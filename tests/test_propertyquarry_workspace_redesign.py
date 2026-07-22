@@ -19793,7 +19793,12 @@ def test_property_workspace_sign_out_clears_workspace_session_cookie() -> None:
     assert hostile_sign_out.json()["error"]["code"] == "cross_site_browser_mutation"
     assert client.cookies.get("ea_workspace_session")
 
-    signed_out = client.post("/app/actions/sign-out", data={"return_to": "/"}, follow_redirects=False)
+    signed_out = client.post(
+        "/app/actions/sign-out",
+        data={"return_to": "/"},
+        headers={"Origin": "https://propertyquarry.com"},
+        follow_redirects=False,
+    )
     assert signed_out.status_code == 303
     assert signed_out.headers["location"] == "/"
     sign_out_cookie = str(signed_out.headers.get("set-cookie") or "")
@@ -19922,7 +19927,12 @@ def test_property_workspace_sign_out_removes_signed_in_ui_globally() -> None:
     assert ">Access<" in signed_in_properties.text
     assert ">Settings<" not in signed_in_properties.text
 
-    signed_out = client.post("/app/actions/sign-out", data={"return_to": "/"}, follow_redirects=False)
+    signed_out = client.post(
+        "/app/actions/sign-out",
+        data={"return_to": "/"},
+        headers={"Origin": "https://propertyquarry.com"},
+        follow_redirects=False,
+    )
     assert signed_out.status_code == 303
     assert not client.cookies.get("ea_workspace_session")
 
@@ -20050,28 +20060,28 @@ def test_property_workspace_sign_out_redirects_cloudflare_access_to_access_logou
     monkeypatch.setenv("EA_CF_ACCESS_TEAM_DOMAIN", "demo.cloudflareaccess.com")
 
     client = build_property_client(principal_id=principal_id)
-    app = client.app
-    app.dependency_overrides[get_request_context] = lambda: RequestContext(
-        principal_id="cf-email:user@example.com",
-        authenticated=True,
-        auth_source="cloudflare_access",
-        access_email="user@example.com",
-        operator_id="",
+    monkeypatch.setattr(
+        landing_routes,
+        "get_request_context",
+        lambda *_args, **_kwargs: RequestContext(
+            principal_id="cf-email:user@example.com",
+            authenticated=True,
+            auth_source="cloudflare_access",
+            access_email="user@example.com",
+            operator_id="",
+        ),
     )
     client.headers.pop("X-EA-Principal-ID", None)
-    try:
-        signed_out = client.post(
-            "/app/actions/sign-out",
-            data={"return_to": "/app/account"},
-            headers={
-                "Host": "propertyquarry.com",
-                "Origin": "https://propertyquarry.com",
-                "x-forwarded-proto": "https",
-            },
-            follow_redirects=False,
-        )
-    finally:
-        app.dependency_overrides.pop(get_request_context, None)
+    signed_out = client.post(
+        "/app/actions/sign-out",
+        data={"return_to": "/app/account"},
+        headers={
+            "Host": "propertyquarry.com",
+            "Origin": "https://propertyquarry.com",
+            "x-forwarded-proto": "https",
+        },
+        follow_redirects=False,
+    )
 
     assert signed_out.status_code == 303
     location = str(signed_out.headers.get("location") or "")
@@ -20085,7 +20095,7 @@ def test_property_workspace_sign_out_redirects_cloudflare_access_to_access_logou
     assert "ea_workspace_session=" in str(signed_out.headers.get("set-cookie") or "")
 
 
-def test_property_workspace_sign_out_works_via_get() -> None:
+def test_property_workspace_sign_out_rejects_get() -> None:
     principal_id = "pq-account-sign-out-get"
     client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property Get Logout")
@@ -20111,10 +20121,9 @@ def test_property_workspace_sign_out_works_via_get() -> None:
         follow_redirects=False,
         headers={"Host": "propertyquarry.com"},
     )
-    assert signed_out.status_code == 303
-    assert signed_out.headers["location"] == "/"
-    assert "ea_workspace_session=" in str(signed_out.headers.get("set-cookie") or "")
-    assert not client.cookies.get("ea_workspace_session")
+    assert signed_out.status_code == 405
+    assert not signed_out.headers.get_list("set-cookie")
+    assert client.cookies.get("ea_workspace_session")
 
 
 def test_propertyquarry_workspace_session_root_home_override_stays_public() -> None:
