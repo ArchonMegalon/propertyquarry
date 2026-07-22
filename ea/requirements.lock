@@ -6,7 +6,7 @@ cffi==2.0.0
 charset_normalizer==3.4.7
 click==8.4.1
 cryptography==48.0.1
-fastapi==0.139.2
+fastapi==0.135.1
 greenlet==3.5.1
 h11==0.16.0
 idna==3.18
