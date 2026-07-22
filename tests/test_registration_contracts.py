@@ -74,6 +74,13 @@ def test_register_template_uses_named_secure_verification_links() -> None:
     assert "node.setAttribute('aria-current', 'step')" in source
     assert "const registerReturnTo = String(app.dataset.registerReturnTo || '').trim() || '/app/search';" in source
     assert "brand.key === 'propertyquarry'" not in source
+    assert 'data-action="resend-code"' in source
+    assert 'data-action="change-email"' in source
+    assert "propertyquarry-register-state-v1" in source
+    assert "const googleConnectStorageKey" not in source
+    assert "window.addEventListener('storage'" not in source
+    assert "Google confirmed your PropertyQuarry identity" in source
+    assert "No inbox or workspace data was connected" in source
     assert "@media (max-width: 760px)" in source
 
 
@@ -249,10 +256,14 @@ def test_register_start_reports_email_delivery_failure_without_aborting_flow(
     assert len(body["verification_code"]) == 6
 
 
-def test_register_start_prod_sends_email_without_returning_verification_credentials(
+def test_register_start_prod_returns_safe_token_without_returning_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+        "test-propertyquarry-production-registration-session-secret",
+    )
     client = _client(monkeypatch)
     object.__setattr__(client.app.state.container.settings.runtime, "mode", "prod")
 
@@ -276,18 +287,35 @@ def test_register_start_prod_sends_email_without_returning_verification_credenti
     assert response.status_code == 200
     body = response.json()
     assert body["email_delivery_status"] == "sent"
-    assert body["verification_token"] == ""
+    assert body["verification_token"]
     assert body["verification_code"] == ""
     assert body["magic_link_url"] == ""
     assert body["email_delivery_error"] == ""
     assert "token=" in str(observed["magic_link_url"])
     assert "code=" in str(observed["magic_link_url"])
+    assert str(observed["verification_code"]) not in body["verification_token"]
+
+    verified = client.post(
+        "/v1/register/verify",
+        json={
+            "verification_token": body["verification_token"],
+            "verification_code": observed["verification_code"],
+            "workspace_name": "Production Example",
+            "timezone": "Europe/Vienna",
+            "language": "en",
+        },
+    )
+    assert verified.status_code == 200
 
 
 def test_register_start_prod_fails_closed_without_email_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+        "test-propertyquarry-production-registration-session-secret",
+    )
     client = _client(monkeypatch)
     object.__setattr__(client.app.state.container.settings.runtime, "mode", "prod")
 
@@ -304,6 +332,10 @@ def test_register_start_prod_redacts_email_provider_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+        "test-propertyquarry-production-registration-session-secret",
+    )
     client = _client(monkeypatch)
     object.__setattr__(client.app.state.container.settings.runtime, "mode", "prod")
 
@@ -321,6 +353,37 @@ def test_register_start_prod_redacts_email_provider_failure(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "registration_email_delivery_unavailable"
     assert provider_detail not in response.text
+
+
+def test_register_start_prod_fails_closed_without_dedicated_verification_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.delenv("PROPERTYQUARRY_IDENTITY_SESSION_SECRET", raising=False)
+    client = _client(monkeypatch)
+    object.__setattr__(client.app.state.container.settings.runtime, "mode", "prod")
+
+    response = client.post("/v1/register/start", json={"email": "prod@example.com"})
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "registration_verification_unavailable"
+    assert "verification_token" not in response.text
+    assert "verification_code" not in response.text
+
+
+def test_register_start_prod_fails_closed_with_weak_verification_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv("PROPERTYQUARRY_IDENTITY_SESSION_SECRET", "too-short")
+    client = _client(monkeypatch)
+    object.__setattr__(client.app.state.container.settings.runtime, "mode", "prod")
+
+    response = client.post("/v1/register/start", json={"email": "prod@example.com"})
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "registration_verification_unavailable"
+    assert "too-short" not in response.text
 
 
 def test_sign_in_email_link_reissues_workspace_access_for_existing_email(
@@ -1648,11 +1711,7 @@ def test_expired_sign_in_page_never_renders_an_inert_recovery_action(
 
 def test_register_verify_requires_matching_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     started = client.post("/v1/register/start", json={"email": "verify@example.com"})
@@ -1687,19 +1746,29 @@ def test_register_verify_requires_matching_code(monkeypatch: pytest.MonkeyPatch)
     assert verified_body["access_url"].startswith("/workspace-access/")
     google_start = dict(verified_body["google_start"])
     assert google_start["ready"] is True
-    assert google_start["auth_url"].startswith("https://accounts.google.com/o/oauth2/v2/auth")
+    assert google_start["identity_only"] is True
+    assert google_start["auth_url"].startswith("/sign-in/google?")
     assert google_start["start_url"] == google_start["auth_url"]
 
+    replayed = client.post(
+        "/v1/register/verify",
+        json={
+            "verification_token": body["verification_token"],
+            "verification_code": body["verification_code"],
+            "workspace_name": "Verify Example",
+            "timezone": "Europe/Vienna",
+            "language": "en",
+        },
+    )
+    assert replayed.status_code == 409
+    assert replayed.json()["error"]["code"] == "registration_verification_already_used"
 
-def test_register_verify_uses_browser_google_callback_even_when_api_callback_is_configured(
+
+def test_register_verify_routes_google_through_propertyquarry_identity_only_sign_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/v1/providers/google/oauth/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     started = client.post("/v1/register/start", json={"email": "browser-callback@example.com"})
@@ -1720,17 +1789,25 @@ def test_register_verify_uses_browser_google_callback_even_when_api_callback_is_
     google_start = dict(verified.json()["google_start"])
     parsed = urllib.parse.urlparse(str(google_start["auth_url"]))
     query = urllib.parse.parse_qs(parsed.query)
-    assert query["redirect_uri"][0] == "https://propertyquarry.com/google/callback"
+    assert parsed.path == "/sign-in/google"
+    assert query["return_to"] == ["/register?ready=1&google_identity=confirmed"]
+    assert google_start["identity_only"] is True
+    assert google_start["ready"] is True
 
 
-def test_register_google_callback_page_signals_original_registration_tab(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_register_verify_never_invokes_generic_google_connector_or_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/v1/providers/google/oauth/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
+    monkeypatch.setattr(
+        client.app.state.container.onboarding,
+        "start_google",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("generic Google connector must not run")
+        ),
+    )
 
     started = client.post("/v1/register/start", json={"email": "callback-signal@example.com"})
     assert started.status_code == 200
@@ -1748,64 +1825,13 @@ def test_register_google_callback_page_signals_original_registration_tab(monkeyp
     )
     assert verified.status_code == 200
     google_start = dict(verified.json()["google_start"])
-    parsed = urllib.parse.urlparse(str(google_start["auth_url"]))
-    query = urllib.parse.parse_qs(parsed.query)
-
-    from app.services import google_oauth as google_service
-
-    monkeypatch.setattr(
-        google_service,
-        "_exchange_google_code_for_tokens",
-        lambda **kwargs: {
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "scope": (
-                "openid email profile "
-                "https://www.googleapis.com/auth/gmail.send "
-                "https://www.googleapis.com/auth/gmail.metadata "
-                "https://www.googleapis.com/auth/calendar.readonly"
-            ),
-            "expires_in": 3600,
-        },
-    )
-    monkeypatch.setattr(
-        google_service,
-        "_fetch_google_userinfo",
-        lambda access_token: {
-            "sub": "google-sub-register",
-            "email": "callback-signal@example.com",
-            "hd": "example.com",
-        },
-    )
-    monkeypatch.setattr(
-        google_service,
-        "_refresh_google_access_token",
-        lambda **kwargs: {
-            "access_token": "fresh-access-token",
-            "expires_in": 3600,
-        },
-    )
-    monkeypatch.setattr(google_service, "_gmail_messages_payload", lambda **kwargs: {})
-    monkeypatch.setattr(google_service, "_list_recent_calendar_signals", lambda **kwargs: [])
-
-    callback = client.get("/google/callback", params={"code": "code-123", "state": query["state"][0]})
-
-    assert callback.status_code == 200
-    assert "Return to email setup" in callback.text
-    assert "ea-register-google-connected" in callback.text
-    assert "window.location.replace" in callback.text
-    assert "google_connected" in callback.text
-    assert "Open search" in callback.text
-    assert 'href="/app/search"' in callback.text
+    assert google_start["identity_only"] is True
+    assert google_start["start_url"].startswith("/sign-in/google?")
 
 
 def test_register_verify_reports_google_oauth_configuration_hint_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
-    monkeypatch.delenv("EA_GOOGLE_OAUTH_CLIENT_ID", raising=False)
-    monkeypatch.delenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("EA_GOOGLE_OAUTH_REDIRECT_URI", raising=False)
-    monkeypatch.delenv("EA_GOOGLE_OAUTH_STATE_SECRET", raising=False)
-    monkeypatch.delenv("EA_PROVIDER_SECRET_KEY", raising=False)
+    _clear_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     started = client.post("/v1/register/start", json={"email": "nodev@example.com"})
@@ -1825,8 +1851,10 @@ def test_register_verify_reports_google_oauth_configuration_hint_when_missing(mo
     assert verified.status_code == 200
     google_start = dict(verified.json()["google_start"])
     assert google_start["ready"] is False
-    assert google_start["error"] == "google_oauth_client_id_missing"
-    assert "Set EA_GOOGLE_OAUTH_CLIENT_ID and EA_GOOGLE_OAUTH_CLIENT_SECRET." in google_start["detail"]
+    assert google_start["error"].startswith("google_oauth_propertyquarry_")
+    assert google_start["start_url"] == ""
+    assert google_start["auth_url"] == ""
+    assert google_start["detail"] == "Google identity is not configured for PropertyQuarry on this host."
 
 
 def test_registration_email_payload_stays_english_and_uses_propertyquarry_sender(
@@ -1868,7 +1896,9 @@ def test_registration_email_payload_stays_english_and_uses_propertyquarry_sender
     assert payload["from"] == "PropertyQuarry <property@propertyquarry.com>"
     assert payload["subject"] == "Verify your email for PropertyQuarry"
     assert "Use this verification code to create your PropertyQuarry account" in payload["text"]
-    assert "Google is connected after sign-up as an identity and optional workspace data source for PropertyQuarry." in payload["text"]
+    assert "Google can optionally confirm your PropertyQuarry identity after sign-up." in payload["text"]
+    assert "It does not connect Gmail, Calendar, MyExternalBrain, or EA." in payload["text"]
+    assert "workspace data source" not in payload["text"]
     assert "titled secure-access button" in payload["text"]
     assert "http://" not in payload["text"]
     assert "https://" not in payload["text"]

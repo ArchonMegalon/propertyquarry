@@ -36,6 +36,20 @@ API_ROLE = "propertyquarry_api"
 WORKER_ROLE = "propertyquarry_worker"
 SCHEDULER_ROLE = "propertyquarry_scheduler"
 RUNTIME_ROLES = (API_ROLE, WORKER_ROLE, SCHEDULER_ROLE)
+GOOGLE_IDENTITY_API_TABLE_GRANTS = (
+    (
+        "SELECT, INSERT, UPDATE",
+        (
+            "propertyquarry_google_identity_accounts",
+            "propertyquarry_google_identity_sessions",
+        ),
+    ),
+    ("INSERT", ("propertyquarry_google_identity_audit",)),
+    (
+        "SELECT, INSERT, DELETE",
+        ("propertyquarry_google_identity_consumed_states",),
+    ),
+)
 MIGRATION_TABLES = (
     "ea_kernel_schema_migrations",
     "propertyquarry_schema_migrations",
@@ -1064,6 +1078,10 @@ def _runtime_acl_sql() -> str:
             SCHEDULER_ROLE,
             "SELECT, INSERT",
             ("property_search_erasure_key_state",),
+        ),
+        *(
+            (API_ROLE, privileges, tables)
+            for privileges, tables in GOOGLE_IDENTITY_API_TABLE_GRANTS
         ),
     )
     table_grants += tuple(

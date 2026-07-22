@@ -23,6 +23,7 @@ from app.property_distance_preferences import (
     property_distance_preference_keys,
 )
 from app.product.service import build_product_service
+from app.services import propertyquarry_google_identity
 from app.services.google_oauth import (
     complete_google_oauth_callback,
     GOOGLE_PROVIDER_KEY,
@@ -36,9 +37,34 @@ register_router = APIRouter(prefix="/v1/register", tags=["registration"])
 
 def _registration_secret(container: AppContainer) -> str:
     runtime_mode = str(getattr(getattr(container.settings, "runtime", None), "mode", "dev") or "dev").strip().lower()
+    dedicated_secret = str(
+        os.environ.get("PROPERTYQUARRY_IDENTITY_SESSION_SECRET") or ""
+    ).strip()
+    if dedicated_secret:
+        if len(dedicated_secret) < 32:
+            raise RuntimeError("propertyquarry_registration_secret_weak")
+        return hmac.new(
+            dedicated_secret.encode("utf-8"),
+            b"propertyquarry-registration-verification-v1",
+            hashlib.sha256,
+        ).hexdigest()
+    if runtime_mode == "prod":
+        raise RuntimeError("propertyquarry_registration_secret_missing")
     api_token = str(getattr(getattr(container.settings, "auth", None), "api_token", "") or "").strip()
     default_principal = str(getattr(getattr(container.settings, "auth", None), "default_principal_id", "") or "").strip()
     return f"register:{runtime_mode}:{api_token or default_principal or 'local-user'}"
+
+
+def _registration_code_digest(
+    *,
+    container: AppContainer,
+    verification_code: str,
+) -> str:
+    return hmac.new(
+        _registration_secret(container).encode("utf-8"),
+        f"code:{str(verification_code or '').strip()}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def _urlsafe_b64encode(value: bytes) -> str:
@@ -495,17 +521,31 @@ def register_start(
     expires_at = int(time.time()) + 15 * 60
     verification_code = f"{secrets.randbelow(1_000_000):06d}"
     return_to = _normalize_browser_return_to(body.return_to, default="/app/search")
-    verification_token = _sign_registration_payload(
-        container=container,
-        payload={
-            "token_kind": "register_challenge",
-            "email": email,
-            "verification_code": verification_code,
-            "return_to": return_to,
-            "expires_at": expires_at,
-        },
-    )
     runtime_mode = str(getattr(getattr(container.settings, "runtime", None), "mode", "dev") or "dev").strip().lower()
+    try:
+        verification_token = _sign_registration_payload(
+            container=container,
+            payload={
+                "token_kind": "register_challenge",
+                "email": email,
+                "verification_code_digest": _registration_code_digest(
+                    container=container,
+                    verification_code=verification_code,
+                ),
+                "return_to": return_to,
+                "expires_at": expires_at,
+            },
+        )
+    except RuntimeError as exc:
+        if runtime_mode == "prod" and str(exc) in {
+            "propertyquarry_registration_secret_missing",
+            "propertyquarry_registration_secret_weak",
+        }:
+            raise HTTPException(
+                status_code=503,
+                detail="registration_verification_unavailable",
+            ) from exc
+        raise
     magic_link_url = "/register?" + urllib.parse.urlencode(
         {
             "token": verification_token,
@@ -554,7 +594,7 @@ def register_start(
     expose_local_verification = runtime_mode != "prod"
     return RegisterStartOut(
         email=email,
-        verification_token=verification_token if expose_local_verification else "",
+        verification_token=verification_token,
         verification_code=verification_code if expose_local_verification else "",
         magic_link_url=magic_link_url if expose_local_verification else "",
         expires_at=expires_at,
@@ -580,10 +620,48 @@ def register_verify(
         "register_challenge",
     ):
         raise HTTPException(status_code=400, detail="registration_verification_invalid")
-    expected_code = str(payload.get("verification_code") or "").strip()
     provided_code = str(body.verification_code or "").strip()
-    if not provided_code or not hmac.compare_digest(provided_code, expected_code):
+    expected_code_digest = str(
+        payload.get("verification_code_digest") or ""
+    ).strip()
+    provided_code_digest = _registration_code_digest(
+        container=container,
+        verification_code=provided_code,
+    )
+    legacy_expected_code = str(payload.get("verification_code") or "").strip()
+    code_matches = bool(
+        provided_code
+        and (
+            (
+                expected_code_digest
+                and hmac.compare_digest(
+                    provided_code_digest,
+                    expected_code_digest,
+                )
+            )
+            or (
+                legacy_expected_code
+                and hmac.compare_digest(provided_code, legacy_expected_code)
+            )
+        )
+    )
+    if not code_matches:
         raise HTTPException(status_code=400, detail="registration_verification_code_invalid")
+    try:
+        propertyquarry_google_identity.consume_propertyquarry_identity_verification_challenge(
+            token=body.verification_token,
+            expires_at=int(payload.get("expires_at") or 0),
+            database_url=str(
+                getattr(container.settings, "database_url", "") or ""
+            ).strip(),
+        )
+    except RuntimeError as exc:
+        if str(exc) == "propertyquarry_identity_verification_replayed":
+            raise HTTPException(
+                status_code=409,
+                detail="registration_verification_already_used",
+            ) from exc
+        raise
     email = str(payload.get("email") or "").strip().lower()
     principal_id = _registration_principal_id(email)
     workspace_name = str(body.workspace_name or "").strip() or _workspace_name_from_email(email)
@@ -596,21 +674,30 @@ def register_verify(
         region="",
         language=language,
         timezone=timezone,
-        selected_channels=("google",),
+        selected_channels=(),
     )
-    google_start: dict[str, object] = {}
-    try:
-        google_status = container.onboarding.start_google(
-            principal_id=principal_id,
-            scope_bundle=str(body.scope_bundle or "identity").strip() or "identity",
-            redirect_uri_override=f"{_registration_base_url(request)}/google/callback" if request is not None else None,
-            return_to="/register?ready=1",
-            browser_source="register",
-        )
-        google_start = dict(google_status.get("google_start") or {})
-        status = google_status
-    except RuntimeError as exc:
-        google_start = {"error": str(exc or "google_oauth_not_ready")}
+    google_return_to = "/register?ready=1&google_identity=confirmed"
+    google_start_url = "/sign-in/google?" + urllib.parse.urlencode(
+        {"return_to": google_return_to}
+    )
+    google_ready = propertyquarry_google_identity.propertyquarry_google_identity_configured()
+    google_start: dict[str, object] = {
+        "auth_url": google_start_url,
+        "identity_only": True,
+        "ready": google_ready,
+        "start_url": google_start_url,
+    }
+    if not google_ready:
+        google_start.update({"auth_url": "", "start_url": ""})
+        try:
+            propertyquarry_google_identity.load_propertyquarry_google_identity_config()
+        except RuntimeError as exc:
+            google_start.update(
+                {
+                    "error": str(exc or "google_oauth_propertyquarry_unavailable"),
+                    "detail": "Google identity is not configured for PropertyQuarry on this host.",
+                }
+            )
     access = build_product_service(container).issue_workspace_access_session(
         principal_id=principal_id,
         email=email,

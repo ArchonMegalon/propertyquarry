@@ -7108,7 +7108,6 @@ def workspace_access_session(
 async def app_sign_out(
     request: Request,
     container: AppContainer = Depends(get_container),
-    context: RequestContext = Depends(get_request_context),
 ) -> RedirectResponse:
     body: dict[str, list[str]] = {}
     if request.method == "POST":
@@ -7118,29 +7117,68 @@ async def app_sign_out(
     return_to = _normalize_browser_return_to(query_params.get("return_to", "") or _form_value(body, "return_to", public_base), default=public_base)
     if not return_to:
         return_to = public_base
-    propertyquarry_identity_session = _propertyquarry_identity_session_payload(request, container)
-    workspace_session = (
-        None
-        if isinstance(propertyquarry_identity_session, dict)
-        else _workspace_session_payload(request, container)
+    propertyquarry_identity_cookie_supplied = bool(
+        str(
+            request.cookies.get(
+                propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME
+            )
+            or ""
+        ).strip()
     )
-    actor = str(context.operator_id or context.access_email or context.principal_id or "browser").strip()
-    if isinstance(propertyquarry_identity_session, dict):
+    propertyquarry_identity_session = _propertyquarry_identity_session_payload(
+        request,
+        container,
+    )
+    if propertyquarry_identity_cookie_supplied:
+        actor = "browser"
+        if isinstance(propertyquarry_identity_session, dict):
+            actor = str(
+                propertyquarry_identity_session.get("email")
+                or propertyquarry_identity_session.get("principal_id")
+                or actor
+            ).strip()
         try:
             propertyquarry_google_identity.revoke_propertyquarry_identity_session(
                 token=str(
-                    request.cookies.get(propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME)
+                    request.cookies.get(
+                        propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME
+                    )
                     or ""
                 ).strip(),
-                database_url=str(getattr(container.settings, "database_url", "") or "").strip(),
+                database_url=str(
+                    getattr(container.settings, "database_url", "") or ""
+                ).strip(),
                 actor=actor,
             )
         except Exception:
             pass
+        response = RedirectResponse(return_to, status_code=303)
+        response.delete_cookie(
+            propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME,
+            path="/",
+            secure=True,
+            httponly=True,
+            samesite="lax",
+        )
+        response.headers["X-Robots-Tag"] = (
+            "noindex, nofollow, noarchive, nosnippet"
+        )
+        return response
+
+    context = get_request_context(request, container)
+    workspace_session = _workspace_session_payload(request, container)
+    actor = str(
+        context.operator_id
+        or context.access_email
+        or context.principal_id
+        or "browser"
+    ).strip()
     if isinstance(workspace_session, dict):
         product = build_product_service(container)
         session_id = str(workspace_session.get("session_id") or "").strip()
-        principal_id = str(workspace_session.get("principal_id") or context.principal_id or "").strip()
+        principal_id = str(
+            workspace_session.get("principal_id") or context.principal_id or ""
+        ).strip()
         if session_id and principal_id:
             try:
                 product.revoke_workspace_access_session(
@@ -7156,22 +7194,19 @@ async def app_sign_out(
     ):
         return_to = _cloudflare_access_logout_url(
             request,
-            team_domain=str(container.settings.auth.cf_access_team_domain or "").strip(),
+            team_domain=str(
+                container.settings.auth.cf_access_team_domain or ""
+            ).strip(),
             return_to=return_to,
         )
 
     response = RedirectResponse(return_to, status_code=303)
-    if isinstance(propertyquarry_identity_session, dict):
-        response.delete_cookie(
-            propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME,
-            path="/",
-            secure=True,
-            httponly=True,
-            samesite="lax",
-        )
-    else:
-        _clear_workspace_session_cookie(response, request)
-        response.set_cookie("ea_workspace_signed_out", "1", **_signed_out_marker_cookie_kwargs(request))
+    _clear_workspace_session_cookie(response, request)
+    response.set_cookie(
+        "ea_workspace_signed_out",
+        "1",
+        **_signed_out_marker_cookie_kwargs(request),
+    )
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
     return response
 

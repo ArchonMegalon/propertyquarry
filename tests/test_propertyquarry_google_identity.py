@@ -95,6 +95,12 @@ def test_identity_requires_independent_high_entropy_state_and_session_secrets(
     with pytest.raises(RuntimeError, match="google_oauth_propertyquarry_session_secret_weak"):
         identity.load_propertyquarry_google_identity_config()
 
+    shared_secret = "propertyquarry-shared-secret-with-enough-entropy"
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET", shared_secret)
+    monkeypatch.setenv("PROPERTYQUARRY_IDENTITY_SESSION_SECRET", shared_secret)
+    with pytest.raises(RuntimeError, match="google_oauth_propertyquarry_secrets_must_differ"):
+        identity.load_propertyquarry_google_identity_config()
+
 
 def test_identity_start_is_prefixed_narrow_and_keeps_only_a_safe_local_return(
     monkeypatch: pytest.MonkeyPatch,
@@ -585,12 +591,103 @@ def test_propertyquarry_identity_cookie_is_ignored_on_another_product_host(
     assert response.headers["location"] == "/sign-in?current_session=missing"
 
 
+def test_sign_out_clears_invalid_propertyquarry_cookie_without_legacy_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import propertyquarry_google_identity as identity
+
+    _configure_propertyquarry_google(monkeypatch)
+    client = _client(monkeypatch)
+    response = client.post(
+        "/app/actions/sign-out",
+        data={"return_to": "/sign-in"},
+        headers={
+            "cookie": f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=pqis1.invalid-expired-cookie"
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    cookies = response.headers.get_list("set-cookie")
+    assert len(cookies) == 1
+    assert cookies[0].startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
+    assert "Max-Age=0" in cookies[0]
+    assert "ea_" not in cookies[0].lower()
+
+
+def test_production_sign_out_bypasses_generic_auth_and_workspace_resolution_for_invalid_pq_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.app import create_app
+    from app.api.routes import landing
+    from app.services import propertyquarry_google_identity as identity
+    from app.settings import RuntimeProfile
+
+    _configure_propertyquarry_google(monkeypatch)
+    monkeypatch.setenv("EA_STORAGE_BACKEND", "memory")
+    monkeypatch.delenv("EA_LEDGER_BACKEND", raising=False)
+    monkeypatch.setenv("EA_API_TOKEN", "configured-production-api-token")
+    monkeypatch.setenv("EA_RUNTIME_MODE", "dev")
+    monkeypatch.setenv("EA_DATABASE_URL", "")
+    app = create_app()
+    object.__setattr__(
+        app.state.container,
+        "runtime_profile",
+        RuntimeProfile(
+            mode="prod",
+            storage_backend="postgres",
+            durability="durable",
+            auth_mode="token",
+            principal_source="verified_identity",
+            database_required=True,
+            database_configured=True,
+            source_backend="postgres",
+        ),
+    )
+    monkeypatch.setattr(
+        landing,
+        "get_request_context",
+        lambda *_args, **_kwargs: pytest.fail(
+            "PQ-cookie sign-out must not resolve generic authentication"
+        ),
+    )
+    monkeypatch.setattr(
+        landing,
+        "_workspace_session_payload",
+        lambda *_args, **_kwargs: pytest.fail(
+            "PQ-cookie sign-out must not resolve or touch an EA workspace session"
+        ),
+    )
+    client = TestClient(app, base_url="https://propertyquarry.com")
+
+    response = client.post(
+        "/app/actions/sign-out",
+        data={"return_to": "/sign-in"},
+        headers={
+            "cookie": (
+                f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=pqis1.invalid-expired-cookie; "
+                "ea_workspace_session=must-not-be-resolved"
+            )
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/sign-in"
+    cookies = response.headers.get_list("set-cookie")
+    assert len(cookies) == 1
+    assert cookies[0].startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
+    assert "Max-Age=0" in cookies[0]
+    assert "ea_" not in cookies[0].lower()
+
+
 def test_google_identity_lane_has_static_cross_product_isolation() -> None:
     from app.api.routes import landing, landing_setup
     from app.services import propertyquarry_google_identity as identity
 
     module_source = inspect.getsource(identity)
     lowered = module_source.lower()
+    assert "CREATE TABLE" not in module_source
     assert "EA_" not in module_source
     assert "myexternalbrain" not in lowered
     assert "provider_binding" not in lowered

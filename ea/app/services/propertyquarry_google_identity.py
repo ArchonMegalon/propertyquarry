@@ -15,6 +15,13 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from app.product.propertyquarry_google_identity_schema import (
+    GOOGLE_IDENTITY_TABLES,
+    inspect_propertyquarry_google_identity_schema,
+    require_propertyquarry_google_identity_schema_ready,
+    reset_propertyquarry_google_identity_schema_cache_for_tests,
+)
+
 
 GOOGLE_AUTHORIZE_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
@@ -25,14 +32,6 @@ GOOGLE_IDENTITY_STATE_PREFIX = "pqg1"
 GOOGLE_IDENTITY_SESSION_PREFIX = "pqis1"
 GOOGLE_IDENTITY_LANE = "propertyquarry_google_identity"
 GOOGLE_IDENTITY_SCOPES = ("openid", "email", "profile")
-GOOGLE_IDENTITY_TABLES = (
-    "propertyquarry_google_identity_accounts",
-    "propertyquarry_google_identity_sessions",
-    "propertyquarry_google_identity_audit",
-    "propertyquarry_google_identity_consumed_states",
-)
-
-
 @dataclass(frozen=True)
 class PropertyQuarryGoogleIdentityConfig:
     client_id: str
@@ -66,8 +65,6 @@ class PropertyQuarryGoogleIdentitySession:
 
 
 _MEMORY_LOCK = threading.RLock()
-_SCHEMA_LOCK = threading.RLock()
-_SCHEMA_READY_DATABASE_URLS: set[str] = set()
 _MEMORY_ACCOUNTS: dict[str, dict[str, object]] = {}
 _MEMORY_SESSIONS: dict[str, dict[str, object]] = {}
 _MEMORY_AUDIT: list[dict[str, object]] = []
@@ -106,6 +103,13 @@ def load_propertyquarry_google_identity_config() -> PropertyQuarryGoogleIdentity
         missing_error="google_oauth_propertyquarry_state_secret_missing",
         weak_error="google_oauth_propertyquarry_state_secret_weak",
     )
+    session_secret = _required_secret(
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+        missing_error="google_oauth_propertyquarry_session_secret_missing",
+        weak_error="google_oauth_propertyquarry_session_secret_weak",
+    )
+    if hmac.compare_digest(state_secret, session_secret):
+        raise RuntimeError("google_oauth_propertyquarry_secrets_must_differ")
     return PropertyQuarryGoogleIdentityConfig(
         client_id=_required_env(
             "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID",
@@ -118,11 +122,7 @@ def load_propertyquarry_google_identity_config() -> PropertyQuarryGoogleIdentity
         redirect_uri=_env("PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI")
         or "https://propertyquarry.com/google/callback",
         state_secret=state_secret,
-        session_secret=_required_secret(
-            "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
-            missing_error="google_oauth_propertyquarry_session_secret_missing",
-            weak_error="google_oauth_propertyquarry_session_secret_weak",
-        ),
+        session_secret=session_secret,
         state_ttl_seconds=_bounded_env_int(
             "PROPERTYQUARRY_GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS",
             default=600,
@@ -346,88 +346,23 @@ def _connect(database_url: str):  # type: ignore[no-untyped-def]
     return psycopg.connect(str(database_url or "").strip())
 
 
-def _ensure_schema(database_url: str) -> None:
+def _require_schema(database_url: str) -> None:
     normalized = str(database_url or "").strip()
     if not normalized:
         return
-    with _SCHEMA_LOCK:
-        if normalized in _SCHEMA_READY_DATABASE_URLS:
-            return
-        with _connect(normalized) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS propertyquarry_google_identity_accounts (
-                        principal_id TEXT PRIMARY KEY,
-                        subject_hash TEXT UNIQUE NOT NULL,
-                        email TEXT NOT NULL,
-                        display_name TEXT NOT NULL DEFAULT '',
-                        email_verified BOOLEAN NOT NULL,
-                        created_at TIMESTAMPTZ NOT NULL,
-                        updated_at TIMESTAMPTZ NOT NULL
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS propertyquarry_google_identity_sessions (
-                        session_id TEXT PRIMARY KEY,
-                        principal_id TEXT NOT NULL,
-                        token_hash TEXT UNIQUE NOT NULL,
-                        status TEXT NOT NULL,
-                        issued_at TIMESTAMPTZ NOT NULL,
-                        expires_at TIMESTAMPTZ NOT NULL,
-                        last_seen_at TIMESTAMPTZ NOT NULL,
-                        revoked_at TIMESTAMPTZ
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS propertyquarry_google_identity_audit (
-                        audit_id TEXT PRIMARY KEY,
-                        principal_id TEXT NOT NULL,
-                        session_id TEXT NOT NULL DEFAULT '',
-                        event_type TEXT NOT NULL,
-                        metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-                        occurred_at TIMESTAMPTZ NOT NULL
-                    )
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS propertyquarry_google_identity_consumed_states (
-                        state_hash TEXT PRIMARY KEY,
-                        consumed_at TIMESTAMPTZ NOT NULL,
-                        expires_at TIMESTAMPTZ NOT NULL
-                    )
-                    """
-                )
-            connection.commit()
-        _SCHEMA_READY_DATABASE_URLS.add(normalized)
+    require_propertyquarry_google_identity_schema_ready(normalized)
 
 
 def propertyquarry_google_identity_schema_preflight(database_url: str = "") -> dict[str, object]:
     normalized_database_url = str(database_url or "").strip()
-    present_tables = list(GOOGLE_IDENTITY_TABLES)
     backend = "memory"
+    ready = True
     if normalized_database_url:
         backend = "postgres"
-        _ensure_schema(normalized_database_url)
-        with _connect(normalized_database_url) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT table_name
-                    FROM information_schema.tables
-                    WHERE table_schema = current_schema() AND table_name = ANY(%s)
-                    ORDER BY table_name
-                    """,
-                    (list(GOOGLE_IDENTITY_TABLES),),
-                )
-                present_tables = [str(row[0]) for row in cursor.fetchall()]
+        ready = inspect_propertyquarry_google_identity_schema(
+            normalized_database_url
+        ).ready
     expected_tables = sorted(GOOGLE_IDENTITY_TABLES)
-    ready = sorted(present_tables) == expected_tables
     schema_material = json.dumps(
         {
             "contract_name": "propertyquarry.google_identity_schema.v1",
@@ -447,11 +382,17 @@ def propertyquarry_google_identity_schema_preflight(database_url: str = "") -> d
     }
 
 
-def _consume_state(*, state: str, expires_at: int, database_url: str) -> None:
+def _consume_state(
+    *,
+    state: str,
+    expires_at: int,
+    database_url: str,
+    replay_error: str = "google_oauth_propertyquarry_state_replayed",
+) -> None:
     state_hash = hashlib.sha256(str(state or "").encode("utf-8")).hexdigest()
     normalized_database_url = str(database_url or "").strip()
     if normalized_database_url:
-        _ensure_schema(normalized_database_url)
+        _require_schema(normalized_database_url)
         with _connect(normalized_database_url) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -468,7 +409,7 @@ def _consume_state(*, state: str, expires_at: int, database_url: str) -> None:
                 inserted = cursor.rowcount == 1
             connection.commit()
         if not inserted:
-            raise RuntimeError("google_oauth_propertyquarry_state_replayed")
+            raise RuntimeError(replay_error)
         return
     with _MEMORY_LOCK:
         now = int(time.time())
@@ -476,8 +417,22 @@ def _consume_state(*, state: str, expires_at: int, database_url: str) -> None:
             if current_expiry < now:
                 _MEMORY_CONSUMED_STATES.pop(key, None)
         if state_hash in _MEMORY_CONSUMED_STATES:
-            raise RuntimeError("google_oauth_propertyquarry_state_replayed")
+            raise RuntimeError(replay_error)
         _MEMORY_CONSUMED_STATES[state_hash] = int(expires_at)
+
+
+def consume_propertyquarry_identity_verification_challenge(
+    *,
+    token: str,
+    expires_at: int,
+    database_url: str = "",
+) -> None:
+    _consume_state(
+        state=f"propertyquarry-email-verification-v1:{str(token or '').strip()}",
+        expires_at=expires_at,
+        database_url=database_url,
+        replay_error="propertyquarry_identity_verification_replayed",
+    )
 
 
 def consume_propertyquarry_google_identity_state(
@@ -567,7 +522,7 @@ def _claim_verified_identity_account(
     email_principal = f"user-{hashlib.sha256(email.encode('utf-8')).hexdigest()[:16]}"
     normalized_database_url = str(database_url or "").strip()
     if normalized_database_url:
-        _ensure_schema(normalized_database_url)
+        _require_schema(normalized_database_url)
         with _connect(normalized_database_url) as connection:
             with connection.cursor() as cursor:
                 for lock_key in sorted({f"email:{email_principal}", f"subject:{subject_hash}"}):
@@ -693,7 +648,7 @@ def _persist_identity_session(
     )
     normalized_database_url = str(database_url or "").strip()
     if normalized_database_url:
-        _ensure_schema(normalized_database_url)
+        _require_schema(normalized_database_url)
         try:
             from psycopg.types.json import Json
         except Exception as exc:  # pragma: no cover - import guard
@@ -832,7 +787,7 @@ def complete_propertyquarry_google_identity_callback(
 def _load_session_record(*, session_id: str, database_url: str) -> dict[str, object] | None:
     normalized_database_url = str(database_url or "").strip()
     if normalized_database_url:
-        _ensure_schema(normalized_database_url)
+        _require_schema(normalized_database_url)
         with _connect(normalized_database_url) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -1006,6 +961,7 @@ def revoke_propertyquarry_identity_session(
 
 
 def reset_propertyquarry_google_identity_memory_for_tests() -> None:
+    reset_propertyquarry_google_identity_schema_cache_for_tests()
     with _MEMORY_LOCK:
         _MEMORY_ACCOUNTS.clear()
         _MEMORY_SESSIONS.clear()

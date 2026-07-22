@@ -270,6 +270,8 @@
           <div class="register-error" data-verify-error></div>
           <div class="cta-row">
             <button class="btn primary" type="submit">Finish setup</button>
+            <button class="btn" type="button" data-action="resend-code">Resend code</button>
+            <button class="btn" type="button" data-action="change-email">Use a different email</button>
           </div>
         </form>
       </section>
@@ -277,8 +279,8 @@
       <section class="register-step" data-step="3">
         <div>
           <div class="kicker">Step 3</div>
-          <h2>{% if brand.key == 'propertyquarry' %}Optional Google access{% else %}Connect Google{% endif %}</h2>
-          <p class="copy">Link Google for a faster return, or skip it for now.</p>
+          <h2>{% if brand.key == 'propertyquarry' %}Optional Google identity{% else %}Connect Google{% endif %}</h2>
+          <p class="copy">{% if brand.key == 'propertyquarry' %}Google only confirms who you are. It does not connect Gmail, Calendar, MyExternalBrain, or EA.{% else %}Link Google for a faster return, or skip it for now.{% endif %}</p>
         </div>
         <div class="register-choice">
           <strong>{% if brand.key == 'propertyquarry' %}Google sign-in{% else %}Google sign-in{% endif %}<button class="info-tip" type="button" title="Optional return access." aria-label="Optional return access.">?</button></strong>
@@ -286,7 +288,7 @@
         <div class="register-inline" data-google-inline></div>
         <div class="register-error" data-google-error></div>
         <div class="cta-row">
-          <button class="btn primary" type="button" data-action="google-consent">{% if brand.key == 'propertyquarry' %}Link Google account{% else %}Connect Google Core{% endif %}</button>
+          <button class="btn primary" type="button" data-action="google-consent">{% if brand.key == 'propertyquarry' %}Confirm identity with Google{% else %}Connect Google Core{% endif %}</button>
           <button class="btn" type="button" data-action="build-brief">{% if brand.key == 'propertyquarry' %}Skip for now{% else %}Build first morning memo{% endif %}</button>
         </div>
       </section>
@@ -323,8 +325,14 @@
   const registerReturnTo = String(app.dataset.registerReturnTo || '').trim() || '/app/search';
 
   const params = new URLSearchParams(window.location.search);
-  const storageKey = 'ea-register-state';
-  const googleConnectStorageKey = 'ea-register-google-connected';
+  const storageKey = 'propertyquarry-register-state-v1';
+  const legacyStorageKeys = ['ea-register-state', 'ea-register-google-connected'];
+  try {
+    legacyStorageKeys.forEach((key) => window.localStorage.removeItem(key));
+    if (params.get('restart') === '1') window.localStorage.removeItem(storageKey);
+  } catch (_error) {
+    // Registration still works when browser storage is unavailable.
+  }
   const saved = (() => {
     try {
       return JSON.parse(window.localStorage.getItem(storageKey) || 'null') || {};
@@ -359,11 +367,15 @@
   const verifyInline = document.querySelector('[data-verify-inline]');
   const verifyError = document.querySelector('[data-verify-error]');
   const verifyNote = document.querySelector('[data-verify-note]');
+  const resendButton = document.querySelector('[data-action="resend-code"]');
+  const changeEmailButton = document.querySelector('[data-action="change-email"]');
   const googleInline = document.querySelector('[data-google-inline]');
   const googleError = document.querySelector('[data-google-error]');
   const briefList = document.querySelector('[data-preview-brief]');
   const queueList = document.querySelector('[data-preview-queue]');
   let buildInFlight = false;
+  let resendTimer = 0;
+  const resendCooldownSeconds = 60;
 
   const setState = () => {
     window.localStorage.setItem(storageKey, JSON.stringify({
@@ -371,6 +383,27 @@
       verified: state.verified,
       preview: state.preview,
     }));
+  };
+
+  const updateResendButton = () => {
+    if (!resendButton) return;
+    const requestedAt = Number((state.start || {}).requested_at_ms || 0);
+    const elapsedSeconds = Math.floor((Date.now() - requestedAt) / 1000);
+    const remaining = Math.max(0, resendCooldownSeconds - elapsedSeconds);
+    resendButton.disabled = remaining > 0;
+    resendButton.textContent = remaining > 0
+      ? `Resend code in ${remaining}s`
+      : 'Resend code';
+    if (remaining <= 0 && resendTimer) {
+      window.clearInterval(resendTimer);
+      resendTimer = 0;
+    }
+  };
+
+  const startResendCooldown = () => {
+    if (resendTimer) window.clearInterval(resendTimer);
+    updateResendButton();
+    resendTimer = window.setInterval(updateResendButton, 1000);
   };
 
   const setStep = (step) => {
@@ -461,11 +494,11 @@
     setStep(3);
   };
 
-  startForm?.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    startError.textContent = '';
-    startStatus.textContent = 'Preparing verification…';
-    const email = String(startForm.elements.email.value || '').trim();
+  const requestVerification = async (email, { resend = false } = {}) => {
+    const statusNode = resend ? verifyInline : startStatus;
+    const errorNode = resend ? verifyError : startError;
+    errorNode.textContent = '';
+    statusNode.textContent = resend ? 'Requesting a fresh code…' : 'Preparing verification…';
     try {
       const response = await fetch('/v1/register/start', {
         method: 'POST',
@@ -473,11 +506,17 @@
         body: JSON.stringify({ email, return_to: registerReturnTo }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error((body.detail || 'Could not start registration').toString());
-      state.start = body;
+      if (!response.ok) {
+        const detail = String(body.detail || body.error?.code || '').trim();
+        const message = detail === 'registration_email_delivery_unavailable'
+          ? 'Email delivery is temporarily unavailable. Please try again shortly or continue with Google sign-in.'
+          : (detail || 'Could not request a verification code.');
+        throw new Error(message);
+      }
+      state.start = Object.assign({}, body, { requested_at_ms: Date.now() });
       setState();
-      startStatus.textContent = body.email_delivery_status === 'sent'
-        ? `Verification email sent to ${body.email}. Open the secure verification link or enter the 6-digit code from that message.`
+      statusNode.textContent = body.email_delivery_status === 'sent'
+        ? `${resend ? 'Fresh verification email' : 'Verification email'} sent to ${body.email}. Open the secure verification link or enter the 6-digit code from that message.`
         : (body.email_delivery_status === 'failed'
           ? (body.verification_code
             ? `Email delivery is not configured cleanly on this host. Use code ${body.verification_code} to continue locally.`
@@ -487,10 +526,40 @@
             : `Verification ready for ${body.email}. Continue with the code or secure verification link.`));
       syncStep();
       renderVerifyNote();
+      startResendCooldown();
     } catch (error) {
-      startStatus.textContent = '';
-      startError.textContent = error instanceof Error ? error.message : 'Could not start registration.';
+      statusNode.textContent = '';
+      errorNode.textContent = error instanceof Error ? error.message : 'Could not request a verification code.';
     }
+  };
+
+  startForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const email = String(startForm.elements.email.value || '').trim();
+    await requestVerification(email);
+  });
+
+  resendButton?.addEventListener('click', async () => {
+    const email = String((state.start || {}).email || '').trim();
+    if (!email || resendButton.disabled) return;
+    await requestVerification(email, { resend: true });
+  });
+
+  changeEmailButton?.addEventListener('click', () => {
+    const previousEmail = String((state.start || {}).email || '').trim();
+    state.start = null;
+    state.verified = null;
+    state.preview = { brief: [], queue: [] };
+    try {
+      window.localStorage.removeItem(storageKey);
+    } catch (_error) {
+      // State is already cleared in memory.
+    }
+    if (startForm && previousEmail) startForm.elements.email.value = previousEmail;
+    verifyInline.textContent = '';
+    verifyError.textContent = '';
+    setStep(1);
+    startForm?.elements.email?.focus();
   });
 
   verifyForm?.addEventListener('submit', async (event) => {
@@ -512,7 +581,13 @@
         body: JSON.stringify(payload),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error((body.detail || 'Could not verify registration').toString());
+      if (!response.ok) {
+        const detail = String(body.detail || body.error?.code || '').trim();
+        const message = detail === 'registration_verification_already_used'
+          ? 'That code has already been used. Request a fresh code to continue.'
+          : (detail || 'Could not verify registration.');
+        throw new Error(message);
+      }
       state.verified = body;
       setState();
       verifyInline.textContent = 'Account created. Signing you in…';
@@ -534,8 +609,8 @@
       googleError.textContent = errorMessage;
       return;
     }
-    googleInline.textContent = 'Google opened in a new tab. Return here when you are ready.';
-    window.open(startUrl, '_blank', 'noopener');
+    googleInline.textContent = 'Opening Google to confirm your PropertyQuarry identity…';
+    window.location.assign(startUrl);
   });
 
   const buildPropertyWorkspace = async () => {
@@ -572,87 +647,17 @@
     }
   };
 
-  const googleSyncSummary = (payload) => {
-    if (!payload || String(payload.sync_status || '').trim().toLowerCase() !== 'completed') {
-      const error = String((payload && payload.sync_error) || '').trim();
-      return error ? `Google connected, but the first sync needs attention: ${error}.` : 'Google connected.';
-    }
-    const processed = Number(payload.sync_processed_total || 0);
-    const synced = Number(payload.sync_synced_total || 0);
-    const deduplicated = Number(payload.sync_deduplicated_total || 0);
-    const suppressed = Number(payload.sync_suppressed_total || 0);
-    if (processed || suppressed) {
-      return `Google connected. First sync processed ${processed}, staged ${synced}, deduplicated ${deduplicated}, and suppressed ${suppressed}.`;
-    }
-    return 'Google connected. First sync finished, but there were no recent Gmail or Calendar signals to stage yet.';
-  };
-
-  const consumeGoogleConnectPayload = async (rawPayload) => {
-    if (!state.verified) return;
-    let payload = rawPayload;
-    if (typeof payload === 'string') {
-      try {
-        payload = JSON.parse(payload);
-      } catch (_error) {
-        payload = null;
-      }
-    }
-    if (!payload || !payload.google_connected) return;
-    googleError.textContent = '';
-    googleInline.textContent = googleSyncSummary(payload);
-    if (!state.preview.brief.length && !state.preview.queue.length) {
-      await buildPropertyWorkspace();
-    }
-  };
-
-  const consumeStoredGoogleConnectPayload = async () => {
-    let raw = '';
-    try {
-      raw = window.localStorage.getItem(googleConnectStorageKey) || '';
-    } catch (_error) {
-      raw = '';
-    }
-    if (!raw) return;
-    try {
-      await consumeGoogleConnectPayload(raw);
-    } finally {
-      try {
-        window.localStorage.removeItem(googleConnectStorageKey);
-      } catch (_error) {
-        // Ignore local storage cleanup failures.
-      }
-    }
-  };
-
   document.querySelector('[data-action="build-brief"]')?.addEventListener('click', async () => {
     await buildPropertyWorkspace();
   });
 
-  window.addEventListener('storage', (event) => {
-    if (event.key !== googleConnectStorageKey || !event.newValue) return;
-    void consumeGoogleConnectPayload(event.newValue);
-  });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
-    void consumeStoredGoogleConnectPayload();
-  });
-
   syncStep();
   renderVerifyNote();
+  if (state.start) startResendCooldown();
 
-  if (params.get('google_connected') === '1') {
-    void consumeGoogleConnectPayload({
-      google_connected: true,
-      sync_status: params.get('sync_status') || '',
-      sync_processed_total: params.get('sync_processed_total') || '0',
-      sync_synced_total: params.get('sync_synced_total') || '0',
-      sync_deduplicated_total: params.get('sync_deduplicated_total') || '0',
-      sync_suppressed_total: params.get('sync_suppressed_total') || '0',
-      sync_error: params.get('sync_error') || '',
-    });
-  } else {
-    void consumeStoredGoogleConnectPayload();
+  if (params.get('google_identity') === 'confirmed' && state.verified) {
+    googleInline.textContent = 'Google confirmed your PropertyQuarry identity. No inbox or workspace data was connected.';
+    void buildPropertyWorkspace();
   }
 })();
 </script>

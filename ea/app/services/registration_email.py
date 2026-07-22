@@ -127,7 +127,8 @@ def _registration_text(*, verification_code: str, magic_link_url: str, expires_a
         f"{verification_code}\n\n"
         "Or use the titled secure-access button in this email.\n\n"
         f"This link and code expire in about {minutes} minutes.\n\n"
-        "Google is connected after sign-up as an identity and optional workspace data source for PropertyQuarry.\n\n"
+        "Google can optionally confirm your PropertyQuarry identity after sign-up. "
+        "It does not connect Gmail, Calendar, MyExternalBrain, or EA.\n\n"
         "If you did not request this email, you can ignore it.\n"
     )
 
@@ -733,7 +734,7 @@ def send_workspace_invitation_email(
         [
             "",
             "You will get account access after accepting the invite.",
-            "Google is connected later as an optional account data source. It is not your app login.",
+            "Google can optionally confirm your PropertyQuarry identity. It does not connect Gmail, Calendar, MyExternalBrain, or EA.",
         ]
     )
     return _send_emailit_email(
