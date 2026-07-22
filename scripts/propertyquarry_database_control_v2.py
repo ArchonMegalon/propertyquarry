@@ -21,7 +21,25 @@ try:  # Repo execution.
     from scripts import propertyquarry_predeploy_backup_v2 as backup_contract
     from scripts import provision_propertyquarry_runtime_database as runtime_database
 except ImportError:  # Installed, adjacent executable execution.
-    import propertyquarry_predeploy_backup_v2 as backup_contract  # type: ignore[no-redef]
+    from importlib.machinery import SourceFileLoader
+    import importlib.util
+
+    _installed_backup_path = Path(__file__).with_name(
+        "propertyquarry-predeploy-backup-v2"
+    )
+    _installed_backup_loader = SourceFileLoader(
+        "propertyquarry_predeploy_backup_v2",
+        str(_installed_backup_path),
+    )
+    _installed_backup_spec = importlib.util.spec_from_loader(
+        _installed_backup_loader.name,
+        _installed_backup_loader,
+    )
+    if _installed_backup_spec is None:  # pragma: no cover - interpreter guard
+        raise ImportError("installed_backup_module_unavailable")
+    backup_contract = importlib.util.module_from_spec(_installed_backup_spec)
+    sys.modules[_installed_backup_loader.name] = backup_contract
+    _installed_backup_loader.exec_module(backup_contract)
     import provision_propertyquarry_runtime_database as runtime_database  # type: ignore[no-redef]
 
 

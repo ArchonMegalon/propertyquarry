@@ -5,7 +5,9 @@ import base64
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
@@ -341,3 +343,37 @@ def test_request_requires_exact_operation_pinned_image_and_receipt_path(
     with pytest.raises(control.DatabaseControlError, match="web_image_invalid"):
         control._validate_request(args)
 
+
+def test_installed_layout_loads_the_signed_hyphenated_backup_executable(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "libexec"
+    install_root.mkdir()
+    database_executable = install_root / "propertyquarry-database-control-v2"
+    backup_executable = install_root / "propertyquarry-predeploy-backup-v2"
+    runtime_module = install_root / "provision_propertyquarry_runtime_database.py"
+    shutil.copyfile(Path(control.__file__), database_executable)
+    shutil.copyfile(Path(control.backup_contract.__file__), backup_executable)
+    shutil.copyfile(Path(control.runtime_database.__file__), runtime_module)
+
+    completed = subprocess.run(
+        [sys.executable, str(database_executable), "--help"],
+        cwd=tmp_path,
+        env={
+            "HOME": "/nonexistent",
+            "LANG": "C.UTF-8",
+            "LC_ALL": "C.UTF-8",
+            "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+            "PYTHONPATH": "",
+            "TZ": "UTC",
+        },
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "provision-roles" in completed.stdout
+    assert "verify-schema-readiness" in completed.stdout
