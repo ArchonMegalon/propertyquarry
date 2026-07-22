@@ -235,7 +235,7 @@
           <div class="register-status" data-start-status></div>
           <div class="register-error" data-start-error></div>
           <div class="cta-row">
-            <button class="btn primary" type="submit">Continue</button>
+            <button class="btn primary" type="submit">Send verification code</button>
           </div>
         </form>
       </section>
@@ -325,17 +325,21 @@
   const registerReturnTo = String(app.dataset.registerReturnTo || '').trim() || '/app/search';
 
   const params = new URLSearchParams(window.location.search);
-  const storageKey = 'propertyquarry-register-state-v1';
-  const legacyStorageKeys = ['ea-register-state', 'ea-register-google-connected'];
+  const storageKey = 'propertyquarry-register-session-v2';
+  const legacyStorageKeys = [
+    'propertyquarry-register-state-v1',
+    'ea-register-state',
+    'ea-register-google-connected',
+  ];
   try {
     legacyStorageKeys.forEach((key) => window.localStorage.removeItem(key));
-    if (params.get('restart') === '1') window.localStorage.removeItem(storageKey);
+    if (params.get('restart') === '1') window.sessionStorage.removeItem(storageKey);
   } catch (_error) {
     // Registration still works when browser storage is unavailable.
   }
   const saved = (() => {
     try {
-      return JSON.parse(window.localStorage.getItem(storageKey) || 'null') || {};
+      return JSON.parse(window.sessionStorage.getItem(storageKey) || 'null') || {};
     } catch (_error) {
       return {};
     }
@@ -352,6 +356,14 @@
       verification_token: params.get('token'),
       verification_code: params.get('code') || '',
     });
+    params.delete('token');
+    params.delete('code');
+    const cleanQuery = params.toString();
+    window.history.replaceState(
+      {},
+      '',
+      cleanQuery ? `/register?${cleanQuery}` : '/register',
+    );
   }
   if (params.get('ready') === '1' && state.verified) {
     state.step = 3;
@@ -378,7 +390,7 @@
   const resendCooldownSeconds = 60;
 
   const setState = () => {
-    window.localStorage.setItem(storageKey, JSON.stringify({
+    window.sessionStorage.setItem(storageKey, JSON.stringify({
       start: state.start,
       verified: state.verified,
       preview: state.preview,
@@ -387,9 +399,11 @@
 
   const updateResendButton = () => {
     if (!resendButton) return;
+    const serverAvailableAt = Number((state.start || {}).resend_available_at || 0) * 1000;
     const requestedAt = Number((state.start || {}).requested_at_ms || 0);
-    const elapsedSeconds = Math.floor((Date.now() - requestedAt) / 1000);
-    const remaining = Math.max(0, resendCooldownSeconds - elapsedSeconds);
+    const fallbackAvailableAt = requestedAt + (Number((state.start || {}).resend_cooldown_seconds || resendCooldownSeconds) * 1000);
+    const availableAt = serverAvailableAt || fallbackAvailableAt;
+    const remaining = Math.max(0, Math.ceil((availableAt - Date.now()) / 1000));
     resendButton.disabled = remaining > 0;
     resendButton.textContent = remaining > 0
       ? `Resend code in ${remaining}s`
@@ -477,7 +491,7 @@
 
   const syncStep = () => {
     applyPrefill();
-    if (!state.start) {
+    if (!state.start && !state.verified) {
       setStep(1);
       return;
     }
@@ -508,9 +522,20 @@
       const body = await response.json();
       if (!response.ok) {
         const detail = String(body.detail || body.error?.code || '').trim();
-        const message = detail === 'registration_email_delivery_unavailable'
-          ? 'Email delivery is temporarily unavailable. Please try again shortly or continue with Google sign-in.'
-          : (detail || 'Could not request a verification code.');
+        const retryAfter = Number(response.headers.get('retry-after') || 0);
+        if (retryAfter > 0 && state.start) {
+          state.start.resend_available_at = Math.ceil(Date.now() / 1000) + retryAfter;
+          setState();
+          startResendCooldown();
+        }
+        let message = detail || 'Could not request a verification code.';
+        if (detail === 'registration_email_delivery_unavailable') {
+          message = 'Email delivery is temporarily unavailable. Please try again shortly.';
+        } else if (detail === 'registration_verification_resend_too_soon') {
+          message = `A fresh code was requested recently. Try again in ${retryAfter || resendCooldownSeconds} seconds.`;
+        } else if (detail === 'registration_verification_rate_limited') {
+          message = 'Too many codes were requested for this email. Please try again later.';
+        }
         throw new Error(message);
       }
       state.start = Object.assign({}, body, { requested_at_ms: Date.now() });
@@ -551,7 +576,7 @@
     state.verified = null;
     state.preview = { brief: [], queue: [] };
     try {
-      window.localStorage.removeItem(storageKey);
+      window.sessionStorage.removeItem(storageKey);
     } catch (_error) {
       // State is already cleared in memory.
     }
@@ -583,17 +608,25 @@
       const body = await response.json();
       if (!response.ok) {
         const detail = String(body.detail || body.error?.code || '').trim();
-        const message = detail === 'registration_verification_already_used'
-          ? 'That code has already been used. Request a fresh code to continue.'
-          : (detail || 'Could not verify registration.');
+        let message = detail || 'Could not verify registration.';
+        if (detail === 'registration_verification_already_used') {
+          message = 'That code has already been used. Request a fresh code to continue.';
+        } else if (detail === 'registration_verification_locked') {
+          message = 'Too many incorrect attempts. Request a fresh code to continue.';
+        }
         throw new Error(message);
       }
-      state.verified = body;
+      const accessUrl = String(body.access_url || '').trim();
+      if (!accessUrl) throw new Error('Could not create a secure sign-in link.');
+      state.start = null;
+      state.verified = {
+        google_start: body.google_start || {},
+      };
       setState();
       verifyInline.textContent = 'Account created. Signing you in…';
       const readyParams = new URLSearchParams({ ready: '1', return_to: registerReturnTo });
       const returnTo = encodeURIComponent(`/register?${readyParams.toString()}`);
-      window.location.assign(`${body.access_url}?return_to=${returnTo}`);
+      window.location.assign(`${accessUrl}?return_to=${returnTo}`);
     } catch (error) {
       verifyInline.textContent = '';
       verifyError.textContent = error instanceof Error ? error.message : 'Could not verify registration.';

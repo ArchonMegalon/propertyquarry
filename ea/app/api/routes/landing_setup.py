@@ -669,6 +669,13 @@ def _complete_propertyquarry_google_identity_sign_in(
         httponly=True,
         samesite="lax",
     )
+    response.delete_cookie(
+        "ea_workspace_session",
+        path="/",
+        secure=secure_cookie,
+        httponly=True,
+        samesite="lax",
+    )
     return finish(response)
 
 
@@ -687,9 +694,13 @@ def google_oauth_browser_callback(
             or ""
         ).strip()
     )
-    if propertyquarry_google_identity.is_propertyquarry_google_identity_state(state) or (
-        not str(state or "").strip() and flow_cookie_present
-    ):
+    propertyquarry_host = str(request.url.hostname or "").strip().lower().rstrip(
+        "."
+    ) in {"propertyquarry.com", "www.propertyquarry.com"}
+    propertyquarry_state = (
+        propertyquarry_google_identity.is_propertyquarry_google_identity_state(state)
+    )
+    if propertyquarry_host or propertyquarry_state or flow_cookie_present:
         return _complete_propertyquarry_google_identity_sign_in(
             request=request,
             code=code,

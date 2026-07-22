@@ -76,7 +76,12 @@ def test_register_template_uses_named_secure_verification_links() -> None:
     assert "brand.key === 'propertyquarry'" not in source
     assert 'data-action="resend-code"' in source
     assert 'data-action="change-email"' in source
-    assert "propertyquarry-register-state-v1" in source
+    assert "propertyquarry-register-session-v2" in source
+    assert "window.sessionStorage.setItem(storageKey" in source
+    assert "window.localStorage.setItem(storageKey" not in source
+    assert "state.start = null;" in source
+    assert "access_token" not in source
+    assert "window.history.replaceState" in source
     assert "const googleConnectStorageKey" not in source
     assert "window.addEventListener('storage'" not in source
     assert "Google confirmed your PropertyQuarry identity" in source
@@ -191,6 +196,196 @@ def test_register_start_returns_magic_link_and_local_code_without_email_transpor
     assert body["magic_link_url"].startswith("/register?token=")
     assert body["workspace_name"] == "Tibor Girschele"
     assert body["email_delivery_status"] == ""
+
+
+def test_register_challenge_is_opaque_and_response_never_exposes_access_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    _configure_google_sign_in(monkeypatch)
+    client = _client(monkeypatch)
+
+    started = client.post(
+        "/v1/register/start",
+        json={"email": "opaque.registration@example.com"},
+    )
+
+    assert started.status_code == 200
+    start_body = started.json()
+    token = str(start_body["verification_token"])
+    assert token.startswith("pqrv2_")
+    assert "." not in token
+    assert "opaque" not in token.lower()
+    assert "example" not in token.lower()
+    assert start_body["resend_cooldown_seconds"] == 60
+    assert start_body["resend_available_at"] > 0
+
+    verified = client.post(
+        "/v1/register/verify",
+        json={
+            "verification_token": token,
+            "verification_code": start_body["verification_code"],
+            "workspace_name": "Opaque Registration",
+            "timezone": "Europe/Vienna",
+            "language": "en",
+        },
+    )
+
+    assert verified.status_code == 200
+    assert "access_token" not in verified.json()
+    assert "access_token" not in verified.text
+
+
+def test_register_resend_enforces_cooldown_and_invalidates_previous_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    from app.services import propertyquarry_registration_identity as registration_identity
+
+    clock = {"now": 1_800_000_000}
+    monkeypatch.setattr(registration_identity.time, "time", lambda: clock["now"])
+    client = _client(monkeypatch)
+
+    first = client.post(
+        "/v1/register/start",
+        json={"email": "resend@example.com"},
+    )
+    assert first.status_code == 200
+
+    too_soon = client.post(
+        "/v1/register/start",
+        json={"email": "resend@example.com"},
+    )
+    assert too_soon.status_code == 429
+    assert too_soon.json()["error"]["code"] == "registration_verification_resend_too_soon"
+    assert int(too_soon.headers["retry-after"]) == 60
+
+    clock["now"] += 61
+    fresh = client.post(
+        "/v1/register/start",
+        json={"email": "resend@example.com"},
+    )
+    assert fresh.status_code == 200
+    assert fresh.json()["verification_token"] != first.json()["verification_token"]
+
+    old = client.post(
+        "/v1/register/verify",
+        json={
+            "verification_token": first.json()["verification_token"],
+            "verification_code": first.json()["verification_code"],
+            "workspace_name": "Old Code",
+            "timezone": "Europe/Vienna",
+            "language": "en",
+        },
+    )
+    assert old.status_code == 400
+    assert old.json()["error"]["code"] == "registration_verification_invalid"
+
+    current = client.post(
+        "/v1/register/verify",
+        json={
+            "verification_token": fresh.json()["verification_token"],
+            "verification_code": fresh.json()["verification_code"],
+            "workspace_name": "Fresh Code",
+            "timezone": "Europe/Vienna",
+            "language": "en",
+        },
+    )
+    assert current.status_code == 200
+
+
+def test_register_verification_locks_after_five_wrong_codes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    client = _client(monkeypatch)
+    started = client.post(
+        "/v1/register/start",
+        json={"email": "attempt-lock@example.com"},
+    )
+    assert started.status_code == 200
+    body = started.json()
+    wrong_code = "000000" if body["verification_code"] != "000000" else "000001"
+
+    for attempt in range(1, 6):
+        wrong = client.post(
+            "/v1/register/verify",
+            json={
+                "verification_token": body["verification_token"],
+                "verification_code": wrong_code,
+                "workspace_name": "Attempt Lock",
+                "timezone": "Europe/Vienna",
+                "language": "en",
+            },
+        )
+        if attempt < 5:
+            assert wrong.status_code == 400
+            assert wrong.json()["error"]["code"] == "registration_verification_code_invalid"
+        else:
+            assert wrong.status_code == 429
+            assert wrong.json()["error"]["code"] == "registration_verification_locked"
+
+    correct_after_lock = client.post(
+        "/v1/register/verify",
+        json={
+            "verification_token": body["verification_token"],
+            "verification_code": body["verification_code"],
+            "workspace_name": "Attempt Lock",
+            "timezone": "Europe/Vienna",
+            "language": "en",
+        },
+    )
+    assert correct_after_lock.status_code == 429
+    assert correct_after_lock.json()["error"]["code"] == "registration_verification_locked"
+
+
+def test_register_resend_is_limited_to_five_messages_per_hour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    from app.services import propertyquarry_registration_identity as registration_identity
+
+    clock = {"now": 1_800_100_000}
+    monkeypatch.setattr(registration_identity.time, "time", lambda: clock["now"])
+    client = _client(monkeypatch)
+
+    for _send_number in range(5):
+        sent = client.post(
+            "/v1/register/start",
+            json={"email": "send-window@example.com"},
+        )
+        assert sent.status_code == 200
+        clock["now"] += 61
+
+    limited = client.post(
+        "/v1/register/start",
+        json={"email": "send-window@example.com"},
+    )
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "registration_verification_rate_limited"
+    assert int(limited.headers["retry-after"]) > 0
+
+
+@pytest.mark.parametrize("path", ("/v1/register/start", "/v1/register/verify"))
+def test_register_api_is_not_available_on_another_product_host(
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    client = _client(monkeypatch)
+    payload = (
+        {"email": "cross-product@example.com"}
+        if path.endswith("/start")
+        else {"verification_token": "pqrv2_invalid", "verification_code": "000000"}
+    )
+
+    response = client.post(
+        path,
+        json=payload,
+        headers={"host": "myexternalbrain.example"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "propertyquarry_registration_host_required"
 
 
 def test_register_start_uses_absolute_magic_link_when_email_delivery_is_enabled(
@@ -928,7 +1123,10 @@ def test_sign_in_google_reopens_existing_workspace_after_callback(monkeypatch: p
     assert callback.status_code == 303
     assert callback.headers["location"] == "/app/support"
     assert "propertyquarry_identity_session=pqis1." in str(callback.headers.get("set-cookie") or "")
-    assert "ea_workspace_session=" not in str(callback.headers.get("set-cookie") or "")
+    assert any(
+        header.startswith('ea_workspace_session=""') and "Max-Age=0" in header
+        for header in callback.headers.get_list("set-cookie")
+    )
 
 
 def test_sign_in_google_ignores_google_connector_binding_and_uses_local_identity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1749,6 +1947,10 @@ def test_register_verify_requires_matching_code(monkeypatch: pytest.MonkeyPatch)
     assert google_start["identity_only"] is True
     assert google_start["auth_url"].startswith("/sign-in/google?")
     assert google_start["start_url"] == google_start["auth_url"]
+    google_query = urllib.parse.parse_qs(
+        urllib.parse.urlparse(google_start["start_url"]).query
+    )
+    assert len(google_query["identity_binding"][0]) == 64
 
     replayed = client.post(
         "/v1/register/verify",
@@ -1902,6 +2104,19 @@ def test_registration_email_payload_stays_english_and_uses_propertyquarry_sender
     assert "titled secure-access button" in payload["text"]
     assert "http://" not in payload["text"]
     assert "https://" not in payload["text"]
+    assert "Verify email and continue" in payload["html"]
+    assert "654321" in payload["html"]
+    assert (
+        'href="https://propertyquarry.com/register?token=test&amp;code=654321"'
+        in payload["html"]
+    )
+    assert "It does not connect Gmail, Calendar, MyExternalBrain, or EA." in payload[
+        "html"
+    ]
+    assert payload["meta"]["kind"] == "propertyquarry_registration_verification_v2"
+    assert payload["meta"]["verification_ref"] != "654321"
+    assert "verification_code" not in payload["meta"]
+    assert "654321" not in json.dumps(payload["meta"], sort_keys=True)
     assert receipt.message_id == "emailit-live-1"
 
 

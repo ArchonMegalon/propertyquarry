@@ -133,6 +133,47 @@ def _registration_text(*, verification_code: str, magic_link_url: str, expires_a
     )
 
 
+def _registration_html(
+    *,
+    verification_code: str,
+    magic_link_url: str,
+    expires_at: int,
+) -> str:
+    minutes = _minutes_until(expires_at=expires_at)
+    body = (
+        '<p style="margin:0 0 14px;line-height:1.6;">'
+        "Use this verification code to create your PropertyQuarry account:"
+        "</p>"
+        '<div style="margin:0 0 16px;font-size:28px;letter-spacing:.18em;'
+        'font-weight:800;color:#242321;">'
+        f"{_html_escape(verification_code)}"
+        "</div>"
+        + _email_button_row(
+            [
+                _email_button(
+                    href=magic_link_url,
+                    label="Verify email and continue",
+                )
+            ]
+        )
+        + '<p style="margin:0 0 14px;line-height:1.6;color:#6c675f;">'
+        f"The button and code expire in about {minutes} minutes."
+        "</p>"
+        '<p style="margin:0;line-height:1.6;color:#6c675f;">'
+        "Google can optionally confirm your PropertyQuarry identity afterward. "
+        "It does not connect Gmail, Calendar, MyExternalBrain, or EA."
+        "</p>"
+        + _email_footer_html(
+            reason="You are receiving this because this address started PropertyQuarry registration."
+        )
+    )
+    return _html_email_shell(
+        title="Verify your email for PropertyQuarry",
+        body_html=body,
+        preheader="Use your six-digit code or the secure verification button.",
+    )
+
+
 def _meta_ref(value: str) -> str:
     normalized = str(value or "").strip()
     if not normalized:
@@ -699,8 +740,13 @@ def send_registration_email(*, recipient_email: str, verification_code: str, mag
             magic_link_url=magic_link_url,
             expires_at=expires_at,
         ),
-        kind="ea_registration_verification",
-        meta={"verification_code": verification_code},
+        html_body=_registration_html(
+            verification_code=verification_code,
+            magic_link_url=magic_link_url,
+            expires_at=expires_at,
+        ),
+        kind="propertyquarry_registration_verification_v2",
+        meta={"verification_ref": _meta_ref(verification_code)},
     )
 
 

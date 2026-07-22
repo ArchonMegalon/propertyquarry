@@ -250,29 +250,63 @@ def is_propertyquarry_google_identity_state(state: str) -> bool:
     return str(state or "").strip().startswith(f"{GOOGLE_IDENTITY_STATE_PREFIX}.")
 
 
+def _expected_email_binding(*, email: str, secret: str) -> str:
+    normalized_email = str(email or "").strip().lower()
+    if "@" not in normalized_email or "." not in normalized_email.rsplit("@", 1)[-1]:
+        raise RuntimeError("google_oauth_propertyquarry_expected_email_invalid")
+    return hmac.new(
+        secret.encode("utf-8"),
+        (
+            "propertyquarry-google-expected-email-v1\0" + normalized_email
+        ).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _validated_expected_email_binding(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return ""
+    if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+        raise RuntimeError("google_oauth_propertyquarry_expected_email_binding_invalid")
+    return normalized
+
+
+def propertyquarry_google_expected_email_binding(email: str) -> str:
+    config = load_propertyquarry_google_identity_config()
+    return _expected_email_binding(email=email, secret=config.state_secret)
+
+
 def build_propertyquarry_google_identity_start(
     *,
     redirect_uri: str,
     return_to: str,
+    expected_email_binding: str = "",
 ) -> PropertyQuarryGoogleIdentityStart:
     config = load_propertyquarry_google_identity_config()
     resolved_redirect_uri = _validate_redirect_uri(redirect_uri, expected=config.redirect_uri)
     resolved_return_to = _safe_return_to(return_to)
     issued_at = int(time.time())
     flow_nonce = secrets.token_urlsafe(32)
+    state_payload: dict[str, object] = {
+        "expires_at": issued_at + config.state_ttl_seconds,
+        "flow_nonce_hash": hashlib.sha256(flow_nonce.encode("utf-8")).hexdigest(),
+        "issued_at": issued_at,
+        "lane": GOOGLE_IDENTITY_LANE,
+        "nonce": secrets.token_urlsafe(24),
+        "redirect_uri": resolved_redirect_uri,
+        "return_to": resolved_return_to,
+        "version": 1,
+    }
+    resolved_expected_email_binding = _validated_expected_email_binding(
+        expected_email_binding
+    )
+    if resolved_expected_email_binding:
+        state_payload["expected_email_binding"] = resolved_expected_email_binding
     state = _encode_prefixed_payload(
         prefix=GOOGLE_IDENTITY_STATE_PREFIX,
         secret=config.state_secret,
-        payload={
-            "expires_at": issued_at + config.state_ttl_seconds,
-            "flow_nonce_hash": hashlib.sha256(flow_nonce.encode("utf-8")).hexdigest(),
-            "issued_at": issued_at,
-            "lane": GOOGLE_IDENTITY_LANE,
-            "nonce": secrets.token_urlsafe(24),
-            "redirect_uri": resolved_redirect_uri,
-            "return_to": resolved_return_to,
-            "version": 1,
-        },
+        payload=state_payload,
     )
     query = urllib.parse.urlencode(
         {
@@ -335,6 +369,9 @@ def read_propertyquarry_google_identity_state(
         expected=config.redirect_uri,
     )
     payload["return_to"] = _safe_return_to(payload.get("return_to"))
+    payload["expected_email_binding"] = _validated_expected_email_binding(
+        str(payload.get("expected_email_binding") or "")
+    )
     return payload
 
 
@@ -732,6 +769,14 @@ def complete_propertyquarry_google_identity_callback(
         raise RuntimeError("google_oauth_propertyquarry_userinfo_incomplete")
     if userinfo.get("email_verified") is not True:
         raise RuntimeError("google_oauth_propertyquarry_email_unverified")
+    expected_email_binding = str(
+        state_payload.get("expected_email_binding") or ""
+    ).strip()
+    if expected_email_binding and not hmac.compare_digest(
+        expected_email_binding,
+        _expected_email_binding(email=email, secret=config.state_secret),
+    ):
+        raise RuntimeError("google_oauth_propertyquarry_email_mismatch")
     display_name = str(userinfo.get("name") or email.split("@", 1)[0] or "PropertyQuarry").strip()[:200]
     subject_hash = _subject_hash(subject)
     issued_at_unix = int(time.time())

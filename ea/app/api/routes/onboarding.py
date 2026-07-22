@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import hmac
 import json
@@ -24,6 +23,7 @@ from app.property_distance_preferences import (
 )
 from app.product.service import build_product_service
 from app.services import propertyquarry_google_identity
+from app.services import propertyquarry_registration_identity
 from app.services.google_oauth import (
     complete_google_oauth_callback,
     GOOGLE_PROVIDER_KEY,
@@ -55,62 +55,6 @@ def _registration_secret(container: AppContainer) -> str:
     return f"register:{runtime_mode}:{api_token or default_principal or 'local-user'}"
 
 
-def _registration_code_digest(
-    *,
-    container: AppContainer,
-    verification_code: str,
-) -> str:
-    return hmac.new(
-        _registration_secret(container).encode("utf-8"),
-        f"code:{str(verification_code or '').strip()}".encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def _urlsafe_b64encode(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
-
-
-def _urlsafe_b64decode(value: str) -> bytes:
-    padding = "=" * (-len(value) % 4)
-    return base64.urlsafe_b64decode(f"{value}{padding}")
-
-
-def _sign_registration_payload(*, container: AppContainer, payload: dict[str, object]) -> str:
-    encoded = _urlsafe_b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-    signature = hmac.new(
-        _registration_secret(container).encode("utf-8"),
-        encoded.encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
-    return f"{encoded}.{_urlsafe_b64encode(signature)}"
-
-
-def _verify_registration_payload(*, container: AppContainer, token: str) -> dict[str, object] | None:
-    encoded, dot, provided_signature = str(token or "").partition(".")
-    if not encoded or not dot or not provided_signature:
-        return None
-    expected_signature = _urlsafe_b64encode(
-        hmac.new(
-            _registration_secret(container).encode("utf-8"),
-            encoded.encode("utf-8"),
-            hashlib.sha256,
-        ).digest()
-    )
-    if not hmac.compare_digest(provided_signature, expected_signature):
-        return None
-    try:
-        payload = json.loads(_urlsafe_b64decode(encoded).decode("utf-8"))
-    except Exception:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    expires_at = int(payload.get("expires_at") or 0)
-    if expires_at <= int(time.time()):
-        return None
-    return payload
-
-
 def _registration_principal_id(email: str) -> str:
     normalized = str(email or "").strip().lower()
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
@@ -139,6 +83,33 @@ def _registration_base_url(request: Request) -> str:
     return str(request.base_url).rstrip("/")
 
 
+def _require_propertyquarry_registration_host(request: Request) -> None:
+    if not propertyquarry_google_identity.propertyquarry_identity_host_allowed(
+        request.url.hostname
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="propertyquarry_registration_host_required",
+        )
+
+
+def _registration_challenge_http_error(
+    exc: propertyquarry_registration_identity.RegistrationChallengeError,
+) -> HTTPException:
+    if exc.code == "registration_verification_already_used":
+        return HTTPException(status_code=409, detail=exc.code)
+    if exc.code in {
+        "registration_verification_locked",
+        "registration_verification_rate_limited",
+        "registration_verification_resend_too_soon",
+    }:
+        headers = {}
+        if exc.retry_after_seconds:
+            headers["Retry-After"] = str(exc.retry_after_seconds)
+        return HTTPException(status_code=429, detail=exc.code, headers=headers)
+    return HTTPException(status_code=400, detail=exc.code)
+
+
 class RegisterStartIn(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     return_to: str = Field(default="/app/search", max_length=2048)
@@ -157,6 +128,8 @@ class RegisterStartOut(BaseModel):
     email_delivery_provider: str = ""
     email_delivery_id: str = ""
     email_delivery_error: str = ""
+    resend_available_at: int = 0
+    resend_cooldown_seconds: int = 0
 
 
 class RegisterVerifyIn(BaseModel):
@@ -184,7 +157,6 @@ class RegisterVerifyOut(BaseModel):
     next_step: str = ""
     onboarding_id: str = ""
     access_url: str = ""
-    access_token: str = ""
     access_expires_at: str = ""
     google_start: dict[str, object] = Field(default_factory=dict)
 
@@ -514,27 +486,22 @@ def register_start(
     container: AppContainer = Depends(get_container),
     request: Request = None,
 ) -> RegisterStartOut:
+    _require_propertyquarry_registration_host(request)
     product = build_product_service(container)
     email = str(body.email or "").strip().lower()
     if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
         raise HTTPException(status_code=400, detail="registration_email_invalid")
-    expires_at = int(time.time()) + 15 * 60
-    verification_code = f"{secrets.randbelow(1_000_000):06d}"
     return_to = _normalize_browser_return_to(body.return_to, default="/app/search")
     runtime_mode = str(getattr(getattr(container.settings, "runtime", None), "mode", "dev") or "dev").strip().lower()
     try:
-        verification_token = _sign_registration_payload(
-            container=container,
-            payload={
-                "token_kind": "register_challenge",
-                "email": email,
-                "verification_code_digest": _registration_code_digest(
-                    container=container,
-                    verification_code=verification_code,
-                ),
-                "return_to": return_to,
-                "expires_at": expires_at,
-            },
+        registration_secret = _registration_secret(container)
+        challenge = propertyquarry_registration_identity.issue_registration_challenge(
+            email=email,
+            return_to=return_to,
+            secret=registration_secret,
+            database_url=str(
+                getattr(container.settings, "database_url", "") or ""
+            ).strip(),
         )
     except RuntimeError as exc:
         if runtime_mode == "prod" and str(exc) in {
@@ -545,7 +512,15 @@ def register_start(
                 status_code=503,
                 detail="registration_verification_unavailable",
             ) from exc
+        if isinstance(
+            exc,
+            propertyquarry_registration_identity.RegistrationChallengeError,
+        ):
+            raise _registration_challenge_http_error(exc) from exc
         raise
+    verification_token = challenge.token
+    verification_code = challenge.verification_code
+    expires_at = challenge.expires_at
     magic_link_url = "/register?" + urllib.parse.urlencode(
         {
             "token": verification_token,
@@ -605,6 +580,8 @@ def register_start(
         email_delivery_provider=email_delivery_provider,
         email_delivery_id=email_delivery_id,
         email_delivery_error=email_delivery_error if expose_local_verification else "",
+        resend_available_at=challenge.resend_available_at,
+        resend_cooldown_seconds=challenge.resend_cooldown_seconds,
     )
 
 
@@ -614,55 +591,33 @@ def register_verify(
     container: AppContainer = Depends(get_container),
     request: Request = None,
 ) -> dict[str, object]:
-    payload = _verify_registration_payload(container=container, token=body.verification_token)
-    if payload is None or not hmac.compare_digest(
-        str(payload.get("token_kind") or "").strip(),
-        "register_challenge",
-    ):
-        raise HTTPException(status_code=400, detail="registration_verification_invalid")
-    provided_code = str(body.verification_code or "").strip()
-    expected_code_digest = str(
-        payload.get("verification_code_digest") or ""
-    ).strip()
-    provided_code_digest = _registration_code_digest(
-        container=container,
-        verification_code=provided_code,
-    )
-    legacy_expected_code = str(payload.get("verification_code") or "").strip()
-    code_matches = bool(
-        provided_code
-        and (
-            (
-                expected_code_digest
-                and hmac.compare_digest(
-                    provided_code_digest,
-                    expected_code_digest,
-                )
-            )
-            or (
-                legacy_expected_code
-                and hmac.compare_digest(provided_code, legacy_expected_code)
-            )
-        )
-    )
-    if not code_matches:
-        raise HTTPException(status_code=400, detail="registration_verification_code_invalid")
+    _require_propertyquarry_registration_host(request)
     try:
-        propertyquarry_google_identity.consume_propertyquarry_identity_verification_challenge(
+        challenge = propertyquarry_registration_identity.verify_registration_challenge(
             token=body.verification_token,
-            expires_at=int(payload.get("expires_at") or 0),
+            verification_code=str(body.verification_code or "").strip(),
+            secret=_registration_secret(container),
             database_url=str(
                 getattr(container.settings, "database_url", "") or ""
             ).strip(),
         )
+    except propertyquarry_registration_identity.RegistrationChallengeError as exc:
+        raise _registration_challenge_http_error(exc) from exc
     except RuntimeError as exc:
-        if str(exc) == "propertyquarry_identity_verification_replayed":
+        runtime_mode = str(
+            getattr(getattr(container.settings, "runtime", None), "mode", "dev")
+            or "dev"
+        ).strip().lower()
+        if runtime_mode == "prod" and str(exc) in {
+            "propertyquarry_registration_secret_missing",
+            "propertyquarry_registration_secret_weak",
+        }:
             raise HTTPException(
-                status_code=409,
-                detail="registration_verification_already_used",
+                status_code=503,
+                detail="registration_verification_unavailable",
             ) from exc
         raise
-    email = str(payload.get("email") or "").strip().lower()
+    email = challenge.email
     principal_id = _registration_principal_id(email)
     workspace_name = str(body.workspace_name or "").strip() or _workspace_name_from_email(email)
     language = str(body.language or "").strip() or "en"
@@ -678,7 +633,16 @@ def register_verify(
     )
     google_return_to = "/register?ready=1&google_identity=confirmed"
     google_start_url = "/sign-in/google?" + urllib.parse.urlencode(
-        {"return_to": google_return_to}
+        {
+            "return_to": google_return_to,
+            "identity_binding": (
+                propertyquarry_google_identity.propertyquarry_google_expected_email_binding(
+                    email
+                )
+                if propertyquarry_google_identity.propertyquarry_google_identity_configured()
+                else ""
+            ),
+        }
     )
     google_ready = propertyquarry_google_identity.propertyquarry_google_identity_configured()
     google_start: dict[str, object] = {
@@ -709,7 +673,6 @@ def register_verify(
         **status,
         "google_start": google_start,
         "access_url": str(access.get("access_url") or "").strip(),
-        "access_token": str(access.get("access_token") or "").strip(),
         "access_expires_at": str(access.get("expires_at") or "").strip(),
     }
 

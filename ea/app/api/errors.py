@@ -430,13 +430,16 @@ def install_error_handlers(app: FastAPI) -> None:
         if browser_failure is not None:
             return browser_failure
         message = str(exc.detail or code)
-        return _error_payload(
+        response = _error_payload(
             request=request,
             status_code=exc.status_code,
             code=code,
             message=message,
             details=exc.detail,
         )
+        for header_name, header_value in dict(exc.headers or {}).items():
+            response.headers[str(header_name)] = str(header_value)
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):  # type: ignore[no-untyped-def]

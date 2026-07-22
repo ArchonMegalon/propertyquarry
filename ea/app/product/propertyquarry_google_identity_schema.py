@@ -18,6 +18,7 @@ GOOGLE_IDENTITY_TABLES = (
     "propertyquarry_google_identity_sessions",
     "propertyquarry_google_identity_audit",
     "propertyquarry_google_identity_consumed_states",
+    "propertyquarry_registration_challenges",
 )
 GOOGLE_IDENTITY_API_ROLE = "propertyquarry_api"
 GOOGLE_IDENTITY_API_TABLE_GRANTS = (
@@ -33,6 +34,10 @@ GOOGLE_IDENTITY_API_TABLE_GRANTS = (
     (
         "propertyquarry_google_identity_consumed_states",
         ("SELECT", "INSERT", "DELETE"),
+    ),
+    (
+        "propertyquarry_registration_challenges",
+        ("SELECT", "INSERT", "UPDATE"),
     ),
 )
 _TABLE_PRIVILEGES = (
@@ -151,11 +156,32 @@ CREATE TABLE IF NOT EXISTS propertyquarry_google_identity_consumed_states (
     expires_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS propertyquarry_registration_challenges (
+    email_hash CHAR(64) PRIMARY KEY,
+    challenge_id TEXT UNIQUE NOT NULL,
+    token_hash CHAR(64) UNIQUE NOT NULL,
+    email TEXT NOT NULL,
+    return_to TEXT NOT NULL,
+    code_digest CHAR(64) NOT NULL,
+    status TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    send_count INTEGER NOT NULL DEFAULT 1,
+    window_started_at TIMESTAMPTZ NOT NULL,
+    last_sent_at TIMESTAMPTZ NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    verified_at TIMESTAMPTZ,
+    CHECK (attempt_count >= 0),
+    CHECK (send_count > 0),
+    CHECK (status IN ('active', 'consumed', 'expired', 'locked'))
+);
+
 REVOKE ALL PRIVILEGES ON TABLE
     propertyquarry_google_identity_accounts,
     propertyquarry_google_identity_sessions,
     propertyquarry_google_identity_audit,
-    propertyquarry_google_identity_consumed_states
+    propertyquarry_google_identity_consumed_states,
+    propertyquarry_registration_challenges
     FROM PUBLIC, propertyquarry_api, propertyquarry_worker,
          propertyquarry_scheduler;
 GRANT SELECT, INSERT, UPDATE
@@ -169,6 +195,9 @@ GRANT INSERT
     TO propertyquarry_api;
 GRANT SELECT, INSERT, DELETE
     ON TABLE propertyquarry_google_identity_consumed_states
+    TO propertyquarry_api;
+GRANT SELECT, INSERT, UPDATE
+    ON TABLE propertyquarry_registration_challenges
     TO propertyquarry_api;
 """
 

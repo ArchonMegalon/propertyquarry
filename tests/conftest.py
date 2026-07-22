@@ -38,6 +38,12 @@ def _reset_shared_runtime_state() -> None:
     except Exception:
         pass
     try:
+        from app.services import propertyquarry_registration_identity
+
+        propertyquarry_registration_identity.reset_propertyquarry_registration_identity_memory_for_tests()
+    except Exception:
+        pass
+    try:
         from app.services import responses_upstream
 
         responses_upstream._test_reset_onemin_states()

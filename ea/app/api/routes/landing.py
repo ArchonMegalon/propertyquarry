@@ -6833,6 +6833,9 @@ async def sign_in_google(
         request.query_params.get("return_to"),
         default=str(request_brand(request).get("app_home") or "/app/search"),
     )
+    identity_binding = str(
+        request.query_params.get("identity_binding") or ""
+    ).strip()
     if request_brand(request).get("key") != "propertyquarry":
         return RedirectResponse(
             "/sign-in?"
@@ -6849,6 +6852,7 @@ async def sign_in_google(
         packet = propertyquarry_google_identity.build_propertyquarry_google_identity_start(
             redirect_uri=identity_config.redirect_uri,
             return_to=return_to,
+            expected_email_binding=identity_binding,
         )
     except RuntimeError as exc:
         return RedirectResponse(
@@ -7159,6 +7163,12 @@ async def app_sign_out(
             secure=True,
             httponly=True,
             samesite="lax",
+        )
+        _clear_workspace_session_cookie(response, request)
+        response.set_cookie(
+            "ea_workspace_signed_out",
+            "1",
+            **_signed_out_marker_cookie_kwargs(request),
         )
         response.headers["X-Robots-Tag"] = (
             "noindex, nofollow, noarchive, nosnippet"

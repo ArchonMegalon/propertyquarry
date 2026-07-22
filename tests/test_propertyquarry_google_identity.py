@@ -457,7 +457,12 @@ def test_prefixed_callback_bypasses_generic_google_and_sets_only_local_cookie(
     assert any(header.startswith("propertyquarry_identity_session=pqis1.") for header in callback_cookies)
     assert any(header.startswith("propertyquarry_google_identity_flow=") and "Max-Age=0" in header for header in callback_cookies)
     assert all("HttpOnly" in header and "Secure" in header and "SameSite=lax" in header for header in callback_cookies)
-    assert all("ea_" not in header.lower() and "myexternalbrain" not in header.lower() for header in callback_cookies)
+    workspace_cookie_deletions = [
+        header for header in callback_cookies if header.startswith("ea_workspace_session=")
+    ]
+    assert workspace_cookie_deletions
+    assert all("Max-Age=0" in header for header in workspace_cookie_deletions)
+    assert all("myexternalbrain" not in header.lower() for header in callback_cookies)
     current = client.get("/sign-in/current-session", follow_redirects=False)
     assert current.status_code == 303
     assert current.headers["location"] == "/app/search"
@@ -474,7 +479,146 @@ def test_prefixed_callback_bypasses_generic_google_and_sets_only_local_cookie(
     assert signed_out.status_code == 303
     sign_out_cookies = signed_out.headers.get_list("set-cookie")
     assert any(header.startswith("propertyquarry_identity_session=") and "Max-Age=0" in header for header in sign_out_cookies)
-    assert all("ea_" not in header.lower() and "myexternalbrain" not in header.lower() for header in sign_out_cookies)
+    assert any(header.startswith("ea_workspace_session=") and "Max-Age=0" in header for header in sign_out_cookies)
+    assert any(header.startswith("ea_workspace_signed_out=1") for header in sign_out_cookies)
+    assert all("myexternalbrain" not in header.lower() for header in sign_out_cookies)
+
+
+def test_local_unprefixed_google_state_stays_on_generic_callback_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.app import create_app
+    from app.api.routes import landing_setup
+
+    _configure_propertyquarry_google(monkeypatch)
+    monkeypatch.setenv("EA_STORAGE_BACKEND", "memory")
+    monkeypatch.delenv("EA_LEDGER_BACKEND", raising=False)
+    monkeypatch.setenv("EA_API_TOKEN", "")
+    monkeypatch.setenv("EA_RUNTIME_MODE", "dev")
+    monkeypatch.setenv("EA_DATABASE_URL", "")
+    generic_calls = {"count": 0}
+    monkeypatch.setattr(
+        landing_setup,
+        "read_google_oauth_state",
+        lambda _state: {
+            "browser_source": "sign_in",
+            "return_to": "/app/support",
+        },
+    )
+
+    def _generic_callback(**_kwargs):  # noqa: ANN003
+        generic_calls["count"] += 1
+        raise RuntimeError("generic-callback-sentinel")
+
+    monkeypatch.setattr(
+        landing_setup,
+        "complete_google_oauth_callback",
+        _generic_callback,
+    )
+    client = TestClient(create_app(), base_url="https://testserver")
+
+    callback = client.get(
+        "/google/callback",
+        params={"code": "generic-code", "state": "legacy-state"},
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 303
+    assert generic_calls["count"] == 1
+    assert "google_error=generic-callback-sentinel" in callback.headers["location"]
+
+
+def test_propertyquarry_host_rejects_unprefixed_google_state_without_generic_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.routes import landing_setup
+
+    _configure_propertyquarry_google(monkeypatch)
+    generic_calls = {"count": 0}
+
+    def _generic_callback(**_kwargs):  # noqa: ANN003
+        generic_calls["count"] += 1
+        raise AssertionError("generic callback must not run on the PropertyQuarry host")
+
+    monkeypatch.setattr(
+        landing_setup,
+        "complete_google_oauth_callback",
+        _generic_callback,
+    )
+    client = _client(monkeypatch)
+
+    callback = client.get(
+        "/google/callback",
+        params={"code": "attacker-code", "state": "legacy-state"},
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 303
+    assert generic_calls["count"] == 0
+    assert "google_error=google_oauth_propertyquarry_state_invalid" in callback.headers["location"]
+    assert any(
+        header.startswith("propertyquarry_google_identity_flow=")
+        and "Max-Age=0" in header
+        for header in callback.headers.get_list("set-cookie")
+    )
+
+
+def test_registration_google_continuation_rejects_a_different_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import propertyquarry_google_identity as identity
+
+    _configure_propertyquarry_google(monkeypatch)
+    expected_email = "registered@example.com"
+    binding = identity.propertyquarry_google_expected_email_binding(expected_email)
+    client = _client(monkeypatch)
+    started = client.get(
+        "/sign-in/google?"
+        + urllib.parse.urlencode(
+            {
+                "return_to": "/register?ready=1&google_identity=confirmed",
+                "identity_binding": binding,
+            }
+        ),
+        follow_redirects=False,
+    )
+    assert started.status_code == 303
+    state = urllib.parse.parse_qs(
+        urllib.parse.urlparse(started.headers["location"]).query
+    )["state"][0]
+    assert expected_email not in state
+    assert identity.read_propertyquarry_google_identity_state(state)[
+        "expected_email_binding"
+    ] == binding
+    monkeypatch.setattr(
+        identity,
+        "_exchange_google_code_for_tokens",
+        lambda **_kwargs: {"access_token": "transient"},
+    )
+    monkeypatch.setattr(
+        identity,
+        "_fetch_google_userinfo",
+        lambda _token: {
+            "sub": "different-google-subject",
+            "email": "different@example.com",
+            "email_verified": True,
+        },
+    )
+
+    callback = client.get(
+        "/google/callback",
+        params={"code": "one-use-code", "state": state},
+        follow_redirects=False,
+    )
+
+    assert callback.status_code == 303
+    assert "google_error=google_oauth_propertyquarry_email_mismatch" in callback.headers[
+        "location"
+    ]
+    assert not any(
+        header.startswith("propertyquarry_identity_session=pqis1.")
+        for header in callback.headers.get_list("set-cookie")
+    )
 
 
 def test_callback_rejects_login_csrf_before_exchange_and_clears_flow_cookie(
@@ -609,10 +753,16 @@ def test_sign_out_clears_invalid_propertyquarry_cookie_without_legacy_side_effec
 
     assert response.status_code == 303
     cookies = response.headers.get_list("set-cookie")
-    assert len(cookies) == 1
-    assert cookies[0].startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
-    assert "Max-Age=0" in cookies[0]
-    assert "ea_" not in cookies[0].lower()
+    assert any(
+        header.startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
+        and "Max-Age=0" in header
+        for header in cookies
+    )
+    assert any(
+        header.startswith("ea_workspace_session=") and "Max-Age=0" in header
+        for header in cookies
+    )
+    assert any(header.startswith("ea_workspace_signed_out=1") for header in cookies)
 
 
 def test_production_sign_out_bypasses_generic_auth_and_workspace_resolution_for_invalid_pq_cookie(
@@ -675,10 +825,16 @@ def test_production_sign_out_bypasses_generic_auth_and_workspace_resolution_for_
     assert response.status_code == 303
     assert response.headers["location"] == "/sign-in"
     cookies = response.headers.get_list("set-cookie")
-    assert len(cookies) == 1
-    assert cookies[0].startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
-    assert "Max-Age=0" in cookies[0]
-    assert "ea_" not in cookies[0].lower()
+    assert any(
+        header.startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
+        and "Max-Age=0" in header
+        for header in cookies
+    )
+    assert any(
+        header.startswith("ea_workspace_session=") and "Max-Age=0" in header
+        for header in cookies
+    )
+    assert any(header.startswith("ea_workspace_signed_out=1") for header in cookies)
 
 
 def test_google_identity_lane_has_static_cross_product_isolation() -> None:
