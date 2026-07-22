@@ -257,7 +257,7 @@ def build_security_posture_receipt() -> dict[str, object]:
     except IndexError:
         worker_section = ""
     required_worker_contracts = (
-        'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"',
+        'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"',
         'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"',
         "cap_drop:\n      - ALL",
         'security_opt:\n      - "no-new-privileges:true"',
@@ -411,11 +411,11 @@ def build_security_posture_receipt() -> dict[str, object]:
         failures.append("docker-compose.property.yml must default the scheduler to property_only")
     if "dockerfile: ea/Dockerfile.property-web" not in compose:
         failures.append("docker-compose.property.yml must run API/worker/scheduler from the lightweight web runtime")
-    if 'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"' not in compose:
+    if 'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"' not in compose:
         failures.append("docker-compose.property.yml must name the lightweight web runtime image")
     if "propertyquarry-render-tools:" not in compose or "render-tools" not in compose:
         failures.append("docker-compose.property.yml must expose an explicit render-tools profile")
-    if 'image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-render-runtime:latest}"' not in compose:
+    if 'image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-standalone-render-runtime:latest}"' not in compose:
         failures.append("docker-compose.property.yml must name the render tooling image separately")
     if re.search(r"^\s+user:\s*[\"']?0(?::0)?[\"']?\s*$", compose, flags=re.MULTILINE):
         failures.append("docker-compose.property.yml must not run property web services as root")
