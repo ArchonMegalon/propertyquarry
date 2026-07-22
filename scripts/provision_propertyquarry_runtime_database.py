@@ -49,6 +49,10 @@ GOOGLE_IDENTITY_API_TABLE_GRANTS = (
         "SELECT, INSERT, DELETE",
         ("propertyquarry_google_identity_consumed_states",),
     ),
+    (
+        "SELECT, INSERT, UPDATE",
+        ("propertyquarry_registration_challenges",),
+    ),
 )
 MIGRATION_TABLES = (
     "ea_kernel_schema_migrations",
@@ -978,6 +982,7 @@ def _runtime_acl_sql() -> str:
             API_ROLE,
             "SELECT",
             (
+                "ea_kernel_schema_migrations",
                 "propertyquarry_schema_migrations",
                 "property_evidence_overlay_rollups",
                 "property_evidence_overlay_snapshots",
@@ -1010,6 +1015,7 @@ def _runtime_acl_sql() -> str:
             WORKER_ROLE,
             "SELECT",
             (
+                "ea_kernel_schema_migrations",
                 "propertyquarry_schema_migrations",
                 "property_content_jobs",
                 "property_content_webhook_events",
@@ -1043,6 +1049,7 @@ def _runtime_acl_sql() -> str:
             SCHEDULER_ROLE,
             "SELECT",
             (
+                "ea_kernel_schema_migrations",
                 "propertyquarry_schema_migrations",
                 "property_search_work_jobs",
                 "property_research_packet_index_state",

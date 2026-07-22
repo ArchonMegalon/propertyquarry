@@ -448,6 +448,11 @@ def test_runtime_sql_contract_fences_runtime_roles_and_owned_objects() -> None:
         "GRANT SELECT, INSERT ON TABLE public.property_content_job_events "
         f"TO {runtime.API_ROLE}" in configure_sql
     )
+    for role in runtime.RUNTIME_ROLES:
+        assert (
+            "GRANT SELECT ON TABLE public.ea_kernel_schema_migrations "
+            f"TO {role}" in configure_sql
+        )
     grant_statements = [
         line.strip()
         for line in configure_sql.splitlines()
@@ -570,11 +575,19 @@ def test_kernel_relations_are_exhaustively_bound_to_the_runtime_acl_contract() -
                 key = (role, table)
                 assert key not in expected_acl
                 expected_acl[key] = set(privileges.split(", "))
+    for role in runtime.RUNTIME_ROLES:
+        expected_acl[(role, "ea_kernel_schema_migrations")] = {"SELECT"}
 
     assert {
-        table for role, table in expected_acl if role == runtime.API_ROLE
+        table
+        for role, table in expected_acl
+        if role == runtime.API_ROLE and table in runtime_relations
     } == runtime_relations
-    assert {table for role, table in expected_acl if role == runtime.WORKER_ROLE} == {
+    assert {
+        table
+        for role, table in expected_acl
+        if role == runtime.WORKER_ROLE and table in runtime_relations
+    } == {
         "evidence_objects",
         "execution_events",
         "execution_sessions",
@@ -594,7 +607,9 @@ def test_kernel_relations_are_exhaustively_bound_to_the_runtime_acl_contract() -
         "tool_registry",
     }
     assert {
-        table for role, table in expected_acl if role == runtime.SCHEDULER_ROLE
+        table
+        for role, table in expected_acl
+        if role == runtime.SCHEDULER_ROLE and table in runtime_relations
     } == {
         "execution_events",
         "execution_sessions",
@@ -633,9 +648,17 @@ def test_kernel_relations_are_exhaustively_bound_to_the_runtime_acl_contract() -
 
     assert configured_acl == expected_acl
     assert not any(
-        table in no_grant_relations | protected_relations
+        table in no_grant_relations
         for _role, table in configured_acl
     )
+    assert {
+        (role, table, frozenset(privileges))
+        for (role, table), privileges in configured_acl.items()
+        if table in protected_relations
+    } == {
+        (role, "ea_kernel_schema_migrations", frozenset({"SELECT"}))
+        for role in runtime.RUNTIME_ROLES
+    }
 
 
 def test_activation_sentinel_is_transactional_owned_and_database_oid_bound() -> None:
