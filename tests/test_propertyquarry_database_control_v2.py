@@ -15,7 +15,7 @@ import pytest
 from scripts import propertyquarry_database_control_v2 as control
 
 
-RUNTIME_SHA = "a" * 64
+RUNTIME_SHA = "a" * 40
 WEB_IMAGE = f"ghcr.io/example/propertyquarry@sha256:{'b' * 64}"
 MIGRATOR_URL = "postgresql://migrator:migrator-secret@propertyquarry-db/propertyquarry"
 API_URL = "postgresql://api:api-secret@propertyquarry-db/propertyquarry"
@@ -339,6 +339,11 @@ def test_request_requires_exact_operation_pinned_image_and_receipt_path(
         receipt,
     )
 
+    args.runtime_sha = "a" * 64
+    with pytest.raises(control.DatabaseControlError, match="runtime_sha_invalid"):
+        control._validate_request(args)
+
+    args.runtime_sha = RUNTIME_SHA
     args.web_image = "ghcr.io/example/propertyquarry:latest"
     with pytest.raises(control.DatabaseControlError, match="web_image_invalid"):
         control._validate_request(args)

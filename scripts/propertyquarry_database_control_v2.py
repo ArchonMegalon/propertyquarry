@@ -68,7 +68,7 @@ RECEIPT_ROOT = Path(
     "/var/lib/propertyquarry-release-single-host-v2/database-receipts"
 )
 MACHINE_ID_PATH = Path("/etc/machine-id")
-RUNTIME_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+RUNTIME_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_RE = re.compile(r"^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$")
 
 

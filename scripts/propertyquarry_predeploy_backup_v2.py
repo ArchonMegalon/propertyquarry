@@ -82,7 +82,8 @@ DATABASE_CONTAINER = "propertyquarry-db-live"
 DATABASE_NAME = "propertyquarry"
 DATABASE_USER = "postgres"
 
-HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+RUNTIME_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 IMAGE_RE = re.compile(r"^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$")
 KEY_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 KEY_FILE_RE = re.compile(rb"^[0-9a-f]{64}\n$")
@@ -1382,9 +1383,9 @@ def _machine_id_digest(path: Path) -> str:
 
 
 def _validate_request(request: BackupRequest, paths: BackupPaths) -> None:
-    if not HEX64_RE.fullmatch(request.runtime_sha):
+    if not RUNTIME_SHA_RE.fullmatch(request.runtime_sha):
         raise BackupError("runtime_sha_invalid")
-    if not HEX64_RE.fullmatch(request.envelope_sha):
+    if not SHA256_HEX_RE.fullmatch(request.envelope_sha):
         raise BackupError("envelope_sha_invalid")
     if not IMAGE_RE.fullmatch(request.web_image):
         raise BackupError("web_image_invalid")

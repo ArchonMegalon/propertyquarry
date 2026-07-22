@@ -12,7 +12,36 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from scripts import propertyquarry_predeploy_backup_v2 as backup
 
 
-RUNTIME_SHA = "a" * 64
+RUNTIME_SHA = "a" * 40
+
+
+def test_backup_request_binds_git_sha_and_sha256_envelope_lengths(
+    tmp_path: Path,
+) -> None:
+    paths = backup.BackupPaths(receipt_root=tmp_path / "receipts")
+    receipt = paths.receipt_root / f"{RUNTIME_SHA}.json"
+    request = backup.BackupRequest(
+        runtime_sha=RUNTIME_SHA,
+        envelope_sha="b" * 64,
+        web_image=f"ghcr.io/example/propertyquarry@sha256:{'c' * 64}",
+        render_image=f"ghcr.io/example/propertyquarry-render@sha256:{'d' * 64}",
+        receipt_path=receipt,
+        encryption_key_path=backup.EXPECTED_ENCRYPTION_KEY_PATH,
+    )
+
+    backup._validate_request(request, paths)  # noqa: SLF001
+
+    invalid_runtime = backup.BackupRequest(
+        **{**request.__dict__, "runtime_sha": "a" * 64}
+    )
+    with pytest.raises(backup.BackupError, match="runtime_sha_invalid"):
+        backup._validate_request(invalid_runtime, paths)  # noqa: SLF001
+
+    invalid_envelope = backup.BackupRequest(
+        **{**request.__dict__, "envelope_sha": "b" * 40}
+    )
+    with pytest.raises(backup.BackupError, match="envelope_sha_invalid"):
+        backup._validate_request(invalid_envelope, paths)  # noqa: SLF001
 
 
 def test_chunked_encryption_roundtrip_authenticates_footer_and_has_no_plaintext_file(
@@ -225,7 +254,7 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_sha = "b" * 64
+    runtime_sha = "b" * 40
     envelope_sha = "c" * 64
     web_image = "ghcr.io/example/propertyquarry@sha256:" + ("d" * 64)
     render_image = "ghcr.io/example/propertyquarry-render@sha256:" + ("e" * 64)
