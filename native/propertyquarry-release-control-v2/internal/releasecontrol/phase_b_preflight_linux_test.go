@@ -55,10 +55,10 @@ func newPhaseBTestFixture(t *testing.T) *phaseBTestFixture {
 	}
 	identity := map[string]any{
 		"audience":            "propertyquarry-release-control-v2",
-		"repository":          "ArchonMegalon/property",
+		"repository":          "ArchonMegalon/propertyquarry",
 		"ref":                 "refs/heads/main",
 		"candidate_sha":       "1111111111111111111111111111111111111111",
-		"workflow_ref":        "ArchonMegalon/property/.github/workflows/smoke-runtime.yml@refs/heads/main",
+		"workflow_ref":        "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main",
 		"workflow_sha":        "2222222222222222222222222222222222222222",
 		"run_id":              "123456789",
 		"run_attempt":         json.Number("1"),
@@ -67,7 +67,7 @@ func newPhaseBTestFixture(t *testing.T) *phaseBTestFixture {
 		"repository_id":       "200",
 		"repository_owner_id": "100",
 		"check_run_id":        "987654321",
-		"subject":             "repo:ArchonMegalon@100/property@200:environment:propertyquarry-production",
+		"subject":             "repo:ArchonMegalon@100/propertyquarry@200:environment:propertyquarry-production",
 	}
 	policyValue := map[string]any{
 		"schema":                 "propertyquarry.release-root-policy.v2",
@@ -98,13 +98,13 @@ func newPhaseBTestFixture(t *testing.T) *phaseBTestFixture {
 	claims := map[string]any{
 		"iss":                 phaseBGitHubIssuer,
 		"aud":                 "propertyquarry-release-control-v2",
-		"sub":                 "repo:ArchonMegalon@100/property@200:environment:propertyquarry-production",
-		"repository":          "ArchonMegalon/property",
+		"sub":                 "repo:ArchonMegalon@100/propertyquarry@200:environment:propertyquarry-production",
+		"repository":          "ArchonMegalon/propertyquarry",
 		"repository_id":       "200",
 		"repository_owner_id": "100",
 		"ref":                 "refs/heads/main",
 		"sha":                 "1111111111111111111111111111111111111111",
-		"workflow_ref":        "ArchonMegalon/property/.github/workflows/smoke-runtime.yml@refs/heads/main",
+		"workflow_ref":        "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main",
 		"workflow_sha":        "2222222222222222222222222222222222222222",
 		"run_id":              "123456789",
 		"run_attempt":         "1",
@@ -451,7 +451,7 @@ func TestPhaseBGitHubOIDCRejectsSignatureIdentityTimeAndKeySubstitution(t *testi
 			value["sub"] = "repo:Attacker/property:environment:propertyquarry-production"
 		}, fixture.now},
 		{"subject-extra-context", func(value map[string]any) {
-			value["sub"] = "repo:ArchonMegalon@100/property@200:attacker:value:environment:propertyquarry-production"
+			value["sub"] = "repo:ArchonMegalon@100/propertyquarry@200:attacker:value:environment:propertyquarry-production"
 		}, fixture.now},
 		{"future", func(value map[string]any) {}, fixture.now.Add(-2 * time.Minute)},
 		{"expired", func(value map[string]any) {}, fixture.now.Add(10 * time.Minute)},

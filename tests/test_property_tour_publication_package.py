@@ -453,13 +453,14 @@ def test_materializer_emits_deterministic_property_owned_package(
         publisher._canonical_json_bytes(pre_authority)
     )
     assert authority["user_instruction_sha256"] == USER_INSTRUCTION_SHA256
+    assert authority["repository"] == "ArchonMegalon/propertyquarry"
     assert authority["allowed_public_origins"] == [
         "https://myexternalbrain.com",
         "https://propertyquarry.com",
     ]
     assert proof["schema"] == publisher.PUBLIC_RECONSTRUCTION_SCHEMA
     assert proof["floorplan"]["source_path"] == (
-        f"property://ArchonMegalon/property/{publication_fixture.artifact_commit}/"
+        f"property://ArchonMegalon/propertyquarry/{publication_fixture.artifact_commit}/"
         "floorplan-apartment-crop.png"
     )
     assert proof["synthetic"] is True

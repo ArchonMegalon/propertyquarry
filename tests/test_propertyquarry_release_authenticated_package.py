@@ -457,19 +457,19 @@ def test_fixed_seed_cross_language_authentication_vector(
         },
         "payload": {
             "tree_digest": (
-                "sha256:2acc62bbc462575674fb734cbbcf715d5"
-                "34d6ab1d2413558c00afc79b2a525d5"
+                "sha256:884dba36f555f872d1cecc6af09bdd9c"
+                "20b44d5122e9eb4f385eb059e88e1ac0"
             ),
             "file_count": 21,
             "directory_count": 15,
             "role_count": 19,
             "installation_manifest_sha256": (
-                "sha256:2598ae1f530cf2d8c5008c0a6a2010c4"
-                "a661621f2b127be11d50a6078ba20462"
+                "sha256:96a491ee16265cae3d9c2592bd0de0e34"
+                "5fa8a2c3792f555a59ef9601b5494c6"
             ),
             "package_payload_receipt_sha256": (
-                "sha256:a13ca9dfc991a2f34440c60a30ef0078"
-                "b62c9669f7172b9391ab0e10c3563187"
+                "sha256:9361a60248905443a11039856190c03d"
+                "b64695777f363bf7e7c6e3d72c6e8db6"
             ),
             "native_build_receipt_sha256": (
                 "sha256:cdd3ce09ab91ae315138d3ab516de5ceb"
@@ -487,16 +487,16 @@ def test_fixed_seed_cross_language_authentication_vector(
     ]
     assert len(authenticated._tree_entries(snapshot)) == 36
     assert _sha(tree_raw) == (
-        "sha256:a8f3b16c31fa41579f0c68e975aedd96"
-        "3ed273bd853f6eaac5746097f268ec04"
+        "sha256:9bcf048c3bd0e7197ba3a33fd24df085"
+        "d4140adcf327c09e14870ebff8e854e9"
     )
     assert authenticated._tree_digest(snapshot) == expected_document["payload"][
         "tree_digest"
     ]
     assert authentication_raw == _canonical(expected_document)
     assert _sha(authentication_raw) == (
-        "sha256:9438bd392e188b41072e60c160189b95"
-        "dd636c235b32fe7c99c14cffe5f7ad19"
+        "sha256:88c05d520ecd85db0eeb6f8823f5c034"
+        "e528c2bf3a7363df5ab7a12f14db7282"
     )
     assert _sha(
         authenticated._framed(
@@ -504,18 +504,18 @@ def test_fixed_seed_cross_language_authentication_vector(
             authentication_raw,
         )
     ) == (
-        "sha256:df6cec46faf54a8af36c7ec1032e35d1"
-        "1816975f7d98177c5e483a6c5e832999"
+        "sha256:e99b6278dd9520d8106b9e60e23d07ce"
+        "4b93fa04a8a3a107dcd6eb4978993314"
     )
     assert signature.hex() == (
-        "e2ac20f9ac061572b927ca345c6c476b"
-        "ce306255f1fbb5e9968973f2737050e5"
-        "9c5733dba9ff808f583af18eece31a5d"
-        "becac24dfe242e6275a3f6421cc54308"
+        "8f1049151ecce7c67b031828c8d94528"
+        "41a07f38d3d5e37a8a8ede6421a08584"
+        "fa060e8a5be29486e61d6e57319c0eab"
+        "efc6d1b246a85e304497b77b339fc603"
     )
     assert _sha(signature) == (
-        "sha256:00280c7014362ce9d579e917bf973a48"
-        "1f5b3837b9df59366488d592238b0346"
+        "sha256:9d56820ae3683cf3c2539f8f6de65e34"
+        "f99a9884770b4bcead2d636875926855"
     )
 
 

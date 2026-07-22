@@ -445,7 +445,7 @@ def _rybbit_payload() -> dict[str, object]:
 
 def _live_payload(*, security_sha: str, binding_sha: str) -> dict[str, object]:
     release = {
-        "release_repository": "ArchonMegalon/property",
+        "release_repository": "ArchonMegalon/propertyquarry",
         "release_public_origin": "https://propertyquarry.com",
         "release_branch": "main",
         "release_commit_sha": CANDIDATE_SHA,

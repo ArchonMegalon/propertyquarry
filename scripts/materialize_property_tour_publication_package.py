@@ -41,7 +41,7 @@ DISCLOSURE = (
     "Generated interactive reconstruction from the supplied floor plan. "
     "It is a layout aid, not a captured or provider-verified 3D scan."
 )
-PROPERTY_REPOSITORY = "ArchonMegalon/property"
+PROPERTY_REPOSITORY = "ArchonMegalon/propertyquarry"
 AUTHORIZED_SLUG = "360-tour-balkon-wohnung-in-neustift-layout-first-0146e6f9c6"
 AUTHORIZED_ARTIFACT_COMMIT = "dd81d16421339d1ac4ca9f01d65f5ebcf607258f"
 AUTHORIZED_FINAL_REVIEW_RECEIPT_SHA256 = (
