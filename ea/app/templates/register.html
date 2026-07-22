@@ -270,7 +270,7 @@
           <div class="register-error" data-verify-error></div>
           <div class="cta-row">
             <button class="btn primary" type="submit">Finish setup</button>
-            <button class="btn" type="button" data-action="resend-code">Resend code</button>
+            <button class="btn" type="button" data-action="resend-code">Send again</button>
             <button class="btn" type="button" data-action="change-email">Use a different email</button>
           </div>
         </form>
@@ -425,8 +425,8 @@
     const remaining = Math.max(0, Math.ceil((availableAt - Date.now()) / 1000));
     resendButton.disabled = remaining > 0;
     resendButton.textContent = remaining > 0
-      ? `Resend code in ${remaining}s`
-      : 'Resend code';
+      ? `Send again in ${remaining}s`
+      : 'Send again';
     if (remaining <= 0 && resendTimer) {
       window.clearInterval(resendTimer);
       resendTimer = 0;

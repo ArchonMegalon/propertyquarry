@@ -75,6 +75,7 @@ def test_register_template_uses_named_secure_verification_links() -> None:
     assert "const registerReturnTo = String(app.dataset.registerReturnTo || '').trim() || '/app/search';" in source
     assert "brand.key === 'propertyquarry'" not in source
     assert 'data-action="resend-code"' in source
+    assert '>Send again</button>' in source
     assert 'data-action="change-email"' in source
     assert "propertyquarry-register-session-v2" in source
     assert "window.sessionStorage.setItem(storageKey" in source
