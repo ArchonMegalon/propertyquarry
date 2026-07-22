@@ -4250,6 +4250,17 @@ def _normalize_property_visual_request_kind(request_kind: object) -> str:
     return normalized_kind if normalized_kind in {"tour", "flythrough"} else "tour"
 
 
+def _property_visual_url_uses_retired_product_host(value: object) -> bool:
+    normalized_url = str(value or "").strip()
+    if not normalized_url:
+        return False
+    try:
+        host = str(urllib.parse.urlsplit(normalized_url).hostname or "").strip().lower().rstrip(".")
+    except (TypeError, ValueError):
+        return False
+    return host == "myexternalbrain.com" or host.endswith(".myexternalbrain.com")
+
+
 def _property_visual_ready_tour_url(
     *,
     tour_url: object = "",
@@ -4258,6 +4269,10 @@ def _property_visual_ready_tour_url(
 ) -> str:
     normalized_tour_url = str(tour_url or "").strip()
     normalized_open_tour_url = str(open_tour_url or "").strip()
+    if _property_visual_url_uses_retired_product_host(normalized_tour_url):
+        normalized_tour_url = ""
+    if _property_visual_url_uses_retired_product_host(normalized_open_tour_url):
+        normalized_open_tour_url = ""
     if normalized_tour_url:
         if _is_branded_public_tour_url(normalized_tour_url):
             resolved_open_tour_url = str(

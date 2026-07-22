@@ -468,7 +468,7 @@ def validate_static_compose_contract() -> None:
             "durable worker must remain outside the optional advanced-visual boundary"
         )
     if (
-        'command: ["/usr/local/bin/python", "-m", "app.product.property_search_schema", "migrate"]'
+        'command: ["/usr/local/bin/python", "-m", "app.product.propertyquarry_schema", "migrate"]'
         not in property_content
     ):
         raise RecoveryValidationError(

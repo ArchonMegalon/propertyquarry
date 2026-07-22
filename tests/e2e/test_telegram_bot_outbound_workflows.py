@@ -107,8 +107,8 @@ def test_telegram_outbound_workflow_property_tour_sent(monkeypatch: pytest.Monke
             execution_session_id="session-property-tour-1",
             principal_id=principal_id,
             structured_output_json={
-                "hosted_url": "https://myexternalbrain.com/tours/brigittenau-apartment-a",
-                "public_url": "https://myexternalbrain.com/tours/brigittenau-apartment-a",
+                "hosted_url": "https://propertyquarry.com/tours/brigittenau-apartment-a",
+                "public_url": "https://propertyquarry.com/tours/brigittenau-apartment-a",
                 "crezlo_public_url": "https://vendor.example.com/tours/brigittenau-apartment-a",
                 "editor_url": "https://vendor.example.com/editor/brigittenau-apartment-a",
                 "tour_id": "tour-123",
@@ -161,7 +161,7 @@ def test_telegram_outbound_workflow_property_tour_sent(monkeypatch: pytest.Monke
     assert body["telegram_message_ids"] == ["tg-1"]
     assert body["telegram_video_delivery_status"] == "sent"
     assert body["telegram_video_message_ids"] == ["tg-video-1"]
-    assert body["telegram_video_url"] == "https://myexternalbrain.com/tours/files/brigittenau-apartment-a/tour.mp4"
+    assert body["telegram_video_url"] == "https://propertyquarry.com/tours/files/brigittenau-apartment-a/tour.mp4"
 
     tg_events = client.get("/app/api/events", params={"channel": "product", "event_type": "willhaben_property_tour_telegram_sent"})
     assert tg_events.status_code == 200

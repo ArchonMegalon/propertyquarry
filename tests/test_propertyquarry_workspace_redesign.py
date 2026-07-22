@@ -15302,6 +15302,7 @@ def test_property_tour_local_bundle_helpers_reject_untrusted_origins_before_look
 
     hostile_urls = (
         f"https://evil.example/tours/{slug}",
+        f"https://tours.myexternalbrain.com/tours/{slug}",
         f"https://propertyquarry.com.evil.example/tours/{slug}",
         f"https://propertyquarry.com@evil.example/tours/{slug}",
         f"https://propertyquarry.com:444/tours/{slug}",
@@ -15338,9 +15339,6 @@ def test_property_tour_local_bundle_helpers_reject_untrusted_origins_before_look
     assert property_tour_hosting._hosted_property_tour_slug_from_url(f"/tours/{slug}") == slug
     assert property_tour_hosting._hosted_property_tour_slug_from_url(
         f"https://propertyquarry.com/tours/{slug}/control/3dvista"
-    ) == slug
-    assert property_tour_hosting._hosted_property_tour_slug_from_url(
-        f"https://tours.myexternalbrain.com/tours/{slug}"
     ) == slug
 
 
@@ -15417,19 +15415,9 @@ def test_property_tour_matterport_only_bundle_stays_unavailable(monkeypatch) -> 
             "https://App.Property.example:443/",
             "app.property.example",
         ),
-        (
-            "EA_PUBLIC_TOUR_BASE_URL",
-            "https://Tours.EA.example:443/tours",
-            "tours.ea.example",
-        ),
-        (
-            "EA_PUBLIC_APP_BASE_URL",
-            "https://App.EA.example:443",
-            "app.ea.example",
-        ),
     ),
 )
-def test_configured_public_tour_hosts_accepts_strict_all_four_environment_bases(
+def test_configured_public_tour_hosts_accepts_strict_propertyquarry_environment_bases(
     monkeypatch,
     environment_name: str,
     configured_url: str,
@@ -15446,6 +15434,30 @@ def test_configured_public_tour_hosts_accepts_strict_all_four_environment_bases(
     monkeypatch.setenv(environment_name, configured_url)
 
     assert property_tour_hosting._configured_public_tour_hosts() == (expected_host,)
+
+
+@pytest.mark.parametrize(
+    ("environment_name", "configured_url"),
+    (
+        ("EA_PUBLIC_TOUR_BASE_URL", "https://Tours.EA.example:443/tours"),
+        ("EA_PUBLIC_APP_BASE_URL", "https://App.EA.example:443"),
+    ),
+)
+def test_configured_public_tour_hosts_ignores_retired_ea_environment_bases(
+    monkeypatch,
+    environment_name: str,
+    configured_url: str,
+) -> None:
+    for name in (
+        "PROPERTYQUARRY_PUBLIC_TOUR_BASE_URL",
+        "PROPERTYQUARRY_PUBLIC_BASE_URL",
+        "EA_PUBLIC_TOUR_BASE_URL",
+        "EA_PUBLIC_APP_BASE_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(environment_name, configured_url)
+
+    assert property_tour_hosting._configured_public_tour_hosts() == ()
 
 
 @pytest.mark.parametrize(

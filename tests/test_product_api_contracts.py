@@ -11343,7 +11343,7 @@ def test_signal_ingest_willhaben_search_agent_mail_can_auto_create_and_send_to_t
             execution_session_id="session-property-tour-auto-agent",
             principal_id=principal_id,
             structured_output_json={
-                "public_url": "https://myexternalbrain.com/tours/search-agent-apartment",
+                "public_url": "https://propertyquarry.com/tours/search-agent-apartment",
                 "crezlo_public_url": "https://vendor.example.com/tours/search-agent-apartment",
             },
         )
@@ -11506,8 +11506,8 @@ def test_willhaben_property_tour_route_generates_tour_and_sends_email(monkeypatc
             execution_session_id="session-property-tour-1",
             principal_id=principal_id,
             structured_output_json={
-                "hosted_url": "https://myexternalbrain.com/tours/brigittenau-apartment-a",
-                "public_url": "https://myexternalbrain.com/tours/brigittenau-apartment-a",
+                "hosted_url": "https://propertyquarry.com/tours/brigittenau-apartment-a",
+                "public_url": "https://propertyquarry.com/tours/brigittenau-apartment-a",
                 "crezlo_public_url": "https://vendor.example.com/tours/brigittenau-apartment-a",
                 "editor_url": "https://vendor.example.com/editor/brigittenau-apartment-a",
                 "tour_id": "tour-123",
@@ -11539,7 +11539,7 @@ def test_willhaben_property_tour_route_generates_tour_and_sends_email(monkeypatc
     body = created.json()
     assert body["status"] == "ready"
     assert body["listing_id"] == "listing-123"
-    assert body["tour_url"] == "https://myexternalbrain.com/tours/brigittenau-apartment-a"
+    assert body["tour_url"] == "https://propertyquarry.com/tours/brigittenau-apartment-a"
     assert body["vendor_tour_url"] == ""
     assert body["editor_url"] == "https://vendor.example.com/editor/brigittenau-apartment-a"
     assert body["artifact_id"] == "artifact-property-tour-1"
@@ -11551,9 +11551,9 @@ def test_willhaben_property_tour_route_generates_tour_and_sends_email(monkeypatc
     assert body["telegram_message_ids"] == ["tg-1"]
     assert body["telegram_video_delivery_status"] == "sent"
     assert body["telegram_video_message_ids"] == ["tg-video-1"]
-    assert body["telegram_video_url"] == "https://myexternalbrain.com/tours/files/brigittenau-apartment-a/tour.mp4"
+    assert body["telegram_video_url"] == "https://propertyquarry.com/tours/files/brigittenau-apartment-a/tour.mp4"
     assert observed_email["recipient_email"] == "owner@example.test"
-    assert observed_email["tour_url"] == "https://myexternalbrain.com/tours/brigittenau-apartment-a"
+    assert observed_email["tour_url"] == "https://propertyquarry.com/tours/brigittenau-apartment-a"
     assert observed_email["decision_summary_json"]["recommendation"] == "shortlist"
 
     events = client.get(
@@ -14139,8 +14139,8 @@ def test_willhaben_property_tour_route_uses_personal_fit_assessment_when_profile
             execution_session_id="session-property-tour-2",
             principal_id=principal_id,
             structured_output_json={
-                "hosted_url": "https://myexternalbrain.com/tours/waehring-apartment-a",
-                "public_url": "https://myexternalbrain.com/tours/waehring-apartment-a",
+                "hosted_url": "https://propertyquarry.com/tours/waehring-apartment-a",
+                "public_url": "https://propertyquarry.com/tours/waehring-apartment-a",
                 "crezlo_public_url": "https://vendor.example.com/tours/waehring-apartment-a",
                 "editor_url": "https://vendor.example.com/editor/waehring-apartment-a",
                 "tour_id": "tour-456",
@@ -14234,8 +14234,8 @@ def test_willhaben_property_tour_records_video_followup_when_telegram_video_deli
             execution_session_id="session-property-tour-video-fail",
             principal_id=principal_id,
             structured_output_json={
-                "hosted_url": "https://myexternalbrain.com/tours/video-fail-123",
-                "public_url": "https://myexternalbrain.com/tours/video-fail-123",
+                "hosted_url": "https://propertyquarry.com/tours/video-fail-123",
+                "public_url": "https://propertyquarry.com/tours/video-fail-123",
                 "crezlo_public_url": "https://vendor.example.com/tours/video-fail-123",
                 "editor_url": "https://vendor.example.com/editor/video-fail-123",
                 "tour_id": "tour-video-fail-123",
@@ -16100,23 +16100,37 @@ def test_property_tour_binding_bootstraps_crezlo_metadata_from_runtime_state(mon
 
 
 def test_property_tour_url_resolver_prefers_branded_link_even_when_legacy_fields_are_swapped(monkeypatch) -> None:
-    monkeypatch.setenv("EA_PUBLIC_APP_BASE_URL", "https://myexternalbrain.com")
+    monkeypatch.setenv("PROPERTYQUARRY_PUBLIC_BASE_URL", "https://propertyquarry.com")
     monkeypatch.setattr(
         property_tour_hosting,
         "_hosted_property_tour_verified_provider",
         lambda tour_url: "3dvista"
-        if str(tour_url or "").strip() == "https://myexternalbrain.com/tours/brigittenau-apartment-a"
+        if str(tour_url or "").strip() == "https://propertyquarry.com/tours/brigittenau-apartment-a"
         else "",
     )
     branded_url, vendor_url = product_service._resolve_property_tour_urls(
         {
-            "crezlo_public_url": "https://myexternalbrain.com/tours/brigittenau-apartment-a",
+            "crezlo_public_url": "https://propertyquarry.com/tours/brigittenau-apartment-a",
             "public_url": "https://example.3dvista.com/tours/brigittenau-apartment-a",
             "share_url": "https://example.3dvista.com/share/brigittenau-apartment-a",
         }
     )
-    assert branded_url == "https://myexternalbrain.com/tours/brigittenau-apartment-a"
+    assert branded_url == "https://propertyquarry.com/tours/brigittenau-apartment-a"
     assert vendor_url == ""
+
+
+@pytest.mark.parametrize(
+    "retired_url",
+    (
+        "https://myexternalbrain.com/tours/retired-tour",
+        "https://tours.myexternalbrain.com/tours/retired-tour",
+    ),
+)
+def test_property_visual_ready_tour_url_rejects_retired_product_hosts(
+    retired_url: str,
+) -> None:
+    assert product_service._property_visual_ready_tour_url(tour_url=retired_url) == ""
+    assert product_service._property_visual_ready_tour_url(open_tour_url=retired_url) == ""
 
 
 def test_property_tour_binding_selector_prefers_crezlo_browseract_lane_over_other_browseract_bindings(monkeypatch) -> None:
@@ -16445,7 +16459,7 @@ def test_property_scout_tour_auto_create_reuses_existing_branded_url(monkeypatch
         event_type="generic_property_tour_created",
         source_id=source_ref,
         payload={
-            "tour_url": "https://myexternalbrain.com/tours/brigittenau-apartment-a",
+            "tour_url": "https://propertyquarry.com/tours/brigittenau-apartment-a",
             "vendor_tour_url": provider_url,
         },
     )
@@ -16456,7 +16470,7 @@ def test_property_scout_tour_auto_create_reuses_existing_branded_url(monkeypatch
         create_calls.append(dict(kwargs))
         return {
             "status": "created",
-            "tour_url": "https://myexternalbrain.com/tours/recreated-tour-2",
+            "tour_url": "https://propertyquarry.com/tours/recreated-tour-2",
             "vendor_tour_url": "https://vendor.example.com/tours/recreated-tour-2",
             "blocked_reason": "",
         }
@@ -16472,14 +16486,14 @@ def test_property_scout_tour_auto_create_reuses_existing_branded_url(monkeypatch
     )
 
     assert result["status"] == "existing"
-    assert result["tour_url"] == "https://myexternalbrain.com/tours/brigittenau-apartment-a"
+    assert result["tour_url"] == "https://propertyquarry.com/tours/brigittenau-apartment-a"
     assert result["vendor_tour_url"] == provider_url
     assert not create_calls
 
 
 def test_existing_hosted_property_tour_url_requires_real_bundle_assets(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
-    monkeypatch.setenv("EA_PUBLIC_TOUR_BASE_URL", "https://myexternalbrain.com/tours")
+    monkeypatch.setenv("PROPERTYQUARRY_PUBLIC_TOUR_BASE_URL", "https://propertyquarry.com/tours")
     slug = "broken-bundle-tour"
     bundle_dir = tmp_path / slug
     bundle_dir.mkdir(parents=True)
@@ -16499,7 +16513,7 @@ def test_existing_hosted_property_tour_url_requires_real_bundle_assets(monkeypat
 
     (bundle_dir / "scene-01.jpg").write_bytes(b"real-asset")
     assert product_service._existing_hosted_property_tour_url({"slug": slug}) == (
-        "https://myexternalbrain.com/tours/broken-bundle-tour"
+        "https://propertyquarry.com/tours/broken-bundle-tour"
     )
 
 
@@ -16508,7 +16522,7 @@ def test_existing_hosted_property_tour_url_rejects_generated_reconstruction_as_t
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
-    monkeypatch.setenv("EA_PUBLIC_TOUR_BASE_URL", "https://myexternalbrain.com/tours")
+    monkeypatch.setenv("PROPERTYQUARRY_PUBLIC_TOUR_BASE_URL", "https://propertyquarry.com/tours")
     slug = "generated-reconstruction-existing-tour"
     bundle_dir = tmp_path / slug
     reconstruction_dir = bundle_dir / "generated-reconstruction"
@@ -16534,14 +16548,14 @@ def test_existing_hosted_property_tour_url_rejects_generated_reconstruction_as_t
         encoding="utf-8",
     )
 
-    tour_url = f"https://myexternalbrain.com/tours/{slug}"
+    tour_url = f"https://propertyquarry.com/tours/{slug}"
     assert product_service._existing_hosted_property_tour_url({"slug": slug}) == ""
     assert property_tour_hosting._hosted_property_tour_preview_image_url(tour_url) == (
-        f"https://myexternalbrain.com/tours/files/{slug}/generated-reconstruction/photo-01.jpg"
+        f"https://propertyquarry.com/tours/files/{slug}/generated-reconstruction/photo-01.jpg"
     )
     assert property_tour_hosting._hosted_property_tour_generated_reconstruction_asset_url(tour_url) == ""
     assert property_tour_hosting._hosted_property_tour_generated_reconstruction_asset_urls(tour_url) == (
-        f"https://myexternalbrain.com/tours/files/{slug}/generated-reconstruction/photo-01.jpg",
+        f"https://propertyquarry.com/tours/files/{slug}/generated-reconstruction/photo-01.jpg",
     )
 
 
@@ -16549,7 +16563,7 @@ def test_existing_hosted_property_tour_url_deep_links_live_360_when_manifest_has
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
-    monkeypatch.setenv("EA_PUBLIC_TOUR_BASE_URL", "https://myexternalbrain.com/tours")
+    monkeypatch.setenv("PROPERTYQUARRY_PUBLIC_TOUR_BASE_URL", "https://propertyquarry.com/tours")
     slug = "live-360-tour"
     bundle_dir = tmp_path / slug
     bundle_dir.mkdir(parents=True)
@@ -16568,7 +16582,7 @@ def test_existing_hosted_property_tour_url_deep_links_live_360_when_manifest_has
     )
 
     assert product_service._existing_hosted_property_tour_url({"slug": slug}) == (
-        "https://myexternalbrain.com/tours/live-360-tour#live-360"
+        "https://propertyquarry.com/tours/live-360-tour#live-360"
     )
 
 
@@ -16576,7 +16590,7 @@ def test_existing_hosted_property_tour_url_for_identity_matches_private_manifest
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
-    monkeypatch.setenv("EA_PUBLIC_TOUR_BASE_URL", "https://myexternalbrain.com/tours")
+    monkeypatch.setenv("PROPERTYQUARRY_PUBLIC_TOUR_BASE_URL", "https://propertyquarry.com/tours")
     slug = "identity-match-tour"
     principal_id = "cf-email:identity-owner@example.test"
     bundle_dir = tmp_path / slug
@@ -16599,15 +16613,15 @@ def test_existing_hosted_property_tour_url_for_identity_matches_private_manifest
     assert property_tour_hosting._existing_hosted_property_tour_url_for_identity(
         property_url="https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/identity-match-tour",
         principal_id=principal_id,
-    ) == "https://myexternalbrain.com/tours/identity-match-tour"
+    ) == "https://propertyquarry.com/tours/identity-match-tour"
     assert property_tour_hosting._existing_hosted_property_tour_url_for_identity(
         source_ref="willhaben:identity-match-tour",
         principal_id=principal_id,
-    ) == "https://myexternalbrain.com/tours/identity-match-tour"
+    ) == "https://propertyquarry.com/tours/identity-match-tour"
     assert property_tour_hosting._existing_hosted_property_tour_url_for_identity(
         external_id="identity-match-tour",
         principal_id=principal_id,
-    ) == "https://myexternalbrain.com/tours/identity-match-tour"
+    ) == "https://propertyquarry.com/tours/identity-match-tour"
 
 
 def test_willhaben_property_packet_script_path_supports_container_layout(monkeypatch, tmp_path: Path) -> None:
@@ -21152,8 +21166,8 @@ def test_office_signal_can_auto_create_willhaben_property_tour(monkeypatch, tmp_
             execution_session_id="session-property-tour-2",
             principal_id=principal_id,
             structured_output_json={
-                "hosted_url": "https://myexternalbrain.com/tours/garden-apartment",
-                "public_url": "https://myexternalbrain.com/tours/garden-apartment",
+                "hosted_url": "https://propertyquarry.com/tours/garden-apartment",
+                "public_url": "https://propertyquarry.com/tours/garden-apartment",
                 "crezlo_public_url": "https://client.3dvista.com/tour/garden-apartment",
             },
         )
@@ -25277,7 +25291,7 @@ def test_google_willhaben_signal_sync_targets_secondary_account_and_auto_sends_t
             execution_session_id="session-property-tour-google-sync",
             principal_id=principal_id,
             structured_output_json={
-                "public_url": "https://myexternalbrain.com/tours/google-sync-apartment",
+                "public_url": "https://propertyquarry.com/tours/google-sync-apartment",
                 "crezlo_public_url": "https://vendor.example.com/tours/google-sync-apartment",
             },
         )
@@ -26037,8 +26051,8 @@ def test_willhaben_property_tour_route_retries_gmail_delivery_with_fallback_bind
             execution_session_id="session-property-tour-fallback-1",
             principal_id=principal_id,
             structured_output_json={
-                "hosted_url": "https://myexternalbrain.com/tours/fallback-gmail-apartment",
-                "public_url": "https://myexternalbrain.com/tours/fallback-gmail-apartment",
+                "hosted_url": "https://propertyquarry.com/tours/fallback-gmail-apartment",
+                "public_url": "https://propertyquarry.com/tours/fallback-gmail-apartment",
                 "crezlo_public_url": "https://client.3dvista.com/tour/fallback-gmail-apartment",
                 "editor_url": "https://vendor.example.com/editor/fallback-gmail-apartment",
                 "tour_id": "tour-fallback-1",

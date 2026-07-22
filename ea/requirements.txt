@@ -1,4 +1,4 @@
-fastapi>=0.111.0
+fastapi==0.135.1
 uvicorn>=0.30.0
 websockets>=15.0.1
 wsproto>=1.2.0
