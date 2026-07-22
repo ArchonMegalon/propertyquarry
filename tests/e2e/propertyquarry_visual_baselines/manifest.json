@@ -29,21 +29,21 @@
       "baseline": "images/sign-in.desktop.png",
       "height": 820,
       "id": "sign-in.desktop",
-      "sha256": "8e89748246b75d6e7cb732f95d87f12bddc8d5c28d32eb23125f20dbf6eb0a0b",
+      "sha256": "164b119cb0e53f73160f22f061017d043639ab8e5868851d602b6da91e3e82f4",
       "width": 1440
     },
     {
       "baseline": "images/sign-in.mobile.png",
       "height": 932,
       "id": "sign-in.mobile",
-      "sha256": "774a97ec018b7d86f3399dc386ce406bb3981b53f028c048e01b2a75f40cd65b",
+      "sha256": "cd728d4e80f769b88d421dacc77bd4ca64dec1a3fd868f30954df2f051cccce6",
       "width": 430
     },
     {
       "baseline": "images/search-setup.desktop.png",
       "height": 1200,
       "id": "search-setup.desktop",
-      "sha256": "6397555de69e6568006d8c74555be908fe19df67a0617751ecb4ca9e905de2e4",
+      "sha256": "710b15546978c34c227b74051213abc0c48ded7301bf979d14893521a9aa14ee",
       "width": 1600
     },
     {
@@ -64,7 +64,7 @@
       "baseline": "images/results.mobile.png",
       "height": 844,
       "id": "results.mobile",
-      "sha256": "4cfa140d9d533732fb04ca7faceaad3885008ef80651a7b58fd0f5d3048874b4",
+      "sha256": "2fc93c938d510c6986c2044b9ad14f7e50f87b9b2b2558a750d707c7a0ac7793",
       "width": 390
     },
     {

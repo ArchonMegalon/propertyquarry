@@ -304,9 +304,12 @@ def test_every_public_information_route_renders_with_its_strict_copy_contract() 
     assert failures == {}
 
 
-def test_expired_session_sign_in_state_keeps_saved_work_and_next_action_visible() -> None:
+def test_expired_session_sign_in_state_keeps_saved_work_and_next_action_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tests.product_test_helpers import build_property_client
 
+    monkeypatch.setenv("EMAILIT_API_KEY", "propertyquarry-failure-state-emailit-key")
     client = build_property_client(principal_id="pq-expired-session-contract")
     response = client.get("/sign-in?session=expired&return_to=%2Fapp%2Fsearch")
 
@@ -314,6 +317,8 @@ def test_expired_session_sign_in_state_keeps_saved_work_and_next_action_visible(
     assert 'data-pq-failure-state="expired_session"' in response.text
     assert "Your search is still saved." in response.text
     assert "data-pq-next-action" in response.text
+    assert "data-focus-sign-in-options" in response.text
+    assert "Show sign-in options" in response.text
 
 
 def test_payment_failure_state_is_rendered_from_durable_billing_truth() -> None:
