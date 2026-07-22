@@ -28,7 +28,7 @@ RELEASE_JOB_NEEDS = [
 ]
 RELEASE_JOB_CONDITION = (
     "${{ always() && github.event_name == 'workflow_dispatch' "
-    "&& github.repository == 'ArchonMegalon/property' "
+    "&& github.repository == 'ArchonMegalon/propertyquarry' "
     "&& github.ref == 'refs/heads/main' && inputs.run_launch_authority == true "
     "&& inputs.run_activation_journey != true "
     "&& needs['propertyquarry-protected-dispatch-inputs'].result == 'success' "
@@ -1090,7 +1090,7 @@ def test_smoke_runtime_binds_flagship_security_to_one_time_protected_runner() ->
     assert type(security_job) is dict
     assert security_job["if"] == (
         "${{ github.event_name == 'workflow_dispatch' "
-        "&& github.repository == 'ArchonMegalon/property' "
+        "&& github.repository == 'ArchonMegalon/propertyquarry' "
         "&& github.ref == 'refs/heads/main' "
         "&& startsWith(inputs.security_runner_label, 'pqsec-') "
         "&& needs['propertyquarry-protected-dispatch-inputs'].result == 'success' "
@@ -1310,7 +1310,7 @@ def test_smoke_runtime_routes_release_from_ordinary_ci_to_one_atomic_v2_lane() -
         assert legacy_job_name not in release_job
     assert "inputs.run_activation_journey != true" in release_job
     assert "activation_run_key" not in release_job
-    assert "github.repository == 'ArchonMegalon/property'" in release_job
+    assert "github.repository == 'ArchonMegalon/propertyquarry'" in release_job
     assert "inputs.run_activation_journey != true" in release_job
     assert "always()" in release_job
     assert "release-preflight" in release_job
@@ -3336,10 +3336,10 @@ def test_property_compose_container_names_are_recoverable() -> None:
     )[0]
 
     assert "dockerfile: ea/Dockerfile.property-web" in compose
-    assert 'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"' in compose
+    assert 'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"' in compose
     assert "propertyquarry-render-tools:" in compose
     assert "dockerfile: ea/Dockerfile.property" in compose
-    assert 'image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-render-runtime:latest}"' in compose
+    assert 'image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-standalone-render-runtime:latest}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler}"' in compose

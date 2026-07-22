@@ -33,13 +33,13 @@ def test_image_publish_workflow_loads_as_yaml_with_the_expected_jobs() -> None:
             "component": "web",
             "service": "propertyquarry-api",
             "dockerfile": "ea/Dockerfile.property-web",
-            "image": "ghcr.io/archonmegalon/propertyquarry-web-runtime",
+            "image": "ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime",
         },
         {
             "component": "render",
             "service": "propertyquarry-render-tools",
             "dockerfile": "ea/Dockerfile.property",
-            "image": "ghcr.io/archonmegalon/propertyquarry-render-runtime",
+            "image": "ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime",
         },
     ]
 
@@ -114,8 +114,8 @@ def test_image_publish_preflight_binds_clean_main_envelope_to_manifest_runtime()
     ):
         assert required in preflight
 
-    assert "EXPECTED_WEB_IMAGE: ghcr.io/archonmegalon/propertyquarry-web-runtime" in preflight
-    assert "EXPECTED_RENDER_IMAGE: ghcr.io/archonmegalon/propertyquarry-render-runtime" in preflight
+    assert "EXPECTED_WEB_IMAGE: ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime" in preflight
+    assert "EXPECTED_RENDER_IMAGE: ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime" in preflight
     assert "fetch-depth: 0" in preflight
     assert "persist-credentials: false" in preflight
 
@@ -127,10 +127,10 @@ def test_image_publish_builds_both_services_from_the_exact_envelope_with_supply_
     for required in (
         "service: propertyquarry-api",
         "dockerfile: ea/Dockerfile.property-web",
-        "image: ghcr.io/archonmegalon/propertyquarry-web-runtime",
+        "image: ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime",
         "service: propertyquarry-render-tools",
         "dockerfile: ea/Dockerfile.property",
-        "image: ghcr.io/archonmegalon/propertyquarry-render-runtime",
+        "image: ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime",
         "ref: ${{ needs.preflight.outputs.envelope_sha }}",
         "context: source",
         "file: source/${{ matrix.dockerfile }}",
