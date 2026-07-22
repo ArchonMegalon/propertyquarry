@@ -206,7 +206,14 @@ def test_production_sources_cover_database_roles_volumes_and_isolated_envs() -> 
     assert "propertyquarry_google_identity.env" in rendered
     assert "propertyquarry_registration_email.env" in rendered
     by_name = {spec.name: spec for spec in specs}
-    assert "/docker/property/.env" in by_name["runtime-identity-config"].coverage
+    assert by_name["runtime-identity-config"].coverage == (
+        "/docker/property/.env",
+        "/docker/property/state/runtime/property_scene_video_shared.env",
+        "/docker/property/state/runtime/propertyquarry_database_roles.env",
+        "/docker/property/state/runtime/propertyquarry_admission.env",
+        "/docker/property/state/runtime/propertyquarry_google_identity.env",
+        "/docker/property/state/runtime/propertyquarry_registration_email.env",
+    )
     assert "propertyquarry-db-live" in rendered
     assert "pg_dump --format=custom" in rendered
     assert "pg_dumpall --roles-only" in rendered

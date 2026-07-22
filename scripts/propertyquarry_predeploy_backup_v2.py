@@ -904,6 +904,18 @@ def production_artifact_specs() -> tuple[ArtifactSpec, ...]:
         )
     runtime_files = (
         Path("/docker/property/.env"),
+        Path(
+            "/docker/property/state/runtime/"
+            "property_scene_video_shared.env"
+        ),
+        Path(
+            "/docker/property/state/runtime/"
+            "propertyquarry_database_roles.env"
+        ),
+        Path(
+            "/docker/property/state/runtime/"
+            "propertyquarry_admission.env"
+        ),
         Path("/docker/property/state/runtime/propertyquarry_google_identity.env"),
         Path(
             "/docker/property/state/runtime/"
