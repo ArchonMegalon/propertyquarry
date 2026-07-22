@@ -7,7 +7,7 @@ The protected `propertyquarry-publish-runtime-images` workflow is the only repos
 - Start the workflow manually on `main` only after ordinary CI is green and `docs/PROPERTYQUARRY_RELEASE_MANIFEST.md` names the intended runtime candidate.
 - GitHub environment approval for `propertyquarry-production` is required before the lane can read source or write packages.
 - The clean workflow-envelope SHA is the exact repository-root build context. The manifest runtime SHA is derived separately, must be its ancestor, and is recorded alongside the envelope SHA.
-- The approved repositories are only `ghcr.io/archonmegalon/propertyquarry-web-runtime` and `ghcr.io/archonmegalon/propertyquarry-render-runtime`.
+- The approved repositories are only `ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime` and `ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime`. They are first-published by `ArchonMegalon/propertyquarry` and do not inherit package authority from the former combined repository.
 
 ## Published contract
 

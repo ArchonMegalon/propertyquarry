@@ -31,8 +31,8 @@ jobs:
         shell: bash
         env:
           EXPECTED_REPOSITORY: ArchonMegalon/propertyquarry
-          EXPECTED_WEB_IMAGE: ghcr.io/archonmegalon/propertyquarry-web-runtime
-          EXPECTED_RENDER_IMAGE: ghcr.io/archonmegalon/propertyquarry-render-runtime
+          EXPECTED_WEB_IMAGE: ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime
+          EXPECTED_RENDER_IMAGE: ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime
           REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
         run: |
           set -euo pipefail
@@ -169,11 +169,11 @@ jobs:
           - component: web
             service: propertyquarry-api
             dockerfile: ea/Dockerfile.property-web
-            image: ghcr.io/archonmegalon/propertyquarry-web-runtime
+            image: ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime
           - component: render
             service: propertyquarry-render-tools
             dockerfile: ea/Dockerfile.property
-            image: ghcr.io/archonmegalon/propertyquarry-render-runtime
+            image: ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime
     steps:
       - name: Check out the exact workflow envelope build context
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -211,8 +211,8 @@ jobs:
           PYTHONPATH=source/ea python3 source/scripts/check_property_release_hygiene.py
 
           case "${COMPONENT}:${SERVICE}:${DOCKERFILE}:${IMAGE_REPOSITORY}" in
-            "web:propertyquarry-api:ea/Dockerfile.property-web:ghcr.io/archonmegalon/propertyquarry-web-runtime") ;;
-            "render:propertyquarry-render-tools:ea/Dockerfile.property:ghcr.io/archonmegalon/propertyquarry-render-runtime") ;;
+            "web:propertyquarry-api:ea/Dockerfile.property-web:ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime") ;;
+            "render:propertyquarry-render-tools:ea/Dockerfile.property:ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime") ;;
             *)
               echo "Unexpected component, service, Dockerfile, or registry repository" >&2
               exit 1
@@ -261,7 +261,7 @@ jobs:
           dockerignore_sha256="$(sha256sum source/.dockerignore | awk '{print $1}')"
           compose_sha256="$(sha256sum source/docker-compose.property.yml | awk '{print $1}')"
           published_tag="${IMAGE_REPOSITORY}:runtime-${RUNTIME_SHA}-envelope-${ENVELOPE_SHA}-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          if [[ ! "${published_tag}" =~ ^ghcr\.io/archonmegalon/propertyquarry-(web|render)-runtime:runtime-[0-9a-f]{40}-envelope-[0-9a-f]{40}-run-[0-9]+-[0-9]+$ ]]; then
+          if [[ ! "${published_tag}" =~ ^ghcr\.io/archonmegalon/propertyquarry-standalone-(web|render)-runtime:runtime-[0-9a-f]{40}-envelope-[0-9a-f]{40}-run-[0-9]+-[0-9]+$ ]]; then
             echo "Published tag is not bound to the full SHAs and unique workflow attempt" >&2
             exit 1
           fi
@@ -331,7 +331,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${IMAGE_REPOSITORY}" != "ghcr.io/archonmegalon/propertyquarry-${COMPONENT}-runtime" ]]; then
+          if [[ "${IMAGE_REPOSITORY}" != "ghcr.io/archonmegalon/propertyquarry-standalone-${COMPONENT}-runtime" ]]; then
             echo "Unexpected registry repository: ${IMAGE_REPOSITORY}" >&2
             exit 1
           fi
@@ -703,12 +703,12 @@ jobs:
 
           expected = {
               "web": {
-                  "image_repository": "ghcr.io/archonmegalon/propertyquarry-web-runtime",
+                  "image_repository": "ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime",
                   "compose_service": "propertyquarry-api",
                   "dockerfile": "ea/Dockerfile.property-web",
               },
               "render": {
-                  "image_repository": "ghcr.io/archonmegalon/propertyquarry-render-runtime",
+                  "image_repository": "ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime",
                   "compose_service": "propertyquarry-render-tools",
                   "dockerfile": "ea/Dockerfile.property",
               },

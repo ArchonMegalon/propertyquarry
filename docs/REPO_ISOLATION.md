@@ -37,6 +37,13 @@ repository. PropertyQuarry does not accept release identity, commits, manifests,
 container provenance, runtime configuration, or deploy authority from
 MyExternalBrain or `ArchonMegalon/property`.
 
+The only publishable runtime packages are
+`ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime` and
+`ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime`. Their first
+publication must originate from this repository. Packages linked to the former
+combined repository are outside the standalone release plane even when their
+names contain `propertyquarry`.
+
 Run the offline repository-identity gate after fetching the canonical repository
 through both compatibility-named local refs:
 

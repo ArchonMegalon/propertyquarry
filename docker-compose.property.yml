@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: ea/Dockerfile.property-web
-    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"
+    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
     container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     cap_drop:
@@ -174,7 +174,7 @@ services:
         condition: service_completed_successfully
 
   propertyquarry-migrate:
-    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"
+    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
     container_name: "${PROPERTYQUARRY_MIGRATE_CONTAINER_NAME:-propertyquarry-migrate}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     cap_drop:
@@ -213,7 +213,7 @@ services:
         condition: service_healthy
 
   propertyquarry-worker:
-    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"
+    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
     container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     cap_drop:
@@ -297,7 +297,7 @@ services:
       retries: 5
 
   propertyquarry-scheduler:
-    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"
+    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
     container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     cap_drop:
@@ -434,7 +434,7 @@ services:
     build:
       context: .
       dockerfile: ea/Dockerfile.property
-    image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-render-runtime:latest}"
+    image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-standalone-render-runtime:latest}"
     container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-tools}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     restart: "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-on-failure:3}"
