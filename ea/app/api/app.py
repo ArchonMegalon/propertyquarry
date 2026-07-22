@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Query
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.responses import Response
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.api.dependencies import require_request_auth
+from app.api.dependencies import (
+    get_cloudflare_access_identity,
+    get_container,
+    get_request_context,
+    require_request_auth,
+)
 from app.api.errors import install_error_handlers
 from app.api.ingress import IngressAbuseMiddleware, IngressPolicy
 from app.api.principal_identity import PrincipalIdentityMiddleware, PrincipalIdentityPolicy
@@ -27,6 +34,196 @@ from app.settings import get_settings, validate_startup_settings
 
 
 _PROPERTY_SEARCH_PREWARM_CONTAINER = None
+
+_PROPERTYQUARRY_RUNTIME_PROFILE = "propertyquarry"
+_PROPERTYQUARRY_APP_SECTIONS = frozenset(
+    {
+        "account",
+        "agents",
+        "alerts",
+        "billing",
+        "properties",
+        "research",
+        "shortlist",
+    }
+)
+_PROPERTYQUARRY_ALLOWED_ROUTE_PATHS = frozenset(
+    {
+        "/",
+        "/app",
+        "/app/actions/sign-out",
+        "/app/api/offers",
+        "/app/api/signals/google/property-sync",
+        "/app/api/signals/google/status",
+        "/app/api/signals/google/willhaben-sync",
+        "/app/api/signals/willhaben/property-tour",
+        "/app/example/shortlist",
+        "/app/properties/notifications/preview",
+        "/app/research-tour-handoff/{token}",
+        "/app/search",
+        "/cookies",
+        "/data-deletion",
+        "/directory",
+        "/directory/profile/{profile_id}",
+        "/disclaimers",
+        "/docs",
+        "/get-started",
+        "/google/callback",
+        "/google/connect",
+        "/guides/wohnung-kaufen-wien-checkliste",
+        "/health",
+        "/health/live",
+        "/health/ready",
+        "/healthz",
+        "/how-it-works",
+        "/how-it-works/score",
+        "/imprint",
+        "/integrations",
+        "/integrations/{channel_name}",
+        "/internal/metrics",
+        "/manifest.webmanifest",
+        "/markets/vienna",
+        "/pricing",
+        "/privacy",
+        "/privacy/analytics-consent",
+        "/product",
+        "/pwa-icon-{size}.png",
+        "/pwa-icon.svg",
+        "/refunds",
+        "/register",
+        "/robots.txt",
+        "/security",
+        "/service-worker.js",
+        "/sign-in",
+        "/sign-in/current-session",
+        "/sign-in/email-link",
+        "/sign-in/google",
+        "/sitemap.xml",
+        "/static",
+        "/subprocessors",
+        "/support",
+        "/terms",
+        "/user-data-deletion",
+        "/v1/onboarding/finalize",
+        "/v1/onboarding/google/callback",
+        "/v1/onboarding/google/start",
+        "/v1/onboarding/start",
+        "/v1/onboarding/status",
+        "/v1/register/start",
+        "/v1/register/verify",
+        "/version",
+        "/workspace-access/{token}",
+        "/workspace-invites/{token}",
+        "/workspace-invites/{token}/accept",
+    }
+)
+_PROPERTYQUARRY_ALLOWED_ROUTE_PREFIXES = (
+    "/app/api/followups/",
+    "/app/api/offers/",
+    "/app/api/people/{person_id}/preference-profile",
+    "/app/api/properties/",
+    "/app/api/property-",
+    "/app/api/property/",
+    "/app/api/signals/google/photos/",
+    "/app/api/signals/property/",
+    "/app/api/stakeholders/",
+    "/app/assets/",
+    "/app/research/",
+    "/app/shortlist/",
+    "/tours/",
+    "/v1/integrations/fliplink/",
+    "/v1/onboarding/property-search/",
+)
+
+
+def propertyquarry_runtime_profile_enabled() -> bool:
+    """Resolve the explicit, fail-closed API surface profile."""
+
+    raw_profile = str(os.environ.get("PROPERTYQUARRY_RUNTIME_PROFILE") or "").strip().lower()
+    if not raw_profile:
+        return False
+    if raw_profile == _PROPERTYQUARRY_RUNTIME_PROFILE:
+        return True
+    raise RuntimeError(
+        "PROPERTYQUARRY_RUNTIME_PROFILE must be unset or 'propertyquarry'"
+    )
+
+
+def _propertyquarry_section_endpoint(  # type: ignore[no-untyped-def]
+    *,
+    section: str,
+    app_shell_endpoint,
+):
+    def propertyquarry_section(
+        request: Request,
+        container=Depends(get_container),
+        context=Depends(get_request_context),
+        access_identity=Depends(get_cloudflare_access_identity),
+        run_id: str = Query(default=""),
+        candidate: str = Query(default=""),
+        agent_id: str = Query(default=""),
+        load_agent: str = Query(default=""),
+        run_agent: str = Query(default=""),
+        packet_missing: str = Query(default=""),
+        missing_candidate_ref: str = Query(default=""),
+        stale_run: str = Query(default=""),
+        missing_run_id: str = Query(default=""),
+        full: str = Query(default=""),
+    ) -> HTMLResponse:
+        return app_shell_endpoint(
+            section=section,
+            request=request,
+            container=container,
+            context=context,
+            access_identity=access_identity,
+            run_id=run_id,
+            candidate=candidate,
+            agent_id=agent_id,
+            load_agent=load_agent,
+            run_agent=run_agent,
+            packet_missing=packet_missing,
+            missing_candidate_ref=missing_candidate_ref,
+            stale_run=stale_run,
+            missing_run_id=missing_run_id,
+            full=full,
+        )
+
+    propertyquarry_section.__name__ = f"propertyquarry_app_{section.replace('-', '_')}"
+    return propertyquarry_section
+
+
+def _apply_propertyquarry_runtime_profile(  # type: ignore[no-untyped-def]
+    app: FastAPI,
+    *,
+    app_shell_endpoint,
+) -> None:
+    for section in sorted(_PROPERTYQUARRY_APP_SECTIONS):
+        path = f"/app/{section}"
+        app.add_api_route(
+            path,
+            _propertyquarry_section_endpoint(
+                section=section,
+                app_shell_endpoint=app_shell_endpoint,
+            ),
+            methods=["GET"],
+            response_class=HTMLResponse,
+            include_in_schema=False,
+        )
+
+    allowed_exact = _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS | {
+        f"/app/{section}" for section in _PROPERTYQUARRY_APP_SECTIONS
+    }
+    app.router.routes[:] = [
+        route
+        for route in app.router.routes
+        if str(getattr(route, "path", "")) in allowed_exact
+        or any(
+            str(getattr(route, "path", "")).startswith(prefix)
+            for prefix in _PROPERTYQUARRY_ALLOWED_ROUTE_PREFIXES
+        )
+    ]
+    app.openapi_schema = None
+    app.state.propertyquarry_runtime_profile = _PROPERTYQUARRY_RUNTIME_PROFILE
 
 
 class CachedStaticFiles(StaticFiles):
@@ -290,6 +487,7 @@ def preload_non_channel_route_modules(*, include_legacy: bool = False) -> None:
 
 
 def create_app() -> FastAPI:
+    propertyquarry_profile = propertyquarry_runtime_profile_enabled()
     s = get_settings()
     validate_startup_settings(s)
     if inline_sync_handlers_enabled():
@@ -371,7 +569,7 @@ def create_app() -> FastAPI:
         global _PROPERTY_SEARCH_PREWARM_CONTAINER
         _PROPERTY_SEARCH_PREWARM_CONTAINER = app.state.container
         app.router.on_startup.append(_prewarm_property_search_surface_cache)
-    if s.legacy_runtime_surfaces_enabled:
+    if s.legacy_runtime_surfaces_enabled and not propertyquarry_profile:
         app.router.on_startup.append(_prewarm_provider_health_cache)
     _include_public_routes(
         app,
@@ -430,7 +628,7 @@ def create_app() -> FastAPI:
         rewrite_router=rewrite_router,
         runtime_router=runtime_router,
     )
-    if s.legacy_runtime_surfaces_enabled:
+    if s.legacy_runtime_surfaces_enabled and not propertyquarry_profile:
         legacy_route_modules = _load_legacy_route_modules()
         connectors_router = legacy_route_modules["connectors"].router
         delivery_router = legacy_route_modules["delivery"].router
@@ -455,5 +653,10 @@ def create_app() -> FastAPI:
             task_contracts_router=task_contracts_router,
             tools_router=tools_router,
             responses_router=responses_router,
+        )
+    if propertyquarry_profile:
+        _apply_propertyquarry_runtime_profile(
+            app,
+            app_shell_endpoint=route_modules["landing"].app_shell,
         )
     return app

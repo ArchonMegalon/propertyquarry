@@ -18,6 +18,7 @@ services:
         required: false
     environment:
       EA_ROLE: api
+      PROPERTYQUARRY_RUNTIME_PROFILE: "propertyquarry"
       EA_PORT: "8090"
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
       EA_API_TOKEN: "${EA_API_TOKEN:-}"
