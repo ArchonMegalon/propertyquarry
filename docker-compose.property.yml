@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: ea/Dockerfile.property-web
     image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
-    container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api}"
+    container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     cap_drop:
       - ALL
@@ -13,9 +13,6 @@ services:
     restart: "${PROPERTYQUARRY_API_RESTART_POLICY:-on-failure:3}"
     init: true
     stop_grace_period: 20s
-    env_file:
-      - path: ./state/runtime/property_scene_video_shared.env
-        required: false
     environment:
       EA_ROLE: api
       PROPERTYQUARRY_RUNTIME_PROFILE: "propertyquarry"
@@ -143,6 +140,20 @@ services:
       TZ: Europe/Vienna
     ports:
       - "${EA_HOST_BIND:-127.0.0.1}:${EA_HOST_PORT:-8090}:8090"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/usr/local/bin/python",
+          "-I",
+          "-S",
+          "-c",
+          "import http.client; connection = http.client.HTTPConnection('127.0.0.1', 8090, timeout=10); connection.request('GET', '/health/ready', headers={'Host': 'propertyquarry.com'}); response = connection.getresponse(); response.read(); connection.close(); raise SystemExit(0 if response.status == 200 else 1)",
+        ]
+      interval: 30s
+      timeout: 15s
+      start_period: 90s
+      retries: 5
     cpu_shares: ${PROPERTYQUARRY_API_CPU_SHARES:-1024}
     cpus: ${PROPERTYQUARRY_API_CPUS:-2.0}
     mem_limit: "${PROPERTYQUARRY_API_MEMORY_LIMIT:-1536m}"
@@ -176,7 +187,7 @@ services:
 
   propertyquarry-migrate:
     image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
-    container_name: "${PROPERTYQUARRY_MIGRATE_CONTAINER_NAME:-propertyquarry-migrate}"
+    container_name: "${PROPERTYQUARRY_MIGRATE_CONTAINER_NAME:-propertyquarry-migrate-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     cap_drop:
       - ALL
@@ -215,7 +226,7 @@ services:
 
   propertyquarry-worker:
     image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
-    container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"
+    container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     cap_drop:
       - ALL
@@ -299,7 +310,7 @@ services:
 
   propertyquarry-scheduler:
     image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
-    container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler}"
+    container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     cap_drop:
       - ALL
@@ -308,9 +319,6 @@ services:
     restart: "${PROPERTYQUARRY_SCHEDULER_RESTART_POLICY:-on-failure:3}"
     init: true
     stop_grace_period: 20s
-    env_file:
-      - path: ./state/runtime/property_scene_video_shared.env
-        required: false
     environment:
       EA_ROLE: scheduler
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
@@ -436,12 +444,15 @@ services:
       context: .
       dockerfile: ea/Dockerfile.property
     image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-standalone-render-runtime:latest}"
-    container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-tools}"
+    container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     restart: "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-on-failure:3}"
     init: true
     # The bridge reads the same numeric seconds value and reserves 30s for process close.
     stop_grace_period: "${PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS:-1860}s"
+    env_file:
+      - path: ./state/runtime/property_scene_video_shared.env
+        required: false
     environment:
       EA_ROLE: render-tools
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"

@@ -3,8 +3,8 @@ services:
     # Production never consumes this caller-controlled Compose fragment; the
     # installed release controller owns its canonical plan.  Local/disposable
     # use is nevertheless digest-only so a mutable tag cannot slip in.
-    image: cloudflare/cloudflared@sha256:${PROPERTYQUARRY_CLOUDFLARED_IMAGE_SHA256:?Set the controller-approved 64-character Cloudflared image digest}
-    container_name: propertyquarry-cloudflared
+    image: "${PROPERTYQUARRY_CLOUDFLARED_IMAGE_SHA256:-cloudflare/cloudflared@sha256:18626b1baac4450214535cd5bc40ef44c0635244d585ebf707749c22b6f3408f}"
+    container_name: propertyquarry-cloudflared-live
     restart: "${PROPERTYQUARRY_CLOUDFLARED_RESTART_POLICY:-on-failure:3}"
     init: true
     read_only: true
