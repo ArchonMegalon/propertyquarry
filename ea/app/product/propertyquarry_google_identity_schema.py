@@ -156,6 +156,28 @@ CREATE TABLE IF NOT EXISTS propertyquarry_google_identity_consumed_states (
     expires_at TIMESTAMPTZ NOT NULL
 );
 
+REVOKE ALL PRIVILEGES ON TABLE
+    propertyquarry_google_identity_accounts,
+    propertyquarry_google_identity_sessions,
+    propertyquarry_google_identity_audit,
+    propertyquarry_google_identity_consumed_states
+    FROM PUBLIC, propertyquarry_api, propertyquarry_worker,
+         propertyquarry_scheduler;
+GRANT SELECT, INSERT, UPDATE
+    ON TABLE propertyquarry_google_identity_accounts
+    TO propertyquarry_api;
+GRANT SELECT, INSERT, UPDATE
+    ON TABLE propertyquarry_google_identity_sessions
+    TO propertyquarry_api;
+GRANT INSERT
+    ON TABLE propertyquarry_google_identity_audit
+    TO propertyquarry_api;
+GRANT SELECT, INSERT, DELETE
+    ON TABLE propertyquarry_google_identity_consumed_states
+    TO propertyquarry_api;
+"""
+
+_IDENTITY_SCHEMA_V2 = r"""
 CREATE TABLE IF NOT EXISTS propertyquarry_registration_challenges (
     email_hash CHAR(64) PRIMARY KEY,
     challenge_id TEXT UNIQUE NOT NULL,
@@ -171,31 +193,16 @@ CREATE TABLE IF NOT EXISTS propertyquarry_registration_challenges (
     issued_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     verified_at TIMESTAMPTZ,
+    finalized_at TIMESTAMPTZ,
     CHECK (attempt_count >= 0),
     CHECK (send_count > 0),
-    CHECK (status IN ('active', 'consumed', 'expired', 'locked'))
+    CHECK (status IN ('active', 'verified', 'finalized', 'expired', 'locked'))
 );
 
 REVOKE ALL PRIVILEGES ON TABLE
-    propertyquarry_google_identity_accounts,
-    propertyquarry_google_identity_sessions,
-    propertyquarry_google_identity_audit,
-    propertyquarry_google_identity_consumed_states,
     propertyquarry_registration_challenges
     FROM PUBLIC, propertyquarry_api, propertyquarry_worker,
          propertyquarry_scheduler;
-GRANT SELECT, INSERT, UPDATE
-    ON TABLE propertyquarry_google_identity_accounts
-    TO propertyquarry_api;
-GRANT SELECT, INSERT, UPDATE
-    ON TABLE propertyquarry_google_identity_sessions
-    TO propertyquarry_api;
-GRANT INSERT
-    ON TABLE propertyquarry_google_identity_audit
-    TO propertyquarry_api;
-GRANT SELECT, INSERT, DELETE
-    ON TABLE propertyquarry_google_identity_consumed_states
-    TO propertyquarry_api;
 GRANT SELECT, INSERT, UPDATE
     ON TABLE propertyquarry_registration_challenges
     TO propertyquarry_api;
@@ -206,6 +213,11 @@ GOOGLE_IDENTITY_MIGRATIONS = (
         1,
         "propertyquarry_local_google_identity",
         _IDENTITY_SCHEMA_V1,
+    ),
+    PropertyQuarryGoogleIdentityMigration(
+        2,
+        "propertyquarry_registration_challenges",
+        _IDENTITY_SCHEMA_V2,
     ),
 )
 LATEST_GOOGLE_IDENTITY_SCHEMA_VERSION = GOOGLE_IDENTITY_MIGRATIONS[-1].version

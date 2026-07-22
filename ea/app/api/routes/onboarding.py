@@ -593,13 +593,15 @@ def register_verify(
 ) -> dict[str, object]:
     _require_propertyquarry_registration_host(request)
     try:
+        registration_secret = _registration_secret(container)
+        registration_database_url = str(
+            getattr(container.settings, "database_url", "") or ""
+        ).strip()
         challenge = propertyquarry_registration_identity.verify_registration_challenge(
             token=body.verification_token,
             verification_code=str(body.verification_code or "").strip(),
-            secret=_registration_secret(container),
-            database_url=str(
-                getattr(container.settings, "database_url", "") or ""
-            ).strip(),
+            secret=registration_secret,
+            database_url=registration_database_url,
         )
     except propertyquarry_registration_identity.RegistrationChallengeError as exc:
         raise _registration_challenge_http_error(exc) from exc
@@ -669,6 +671,15 @@ def register_verify(
         display_name=workspace_name,
         source_kind="register",
     )
+    try:
+        propertyquarry_registration_identity.finalize_registration_challenge(
+            token=body.verification_token,
+            grant=challenge.grant,
+            secret=registration_secret,
+            database_url=registration_database_url,
+        )
+    except propertyquarry_registration_identity.RegistrationChallengeError as exc:
+        raise _registration_challenge_http_error(exc) from exc
     return {
         **status,
         "google_start": google_start,

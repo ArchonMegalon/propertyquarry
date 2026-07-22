@@ -474,6 +474,7 @@ def test_prefixed_callback_bypasses_generic_google_and_sets_only_local_cookie(
     signed_out = client.post(
         "/app/actions/sign-out",
         data={"return_to": "/sign-in"},
+        headers={"origin": "https://propertyquarry.com"},
         follow_redirects=False,
     )
     assert signed_out.status_code == 303
@@ -746,6 +747,7 @@ def test_sign_out_clears_invalid_propertyquarry_cookie_without_legacy_side_effec
         "/app/actions/sign-out",
         data={"return_to": "/sign-in"},
         headers={
+            "origin": "https://propertyquarry.com",
             "cookie": f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=pqis1.invalid-expired-cookie"
         },
         follow_redirects=False,
@@ -814,6 +816,7 @@ def test_production_sign_out_bypasses_generic_auth_and_workspace_resolution_for_
         "/app/actions/sign-out",
         data={"return_to": "/sign-in"},
         headers={
+            "origin": "https://propertyquarry.com",
             "cookie": (
                 f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=pqis1.invalid-expired-cookie; "
                 "ea_workspace_session=must-not-be-resolved"
@@ -835,6 +838,37 @@ def test_production_sign_out_bypasses_generic_auth_and_workspace_resolution_for_
         for header in cookies
     )
     assert any(header.startswith("ea_workspace_signed_out=1") for header in cookies)
+
+
+def test_sign_out_is_post_only_and_rejects_cross_origin_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import propertyquarry_google_identity as identity
+
+    _configure_propertyquarry_google(monkeypatch)
+    client = _client(monkeypatch)
+    cookie = f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=pqis1.invalid-expired-cookie"
+
+    get_response = client.get(
+        "/app/actions/sign-out?return_to=%2Fsign-in",
+        headers={"cookie": cookie},
+        follow_redirects=False,
+    )
+    assert get_response.status_code == 405
+    assert not get_response.headers.get_list("set-cookie")
+
+    cross_origin = client.post(
+        "/app/actions/sign-out",
+        data={"return_to": "/sign-in"},
+        headers={
+            "origin": "https://attacker.example",
+            "cookie": cookie,
+        },
+        follow_redirects=False,
+    )
+    assert cross_origin.status_code == 403
+    assert cross_origin.json()["error"]["code"] == "cross_site_browser_mutation"
+    assert not cross_origin.headers.get_list("set-cookie")
 
 
 def test_google_identity_lane_has_static_cross_product_isolation() -> None:

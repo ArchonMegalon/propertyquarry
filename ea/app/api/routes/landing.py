@@ -7108,14 +7108,64 @@ def workspace_access_session(
     return response
 
 
-@router.api_route("/app/actions/sign-out", methods=["GET", "POST"], response_model=None, include_in_schema=False)
+def _browser_request_origin(request: Request) -> tuple[str, str, int] | None:
+    raw_origin = str(request.headers.get("origin") or "").strip()
+    raw_referer = str(request.headers.get("referer") or "").strip()
+    source = raw_origin or raw_referer
+    if not source or source.lower() == "null" or any(
+        character.isspace() for character in source
+    ):
+        return None
+    parsed = urllib.parse.urlsplit(source)
+    scheme = str(parsed.scheme or "").strip().lower()
+    hostname = str(parsed.hostname or "").strip().lower().rstrip(".")
+    if scheme not in {"http", "https"} or not hostname:
+        return None
+    try:
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        return None
+    return scheme, hostname, int(port)
+
+
+def _effective_request_origin(request: Request) -> tuple[str, str, int] | None:
+    scheme = str(
+        request.headers.get("x-forwarded-proto") or request.url.scheme or ""
+    ).split(",", 1)[0].strip().lower()
+    authority = str(
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.netloc
+        or ""
+    ).split(",", 1)[0].strip()
+    if scheme not in {"http", "https"} or not authority:
+        return None
+    parsed = urllib.parse.urlsplit(f"{scheme}://{authority}")
+    hostname = str(parsed.hostname or "").strip().lower().rstrip(".")
+    if not hostname:
+        return None
+    try:
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        return None
+    return scheme, hostname, int(port)
+
+
+def _require_same_origin_browser_post(request: Request) -> None:
+    if _browser_request_origin(request) != _effective_request_origin(request):
+        raise HTTPException(status_code=403, detail="sign_out_origin_invalid")
+
+
+@router.post("/app/actions/sign-out", response_model=None, include_in_schema=False)
 async def app_sign_out(
     request: Request,
     container: AppContainer = Depends(get_container),
 ) -> RedirectResponse:
-    body: dict[str, list[str]] = {}
-    if request.method == "POST":
-        body = urllib.parse.parse_qs((await request.body()).decode("utf-8", errors="ignore"), keep_blank_values=True)
+    _require_same_origin_browser_post(request)
+    body = urllib.parse.parse_qs(
+        (await request.body()).decode("utf-8", errors="ignore"),
+        keep_blank_values=True,
+    )
     public_base = str(request_brand(request).get("public_base_url") or "/").strip() or "/"
     query_params = request.query_params
     return_to = _normalize_browser_return_to(query_params.get("return_to", "") or _form_value(body, "return_to", public_base), default=public_base)

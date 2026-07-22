@@ -78,6 +78,9 @@ def test_register_template_uses_named_secure_verification_links() -> None:
     assert 'data-action="change-email"' in source
     assert "propertyquarry-register-session-v2" in source
     assert "window.sessionStorage.setItem(storageKey" in source
+    assert "state.verified = state.verified || { google_start: googleStart };" in source
+    assert "google_identity_binding" in source
+    assert "catch (_error) {\n      return false;\n    }" in source
     assert "window.localStorage.setItem(storageKey" not in source
     assert "state.start = null;" in source
     assert "access_token" not in source
@@ -234,6 +237,90 @@ def test_register_challenge_is_opaque_and_response_never_exposes_access_token(
     assert verified.status_code == 200
     assert "access_token" not in verified.json()
     assert "access_token" not in verified.text
+
+
+def test_register_verify_retries_same_proof_after_transient_provisioning_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    client = _client(monkeypatch)
+    started = client.post(
+        "/v1/register/start",
+        json={"email": "resumable.registration@example.com"},
+    )
+    assert started.status_code == 200
+    proof = started.json()
+
+    onboarding = client.app.state.container.onboarding
+    original_start_workspace = onboarding.start_workspace
+    provisioned: list[dict[str, object]] = []
+
+    def _flaky_start_workspace(**kwargs) -> dict[str, object]:
+        result = original_start_workspace(**kwargs)
+        provisioned.append(result)
+        if len(provisioned) == 1:
+            raise RuntimeError("transient_workspace_provisioning_failure")
+        return result
+
+    monkeypatch.setattr(onboarding, "start_workspace", _flaky_start_workspace)
+    payload = {
+        "verification_token": proof["verification_token"],
+        "verification_code": proof["verification_code"],
+        "workspace_name": "Resumable Registration",
+        "timezone": "Europe/Vienna",
+        "language": "en",
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="transient_workspace_provisioning_failure",
+    ):
+        client.post("/v1/register/verify", json=payload)
+
+    retried = client.post("/v1/register/verify", json=payload)
+    assert retried.status_code == 200
+    assert len(provisioned) == 2
+    assert provisioned[0]["workspace"] == provisioned[1]["workspace"]
+    assert retried.json()["workspace"] == provisioned[0]["workspace"]
+
+    replayed = client.post("/v1/register/verify", json=payload)
+    assert replayed.status_code == 200
+    assert replayed.json()["principal_id"] == retried.json()["principal_id"]
+    assert replayed.json()["workspace"] == retried.json()["workspace"]
+
+
+def test_registration_verified_grant_finalization_is_idempotent() -> None:
+    from app.services import propertyquarry_registration_identity as identity
+
+    issued = identity.issue_registration_challenge(
+        email="finalize@example.com",
+        return_to="/app/search",
+        secret="test-registration-finalize-secret",
+        now=1_900_000_000,
+    )
+    verified = identity.verify_registration_challenge(
+        token=issued.token,
+        verification_code=issued.verification_code,
+        secret="test-registration-finalize-secret",
+        now=1_900_000_001,
+    )
+
+    assert verified.grant.startswith("pqrg2_")
+    first = identity.finalize_registration_challenge(
+        token=issued.token,
+        grant=verified.grant,
+        secret="test-registration-finalize-secret",
+        now=1_900_000_002,
+    )
+    second = identity.finalize_registration_challenge(
+        token=issued.token,
+        grant=verified.grant,
+        secret="test-registration-finalize-secret",
+        now=1_900_000_003,
+    )
+
+    assert first.finalized is True
+    assert second == first
 
 
 def test_register_resend_enforces_cooldown_and_invalidates_previous_code(
@@ -1962,8 +2049,11 @@ def test_register_verify_requires_matching_code(monkeypatch: pytest.MonkeyPatch)
             "language": "en",
         },
     )
-    assert replayed.status_code == 409
-    assert replayed.json()["error"]["code"] == "registration_verification_already_used"
+    assert replayed.status_code == 200
+    replayed_body = replayed.json()
+    assert replayed_body["principal_id"] == verified_body["principal_id"]
+    assert replayed_body["workspace"] == verified_body["workspace"]
+    assert replayed_body["google_start"] == verified_body["google_start"]
 
 
 def test_register_verify_routes_google_through_propertyquarry_identity_only_sign_in(
@@ -2114,7 +2204,11 @@ def test_registration_email_payload_stays_english_and_uses_propertyquarry_sender
         "html"
     ]
     assert payload["meta"]["kind"] == "propertyquarry_registration_verification_v2"
-    assert payload["meta"]["verification_ref"] != "654321"
+    assert payload["meta"]["verification_ref"].startswith("pqvr_")
+    assert len(payload["meta"]["verification_ref"]) >= 32
+    assert payload["meta"]["verification_ref"] != hashlib.sha256(
+        b"654321"
+    ).hexdigest()[:24]
     assert "verification_code" not in payload["meta"]
     assert "654321" not in json.dumps(payload["meta"], sort_keys=True)
     assert receipt.message_id == "emailit-live-1"

@@ -37,9 +37,23 @@ class _Cursor:
                 if current_component == component
             ]
             return
-        if str(sql) == schema.GOOGLE_IDENTITY_MIGRATIONS[0].sql:
-            self.database.relations.update(schema.GOOGLE_IDENTITY_TABLES)
+        if str(sql) in {
+            migration.sql for migration in schema.GOOGLE_IDENTITY_MIGRATIONS
+        }:
+            migration = next(
+                migration
+                for migration in schema.GOOGLE_IDENTITY_MIGRATIONS
+                if migration.sql == str(sql)
+            )
+            relations = (
+                schema.GOOGLE_IDENTITY_TABLES[:-1]
+                if migration.version == 1
+                else ("propertyquarry_registration_challenges",)
+            )
+            self.database.relations.update(relations)
             for relation, privileges in schema.GOOGLE_IDENTITY_API_TABLE_GRANTS:
+                if relation not in relations:
+                    continue
                 self.database.privileges.update(
                     (schema.GOOGLE_IDENTITY_API_ROLE, relation, privilege)
                     for privilege in privileges
@@ -113,7 +127,7 @@ def test_privileged_migration_owns_identity_ddl_and_runtime_probe_is_read_only()
 
     assert result.previous_version == 0
     assert result.current_version == schema.LATEST_GOOGLE_IDENTITY_SCHEMA_VERSION
-    assert result.applied_versions == (1,)
+    assert result.applied_versions == (1, 2)
     assert set(schema.GOOGLE_IDENTITY_TABLES).issubset(database.relations)
     assert database.privileges == {
         (schema.GOOGLE_IDENTITY_API_ROLE, relation, privilege)
@@ -230,8 +244,8 @@ def test_identity_migration_replays_once_and_detects_checksum_drift() -> None:
         connect=database.connect,
     )
 
-    assert first.applied_versions == (1,)
-    assert second.previous_version == 1
+    assert first.applied_versions == (1, 2)
+    assert second.previous_version == 2
     assert second.applied_versions == ()
 
     database.ledger[(schema.SCHEMA_COMPONENT, 1)] = (
@@ -246,6 +260,47 @@ def test_identity_migration_replays_once_and_detects_checksum_drift() -> None:
             "postgresql://test/propertyquarry",
             connect=database.connect,
         )
+
+
+def test_identity_v1_is_immutable_and_v2_upgrades_an_existing_v1_ledger() -> None:
+    v1 = schema.GOOGLE_IDENTITY_MIGRATIONS[0]
+    v2 = schema.GOOGLE_IDENTITY_MIGRATIONS[1]
+    assert v1.checksum == (
+        "25834f94d5c05060d3a9719d4cbb0902af5c1e470113b793c839351549690ed2"
+    )
+    assert "propertyquarry_registration_challenges" not in v1.sql
+    assert "propertyquarry_registration_challenges" in v2.sql
+
+    database = _Database()
+    database.ledger[(schema.SCHEMA_COMPONENT, 1)] = (v1.name, v1.checksum)
+    database.relations.update(schema.GOOGLE_IDENTITY_TABLES[:-1])
+    for relation, privileges in schema.GOOGLE_IDENTITY_API_TABLE_GRANTS:
+        if relation == "propertyquarry_registration_challenges":
+            continue
+        database.privileges.update(
+            (schema.GOOGLE_IDENTITY_API_ROLE, relation, privilege)
+            for privilege in privileges
+        )
+
+    result = schema.migrate_propertyquarry_google_identity_schema(
+        "postgresql://test/propertyquarry",
+        applied_by="upgrade-test",
+        connect=database.connect,
+    )
+
+    assert result.previous_version == 1
+    assert result.current_version == 2
+    assert result.applied_versions == (2,)
+    assert database.ledger[(schema.SCHEMA_COMPONENT, 1)] == (
+        v1.name,
+        "25834f94d5c05060d3a9719d4cbb0902af5c1e470113b793c839351549690ed2",
+    )
+    assert "propertyquarry_registration_challenges" in database.relations
+    assert (
+        schema.GOOGLE_IDENTITY_API_ROLE,
+        "propertyquarry_registration_challenges",
+        "UPDATE",
+    ) in database.privileges
 
 
 @dataclass(frozen=True)

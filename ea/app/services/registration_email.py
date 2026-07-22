@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import time
 import urllib.error
 import urllib.request
@@ -172,6 +173,10 @@ def _registration_html(
         body_html=body,
         preheader="Use your six-digit code or the secure verification button.",
     )
+
+
+def _registration_verification_ref() -> str:
+    return f"pqvr_{secrets.token_urlsafe(24)}"
 
 
 def _meta_ref(value: str) -> str:
@@ -746,7 +751,7 @@ def send_registration_email(*, recipient_email: str, verification_code: str, mag
             expires_at=expires_at,
         ),
         kind="propertyquarry_registration_verification_v2",
-        meta={"verification_ref": _meta_ref(verification_code)},
+        meta={"verification_ref": _registration_verification_ref()},
     )
 
 

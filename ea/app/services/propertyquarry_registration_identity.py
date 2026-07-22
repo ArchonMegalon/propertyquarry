@@ -37,6 +37,8 @@ class VerifiedRegistrationChallenge:
     email: str
     return_to: str
     expires_at: int
+    grant: str
+    finalized: bool = False
 
 
 class RegistrationChallengeError(RuntimeError):
@@ -72,6 +74,19 @@ def _code_digest(*, secret: str, challenge_id: str, verification_code: str) -> s
         f"{challenge_id}\0{str(verification_code or '').strip()}"
     ).encode("utf-8")
     return hmac.new(str(secret or "").encode("utf-8"), material, hashlib.sha256).hexdigest()
+
+
+def _verification_grant(*, secret: str, challenge_id: str, token_hash: str) -> str:
+    material = (
+        "propertyquarry-registration-verified-grant-v2\0"
+        f"{challenge_id}\0{token_hash}"
+    ).encode("utf-8")
+    digest = hmac.new(
+        str(secret or "").encode("utf-8"),
+        material,
+        hashlib.sha256,
+    ).hexdigest()
+    return f"pqrg2_{digest}"
 
 
 def _unix_seconds(value: object) -> int:
@@ -150,6 +165,7 @@ def issue_registration_challenge(
         "issued_at": issued_at,
         "expires_at": expires_at,
         "verified_at": None,
+        "finalized_at": None,
     }
     normalized_database_url = str(database_url or "").strip()
     if normalized_database_url:
@@ -190,10 +206,10 @@ def issue_registration_challenge(
                         email_hash, challenge_id, token_hash, email, return_to,
                         code_digest, status, attempt_count, send_count,
                         window_started_at, last_sent_at, issued_at, expires_at,
-                        verified_at
+                        verified_at, finalized_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, 'active', 0, %s,
-                        %s, %s, %s, %s, NULL
+                        %s, %s, %s, %s, NULL, NULL
                     )
                     ON CONFLICT (email_hash) DO UPDATE SET
                         challenge_id = EXCLUDED.challenge_id,
@@ -208,7 +224,8 @@ def issue_registration_challenge(
                         last_sent_at = EXCLUDED.last_sent_at,
                         issued_at = EXCLUDED.issued_at,
                         expires_at = EXCLUDED.expires_at,
-                        verified_at = NULL
+                        verified_at = NULL,
+                        finalized_at = NULL
                     """,
                     (
                         email_hash,
@@ -265,14 +282,10 @@ def _verify_record(
     now: int,
 ) -> tuple[dict[str, object], RegistrationChallengeError | None]:
     status = str(record.get("status") or "").strip()
-    if status == "consumed":
-        return record, RegistrationChallengeError(
-            "registration_verification_already_used"
-        )
     if status == "locked":
         return record, RegistrationChallengeError("registration_verification_locked")
     expires_at = _unix_seconds(record.get("expires_at"))
-    if status != "active" or expires_at <= now:
+    if status not in {"active", "verified", "finalized"} or expires_at <= now:
         record["status"] = "expired"
         return record, RegistrationChallengeError("registration_verification_expired")
     provided_digest = _code_digest(
@@ -284,6 +297,10 @@ def _verify_record(
         str(record.get("code_digest") or ""),
         provided_digest,
     ):
+        if status in {"verified", "finalized"}:
+            return record, RegistrationChallengeError(
+                "registration_verification_code_invalid"
+            )
         attempt_count = int(record.get("attempt_count") or 0) + 1
         record["attempt_count"] = attempt_count
         if attempt_count >= REGISTRATION_MAX_VERIFY_ATTEMPTS:
@@ -292,8 +309,9 @@ def _verify_record(
         return record, RegistrationChallengeError(
             "registration_verification_code_invalid"
         )
-    record["status"] = "consumed"
-    record["verified_at"] = now
+    if status == "active":
+        record["status"] = "verified"
+        record["verified_at"] = now
     return record, None
 
 
@@ -319,7 +337,7 @@ def verify_registration_challenge(
                     SELECT email_hash, challenge_id, token_hash, email, return_to,
                            code_digest, status, attempt_count, send_count,
                            window_started_at, last_sent_at, issued_at, expires_at,
-                           verified_at
+                           verified_at, finalized_at
                     FROM propertyquarry_registration_challenges
                     WHERE token_hash = %s
                     FOR UPDATE
@@ -343,6 +361,7 @@ def verify_registration_challenge(
                         "issued_at",
                         "expires_at",
                         "verified_at",
+                        "finalized_at",
                     )
                     record = dict(zip(names, row))
                     record, verification_error = _verify_record(
@@ -354,7 +373,8 @@ def verify_registration_challenge(
                     cursor.execute(
                         """
                         UPDATE propertyquarry_registration_challenges
-                        SET status = %s, attempt_count = %s, verified_at = %s
+                        SET status = %s, attempt_count = %s, verified_at = %s,
+                            finalized_at = %s
                         WHERE token_hash = %s
                         """,
                         (
@@ -363,6 +383,14 @@ def verify_registration_challenge(
                             (
                                 datetime.fromtimestamp(verified_at, tz=timezone.utc)
                                 if record.get("verified_at")
+                                else None
+                            ),
+                            (
+                                datetime.fromtimestamp(
+                                    _unix_seconds(record.get("finalized_at")),
+                                    tz=timezone.utc,
+                                )
+                                if record.get("finalized_at")
                                 else None
                             ),
                             token_hash,
@@ -396,6 +424,154 @@ def verify_registration_challenge(
         email=str(record.get("email") or "").strip().lower(),
         return_to=str(record.get("return_to") or "").strip() or "/app/search",
         expires_at=_unix_seconds(record.get("expires_at")),
+        grant=_verification_grant(
+            secret=secret,
+            challenge_id=str(record.get("challenge_id") or ""),
+            token_hash=token_hash,
+        ),
+        finalized=str(record.get("status") or "").strip() == "finalized",
+    )
+
+
+def _finalize_record(
+    *,
+    record: dict[str, object],
+    grant: str,
+    secret: str,
+    now: int,
+) -> tuple[dict[str, object], RegistrationChallengeError | None]:
+    status = str(record.get("status") or "").strip()
+    if status in {"expired", "locked"}:
+        return record, RegistrationChallengeError(
+            "registration_verification_expired"
+            if status == "expired"
+            else "registration_verification_locked"
+        )
+    expected_grant = _verification_grant(
+        secret=secret,
+        challenge_id=str(record.get("challenge_id") or ""),
+        token_hash=str(record.get("token_hash") or ""),
+    )
+    if not hmac.compare_digest(str(grant or "").strip(), expected_grant):
+        return record, RegistrationChallengeError(
+            "registration_verification_grant_invalid"
+        )
+    if status == "finalized":
+        return record, None
+    if status != "verified":
+        return record, RegistrationChallengeError(
+            "registration_verification_not_verified"
+        )
+    record["status"] = "finalized"
+    record["finalized_at"] = now
+    return record, None
+
+
+def finalize_registration_challenge(
+    *,
+    token: str,
+    grant: str,
+    secret: str,
+    database_url: str = "",
+    now: int | None = None,
+) -> VerifiedRegistrationChallenge:
+    token_hash = _validated_token_hash(token)
+    finalized_at = int(time.time()) if now is None else int(now)
+    normalized_database_url = str(database_url or "").strip()
+    if normalized_database_url:
+        require_propertyquarry_google_identity_schema_ready(normalized_database_url)
+        record: dict[str, object] | None = None
+        finalize_error: RegistrationChallengeError | None = None
+        with _connect(normalized_database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT email_hash, challenge_id, token_hash, email, return_to,
+                           code_digest, status, attempt_count, send_count,
+                           window_started_at, last_sent_at, issued_at, expires_at,
+                           verified_at, finalized_at
+                    FROM propertyquarry_registration_challenges
+                    WHERE token_hash = %s
+                    FOR UPDATE
+                    """,
+                    (token_hash,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    names = (
+                        "email_hash",
+                        "challenge_id",
+                        "token_hash",
+                        "email",
+                        "return_to",
+                        "code_digest",
+                        "status",
+                        "attempt_count",
+                        "send_count",
+                        "window_started_at",
+                        "last_sent_at",
+                        "issued_at",
+                        "expires_at",
+                        "verified_at",
+                        "finalized_at",
+                    )
+                    record = dict(zip(names, row))
+                    record, finalize_error = _finalize_record(
+                        record=record,
+                        grant=grant,
+                        secret=secret,
+                        now=finalized_at,
+                    )
+                    if finalize_error is None:
+                        cursor.execute(
+                            """
+                            UPDATE propertyquarry_registration_challenges
+                            SET status = %s, finalized_at = %s
+                            WHERE token_hash = %s
+                            """,
+                            (
+                                record["status"],
+                                datetime.fromtimestamp(
+                                    _unix_seconds(record.get("finalized_at")),
+                                    tz=timezone.utc,
+                                ),
+                                token_hash,
+                            ),
+                        )
+            connection.commit()
+        if record is None:
+            raise RegistrationChallengeError("registration_verification_invalid")
+        if finalize_error is not None:
+            raise finalize_error
+    else:
+        record = None
+        finalize_error = None
+        with _MEMORY_LOCK:
+            for current in _MEMORY_CHALLENGES.values():
+                if hmac.compare_digest(str(current.get("token_hash") or ""), token_hash):
+                    record = current
+                    break
+            if record is not None:
+                record, finalize_error = _finalize_record(
+                    record=record,
+                    grant=grant,
+                    secret=secret,
+                    now=finalized_at,
+                )
+        if record is None:
+            raise RegistrationChallengeError("registration_verification_invalid")
+        if finalize_error is not None:
+            raise finalize_error
+    return VerifiedRegistrationChallenge(
+        email=str(record.get("email") or "").strip().lower(),
+        return_to=str(record.get("return_to") or "").strip() or "/app/search",
+        expires_at=_unix_seconds(record.get("expires_at")),
+        grant=_verification_grant(
+            secret=secret,
+            challenge_id=str(record.get("challenge_id") or ""),
+            token_hash=token_hash,
+        ),
+        finalized=True,
     )
 
 

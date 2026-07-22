@@ -365,7 +365,21 @@
       cleanQuery ? `/register?${cleanQuery}` : '/register',
     );
   }
-  if (params.get('ready') === '1' && state.verified) {
+  if (params.get('ready') === '1') {
+    const identityBinding = String(params.get('google_identity_binding') || '').trim();
+    const googleReady = params.get('google_ready') === '1';
+    const googleReturnTo = '/register?ready=1&google_identity=confirmed';
+    const googleStart = {};
+    if (googleReady && /^[0-9a-f]{64}$/.test(identityBinding)) {
+      googleStart.ready = true;
+      googleStart.identity_only = true;
+      googleStart.start_url = `/sign-in/google?${new URLSearchParams({
+        return_to: googleReturnTo,
+        identity_binding: identityBinding,
+      }).toString()}`;
+      googleStart.auth_url = googleStart.start_url;
+    }
+    state.verified = state.verified || { google_start: googleStart };
     state.step = 3;
   }
 
@@ -390,11 +404,16 @@
   const resendCooldownSeconds = 60;
 
   const setState = () => {
-    window.sessionStorage.setItem(storageKey, JSON.stringify({
-      start: state.start,
-      verified: state.verified,
-      preview: state.preview,
-    }));
+    try {
+      window.sessionStorage.setItem(storageKey, JSON.stringify({
+        start: state.start,
+        verified: state.verified,
+        preview: state.preview,
+      }));
+      return true;
+    } catch (_error) {
+      return false;
+    }
   };
 
   const updateResendButton = () => {
@@ -625,6 +644,20 @@
       setState();
       verifyInline.textContent = 'Account created. Signing you in…';
       const readyParams = new URLSearchParams({ ready: '1', return_to: registerReturnTo });
+      const googleStartUrl = String(
+        state.verified.google_start?.start_url
+        || state.verified.google_start?.auth_url
+        || '',
+      ).trim();
+      if (state.verified.google_start?.ready === true && googleStartUrl.startsWith('/sign-in/google?')) {
+        const identityBinding = String(
+          new URL(googleStartUrl, window.location.origin).searchParams.get('identity_binding') || '',
+        ).trim();
+        if (/^[0-9a-f]{64}$/.test(identityBinding)) {
+          readyParams.set('google_ready', '1');
+          readyParams.set('google_identity_binding', identityBinding);
+        }
+      }
       const returnTo = encodeURIComponent(`/register?${readyParams.toString()}`);
       window.location.assign(`${accessUrl}?return_to=${returnTo}`);
     } catch (error) {
