@@ -165,7 +165,7 @@ def _assert_exact_v2_release_job(workflow: str) -> dict[str, object]:
     assert release_job["needs"] == RELEASE_JOB_NEEDS
     assert release_job["if"] == RELEASE_JOB_CONDITION
     assert type(release_job["timeout-minutes"]) is int
-    assert release_job["timeout-minutes"] == 180
+    assert release_job["timeout-minutes"] == 360
     assert release_job["concurrency"] == {
         "group": "propertyquarry-release-lifecycle-v2",
         "cancel-in-progress": False,
@@ -1008,7 +1008,7 @@ def test_smoke_runtime_uses_only_the_fixed_v2_supervisor_for_release() -> None:
 
     assert workflow.count("\n  propertyquarry-release-v2:\n") == 1
     assert f"if: {RELEASE_JOB_CONDITION}" in release_job
-    assert "timeout-minutes: 180" in release_job
+    assert "timeout-minutes: 360" in release_job
     assert "group: propertyquarry-release-lifecycle-v2" in release_job
     assert "cancel-in-progress: false" in release_job
     assert "environment:\n      name: propertyquarry-production" in release_job
@@ -1164,13 +1164,13 @@ def test_v2_release_job_closed_yaml_contract_rejects_execution_indirection() -> 
         1,
     )
     duplicate_key = body.replace(
-        "    timeout-minutes: 180\n",
-        "    timeout-minutes: 180\n    timeout-minutes: 1\n",
+        "    timeout-minutes: 360\n",
+        "    timeout-minutes: 360\n    timeout-minutes: 1\n",
         1,
     )
     custom_tag = body.replace(
-        "    timeout-minutes: 180\n",
-        "    timeout-minutes: !candidate-controlled 180\n",
+        "    timeout-minutes: 360\n",
+        "    timeout-minutes: !candidate-controlled 360\n",
         1,
     )
     alias = body.replace(

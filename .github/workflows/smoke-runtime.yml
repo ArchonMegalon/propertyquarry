@@ -1269,7 +1269,7 @@ jobs:
       - propertyquarry-security-bootstrap-attestation
       - propertyquarry-continuous-ux
     if: ${{ always() && github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/propertyquarry' && github.ref == 'refs/heads/main' && inputs.run_launch_authority == true && inputs.run_activation_journey != true && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-ordinary-ci-success'].result == 'success' && needs['propertyquarry-flagship-security'].result == 'success' && needs['propertyquarry-security-bootstrap-attestation'].result == 'success' && needs['propertyquarry-continuous-ux'].result == 'success' }}
-    timeout-minutes: 180
+    timeout-minutes: 360
     concurrency:
       group: propertyquarry-release-lifecycle-v2
       cancel-in-progress: false
