@@ -65,6 +65,11 @@ RECEIPT_ROOT = Path(
     "/var/lib/propertyquarry-release-single-host-v2/backup-receipts"
 )
 REMOTE_ROOT = Path("/mnt/pcloud/propertyquarry/releases/backups/v2")
+REMOTE_DIRECTORY_MODE = 0o775
+REMOTE_DIRECTORY_NLINK = 1
+REMOTE_FILE_MODE = 0o664
+REMOTE_UID = 1000
+REMOTE_GID = 1000
 EXPECTED_ENCRYPTION_KEY_PATH = Path(
     "/home/tibor/.local/share/propertyquarry-backup-keys/"
     "propertyquarry-predeploy-backup-v2.key"
@@ -1211,12 +1216,25 @@ def _validate_remote_directory_shape(
         raise BackupError("remote_final_missing", str(final_path)) from exc
     if not stat.S_ISDIR(observed.st_mode) or stat.S_ISLNK(observed.st_mode):
         raise BackupError("remote_final_directory_invalid", str(final_path))
+    if (
+        stat.S_IMODE(observed.st_mode) != REMOTE_DIRECTORY_MODE
+        or observed.st_uid != REMOTE_UID
+        or observed.st_gid != REMOTE_GID
+        or observed.st_nlink != REMOTE_DIRECTORY_NLINK
+    ):
+        raise BackupError("remote_final_directory_metadata_invalid", str(final_path))
     expected_names = {"manifest.v2.json"} | {
         f"{spec.name}.pqenc" for spec in specs
     }
     observed_names = {entry.name for entry in os.scandir(final_path)}
     if observed_names != expected_names:
         raise BackupError("remote_final_shape_invalid", str(final_path))
+    _lstat_regular(
+        final_path / "manifest.v2.json",
+        mode=REMOTE_FILE_MODE,
+        uid=REMOTE_UID,
+        gid=REMOTE_GID,
+    )
 
 
 def _recover_remote_final(
@@ -1268,7 +1286,12 @@ def _recover_remote_final(
         ):
             raise BackupError("remote_manifest_artifact_binding_invalid", spec.name)
         artifact_path = final_path / expected_filename
-        _lstat_regular(artifact_path, mode=0o600)
+        _lstat_regular(
+            artifact_path,
+            mode=REMOTE_FILE_MODE,
+            uid=REMOTE_UID,
+            gid=REMOTE_GID,
+        )
         ciphertext_sha256, ciphertext_bytes = _sha256_file(artifact_path)
         if (
             recorded.get("ciphertext_sha256") != f"sha256:{ciphertext_sha256}"
@@ -1324,7 +1347,12 @@ def _validate_signed_receipt_remote(
     for spec in specs:
         item = indexed[spec.name]
         artifact_path = final_path / f"{spec.name}.pqenc"
-        _lstat_regular(artifact_path, mode=0o600)
+        _lstat_regular(
+            artifact_path,
+            mode=REMOTE_FILE_MODE,
+            uid=REMOTE_UID,
+            gid=REMOTE_GID,
+        )
         ciphertext_sha256, ciphertext_bytes = _sha256_file(artifact_path)
         if (
             item.get("filename") != artifact_path.name
@@ -1526,6 +1554,7 @@ def create_backup(
             os.rename(partial_path, final_path)
             partial_path = None
             _fsync_directory(paths.remote_root)
+            _validate_remote_directory_shape(final_path, specs)
         except Exception:
             if partial_path is not None and partial_path.exists():
                 shutil.rmtree(partial_path)

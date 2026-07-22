@@ -305,6 +305,11 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
     key_parent.chmod(0o700)
     encryption_key = key_parent / "propertyquarry-predeploy-backup-v2.key"
     monkeypatch.setattr(backup, "EXPECTED_ENCRYPTION_KEY_PATH", encryption_key)
+    monkeypatch.setattr(backup, "REMOTE_DIRECTORY_MODE", 0o700)
+    monkeypatch.setattr(backup, "REMOTE_DIRECTORY_NLINK", 2)
+    monkeypatch.setattr(backup, "REMOTE_FILE_MODE", 0o600)
+    monkeypatch.setattr(backup, "REMOTE_UID", os.getuid())
+    monkeypatch.setattr(backup, "REMOTE_GID", os.getgid())
     paths = backup.BackupPaths(
         install_root=install_root,
         receipt_root=receipt_root,
