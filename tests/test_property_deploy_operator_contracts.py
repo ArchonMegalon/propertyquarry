@@ -15,9 +15,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE_SUPERVISOR = (
+RELEASE_CLIENT = (
     "/usr/libexec/propertyquarry-release-control/"
-    "propertyquarry-release-supervisor-v2"
+    "propertyquarry-release-single-host-v2"
 )
 RELEASE_JOB_NEEDS = [
     "propertyquarry-protected-dispatch-inputs",
@@ -101,7 +101,7 @@ def _strict_workflow_document(workflow: str) -> dict[str, object]:
     return document
 
 
-def _expected_release_supervisor_run(operation: str) -> str:
+def _expected_release_client_run(operation: str) -> str:
     assert operation in {"release-preflight", "release-run"}
     lines = [
         '[[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]',
@@ -127,8 +127,8 @@ def _expected_release_supervisor_run(operation: str) -> str:
         '  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" \\',
         '  PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \\',
         '  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \\',
-        f"  {RELEASE_SUPERVISOR} \\",
-        f"    {operation}",
+        f"  {RELEASE_CLIENT} \\",
+        f"    client {operation}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -150,7 +150,7 @@ def _assert_exact_v2_release_job(workflow: str) -> dict[str, object]:
         runner_labels = runner if type(runner) is list else [runner]
         assert "propertyquarry-release-controller-v2" not in runner_labels
         assert "propertyquarry-release-controller-v2" not in yaml.safe_dump(runner)
-        assert RELEASE_SUPERVISOR not in yaml.safe_dump(candidate_job)
+        assert RELEASE_CLIENT not in yaml.safe_dump(candidate_job)
     assert set(release_job) == {
         "needs",
         "if",
@@ -194,7 +194,7 @@ def _assert_exact_v2_release_job(workflow: str) -> dict[str, object]:
         assert set(step) == {"name", "shell", "run"}
         assert step["name"] == name
         assert step["shell"] == "/bin/bash --noprofile --norc -p -euo pipefail {0}"
-        assert step["run"] == _expected_release_supervisor_run(operation)
+        assert step["run"] == _expected_release_client_run(operation)
     return release_job
 
 
@@ -1018,7 +1018,7 @@ def test_smoke_runtime_uses_only_the_fixed_v2_supervisor_for_release() -> None:
         "shell: /bin/bash --noprofile --norc -p -euo pipefail {0}"
         in release_job
     )
-    assert release_job.count(RELEASE_SUPERVISOR) == 2
+    assert release_job.count(RELEASE_CLIENT) == 2
     assert release_job.count("exec /usr/bin/env -i") == 2
     assert release_job.count("PATH=/usr/sbin:/usr/bin:/sbin:/bin") == 2
     assert release_job.count("HOME=/nonexistent") == 2
