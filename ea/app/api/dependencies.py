@@ -28,6 +28,7 @@ from app.services.cloudflare_access import (
     build_operator_notes,
     resolve_access_identity,
 )
+from app.services import propertyquarry_google_identity
 from app.settings import RuntimeProfile, resolve_runtime_profile, resolve_signing_secret
 
 
@@ -62,6 +63,7 @@ def _request_supplies_auth_material(request: Request) -> bool:
         or str(request.headers.get("x-ea-principal-id") or "").strip()
         or str(request.headers.get("x-principal-id") or "").strip()
         or str(request.headers.get("x-ea-operator-id") or "").strip()
+        or _extract_propertyquarry_identity_token(request)
         or _extract_workspace_session_token(request)
     )
 
@@ -267,6 +269,43 @@ def _workspace_session_payload(request: Request, container: AppContainer) -> dic
         setattr(request.state, "workspace_access_session_payload", False)
         return None
     setattr(request.state, "workspace_access_session_payload", payload)
+    return payload
+
+
+def _extract_propertyquarry_identity_token(request: Request) -> str:
+    return str(
+        request.cookies.get(propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME) or ""
+    ).strip()
+
+
+def _propertyquarry_identity_session_payload(
+    request: Request,
+    container: AppContainer,
+) -> dict[str, object] | None:
+    cached = getattr(request.state, "propertyquarry_identity_session_payload", None)
+    if isinstance(cached, dict):
+        return cached
+    if cached is False:
+        return None
+    if not propertyquarry_google_identity.propertyquarry_identity_host_allowed(request.url.hostname):
+        setattr(request.state, "propertyquarry_identity_session_payload", False)
+        return None
+    token = _extract_propertyquarry_identity_token(request)
+    if not token:
+        setattr(request.state, "propertyquarry_identity_session_payload", False)
+        return None
+    database_url = str(getattr(container.settings, "database_url", "") or "").strip()
+    try:
+        payload = propertyquarry_google_identity.resolve_propertyquarry_identity_session(
+            token=token,
+            database_url=database_url,
+        )
+    except Exception:
+        payload = None
+    if not isinstance(payload, dict):
+        setattr(request.state, "propertyquarry_identity_session_payload", False)
+        return None
+    setattr(request.state, "propertyquarry_identity_session_payload", payload)
     return payload
 
 
@@ -510,6 +549,26 @@ def get_request_context(
             auth_source="cloudflare_access",
             access_email=access_identity.email,
             operator_id=build_operator_id(access_identity),
+        )
+        setattr(request.state, "ea_request_context", context)
+        return context
+    propertyquarry_identity_session = _propertyquarry_identity_session_payload(request, container)
+    if propertyquarry_identity_session is not None:
+        principal_id = str(propertyquarry_identity_session.get("principal_id") or "").strip()
+        if not principal_id:
+            _log_auth_failure(
+                request,
+                detail="principal_required",
+                profile=profile,
+                expected_token_configured=bool(_configured_api_token(container)),
+            )
+            raise HTTPException(status_code=401, detail="principal_required")
+        context = RequestContext(
+            principal_id=principal_id,
+            authenticated=True,
+            auth_source="propertyquarry_google_identity",
+            access_email=str(propertyquarry_identity_session.get("email") or "").strip().lower(),
+            operator_id="",
         )
         setattr(request.state, "ea_request_context", context)
         return context

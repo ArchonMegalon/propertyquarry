@@ -1492,6 +1492,99 @@ def test_propertyquarry_ai_panorama_mobile_hotspot_labels_stay_inside_viewport(
         context.close()
 
 
+def test_propertyquarry_google_continue_initiates_google_redirect_in_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID", "propertyquarry-browser-client")
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET", "propertyquarry-browser-secret")
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI", f"{base_url}/google/callback")
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET",
+        "propertyquarry-browser-state-secret-with-enough-entropy",
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+        "propertyquarry-browser-session-secret-with-enough-entropy",
+    )
+    context = _new_public_context(browser, mobile=False, width=1440, height=900)
+    page = context.new_page()
+    google_redirects: list[dict[str, object]] = []
+
+    def _capture_google_start(route) -> None:  # type: ignore[no-untyped-def]
+        response = route.fetch(max_redirects=0)
+        google_redirects.append(
+            {
+                "status": response.status,
+                "location": str(response.headers.get("location") or ""),
+            }
+        )
+        route.fulfill(
+            status=200,
+            content_type="text/html",
+            body="<title>Google handoff captured</title><h1>Google handoff captured</h1>",
+        )
+
+    page.route(re.compile(r"/sign-in/google\?"), _capture_google_start)
+    try:
+        response = page.goto(
+            f"{base_url}/sign-in?return_to=%2Fapp%2Fproperties%3Frun_id%3Drun-browser&session=expired",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        continue_with_google = page.get_by_role("link", name="Continue with Google")
+        expect(continue_with_google).to_be_visible()
+
+        continue_with_google.click()
+
+        expect(page.get_by_role("heading", name="Google handoff captured")).to_be_visible()
+        assert len(google_redirects) == 1
+        assert google_redirects[0]["status"] == 303
+        location = str(google_redirects[0]["location"])
+        assert location.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+        assert query["redirect_uri"] == [f"{base_url}/google/callback"]
+        assert query["scope"] == ["openid email profile"]
+        assert query["state"][0].startswith("pqg1.")
+    finally:
+        context.close()
+
+
+def test_propertyquarry_expired_session_without_google_has_visible_recovery_not_dead_focus(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    for name in (
+        "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID",
+        "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET",
+        "PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI",
+        "PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET",
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    context = _new_public_context(browser, mobile=False, width=1440, height=900)
+    page = context.new_page()
+    try:
+        response = page.goto(f"{base_url}/sign-in?session=expired", wait_until="networkidle")
+        assert response is not None and response.ok
+        expect(page.get_by_text("Google sign-in is temporarily unavailable.")).to_be_visible()
+        expect(page.get_by_role("link", name="Check Google again")).to_be_visible()
+        assert page.get_by_role("link", name="Continue with Google").count() == 0
+        focus_only = page.locator("[data-focus-sign-in-options]")
+        if focus_only.count():
+            assert page.locator('form[action="/sign-in/email-link"] input[type="email"]').count() == 1
+
+        page.get_by_role("link", name="Check Google again").click()
+        page.wait_for_url(re.compile(r"/sign-in\?return_to=.*#sign-in-options$"))
+        assert page.url.startswith(f"{base_url}/sign-in?")
+    finally:
+        context.close()
+
+
 def _property_fact_browser_field(
     *,
     key: str,

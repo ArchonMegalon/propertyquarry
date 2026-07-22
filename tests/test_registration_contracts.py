@@ -36,6 +36,11 @@ def _configure_google_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
     monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
     monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET", "test-propertyquarry-google-state-secret")
+    monkeypatch.setenv("PROPERTYQUARRY_IDENTITY_SESSION_SECRET", "test-propertyquarry-identity-session-secret")
 
 
 def _clear_google_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,6 +50,11 @@ def _clear_google_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
         "EA_GOOGLE_OAUTH_REDIRECT_URI",
         "EA_GOOGLE_OAUTH_STATE_SECRET",
         "EA_PROVIDER_SECRET_KEY",
+        "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID",
+        "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET",
+        "PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI",
+        "PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET",
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -430,7 +440,7 @@ def test_sign_in_page_uses_one_real_email_action_and_compact_provider_cards(
     assert '<input type="hidden" name="return_to" value="/app/support">' in response.text
     assert "Send secure sign-in link" in response.text
     assert "Create an account with email." in response.text
-    assert "Sign-in providers open the same account and create it if needed." in response.text
+    assert "Sign-in providers verify who you are, then open the same local account or create it if needed." in response.text
     assert "Creates account if needed" not in response.text
     assert 'role="list" aria-label="Sign-in providers"' in response.text
     assert 'aria-label="Continue with Google"' in response.text
@@ -453,8 +463,8 @@ def test_sign_in_page_shows_google_when_oauth_is_configured(monkeypatch: pytest.
     assert "Continue with Google" in response.text
     assert 'href="/sign-in/google?return_to=%2Fapp%2Fsearch"' in response.text
     assert "Google unavailable" not in response.text
-    assert "same account" in response.text.lower()
-    assert "Sign-in providers open the same account and create it if needed." in response.text
+    assert "same local account" in response.text.lower()
+    assert "Sign-in providers verify who you are, then open the same local account or create it if needed." in response.text
 
 
 @pytest.mark.parametrize(
@@ -798,11 +808,7 @@ def test_sign_in_facebook_ignores_stale_email_scope_override(monkeypatch: pytest
 
 
 def test_sign_in_google_reopens_existing_workspace_after_callback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     existing_principal = "user-4a1702ea0e8d9ec5"
@@ -831,24 +837,23 @@ def test_sign_in_google_reopens_existing_workspace_after_callback(monkeypatch: p
     query = urllib.parse.parse_qs(parsed.query)
     assert query["redirect_uri"][0] == "https://propertyquarry.com/google/callback"
 
-    from app.services import google_oauth as google_service
+    from app.services import propertyquarry_google_identity as google_identity
 
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_exchange_google_code_for_tokens",
         lambda **kwargs: {
             "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "scope": "openid email profile",
             "expires_in": 3600,
         },
     )
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_fetch_google_userinfo",
         lambda access_token: {
             "sub": "google-sub-signin",
             "email": "tibor.girschele@gmail.com",
+            "email_verified": True,
         },
     )
 
@@ -858,20 +863,13 @@ def test_sign_in_google_reopens_existing_workspace_after_callback(monkeypatch: p
         follow_redirects=False,
     )
     assert callback.status_code == 303
-    assert callback.headers["location"].startswith("/workspace-access/")
-
-    opened = client.get(callback.headers["location"], follow_redirects=False)
-    assert opened.status_code == 303
-    assert opened.headers["location"] == "/app/support"
-    assert "ea_workspace_session=" in str(opened.headers.get("set-cookie") or "")
+    assert callback.headers["location"] == "/app/support"
+    assert "propertyquarry_identity_session=pqis1." in str(callback.headers.get("set-cookie") or "")
+    assert "ea_workspace_session=" not in str(callback.headers.get("set-cookie") or "")
 
 
-def test_sign_in_google_reopens_existing_workspace_using_google_connector_binding(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+def test_sign_in_google_ignores_google_connector_binding_and_uses_local_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     existing_principal = "user-a2a5c1d8b7e2f4"
@@ -899,22 +897,23 @@ def test_sign_in_google_reopens_existing_workspace_using_google_connector_bindin
     parsed = urllib.parse.urlparse(auth_url)
     query = urllib.parse.parse_qs(parsed.query)
 
+    from app.services import propertyquarry_google_identity as google_identity
+
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_exchange_google_code_for_tokens",
         lambda **kwargs: {
             "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "scope": "openid email profile",
             "expires_in": 3600,
         },
     )
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_fetch_google_userinfo",
         lambda access_token: {
             "sub": "google-sub-signin",
             "email": "tibor.girschele@gmail.com",
+            "email_verified": True,
         },
     )
 
@@ -924,12 +923,11 @@ def test_sign_in_google_reopens_existing_workspace_using_google_connector_bindin
         follow_redirects=False,
     )
     assert callback.status_code == 303
-    assert callback.headers["location"].startswith("/workspace-access/")
-
-    opened = client.get(callback.headers["location"], follow_redirects=False)
-    assert opened.status_code == 303
-    assert opened.headers["location"] == "/app/search"
-    assert "ea_workspace_session=" in str(opened.headers.get("set-cookie") or "")
+    assert callback.headers["location"] == "/app/search"
+    assert "propertyquarry_identity_session=pqis1." in str(callback.headers.get("set-cookie") or "")
+    local_principal = f"user-{hashlib.sha256(b'tibor.girschele@gmail.com').hexdigest()[:16]}"
+    assert local_principal in google_identity._MEMORY_ACCOUNTS  # noqa: SLF001
+    assert existing_principal not in google_identity._MEMORY_ACCOUNTS  # noqa: SLF001
 
 
 def test_sign_in_google_prefers_real_workspace_over_temporary_cf_email(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1000,11 +998,7 @@ def test_sign_in_google_reopens_existing_cf_email_workspace_without_access_sessi
 
 
 def test_sign_in_google_reopens_registered_workspace_without_access_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     email = "returner@example.com"
@@ -1016,24 +1010,23 @@ def test_sign_in_google_reopens_registered_workspace_without_access_session(monk
     assert sign_in_start.status_code == 303
     query = urllib.parse.parse_qs(urllib.parse.urlparse(sign_in_start.headers["location"]).query)
 
-    from app.services import google_oauth as google_service
+    from app.services import propertyquarry_google_identity as google_identity
 
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_exchange_google_code_for_tokens",
         lambda **kwargs: {
             "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "scope": "openid email profile",
             "expires_in": 3600,
         },
     )
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_fetch_google_userinfo",
         lambda access_token: {
             "sub": "google-sub-returner",
             "email": email,
+            "email_verified": True,
         },
     )
 
@@ -1044,19 +1037,13 @@ def test_sign_in_google_reopens_registered_workspace_without_access_session(monk
     )
 
     assert callback.status_code == 303
-    assert callback.headers["location"].startswith("/workspace-access/")
-    opened = client.get(callback.headers["location"], follow_redirects=False)
-    assert opened.status_code == 303
-    assert opened.headers["location"] == "/app/search"
-    assert "ea_workspace_session=" in str(opened.headers.get("set-cookie") or "")
+    assert callback.headers["location"] == "/app/search"
+    assert "propertyquarry_identity_session=pqis1." in str(callback.headers.get("set-cookie") or "")
+    assert registered_principal in google_identity._MEMORY_ACCOUNTS  # noqa: SLF001
 
 
 def test_sign_in_google_does_not_create_wrong_workspace_for_unknown_email(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     sign_in_start = client.post("/sign-in/google", follow_redirects=False)
@@ -1064,24 +1051,23 @@ def test_sign_in_google_does_not_create_wrong_workspace_for_unknown_email(monkey
     parsed = urllib.parse.urlparse(sign_in_start.headers["location"])
     query = urllib.parse.parse_qs(parsed.query)
 
-    from app.services import google_oauth as google_service
+    from app.services import propertyquarry_google_identity as google_identity
 
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_exchange_google_code_for_tokens",
         lambda **kwargs: {
             "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "scope": "openid email profile",
             "expires_in": 3600,
         },
     )
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_fetch_google_userinfo",
         lambda access_token: {
             "sub": "google-sub-unknown",
             "email": "unknown.google@example.com",
+            "email_verified": True,
         },
     )
 
@@ -1092,19 +1078,14 @@ def test_sign_in_google_does_not_create_wrong_workspace_for_unknown_email(monkey
     )
 
     assert callback.status_code == 303
-    assert callback.headers["location"].startswith("/workspace-access/")
-    opened = client.get(callback.headers["location"], follow_redirects=False)
-    assert opened.status_code == 303
-    assert opened.headers["location"] == "/app/search"
-    assert "ea_workspace_session=" in str(opened.headers.get("set-cookie") or "")
+    assert callback.headers["location"] == "/app/search"
+    assert "propertyquarry_identity_session=pqis1." in str(callback.headers.get("set-cookie") or "")
+    unknown_principal = f"user-{hashlib.sha256(b'unknown.google@example.com').hexdigest()[:16]}"
+    assert unknown_principal in google_identity._MEMORY_ACCOUNTS  # noqa: SLF001
 
 
 def test_sign_in_google_callback_google_error_is_returned_to_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     sign_in_start = client.post("/sign-in/google", follow_redirects=False)
@@ -1124,7 +1105,7 @@ def test_sign_in_google_callback_google_error_is_returned_to_sign_in(monkeypatch
 
     assert callback.status_code == 303
     assert callback.headers["location"].startswith("/sign-in?")
-    assert "google_error=The+user+denied+the+request" in callback.headers["location"]
+    assert "google_error=google_oauth_propertyquarry_access_denied" in callback.headers["location"]
 
 
 def test_sign_in_page_shows_friendly_identity_only_google_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1187,12 +1168,8 @@ def test_sign_in_hides_stale_provider_error_after_account_is_signed_in(monkeypat
     assert "Retry Google sign-in" not in response.text
 
 
-def test_sign_in_google_identity_only_callback_redirects_as_google_identity_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+def test_sign_in_google_identity_callback_does_not_reflect_provider_error_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     sign_in_start = client.post("/sign-in/google", follow_redirects=False)
@@ -1212,38 +1189,35 @@ def test_sign_in_google_identity_only_callback_redirects_as_google_identity_only
 
     assert callback.status_code == 303
     assert callback.headers["location"].startswith("/sign-in?")
-    assert "google_error=google_identity_only" in callback.headers["location"]
+    assert "google_error=google_oauth_propertyquarry_access_denied" in callback.headers["location"]
+    assert "Google+Identity-only" not in callback.headers["location"]
 
 
-def test_sign_in_google_callback_fails_closed_without_returned_scopes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+def test_sign_in_google_callback_accepts_verified_userinfo_without_scope_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     sign_in_start = client.post("/sign-in/google", follow_redirects=False)
     assert sign_in_start.status_code == 303
     query = urllib.parse.parse_qs(urllib.parse.urlparse(sign_in_start.headers["location"]).query)
 
-    from app.services import google_oauth as google_service
+    from app.services import propertyquarry_google_identity as google_identity
 
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_exchange_google_code_for_tokens",
         lambda **kwargs: {
             "access_token": "access-token",
-            "refresh_token": "refresh-token",
             "expires_in": 3600,
         },
     )
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_fetch_google_userinfo",
         lambda access_token: {
             "sub": "google-sub-signin",
             "email": "tibor.girschele@gmail.com",
+            "email_verified": True,
         },
     )
 
@@ -1254,45 +1228,40 @@ def test_sign_in_google_callback_fails_closed_without_returned_scopes(monkeypatc
     )
 
     assert callback.status_code == 303
-    assert callback.headers["location"].startswith("/sign-in?")
-    assert "google_error=google_oauth_granted_scopes_missing" in callback.headers["location"]
+    assert callback.headers["location"] == "/app/search"
+    assert "propertyquarry_identity_session=pqis1." in str(callback.headers.get("set-cookie") or "")
 
 
-def test_sign_in_google_callback_rejects_replayed_state_before_second_token_exchange(
+def test_sign_in_google_callback_rejects_reused_browser_flow_before_second_token_exchange(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_REDIRECT_URI", "https://propertyquarry.com/google/callback")
-    monkeypatch.setenv("EA_GOOGLE_OAUTH_STATE_SECRET", "test-google-state-secret")
-    monkeypatch.setenv("EA_PROVIDER_SECRET_KEY", "test-provider-secret-key")
+    _configure_google_sign_in(monkeypatch)
     client = _client(monkeypatch)
 
     sign_in_start = client.post("/sign-in/google", follow_redirects=False)
     assert sign_in_start.status_code == 303
     state = urllib.parse.parse_qs(urllib.parse.urlparse(sign_in_start.headers["location"]).query)["state"][0]
 
-    from app.services import google_oauth as google_service
+    from app.services import propertyquarry_google_identity as google_identity
 
-    google_service._GOOGLE_USED_STATE_KEYS.clear()  # noqa: SLF001
+    google_identity.reset_propertyquarry_google_identity_memory_for_tests()
     token_exchanges = {"count": 0}
 
     def _exchange(**kwargs):  # noqa: ANN003
         token_exchanges["count"] += 1
         return {
             "access_token": "access-token",
-            "refresh_token": "refresh-token",
-            "scope": "openid email profile",
             "expires_in": 3600,
         }
 
-    monkeypatch.setattr(google_service, "_exchange_google_code_for_tokens", _exchange)
+    monkeypatch.setattr(google_identity, "_exchange_google_code_for_tokens", _exchange)
     monkeypatch.setattr(
-        google_service,
+        google_identity,
         "_fetch_google_userinfo",
         lambda access_token: {
             "sub": "google-sub-unknown",
             "email": "unknown.google@example.com",
+            "email_verified": True,
         },
     )
 
@@ -1302,7 +1271,7 @@ def test_sign_in_google_callback_rejects_replayed_state_before_second_token_exch
         follow_redirects=False,
     )
     assert first_callback.status_code == 303
-    assert first_callback.headers["location"].startswith("/workspace-access/")
+    assert first_callback.headers["location"] == "/app/search"
     assert token_exchanges["count"] == 1
 
     second_callback = client.get(
@@ -1311,7 +1280,7 @@ def test_sign_in_google_callback_rejects_replayed_state_before_second_token_exch
         follow_redirects=False,
     )
     assert second_callback.status_code == 303
-    assert "google_error=google_oauth_state_replayed" in second_callback.headers["location"]
+    assert "google_error=google_oauth_propertyquarry_flow_mismatch" in second_callback.headers["location"]
     assert token_exchanges["count"] == 1
 
 

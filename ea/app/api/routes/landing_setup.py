@@ -31,6 +31,7 @@ from app.services.google_oauth import (
     read_google_oauth_state,
     read_google_oauth_state_unchecked,
 )
+from app.services import propertyquarry_google_identity
 from app.services.id_austria_oidc import (
     complete_id_austria_oidc_callback,
     read_id_austria_oidc_state,
@@ -567,6 +568,110 @@ def facebook_oauth_browser_callback(
     )
 
 
+def _complete_propertyquarry_google_identity_sign_in(
+    *,
+    request: Request,
+    code: str,
+    state: str,
+    error: str,
+    container: AppContainer,
+) -> RedirectResponse:
+    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    secure_cookie = (
+        request.url.scheme == "https"
+        or forwarded_proto == "https"
+        or str(request.url.hostname or "").strip().lower().rstrip(".")
+        in {"propertyquarry.com", "www.propertyquarry.com"}
+    )
+
+    def finish(response: RedirectResponse) -> RedirectResponse:
+        response.delete_cookie(
+            propertyquarry_google_identity.GOOGLE_IDENTITY_FLOW_COOKIE_NAME,
+            path="/google/callback",
+            secure=secure_cookie,
+            httponly=True,
+            samesite="lax",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+        return response
+
+    flow_nonce = str(
+        request.cookies.get(propertyquarry_google_identity.GOOGLE_IDENTITY_FLOW_COOKIE_NAME)
+        or ""
+    ).strip()
+    return_to = "/app/search"
+    try:
+        state_payload = propertyquarry_google_identity.read_propertyquarry_google_identity_state(
+            state,
+            flow_nonce=flow_nonce,
+            require_flow_nonce=True,
+        )
+        return_to = _normalize_browser_return_to(
+            str(state_payload.get("return_to") or ""),
+            default="/app/search",
+        )
+    except RuntimeError as exc:
+        return finish(_google_sign_in_error_redirect(error=str(exc), return_to=return_to))
+    if not propertyquarry_google_identity.propertyquarry_identity_host_allowed(request.url.hostname):
+        return finish(_google_sign_in_error_redirect(
+            error="google_oauth_propertyquarry_host_required",
+            return_to=return_to,
+        ))
+    if str(error or "").strip():
+        try:
+            propertyquarry_google_identity.consume_propertyquarry_google_identity_state(
+                state=state,
+                flow_nonce=flow_nonce,
+                database_url=str(getattr(container.settings, "database_url", "") or "").strip(),
+            )
+        except RuntimeError as exc:
+            return finish(_google_sign_in_error_redirect(error=str(exc), return_to=return_to))
+        return finish(_google_sign_in_error_redirect(
+            error="google_oauth_propertyquarry_access_denied",
+            return_to=return_to,
+        ))
+    if not str(code or "").strip():
+        try:
+            propertyquarry_google_identity.consume_propertyquarry_google_identity_state(
+                state=state,
+                flow_nonce=flow_nonce,
+                database_url=str(getattr(container.settings, "database_url", "") or "").strip(),
+            )
+        except RuntimeError as exc:
+            return finish(_google_sign_in_error_redirect(error=str(exc), return_to=return_to))
+        return finish(_google_sign_in_error_redirect(
+            error="google_oauth_propertyquarry_code_missing",
+            return_to=return_to,
+        ))
+    try:
+        identity_session = propertyquarry_google_identity.complete_propertyquarry_google_identity_callback(
+            code=code,
+            state=state,
+            flow_nonce=flow_nonce,
+            database_url=str(getattr(container.settings, "database_url", "") or "").strip(),
+        )
+    except RuntimeError as exc:
+        return finish(_google_sign_in_error_redirect(error=str(exc), return_to=return_to))
+    except Exception:
+        return finish(_google_sign_in_error_redirect(
+            error="google_oauth_propertyquarry_sign_in_failed",
+            return_to=return_to,
+        ))
+    response = RedirectResponse(identity_session.return_to, status_code=303)
+    response.set_cookie(
+        propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME,
+        identity_session.token,
+        max_age=identity_session.max_age_seconds,
+        path="/",
+        secure=secure_cookie,
+        httponly=True,
+        samesite="lax",
+    )
+    return finish(response)
+
+
 @router.get("/google/callback", response_class=HTMLResponse, response_model=None, name="google_oauth_browser_callback")
 def google_oauth_browser_callback(
     request: Request,
@@ -576,6 +681,22 @@ def google_oauth_browser_callback(
     error_description: str = "",
     container: AppContainer = Depends(get_container),
 ) -> HTMLResponse | RedirectResponse:
+    flow_cookie_present = bool(
+        str(
+            request.cookies.get(propertyquarry_google_identity.GOOGLE_IDENTITY_FLOW_COOKIE_NAME)
+            or ""
+        ).strip()
+    )
+    if propertyquarry_google_identity.is_propertyquarry_google_identity_state(state) or (
+        not str(state or "").strip() and flow_cookie_present
+    ):
+        return _complete_propertyquarry_google_identity_sign_in(
+            request=request,
+            code=code,
+            state=state,
+            error=error,
+            container=container,
+        )
     state_payload = {}
     try:
         state_payload = read_google_oauth_state(state) if str(state or "").strip() else {}

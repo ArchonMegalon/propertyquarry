@@ -28,6 +28,7 @@ from markupsafe import Markup
 from app.api.dependencies import (
     RequestContext,
     _extract_token,
+    _propertyquarry_identity_session_payload,
     _resolved_principal_id,
     _workspace_session_payload,
     browser_principal_override_allowed,
@@ -155,6 +156,7 @@ from app.product.service import (
 )
 from app.services.cloudflare_access import CloudflareAccessIdentity
 from app.services import google_oauth as google_oauth_service
+from app.services import propertyquarry_google_identity
 from app.services import public_analytics_consent as analytics_consent
 from app.services.google_oauth import complete_google_oauth_callback
 from app.services.property_billing import payfunnels_configured, property_commercial_snapshot
@@ -876,14 +878,10 @@ def _property_pricing_billing_link_copy(handoff: dict[str, object] | None = None
     )
 
 
-def _google_sign_in_enabled() -> bool:
-    from app.services.google_oauth import load_google_oauth_config
-
-    try:
-        load_google_oauth_config()
-    except RuntimeError:
+def _google_sign_in_enabled(request: Request | None = None) -> bool:
+    if request is not None and request_brand(request).get("key") != "propertyquarry":
         return False
-    return True
+    return propertyquarry_google_identity.propertyquarry_google_identity_configured()
 
 
 def _facebook_sign_in_enabled() -> bool:
@@ -3916,6 +3914,9 @@ def _principal_for_page(
     if access_identity is not None:
         return access_identity.principal_id
     if request is not None:
+        propertyquarry_identity_session = _propertyquarry_identity_session_payload(request, container)
+        if propertyquarry_identity_session is not None:
+            return str(propertyquarry_identity_session.get("principal_id") or "").strip()
         workspace_session = _workspace_session_payload(request, container)
         if workspace_session is not None:
             return str(workspace_session.get("principal_id") or "").strip()
@@ -3987,6 +3988,9 @@ def _landing_authenticated_principal(
 ) -> str:
     if access_identity is not None:
         return str(access_identity.principal_id or "").strip()
+    propertyquarry_identity_session = _propertyquarry_identity_session_payload(request, container)
+    if propertyquarry_identity_session is not None:
+        return str(propertyquarry_identity_session.get("principal_id") or "").strip()
     workspace_session = _workspace_session_payload(request, container)
     if workspace_session is not None:
         return str(workspace_session.get("principal_id") or "").strip()
@@ -6737,7 +6741,7 @@ def sign_in_page(
                 "sign_in_facebook_error": facebook_error,
                 "sign_in_id_austria_error": id_austria_error,
                 "sign_in_connected_provider": connected_provider,
-                "sign_in_google_enabled": _google_sign_in_enabled(),
+                "sign_in_google_enabled": _google_sign_in_enabled(request),
                 "sign_in_facebook_enabled": _facebook_sign_in_enabled(),
                 "sign_in_id_austria_configured": id_austria_configured,
                 "sign_in_id_austria_country_allowed": id_austria_country_allowed,
@@ -6825,19 +6829,26 @@ async def sign_in_google(
     request: Request,
     container: AppContainer = Depends(get_container),
 ) -> RedirectResponse:
-    from app.services.google_oauth import build_google_oauth_start
-
     return_to = _normalize_browser_return_to(
         request.query_params.get("return_to"),
         default=str(request_brand(request).get("app_home") or "/app/search"),
     )
+    if request_brand(request).get("key") != "propertyquarry":
+        return RedirectResponse(
+            "/sign-in?"
+            + urllib.parse.urlencode(
+                {
+                    "google_error": "google_oauth_propertyquarry_host_required",
+                    "return_to": return_to,
+                }
+            ),
+            status_code=303,
+        )
     try:
-        packet = build_google_oauth_start(
-            principal_id="",
-            scope_bundle="identity",
-            redirect_uri_override=f"{_public_app_base_url(request)}/google/callback",
+        identity_config = propertyquarry_google_identity.load_propertyquarry_google_identity_config()
+        packet = propertyquarry_google_identity.build_propertyquarry_google_identity_start(
+            redirect_uri=identity_config.redirect_uri,
             return_to=return_to,
-            browser_source="sign_in",
         )
     except RuntimeError as exc:
         return RedirectResponse(
@@ -6850,7 +6861,26 @@ async def sign_in_google(
             ),
             status_code=303,
         )
-    return RedirectResponse(str(packet.auth_url), status_code=303)
+    response = RedirectResponse(str(packet.auth_url), status_code=303)
+    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    secure_cookie = (
+        request.url.scheme == "https"
+        or forwarded_proto == "https"
+        or str(request.url.hostname or "").strip().lower().rstrip(".")
+        in {"propertyquarry.com", "www.propertyquarry.com"}
+    )
+    response.set_cookie(
+        propertyquarry_google_identity.GOOGLE_IDENTITY_FLOW_COOKIE_NAME,
+        packet.flow_nonce,
+        max_age=packet.max_age_seconds,
+        path="/google/callback",
+        secure=secure_cookie,
+        httponly=True,
+        samesite="lax",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @router.api_route("/sign-in/facebook", methods=["GET", "POST"], response_model=None, include_in_schema=False)
@@ -7088,10 +7118,27 @@ async def app_sign_out(
     return_to = _normalize_browser_return_to(query_params.get("return_to", "") or _form_value(body, "return_to", public_base), default=public_base)
     if not return_to:
         return_to = public_base
-    workspace_session = _workspace_session_payload(request, container)
-    product = build_product_service(container)
+    propertyquarry_identity_session = _propertyquarry_identity_session_payload(request, container)
+    workspace_session = (
+        None
+        if isinstance(propertyquarry_identity_session, dict)
+        else _workspace_session_payload(request, container)
+    )
     actor = str(context.operator_id or context.access_email or context.principal_id or "browser").strip()
+    if isinstance(propertyquarry_identity_session, dict):
+        try:
+            propertyquarry_google_identity.revoke_propertyquarry_identity_session(
+                token=str(
+                    request.cookies.get(propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME)
+                    or ""
+                ).strip(),
+                database_url=str(getattr(container.settings, "database_url", "") or "").strip(),
+                actor=actor,
+            )
+        except Exception:
+            pass
     if isinstance(workspace_session, dict):
+        product = build_product_service(container)
         session_id = str(workspace_session.get("session_id") or "").strip()
         principal_id = str(workspace_session.get("principal_id") or context.principal_id or "").strip()
         if session_id and principal_id:
@@ -7114,8 +7161,17 @@ async def app_sign_out(
         )
 
     response = RedirectResponse(return_to, status_code=303)
-    _clear_workspace_session_cookie(response, request)
-    response.set_cookie("ea_workspace_signed_out", "1", **_signed_out_marker_cookie_kwargs(request))
+    if isinstance(propertyquarry_identity_session, dict):
+        response.delete_cookie(
+            propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME,
+            path="/",
+            secure=True,
+            httponly=True,
+            samesite="lax",
+        )
+    else:
+        _clear_workspace_session_cookie(response, request)
+        response.set_cookie("ea_workspace_signed_out", "1", **_signed_out_marker_cookie_kwargs(request))
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
     return response
 

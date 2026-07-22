@@ -345,7 +345,7 @@
     <div class="access-shell">
       <div class="access-intro">
         <h1>{% if brand.key == 'propertyquarry' %}Continue your property search.{% else %}Sign in if you already have account access.{% endif %}</h1>
-        <p class="lead">Use a secure email link if your address already has access. You can also continue with an available provider.</p>
+        <p class="lead">Use a secure email link if your address already has access. You can also continue with an available provider.{% if show_google_provider %} Google only verifies your identity for a PropertyQuarry-local session.{% endif %}</p>
       </div>
       <div class="access-entry" id="sign-in-options" role="region" aria-label="Sign-in options" tabindex="-1">
         {% if public_signed_in %}
@@ -381,13 +381,14 @@
         </div>
         {% if has_enabled_sign_in_provider %}
         <div class="access-entry-block">
-          <p class="access-entry-copy">Sign-in providers open the same account and create it if needed.</p>
+          <p class="access-entry-copy">Sign-in providers verify who you are, then open the same local account or create it if needed.</p>
           <div class="auth-provider-stack" role="list" aria-label="Sign-in providers">
             {% if show_google_provider %}
             <div class="auth-provider-card" role="listitem" data-auth-provider-card data-auth-provider="google" data-auth-provider-state="enabled">
               <span class="auth-provider-icon" aria-hidden="true">G</span>
               <span>
                 <strong>Google</strong>
+                <span class="access-entry-copy">Identity only</span>
               </span>
               <a class="btn" href="/sign-in/google?return_to={{ sign_in_return_to_encoded }}" aria-label="Continue with Google" data-auth-provider-link data-submitting-label="Opening Google...">Continue</a>
             </div>
@@ -414,6 +415,15 @@
           </div>
         </div>
         {% endif %}
+        {% endif %}
+        {% if brand.key == 'propertyquarry' and not show_google_provider and not sign_in_google_error %}
+        <div class="access-feedback" data-propertyquarry-google-unavailable role="status" aria-live="polite">
+          <strong>Google sign-in is temporarily unavailable.</strong>
+          <p class="copy">{% if sign_in_link_enabled %}Use the secure email form above, or check Google again.{% else %}Check Google again in a moment. Your saved property search is not affected.{% endif %}</p>
+          <div class="cta-row">
+            <a class="btn" href="/sign-in?return_to={{ sign_in_return_to_encoded }}#sign-in-options">Check Google again</a>
+          </div>
+        </div>
         {% endif %}
       </div>
     </div>
@@ -463,7 +473,7 @@
         {{ sign_in_google_error }}
         {% endif %}
       </p>
-      <p class="copy">Google opens the same account and creates it if needed.</p>
+      <p class="copy">Google opens the same account and creates it if needed. It only verifies your identity here; PropertyQuarry keeps the account and session local.</p>
       {% if show_google_provider %}
       <div class="cta-row">
         <a class="btn" href="/sign-in/google?return_to={{ sign_in_return_to_encoded }}" data-auth-provider-link data-auth-provider-kind="google" data-submitting-label="Opening Google...">Retry Google sign-in</a>
