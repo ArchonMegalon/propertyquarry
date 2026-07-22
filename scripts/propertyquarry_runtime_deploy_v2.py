@@ -132,6 +132,7 @@ MAX_COMPOSE_BYTES = 8 * 1024 * 1024
 
 RUNTIME_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DEPLOYMENT_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+ENVELOPE_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 CONTAINER_ID_RE = re.compile(r"^[0-9a-f]{64}$")
 SIGNATURE_RE = re.compile(r"^[A-Za-z0-9_-]{86}$")
@@ -555,6 +556,31 @@ def _validate_observation(value: object, *, expected_path: Path) -> dict[str, ob
     return dict(value)
 
 
+def _validate_runtime_input_descriptor(
+    value: object,
+    *,
+    expected_path: Path,
+) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != OBSERVATION_KEYS:
+        raise DeployError("runtime_input_shape_invalid")
+    if value.get("path") != str(expected_path):
+        raise DeployError("runtime_input_path_invalid")
+    if not SHA256_RE.fullmatch(str(value.get("sha256") or "")):
+        raise DeployError("runtime_input_digest_invalid")
+    mode = _exact_int(value.get("mode"), 0, 0o7777)
+    uid = _exact_int(value.get("uid"), 0, (1 << 31) - 1)
+    gid = _exact_int(value.get("gid"), 0, (1 << 31) - 1)
+    size = _exact_int(value.get("size"), 1, MAX_ENV_BYTES)
+    return {
+        "gid": gid,
+        "mode": mode,
+        "path": str(expected_path),
+        "sha256": str(value["sha256"]),
+        "size": size,
+        "uid": uid,
+    }
+
+
 def _runtime_input_owners(authority: Mapping[str, object]) -> tuple[tuple[int, int], ...]:
     return (
         (RUNTIME_UID, RUNTIME_GID),
@@ -589,12 +615,11 @@ def _validate_runtime_input_array(
     owners = _runtime_input_owners(authority)
     result: list[dict[str, object]] = []
     for item, path, (uid, gid) in zip(value, ENV_FILES, owners, strict=True):
-        observed = _validate_observation(item, expected_path=path)
+        observed = _validate_runtime_input_descriptor(item, expected_path=path)
         if (
-            observed["mode"] != "0600"
+            observed["mode"] != 0o600
             or observed["uid"] != uid
             or observed["gid"] != gid
-            or int(observed["size"]) > MAX_ENV_BYTES
         ):
             raise DeployError("runtime_input_metadata_invalid")
         result.append(observed)
@@ -837,7 +862,7 @@ def _load_contract(args: argparse.Namespace) -> Contract:
     if (
         not RUNTIME_SHA_RE.fullmatch(common["runtime_sha"])
         or not DEPLOYMENT_ID_RE.fullmatch(common["deployment_id"])
-        or not RUNTIME_SHA_RE.fullmatch(common["envelope_sha"])
+        or not ENVELOPE_SHA_RE.fullmatch(common["envelope_sha"])
         or not IMAGE_RE.fullmatch(common["web_image"])
         or not IMAGE_RE.fullmatch(common["render_image"])
         or not IMAGE_RE.fullmatch(common["cloudflared_image"])
@@ -1493,7 +1518,7 @@ def _validate_database_receipts(
 
 
 def _runtime_input_observations() -> list[dict[str, object]]:
-    return [_observe(path, maximum=MAX_ENV_BYTES) for path in ENV_FILES]
+    return [_observe_runtime_input(path) for path in ENV_FILES]
 
 
 def _environment_digests(
@@ -1531,6 +1556,19 @@ def _observe(path: Path, *, maximum: int) -> dict[str, object]:
     return {
         "gid": metadata.st_gid,
         "mode": f"{stat.S_IMODE(metadata.st_mode):04o}",
+        "path": str(path),
+        "sha256": _sha256_id(raw),
+        "size": metadata.st_size,
+        "uid": metadata.st_uid,
+    }
+
+
+def _observe_runtime_input(path: Path) -> dict[str, object]:
+    raw = _read_regular(path, maximum=MAX_ENV_BYTES)
+    metadata = path.lstat()
+    return {
+        "gid": metadata.st_gid,
+        "mode": stat.S_IMODE(metadata.st_mode),
         "path": str(path),
         "sha256": _sha256_id(raw),
         "size": metadata.st_size,
@@ -1634,7 +1672,40 @@ def _open_verified_docker(expected: Mapping[str, object]) -> int:
         raise
 
 
-def _run_compose(argv: Sequence[str], docker_observation: Mapping[str, object]) -> ProcessResult:
+def _run_compose(
+    argv: Sequence[str],
+    docker_observation: Mapping[str, object],
+    release_environment: Mapping[str, str],
+) -> ProcessResult:
+    expected_release_keys = {
+        "PROPERTYQUARRY_RELEASE_COMMIT_SHA",
+        "PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID",
+        "PROPERTYQUARRY_RENDER_IMAGE",
+        "PROPERTYQUARRY_WEB_IMAGE",
+    }
+    if (
+        set(release_environment) != expected_release_keys
+        or RUNTIME_SHA_RE.fullmatch(
+            str(release_environment.get("PROPERTYQUARRY_RELEASE_COMMIT_SHA") or "")
+        )
+        is None
+        or DEPLOYMENT_ID_RE.fullmatch(
+            str(
+                release_environment.get("PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID")
+                or ""
+            )
+        )
+        is None
+        or IMAGE_RE.fullmatch(
+            str(release_environment.get("PROPERTYQUARRY_RENDER_IMAGE") or "")
+        )
+        is None
+        or IMAGE_RE.fullmatch(
+            str(release_environment.get("PROPERTYQUARRY_WEB_IMAGE") or "")
+        )
+        is None
+    ):
+        raise DeployError("compose_release_environment_invalid")
     descriptor = _open_verified_docker(docker_observation)
     environment = {
         "DOCKER_CONFIG": "/nonexistent/propertyquarry-release-single-host-v2",
@@ -1642,6 +1713,7 @@ def _run_compose(argv: Sequence[str], docker_observation: Mapping[str, object]) 
         "LANG": "C",
         "LC_ALL": "C",
         "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+        **dict(release_environment),
     }
     try:
         process = subprocess.Popen(
@@ -2106,6 +2178,12 @@ def execute_signed(args: argparse.Namespace) -> dict[str, object]:
     process = _run_compose(
         contract.runtime_deploy["compose_argv"],
         contract.runtime_deploy["docker_executable"],
+        {
+            "PROPERTYQUARRY_RELEASE_COMMIT_SHA": str(args.runtime_sha),
+            "PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID": str(args.deployment_id),
+            "PROPERTYQUARRY_RENDER_IMAGE": str(args.render_image),
+            "PROPERTYQUARRY_WEB_IMAGE": str(args.web_image),
+        },
     )
     finished = int(time.time())
     duration = finished - started

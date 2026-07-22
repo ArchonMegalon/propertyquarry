@@ -47,7 +47,7 @@ class Harness:
         self.gid = os.getgid()
         self.runtime_sha = "1" * 40
         self.deployment_id = "2" * 64
-        self.envelope_sha = "3" * 40
+        self.envelope_sha = "3" * 64
         self.web_image = (
             "ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime@sha256:"
             + "4" * 64
@@ -212,6 +212,11 @@ class Harness:
             "uid": metadata.st_uid,
         }
 
+    def _runtime_input_observation(self, path: Path) -> dict[str, object]:
+        observation = self._observation(path)
+        observation["mode"] = int(str(observation["mode"]), 8)
+        return observation
+
     def _sign_wrapper(self, payload: dict[str, object], domain: bytes) -> bytes:
         encoded = deploy._canonical_json(payload)
         signature = self.receipt_key.sign(deploy._framed(domain, encoded))
@@ -235,7 +240,9 @@ class Harness:
         return deploy._sha256_id(raw)
 
     def _build_documents_and_receipts(self) -> None:
-        post_inputs = [self._observation(path) for path in self.env_files]
+        post_inputs = [
+            self._runtime_input_observation(path) for path in self.env_files
+        ]
         pre_inputs = [dict(item) for item in post_inputs]
         pre_inputs[0] = dict(pre_inputs[0])
         pre_inputs[0]["sha256"] = "sha256:" + "a" * 64
@@ -592,9 +599,15 @@ class Harness:
         secret_stderr = b"another-secret"
         expected_argv = list(self.runtime_deploy["compose_argv"])
 
-        def fake_run(argv, docker_observation):
+        def fake_run(argv, docker_observation, release_environment):
             assert list(argv) == expected_argv
             assert docker_observation == self.runtime_deploy["docker_executable"]
+            assert release_environment == {
+                "PROPERTYQUARRY_RELEASE_COMMIT_SHA": self.runtime_sha,
+                "PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID": self.deployment_id,
+                "PROPERTYQUARRY_RENDER_IMAGE": self.render_image,
+                "PROPERTYQUARRY_WEB_IMAGE": self.web_image,
+            }
             return deploy.ProcessResult(
                 exit_code=0,
                 stdout_bytes=len(secret_stdout),
@@ -672,6 +685,7 @@ def test_signed_deploy_receipt_binds_every_predecessor_and_redacts_output(
     assert payload["database_container_id"] == harness.database_container_id
     assert payload["database_pgdata_volume"] == harness.pgdata
     assert payload["runtime_inputs"] == harness.runtime_inputs
+    assert {item["mode"] for item in payload["runtime_inputs"]} == {0o600}
     assert payload["pre_observations"] == payload["post_observations"]
     assert payload["pull_policy"] == "always"
     assert payload["build_performed"] is False
@@ -714,8 +728,17 @@ def test_rejects_runtime_input_substitution(harness: Harness) -> None:
     assert not harness.receipt_path.exists()
 
 
+def test_rejects_string_mode_in_signed_runtime_inputs(harness: Harness) -> None:
+    authority = json.loads((harness.install / "authority.v2.json").read_bytes())
+    runtime_inputs = [dict(item) for item in authority["runtime_inputs"]]
+    runtime_inputs[0]["mode"] = "0600"
+
+    with pytest.raises(deploy.DeployError, match="integer_invalid"):
+        deploy._validate_runtime_input_array(runtime_inputs, authority=authority)
+
+
 def test_rejects_post_execution_compose_mutation(harness: Harness) -> None:
-    def mutating_run(_argv, _docker_observation):
+    def mutating_run(_argv, _docker_observation, _release_environment):
         harness.compose_files[1].write_text("services: {changed: {}}\n")
         return deploy.ProcessResult(
             exit_code=0,
@@ -744,7 +767,7 @@ def test_rejects_database_substrate_replacement_during_compose(
     harness.monkeypatch.setattr(
         deploy,
         "_run_compose",
-        lambda _argv, _docker: deploy.ProcessResult(
+        lambda _argv, _docker, _release_environment: deploy.ProcessResult(
             exit_code=0,
             stdout_bytes=0,
             stdout_sha256=deploy._sha256_id(b""),
