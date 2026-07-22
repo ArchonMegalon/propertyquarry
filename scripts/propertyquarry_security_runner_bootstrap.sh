@@ -169,14 +169,14 @@ trap 'on_unexpected_error "${LINENO}"' ERR
 [[ "${EUID}" -eq 0 ]] || fail "bootstrap must run as root on the disposable hosted VM"
 [[ "${GITHUB_ACTIONS:-}" == "true" ]] || fail "not running in GitHub Actions"
 [[ "${RUNNER_ENVIRONMENT:-}" == "github-hosted" ]] || fail "outer runner is not GitHub-hosted"
-[[ "${GITHUB_REPOSITORY:-}" == "ArchonMegalon/property" ]] || fail "outer repository mismatch"
+[[ "${GITHUB_REPOSITORY:-}" == "ArchonMegalon/propertyquarry" ]] || fail "outer repository mismatch"
 [[ "${GITHUB_REF:-}" == "refs/heads/main" ]] || fail "outer ref is not main"
 [[ "${GITHUB_SHA:-}" == "${PQ_EXPECTED_HEAD_SHA:?}" ]] || fail "outer head SHA mismatch"
 [[ "${ImageOS:-}" == "${EXPECTED_IMAGE_OS}" ]] || fail "hosted image OS changed"
 [[ "${ImageVersion:-}" == "${EXPECTED_IMAGE_VERSION}" ]] || fail "hosted image version changed"
 [[ "$(uname -r)" == "${EXPECTED_KERNEL}" ]] || fail "hosted kernel changed"
-[[ "${PQ_REPOSITORY:?}" == "ArchonMegalon/property" ]] || fail "target repository mismatch"
-[[ "${PQ_EXPECTED_WORKFLOW_REF:?}" == "ArchonMegalon/property/.github/workflows/smoke-runtime.yml@refs/heads/main" ]] \
+[[ "${PQ_REPOSITORY:?}" == "ArchonMegalon/propertyquarry" ]] || fail "target repository mismatch"
+[[ "${PQ_EXPECTED_WORKFLOW_REF:?}" == "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main" ]] \
   || fail "target workflow ref mismatch"
 [[ "${PQ_SECURITY_RUN_ID:?}" =~ ^[0-9]+$ ]] || fail "target run id is malformed"
 [[ "${PQ_SECURITY_RUN_ATTEMPT:?}" =~ ^[1-9][0-9]*$ ]] || fail "target run attempt is malformed"
@@ -191,9 +191,9 @@ registration_remaining_seconds="$((registration_expires_epoch - $(date -u +%s)))
 (( registration_remaining_seconds >= 2400 )) || fail "runner token is too close to expiration"
 (( registration_remaining_seconds <= 3700 )) || fail "runner token expiration is implausibly distant"
 [[ "${PQ_GHCR_TOKEN:?}" != *$'\n'* ]] || fail "registry token is malformed"
-[[ "${PQ_WEB_IMAGE:?}" =~ ^ghcr\.io/archonmegalon/propertyquarry-web-runtime@sha256:[0-9a-f]{64}$ ]] \
+[[ "${PQ_WEB_IMAGE:?}" =~ ^ghcr\.io/archonmegalon/propertyquarry-standalone-web-runtime@sha256:[0-9a-f]{64}$ ]] \
   || fail "web image is not the exact protected digest form"
-[[ "${PQ_RENDER_IMAGE:?}" =~ ^ghcr\.io/archonmegalon/propertyquarry-render-runtime@sha256:[0-9a-f]{64}$ ]] \
+[[ "${PQ_RENDER_IMAGE:?}" =~ ^ghcr\.io/archonmegalon/propertyquarry-standalone-render-runtime@sha256:[0-9a-f]{64}$ ]] \
   || fail "render image is not the exact protected digest form"
 [[ "${PQ_WEB_IMAGE}" != "${PQ_RENDER_IMAGE}" ]] || fail "web and render image identities collide"
 [[ "$(sha256_file "${PQ_LOCK_SOURCE:?}")" == "${PQ_LOCK_SHA256:?}" ]] || fail "pip-audit lock hash mismatch"

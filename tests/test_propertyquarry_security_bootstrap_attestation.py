@@ -22,7 +22,7 @@ from scripts.verify_propertyquarry_security_bootstrap_attestation import (
 )
 
 
-REPOSITORY = "ArchonMegalon/property"
+REPOSITORY = "ArchonMegalon/propertyquarry"
 WORKFLOW_REF = f"{REPOSITORY}/.github/workflows/smoke-runtime.yml@refs/heads/main"
 BOOTSTRAP_PATH = ".github/workflows/propertyquarry-security-runner-bootstrap.yml"
 RUN_ID = "8001"
@@ -35,10 +35,12 @@ RUNNER_LABEL = "pqsec-" + "b" * 32
 RUNNER_NAME = f"pq-security-{BOOTSTRAP_RUN_ID}-{RUN_ID}"
 TOKEN_EXPIRES_AT = "2030-01-01T01:00:00Z"
 WEB_IMAGE = (
-    "ghcr.io/archonmegalon/propertyquarry-web-runtime@sha256:" + "c" * 64
+    "ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime@sha256:"
+    + "c" * 64
 )
 RENDER_IMAGE = (
-    "ghcr.io/archonmegalon/propertyquarry-render-runtime@sha256:" + "d" * 64
+    "ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime@sha256:"
+    + "d" * 64
 )
 
 

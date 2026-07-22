@@ -28,11 +28,11 @@ _HEAD_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _RUNNER_LABEL_RE = re.compile(r"^pqsec-[0-9a-f]{32}$")
 _WEB_IMAGE_RE = re.compile(
     r"^ghcr\.io/archonmegalon/"
-    r"propertyquarry-web-runtime@sha256:[0-9a-f]{64}$"
+    r"propertyquarry-standalone-web-runtime@sha256:[0-9a-f]{64}$"
 )
 _RENDER_IMAGE_RE = re.compile(
     r"^ghcr\.io/archonmegalon/"
-    r"propertyquarry-render-runtime@sha256:[0-9a-f]{64}$"
+    r"propertyquarry-standalone-render-runtime@sha256:[0-9a-f]{64}$"
 )
 _POSITIVE_ID_RE = re.compile(r"^[1-9][0-9]{0,19}$")
 _ARTIFACT_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")

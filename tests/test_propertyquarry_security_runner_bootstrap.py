@@ -70,7 +70,14 @@ def test_bootstrap_is_manual_main_only_and_uses_the_protected_hosted_lane() -> N
     assert job["timeout-minutes"] == "330"
     assert job["environment"] == {"name": "propertyquarry-production"}
     assert "refs/heads/main" in job["if"]
-    assert "ArchonMegalon/property" in job["if"]
+    assert (
+        "github.event.repository.full_name == 'ArchonMegalon/propertyquarry'"
+        in job["if"]
+    )
+    assert (
+        "github.event.repository.full_name == 'ArchonMegalon/property'"
+        not in job["if"]
+    )
 
 
 def test_bootstrap_validates_exact_queued_job_before_any_repo_source_runs() -> None:
@@ -124,9 +131,27 @@ def test_registration_token_must_be_operator_minted_just_in_time() -> None:
     assert "PROPERTYQUARRY_SECURITY_RUNNER_ADMIN_TOKEN" not in workflow_text
 
 
+def test_bootstrap_binds_the_standalone_repository_and_image_namespaces() -> None:
+    workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    script = BOOTSTRAP_PATH.read_text(encoding="utf-8")
+
+    assert '"ArchonMegalon/propertyquarry"' in workflow_text
+    assert '"ArchonMegalon/property"' not in workflow_text
+    assert '"ArchonMegalon/propertyquarry"' in script
+    assert '"ArchonMegalon/property"' not in script
+    assert (
+        "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"
+        in script
+    )
+    assert "propertyquarry-standalone-web-runtime@sha256" in script
+    assert "propertyquarry-standalone-render-runtime@sha256" in script
+    assert "propertyquarry-web-runtime@sha256" not in script
+    assert "propertyquarry-render-runtime@sha256" not in script
+
+
 def test_downloaded_sources_are_bound_to_reviewed_hashes() -> None:
     workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
-    assert _sha256(BOOTSTRAP_PATH) == "4ff51b7a86e5cef1007a46d9383e5233abd697fb2890e28aae933cd8e38452ea"
+    assert _sha256(BOOTSTRAP_PATH) == "4c6543ab71940154c12b7e750d0af1daa92be46a472a3b5ddd3efd64830edbad"
     assert _sha256(PREFLIGHT_PATH) == "1450cd2506ed02edd5445861678aa80da92f5535161cdfa569d34622311796e3"
     assert _sha256(RUNNER_LOCK_PATH) == "e968dda8c1dee309698cf05e42932f786397e954ac034c4f90a0be0db32844fd"
     for identity in (_sha256(BOOTSTRAP_PATH), _sha256(PREFLIGHT_PATH), _sha256(RUNNER_LOCK_PATH)):
@@ -347,6 +372,20 @@ def test_existing_flagship_security_job_remains_fixed_and_offline() -> None:
     assert "pip install" not in job
     assert "docker pull" not in job
     assert "download-db-only" not in job
+
+
+def test_release_authority_jobs_bind_the_standalone_repository() -> None:
+    smoke = yaml.load(
+        SMOKE_WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader
+    )
+
+    for job_name in (
+        "propertyquarry-live-release-gates",
+        "propertyquarry-launch-gold",
+    ):
+        assert smoke["jobs"][job_name]["env"][
+            "PROPERTYQUARRY_EXPECTED_RELEASE_REPOSITORY"
+        ] == "ArchonMegalon/propertyquarry"
 
 
 def test_hosted_preflight_is_the_only_self_hosted_runner_label_authority() -> None:

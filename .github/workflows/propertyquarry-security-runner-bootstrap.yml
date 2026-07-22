@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   bootstrap:
-    if: ${{ github.ref == 'refs/heads/main' && github.event.repository.full_name == 'ArchonMegalon/property' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event.repository.full_name == 'ArchonMegalon/propertyquarry' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     environment:
@@ -45,7 +45,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           umask 077
-          [[ "${GITHUB_REPOSITORY}" == "ArchonMegalon/property" ]]
+          [[ "${GITHUB_REPOSITORY}" == "ArchonMegalon/propertyquarry" ]]
           [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "${SECURITY_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
@@ -204,7 +204,7 @@ jobs:
           materialize config/propertyquarry_security_runner_requirements.lock "${source_root}/pip-audit.lock"
 
           printf '%s  %s\n' \
-            '4ff51b7a86e5cef1007a46d9383e5233abd697fb2890e28aae933cd8e38452ea' \
+            '4c6543ab71940154c12b7e750d0af1daa92be46a472a3b5ddd3efd64830edbad' \
             "${source_root}/bootstrap.sh" \
             '1450cd2506ed02edd5445861678aa80da92f5535161cdfa569d34622311796e3' \
             "${source_root}/preflight.sh" \
