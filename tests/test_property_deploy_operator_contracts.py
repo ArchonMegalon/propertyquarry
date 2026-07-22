@@ -1388,7 +1388,17 @@ def test_smoke_runtime_v2_lane_is_fail_closed_without_installed_authority() -> N
     )
     assert "inputs.run_launch_authority == true" in release_job
     assert "/usr/libexec/propertyquarry-release-control/" in release_job
-    assert "propertyquarry-release-supervisor-v2" in release_job
+    assert (
+        "/usr/libexec/propertyquarry-release-control/"
+        "propertyquarry-release-single-host-v2 \\\n"
+        "              client release-preflight"
+    ) in release_job
+    assert (
+        "/usr/libexec/propertyquarry-release-control/"
+        "propertyquarry-release-single-host-v2 \\\n"
+        "              client release-run"
+    ) in release_job
+    assert "propertyquarry-release-supervisor-v2" not in release_job
     assert "PROPERTYQUARRY_RELEASE_CONTROLLER_READY" not in release_job
     assert "PROPERTYQUARRY_RELEASE_CONTROLLER_BUNDLE_SHA256" not in release_job
     assert "PROPERTYQUARRY_RELEASE_CONTROLLER_BUNDLE_PATH" not in release_job

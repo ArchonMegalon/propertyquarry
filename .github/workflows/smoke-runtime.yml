@@ -1316,8 +1316,8 @@ jobs:
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \
-            /usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2 \
-              release-preflight
+            /usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2 \
+              client release-preflight
       - name: Request the atomic release lifecycle from the installed supervisor
         shell: /bin/bash --noprofile --norc -p -euo pipefail {0}
         run: |
@@ -1344,8 +1344,8 @@ jobs:
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \
-            /usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2 \
-              release-run
+            /usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2 \
+              client release-run
 
   propertyquarry-activation-request-inert:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_activation_journey == true }}
