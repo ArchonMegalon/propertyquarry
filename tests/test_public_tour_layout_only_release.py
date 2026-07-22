@@ -52,7 +52,7 @@ def _asset_bytes() -> dict[str, bytes]:
             {
                 "schema": "propertyquarry.generated-reconstruction.v1",
                 "floorplan": {
-                    "source_path": "property://ArchonMegalon/property/reviewed/floorplan.png"
+                    "source_path": "property://ArchonMegalon/propertyquarry/reviewed/floorplan.png"
                 },
                 "photo_reference_panel_count": 0,
                 "photo_reference_panels": [],
@@ -64,6 +64,14 @@ def _asset_bytes() -> dict[str, bytes]:
         THREE: b"export const Scene = class Scene {};",
         ORBIT: b"export class OrbitControls {};",
     }
+
+
+def test_layout_only_fixture_uses_standalone_repository_identity() -> None:
+    proof = json.loads(_asset_bytes()[PROOF])
+    source_path = proof["floorplan"]["source_path"]
+
+    assert source_path.startswith("property://ArchonMegalon/propertyquarry/")
+    assert "property://ArchonMegalon/property/" not in source_path
 
 
 def _payload(assets: dict[str, bytes]) -> dict[str, object]:

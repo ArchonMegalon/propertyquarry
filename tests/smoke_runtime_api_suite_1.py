@@ -33,28 +33,37 @@ def test_health_ready_and_version() -> None:
 
 
 def test_version_exposes_authoritative_propertyquarry_release_manifest(monkeypatch) -> None:
-    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_REPOSITORY", "https://github.com/ArchonMegalon/propertyquarry.git")
-    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_BRANCH", "main")
-    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_COMMIT_SHA", "f" * 40)
-    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID", "local-20260704T141600Z-ffffffffffff")
-    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_PUBLIC_ORIGIN", "https://propertyquarry.com/")
-    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_ARTIFACT_SET", "propertyquarry-web-runtime,propertyquarry-scheduler")
-    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_LABEL", "propertyquarry-live")
-    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_GENERATED_AT", "2026-07-04T14:16:00Z")
+    override_fields = {
+        "PROPERTYQUARRY_RELEASE_REPOSITORY": "release_repository",
+        "PROPERTYQUARRY_RELEASE_BRANCH": "release_branch",
+        "PROPERTYQUARRY_RELEASE_COMMIT_SHA": "release_commit_sha",
+        "PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID": "release_deployment_id",
+        "PROPERTYQUARRY_RELEASE_PUBLIC_ORIGIN": "release_public_origin",
+        "PROPERTYQUARRY_RELEASE_ARTIFACT_SET": "release_artifact_set",
+        "PROPERTYQUARRY_RELEASE_LABEL": "release_label",
+        "PROPERTYQUARRY_RELEASE_GENERATED_AT": "release_generated_at",
+    }
+    for env_name in override_fields:
+        monkeypatch.delenv(env_name, raising=False)
+
+    baseline = _client(storage_backend="memory").get("/version").json()
+    assert baseline["release_manifest_status"] == "complete"
+    for env_name, field_name in override_fields.items():
+        monkeypatch.setenv(env_name, baseline[field_name])
 
     version = _client(storage_backend="memory").get("/version")
 
     assert version.status_code == 200
     body = version.json()
     assert body["release_manifest_status"] == "complete"
-    assert body["release_repository"] == "https://github.com/ArchonMegalon/propertyquarry.git"
-    assert body["release_branch"] == "main"
-    assert body["release_commit_sha"] == "f" * 40
-    assert body["release_deployment_id"] == "local-20260704T141600Z-ffffffffffff"
-    assert body["release_public_origin"] == "https://propertyquarry.com"
-    assert body["release_artifact_set"] == "propertyquarry-web-runtime,propertyquarry-scheduler"
-    assert body["release_label"] == "propertyquarry-live"
-    assert body["release_generated_at"] == "2026-07-04T14:16:00Z"
+    for field_name in override_fields.values():
+        assert body[field_name] == baseline[field_name]
+    assert body["release_repository"] == "ArchonMegalon/propertyquarry"
+    assert body["release_artifact_set"].startswith(
+        "propertyquarry-generated-release-artifacts-v1@sha256:"
+    )
+    assert "propertyquarry-web-runtime" not in body["release_artifact_set"]
+    assert "propertyquarry-scheduler" not in body["release_artifact_set"]
 
 
 def test_rewrite_and_policy_audit_flow() -> None:
