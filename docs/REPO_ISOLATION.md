@@ -30,16 +30,15 @@ Host-level recovery scripts are quarantined operator artifacts. `scripts/harden_
 
 Use `python3 scripts/check_property_repo_isolation.py` or `make property-release-gates` before a public deploy.
 
-## Canonical repository and public mirror
+## Canonical repository authority
 
-`ArchonMegalon/property` is the sole canonical source and release-authority
-repository. `ArchonMegalon/propertyquarry` is a public, byte-exact mirror of
-canonical `main`; it is not an independently advancing release-envelope repo.
-The two `main` refs must resolve to the same commit, not merely equivalent trees.
-No workflow, manifest, security policy, public-tour policy, dossier policy, or
-release claim may be stronger, weaker, or newer in only one repository.
+`ArchonMegalon/propertyquarry` is the sole canonical source and release-authority
+repository. PropertyQuarry does not accept release identity, commits, manifests,
+container provenance, runtime configuration, or deploy authority from
+MyExternalBrain or `ArchonMegalon/property`.
 
-Run the offline role gate after fetching both named refs:
+Run the offline repository-identity gate after fetching the canonical repository
+through both compatibility-named local refs:
 
 ```text
 python3 scripts/check_property_mirror_role.py \
@@ -48,30 +47,21 @@ python3 scripts/check_property_mirror_role.py \
   --write _completion/propertyquarry_mirror_role/receipt.json
 ```
 
-The gate never fetches. Its receipt is deliberately scoped to local Git config,
-objects, and refs and always reports `network_freshness_proven: false`. The
-`propertyquarry-mirror-role-contract` CI lane first rejects Git URL rewrites,
-fetches both public `main` refs from their exact HTTPS origins, then runs the
-offline gate in a single-worktree checkout and preserves the receipt. A lagging,
-ahead, diverged, same-tree/different-commit, malformed-manifest, wrong-remote,
-missing-history, or extra-worktree CI state blocks the ordinary-CI aggregate and
-therefore blocks release authority.
+The compatibility-named gate never fetches, and both URL constants resolve to
+`https://github.com/ArchonMegalon/propertyquarry.git`. It proves exact commit
+identity and clean local state without granting authority to another repository.
+Its receipt is deliberately scoped to local Git config, objects, and refs and
+always reports `network_freshness_proven: false`. The corresponding CI lane
+rejects Git URL rewrites, fetches standalone PropertyQuarry `main`, runs the
+offline gate in a single-worktree checkout, and preserves the receipt. A
+malformed manifest, wrong remote, missing history, dirty worktree, or unexpected
+extra worktree blocks the ordinary-CI aggregate and therefore blocks release.
 
-A pull request in `ArchonMegalon/propertyquarry` is a review-only fast-forward
-candidate, not release evidence and not permission to create a merge or squash
-commit. That PR passes only when its same-repository head SHA is the exact
-canonical `main` commit and the current mirror is already an ancestor of that
-commit. The reviewed candidate must then be applied through the governed
-fast-forward mechanism so mirror `main` retains the canonical commit identity.
-Fork PRs, diverged/ahead mirror histories, and candidate trees with different
-commit identities fail closed. Push and workflow-dispatch release events never
-use candidate mode: they continue to require exact remote `main` identity.
-
-The local release bundle adds two stricter observations: checked-out `HEAD` must
-equal the fetched canonical ref, and the tracked plus non-ignored untracked
-worktree must be clean. Local exact-but-stale refs or a dirty candidate therefore
-cannot be reported as release mirror evidence. Fetch still remains an explicit
-operator step; the offline gate never claims lasting network freshness.
+A pull request in `ArchonMegalon/propertyquarry` is review evidence only. Push
+and workflow-dispatch release events require exact standalone `main` identity;
+no commit from another repository can satisfy the gate. Fetch remains an
+explicit operator step, so the offline receipt never claims lasting network
+freshness.
 
 ## Release-control v2 authority status
 

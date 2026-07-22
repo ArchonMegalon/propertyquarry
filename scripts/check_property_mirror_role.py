@@ -29,11 +29,11 @@ except ModuleNotFoundError:  # Direct execution places scripts/ on sys.path.
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "propertyquarry.mirror_role.v1"
-CANONICAL_REPOSITORY = "ArchonMegalon/property"
+CANONICAL_REPOSITORY = "ArchonMegalon/propertyquarry"
 MIRROR_REPOSITORY = "ArchonMegalon/propertyquarry"
 CANONICAL_REMOTE = "origin"
 MIRROR_REMOTE = "propertyquarry"
-CANONICAL_URL = "https://github.com/ArchonMegalon/property.git"
+CANONICAL_URL = "https://github.com/ArchonMegalon/propertyquarry.git"
 MIRROR_URL = "https://github.com/ArchonMegalon/propertyquarry.git"
 DEFAULT_CANONICAL_REF = "refs/remotes/origin/main"
 DEFAULT_MIRROR_REF = "refs/remotes/propertyquarry/main"

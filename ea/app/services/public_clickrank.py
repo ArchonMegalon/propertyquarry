@@ -12,15 +12,11 @@ from urllib.parse import urlparse
 _CLICKRANK_HOST_CONFIG = {
     "propertyquarry.com": ("CLICKRANK_AI_PROPERTYQUARRY_SITE_ID", ""),
     "www.propertyquarry.com": ("CLICKRANK_AI_PROPERTYQUARRY_SITE_ID", ""),
-    "myexternalbrain.com": ("CLICKRANK_AI_MYEXTERNALBRAIN_SITE_ID", ""),
-    "www.myexternalbrain.com": ("CLICKRANK_AI_MYEXTERNALBRAIN_SITE_ID", ""),
 }
 
 _RYBBIT_HOST_CONFIG = {
     "propertyquarry.com": ("RYBBIT_IO_PROPERTYQUARRY_SITE_ID", ""),
     "www.propertyquarry.com": ("RYBBIT_IO_PROPERTYQUARRY_SITE_ID", ""),
-    "myexternalbrain.com": ("RYBBIT_IO_MYEXTERNALBRAIN_SITE_ID", ""),
-    "www.myexternalbrain.com": ("RYBBIT_IO_MYEXTERNALBRAIN_SITE_ID", ""),
 }
 
 _CLICKRANK_PUBLIC_EXACT_PATHS = {
@@ -97,7 +93,12 @@ def _rybbit_enabled() -> bool:
 
 
 def _configured_public_base_hostname() -> str:
-    return _normalize_hostname(urlparse(str(os.getenv("EA_PUBLIC_APP_BASE_URL") or "")).hostname or "")
+    configured = str(
+        os.getenv("PROPERTYQUARRY_PUBLIC_APP_BASE_URL")
+        or os.getenv("PROPERTYQUARRY_PUBLIC_BASE_URL")
+        or ""
+    )
+    return _normalize_hostname(urlparse(configured).hostname or "")
 
 
 def _hostname_can_fallback_to_public_base_url(hostname: str) -> bool:

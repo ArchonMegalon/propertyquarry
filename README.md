@@ -6,7 +6,7 @@ This repository now contains the runnable product runtime that had previously li
 
 ## Repository authority
 
-[`ArchonMegalon/property`](https://github.com/ArchonMegalon/property) is the sole canonical PropertyQuarry source and release repository. [`ArchonMegalon/propertyquarry`](https://github.com/ArchonMegalon/propertyquarry) is a byte-exact, non-advancing mirror: it may accept only the canonical commit through the governed mirror-sync path, must never contain an independent commit, and must never advance ahead of canonical `main`. A lagging, ahead, divergent, same-tree/different-commit, or independently modified mirror is release-blocking rather than an alternate release envelope.
+[`ArchonMegalon/propertyquarry`](https://github.com/ArchonMegalon/propertyquarry) is the sole canonical PropertyQuarry source and release repository. PropertyQuarry builds, tests, publishes images, and deploys from this repository without release authority, commits, or runtime dependencies from MyExternalBrain or `ArchonMegalon/property`.
 
 The canonical release graph structurally gates `propertyquarry-release-v2` on the same-run `propertyquarry-security-bootstrap-attestation` job. The release job requires that dependency to succeed and binds its attestation SHA-256, bootstrap run ID, and artifact digest before requesting protected preflight. The separate manual bootstrap workflow additionally records exact protected-runner consumption, but neither a bootstrap artifact nor its consumption receipt is standalone release authority; production remains blocked until every other candidate-bound launch and protected-live gate also passes.
 

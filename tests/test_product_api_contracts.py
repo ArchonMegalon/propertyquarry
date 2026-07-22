@@ -11907,7 +11907,24 @@ def test_property_telegram_url_buttons_include_direct_map_without_visible_link_t
     assert ("Open map", "https://www.google.com/maps/search/?api=1&query=Brunnthalgasse%201B%2C%201020%20Wien") in flat
 
 
-def test_generic_property_tour_creates_myexternalbrain_tour_for_immoscout(monkeypatch, tmp_path: Path) -> None:
+def test_property_tour_host_authority_rejects_myexternalbrain_aliases(monkeypatch) -> None:
+    from app.product.property_tour_hosting import (
+        _hosted_property_tour_public_base_url,
+        _is_branded_public_tour_url,
+    )
+
+    monkeypatch.delenv("PROPERTYQUARRY_PUBLIC_TOUR_BASE_URL", raising=False)
+    monkeypatch.delenv("PROPERTYQUARRY_PUBLIC_APP_BASE_URL", raising=False)
+    monkeypatch.delenv("PROPERTYQUARRY_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.setenv("EA_PUBLIC_TOUR_BASE_URL", "https://myexternalbrain.com/tours")
+    monkeypatch.setenv("EA_PUBLIC_APP_BASE_URL", "https://myexternalbrain.com")
+
+    assert _hosted_property_tour_public_base_url() == "https://propertyquarry.com/tours"
+    assert _is_branded_public_tour_url("https://propertyquarry.com/tours/flat-1") is True
+    assert _is_branded_public_tour_url("https://myexternalbrain.com/tours/flat-1") is False
+
+
+def test_generic_property_tour_creates_propertyquarry_tour_for_immoscout(monkeypatch, tmp_path: Path) -> None:
     from app.domain.models import Artifact
 
     principal_id = "cf-email:owner@example.test"
@@ -11965,7 +11982,7 @@ def test_generic_property_tour_creates_myexternalbrain_tour_for_immoscout(monkey
             execution_session_id="session-generic-property-tour",
             principal_id=principal_id,
             structured_output_json={
-                "public_url": "https://myexternalbrain.com/tours/generic-fit-1",
+                "public_url": "https://propertyquarry.com/tours/generic-fit-1",
                 "crezlo_public_url": "https://vendor.example.com/tours/generic-fit-1",
             },
         )
@@ -11986,7 +12003,7 @@ def test_generic_property_tour_creates_myexternalbrain_tour_for_immoscout(monkey
     )
 
     assert result["status"] == "created"
-    assert result["tour_url"] == "https://myexternalbrain.com/tours/generic-fit-1"
+    assert result["tour_url"] == "https://propertyquarry.com/tours/generic-fit-1"
     request = captured["request"]
     assert request.input_json["property_url"] == property_url
     assert request.input_json["media_urls_json"] == ["https://cdn.example.com/generic/photo.jpg"]

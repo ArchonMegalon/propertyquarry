@@ -125,7 +125,7 @@ jobs:
                       failures.append("security_runner_token_expiration_is_outside_window")
               except ValueError:
                   failures.append("security_runner_token_expiration_is_malformed")
-          if repository != "ArchonMegalon/property":
+          if repository != "ArchonMegalon/propertyquarry":
               failures.append("protected_dispatch_is_canonical_repository_only")
           if ref != "refs/heads/main":
               failures.append("protected_dispatch_requires_canonical_main")
@@ -216,7 +216,7 @@ jobs:
           PY
           git config --unset-all remote.origin.url || true
           git config --unset-all remote.origin.pushurl || true
-          git config --add remote.origin.url https://github.com/ArchonMegalon/property.git
+          git config --add remote.origin.url https://github.com/ArchonMegalon/propertyquarry.git
           git config --remove-section remote.propertyquarry || true
           git remote add propertyquarry https://github.com/ArchonMegalon/propertyquarry.git
           git fetch --no-tags --prune origin \
@@ -226,8 +226,6 @@ jobs:
           expected_args=()
           candidate_args=()
           case "${PROPERTYQUARRY_WORKFLOW_EVENT}:${PROPERTYQUARRY_WORKFLOW_REPOSITORY}" in
-            pull_request:ArchonMegalon/property)
-              ;;
             pull_request:ArchonMegalon/propertyquarry)
               if [[ "${PROPERTYQUARRY_PR_BASE_REF}" != "main" ]]; then
                 echo "mirror sync PRs must target propertyquarry main" >&2
@@ -246,11 +244,8 @@ jobs:
                 --expected-candidate-sha "${PROPERTYQUARRY_PR_HEAD_SHA}"
               )
               ;;
-            push:ArchonMegalon/property|workflow_dispatch:ArchonMegalon/property)
-              expected_args+=(--expected-canonical-sha "${PROPERTYQUARRY_WORKFLOW_SHA}")
-              ;;
             push:ArchonMegalon/propertyquarry|workflow_dispatch:ArchonMegalon/propertyquarry)
-              expected_args+=(--expected-mirror-sha "${PROPERTYQUARRY_WORKFLOW_SHA}")
+              expected_args+=(--expected-canonical-sha "${PROPERTYQUARRY_WORKFLOW_SHA}")
               ;;
             *)
               echo "unsupported repository/event for canonical mirror proof" >&2
@@ -274,7 +269,7 @@ jobs:
   # Candidate-bound image scan on a one-time protected security runner.
   propertyquarry-flagship-security:
     needs: propertyquarry-protected-dispatch-inputs
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/property' && github.ref == 'refs/heads/main' && startsWith(inputs.security_runner_label, 'pqsec-') && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-protected-dispatch-inputs'].outputs.security_runner_label == inputs.security_runner_label }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/propertyquarry' && github.ref == 'refs/heads/main' && startsWith(inputs.security_runner_label, 'pqsec-') && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-protected-dispatch-inputs'].outputs.security_runner_label == inputs.security_runner_label }}
     environment:
       name: propertyquarry-production
     permissions:
@@ -353,7 +348,7 @@ jobs:
     needs:
       - propertyquarry-protected-dispatch-inputs
       - propertyquarry-flagship-security
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/property' && github.ref == 'refs/heads/main' && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-flagship-security'].result == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/propertyquarry' && github.ref == 'refs/heads/main' && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-flagship-security'].result == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -383,7 +378,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           umask 077
-          [[ "${GITHUB_REPOSITORY}" == "ArchonMegalon/property" ]]
+          [[ "${GITHUB_REPOSITORY}" == "ArchonMegalon/propertyquarry" ]]
           [[ "${TARGET_RUN_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "${TARGET_RUN_ATTEMPT}" =~ ^[1-9][0-9]{0,9}$ ]]
           [[ "${TARGET_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
@@ -577,7 +572,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           umask 077
-          [[ "${GITHUB_REPOSITORY}" == "ArchonMegalon/property" ]]
+          [[ "${GITHUB_REPOSITORY}" == "ArchonMegalon/propertyquarry" ]]
           [[ "${ARTIFACT_ID}" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "${EXPECTED_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           evidence_root="${RUNNER_TEMP}/propertyquarry-security-bootstrap-attestation"
@@ -1273,7 +1268,7 @@ jobs:
       - propertyquarry-flagship-security
       - propertyquarry-security-bootstrap-attestation
       - propertyquarry-continuous-ux
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/property' && github.ref == 'refs/heads/main' && inputs.run_launch_authority == true && inputs.run_activation_journey != true && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-ordinary-ci-success'].result == 'success' && needs['propertyquarry-flagship-security'].result == 'success' && needs['propertyquarry-security-bootstrap-attestation'].result == 'success' && needs['propertyquarry-continuous-ux'].result == 'success' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/propertyquarry' && github.ref == 'refs/heads/main' && inputs.run_launch_authority == true && inputs.run_activation_journey != true && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-ordinary-ci-success'].result == 'success' && needs['propertyquarry-flagship-security'].result == 'success' && needs['propertyquarry-security-bootstrap-attestation'].result == 'success' && needs['propertyquarry-continuous-ux'].result == 'success' }}
     timeout-minutes: 180
     concurrency:
       group: propertyquarry-release-lifecycle-v2
@@ -1391,7 +1386,7 @@ jobs:
           activation_requested = os.environ["PROPERTYQUARRY_REQUESTED_ACTIVATION"].lower() == "true"
           launch_requested = os.environ["PROPERTYQUARRY_REQUESTED_LAUNCH"].lower() == "true"
           failures = []
-          if os.environ["PROPERTYQUARRY_REQUEST_REPOSITORY"] != "ArchonMegalon/property":
+          if os.environ["PROPERTYQUARRY_REQUEST_REPOSITORY"] != "ArchonMegalon/propertyquarry":
               failures.append("protected_action_requested_outside_canonical_repository")
           if os.environ["PROPERTYQUARRY_REQUEST_REF"] != "refs/heads/main":
               failures.append("protected_action_requested_outside_canonical_main")

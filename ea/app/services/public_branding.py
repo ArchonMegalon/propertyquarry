@@ -35,7 +35,7 @@ def _propertyquarry_brand() -> dict[str, str]:
             or os.getenv("PROPERTYQUARRY_PUBLIC_BASE_URL")
             or "https://propertyquarry.com"
         ).strip().rstrip("/"),
-        "repo_url": "https://github.com/ArchonMegalon/property",
+        "repo_url": "https://github.com/ArchonMegalon/propertyquarry",
     }
 
 

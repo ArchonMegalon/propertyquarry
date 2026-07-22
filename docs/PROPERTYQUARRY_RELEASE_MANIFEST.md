@@ -31,12 +31,10 @@ The marked JSON object is the single canonical release authority consumed by the
   "release_generated_at": "2026-07-22T07:12:13Z",
   "release_label": "propertyquarry-source-browser-candidate-8b9b2dd7e7d2",
   "release_manifest_schema": "propertyquarry.release_manifest.v1",
-  "release_mirror_origin": "https://github.com/ArchonMegalon/propertyquarry.git",
-  "release_mirror_repository": "ArchonMegalon/propertyquarry",
   "release_product": "PropertyQuarry",
   "release_public_origin": "https://propertyquarry.com",
-  "release_repository": "ArchonMegalon/property",
-  "release_repository_origin": "https://github.com/ArchonMegalon/property.git",
+  "release_repository": "ArchonMegalon/propertyquarry",
+  "release_repository_origin": "https://github.com/ArchonMegalon/propertyquarry.git",
   "release_verification_commands": "bash scripts/verify_release_assets.sh && python3 scripts/verify_flagship_release_readiness.py && python3 scripts/verify_generated_release_artifacts_clean.py"
 }
 ```

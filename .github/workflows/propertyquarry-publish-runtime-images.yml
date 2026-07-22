@@ -30,7 +30,7 @@ jobs:
         id: bind
         shell: bash
         env:
-          EXPECTED_REPOSITORY: ArchonMegalon/property
+          EXPECTED_REPOSITORY: ArchonMegalon/propertyquarry
           EXPECTED_WEB_IMAGE: ghcr.io/archonmegalon/propertyquarry-web-runtime
           EXPECTED_RENDER_IMAGE: ghcr.io/archonmegalon/propertyquarry-render-runtime
           REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
@@ -293,7 +293,7 @@ jobs:
           push: true
           tags: ${{ steps.inputs.outputs.published_tag }}
           labels: |
-            org.opencontainers.image.source=https://github.com/ArchonMegalon/property
+            org.opencontainers.image.source=https://github.com/ArchonMegalon/propertyquarry
             org.opencontainers.image.revision=${{ needs.preflight.outputs.envelope_sha }}
             org.opencontainers.image.version=${{ needs.preflight.outputs.runtime_sha }}
             com.propertyquarry.release.runtime-sha=${{ needs.preflight.outputs.runtime_sha }}
@@ -539,7 +539,7 @@ jobs:
           if not isinstance(labels, dict):
               raise SystemExit("remote image labels are missing or malformed")
           expected = {
-              "org.opencontainers.image.source": "https://github.com/ArchonMegalon/property",
+              "org.opencontainers.image.source": "https://github.com/ArchonMegalon/propertyquarry",
               "org.opencontainers.image.revision": os.environ["ENVELOPE_SHA"],
               "org.opencontainers.image.version": os.environ["RUNTIME_SHA"],
               "com.propertyquarry.release.runtime-sha": os.environ["RUNTIME_SHA"],

@@ -2271,19 +2271,19 @@ def test_propertyquarry_sign_in_offers_id_austria_only_for_austrian_requests(mon
     assert query["scope"][0] == "openid profile"
 
 
-def test_public_branding_repo_urls_stay_in_property_repository(monkeypatch) -> None:
+def test_public_branding_repo_urls_stay_in_propertyquarry_repository(monkeypatch) -> None:
     brand = public_branding.brand_from_hostname("propertyquarry.com")
     assert brand["key"] == "propertyquarry"
     assert brand["name"] == "PropertyQuarry"
     assert brand["app_home"] == "/app/search"
-    assert brand["repo_url"] == "https://github.com/ArchonMegalon/property"
+    assert brand["repo_url"] == "https://github.com/ArchonMegalon/propertyquarry"
 
     monkeypatch.setenv("PROPERTYQUARRY_DEFAULT_BRAND", "0")
     fallback_brand = public_branding.brand_from_hostname("legacy.invalid")
     assert fallback_brand["key"] == "propertyquarry"
     assert fallback_brand["name"] == "PropertyQuarry"
     assert fallback_brand["app_home"] == "/app/search"
-    assert fallback_brand["repo_url"] == "https://github.com/ArchonMegalon/property"
+    assert fallback_brand["repo_url"] == "https://github.com/ArchonMegalon/propertyquarry"
 
     source = (Path(__file__).resolve().parents[1] / "ea/app/services/public_branding.py").read_text(encoding="utf-8")
     assert "Executive Assistant" not in source

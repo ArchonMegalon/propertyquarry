@@ -1637,6 +1637,46 @@ def test_sign_in_page_does_not_require_email_field_for_google(monkeypatch: pytes
     assert 'placeholder="you@company.com"' not in response.text
 
 
+def test_expired_sign_in_page_never_renders_an_inert_recovery_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    _clear_google_sign_in(monkeypatch)
+    for key in (
+        "EA_FACEBOOK_OAUTH_CLIENT_ID",
+        "EA_FACEBOOK_OAUTH_CLIENT_SECRET",
+        "EA_FACEBOOK_OAUTH_REDIRECT_URI",
+        "EA_FACEBOOK_OAUTH_STATE_SECRET",
+        "PROPERTYQUARRY_ID_AUSTRIA_CLIENT_ID",
+        "PROPERTYQUARRY_ID_AUSTRIA_CLIENT_SECRET",
+        "PROPERTYQUARRY_ID_AUSTRIA_REDIRECT_URI",
+        "PROPERTYQUARRY_ID_AUSTRIA_STATE_SECRET",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    client = _client(monkeypatch)
+
+    unavailable = client.get(
+        "/sign-in?return_to=%2Fapp%2Fproperties%3Frun_id%3Drun-1&session=expired"
+    )
+
+    assert unavailable.status_code == 200
+    assert "Sign-in is temporarily unavailable; try again later." in unavailable.text
+    assert "data-sign-in-unavailable" in unavailable.text
+    assert "data-pq-next-action" not in unavailable.text
+    assert 'href="#sign-in-options"' not in unavailable.text
+
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    configured = client.get(
+        "/sign-in?return_to=%2Fapp%2Fproperties%3Frun_id%3Drun-1&session=expired"
+    )
+
+    assert configured.status_code == 200
+    assert "Sign-in is temporarily unavailable" not in configured.text
+    assert "data-pq-next-action data-focus-sign-in-options" in configured.text
+    assert "Show sign-in options" in configured.text
+    assert 'href="#sign-in-options"' not in configured.text
+
+
 def test_register_verify_requires_matching_code(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
     monkeypatch.setenv("EA_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")

@@ -42,7 +42,7 @@ def _git(repo: Path, *args: str, input_text: str | None = None) -> str:
     return result.stdout.strip()
 
 
-def _manifest(*, repository: str = "ArchonMegalon/property") -> str:
+def _manifest(*, repository: str = "ArchonMegalon/propertyquarry") -> str:
     values = dict(RELEASE_MANIFEST_STATIC_VALUES)
     values["release_repository"] = repository
     values.update(
@@ -388,7 +388,7 @@ def test_local_release_binding_rejects_head_not_at_canonical(
 def test_invalid_manifest_role_blocks_both_equal_refs(tmp_path: Path) -> None:
     repo, _ = _fixture_repo(tmp_path)
     manifest = repo / "docs" / "PROPERTYQUARRY_RELEASE_MANIFEST.md"
-    manifest.write_text(_manifest(repository="ArchonMegalon/propertyquarry"), encoding="utf-8")
+    manifest.write_text(_manifest(repository="ArchonMegalon/property"), encoding="utf-8")
     invalid_sha = _commit(repo, "invalid role")
     _set_refs(repo, invalid_sha, invalid_sha)
 
@@ -476,15 +476,13 @@ def test_workflow_and_release_bundle_fail_closed_on_mirror_role() -> None:
     assert "--require-head-at-canonical" in release_gate
     assert "--require-clean-worktree" in release_gate
     isolation = (ROOT / "docs" / "REPO_ISOLATION.md").read_text(encoding="utf-8")
-    assert "ArchonMegalon/property` is the sole canonical" in isolation
+    assert "`ArchonMegalon/propertyquarry` is the sole canonical" in isolation
     assert "network_freshness_proven: false" in isolation
-    assert "review-only fast-forward" in isolation
-    assert "candidate" in isolation
+    assert "review evidence only" in isolation
+    assert "no commit from another repository can satisfy the gate" in isolation
     assert "non-authoritative and inert" in isolation
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "`ArchonMegalon/property`" in readme
-    assert "sole canonical PropertyQuarry source and release repository" in readme
     assert "`ArchonMegalon/propertyquarry`" in readme
-    assert "byte-exact, non-advancing mirror" in readme
-    assert "must never contain an independent commit" in readme
+    assert "sole canonical PropertyQuarry source and release repository" in readme
+    assert "without release authority, commits, or runtime dependencies" in readme

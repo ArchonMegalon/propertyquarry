@@ -27,8 +27,6 @@ _RELEASE_MANIFEST_FIELDS = (
     "release_candidate_status",
     "release_repository",
     "release_repository_origin",
-    "release_mirror_repository",
-    "release_mirror_origin",
     "release_branch",
     "release_commit_sha",
     "release_public_origin",
@@ -69,8 +67,6 @@ def _release_manifest() -> dict[str, str]:
     overrides = {
         "release_repository": _env_value("PROPERTYQUARRY_RELEASE_REPOSITORY"),
         "release_repository_origin": _env_value("PROPERTYQUARRY_RELEASE_REPOSITORY_ORIGIN"),
-        "release_mirror_repository": _env_value("PROPERTYQUARRY_RELEASE_MIRROR_REPOSITORY"),
-        "release_mirror_origin": _env_value("PROPERTYQUARRY_RELEASE_MIRROR_ORIGIN"),
         "release_branch": _env_value("PROPERTYQUARRY_RELEASE_BRANCH"),
         "release_commit_sha": _env_value("PROPERTYQUARRY_RELEASE_COMMIT_SHA"),
         "release_deployment_id": _env_value("PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID"),

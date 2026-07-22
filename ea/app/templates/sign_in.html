@@ -335,6 +335,7 @@
     {% set show_facebook_provider = sign_in_facebook_enabled %}
     {% set show_id_austria_provider = sign_in_id_austria_visible and sign_in_id_austria_enabled %}
     {% set has_enabled_sign_in_provider = show_google_provider or show_facebook_provider or show_id_austria_provider %}
+    {% set has_enabled_sign_in_method = sign_in_link_enabled or has_enabled_sign_in_provider %}
     {% set has_other_google_provider = show_facebook_provider or show_id_austria_provider %}
     {% set has_other_facebook_provider = show_google_provider or show_id_austria_provider %}
     {% set has_other_id_austria_provider = show_google_provider or show_facebook_provider %}
@@ -419,10 +420,14 @@
     {% if sign_in_session_expired %}
     <div class="access-feedback" data-pq-failure-state="expired_session" role="status" aria-live="polite">
       <strong>Your session ended.</strong>
-      <p class="copy">Your search is still saved. Sign in again to continue where you left off.</p>
+      {% if has_enabled_sign_in_method %}
+      <p class="copy">Your search is still saved. Choose a sign-in option to continue where you left off.</p>
       <div class="cta-row">
-        <a class="btn primary" data-pq-next-action href="#sign-in-options">Sign in again</a>
+        <button class="btn primary" type="button" data-pq-next-action data-focus-sign-in-options>Show sign-in options</button>
       </div>
+      {% else %}
+      <p class="copy" data-sign-in-unavailable>Your search is still saved. Sign-in is temporarily unavailable; try again later.</p>
+      {% endif %}
     </div>
     {% endif %}
     {% if sign_in_connected_provider %}
@@ -592,6 +597,15 @@
       if (!emailField) return;
       emailField.scrollIntoView({ block: 'center', behavior: 'smooth' });
       emailField.focus({ preventScroll: true });
+    });
+  }
+  const signInOptionsFocusButton = document.querySelector('[data-focus-sign-in-options]');
+  if (signInOptionsFocusButton) {
+    signInOptionsFocusButton.addEventListener('click', () => {
+      const signInOptions = document.getElementById('sign-in-options');
+      if (!signInOptions) return;
+      signInOptions.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      signInOptions.focus({ preventScroll: true });
     });
   }
 </script>

@@ -69,12 +69,8 @@ def _manifest_values(origin: str) -> dict[str, str]:
         "release_candidate_status": (
             "source-browser-candidate-pending-protected-live-evidence"
         ),
-        "release_repository": "ArchonMegalon/property",
-        "release_repository_origin": "https://github.com/ArchonMegalon/property.git",
-        "release_mirror_repository": "ArchonMegalon/propertyquarry",
-        "release_mirror_origin": (
-            "https://github.com/ArchonMegalon/propertyquarry.git"
-        ),
+        "release_repository": "ArchonMegalon/propertyquarry",
+        "release_repository_origin": "https://github.com/ArchonMegalon/propertyquarry.git",
         "release_branch": "main",
         "release_commit_sha": COMMIT_SHA,
         "release_public_origin": origin,
@@ -289,8 +285,6 @@ def test_live_release_provenance_requires_complete_exact_manifest_and_security_b
         ("release_candidate_status", "unreviewed"),
         ("release_repository", "another/repository"),
         ("release_repository_origin", "https://github.com/another/repository.git"),
-        ("release_mirror_repository", "another/mirror"),
-        ("release_mirror_origin", "https://github.com/another/mirror.git"),
         ("release_branch", "release"),
         ("release_commit_sha", "e" * 40),
         ("release_public_origin", "https://other.example"),

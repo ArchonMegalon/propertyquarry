@@ -1461,8 +1461,6 @@ def _configured_public_tour_hosts() -> tuple[str, ...]:
     for environment_name, expected_path in (
         ("PROPERTYQUARRY_PUBLIC_TOUR_BASE_URL", "/tours"),
         ("PROPERTYQUARRY_PUBLIC_BASE_URL", "/"),
-        ("EA_PUBLIC_TOUR_BASE_URL", "/tours"),
-        ("EA_PUBLIC_APP_BASE_URL", "/"),
     ):
         raw = str(os.getenv(environment_name) or "").strip()
         if not raw:
@@ -1511,12 +1509,6 @@ def _property_public_tour_base_url() -> str:
     return f"{_property_public_app_base_url()}/tours"
 
 def _hosted_property_tour_public_base_url() -> str:
-    explicit = str(os.getenv("EA_PUBLIC_TOUR_BASE_URL") or "").strip().rstrip("/")
-    if explicit:
-        return explicit
-    public_app = str(os.getenv("EA_PUBLIC_APP_BASE_URL") or "").strip().rstrip("/")
-    if public_app:
-        return f"{public_app}/tours"
     return _property_public_tour_base_url()
 
 def _workspace_access_public_base_url() -> str:
@@ -1549,7 +1541,7 @@ def _is_branded_public_tour_url(value: object) -> bool:
     configured_hosts = _configured_public_tour_hosts()
     if configured_hosts:
         return host in configured_hosts
-    branded_domains = ("myexternalbrain.com", "propertyquarry.com")
+    branded_domains = ("propertyquarry.com",)
     branded_host = any(host == domain or host.endswith(f".{domain}") for domain in branded_domains)
     if branded_host and str(parsed.path or "").startswith("/tours/"):
         return not _is_crezlo_tour_host(normalized)

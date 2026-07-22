@@ -48,6 +48,25 @@ RUNTIME_RELEASE_FILES = (
     "scripts/property_release_gates.sh",
 )
 
+PROPERTYQUARRY_AUTHORITY_FILES = (
+    ".github/workflows/propertyquarry-publish-runtime-images.yml",
+    ".github/workflows/smoke-runtime.yml",
+    "docs/PROPERTYQUARRY_RELEASE_MANIFEST.md",
+    "ea/app/api/routes/health.py",
+    "ea/app/product/property_tour_hosting.py",
+    "ea/app/services/public_branding.py",
+    "ea/app/services/public_clickrank.py",
+    "scripts/check_property_mirror_role.py",
+    "scripts/verify_generated_release_artifacts_clean.py",
+)
+
+FORBIDDEN_AUTHORITY_TOKENS = (
+    "ArchonMegalon/property.git",
+    "ArchonMegalon/property'",
+    'ArchonMegalon/property"',
+    "myexternalbrain.com",
+)
+
 QUARANTINED_HOST_OPS_SCRIPTS = (
     "scripts/harden_propertyquarry_docker.sh",
     "scripts/recover_host_after_reboot.sh",
@@ -116,6 +135,25 @@ def main() -> int:
         for token in FORBIDDEN_RUNTIME_TOKENS:
             if token.lower() in lowered:
                 failures.append(f"{path} references inherited/non-property runtime token {token!r}")
+
+    for path in PROPERTYQUARRY_AUTHORITY_FILES:
+        text = _read(path)
+        lowered = text.lower()
+        for token in FORBIDDEN_AUTHORITY_TOKENS:
+            if token.lower() in lowered:
+                failures.append(
+                    f"{path} grants PropertyQuarry authority to external token {token!r}"
+                )
+
+    for path in (
+        ".github/workflows/propertyquarry-publish-runtime-images.yml",
+        "docs/PROPERTYQUARRY_RELEASE_MANIFEST.md",
+        "scripts/verify_generated_release_artifacts_clean.py",
+    ):
+        if "ArchonMegalon/propertyquarry" not in _read(path):
+            failures.append(
+                f"{path} must bind release authority to ArchonMegalon/propertyquarry"
+            )
 
     for path in QUARANTINED_HOST_OPS_SCRIPTS:
         if not _script_path(path).exists():
