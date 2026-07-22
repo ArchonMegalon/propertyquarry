@@ -224,17 +224,10 @@ def _apply_propertyquarry_runtime_profile(  # type: ignore[no-untyped-def]
             include_in_schema=False,
         )
 
-    allowed_exact = _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS | {
-        f"/app/{section}" for section in _PROPERTYQUARRY_APP_SECTIONS
-    }
     app.router.routes[:] = [
         route
         for route in app.router.routes
-        if str(getattr(route, "path", "")) in allowed_exact
-        or any(
-            str(getattr(route, "path", "")).startswith(prefix)
-            for prefix in _PROPERTYQUARRY_ALLOWED_ROUTE_PREFIXES
-        )
+        if _propertyquarry_route_path_allowed(str(getattr(route, "path", "")))
     ]
     app.openapi_schema = None
     app.state.propertyquarry_runtime_profile = _PROPERTYQUARRY_RUNTIME_PROFILE
@@ -377,6 +370,7 @@ def _include_authenticated_routes(
     app: FastAPI,
     *,
     auth_dependency: list,
+    propertyquarry_profile: bool,
     onboarding_router: APIRouter,
     images_router: APIRouter,
     google_oauth_router: APIRouter,
@@ -393,21 +387,32 @@ def _include_authenticated_routes(
     rewrite_router: APIRouter,
     runtime_router: APIRouter,
 ) -> None:
-    app.include_router(onboarding_router, dependencies=auth_dependency)
-    app.include_router(images_router, dependencies=auth_dependency)
-    app.include_router(google_oauth_router)
-    app.include_router(channels_router, dependencies=auth_dependency)
-    app.include_router(memory_router, dependencies=auth_dependency)
-    app.include_router(product_api_delivery_router, dependencies=auth_dependency)
-    app.include_router(product_api_workspace_router, dependencies=auth_dependency)
-    app.include_router(product_api_router, dependencies=auth_dependency)
-    app.include_router(fliplink_authenticated_router, dependencies=auth_dependency)
-    app.include_router(property_content_studio_router, dependencies=auth_dependency)
-    app.include_router(policy_router, dependencies=auth_dependency)
-    app.include_router(providers_router, dependencies=auth_dependency)
-    app.include_router(plans_router, dependencies=auth_dependency)
-    app.include_router(rewrite_router, dependencies=auth_dependency)
-    app.include_router(runtime_router, dependencies=auth_dependency)
+    def include_router(router: APIRouter, *, require_auth: bool = True) -> None:
+        selected_router = (
+            _propertyquarry_router(router)
+            if propertyquarry_profile
+            else router
+        )
+        app.include_router(
+            selected_router,
+            dependencies=auth_dependency if require_auth else None,
+        )
+
+    include_router(onboarding_router)
+    include_router(images_router)
+    include_router(google_oauth_router, require_auth=False)
+    include_router(channels_router)
+    include_router(memory_router)
+    include_router(product_api_delivery_router)
+    include_router(product_api_workspace_router)
+    include_router(product_api_router)
+    include_router(fliplink_authenticated_router)
+    include_router(property_content_studio_router)
+    include_router(policy_router)
+    include_router(providers_router)
+    include_router(plans_router)
+    include_router(rewrite_router)
+    include_router(runtime_router)
 
 
 def _router_without_paths(router: APIRouter, *, excluded_paths: set[str]) -> APIRouter:
@@ -416,6 +421,26 @@ def _router_without_paths(router: APIRouter, *, excluded_paths: set[str]) -> API
         if getattr(route, "path", "") in excluded_paths:
             continue
         filtered.routes.append(route)
+    return filtered
+
+
+def _propertyquarry_route_path_allowed(path: str) -> bool:
+    allowed_exact = _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS | {
+        f"/app/{section}" for section in _PROPERTYQUARRY_APP_SECTIONS
+    }
+    return path in allowed_exact or any(
+        path.startswith(prefix)
+        for prefix in _PROPERTYQUARRY_ALLOWED_ROUTE_PREFIXES
+    )
+
+
+def _propertyquarry_router(router: APIRouter) -> APIRouter:
+    """Select only standalone product routes before mounting shared routers."""
+
+    filtered = APIRouter()
+    for route in router.routes:
+        if _propertyquarry_route_path_allowed(str(getattr(route, "path", ""))):
+            filtered.routes.append(route)
     return filtered
 
 
@@ -609,6 +634,7 @@ def create_app() -> FastAPI:
     _include_authenticated_routes(
         app,
         auth_dependency=auth_dependency,
+        propertyquarry_profile=propertyquarry_profile,
         onboarding_router=onboarding_router,
         images_router=images_router,
         google_oauth_router=google_oauth_router,

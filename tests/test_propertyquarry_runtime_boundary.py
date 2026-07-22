@@ -76,6 +76,7 @@ def test_propertyquarry_runtime_profile_mounts_only_property_product_surface(
         "/results/{slug}",
         "/setup",
         "/v1/memory/items",
+        "/v1/memory/candidates",
         "/v1/providers/bindings",
         "/v1/rewrite/artifact",
     }.isdisjoint(paths)
@@ -84,6 +85,7 @@ def test_propertyquarry_runtime_profile_mounts_only_property_product_surface(
     assert client.get("/sign-in").status_code == 200
     assert client.get("/app/queue").status_code == 404
     assert client.get("/app/api/brief").status_code == 404
+    assert client.get("/v1/memory/candidates").status_code == 404
     assert client.get("/v1/memory/items").status_code == 404
     assert client.get("/admin").status_code == 404
 
@@ -106,6 +108,7 @@ def test_generic_runtime_keeps_existing_routes_when_profile_is_unset(
         "/openapi.json",
         "/results/{slug}",
         "/v1/memory/items",
+        "/v1/memory/candidates",
         "/v1/providers/bindings",
         "/v1/rewrite/artifact",
     }.issubset(paths)
