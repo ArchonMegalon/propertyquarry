@@ -43,6 +43,7 @@ _PROPERTYQUARRY_APP_SECTIONS = frozenset(
         "alerts",
         "billing",
         "properties",
+        "properties/packets",
         "research",
         "shortlist",
     }
@@ -52,6 +53,8 @@ _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS = frozenset(
         "/",
         "/app",
         "/app/actions/sign-out",
+        "/app/api/access-sessions",
+        "/app/api/handoffs",
         "/app/api/offers",
         "/app/api/signals/google/property-sync",
         "/app/api/signals/google/status",
@@ -118,7 +121,12 @@ _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS = frozenset(
     }
 )
 _PROPERTYQUARRY_ALLOWED_ROUTE_PREFIXES = (
+    "/app/actions/access-sessions/",
+    "/app/actions/handoffs/",
+    "/app/actions/settings/",
+    "/app/api/access-sessions/",
     "/app/api/followups/",
+    "/app/api/handoffs/",
     "/app/api/offers/",
     "/app/api/people/{person_id}/preference-profile",
     "/app/api/properties/",
@@ -126,9 +134,13 @@ _PROPERTYQUARRY_ALLOWED_ROUTE_PREFIXES = (
     "/app/api/property/",
     "/app/api/signals/google/photos/",
     "/app/api/signals/property/",
+    "/app/api/settings/",
     "/app/api/stakeholders/",
     "/app/assets/",
+    "/app/channel/handoffs/",
+    "/app/handoffs/",
     "/app/research/",
+    "/app/settings/",
     "/app/shortlist/",
     "/tours/",
     "/v1/integrations/fliplink/",
@@ -188,7 +200,9 @@ def _propertyquarry_section_endpoint(  # type: ignore[no-untyped-def]
             full=full,
         )
 
-    propertyquarry_section.__name__ = f"propertyquarry_app_{section.replace('-', '_')}"
+    propertyquarry_section.__name__ = (
+        f"propertyquarry_app_{section.replace('-', '_').replace('/', '_')}"
+    )
     return propertyquarry_section
 
 

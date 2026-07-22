@@ -622,6 +622,7 @@ def propertyquarry_browser_server(
 
     cleanup = ExitStack()
     request.addfinalizer(cleanup.close)
+    monkeypatch.setenv("EMAILIT_API_KEY", "propertyquarry-browser-test-emailit-key")
     monkeypatch.setenv("PROPERTYQUARRY_LEGACY_PDF_RENDERER_ALLOW", "1")
     monkeypatch.setenv("PAYPAL_CLIENT_ID", "paypal-client")
     monkeypatch.setenv("PAYPAL_SECRET", "paypal-secret")
@@ -2641,7 +2642,7 @@ def test_propertyquarry_sign_in_missing_current_session_hides_saved_session_cta(
         assert response is not None and response.ok
         expect(page.get_by_text("You are signed out.")).to_be_visible()
         assert page.get_by_role("link", name="Open current session").count() == 0
-        email_sign_in_button = page.get_by_role("button", name="Email sign-in")
+        email_sign_in_button = page.get_by_role("button", name="Send secure sign-in link")
         if email_sign_in_button.count():
             expect(email_sign_in_button).to_be_visible()
         else:
@@ -2660,7 +2661,7 @@ def test_propertyquarry_expired_session_next_action_moves_keyboard_focus_to_sign
     try:
         response = page.goto(f"{base_url}/sign-in?session=expired", wait_until="networkidle")
         assert response is not None and response.ok
-        next_action = page.get_by_role("link", name="Sign in again")
+        next_action = page.get_by_role("button", name="Show sign-in options")
         sign_in_options = page.get_by_role("region", name="Sign-in options")
         expect(next_action).to_be_visible()
         expect(sign_in_options).to_be_visible()

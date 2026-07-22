@@ -604,6 +604,7 @@
     signInOptionsFocusButton.addEventListener('click', () => {
       const signInOptions = document.getElementById('sign-in-options');
       if (!signInOptions) return;
+      window.history.replaceState(null, '', '#sign-in-options');
       signInOptions.scrollIntoView({ block: 'center', behavior: 'smooth' });
       signInOptions.focus({ preventScroll: true });
     });
