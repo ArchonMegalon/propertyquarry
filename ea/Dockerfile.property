@@ -22,19 +22,15 @@ COPY --chmod=0444 \
 COPY --chmod=0555 \
     ea/property_render_ffmpeg_build_recipe.sh \
     /usr/local/libexec/property_render_ffmpeg_build_recipe.sh
+COPY --chmod=0555 \
+    ea/property_render_ffmpeg_source_fetch.sh \
+    /usr/local/libexec/property_render_ffmpeg_source_fetch.sh
 COPY --chmod=0444 \
     ea/property_render_env_launcher.c \
     /usr/local/src/property_render_env_launcher.c
 
-ADD --checksum=sha256:464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c \
-    https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz \
-    /sources/ffmpeg-8.1.2.tar.xz
-ADD --checksum=sha256:0a0963fccd70597838073f3e31b20f4a4d8cc2b5e577472c9a5a1f22624246f8 \
-    https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz.asc \
-    /sources/ffmpeg-8.1.2.tar.xz.asc
-ADD --checksum=sha256:397b3becedcd5a98769967ff1ff8501ddc89f8368b8f766e4701377d7dbaabe5 \
-    https://ffmpeg.org/ffmpeg-devel.asc \
-    /sources/ffmpeg-devel.asc
+RUN /usr/local/libexec/property_render_ffmpeg_source_fetch.sh
+
 ADD --checksum=sha256:d0967a1348c85dfde363bb52610403be898171493100561efa0dd05d5fd1ae50 \
     https://code.videolan.org/videolan/x264/-/archive/0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee/x264-0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee.tar.gz \
     /sources/x264-0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee.tar.gz
