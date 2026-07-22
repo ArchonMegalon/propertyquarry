@@ -127,7 +127,7 @@ DEPENDENCY_PROFILE: Final = (
     ("annotated-doc", "0.0.4"),
     ("annotated-types", "0.7.0"),
     ("anyio", "4.13.0"),
-    ("fastapi", "0.139.2"),
+    ("fastapi", "0.135.1"),
     ("h11", "0.16.0"),
     ("httpcore", "1.0.9"),
     ("httpx", "0.28.1"),
