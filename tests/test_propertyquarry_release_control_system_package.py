@@ -44,10 +44,10 @@ def _controller_config() -> dict[str, object]:
         "version": 2,
         "environment": "propertyquarry-production",
         "identity_policy": {
-            "repository": "ArchonMegalon/property",
+            "repository": "ArchonMegalon/propertyquarry",
             "ref": "refs/heads/main",
             "workflow_ref": (
-                "ArchonMegalon/property/.github/workflows/"
+                "ArchonMegalon/propertyquarry/.github/workflows/"
                 "smoke-runtime.yml@refs/heads/main"
             ),
             "workflow_sha": "a" * 40,

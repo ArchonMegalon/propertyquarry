@@ -596,10 +596,10 @@ def _controller_config(*, workflow_sha: str) -> dict[str, object]:
         "version": 2,
         "environment": "propertyquarry-production",
         "identity_policy": {
-            "repository": "ArchonMegalon/property",
+            "repository": "ArchonMegalon/propertyquarry",
             "ref": "refs/heads/main",
             "workflow_ref": (
-                "ArchonMegalon/property/.github/workflows/"
+                "ArchonMegalon/propertyquarry/.github/workflows/"
                 "smoke-runtime.yml@refs/heads/main"
             ),
             "workflow_sha": workflow_sha,
@@ -734,11 +734,11 @@ def _root_policy(*, candidate_sha: str, workflow_sha: str) -> dict[str, object]:
         "schema": "propertyquarry.release-root-policy.v2",
         "identity": {
             "audience": "propertyquarry-release-control-v2",
-            "repository": "ArchonMegalon/property",
+            "repository": "ArchonMegalon/propertyquarry",
             "ref": "refs/heads/main",
             "candidate_sha": candidate_sha,
             "workflow_ref": (
-                "ArchonMegalon/property/.github/workflows/"
+                "ArchonMegalon/propertyquarry/.github/workflows/"
                 "smoke-runtime.yml@refs/heads/main"
             ),
             "workflow_sha": workflow_sha,

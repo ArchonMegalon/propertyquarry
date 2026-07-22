@@ -99,6 +99,22 @@ def test_bootstrap_creates_six_distinct_keys_and_exact_public_bundle(
     assert actual_package_files == set(identity.PACKAGE_INPUT_FILES)
     assert len(actual_package_files) == 9
 
+    expected_repository = "ArchonMegalon/propertyquarry"
+    expected_workflow_ref = (
+        "ArchonMegalon/propertyquarry/.github/workflows/"
+        "smoke-runtime.yml@refs/heads/main"
+    )
+    controller = json.loads(
+        (package_input / "controller-v2.json").read_bytes()
+    )
+    root_policy = json.loads(
+        (package_input / "policy-v2.json").read_bytes()
+    )
+    assert controller["identity_policy"]["repository"] == expected_repository
+    assert controller["identity_policy"]["workflow_ref"] == expected_workflow_ref
+    assert root_policy["identity"]["repository"] == expected_repository
+    assert root_policy["identity"]["workflow_ref"] == expected_workflow_ref
+
     key_ids: set[str] = set()
     for role, stem in identity.KEY_SPECS:
         private_path = root / "keys" / f"{stem}.key"

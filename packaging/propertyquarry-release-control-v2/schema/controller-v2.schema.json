@@ -48,8 +48,8 @@
         "environment": {"const": "propertyquarry-production"},
         "job": {"const": "propertyquarry-release-v2"},
         "ref": {"const": "refs/heads/main"},
-        "repository": {"const": "ArchonMegalon/property"},
-        "workflow_ref": {"const": "ArchonMegalon/property/.github/workflows/smoke-runtime.yml@refs/heads/main"},
+        "repository": {"const": "ArchonMegalon/propertyquarry"},
+        "workflow_ref": {"const": "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"},
         "workflow_sha": {"pattern": "^[0-9a-f]{40}$", "type": "string"}
       },
       "required": ["repository", "ref", "workflow_ref", "workflow_sha", "job", "environment"],
