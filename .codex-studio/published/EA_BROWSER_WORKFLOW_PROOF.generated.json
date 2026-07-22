@@ -5,7 +5,7 @@
   "proof_target": "propertyquarry",
   "version": 1,
   "kind": "proof_receipt",
-  "generated_at": "2026-07-22T11:51:55Z",
+  "generated_at": "2026-07-22T13:52:27Z",
   "generated_by": "scripts/materialize_ea_browser_workflow_proof.py",
   "status": "pass",
   "operator_summary": "PropertyQuarry browser workflow proof is published and green across the required journey matrix, source-backed contracts, and real-browser E2E.",
@@ -31,7 +31,7 @@
       "id": "propertyquarry.release-proof.v1",
       "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
     },
-    "code_commit": "9dbdf47656c676a1569f569e1c88284653ab4059",
+    "code_commit": "da69896692ae07a05278c69708d418910dce1c5d",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
@@ -71,10 +71,19 @@
       "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
     ],
     "exit_code": 0,
-    "duration_seconds": 25.551,
+    "duration_seconds": 25.124,
     "output_excerpt": [
       ".......                                                                  [100%]",
-      "7 passed in 23.87s"
+      "7 passed in 23.40s",
+      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-58a2b92c-392c-44f6-bb82-d752a1c8b718/test_main_rolls_back_retention0/chummer-ui-fresh-package-plane-injected",
+      "<class 'OSError'>: [Errno 39] Directory not empty: 'chummer-ui-fresh-package-plane-injected'",
+      "  warnings.warn(",
+      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-58a2b92c-392c-44f6-bb82-d752a1c8b718/test_main_rolls_back_retention0",
+      "<class 'OSError'>: [Errno 39] Directory not empty: 'test_main_rolls_back_retention0'",
+      "  warnings.warn(",
+      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-58a2b92c-392c-44f6-bb82-d752a1c8b718",
+      "<class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-tibor/garbage-58a2b92c-392c-44f6-bb82-d752a1c8b718'",
+      "  warnings.warn("
     ],
     "limitations": [],
     "outcome_counts": {
@@ -106,10 +115,19 @@
         "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
       ],
       "exit_code": 0,
-      "duration_seconds": 25.551,
+      "duration_seconds": 25.124,
       "output_excerpt": [
         ".......                                                                  [100%]",
-        "7 passed in 23.87s"
+        "7 passed in 23.40s",
+        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-58a2b92c-392c-44f6-bb82-d752a1c8b718/test_main_rolls_back_retention0/chummer-ui-fresh-package-plane-injected",
+        "<class 'OSError'>: [Errno 39] Directory not empty: 'chummer-ui-fresh-package-plane-injected'",
+        "  warnings.warn(",
+        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-58a2b92c-392c-44f6-bb82-d752a1c8b718/test_main_rolls_back_retention0",
+        "<class 'OSError'>: [Errno 39] Directory not empty: 'test_main_rolls_back_retention0'",
+        "  warnings.warn(",
+        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-58a2b92c-392c-44f6-bb82-d752a1c8b718",
+        "<class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-tibor/garbage-58a2b92c-392c-44f6-bb82-d752a1c8b718'",
+        "  warnings.warn("
       ],
       "limitations": [],
       "outcome_counts": {
@@ -134,10 +152,19 @@
         "test_property_research_rows_preserve_evidence_states_and_original_article_link"
       ],
       "exit_code": 0,
-      "duration_seconds": 2.164,
+      "duration_seconds": 2.024,
       "output_excerpt": [
         ".                                                                        [100%]",
-        "1 passed in 1.19s"
+        "1 passed in 1.11s",
+        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-9347fe29-5e98-4090-a8ce-0a64e854f67a/test_main_rolls_back_retention0/chummer-ui-fresh-package-plane-injected",
+        "<class 'OSError'>: [Errno 39] Directory not empty: 'chummer-ui-fresh-package-plane-injected'",
+        "  warnings.warn(",
+        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-9347fe29-5e98-4090-a8ce-0a64e854f67a/test_main_rolls_back_retention0",
+        "<class 'OSError'>: [Errno 39] Directory not empty: 'test_main_rolls_back_retention0'",
+        "  warnings.warn(",
+        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-9347fe29-5e98-4090-a8ce-0a64e854f67a",
+        "<class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-tibor/garbage-9347fe29-5e98-4090-a8ce-0a64e854f67a'",
+        "  warnings.warn("
       ],
       "limitations": [],
       "outcome_counts": {
@@ -178,10 +205,19 @@
       "test_propertyquarry_research_evidence_states_and_links_render_in_real_browser"
     ],
     "exit_code": 0,
-    "duration_seconds": 101.16,
+    "duration_seconds": 113.078,
     "output_excerpt": [
       "................                                                         [100%]",
-      "16 passed in 99.07s (0:01:39)"
+      "16 passed in 111.03s (0:01:51)",
+      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-7a188467-2fa8-4668-8369-f3a4be318652/test_main_rolls_back_retention0/chummer-ui-fresh-package-plane-injected",
+      "<class 'OSError'>: [Errno 39] Directory not empty: 'chummer-ui-fresh-package-plane-injected'",
+      "  warnings.warn(",
+      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-7a188467-2fa8-4668-8369-f3a4be318652/test_main_rolls_back_retention0",
+      "<class 'OSError'>: [Errno 39] Directory not empty: 'test_main_rolls_back_retention0'",
+      "  warnings.warn(",
+      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-7a188467-2fa8-4668-8369-f3a4be318652",
+      "<class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-tibor/garbage-7a188467-2fa8-4668-8369-f3a4be318652'",
+      "  warnings.warn("
     ],
     "limitations": [],
     "outcome_counts": {
@@ -200,7 +236,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "9dbdf47656c676a1569f569e1c88284653ab4059",
+    "runtime_commit_sha": "da69896692ae07a05278c69708d418910dce1c5d",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
