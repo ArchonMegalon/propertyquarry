@@ -3350,12 +3350,13 @@ def test_property_compose_container_names_are_recoverable() -> None:
     assert "propertyquarry-render-tools:" in compose
     assert "dockerfile: ea/Dockerfile.property" in compose
     assert 'image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-standalone-render-runtime:latest}"' in compose
-    assert 'container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api}"' in compose
-    assert 'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"' in compose
-    assert 'container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler}"' in compose
+    assert 'container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api-live}"' in compose
+    assert 'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker-live}"' in compose
+    assert 'container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler-live}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_DB_CONTAINER_NAME:-propertyquarry-db-live}"' in compose
-    assert 'container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-tools}"' in compose
-    assert compose.count("path: ./state/runtime/property_scene_video_shared.env") == 2
+    assert 'container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-live}"' in compose
+    assert compose.count("path: ./state/runtime/property_scene_video_shared.env") == 1
+    assert "property_scene_video_shared.env" not in api_section
     assert compose.count(
         'PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"'
     ) == 4
@@ -3384,6 +3385,7 @@ def test_property_compose_container_names_are_recoverable() -> None:
     assert 'test: ["CMD", "/usr/local/bin/python", "-m", "app.scheduler_healthcheck"]' in compose
     scheduler_section = compose.split("  propertyquarry-scheduler:", 1)[1].split("  propertyquarry-db:", 1)[0]
     assert "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET" in scheduler_section
+    assert "property_scene_video_shared.env" not in scheduler_section
     assert "disable: true" not in scheduler_section
     render_section = compose.split("  propertyquarry-render-tools:", 1)[1].split("  propertyquarry-db:", 1)[0]
     assert "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET" not in render_section
@@ -3395,8 +3397,8 @@ def test_property_compose_container_names_are_recoverable() -> None:
         'command: ["/usr/local/bin/python", '
         '"-I", "/app/scripts/property_reconstruction_render_bridge.py"]'
     ) in render_section
-    assert "env_file:" not in render_section
-    assert "property_scene_video_shared.env" not in render_section
+    assert "env_file:" in render_section
+    assert "path: ./state/runtime/property_scene_video_shared.env" in render_section
     assert "EA_ARTIFACTS_DIR" not in render_section
     assert "EA_RESPONSES_PROVIDER_LEDGER_DIR" not in render_section
     assert "TEABLE_" not in render_section

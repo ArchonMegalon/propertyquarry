@@ -208,11 +208,11 @@ def build_security_posture_receipt() -> dict[str, object]:
         "PROPERTYQUARRY_WORKER_SERVICE": "propertyquarry-worker",
         "PROPERTYQUARRY_SCHEDULER_SERVICE": "propertyquarry-scheduler",
         "PROPERTYQUARRY_DB_SERVICE": "propertyquarry-db",
-        "PROPERTYQUARRY_API_CONTAINER_NAME": "propertyquarry-api",
-        "PROPERTYQUARRY_WORKER_CONTAINER_NAME": "propertyquarry-worker",
-        "PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME": "propertyquarry-scheduler",
+        "PROPERTYQUARRY_API_CONTAINER_NAME": "propertyquarry-api-live",
+        "PROPERTYQUARRY_WORKER_CONTAINER_NAME": "propertyquarry-worker-live",
+        "PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME": "propertyquarry-scheduler-live",
         "PROPERTYQUARRY_DB_CONTAINER_NAME": "propertyquarry-db-live",
-        "PROPERTYQUARRY_RENDER_CONTAINER_NAME": "propertyquarry-render-tools",
+        "PROPERTYQUARRY_RENDER_CONTAINER_NAME": "propertyquarry-render-live",
     }
     for env_name, expected_value in expected_service_aliases.items():
         if not re.search(rf"^{re.escape(env_name)}={re.escape(expected_value)}$", env_example, flags=re.MULTILINE):
@@ -241,11 +241,11 @@ def build_security_posture_receipt() -> dict[str, object]:
         if service_name not in compose:
             failures.append(f"docker-compose.property.yml missing {service_name}")
     expected_container_name_envs = (
-        'container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api}"',
-        'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"',
-        'container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler}"',
+        'container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api-live}"',
+        'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker-live}"',
+        'container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler-live}"',
         'container_name: "${PROPERTYQUARRY_DB_CONTAINER_NAME:-propertyquarry-db-live}"',
-        'container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-tools}"',
+        'container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-live}"',
     )
     for expected in expected_container_name_envs:
         if expected not in compose:
@@ -258,7 +258,7 @@ def build_security_posture_receipt() -> dict[str, object]:
         worker_section = ""
     required_worker_contracts = (
         'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"',
-        'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"',
+        'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker-live}"',
         "cap_drop:\n      - ALL",
         'security_opt:\n      - "no-new-privileges:true"',
         "read_only: true",
