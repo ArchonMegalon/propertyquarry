@@ -659,7 +659,6 @@ def test_production_compose_argv_is_exact() -> None:
             "always",
             "--quiet-pull",
             "--no-build",
-            "--remove-orphans",
             "--timeout",
             "120",
             "--wait",
@@ -689,7 +688,7 @@ def test_signed_deploy_receipt_binds_every_predecessor_and_redacts_output(
     assert payload["pre_observations"] == payload["post_observations"]
     assert payload["pull_policy"] == "always"
     assert payload["build_performed"] is False
-    assert payload["orphans_removed"] is True
+    assert payload["orphans_removed"] is False
     assert payload["wait_completed"] is True
     assert payload["output_redacted"] is True
     assert payload["secret_values_emitted"] is False

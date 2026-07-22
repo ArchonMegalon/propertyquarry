@@ -3293,7 +3293,7 @@ def _read_deploy_receipt(
         or payload.get("exit_code") != 0
         or payload.get("idempotent") is not True
         or payload.get("mutation") is not True
-        or payload.get("orphans_removed") is not True
+        or payload.get("orphans_removed") is not False
         or payload.get("output_redacted") is not True
         or payload.get("production_ready") is not False
         or payload.get("pull_policy") != "always"
