@@ -24,6 +24,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 from dataclasses import dataclass
@@ -81,10 +82,25 @@ TAR_BIN = "/usr/bin/tar"
 DATABASE_CONTAINER = "propertyquarry-db-live"
 DATABASE_NAME = "propertyquarry"
 DATABASE_USER = "postgres"
+RUNTIME_INPUT_PATHS = (
+    Path("/docker/property/.env"),
+    Path("/docker/property/state/runtime/property_scene_video_shared.env"),
+    Path("/docker/property/state/runtime/propertyquarry_database_roles.env"),
+    Path("/docker/property/state/runtime/propertyquarry_admission.env"),
+    Path("/docker/property/state/runtime/propertyquarry_google_identity.env"),
+    Path("/docker/property/state/runtime/propertyquarry_registration_email.env"),
+)
 
 RUNTIME_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
-IMAGE_RE = re.compile(r"^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$")
+DEPLOYMENT_ID_RE = SHA256_HEX_RE
+IMAGE_RE = re.compile(
+    r"^[a-z0-9./_-]+(?::[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$"
+)
+EXPECTED_DATABASE_IMAGE = (
+    "postgres:16-alpine@sha256:"
+    "16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229"
+)
 KEY_ID_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 KEY_FILE_RE = re.compile(rb"^[0-9a-f]{64}\n$")
 
@@ -139,9 +155,11 @@ class BackupPaths:
 @dataclass(frozen=True)
 class BackupRequest:
     runtime_sha: str
+    deployment_id: str
     envelope_sha: str
     web_image: str
     render_image: str
+    database_image: str
     receipt_path: Path
     encryption_key_path: Path
 
@@ -281,6 +299,191 @@ def _read_regular_nofollow(path: Path, *, max_bytes: int) -> bytes:
         os.close(descriptor)
 
 
+def _runtime_input_snapshot() -> tuple[list[dict[str, object]], dict[str, bytes]]:
+    descriptors: list[dict[str, object]] = []
+    contents: dict[str, bytes] = {}
+    for path in RUNTIME_INPUT_PATHS:
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except (FileNotFoundError, OSError) as exc:
+            raise BackupError("runtime_input_open_failed", str(path)) from exc
+        try:
+            before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_uid != 1000
+                or before.st_gid != 1000
+                or before.st_size < 1
+                or before.st_size > MAX_CAPTURE_BYTES
+            ):
+                raise BackupError("runtime_input_metadata_invalid", str(path))
+            payload = bytearray()
+            while len(payload) <= MAX_CAPTURE_BYTES:
+                chunk = os.read(
+                    descriptor,
+                    min(64 * 1024, MAX_CAPTURE_BYTES + 1 - len(payload)),
+                )
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            after = os.fstat(descriptor)
+            if (
+                len(payload) > MAX_CAPTURE_BYTES
+                or len(payload) != before.st_size
+                or (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_mode,
+                    before.st_uid,
+                    before.st_gid,
+                    before.st_nlink,
+                    before.st_size,
+                    before.st_mtime_ns,
+                    before.st_ctime_ns,
+                )
+                != (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_mode,
+                    after.st_uid,
+                    after.st_gid,
+                    after.st_nlink,
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                )
+            ):
+                raise BackupError("runtime_input_changed_during_read", str(path))
+        finally:
+            os.close(descriptor)
+        encoded = bytes(payload)
+        descriptors.append(
+            {
+                "path": str(path),
+                "sha256": "sha256:" + _sha256_bytes(encoded),
+                "mode": 0o600,
+                "uid": 1000,
+                "gid": 1000,
+                "size": len(encoded),
+            }
+        )
+        contents[str(path)] = encoded
+    return descriptors, contents
+
+
+def _validated_runtime_inputs(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list) or len(value) != len(RUNTIME_INPUT_PATHS):
+        raise BackupError("runtime_inputs_invalid")
+    result: list[dict[str, object]] = []
+    keys = {"gid", "mode", "path", "sha256", "size", "uid"}
+    for expected_path, item in zip(RUNTIME_INPUT_PATHS, value, strict=True):
+        if not isinstance(item, dict) or set(item) != keys:
+            raise BackupError("runtime_inputs_invalid", str(expected_path))
+        descriptor = {
+            "path": item.get("path"),
+            "sha256": item.get("sha256"),
+            "mode": item.get("mode"),
+            "uid": item.get("uid"),
+            "gid": item.get("gid"),
+            "size": item.get("size"),
+        }
+        if (
+            descriptor["path"] != str(expected_path)
+            or not isinstance(descriptor["sha256"], str)
+            or not KEY_ID_RE.fullmatch(descriptor["sha256"])
+            or descriptor["mode"] != 0o600
+            or descriptor["uid"] != 1000
+            or descriptor["gid"] != 1000
+            or not isinstance(descriptor["size"], int)
+            or isinstance(descriptor["size"], bool)
+            or int(descriptor["size"]) < 1
+            or int(descriptor["size"]) > MAX_CAPTURE_BYTES
+        ):
+            raise BackupError("runtime_inputs_invalid", str(expected_path))
+        result.append(descriptor)
+    return result
+
+
+def _validated_database_substrate(value: object) -> dict[str, object]:
+    keys = {
+        "container_id",
+        "container_name",
+        "database",
+        "database_oid",
+        "image",
+        "image_id",
+        "pgdata_volume",
+        "repo_digest",
+    }
+    if not isinstance(value, dict) or set(value) != keys:
+        raise BackupError("database_substrate_invalid")
+    volume = value.get("pgdata_volume")
+    volume_keys = {
+        "created_at",
+        "driver",
+        "labels",
+        "mountpoint",
+        "name",
+        "options",
+        "scope",
+    }
+    if not isinstance(volume, dict) or set(volume) != volume_keys:
+        raise BackupError("database_substrate_invalid")
+    labels = volume.get("labels")
+    options = volume.get("options")
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", str(value.get("container_id") or ""))
+        or value.get("container_name") != DATABASE_CONTAINER
+        or value.get("database") != DATABASE_NAME
+        or not isinstance(value.get("database_oid"), int)
+        or isinstance(value.get("database_oid"), bool)
+        or int(value["database_oid"]) < 1
+        or value.get("image") != EXPECTED_DATABASE_IMAGE
+        or not isinstance(value.get("image_id"), str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(value["image_id"]))
+        or value.get("repo_digest") != _canonical_repo_digest(EXPECTED_DATABASE_IMAGE)
+        or volume.get("name") != "property_propertyquarry_pgdata"
+        or volume.get("driver") != "local"
+        or volume.get("scope") != "local"
+        or volume.get("mountpoint")
+        != "/var/lib/docker/volumes/property_propertyquarry_pgdata/_data"
+        or not isinstance(labels, dict)
+        or not isinstance(options, dict)
+        or labels != dict(sorted(labels.items()))
+        or options != dict(sorted(options.items()))
+        or any(
+            not isinstance(key, str) or not isinstance(item, str)
+            for mapping in (labels, options)
+            for key, item in mapping.items()
+        )
+        or not re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+ -]+Z?",
+            str(volume.get("created_at") or ""),
+        )
+    ):
+        raise BackupError("database_substrate_invalid")
+    return {
+        "container_id": str(value["container_id"]),
+        "container_name": DATABASE_CONTAINER,
+        "database": DATABASE_NAME,
+        "database_oid": int(value["database_oid"]),
+        "image": EXPECTED_DATABASE_IMAGE,
+        "image_id": str(value["image_id"]),
+        "pgdata_volume": {
+            "created_at": str(volume["created_at"]),
+            "driver": "local",
+            "labels": dict(labels),
+            "mountpoint": str(volume["mountpoint"]),
+            "name": str(volume["name"]),
+            "options": dict(options),
+            "scope": "local",
+        },
+        "repo_digest": str(value["repo_digest"]),
+    }
+
+
 def _load_or_create_encryption_key(
     path: Path,
     *,
@@ -361,9 +564,14 @@ def encrypt_stream(
     *,
     master_key: bytes,
     runtime_sha: str,
+    deployment_id: str,
     artifact_name: str,
     artifact_kind: str,
 ) -> dict[str, object]:
+    if not RUNTIME_SHA_RE.fullmatch(runtime_sha) or not DEPLOYMENT_ID_RE.fullmatch(
+        deployment_id
+    ):
+        raise BackupError("encrypted_stream_release_identity_invalid")
     salt = secrets.token_bytes(16)
     nonce_prefix = secrets.token_bytes(8)
     header = {
@@ -374,6 +582,7 @@ def encrypt_stream(
         "kdf": "HKDF-SHA256",
         "nonce_prefix": nonce_prefix.hex(),
         "runtime_sha": runtime_sha,
+        "deployment_id": deployment_id,
         "salt": salt.hex(),
         "schema": ENCRYPTED_STREAM_SCHEMA,
     }
@@ -470,9 +679,14 @@ def decrypt_stream(
     *,
     master_key: bytes,
     expected_runtime_sha: str,
+    expected_deployment_id: str,
     expected_artifact_name: str,
     expected_artifact_kind: str,
 ) -> dict[str, object]:
+    if not RUNTIME_SHA_RE.fullmatch(
+        expected_runtime_sha
+    ) or not DEPLOYMENT_ID_RE.fullmatch(expected_deployment_id):
+        raise BackupError("encrypted_stream_release_identity_invalid")
     ciphertext_digest = hashlib.sha256()
     ciphertext_bytes = 0
     plaintext_digest = hashlib.sha256()
@@ -502,6 +716,7 @@ def decrypt_stream(
             "cipher": "AES-256-GCM",
             "kdf": "HKDF-SHA256",
             "runtime_sha": expected_runtime_sha,
+            "deployment_id": expected_deployment_id,
             "schema": ENCRYPTED_STREAM_SCHEMA,
         }
         for key, value in expected_header.items():
@@ -592,20 +807,102 @@ def _command_error_detail(capture: ProcessCapture) -> str:
     return text[-2000:]
 
 
+def _runtime_tar_bytes(
+    runtime_inputs: Sequence[Mapping[str, object]],
+    runtime_contents: Mapping[str, bytes],
+) -> bytes:
+    expected_inputs = _validated_runtime_inputs(list(runtime_inputs))
+    if set(runtime_contents) != {str(path) for path in RUNTIME_INPUT_PATHS}:
+        raise BackupError("runtime_input_content_set_invalid")
+    output = io.BytesIO()
+    with tarfile.open(
+        fileobj=output,
+        mode="w:gz",
+        format=tarfile.PAX_FORMAT,
+    ) as archive:
+        for descriptor in expected_inputs:
+            path = str(descriptor["path"])
+            payload = runtime_contents[path]
+            if (
+                len(payload) != descriptor["size"]
+                or "sha256:" + _sha256_bytes(payload) != descriptor["sha256"]
+            ):
+                raise BackupError("runtime_input_content_digest_invalid", path)
+            member = tarfile.TarInfo(path.lstrip("/"))
+            member.size = len(payload)
+            member.mode = int(descriptor["mode"])
+            member.uid = int(descriptor["uid"])
+            member.gid = int(descriptor["gid"])
+            member.mtime = 0
+            member.uname = ""
+            member.gname = ""
+            archive.addfile(member, io.BytesIO(payload))
+    encoded = output.getvalue()
+    if not encoded:
+        raise BackupError("runtime_tar_empty")
+    return encoded
+
+
 def _encrypt_command(
     spec: ArtifactSpec,
     destination: Path,
     *,
     master_key: bytes,
     runtime_sha: str,
+    deployment_id: str,
+    runtime_inputs: Sequence[Mapping[str, object]] | None = None,
+    runtime_contents: Mapping[str, bytes] | None = None,
 ) -> dict[str, object]:
-    process = subprocess.Popen(
-        spec.producer,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    if spec.verification == "runtime_tar_exact":
+        if runtime_inputs is None or runtime_contents is None:
+            raise BackupError("runtime_input_snapshot_required")
+        return encrypt_stream(
+            io.BytesIO(_runtime_tar_bytes(runtime_inputs, runtime_contents)),
+            destination,
+            master_key=master_key,
+            runtime_sha=runtime_sha,
+            deployment_id=deployment_id,
+            artifact_name=spec.name,
+            artifact_kind=spec.kind,
+        )
+    producer = list(spec.producer)
+    directory_fd = -1
+    pass_fds: tuple[int, ...] = ()
+    if len(spec.required_paths) == 1:
+        source = spec.required_paths[0]
+        try:
+            directory_fd = os.open(
+                source,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            )
+        except OSError as exc:
+            raise BackupError("backup_source_open_failed", str(source)) from exc
+        observed = os.fstat(directory_fd)
+        if not stat.S_ISDIR(observed.st_mode):
+            os.close(directory_fd)
+            raise BackupError("backup_source_directory_required", str(source))
+        replacement = f"/proc/self/fd/{directory_fd}"
+        producer = [replacement if item == str(source) else item for item in producer]
+        pass_fds = (directory_fd,)
+    try:
+        process = subprocess.Popen(
+            tuple(producer),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+            pass_fds=pass_fds,
+            env={
+                "HOME": "/nonexistent",
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+                "TZ": "UTC",
+            },
+        )
+    finally:
+        if directory_fd >= 0:
+            os.close(directory_fd)
     if process.stdout is None or process.stderr is None:
         process.kill()
         raise BackupError("producer_pipe_unavailable", spec.name)
@@ -617,6 +914,7 @@ def _encrypt_command(
             destination,
             master_key=master_key,
             runtime_sha=runtime_sha,
+            deployment_id=deployment_id,
             artifact_name=spec.name,
             artifact_kind=spec.kind,
         )
@@ -647,6 +945,7 @@ def _decrypt_to_process(
     *,
     master_key: bytes,
     runtime_sha: str,
+    deployment_id: str,
     spec: ArtifactSpec,
 ) -> tuple[dict[str, object], ProcessCapture, ProcessCapture]:
     process = subprocess.Popen(
@@ -669,6 +968,7 @@ def _decrypt_to_process(
             process.stdin.write,
             master_key=master_key,
             expected_runtime_sha=runtime_sha,
+            expected_deployment_id=deployment_id,
             expected_artifact_name=spec.name,
             expected_artifact_kind=spec.kind,
         )
@@ -700,6 +1000,8 @@ def _verify_artifact(
     *,
     master_key: bytes,
     runtime_sha: str,
+    deployment_id: str,
+    runtime_inputs: Sequence[Mapping[str, object]] | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     if spec.verification == "pg_restore_list":
         decrypted, stdout, _stderr = _decrypt_to_process(
@@ -714,6 +1016,7 @@ def _verify_artifact(
             ),
             master_key=master_key,
             runtime_sha=runtime_sha,
+            deployment_id=deployment_id,
             spec=spec,
         )
         listing = stdout.data.decode("utf-8", errors="replace")
@@ -727,12 +1030,83 @@ def _verify_artifact(
             "table_data_entries": table_data_count,
             "toc_lines": stdout.line_count,
         }
+    if spec.verification == "runtime_tar_exact":
+        if runtime_inputs is None:
+            raise BackupError("runtime_input_snapshot_required")
+        expected_inputs = _validated_runtime_inputs(list(runtime_inputs))
+        captured = bytearray()
+
+        def tar_sink(chunk: bytes) -> None:
+            if len(captured) + len(chunk) > MAX_CAPTURE_BYTES * len(
+                RUNTIME_INPUT_PATHS
+            ):
+                raise BackupError("runtime_tar_oversized")
+            captured.extend(chunk)
+
+        decrypted = decrypt_stream(
+            source,
+            tar_sink,
+            master_key=master_key,
+            expected_runtime_sha=runtime_sha,
+            expected_deployment_id=deployment_id,
+            expected_artifact_name=spec.name,
+            expected_artifact_kind=spec.kind,
+        )
+        try:
+            with tarfile.open(fileobj=io.BytesIO(captured), mode="r:gz") as archive:
+                members = archive.getmembers()
+                expected_names = [
+                    str(item["path"]).lstrip("/") for item in expected_inputs
+                ]
+                if [member.name for member in members] != expected_names:
+                    raise BackupError("runtime_tar_member_set_invalid")
+                for descriptor, member in zip(
+                    expected_inputs,
+                    members,
+                    strict=True,
+                ):
+                    if (
+                        not member.isreg()
+                        or member.issparse()
+                        or member.size != descriptor["size"]
+                        or member.mode != descriptor["mode"]
+                        or member.uid != descriptor["uid"]
+                        or member.gid != descriptor["gid"]
+                    ):
+                        raise BackupError(
+                            "runtime_tar_member_metadata_invalid",
+                            member.name,
+                        )
+                    extracted = archive.extractfile(member)
+                    if extracted is None:
+                        raise BackupError(
+                            "runtime_tar_member_content_missing",
+                            member.name,
+                        )
+                    payload = extracted.read(MAX_CAPTURE_BYTES + 1)
+                    if (
+                        len(payload) != descriptor["size"]
+                        or "sha256:" + _sha256_bytes(payload)
+                        != descriptor["sha256"]
+                    ):
+                        raise BackupError(
+                            "runtime_tar_member_digest_invalid",
+                            member.name,
+                        )
+        except (tarfile.TarError, OSError) as exc:
+            raise BackupError("runtime_tar_invalid") from exc
+        return decrypted, {
+            "entries": len(expected_inputs),
+            "method": "decrypt-runtime-tar-exact",
+            "runtime_inputs": expected_inputs,
+        }
     if spec.verification == "tar_gzip_list":
         decrypted, stdout, _stderr = _decrypt_to_process(
             source,
             (TAR_BIN, "--gzip", "--list", "--file", "-"),
             master_key=master_key,
             runtime_sha=runtime_sha,
+            deployment_id=deployment_id,
             spec=spec,
         )
         names = [line.strip() for line in stdout.data.decode("utf-8", errors="replace").splitlines()]
@@ -746,9 +1120,29 @@ def _verify_artifact(
             for name in names
         ):
             raise BackupError("tar_archive_path_unsafe", spec.name)
+        typed_decrypted, verbose, _verbose_stderr = _decrypt_to_process(
+            source,
+            (TAR_BIN, "--gzip", "--list", "--verbose", "--file", "-"),
+            master_key=master_key,
+            runtime_sha=runtime_sha,
+            deployment_id=deployment_id,
+            spec=spec,
+        )
+        if typed_decrypted != decrypted:
+            raise BackupError("tar_archive_roundtrip_mismatch", spec.name)
+        type_lines = [
+            line
+            for line in verbose.data.decode("utf-8", errors="replace").splitlines()
+            if line
+        ]
+        if len(type_lines) != len(names) or any(
+            line[0] not in {"-", "d"} for line in type_lines
+        ):
+            raise BackupError("tar_archive_member_type_invalid", spec.name)
         return decrypted, {
             "entries": stdout.line_count,
-            "method": "decrypt-tar-gzip-list",
+            "member_types": "directory-or-regular-only",
+            "method": "decrypt-tar-gzip-list-and-types",
         }
     if spec.verification == "roles_sql":
         captured = bytearray()
@@ -763,6 +1157,7 @@ def _verify_artifact(
             sink,
             master_key=master_key,
             expected_runtime_sha=runtime_sha,
+            expected_deployment_id=deployment_id,
             expected_artifact_name=spec.name,
             expected_artifact_kind=spec.kind,
         )
@@ -903,26 +1298,6 @@ def production_artifact_specs() -> tuple[ArtifactSpec, ...]:
                 (source,),
             )
         )
-    runtime_files = (
-        Path("/docker/property/.env"),
-        Path(
-            "/docker/property/state/runtime/"
-            "property_scene_video_shared.env"
-        ),
-        Path(
-            "/docker/property/state/runtime/"
-            "propertyquarry_database_roles.env"
-        ),
-        Path(
-            "/docker/property/state/runtime/"
-            "propertyquarry_admission.env"
-        ),
-        Path("/docker/property/state/runtime/propertyquarry_google_identity.env"),
-        Path(
-            "/docker/property/state/runtime/"
-            "propertyquarry_registration_email.env"
-        ),
-    )
     specs.append(
         ArtifactSpec(
             "runtime-identity-config",
@@ -938,11 +1313,11 @@ def production_artifact_specs() -> tuple[ArtifactSpec, ...]:
                 "--one-file-system",
                 "--directory",
                 "/",
-                *(str(path).lstrip("/") for path in runtime_files),
+                *(str(path).lstrip("/") for path in RUNTIME_INPUT_PATHS),
             ),
-            "tar_gzip_list",
-            tuple(str(path) for path in runtime_files),
-            runtime_files,
+            "runtime_tar_exact",
+            tuple(str(path) for path in RUNTIME_INPUT_PATHS),
+            RUNTIME_INPUT_PATHS,
         )
     )
     return tuple(specs)
@@ -1002,9 +1377,11 @@ def _installed_bindings(
             authority,
             {
                 "runtime_sha": request.runtime_sha,
+                "deployment_id": request.deployment_id,
                 "envelope_sha": request.envelope_sha,
                 "web_image": request.web_image,
                 "render_image": request.render_image,
+                "database_image": request.database_image,
             },
         ),
         (
@@ -1012,9 +1389,11 @@ def _installed_bindings(
             plan,
             {
                 "runtime_sha": request.runtime_sha,
+                "deployment_id": request.deployment_id,
                 "envelope_sha": request.envelope_sha,
                 "web_image": request.web_image,
                 "render_image": request.render_image,
+                "database_image": request.database_image,
             },
         ),
         (
@@ -1022,7 +1401,9 @@ def _installed_bindings(
             manifest,
             {
                 "runtime_sha": request.runtime_sha,
+                "deployment_id": request.deployment_id,
                 "envelope_sha": request.envelope_sha,
+                "database_image": request.database_image,
             },
         ),
     ):
@@ -1032,6 +1413,50 @@ def _installed_bindings(
                     "installed_binding_invalid",
                     f"{document_name}:{field_name}",
                 )
+    database_substrate = _validated_database_substrate(
+        authority.get("database_substrate")
+    )
+    if plan.get("database_substrate") != database_substrate:
+        raise BackupError("installed_database_substrate_mismatch")
+    runtime_retirement = authority.get("runtime_retirement")
+    runtime_deploy = authority.get("runtime_deploy")
+    if (
+        not isinstance(runtime_retirement, dict)
+        or runtime_retirement != plan.get("runtime_retirement")
+        or not isinstance(runtime_deploy, dict)
+        or runtime_deploy != plan.get("runtime_deploy")
+    ):
+        raise BackupError("installed_runtime_operation_contract_mismatch")
+    transaction_started_at_epoch = authority.get("transaction_started_at_epoch")
+    backup_max_age_seconds = authority.get("backup_max_age_seconds")
+    if (
+        isinstance(transaction_started_at_epoch, bool)
+        or not isinstance(transaction_started_at_epoch, int)
+        or transaction_started_at_epoch < 1
+        or plan.get("transaction_started_at_epoch")
+        != transaction_started_at_epoch
+        or backup_max_age_seconds != 3600
+        or plan.get("backup_max_age_seconds") != backup_max_age_seconds
+    ):
+        raise BackupError("installed_transaction_window_invalid")
+    pre_purge_runtime_inputs = _validated_runtime_inputs(
+        authority.get("pre_purge_runtime_inputs")
+    )
+    runtime_inputs = _validated_runtime_inputs(authority.get("runtime_inputs"))
+    if (
+        plan.get("pre_purge_runtime_inputs") != pre_purge_runtime_inputs
+        or plan.get("runtime_inputs") != runtime_inputs
+        or pre_purge_runtime_inputs[1:] != runtime_inputs[1:]
+        or authority.get("pre_purge_root_env_digest")
+        != pre_purge_runtime_inputs[0]["sha256"]
+        or plan.get("pre_purge_root_env_digest")
+        != pre_purge_runtime_inputs[0]["sha256"]
+        or authority.get("post_purge_root_env_digest")
+        != runtime_inputs[0]["sha256"]
+        or plan.get("post_purge_root_env_digest")
+        != runtime_inputs[0]["sha256"]
+    ):
+        raise BackupError("installed_runtime_inputs_mismatch")
     package_key_id = str(authority.get("package_authority_key_id") or "")
     if not KEY_ID_RE.fullmatch(package_key_id):
         raise BackupError("package_authority_key_id_invalid")
@@ -1057,6 +1482,20 @@ def _installed_bindings(
         "package_manifest_signature_digest": "sha256:"
         + _sha256_bytes(manifest_signature),
         "plan_digest": plan_digest_id,
+        "deployment_id": request.deployment_id,
+        "pre_purge_root_env_digest": pre_purge_runtime_inputs[0]["sha256"],
+        "post_purge_root_env_digest": runtime_inputs[0]["sha256"],
+        "pre_purge_runtime_inputs": pre_purge_runtime_inputs,
+        "runtime_inputs": runtime_inputs,
+        "database_substrate": database_substrate,
+        "database_substrate_digest": "sha256:"
+        + _sha256_bytes(_canonical_json_bytes(database_substrate)),
+        "runtime_deploy_digest": "sha256:"
+        + _sha256_bytes(_canonical_json_bytes(runtime_deploy)),
+        "runtime_retirement_digest": "sha256:"
+        + _sha256_bytes(_canonical_json_bytes(runtime_retirement)),
+        "transaction_started_at_epoch": transaction_started_at_epoch,
+        "backup_max_age_seconds": backup_max_age_seconds,
     }
 
 
@@ -1265,6 +1704,7 @@ def _recover_remote_final(
     )
     expected_bindings = {
         **bindings,
+        "deployment_id": request.deployment_id,
         "envelope_sha": request.envelope_sha,
         "render_image": request.render_image,
         "runtime_sha": request.runtime_sha,
@@ -1316,6 +1756,8 @@ def _recover_remote_final(
             spec,
             master_key=master_key,
             runtime_sha=request.runtime_sha,
+            deployment_id=request.deployment_id,
+            runtime_inputs=bindings.get("pre_purge_runtime_inputs"),
         )
         for key in ("chunk_count", "ciphertext_bytes", "plaintext_bytes"):
             if recorded.get(key) != decrypted.get(key):
@@ -1382,16 +1824,241 @@ def _machine_id_digest(path: Path) -> str:
     return "sha256:" + _sha256_bytes(value)
 
 
+def _inspect_docker_object(kind: str, target: str) -> dict[str, object]:
+    if kind not in {"container", "image", "volume"}:
+        raise BackupError("docker_inspect_kind_invalid")
+    try:
+        completed = subprocess.run(
+            (DOCKER_BIN, kind, "inspect", target),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env={
+                "HOME": "/nonexistent",
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+                "TZ": "UTC",
+            },
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise BackupError("database_image_inspection_unavailable") from exc
+    if completed.returncode != 0 or len(completed.stdout.encode("utf-8")) > 1024 * 1024:
+        raise BackupError("database_image_inspection_failed")
+    try:
+        loaded = json.loads(completed.stdout)
+    except (TypeError, ValueError) as exc:
+        raise BackupError("database_image_inspection_invalid") from exc
+    if not isinstance(loaded, list) or len(loaded) != 1 or not isinstance(loaded[0], dict):
+        raise BackupError("database_image_inspection_invalid")
+    return dict(loaded[0])
+
+
+def _canonical_repo_digest(reference: str) -> str:
+    repository, digest = reference.rsplit("@", 1)
+    prefix, separator, leaf = repository.rpartition("/")
+    if ":" in leaf:
+        leaf = leaf.split(":", 1)[0]
+    canonical_repository = f"{prefix}{separator}{leaf}" if separator else leaf
+    return f"{canonical_repository}@{digest}"
+
+
+def _database_oid() -> int:
+    try:
+        completed = subprocess.run(
+            (
+                DOCKER_BIN,
+                "exec",
+                "-i",
+                DATABASE_CONTAINER,
+                "psql",
+                "--no-psqlrc",
+                "--tuples-only",
+                "--no-align",
+                "--set=ON_ERROR_STOP=1",
+                f"--username={DATABASE_USER}",
+                "--dbname=template1",
+                "--command=SELECT oid::bigint FROM pg_database WHERE datname = "
+                "'propertyquarry';",
+            ),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env={
+                "HOME": "/nonexistent",
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+                "TZ": "UTC",
+            },
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise BackupError("database_oid_query_unavailable") from exc
+    output = completed.stdout.strip()
+    if (
+        completed.returncode != 0
+        or len(completed.stdout.encode("utf-8")) > 1024
+        or not output.isdecimal()
+        or int(output) < 1
+    ):
+        raise BackupError("database_oid_invalid")
+    return int(output)
+
+
+def _database_volume_identity(name: str) -> dict[str, object]:
+    volume = _inspect_docker_object("volume", name)
+    labels = volume.get("Labels")
+    options = volume.get("Options")
+    if labels is None:
+        labels = {}
+    if options is None:
+        options = {}
+    result = {
+        "created_at": str(volume.get("CreatedAt") or ""),
+        "driver": str(volume.get("Driver") or ""),
+        "labels": dict(sorted(labels.items())) if isinstance(labels, dict) else labels,
+        "mountpoint": str(volume.get("Mountpoint") or ""),
+        "name": str(volume.get("Name") or ""),
+        "options": dict(sorted(options.items())) if isinstance(options, dict) else options,
+        "scope": str(volume.get("Scope") or ""),
+    }
+    if (
+        result["name"] != name
+        or result["driver"] != "local"
+        or result["scope"] != "local"
+        or result["mountpoint"]
+        != f"/var/lib/docker/volumes/{name}/_data"
+        or not isinstance(result["labels"], dict)
+        or not isinstance(result["options"], dict)
+        or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for mapping in (result["labels"], result["options"])
+            for key, value in mapping.items()
+        )
+        or not re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+ -]+Z?",
+            str(result["created_at"]),
+        )
+    ):
+        raise BackupError("database_pgdata_volume_identity_invalid")
+    return result
+
+
+def _verify_database_substrate(database_image: str) -> dict[str, object]:
+    container = _inspect_docker_object("container", DATABASE_CONTAINER)
+    image = _inspect_docker_object("image", database_image)
+    config = container.get("Config")
+    state = container.get("State")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    host = container.get("HostConfig")
+    network_settings = container.get("NetworkSettings")
+    networks = network_settings.get("Networks") if isinstance(network_settings, dict) else None
+    ports = network_settings.get("Ports") if isinstance(network_settings, dict) else None
+    mounts = container.get("Mounts")
+    container_id = str(container.get("Id") or "")
+    image_id = image.get("Id")
+    repo_digests = image.get("RepoDigests")
+    expected_repo_digest = _canonical_repo_digest(database_image)
+    if (
+        not isinstance(config, dict)
+        or not re.fullmatch(r"[0-9a-f]{64}", container_id)
+        or not isinstance(state, dict)
+        or not isinstance(labels, dict)
+        or config.get("Image") != database_image
+        or labels.get("com.docker.compose.project") != "property"
+        or labels.get("com.docker.compose.service") != "propertyquarry-db"
+        or state.get("Status") != "running"
+        or not isinstance(state.get("Health"), dict)
+        or state["Health"].get("Status") != "healthy"
+        or not isinstance(image_id, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+        or container.get("Image") != image_id
+        or not isinstance(repo_digests, list)
+        or expected_repo_digest not in repo_digests
+        or config.get("Cmd") != ["postgres"]
+        or config.get("Entrypoint") != ["docker-entrypoint.sh"]
+        or config.get("User") != ""
+        or config.get("Healthcheck")
+        != {
+            "Interval": 30_000_000_000,
+            "Retries": 3,
+            "Test": ["CMD-SHELL", "pg_isready -U postgres -d propertyquarry"],
+            "Timeout": 5_000_000_000,
+        }
+        or not isinstance(host, dict)
+        or host.get("Privileged") is not False
+        or host.get("ReadonlyRootfs") is not False
+        or host.get("CapAdd") is not None
+        or host.get("CapDrop") is not None
+        or host.get("SecurityOpt") is not None
+        or host.get("PidsLimit") != 128
+        or host.get("PortBindings") != {}
+        or host.get("PublishAllPorts") is not False
+        or host.get("Init") is not True
+        or host.get("CgroupParent") != "system.slice"
+        or host.get("RestartPolicy")
+        != {"MaximumRetryCount": 3, "Name": "on-failure"}
+        or not isinstance(networks, dict)
+        or set(networks) != {
+            "property_default",
+            "property_propertyquarry_render_internal",
+        }
+        or not isinstance(ports, dict)
+        or any(bindings is not None for bindings in ports.values())
+        or not isinstance(mounts, list)
+        or len(mounts) != 1
+        or not isinstance(mounts[0], dict)
+        or {
+            "Destination": mounts[0].get("Destination"),
+            "Name": mounts[0].get("Name"),
+            "RW": mounts[0].get("RW"),
+            "Type": mounts[0].get("Type"),
+        }
+        != {
+            "Destination": "/var/lib/postgresql/data",
+            "Name": "property_propertyquarry_pgdata",
+            "RW": True,
+            "Type": "volume",
+        }
+    ):
+        raise BackupError("database_container_image_identity_invalid")
+    return _validated_database_substrate({
+        "container_id": container_id,
+        "container_name": DATABASE_CONTAINER,
+        "database": DATABASE_NAME,
+        "database_oid": _database_oid(),
+        "image": database_image,
+        "image_id": image_id,
+        "pgdata_volume": _database_volume_identity(
+            "property_propertyquarry_pgdata"
+        ),
+        "repo_digest": expected_repo_digest,
+    })
+
+
 def _validate_request(request: BackupRequest, paths: BackupPaths) -> None:
     if not RUNTIME_SHA_RE.fullmatch(request.runtime_sha):
         raise BackupError("runtime_sha_invalid")
+    if not DEPLOYMENT_ID_RE.fullmatch(request.deployment_id):
+        raise BackupError("deployment_id_invalid")
     if not SHA256_HEX_RE.fullmatch(request.envelope_sha):
         raise BackupError("envelope_sha_invalid")
     if not IMAGE_RE.fullmatch(request.web_image):
         raise BackupError("web_image_invalid")
     if not IMAGE_RE.fullmatch(request.render_image):
         raise BackupError("render_image_invalid")
-    expected_receipt = paths.receipt_root / f"{request.runtime_sha}.json"
+    if request.database_image != EXPECTED_DATABASE_IMAGE:
+        raise BackupError("database_image_invalid")
+    expected_receipt = (
+        paths.receipt_root
+        / request.runtime_sha
+        / request.deployment_id
+        / "create.json"
+    )
     if request.receipt_path != expected_receipt:
         raise BackupError("receipt_path_invalid")
     if request.encryption_key_path != EXPECTED_ENCRYPTION_KEY_PATH:
@@ -1402,19 +2069,29 @@ def _receipt_payload_matches(
     payload: Mapping[str, object],
     request: BackupRequest,
     final_path: Path,
+    database_identity: Mapping[str, object],
+    expected_bindings: Mapping[str, object] | None = None,
 ) -> bool:
     remote = payload.get("remote")
     return bool(
         payload.get("schema") == RECEIPT_SCHEMA
         and payload.get("runtime_sha") == request.runtime_sha
+        and payload.get("deployment_id") == request.deployment_id
         and payload.get("envelope_sha") == request.envelope_sha
         and payload.get("web_image") == request.web_image
         and payload.get("render_image") == request.render_image
+        and payload.get("database_image") == request.database_image
+        and payload.get("database_substrate_before") == database_identity
+        and payload.get("database_substrate_after") == database_identity
         and payload.get("disposition") == "verified-and-published"
         and payload.get("plaintext_retained") is False
         and isinstance(remote, dict)
         and remote.get("path") == str(final_path)
         and final_path.is_dir()
+        and all(
+            payload.get(key) == value
+            for key, value in (expected_bindings or {}).items()
+        )
     )
 
 
@@ -1438,7 +2115,7 @@ def create_backup(
     if require_root and not Path("/mnt/pcloud").is_mount():
         raise BackupError("pcloud_mount_required", "/mnt/pcloud")
     paths.remote_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    final_path = paths.remote_root / request.runtime_sha
+    final_path = paths.remote_root / request.runtime_sha / request.deployment_id
     private, public, receipt_key_id = _load_receipt_authority(
         paths,
         require_root_owner=require_root,
@@ -1446,7 +2123,53 @@ def create_backup(
     specs = tuple(artifact_specs or production_artifact_specs())
     if not specs or len({spec.name for spec in specs}) != len(specs):
         raise BackupError("artifact_specs_invalid")
+    database_identity_before = _verify_database_substrate(request.database_image)
 
+    started = int(clock())
+    installed_bindings = _installed_bindings(
+        paths,
+        request,
+        receipt_key_id=receipt_key_id,
+        require_root_owner=require_root,
+    )
+    runtime_inputs_before, runtime_contents = _runtime_input_snapshot()
+    if runtime_inputs_before != installed_bindings.get("pre_purge_runtime_inputs"):
+        raise BackupError("pre_purge_runtime_inputs_changed")
+    if database_identity_before != installed_bindings.get("database_substrate"):
+        raise BackupError("database_substrate_binding_invalid")
+    bindings = {
+        key: installed_bindings[key]
+        for key in (
+            "authority_digest",
+            "authority_signature_digest",
+            "config_digest",
+            "package_authority_key_id",
+            "package_manifest_digest",
+            "package_manifest_signature_digest",
+            "plan_digest",
+        )
+    }
+    bindings.update(
+        {
+            "backup_max_age_seconds": installed_bindings[
+                "backup_max_age_seconds"
+            ],
+            "database_image": request.database_image,
+            "database_image_id": database_identity_before["image_id"],
+            "database_repo_digest": database_identity_before["repo_digest"],
+            "database_substrate_after": database_identity_before,
+            "database_substrate_before": database_identity_before,
+            "deployment_id": request.deployment_id,
+            "pre_purge_runtime_inputs": runtime_inputs_before,
+            "transaction_started_at_epoch": installed_bindings[
+                "transaction_started_at_epoch"
+            ],
+        }
+    )
+    transaction_started = int(bindings["transaction_started_at_epoch"])
+    max_age = int(bindings["backup_max_age_seconds"])
+    if started < transaction_started or started - transaction_started > max_age:
+        raise BackupError("backup_transaction_window_invalid")
     if request.receipt_path.exists():
         _lstat_regular(
             request.receipt_path,
@@ -1454,24 +2177,37 @@ def create_backup(
             uid=0 if require_root else None,
             gid=0 if require_root else None,
         )
-        raw = _read_regular_nofollow(request.receipt_path, max_bytes=16 * 1024 * 1024)
+        raw = _read_regular_nofollow(
+            request.receipt_path,
+            max_bytes=16 * 1024 * 1024,
+        )
         try:
             wrapper = json.loads(raw)
         except (TypeError, ValueError) as exc:
             raise BackupError("existing_receipt_invalid") from exc
         payload = _verify_receipt_wrapper(wrapper, public, receipt_key_id)
-        if not _receipt_payload_matches(payload, request, final_path):
+        receipt_started = payload.get("started_at_epoch")
+        receipt_finished = payload.get("finished_at_epoch")
+        if (
+            not _receipt_payload_matches(
+                payload,
+                request,
+                final_path,
+                database_identity_before,
+                bindings,
+            )
+            or isinstance(receipt_started, bool)
+            or not isinstance(receipt_started, int)
+            or isinstance(receipt_finished, bool)
+            or not isinstance(receipt_finished, int)
+            or receipt_started < transaction_started
+            or receipt_finished < receipt_started
+            or receipt_finished - receipt_started > max_age
+            or started - receipt_finished > max_age
+        ):
             raise BackupError("existing_receipt_binding_invalid")
         _validate_signed_receipt_remote(payload, final_path, specs)
         return dict(wrapper)
-
-    started = int(clock())
-    bindings = _installed_bindings(
-        paths,
-        request,
-        receipt_key_id=receipt_key_id,
-        require_root_owner=require_root,
-    )
     master_key, encryption_key_id, key_created = _load_or_create_encryption_key(
         request.encryption_key_path,
         expected_parent_uid=key_owner[0],
@@ -1492,8 +2228,10 @@ def create_backup(
             encryption_key_id=encryption_key_id,
         )
     else:
-        partial_path = paths.remote_root / (
-            f".{request.runtime_sha}.partial.{os.getpid()}.{secrets.token_hex(6)}"
+        deployment_parent = paths.remote_root / request.runtime_sha
+        deployment_parent.mkdir(mode=0o700, exist_ok=True)
+        partial_path = deployment_parent / (
+            f".{request.deployment_id}.partial.{os.getpid()}.{secrets.token_hex(6)}"
         )
         partial_path.mkdir(mode=0o700)
         try:
@@ -1509,12 +2247,17 @@ def create_backup(
                     artifact_path,
                     master_key=master_key,
                     runtime_sha=request.runtime_sha,
+                    deployment_id=request.deployment_id,
+                    runtime_inputs=runtime_inputs_before,
+                    runtime_contents=runtime_contents,
                 )
                 decrypted, verification = _verify_artifact(
                     artifact_path,
                     spec,
                     master_key=master_key,
                     runtime_sha=request.runtime_sha,
+                    deployment_id=request.deployment_id,
+                    runtime_inputs=runtime_inputs_before,
                 )
                 for key in (
                     "ciphertext_bytes",
@@ -1549,6 +2292,7 @@ def create_backup(
                 "artifacts": artifacts,
                 "bindings": {
                     **bindings,
+                    "deployment_id": request.deployment_id,
                     "envelope_sha": request.envelope_sha,
                     "render_image": request.render_image,
                     "runtime_sha": request.runtime_sha,
@@ -1566,15 +2310,23 @@ def create_backup(
             _fsync_directory(partial_path)
             os.rename(partial_path, final_path)
             partial_path = None
-            _fsync_directory(paths.remote_root)
+            _fsync_directory(deployment_parent)
             _validate_remote_directory_shape(final_path, specs)
         except Exception:
             if partial_path is not None and partial_path.exists():
                 shutil.rmtree(partial_path)
-                _fsync_directory(paths.remote_root)
+                _fsync_directory(deployment_parent)
             raise
 
+    database_identity_after = _verify_database_substrate(request.database_image)
+    if database_identity_after != database_identity_before:
+        raise BackupError("database_container_identity_changed")
+    runtime_inputs_after, _runtime_contents_after = _runtime_input_snapshot()
+    if runtime_inputs_after != runtime_inputs_before:
+        raise BackupError("runtime_inputs_changed_during_backup")
     finished = int(clock())
+    if finished < started or finished - started > max_age:
+        raise BackupError("backup_duration_invalid")
     coverage = {
         "config": sorted(
             {
@@ -1612,6 +2364,7 @@ def create_backup(
         "disposition": "verified-and-published",
         "encryption_key_created": key_created,
         "encryption_key_id": encryption_key_id,
+        "deployment_id": request.deployment_id,
         "envelope_sha": request.envelope_sha,
         "finished_at_epoch": finished,
         "fsync_artifacts": True,
@@ -1648,9 +2401,11 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     create = subparsers.add_parser("create")
     create.add_argument("--runtime-sha", required=True)
+    create.add_argument("--deployment-id", required=True)
     create.add_argument("--envelope-sha", required=True)
     create.add_argument("--web-image", required=True)
     create.add_argument("--render-image", required=True)
+    create.add_argument("--database-image", required=True)
     create.add_argument("--receipt", required=True)
     create.add_argument("--encryption-key", required=True)
     return parser
@@ -1662,9 +2417,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     request = BackupRequest(
         runtime_sha=str(args.runtime_sha or "").strip().lower(),
+        deployment_id=str(args.deployment_id or "").strip().lower(),
         envelope_sha=str(args.envelope_sha or "").strip().lower(),
         web_image=str(args.web_image or "").strip().lower(),
         render_image=str(args.render_image or "").strip().lower(),
+        database_image=str(args.database_image or "").strip().lower(),
         receipt_path=Path(args.receipt).expanduser().resolve(),
         encryption_key_path=Path(args.encryption_key).expanduser().resolve(),
     )

@@ -4,6 +4,7 @@ import io
 import os
 from pathlib import Path
 import stat
+import time
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -13,18 +14,21 @@ from scripts import propertyquarry_predeploy_backup_v2 as backup
 
 
 RUNTIME_SHA = "a" * 40
+DEPLOYMENT_ID = "9" * 64
 
 
 def test_backup_request_binds_git_sha_and_sha256_envelope_lengths(
     tmp_path: Path,
 ) -> None:
     paths = backup.BackupPaths(receipt_root=tmp_path / "receipts")
-    receipt = paths.receipt_root / f"{RUNTIME_SHA}.json"
+    receipt = paths.receipt_root / RUNTIME_SHA / DEPLOYMENT_ID / "create.json"
     request = backup.BackupRequest(
         runtime_sha=RUNTIME_SHA,
+        deployment_id=DEPLOYMENT_ID,
         envelope_sha="b" * 64,
         web_image=f"ghcr.io/example/propertyquarry@sha256:{'c' * 64}",
         render_image=f"ghcr.io/example/propertyquarry-render@sha256:{'d' * 64}",
+        database_image=backup.EXPECTED_DATABASE_IMAGE,
         receipt_path=receipt,
         encryption_key_path=backup.EXPECTED_ENCRYPTION_KEY_PATH,
     )
@@ -56,6 +60,7 @@ def test_chunked_encryption_roundtrip_authenticates_footer_and_has_no_plaintext_
         destination,
         master_key=key,
         runtime_sha=RUNTIME_SHA,
+        deployment_id=DEPLOYMENT_ID,
         artifact_name="fixture",
         artifact_kind="test-stream",
     )
@@ -65,6 +70,7 @@ def test_chunked_encryption_roundtrip_authenticates_footer_and_has_no_plaintext_
         observed.extend,
         master_key=key,
         expected_runtime_sha=RUNTIME_SHA,
+        expected_deployment_id=DEPLOYMENT_ID,
         expected_artifact_name="fixture",
         expected_artifact_kind="test-stream",
     )
@@ -85,6 +91,7 @@ def test_chunked_encryption_rejects_tampering_and_truncation(tmp_path: Path) -> 
         original,
         master_key=key,
         runtime_sha=RUNTIME_SHA,
+        deployment_id=DEPLOYMENT_ID,
         artifact_name="fixture",
         artifact_kind="test-stream",
     )
@@ -99,6 +106,7 @@ def test_chunked_encryption_rejects_tampering_and_truncation(tmp_path: Path) -> 
             lambda _chunk: None,
             master_key=key,
             expected_runtime_sha=RUNTIME_SHA,
+            expected_deployment_id=DEPLOYMENT_ID,
             expected_artifact_name="fixture",
             expected_artifact_kind="test-stream",
         )
@@ -111,6 +119,7 @@ def test_chunked_encryption_rejects_tampering_and_truncation(tmp_path: Path) -> 
             lambda _chunk: None,
             master_key=key,
             expected_runtime_sha=RUNTIME_SHA,
+            expected_deployment_id=DEPLOYMENT_ID,
             expected_artifact_name="fixture",
             expected_artifact_kind="test-stream",
         )
@@ -206,18 +215,125 @@ def test_tar_artifact_is_encrypted_then_decrypt_list_validated(tmp_path: Path) -
         destination,
         master_key=key,
         runtime_sha=RUNTIME_SHA,
+        deployment_id=DEPLOYMENT_ID,
     )
     decrypted, verification = backup._verify_artifact(  # noqa: SLF001
         destination,
         spec,
         master_key=key,
         runtime_sha=RUNTIME_SHA,
+        deployment_id=DEPLOYMENT_ID,
     )
 
     assert encrypted == decrypted
-    assert verification["method"] == "decrypt-tar-gzip-list"
+    assert verification["method"] == "decrypt-tar-gzip-list-and-types"
     assert verification["entries"] >= 3
     assert destination.read_bytes().find(b"one") == -1
+
+
+def test_tar_artifact_rejects_symlink_members(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "one.txt").write_text("one", encoding="utf-8")
+    (source / "link.txt").symlink_to("one.txt")
+    destination = tmp_path / "archive.pqenc"
+    spec = backup.ArtifactSpec(
+        name="fixture-tar-link",
+        kind="tar-gzip",
+        producer=(
+            backup.TAR_BIN,
+            "--gzip",
+            "--create",
+            "--file",
+            "-",
+            "--directory",
+            str(source),
+            ".",
+        ),
+        verification="tar_gzip_list",
+        coverage=(str(source),),
+        required_paths=(source,),
+    )
+    key = bytes(range(32))
+    backup._encrypt_command(  # noqa: SLF001
+        spec,
+        destination,
+        master_key=key,
+        runtime_sha=RUNTIME_SHA,
+        deployment_id=DEPLOYMENT_ID,
+    )
+
+    with pytest.raises(backup.BackupError, match="tar_archive_member_type_invalid"):
+        backup._verify_artifact(  # noqa: SLF001
+            destination,
+            spec,
+            master_key=key,
+            runtime_sha=RUNTIME_SHA,
+            deployment_id=DEPLOYMENT_ID,
+        )
+
+
+def test_runtime_tar_binds_exact_signed_file_bytes_and_metadata(
+    tmp_path: Path,
+) -> None:
+    contents = {
+        str(path): f"runtime-{index}\n".encode("ascii")
+        for index, path in enumerate(backup.RUNTIME_INPUT_PATHS)
+    }
+    inputs = [
+        {
+            "path": str(path),
+            "sha256": "sha256:"
+            + backup._sha256_bytes(contents[str(path)]),  # noqa: SLF001
+            "mode": 0o600,
+            "uid": 1000,
+            "gid": 1000,
+            "size": len(contents[str(path)]),
+        }
+        for path in backup.RUNTIME_INPUT_PATHS
+    ]
+    spec = next(
+        item
+        for item in backup.production_artifact_specs()
+        if item.name == "runtime-identity-config"
+    )
+    destination = tmp_path / "runtime.pqenc"
+    key = bytes(range(32))
+    encrypted = backup._encrypt_command(  # noqa: SLF001
+        spec,
+        destination,
+        master_key=key,
+        runtime_sha=RUNTIME_SHA,
+        deployment_id=DEPLOYMENT_ID,
+        runtime_inputs=inputs,
+        runtime_contents=contents,
+    )
+    decrypted, verification = backup._verify_artifact(  # noqa: SLF001
+        destination,
+        spec,
+        master_key=key,
+        runtime_sha=RUNTIME_SHA,
+        deployment_id=DEPLOYMENT_ID,
+        runtime_inputs=inputs,
+    )
+
+    assert encrypted == decrypted
+    assert verification == {
+        "entries": 6,
+        "method": "decrypt-runtime-tar-exact",
+        "runtime_inputs": inputs,
+    }
+    changed = [dict(item) for item in inputs]
+    changed[4]["sha256"] = "sha256:" + "0" * 64
+    with pytest.raises(backup.BackupError, match="runtime_tar_member_digest_invalid"):
+        backup._verify_artifact(  # noqa: SLF001
+            destination,
+            spec,
+            master_key=key,
+            runtime_sha=RUNTIME_SHA,
+            deployment_id=DEPLOYMENT_ID,
+            runtime_inputs=changed,
+        )
 
 
 def test_production_sources_cover_database_roles_volumes_and_isolated_envs() -> None:
@@ -255,9 +371,11 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime_sha = "b" * 40
+    deployment_id = "8" * 64
     envelope_sha = "c" * 64
     web_image = "ghcr.io/example/propertyquarry@sha256:" + ("d" * 64)
     render_image = "ghcr.io/example/propertyquarry-render@sha256:" + ("e" * 64)
+    database_image = backup.EXPECTED_DATABASE_IMAGE
     package_key_id = "sha256:" + ("f" * 64)
     install_root = tmp_path / "install"
     receipt_root = tmp_path / "receipts"
@@ -296,13 +414,64 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     receipt_key_id = "sha256:" + backup._sha256_bytes(public_der)  # noqa: SLF001
+    transaction_started = int(time.time())
+    runtime_contents = {
+        str(path): f"fixture-{index}\n".encode("ascii")
+        for index, path in enumerate(backup.RUNTIME_INPUT_PATHS)
+    }
+    runtime_inputs = [
+        {
+            "path": str(path),
+            "sha256": "sha256:"
+            + backup._sha256_bytes(runtime_contents[str(path)]),  # noqa: SLF001
+            "mode": 0o600,
+            "uid": 1000,
+            "gid": 1000,
+            "size": len(runtime_contents[str(path)]),
+        }
+        for path in backup.RUNTIME_INPUT_PATHS
+    ]
+    database_substrate = {
+        "container_id": "2" * 64,
+        "container_name": "propertyquarry-db-live",
+        "database": "propertyquarry",
+        "database_oid": 16384,
+        "image": database_image,
+        "image_id": "sha256:" + "1" * 64,
+        "pgdata_volume": {
+            "created_at": "2026-07-22T12:34:56+02:00",
+            "driver": "local",
+            "labels": {},
+            "mountpoint": (
+                "/var/lib/docker/volumes/"
+                "property_propertyquarry_pgdata/_data"
+            ),
+            "name": "property_propertyquarry_pgdata",
+            "options": {},
+            "scope": "local",
+        },
+        "repo_digest": backup._canonical_repo_digest(database_image),  # noqa: SLF001
+    }
+    runtime_retirement = {"deployment_id": deployment_id}
+    runtime_deploy = {"deployment_id": deployment_id}
 
     plan = {
         "schema": "propertyquarry.release-control.single-host-transaction-plan.v2",
         "runtime_sha": runtime_sha,
+        "deployment_id": deployment_id,
         "envelope_sha": envelope_sha,
         "web_image": web_image,
         "render_image": render_image,
+        "database_image": database_image,
+        "backup_max_age_seconds": 3600,
+        "database_substrate": database_substrate,
+        "pre_purge_root_env_digest": runtime_inputs[0]["sha256"],
+        "post_purge_root_env_digest": runtime_inputs[0]["sha256"],
+        "pre_purge_runtime_inputs": runtime_inputs,
+        "runtime_inputs": runtime_inputs,
+        "runtime_deploy": runtime_deploy,
+        "runtime_retirement": runtime_retirement,
+        "transaction_started_at_epoch": transaction_started,
     }
     plan_raw = backup._canonical_json_bytes(plan)  # noqa: SLF001
     (install_root / "transaction-plan.v2.json").write_bytes(plan_raw)
@@ -310,9 +479,20 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
     authority = {
         "schema": "propertyquarry.release-control.single-host-profile.v2",
         "runtime_sha": runtime_sha,
+        "deployment_id": deployment_id,
         "envelope_sha": envelope_sha,
         "web_image": web_image,
         "render_image": render_image,
+        "database_image": database_image,
+        "backup_max_age_seconds": 3600,
+        "database_substrate": database_substrate,
+        "pre_purge_root_env_digest": runtime_inputs[0]["sha256"],
+        "post_purge_root_env_digest": runtime_inputs[0]["sha256"],
+        "pre_purge_runtime_inputs": runtime_inputs,
+        "runtime_inputs": runtime_inputs,
+        "runtime_deploy": runtime_deploy,
+        "runtime_retirement": runtime_retirement,
+        "transaction_started_at_epoch": transaction_started,
         "package_authority_key_id": package_key_id,
         "receipt_authority_key_id": receipt_key_id,
         "plan_digest": plan_digest,
@@ -323,7 +503,9 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
     manifest = {
         "schema": "propertyquarry.release-control.single-host-package.v2",
         "runtime_sha": runtime_sha,
+        "deployment_id": deployment_id,
         "envelope_sha": envelope_sha,
+        "database_image": database_image,
         "package_authority_key_id": package_key_id,
         "config_digest": authority_digest,
         "plan_digest": plan_digest,
@@ -356,10 +538,14 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
     )
     request = backup.BackupRequest(
         runtime_sha=runtime_sha,
+        deployment_id=deployment_id,
         envelope_sha=envelope_sha,
         web_image=web_image,
         render_image=render_image,
-        receipt_path=receipt_root / f"{runtime_sha}.json",
+        database_image=database_image,
+        receipt_path=(
+            receipt_root / runtime_sha / deployment_id / "create.json"
+        ),
         encryption_key_path=encryption_key,
     )
     spec = backup.ArtifactSpec(
@@ -380,6 +566,16 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
         required_paths=(source,),
     )
     uid_gid = (os.getuid(), os.getgid())
+    monkeypatch.setattr(
+        backup,
+        "_verify_database_substrate",
+        lambda _image: dict(database_substrate),
+    )
+    monkeypatch.setattr(
+        backup,
+        "_runtime_input_snapshot",
+        lambda: ([dict(item) for item in runtime_inputs], dict(runtime_contents)),
+    )
 
     first = backup.create_backup(
         request,
@@ -388,7 +584,7 @@ def test_create_recovers_published_remote_after_receipt_crash_and_detects_tamper
         require_root=False,
         key_owner=uid_gid,
     )
-    final_path = remote_root / runtime_sha
+    final_path = remote_root / runtime_sha / deployment_id
     artifact_path = final_path / "fixture-tar.pqenc"
     artifact_before = artifact_path.read_bytes()
     assert first["payload"]["disposition"] == "verified-and-published"
