@@ -226,7 +226,21 @@ def test_hosted_tour_writer_keeps_raw_tour_json_free_of_private_source_and_proof
                 "longitude": 16.39,
                 "map_lat": 48.22,
                 "map_lng": 16.39,
+                "nearest_supermarket_m": 7,
+                "nearest_supermarket_name": "Public market",
+                "nearest_supermarket_source": "OpenStreetMap",
+                "nearest_supermarket_lat": 48.2201,
+                "nearest_supermarket_lng": 16.3901,
+                "nearest_playground_latitude": 48.2202,
+                "nearest_playground_longitude": 16.3902,
+                "nearestPharmacyLat": 48.2203,
+                "nearestPharmacyLon": 16.3903,
                 "livability_snapshot": {
+                    "nearest_playground_m": 78,
+                    "nearest_playground_name": "Public playground",
+                    "nearest_playground_source": "OpenStreetMap",
+                    "nearest_playground_lat": 48.2204,
+                    "nearest_playground_lng": 16.3904,
                     "nearest_transit": {
                         "label": "Nearby stop",
                         "address": "Nested Exact Transit Address 9",
@@ -338,6 +352,12 @@ def test_hosted_tour_writer_keeps_raw_tour_json_free_of_private_source_and_proof
     assert public_manifest["facts"]["rooms"] == 3
     assert public_manifest["facts"]["area_sqm"] == 84
     assert public_manifest["facts"]["postal_name"] == "1020 Wien"
+    assert public_manifest["facts"]["nearest_supermarket_m"] == 7
+    assert public_manifest["facts"]["nearest_supermarket_name"] == "Public market"
+    assert public_manifest["facts"]["nearest_supermarket_source"] == "OpenStreetMap"
+    assert public_manifest["facts"]["livability_snapshot"]["nearest_playground_m"] == 78
+    assert public_manifest["facts"]["livability_snapshot"]["nearest_playground_name"] == "Public playground"
+    assert public_manifest["facts"]["livability_snapshot"]["nearest_playground_source"] == "OpenStreetMap"
     assert public_manifest["title"] == "Bright apartment"
     assert public_manifest["display_title"] == "Bright apartment"
     assert public_manifest["tour_title"] == "Property tour"
@@ -364,6 +384,11 @@ def test_hosted_tour_writer_keeps_raw_tour_json_free_of_private_source_and_proof
     assert private_manifest["private_exact_location"]["facts"]["livability_snapshot"][
         "formattedAddress"
     ] == "Nested Exact Camel Address 9"
+    assert private_manifest["private_exact_location"]["facts"]["nearest_supermarket_lat"] == 48.2201
+    assert private_manifest["private_exact_location"]["facts"]["nearestPharmacyLon"] == 16.3903
+    assert private_manifest["private_exact_location"]["facts"]["livability_snapshot"][
+        "nearest_playground_lng"
+    ] == 16.3904
     assert (bundle_dir / "tour.json").stat().st_mode & 0o777 == 0o644
     assert (bundle_dir / "tour.private.json").stat().st_mode & 0o777 == 0o600
 

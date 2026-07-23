@@ -318,6 +318,9 @@ _PUBLIC_TOUR_EXACT_LOCATION_COMPACT_KEYS = frozenset(
     re.sub(r"[^a-z0-9]+", "", key.lower())
     for key in _PUBLIC_TOUR_EXACT_LOCATION_FACT_KEYS
 )
+_PUBLIC_TOUR_NEAREST_COORDINATE_SUFFIXES = frozenset(
+    {"lat", "latitude", "lng", "lon", "longitude"}
+)
 _PUBLIC_TOUR_EXACT_LOCATION_FINGERPRINT_KEYS = frozenset(
     re.sub(r"[^a-z0-9]+", "", key.lower())
     for key in {
@@ -473,8 +476,21 @@ def public_tour_key_is_private(key: object) -> bool:
 
 
 def public_tour_key_is_exact_location(key: object) -> bool:
-    compact = re.sub(r"[^a-z0-9]+", "", str(key or "").strip().lower())
-    return bool(compact) and compact in _PUBLIC_TOUR_EXACT_LOCATION_COMPACT_KEYS
+    raw_key = str(key or "").strip()
+    compact = re.sub(r"[^a-z0-9]+", "", raw_key.lower())
+    if bool(compact) and compact in _PUBLIC_TOUR_EXACT_LOCATION_COMPACT_KEYS:
+        return True
+    separated = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", raw_key)
+    segments = tuple(
+        segment
+        for segment in re.sub(r"[^a-z0-9]+", "_", separated.lower()).split("_")
+        if segment
+    )
+    return (
+        len(segments) >= 3
+        and segments[0] == "nearest"
+        and segments[-1] in _PUBLIC_TOUR_NEAREST_COORDINATE_SUFFIXES
+    )
 
 
 def private_tour_exact_location_snapshot(payload: dict[str, object]) -> dict[str, object]:
