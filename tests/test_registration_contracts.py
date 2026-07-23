@@ -597,6 +597,53 @@ def test_register_start_prod_returns_safe_token_without_returning_code(
     assert verified.status_code == 200
 
 
+def test_register_start_prod_accepts_cloudflare_only_delivery_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+        "test-cloudflare-email-token-long-enough",
+    )
+    monkeypatch.setenv("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID", "d" * 32)
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+        "test-propertyquarry-production-registration-session-secret",
+    )
+    client = _client(monkeypatch)
+    object.__setattr__(client.app.state.container.settings.runtime, "mode", "prod")
+
+    from app.api.routes import onboarding as onboarding_route
+    from app.services.registration_email import RegistrationEmailReceipt
+
+    observed: dict[str, object] = {}
+
+    def _fake_send_registration_email(**kwargs) -> RegistrationEmailReceipt:
+        observed.update(kwargs)
+        return RegistrationEmailReceipt(
+            provider="cloudflare_email_sending",
+            message_id="cloudflare-production-1",
+            accepted_at="2026-07-23T04:00:00+00:00",
+        )
+
+    monkeypatch.setattr(
+        onboarding_route,
+        "send_registration_email",
+        _fake_send_registration_email,
+    )
+
+    response = client.post("/v1/register/start", json={"email": "prod@example.com"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email_delivery_status"] == "sent"
+    assert body["email_delivery_provider"] == "cloudflare_email_sending"
+    assert body["email_delivery_id"] == "cloudflare-production-1"
+    assert body["verification_code"] == ""
+    assert body["magic_link_url"] == ""
+    assert observed["recipient_email"] == "prod@example.com"
+
+
 def test_register_start_prod_fails_closed_without_email_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

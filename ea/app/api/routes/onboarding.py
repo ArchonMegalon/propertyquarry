@@ -29,7 +29,7 @@ from app.services.google_oauth import (
     GOOGLE_PROVIDER_KEY,
 )
 from app.services.property_market_catalog import default_timezone_for_country
-from app.services.registration_email import send_registration_email
+from app.services.registration_email import email_delivery_enabled, send_registration_email
 
 router = APIRouter(prefix="/v1/onboarding", tags=["onboarding"])
 register_router = APIRouter(prefix="/v1/register", tags=["registration"])
@@ -532,7 +532,7 @@ def register_start(
     email_delivery_provider = ""
     email_delivery_id = ""
     email_delivery_error = ""
-    email_delivery_configured = bool(str(os.environ.get("EMAILIT_API_KEY") or "").strip())
+    email_delivery_configured = email_delivery_enabled()
     if email_delivery_configured:
         try:
             receipt = send_registration_email(
