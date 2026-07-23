@@ -618,6 +618,112 @@ func TestTourV4InspectionReturnsSignedExactCASInput(t *testing.T) {
 	}
 }
 
+func TestTourV4LegacyPrivateModeIsAcceptedOnlyForOldTreeHashing(t *testing.T) {
+	bundle, permit := tourV4TestFixture(t)
+	manifestSHA := tourV4WithPermit(t, permit)
+	root, binding, key := tourV4TestAuthority(t)
+	livePath := filepath.Join(tourV4RootPath(root, tourV4LiveVolumeRoot), permit.Slug)
+	if err := os.Mkdir(livePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(livePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tourV4TestWrite(
+		t, filepath.Join(livePath, "legacy-public.txt"),
+		[]byte("legacy-public"), 0o644,
+	)
+	tourV4TestWrite(
+		t, filepath.Join(livePath, "tour.private.json"),
+		[]byte(`{"legacy":"private-control"}`), 0o600,
+	)
+	old, err := tourV4SnapshotTree(livePath, nil, false)
+	if err != nil {
+		t.Fatalf("legacy old-tree hashing rejected mode 0600: %v", err)
+	}
+	defer old.release()
+
+	inspection, err := tourV4Inspect(root, binding, key, manifestSHA)
+	if err != nil {
+		t.Fatalf("legacy old-tree inspection failed: %v", err)
+	}
+	defer zero(inspection)
+	payload, canonical, err := verifySignedReceiptPayload(
+		inspection, key.Public().(ed25519.PublicKey),
+	)
+	zero(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["expected_old_tree_argument"] != old.TreeSHA256 {
+		t.Fatalf(
+			"legacy old-tree CAS mismatch: got %#v want %s",
+			payload["expected_old_tree_argument"], old.TreeSHA256,
+		)
+	}
+
+	terminal, err := tourV4Publish(root, binding, key, tourV4PublishInput{
+		BundlePath: bundle, ExpectedOldTreeSHA256: old.TreeSHA256,
+		ExpectedManifestSHA256: manifestSHA,
+		TransactionID:          "12121212121212121212121212121212",
+	})
+	if err != nil {
+		t.Fatalf("legacy old-tree replacement failed: %v", err)
+	}
+	defer zero(terminal)
+	published, err := tourV4SnapshotTree(livePath, &permit, true)
+	if err != nil {
+		t.Fatalf("published tree did not satisfy the public permit: %v", err)
+	}
+	defer published.release()
+	if len(published.Files) != 21 || published.TreeSHA256 != permit.PublicTreeSHA256 {
+		t.Fatalf(
+			"published tree invalid: files=%d sha=%s",
+			len(published.Files), published.TreeSHA256,
+		)
+	}
+	for _, file := range published.Files {
+		if file.Mode != 0o644 || !file.Public {
+			t.Fatalf("non-public published file accepted: %#v", file)
+		}
+	}
+	for _, privatePath := range []string{
+		".propertyquarry-render-commit.json", "tour.private.json",
+	} {
+		if _, err := os.Lstat(filepath.Join(livePath, privatePath)); !os.IsNotExist(err) {
+			t.Fatalf("private file entered published tree: %s: %v", privatePath, err)
+		}
+	}
+}
+
+func TestTourV4ContractedPublicPayloadStillRejectsMode0600(t *testing.T) {
+	bundle, permit := tourV4TestFixture(t)
+	publicPath := filepath.Join(bundle, "telegram-preview.png")
+	if err := os.Chmod(publicPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot, err := tourV4SnapshotTree(bundle, &permit, false); err == nil {
+		snapshot.release()
+		t.Fatal("contracted public mode 0600 was accepted")
+	}
+
+	manifestSHA := tourV4WithPermit(t, permit)
+	root, binding, key := tourV4TestAuthority(t)
+	raw, err := tourV4Publish(root, binding, key, tourV4PublishInput{
+		BundlePath: bundle, ExpectedOldTreeSHA256: tourV4AbsentSentinel,
+		ExpectedManifestSHA256: manifestSHA,
+		TransactionID:          "13131313131313131313131313131313",
+	})
+	zero(raw)
+	if err == nil {
+		t.Fatal("mode 0600 public source entered the publication pipeline")
+	}
+	livePath := filepath.Join(tourV4RootPath(root, tourV4LiveVolumeRoot), permit.Slug)
+	if _, statErr := os.Lstat(livePath); !os.IsNotExist(statErr) {
+		t.Fatalf("rejected public source mutated the live tree: %v", statErr)
+	}
+}
+
 func tourV4TestOldTree(t *testing.T, root, slug string) *tourV4TreeSnapshot {
 	t.Helper()
 	path := filepath.Join(tourV4RootPath(root, tourV4LiveVolumeRoot), slug)

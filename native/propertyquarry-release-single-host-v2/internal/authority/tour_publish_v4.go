@@ -555,7 +555,12 @@ func tourV4SnapshotTreeFromOpenRoot(root *os.File, displayPath string, permit *t
 			} else if permit != nil {
 				zero(file.Content)
 				return fmt.Errorf("tour-v4-extra-file")
-			} else if file.Mode != 0o644 {
+			} else if file.Mode != 0o600 && file.Mode != 0o644 {
+				// Uncontracted snapshots are only used to hash pre-existing
+				// live/retained transaction trees for CAS and rollback. Legacy
+				// trees can contain private control files at 0600. Contracted
+				// source and published-tree snapshots still enforce every
+				// permit mode, and staging copies public files as 0644 only.
 				zero(file.Content)
 				return fmt.Errorf("tour-v4-live-file-mode-invalid")
 			}
