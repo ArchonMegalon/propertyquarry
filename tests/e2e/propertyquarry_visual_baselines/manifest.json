@@ -29,14 +29,14 @@
       "baseline": "images/sign-in.desktop.png",
       "height": 820,
       "id": "sign-in.desktop",
-      "sha256": "164b119cb0e53f73160f22f061017d043639ab8e5868851d602b6da91e3e82f4",
+      "sha256": "8d9f8f29197f113449026377f70525c9c92df8213d31cf8aad10af472aa9dcd2",
       "width": 1440
     },
     {
       "baseline": "images/sign-in.mobile.png",
       "height": 932,
       "id": "sign-in.mobile",
-      "sha256": "cd728d4e80f769b88d421dacc77bd4ca64dec1a3fd868f30954df2f051cccce6",
+      "sha256": "79ab0df39a8057adb3898656a9940b7c418514a67b937090b7450280f9587bd8",
       "width": 430
     },
     {

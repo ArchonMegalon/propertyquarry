@@ -14460,6 +14460,152 @@ def test_property_search_results_ready_email_waits_for_tour_completion(monkeypat
     assert sent[0]["hosted_tour_total"] == 1
 
 
+def test_authenticated_property_visual_status_bounds_terminal_run_finalization_refresh(
+    monkeypatch,
+) -> None:
+    principal_id = "cf-email:bounded.visual.status@example.com"
+    run_id = f"run-bounded-visual-status-{uuid.uuid4().hex}"
+    property_url = "https://example.test/bounded-visual-status"
+    client = build_property_client(principal_id=principal_id)
+    state = product_service._new_property_search_run_record(
+        run_id=run_id,
+        principal_id=principal_id,
+        selected_platforms=("willhaben",),
+        property_search_preferences={
+            "country_code": "AT",
+            "location_query": "Vienna",
+        },
+        force_refresh=False,
+    )
+    state.update(
+        {
+            "status": "processed",
+            "progress": 100,
+            "summary": {
+                "status": "processed",
+                "listing_total": 1,
+                "sources": [
+                    {
+                        "source_label": "Willhaben",
+                        "top_candidates": [
+                            {
+                                "title": "Bounded visual status flat",
+                                "source_ref": "source-bounded-visual-status",
+                                "property_url": property_url,
+                                "tour_status": "blocked",
+                                "blocked_reason": "insufficient_source_media",
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+    with product_service._PROPERTY_SEARCH_RUN_LOCK:
+        product_service._PROPERTY_SEARCH_RUN_REGISTRY[run_id] = dict(state)
+
+    refresh_calls: list[dict[str, object]] = []
+    event_calls: list[dict[str, object]] = []
+
+    def _refresh_delivery(
+        self,
+        *,
+        principal_id: str,
+        result: dict[str, object],
+        tour_events_by_source=None,
+    ) -> dict[str, object]:
+        refresh_calls.append(dict(result))
+        if len(refresh_calls) > 1:
+            raise AssertionError("terminal snapshot re-entered delivery finalization")
+        return {
+            **dict(result),
+            "delivery_refresh_pass": len(refresh_calls),
+        }
+
+    def _record_event(
+        self,
+        *,
+        run_id: str,
+        principal_id: str,
+        step: str,
+        message: str,
+        status: str = "in_progress",
+        steps_delta: int = 1,
+        summary_updates: dict[str, object] | None = None,
+        force_status: str = "",
+        stages_total_override: int | None = None,
+    ) -> bool:
+        del self, message, steps_delta, stages_total_override
+        event_calls.append(
+            {
+                "run_id": run_id,
+                "principal_id": principal_id,
+                "step": step,
+            }
+        )
+        with product_service._PROPERTY_SEARCH_RUN_LOCK:
+            current = dict(product_service._PROPERTY_SEARCH_RUN_REGISTRY[run_id])
+            current["status"] = force_status or status or current.get("status")
+            current["updated_at"] = product_service._now_iso()
+            current["summary"] = {
+                **dict(current.get("summary") or {}),
+                **dict(summary_updates or {}),
+            }
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY[run_id] = current
+        return True
+
+    monkeypatch.setattr(product_service, "_load_property_search_run_record", lambda **_kwargs: None)
+    monkeypatch.setattr(ProductService, "_refresh_property_search_results_delivery_state", _refresh_delivery)
+    monkeypatch.setattr(ProductService, "_record_property_search_run_event", _record_event)
+    monkeypatch.setattr(
+        ProductService,
+        "_apply_property_search_run_repair_receipts",
+        lambda self, *, summary, run_id: dict(summary),
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "_resolve_property_search_run_owner_principal_id",
+        lambda self, **_kwargs: principal_id,
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "_property_search_run_principal_ids",
+        lambda self, **_kwargs: (principal_id,),
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "_latest_property_tour_followup",
+        lambda self, **_kwargs: None,
+    )
+
+    try:
+        response = client.get(
+            "/app/api/signals/property/visual-status",
+            params={
+                "run_id": run_id,
+                "request_kind": "tour",
+                "source_ref": "source-bounded-visual-status",
+                "property_url": property_url,
+            },
+        )
+    finally:
+        with product_service._PROPERTY_SEARCH_RUN_LOCK:
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY.pop(run_id, None)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "blocked"
+    assert payload["property_url"] == property_url
+    assert len(refresh_calls) == 1
+    assert event_calls == [
+        {
+            "run_id": run_id,
+            "principal_id": principal_id,
+            "step": "results_finalizing",
+        }
+    ]
+
+
 def test_property_search_results_delivery_preserves_completed_partial_status(monkeypatch) -> None:
     principal_id = "cf-email:partial.delivery@example.com"
     client = build_property_client(principal_id=principal_id)

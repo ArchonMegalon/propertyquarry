@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from scripts import provision_propertyquarry_runtime_database as runtime_database
 from scripts import smoke_property_postgres_isolated as isolated_harness
 
 
@@ -136,6 +137,38 @@ def test_disposable_capacity_owner_sql_is_exact_idempotent_and_fail_closed() -> 
     assert "DROP ROLE" not in source
 
 
+def test_disposable_runtime_roles_sql_is_exact_idempotent_and_fail_closed() -> None:
+    source = (
+        ROOT / "scripts" / "propertyquarry_disposable_runtime_roles.sql"
+    ).read_text(encoding="utf-8")
+
+    expected_roles = (
+        "propertyquarry_api",
+        "propertyquarry_scheduler",
+        "propertyquarry_worker",
+    )
+    assert set(expected_roles) == set(runtime_database.RUNTIME_ROLES)
+    for role_name in expected_roles:
+        assert source.count(f"'{role_name}'") == 2
+    for posture in (
+        "NOLOGIN",
+        "NOINHERIT",
+        "NOSUPERUSER",
+        "NOCREATEDB",
+        "NOCREATEROLE",
+        "NOREPLICATION",
+        "NOBYPASSRLS",
+    ):
+        assert posture in source
+    assert "IF NOT FOUND THEN" in source
+    assert "pg_catalog.pg_auth_members" in source
+    assert source.count("membership.member = role.oid") == 2
+    assert source.count("membership.roleid = role.oid") == 2
+    assert "ERRCODE = '42501'" in source
+    assert "ALTER ROLE" not in source
+    assert "DROP ROLE" not in source
+
+
 def test_every_legacy_disposable_migration_lane_runs_the_same_role_bootstrap() -> None:
     for relative in (
         "scripts/smoke_postgres.sh",
@@ -145,6 +178,17 @@ def test_every_legacy_disposable_migration_lane_runs_the_same_role_bootstrap() -
         assert source.count("propertyquarry_disposable_capacity_owner.sql") == 1
         assert source.count('f|f|f|f|f|f|f|0') == 1
         assert "--no-psqlrc --quiet --tuples-only --no-align" in source
+
+
+def test_postgres_smoke_provisions_runtime_roles_before_full_schema_migration() -> None:
+    source = (ROOT / "scripts" / "smoke_postgres.sh").read_text(encoding="utf-8")
+
+    role_bootstrap = "propertyquarry_disposable_runtime_roles.sql"
+    full_migration = "python -m app.product.propertyquarry_schema migrate"
+    assert source.count(role_bootstrap) == 1
+    assert source.count(full_migration) == 1
+    assert source.index(role_bootstrap) < source.index(full_migration)
+    assert "python -m app.product.property_search_schema migrate" not in source
 
 
 def test_postgres_browser_ci_uses_only_the_isolated_host_capped_harness() -> None:

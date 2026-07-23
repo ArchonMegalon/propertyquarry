@@ -19518,6 +19518,182 @@ def test_property_visual_status_surfaces_user_requested_generated_reconstruction
     assert response["poll_after_seconds"] == 0
 
 
+def test_property_visual_status_keeps_older_generated_reconstruction_when_latest_followup_is_blocked(
+    monkeypatch,
+) -> None:
+    principal_id = "property-visual-status-generated-history"
+    property_url = "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/generated-history"
+    source_ref = "willhaben:generated-history"
+    generated_url = "https://propertyquarry.com/tours/generated-history"
+    client = build_product_client(principal_id=principal_id)
+    start_workspace(client, mode="personal", workspace_name="Property Tour Office")
+    service = product_service.build_product_service(client.app.state.container)
+
+    monkeypatch.setattr(
+        ProductService,
+        "_snapshot_property_search_run",
+        lambda self, **kwargs: {
+            "run_id": str(kwargs.get("run_id") or ""),
+            "updated_at": "2026-07-23T13:41:49+00:00",
+            "summary": {
+                "ranked_candidates": [
+                    {
+                        "title": "Generated history",
+                        "property_url": property_url,
+                        "source_ref": source_ref,
+                        "source_label": "Willhaben",
+                        "tour_url": "",
+                        "tour_status": "blocked",
+                        "blocked_reason": "property_tour_fallback_disabled",
+                    }
+                ],
+                "sources": [],
+            },
+        },
+    )
+    latest_blocked_followup = SimpleNamespace(
+        human_task_id="human-task-generated-history-latest",
+        status="returned",
+        resolution="blocked",
+        created_at="2026-07-23T13:35:19+00:00",
+        updated_at="2026-07-23T13:36:05+00:00",
+        input_json={},
+        returned_payload_json={
+            "status": "blocked",
+            "tour_status": "blocked",
+            "blocked_reason": "property_tour_fallback_disabled",
+        },
+    )
+    older_generated_followup = SimpleNamespace(
+        human_task_id="human-task-generated-history-older",
+        status="returned",
+        resolution="blocked",
+        created_at="2026-07-23T12:00:12+00:00",
+        updated_at="2026-07-23T12:00:56+00:00",
+        input_json={},
+        returned_payload_json={
+            "status": "blocked",
+            "tour_status": "blocked",
+            "blocked_reason": "property_tour_fallback_disabled",
+            "generated_reconstruction_url": generated_url,
+            "layout_preview_url": generated_url,
+            "layout_preview_status": "ready",
+        },
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "_latest_property_tour_followup",
+        lambda self, **kwargs: (
+            older_generated_followup
+            if bool(kwargs.get("require_generated_reconstruction"))
+            else latest_blocked_followup
+        ),
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_hosted_property_tour_verified_open_url",
+        lambda _tour_url, **_kwargs: "",
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_hosted_property_tour_generated_reconstruction_bundle_ready",
+        lambda tour_url: str(tour_url or "").strip() == generated_url,
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_hosted_property_tour_first_party_open_url",
+        lambda tour_url, **_kwargs: (
+            generated_url
+            if str(tour_url or "").strip() == generated_url
+            else ""
+        ),
+    )
+
+    response = service.get_property_visual_request_status(
+        principal_id=principal_id,
+        run_id="run-generated-history",
+        request_kind="tour",
+        candidate_ref="candidate-generated-history",
+        source_ref=source_ref,
+        property_url=property_url,
+    )
+
+    assert response["status"] == "ready"
+    assert response["tour_status"] == "blocked"
+    assert response["upstream_tour_status"] == "blocked"
+    assert response["tour_url"] == ""
+    assert response["verified_tour_url"] == ""
+    assert response["open_tour_url"] == generated_url
+    assert response["generated_reconstruction_url"] == generated_url
+    assert response["layout_preview_url"] == generated_url
+    assert response["layout_preview_status"] == "ready"
+    assert response["tour_media_mode"] == "generated_reconstruction"
+    assert response["blocked_reason"] == "property_tour_fallback_disabled"
+    assert response["status_label"] == "Open AI-generated 3D tour"
+    assert "AI-generated from the floor plan and listing photos" in response["status_detail"]
+    assert "not a captured 360° tour" in response["status_detail"]
+    assert response["poll_after_seconds"] == 0
+
+
+def test_latest_property_tour_followup_can_select_older_generated_reconstruction(
+    monkeypatch,
+) -> None:
+    principal_id = "property-tour-followup-generated-history"
+    property_url = "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/generated-history-query"
+    client = build_product_client(principal_id=principal_id)
+    service = product_service.build_product_service(client.app.state.container)
+    latest_blocked_followup = SimpleNamespace(
+        human_task_id="human-task-generated-query-latest",
+        task_type="property_tour_followup",
+        input_json={
+            "property_url": property_url,
+            "request_kind": "tour",
+            "run_id": "run-generated-query",
+        },
+        returned_payload_json={"tour_status": "blocked"},
+        created_at="2026-07-23T13:35:19+00:00",
+        updated_at="2026-07-23T13:36:05+00:00",
+    )
+    older_generated_followup = SimpleNamespace(
+        human_task_id="human-task-generated-query-older",
+        task_type="property_tour_followup",
+        input_json={
+            "property_url": property_url,
+            "request_kind": "tour",
+            "run_id": "run-generated-query",
+        },
+        returned_payload_json={
+            "tour_status": "blocked",
+            "generated_reconstruction_url": "https://propertyquarry.com/tours/generated-history-query",
+        },
+        created_at="2026-07-23T12:00:12+00:00",
+        updated_at="2026-07-23T12:00:56+00:00",
+    )
+    monkeypatch.setattr(product_service, "_property_search_run_database_url", lambda: "")
+    monkeypatch.setattr(
+        service._container.orchestrator,
+        "list_human_tasks",
+        lambda **_kwargs: [latest_blocked_followup, older_generated_followup],
+    )
+
+    latest = service._latest_property_tour_followup(
+        principal_id=principal_id,
+        property_url=property_url,
+        request_kind="tour",
+        run_id="run-generated-query",
+    )
+    generated = service._latest_property_tour_followup(
+        principal_id=principal_id,
+        property_url=property_url,
+        request_kind="tour",
+        run_id="run-generated-query",
+        require_generated_reconstruction=True,
+    )
+
+    assert latest is latest_blocked_followup
+    assert generated is older_generated_followup
+
+
 def test_property_visual_status_ready_followup_layout_overrides_stale_pending_candidate(
     monkeypatch,
 ) -> None:

@@ -310,6 +310,19 @@ if [[ "${capacity_owner_state}" != "f|f|f|f|f|f|f|0" ]]; then
   exit 47
 fi
 
+echo "== smoke-postgres: provision disposable PropertyQuarry runtime roles =="
+runtime_role_count="$(
+  docker exec -i "${DB_CONTAINER}" \
+    psql --no-psqlrc --quiet --tuples-only --no-align \
+      -v ON_ERROR_STOP=1 -U "${DB_USER}" -d postgres \
+    < "${EA_ROOT}/scripts/propertyquarry_disposable_runtime_roles.sql"
+)"
+runtime_role_count="$(printf '%s' "${runtime_role_count}" | tr -d '[:space:]')"
+if [[ "${runtime_role_count}" != "3" ]]; then
+  echo "disposable PropertyQuarry runtime role verification failed" >&2
+  exit 48
+fi
+
 echo "== smoke-postgres: reset isolated db ${SMOKE_DB} =="
 db_password_sql="${DB_PASSWORD//\'/\'\'}"
 docker exec -i "${DB_CONTAINER}" psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -d postgres \
@@ -361,9 +374,9 @@ if [[ "${legacy_fixture}" == "1" ]]; then
   exit 0
 fi
 
-echo "== smoke-postgres: property-search migration =="
+echo "== smoke-postgres: complete PropertyQuarry migration =="
 "${DC[@]}" run --rm --no-deps --build "${API_SERVICE}" \
-  python -m app.product.property_search_schema migrate \
+  python -m app.product.propertyquarry_schema migrate \
   --applied-by smoke-postgres
 
 echo "== smoke-postgres: compose up (api + worker) =="

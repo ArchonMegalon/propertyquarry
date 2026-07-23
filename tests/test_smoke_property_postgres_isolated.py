@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from scripts import provision_propertyquarry_runtime_database as runtime_database
 from scripts import smoke_property_postgres_isolated as harness
 
 
@@ -683,6 +684,161 @@ def test_admission_capacity_owner_bootstrap_verifies_exact_safe_role(
         )
 
 
+def test_schema_runtime_role_bootstrap_is_fixed_argv_and_least_privilege() -> None:
+    names = harness.ResourceNames(RUN_ID)
+    create, verify = harness.build_schema_runtime_role_commands(
+        docker_binary="/usr/bin/docker",
+        names=names,
+    )
+    expected_prefix = [
+        "/usr/bin/docker",
+        "--host",
+        harness.DOCKER_HOST,
+        "exec",
+        "--user",
+        "postgres",
+        names.container,
+        "/usr/local/bin/psql",
+        "--no-psqlrc",
+        "--set=ON_ERROR_STOP=1",
+        "--host=/var/run/postgresql",
+        "--dbname=postgres",
+        "--username=postgres",
+        "--no-align",
+        "--tuples-only",
+        "--command",
+    ]
+    assert create[:-1] == expected_prefix
+    assert verify[:-1] == expected_prefix
+    assert harness.DISPOSABLE_SCHEMA_RUNTIME_ROLES == (
+        "propertyquarry_api",
+        "propertyquarry_scheduler",
+        "propertyquarry_worker",
+    )
+    assert set(harness.DISPOSABLE_SCHEMA_RUNTIME_ROLES) == set(
+        runtime_database.RUNTIME_ROLES
+    )
+    safe_posture = (
+        "NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE "
+        "NOREPLICATION NOBYPASSRLS"
+    )
+    assert create[-1] == "; ".join(
+        f'CREATE ROLE "{role_name}" WITH {safe_posture}'
+        for role_name in harness.DISPOSABLE_SCHEMA_RUNTIME_ROLES
+    )
+    assert "pg_catalog.pg_auth_members" in verify[-1]
+    assert "membership.member = role.oid OR membership.roleid = role.oid" in verify[-1]
+    assert verify[-1].endswith("ORDER BY role.rolname")
+    for role_name in harness.DISPOSABLE_SCHEMA_RUNTIME_ROLES:
+        assert create[-1].count(f'"{role_name}"') == 1
+        assert verify[-1].count(f"'{role_name}'") == 1
+    assert all(
+        value not in create + verify
+        for value in (
+            "sh",
+            "bash",
+            "-c",
+            "--env",
+            "DATABASE_URL",
+            "POSTGRES_PASSWORD",
+        )
+    )
+
+
+def test_schema_runtime_role_bootstrap_verifies_exact_safe_roles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = harness.ResourceNames(RUN_ID)
+    observed: list[tuple[str, list[str]]] = []
+    safe_rows = "\n".join(
+        f"{role_name}|f|f|f|f|f|f|f|0"
+        for role_name in harness.DISPOSABLE_SCHEMA_RUNTIME_ROLES
+    )
+
+    def successful(
+        command: list[str] | tuple[str, ...],
+        *,
+        phase: str,
+        environment: dict[str, str],
+        accepted: frozenset[int] = frozenset({0}),
+        timeout_seconds: int = 60,
+    ) -> bytes:
+        del environment, accepted, timeout_seconds
+        observed.append((phase, list(command)))
+        if phase == "docker-schema-roles-bootstrap":
+            return b"CREATE ROLE\nCREATE ROLE\nCREATE ROLE\n"
+        assert phase == "docker-schema-roles-verify"
+        return (safe_rows + "\n").encode("ascii")
+
+    monkeypatch.setattr(harness, "_run_output", successful)
+    harness._provision_schema_runtime_roles(
+        docker_binary="/usr/bin/docker",
+        names=names,
+        environment={},
+    )
+    assert [phase for phase, _command in observed] == [
+        "docker-schema-roles-bootstrap",
+        "docker-schema-roles-verify",
+    ]
+
+    invalid_verification_rows = (
+        safe_rows.replace("|f|f|f|f|f|f|f|0", "|t|f|f|f|f|f|f|0", 1),
+        safe_rows.replace("|0", "|1", 1),
+        "\n".join(safe_rows.splitlines()[:-1]),
+        safe_rows + "\npropertyquarry_unexpected|f|f|f|f|f|f|f|0",
+        "\n".join(reversed(safe_rows.splitlines())),
+        "",
+    )
+    for invalid_rows in invalid_verification_rows:
+        def invalid_verification(
+            _command: list[str] | tuple[str, ...],
+            *,
+            phase: str,
+            environment: dict[str, str],
+            accepted: frozenset[int] = frozenset({0}),
+            timeout_seconds: int = 60,
+            _invalid_rows: str = invalid_rows,
+        ) -> bytes:
+            del _command, environment, accepted, timeout_seconds
+            if phase == "docker-schema-roles-bootstrap":
+                return b"CREATE ROLE\nCREATE ROLE\nCREATE ROLE\n"
+            assert phase == "docker-schema-roles-verify"
+            return (_invalid_rows + "\n").encode("ascii")
+
+        monkeypatch.setattr(harness, "_run_output", invalid_verification)
+        with pytest.raises(
+            harness.IsolatedPostgresError,
+            match="docker-schema-roles-verification-mismatch",
+        ):
+            harness._provision_schema_runtime_roles(
+                docker_binary="/usr/bin/docker",
+                names=names,
+                environment={},
+            )
+
+    def unexpected_create(
+        _command: list[str] | tuple[str, ...],
+        *,
+        phase: str,
+        environment: dict[str, str],
+        accepted: frozenset[int] = frozenset({0}),
+        timeout_seconds: int = 60,
+    ) -> bytes:
+        del _command, phase, environment, accepted, timeout_seconds
+        return b"CREATE ROLE\nCREATE ROLE\n"
+
+    monkeypatch.setattr(harness, "_run_output", unexpected_create)
+    with pytest.raises(
+        harness.IsolatedPostgresError,
+        match="docker-schema-roles-bootstrap-output-invalid",
+    ):
+        harness._provision_schema_runtime_roles(
+            docker_binary="/usr/bin/docker",
+            names=names,
+            environment={},
+        )
+
+
 def test_disposable_api_admission_dsns_are_distinct_loopback_credentials() -> None:
     password = "A" * 32
     admin = f"postgresql://postgres:{'B' * 32}@127.0.0.1:15432/postgres"
@@ -1272,6 +1428,41 @@ def test_isolated_postgres_lane_uses_combined_schema_gate() -> None:
             f'[python, "-m", "app.product.property_search_schema", "{action}"]'
             not in source
         )
+    tree = ast.parse(source)
+    execute_guarded = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_execute_guarded"
+    )
+    calls = sorted(
+        (node for node in ast.walk(execute_guarded) if isinstance(node, ast.Call)),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+    admission_owner_line = next(
+        node.lineno
+        for node in calls
+        if isinstance(node.func, ast.Name)
+        and node.func.id == "_provision_admission_capacity_owner_role"
+    )
+    schema_roles_line = next(
+        node.lineno
+        for node in calls
+        if isinstance(node.func, ast.Name)
+        and node.func.id == "_provision_schema_runtime_roles"
+    )
+    schema_migrate_line = next(
+        node.lineno
+        for node in calls
+        if isinstance(node.func, ast.Name)
+        and node.func.id == "_run_host"
+        and any(
+            keyword.arg == "phase"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value == "schema-migrate"
+            for keyword in node.keywords
+        )
+    )
+    assert admission_owner_line < schema_roles_line < schema_migrate_line
 
 
 def test_browser_launcher_has_one_exact_headless_shell_override_and_static_args() -> None:
@@ -1356,6 +1547,8 @@ def test_every_subprocess_callsite_binds_an_allowlisted_observability_phase() ->
         "docker-address-inspect",
         "docker-role-bootstrap",
         "docker-role-verify",
+        "docker-schema-roles-bootstrap",
+        "docker-schema-roles-verify",
         "schema-migrate",
         "schema-check",
         "session-bootstrap",
@@ -1423,6 +1616,8 @@ def test_scoped_diagnostic_allowlist_is_a_closed_phase_reason_schema() -> None:
             "admission-capacity-owner-role-invalid",
             "docker-role-bootstrap-output-invalid",
             "docker-role-verification-mismatch",
+            "docker-schema-roles-bootstrap-output-invalid",
+            "docker-schema-roles-verification-mismatch",
             "api-admission-role-dsn-invalid",
             "api-admission-role-collision",
             "api-admission-role-provision-failed",

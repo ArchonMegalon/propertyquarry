@@ -52,6 +52,11 @@ NETWORK_ID_RE: Final = re.compile(r"[0-9a-f]{64}\Z")
 RESOURCE_NAME_RE: Final = re.compile(r"pq-pg-e2e-[0-9a-f]{16}-(?:db|net|data)\Z")
 ADMISSION_CAPACITY_OWNER_ROLE_RE: Final = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 DISPOSABLE_API_ADMISSION_ROLE: Final = "propertyquarry_api_admission"
+DISPOSABLE_SCHEMA_RUNTIME_ROLES: Final = (
+    "propertyquarry_api",
+    "propertyquarry_scheduler",
+    "propertyquarry_worker",
+)
 DISPOSABLE_DATABASE_PASSWORD_RE: Final = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
 POSTGRES_SCRAM_ITERATIONS: Final = 4096
 POSTGRES_SCRAM_SALT_BYTES: Final = 16
@@ -169,6 +174,8 @@ COMMAND_PHASES: Final = frozenset(
         "docker-address-inspect",
         "docker-role-bootstrap",
         "docker-role-verify",
+        "docker-schema-roles-bootstrap",
+        "docker-schema-roles-verify",
         "schema-migrate",
         "schema-check",
         "session-bootstrap",
@@ -229,6 +236,8 @@ PHASE_SEMANTIC_FAILURE_CODES: Final = frozenset(
         "admission-capacity-owner-role-invalid",
         "docker-role-bootstrap-output-invalid",
         "docker-role-verification-mismatch",
+        "docker-schema-roles-bootstrap-output-invalid",
+        "docker-schema-roles-verification-mismatch",
         "api-admission-role-dsn-invalid",
         "api-admission-role-collision",
         "api-admission-role-provision-failed",
@@ -1304,6 +1313,58 @@ def build_admission_capacity_owner_commands(
     )
 
 
+def build_schema_runtime_role_commands(
+    *,
+    docker_binary: str,
+    names: ResourceNames,
+) -> tuple[list[str], list[str]]:
+    """Build fixed-argv bootstrap and verification for migration grant roles."""
+    role_names = DISPOSABLE_SCHEMA_RUNTIME_ROLES
+    if any(
+        ADMISSION_CAPACITY_OWNER_ROLE_RE.fullmatch(role) is None
+        for role in role_names
+    ):
+        _fail("docker-schema-roles-bootstrap-output-invalid")
+    psql = [
+        "exec",
+        "--user",
+        "postgres",
+        names.container,
+        "/usr/local/bin/psql",
+        "--no-psqlrc",
+        "--set=ON_ERROR_STOP=1",
+        "--host=/var/run/postgresql",
+        "--dbname=postgres",
+        "--username=postgres",
+        "--no-align",
+        "--tuples-only",
+    ]
+    safe_posture = (
+        "NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE "
+        "NOREPLICATION NOBYPASSRLS"
+    )
+    create_sql = "; ".join(
+        f'CREATE ROLE "{role_name}" WITH {safe_posture}'
+        for role_name in role_names
+    )
+    role_literals = ", ".join(f"'{role_name}'" for role_name in role_names)
+    verify_sql = (
+        "SELECT role.rolname, role.rolcanlogin, role.rolinherit, "
+        "role.rolsuper, role.rolcreaterole, role.rolcreatedb, "
+        "role.rolreplication, role.rolbypassrls, "
+        "(SELECT COUNT(*) FROM pg_catalog.pg_auth_members AS membership "
+        "WHERE membership.member = role.oid OR membership.roleid = role.oid) "
+        "FROM pg_catalog.pg_roles AS role "
+        f"WHERE role.rolname IN ({role_literals}) "
+        "ORDER BY role.rolname"
+    )
+    base = _docker_base(docker_binary)
+    return (
+        base + psql + ["--command", create_sql],
+        base + psql + ["--command", verify_sql],
+    )
+
+
 def _write_env_file(path: Path, values: Mapping[str, str]) -> None:
     if not path.is_absolute() or path.exists():
         _fail("temporary-env-invalid")
@@ -2194,6 +2255,47 @@ def _provision_admission_capacity_owner_role(
         _fail("docker-role-verification-mismatch")
 
 
+def _provision_schema_runtime_roles(
+    *,
+    docker_binary: str,
+    names: ResourceNames,
+    environment: Mapping[str, str],
+) -> None:
+    """Provision only the fail-closed roles referenced by schema grants."""
+    create_command, verify_command = build_schema_runtime_role_commands(
+        docker_binary=docker_binary,
+        names=names,
+    )
+    create_output = _ascii_phase_output(
+        _run_output(
+            create_command,
+            phase="docker-schema-roles-bootstrap",
+            environment=environment,
+        ),
+        "docker-schema-roles-bootstrap-output-invalid",
+    )
+    expected_create = "\n".join(
+        "CREATE ROLE" for _ in DISPOSABLE_SCHEMA_RUNTIME_ROLES
+    )
+    if create_output != expected_create:
+        _fail("docker-schema-roles-bootstrap-output-invalid")
+    verification = _ascii_phase_output(
+        _run_output(
+            verify_command,
+            phase="docker-schema-roles-verify",
+            environment=environment,
+        ),
+        "docker-schema-roles-verification-mismatch",
+    )
+    safe_state = "f|f|f|f|f|f|f|0"
+    expected_verification = "\n".join(
+        f"{role_name}|{safe_state}"
+        for role_name in DISPOSABLE_SCHEMA_RUNTIME_ROLES
+    )
+    if verification != expected_verification:
+        _fail("docker-schema-roles-verification-mismatch")
+
+
 def _validate_disposable_admission_dsns(
     *,
     admin_database_url: str,
@@ -2837,6 +2939,11 @@ def _execute_guarded(
                 docker_binary=docker_binary,
                 names=names,
                 role_name=ADMISSION_CAPACITY_OWNER_ROLE_DEFAULT,
+                environment=docker_environment,
+            )
+            _provision_schema_runtime_roles(
+                docker_binary=docker_binary,
+                names=names,
                 environment=docker_environment,
             )
             database_relay = _LoopbackDatabaseRelay(container_ipv4)

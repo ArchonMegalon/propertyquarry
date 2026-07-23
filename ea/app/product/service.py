@@ -38837,11 +38837,13 @@ class ProductService:
         property_url: str,
         request_kind: str = "tour",
         run_id: str = "",
+        require_generated_reconstruction: bool = False,
     ) -> HumanTask | None:
         normalized_principal = str(principal_id or "").strip()
         normalized_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
         normalized_request_kind = _normalize_property_visual_request_kind(request_kind)
         normalized_run_id = str(run_id or "").strip()
+        require_generated = bool(require_generated_reconstruction)
         if not normalized_principal or not normalized_url:
             return None
         database_url = _property_search_run_database_url()
@@ -38861,6 +38863,10 @@ class ProductService:
                 if normalized_target_run_id:
                     task_run_id = str(input_json.get("run_id") or "").strip()
                     if task_run_id and task_run_id != normalized_target_run_id:
+                        return False
+                if require_generated:
+                    returned_payload = dict(getattr(row, "returned_payload_json", {}) or {})
+                    if not str(returned_payload.get("generated_reconstruction_url") or "").strip():
                         return False
                 return True
 
@@ -38905,6 +38911,11 @@ class ProductService:
                 if normalized_target_run_id
                 else ""
             )
+            where_generated_clause = (
+                "                      AND COALESCE(returned_payload_json ->> 'generated_reconstruction_url', '') <> ''\n"
+                if require_generated
+                else ""
+            )
             query = f"""
                 SELECT human_task_id, session_id, step_id, principal_id, task_type, role_required, brief,
                        authority_required, why_human, quality_rubric_json, input_json, desired_output_json, priority,
@@ -38917,6 +38928,7 @@ class ProductService:
                   AND input_json ->> 'property_url' = %s
                   AND COALESCE(input_json ->> 'request_kind', 'tour') = ANY(%s)
 {where_run_clause}
+{where_generated_clause}
                 ORDER BY updated_at DESC, created_at DESC, human_task_id DESC
                 LIMIT 1
                 """
@@ -43854,6 +43866,7 @@ class ProductService:
         run_id: str,
         principal_id: str,
         allow_finalization_notifications: bool = False,
+        _advance_finalization: bool = True,
     ) -> dict[str, object] | None:
         normalized_run_id = str(run_id or "").strip()
         normalized_principal = str(principal_id or "").strip()
@@ -43967,15 +43980,16 @@ class ProductService:
                     return None
                 with _PROPERTY_SEARCH_RUN_LOCK:
                     state = dict(_PROPERTY_SEARCH_RUN_REGISTRY.get(normalized_run_id) or state)
-        finalized_state = self._maybe_advance_property_search_run_finalization(
-            principal_id=normalized_principal,
-            run_id=normalized_run_id,
-            state=dict(state),
-            allow_notifications=allow_finalization_notifications,
-        )
-        if not isinstance(finalized_state, dict):
-            return None
-        state = finalized_state
+        if _advance_finalization:
+            finalized_state = self._maybe_advance_property_search_run_finalization(
+                principal_id=normalized_principal,
+                run_id=normalized_run_id,
+                state=dict(state),
+                allow_notifications=allow_finalization_notifications,
+            )
+            if not isinstance(finalized_state, dict):
+                return None
+            state = finalized_state
         summary = dict(state.get("summary") or {})
         summary = _state_property_search_run_sync_summary(
             state=dict(state),
@@ -47739,7 +47753,11 @@ class ProductService:
                     candidate_row.setdefault("source_label", source_label)
                     _append_if_match(candidate_row, source_label)
 
-        def _latest_authorized_followup(target_property_url: str) -> HumanTask | None:
+        def _latest_authorized_followup(
+            target_property_url: str,
+            *,
+            require_generated_reconstruction: bool = False,
+        ) -> HumanTask | None:
             if not str(target_property_url or "").strip():
                 return None
             principal_candidates = list(
@@ -47758,6 +47776,7 @@ class ProductService:
                         property_url=target_property_url,
                         request_kind=normalized_kind,
                         run_id=normalized_run_id,
+                        require_generated_reconstruction=require_generated_reconstruction,
                     )
                     if followup is not None:
                         followups.append(followup)
@@ -47955,9 +47974,38 @@ class ProductService:
             str(matched_candidate.get("diorama_style_hint") or ""),
             max_length=180,
         )
-        latest_followup = _latest_authorized_followup(
-            str(matched_candidate.get("property_url") or normalized_property_url).strip()
+        matched_property_url = str(
+            matched_candidate.get("property_url") or normalized_property_url
+        ).strip()
+        generated_followup = (
+            _latest_authorized_followup(
+                matched_property_url,
+                require_generated_reconstruction=True,
+            )
+            if normalized_kind == "tour"
+            else None
         )
+        if generated_followup is not None:
+            generated_followup_payload = (
+                dict(getattr(generated_followup, "returned_payload_json", {}) or {})
+                if isinstance(
+                    getattr(generated_followup, "returned_payload_json", None),
+                    dict,
+                )
+                else {}
+            )
+            historical_generated_reconstruction_url = str(
+                generated_followup_payload.get("generated_reconstruction_url") or ""
+            ).strip()
+            historical_layout_preview_url = _property_visual_layout_preview_url(
+                historical_generated_reconstruction_url,
+                principal_id=normalized_principal,
+            )
+            if historical_layout_preview_url:
+                generated_reconstruction_url = historical_generated_reconstruction_url
+                layout_preview_url = historical_layout_preview_url
+                layout_preview_status = "ready"
+        latest_followup = _latest_authorized_followup(matched_property_url)
         if latest_followup is not None:
             followup_status = str(getattr(latest_followup, "status", "") or "").strip().lower()
             followup_resolution = str(getattr(latest_followup, "resolution", "") or "").strip().lower()
@@ -48303,6 +48351,7 @@ class ProductService:
                 run_id=run_id,
                 principal_id=principal_id,
                 allow_finalization_notifications=allow_notifications,
+                _advance_finalization=False,
             )
             if isinstance(refreshed_state, dict):
                 state = refreshed_state
