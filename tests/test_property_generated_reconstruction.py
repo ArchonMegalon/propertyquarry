@@ -235,6 +235,9 @@ def test_hosted_tour_writer_keeps_raw_tour_json_free_of_private_source_and_proof
                 "nearest_playground_longitude": 16.3902,
                 "nearestPharmacyLat": 48.2203,
                 "nearestPharmacyLon": 16.3903,
+                "nearest_lat": 48.2205,
+                "nearest-lng": 16.3905,
+                "nearestLongitude": 16.3906,
                 "livability_snapshot": {
                     "nearest_playground_m": 78,
                     "nearest_playground_name": "Public playground",
@@ -386,11 +389,41 @@ def test_hosted_tour_writer_keeps_raw_tour_json_free_of_private_source_and_proof
     ] == "Nested Exact Camel Address 9"
     assert private_manifest["private_exact_location"]["facts"]["nearest_supermarket_lat"] == 48.2201
     assert private_manifest["private_exact_location"]["facts"]["nearestPharmacyLon"] == 16.3903
+    assert private_manifest["private_exact_location"]["facts"]["nearest_lat"] == 48.2205
+    assert private_manifest["private_exact_location"]["facts"]["nearest-lng"] == 16.3905
+    assert private_manifest["private_exact_location"]["facts"]["nearestLongitude"] == 16.3906
     assert private_manifest["private_exact_location"]["facts"]["livability_snapshot"][
         "nearest_playground_lng"
     ] == 16.3904
     assert (bundle_dir / "tour.json").stat().st_mode & 0o777 == 0o644
     assert (bundle_dir / "tour.private.json").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        "nearest_lat",
+        "nearest-lng",
+        "nearestLongitude",
+        "nearest_supermarket_lat",
+        "nearest-playground-longitude",
+        "nearestPharmacyLon",
+    ),
+)
+def test_public_tour_nearest_coordinate_keys_are_exact_location(key: str) -> None:
+    assert public_tour_key_is_exact_location(key) is True
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        "nearest_supermarket_m",
+        "nearest_playground_name",
+        "nearest_pharmacy_source",
+    ),
+)
+def test_public_tour_nearest_non_coordinate_facts_remain_public(key: str) -> None:
+    assert public_tour_key_is_exact_location(key) is False
 
 
 def test_public_tour_exact_location_fingerprints_are_strictly_bounded() -> None:

@@ -487,7 +487,7 @@ def public_tour_key_is_exact_location(key: object) -> bool:
         if segment
     )
     return (
-        len(segments) >= 3
+        len(segments) >= 2
         and segments[0] == "nearest"
         and segments[-1] in _PUBLIC_TOUR_NEAREST_COORDINATE_SUFFIXES
     )
