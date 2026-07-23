@@ -5,7 +5,7 @@
   "proof_target": "propertyquarry",
   "version": 1,
   "kind": "proof_receipt",
-  "generated_at": "2026-07-22T15:06:42Z",
+  "generated_at": "2026-07-23T08:51:53Z",
   "generated_by": "scripts/materialize_ea_browser_workflow_proof.py",
   "status": "pass",
   "operator_summary": "PropertyQuarry browser workflow proof is published and green across the required journey matrix, source-backed contracts, and real-browser E2E.",
@@ -31,7 +31,7 @@
       "id": "propertyquarry.release-proof.v1",
       "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
     },
-    "code_commit": "6d42d60052bc152b95469b2b882c7aa6ff147db0",
+    "code_commit": "0f89540c110add373a752f13235372dc8784233e",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
@@ -40,13 +40,13 @@
     "required_test_sources": [
       {
         "path": "tests/test_propertyquarry_workspace_redesign.py",
-        "sha256": "722112f3f1859683c49da6a05f162abdd134c7409de5e1c80313c321677d7639",
-        "git_blob_oid": "6f4cecad6815e27b65801d35a017d710c459234c"
+        "sha256": "d583db56ec9f2a91d00d978aee06258ad1c9f8b55fb06d99679c6d15e0be6715",
+        "git_blob_oid": "1fc99c46f1ea835fb261dafa9b0253129d967864"
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
-        "sha256": "7c1e2a67d2757a97c3855dbbdeeddda56546bd7458d3de1981ff9e9e617956a9",
-        "git_blob_oid": "88864d69e29c8b87cda6c85605408c8927af47eb"
+        "sha256": "cb1060e19bf09894fde9a48aef9987590889213c349fcae296ecc421580c5532",
+        "git_blob_oid": "b76990f949870860171c4a3167c47415b1548147"
       },
       {
         "path": "tests/test_property_evidence_overlays.py",
@@ -71,19 +71,10 @@
       "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
     ],
     "exit_code": 0,
-    "duration_seconds": 25.687,
+    "duration_seconds": 27.538,
     "output_excerpt": [
       ".......                                                                  [100%]",
-      "7 passed in 24.07s",
-      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-a59b17bc-3040-41a1-a0bc-04eb27106266/test_main_rolls_back_retention0/chummer-ui-fresh-package-plane-injected",
-      "<class 'OSError'>: [Errno 39] Directory not empty: 'chummer-ui-fresh-package-plane-injected'",
-      "  warnings.warn(",
-      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-a59b17bc-3040-41a1-a0bc-04eb27106266/test_main_rolls_back_retention0",
-      "<class 'OSError'>: [Errno 39] Directory not empty: 'test_main_rolls_back_retention0'",
-      "  warnings.warn(",
-      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-a59b17bc-3040-41a1-a0bc-04eb27106266",
-      "<class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-tibor/garbage-a59b17bc-3040-41a1-a0bc-04eb27106266'",
-      "  warnings.warn("
+      "7 passed in 26.19s"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -115,19 +106,10 @@
         "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
       ],
       "exit_code": 0,
-      "duration_seconds": 25.687,
+      "duration_seconds": 27.538,
       "output_excerpt": [
         ".......                                                                  [100%]",
-        "7 passed in 24.07s",
-        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-a59b17bc-3040-41a1-a0bc-04eb27106266/test_main_rolls_back_retention0/chummer-ui-fresh-package-plane-injected",
-        "<class 'OSError'>: [Errno 39] Directory not empty: 'chummer-ui-fresh-package-plane-injected'",
-        "  warnings.warn(",
-        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-a59b17bc-3040-41a1-a0bc-04eb27106266/test_main_rolls_back_retention0",
-        "<class 'OSError'>: [Errno 39] Directory not empty: 'test_main_rolls_back_retention0'",
-        "  warnings.warn(",
-        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-a59b17bc-3040-41a1-a0bc-04eb27106266",
-        "<class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-tibor/garbage-a59b17bc-3040-41a1-a0bc-04eb27106266'",
-        "  warnings.warn("
+        "7 passed in 26.19s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -152,19 +134,10 @@
         "test_property_research_rows_preserve_evidence_states_and_original_article_link"
       ],
       "exit_code": 0,
-      "duration_seconds": 1.84,
+      "duration_seconds": 1.787,
       "output_excerpt": [
         ".                                                                        [100%]",
-        "1 passed in 1.09s",
-        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-928a94ae-cc9b-4572-99b5-d222fd6f9b19/test_main_rolls_back_retention0/chummer-ui-fresh-package-plane-injected",
-        "<class 'OSError'>: [Errno 39] Directory not empty: 'chummer-ui-fresh-package-plane-injected'",
-        "  warnings.warn(",
-        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-928a94ae-cc9b-4572-99b5-d222fd6f9b19/test_main_rolls_back_retention0",
-        "<class 'OSError'>: [Errno 39] Directory not empty: 'test_main_rolls_back_retention0'",
-        "  warnings.warn(",
-        "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-928a94ae-cc9b-4572-99b5-d222fd6f9b19",
-        "<class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-tibor/garbage-928a94ae-cc9b-4572-99b5-d222fd6f9b19'",
-        "  warnings.warn("
+        "1 passed in 1.07s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -205,19 +178,10 @@
       "test_propertyquarry_research_evidence_states_and_links_render_in_real_browser"
     ],
     "exit_code": 0,
-    "duration_seconds": 109.533,
+    "duration_seconds": 139.086,
     "output_excerpt": [
       "................                                                         [100%]",
-      "16 passed in 107.30s (0:01:47)",
-      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-23d713a8-51c4-4168-a07f-ec498aff67a1/test_main_rolls_back_retention0/chummer-ui-fresh-package-plane-injected",
-      "<class 'OSError'>: [Errno 39] Directory not empty: 'chummer-ui-fresh-package-plane-injected'",
-      "  warnings.warn(",
-      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-23d713a8-51c4-4168-a07f-ec498aff67a1/test_main_rolls_back_retention0",
-      "<class 'OSError'>: [Errno 39] Directory not empty: 'test_main_rolls_back_retention0'",
-      "  warnings.warn(",
-      "/home/tibor/.local/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /tmp/pytest-of-tibor/garbage-23d713a8-51c4-4168-a07f-ec498aff67a1",
-      "<class 'OSError'>: [Errno 39] Directory not empty: '/tmp/pytest-of-tibor/garbage-23d713a8-51c4-4168-a07f-ec498aff67a1'",
-      "  warnings.warn("
+      "16 passed in 136.86s (0:02:16)"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -236,7 +200,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "6d42d60052bc152b95469b2b882c7aa6ff147db0",
+    "runtime_commit_sha": "0f89540c110add373a752f13235372dc8784233e",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
