@@ -270,9 +270,29 @@ def test_public_and_accessibility_defaults_cover_every_sitemap_information_route
     assert tuple(public_smoke.PUBLIC_INFORMATION_ROUTES) == tuple(gold_status.REQUIRED_PUBLIC_INFORMATION_ROUTES)
 
 
-def test_every_public_information_route_renders_with_its_strict_copy_contract() -> None:
+def test_every_public_information_route_renders_with_its_strict_copy_contract(
+    monkeypatch,
+) -> None:
     from tests.product_test_helpers import build_property_client
 
+    # This is the configured public-surface contract. Keep it independent of
+    # provider-environment mutations performed by earlier test modules; the
+    # fail-closed unconfigured state has its own explicit coverage.
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID", "test-google-client-id")
+    monkeypatch.setenv("PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET", "test-google-client-secret")
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI",
+        "https://propertyquarry.com/google/callback",
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET",
+        "test-propertyquarry-google-state-secret",
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+        "test-propertyquarry-identity-session-secret",
+    )
     client = build_property_client(principal_id="pq-public-information-contract")
     failures: dict[str, list[str]] = {}
     for route in public_smoke.PUBLIC_INFORMATION_ROUTES:
