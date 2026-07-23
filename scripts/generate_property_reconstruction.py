@@ -8662,6 +8662,51 @@ window.__pqReconstructionDebug = {{
 """
 
 
+def _walkthrough_coverage_segments(
+    labels: list[str] | tuple[str, ...],
+    *,
+    duration_seconds: float,
+    step_seconds: float | None = None,
+    segment_seconds: float | None = None,
+) -> list[dict[str, object]]:
+    normalized_labels = [
+        _compact_route_label(label)
+        for label in list(labels or [])
+        if _compact_route_label(label)
+    ]
+    duration = float(duration_seconds or 0.0)
+    if not normalized_labels or not math.isfinite(duration) or duration <= 0.0:
+        return []
+    step = (
+        float(step_seconds)
+        if step_seconds is not None
+        else duration / len(normalized_labels)
+    )
+    segment = float(segment_seconds) if segment_seconds is not None else step
+    if (
+        not math.isfinite(step)
+        or not math.isfinite(segment)
+        or step <= 0.0
+        or segment <= 0.0
+    ):
+        return []
+    rows: list[dict[str, object]] = []
+    for index, label in enumerate(normalized_labels):
+        start = round(min(duration, index * step), 3)
+        end = round(min(duration, (index * step) + segment), 3)
+        if end <= start:
+            return []
+        rows.append(
+            {
+                "segment": label,
+                "index": index + 1,
+                "start": start,
+                "end": end,
+            }
+        )
+    return rows
+
+
 def _write_viewer_walkthrough(
     target: Path,
     *,
@@ -8845,20 +8890,21 @@ def _write_viewer_walkthrough(
     if duration <= 0.0:
         target.unlink(missing_ok=True)
         return {"status": "failed", "reason": "mp4_duration_validation_failed"}
+    coverage_segments = _walkthrough_coverage_segments(
+        expected_segments,
+        duration_seconds=duration,
+    )
+    if len(coverage_segments) != len(expected_segments):
+        target.unlink(missing_ok=True)
+        sidecar_path.unlink(missing_ok=True)
+        return {"status": "failed", "reason": "walkthrough_coverage_timing_invalid"}
+    effective_seconds_per_stop = duration / len(expected_segments)
     coverage = {
         "status": "pass",
         "source": "propertyquarry_generated_reconstruction_viewer_capture",
         "segments_expected": expected_segments,
         "segments_visited": expected_segments,
-        "coverage_segments": [
-            {
-                "segment": label,
-                "index": index + 1,
-                "start": round(min(duration, index * seconds_per_stop), 3),
-                "end": round(min(duration, (index + 1) * seconds_per_stop), 3),
-            }
-            for index, label in enumerate(expected_segments)
-        ],
+        "coverage_segments": coverage_segments,
     }
     sidecar = {
         "provider": "PropertyQuarry generated reconstruction",
@@ -8867,10 +8913,11 @@ def _write_viewer_walkthrough(
         "motion_style": "threejs_layout_flythrough",
         "style_label": style_label,
         "duration_seconds": round(duration, 3),
-        "seconds_per_stop": seconds_per_stop,
+        "seconds_per_stop": round(effective_seconds_per_stop, 3),
+        "requested_seconds_per_stop": seconds_per_stop,
         "fps": fps,
         "transition_style": "dolly_then_hold",
-        "transition_duration_seconds": round(seconds_per_stop * move_phase_ratio, 3),
+        "transition_duration_seconds": round(effective_seconds_per_stop * move_phase_ratio, 3),
         "room_stop_count": len(expected_segments),
         "walkthrough_card_count": len(expected_segments),
         "route_map_embedded": floorplan_thumb is not None and bool(route_markers),
@@ -9175,20 +9222,22 @@ def _write_stop_card_walkthrough(
         target.unlink(missing_ok=True)
         return {"status": "failed", "reason": "mp4_duration_validation_failed"}
     coverage_step_seconds = max(0.0, seconds_per_stop - transition_duration)
+    coverage_segments = _walkthrough_coverage_segments(
+        expected_segments,
+        duration_seconds=duration,
+        step_seconds=coverage_step_seconds,
+        segment_seconds=seconds_per_stop,
+    )
+    if len(coverage_segments) != len(expected_segments):
+        target.unlink(missing_ok=True)
+        sidecar_path.unlink(missing_ok=True)
+        return {"status": "failed", "reason": "walkthrough_coverage_timing_invalid"}
     coverage = {
         "status": "pass",
         "source": "propertyquarry_generated_reconstruction_stop_cards",
         "segments_expected": expected_segments,
         "segments_visited": expected_segments,
-        "coverage_segments": [
-            {
-                "segment": label,
-                "index": index + 1,
-                "start": round(min(duration, index * coverage_step_seconds), 3),
-                "end": round(min(duration, (index * coverage_step_seconds) + seconds_per_stop), 3),
-            }
-            for index, label in enumerate(expected_segments)
-        ],
+        "coverage_segments": coverage_segments,
     }
     sidecar = {
         "provider": "PropertyQuarry generated reconstruction",

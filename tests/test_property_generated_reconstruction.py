@@ -4390,6 +4390,43 @@ def test_generated_reconstruction_render_tools_shared_public_volume_does_not_req
     assert reconstruction_script._runtime_publish_required() is False
 
 
+def test_generated_reconstruction_walkthrough_coverage_uses_observed_duration_and_never_claims_zero_length_segments() -> None:
+    labels = [
+        "living room",
+        "bedroom",
+        "living room detail 2",
+        "bedroom detail 2",
+        "living room detail 3",
+        "bedroom detail 3",
+        "living room detail 4",
+        "bedroom detail 4",
+    ]
+
+    segments = reconstruction_script._walkthrough_coverage_segments(
+        labels,
+        duration_seconds=48.0,
+    )
+
+    assert [row["segment"] for row in segments] == labels
+    assert segments[0] == {
+        "segment": "living room",
+        "index": 1,
+        "start": 0.0,
+        "end": 6.0,
+    }
+    assert segments[-1] == {
+        "segment": "bedroom detail 4",
+        "index": 8,
+        "start": 42.0,
+        "end": 48.0,
+    }
+    assert all(float(row["end"]) > float(row["start"]) for row in segments)
+    assert reconstruction_script._walkthrough_coverage_segments(
+        labels,
+        duration_seconds=0.001,
+    ) == []
+
+
 def test_generated_reconstruction_walkthrough_uses_explicit_room_labels_for_duration_and_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
