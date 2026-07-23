@@ -15,10 +15,10 @@ import (
 const (
 	tourV4Slug = "ab-1-8-modern-and-fully-furnited-loft-apartment-top-moderne-und-voll-mblierte-" +
 		"loft-wohnung-nas-layout-first-d07edad7af3fc379574d"
-	tourV4BundlePath = "/tmp/property-f7-tour-final-v4.HUQw8lU4/" +
+	tourV4BundlePath = "/tmp/propertyquarry-f7-live-v6.OCEyn0/" +
 		tourV4Slug
-	tourV4ManifestSHA256 = "sha256:4cff91610a4105ad579a88e94201d84e44838808610cb8119eabb61d5f954beb"
-	tourV4PublicSHA256   = "sha256:5cc6098565d79549089db385e133671c6de8748b17a171c699a997004412efb1"
+	tourV4ManifestSHA256 = "sha256:ed566ad5265a0cb4d205783b5ce8bc35de8100d75d5adf0059c178836326de33"
+	tourV4PublicSHA256   = "sha256:1d2de2be6c8e11eca686ab3e7c76c1d4c7ba12d231f14276eb9da8bf7fe3d545"
 )
 
 var tourV4DispatchTransactionPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)

@@ -47,7 +47,7 @@ const (
 	tourV4DetachedBootstrapDomain              = "propertyquarry.release-control.single-host-production-authority-bootstrap.v2\x00"
 	tourV4DetachedCanonicalAuthorityRoot       = "/docker/property/state/runtime/propertyquarry-release-authority-v2.private/authority-static-canonical"
 	tourV4DetachedCanonicalPrivateDigest       = "sha256:8b9106db85e8ce423d454bb14c863b6c0d481b061eaae0bd4b584d7071cbc2e1"
-	tourV4DetachedBundlePath                   = "/tmp/property-f7-tour-final-v4.HUQw8lU4/ab-1-8-modern-and-fully-furnited-loft-apartment-top-moderne-und-voll-mblierte-loft-wohnung-nas-layout-first-d07edad7af3fc379574d"
+	tourV4DetachedBundlePath                   = "/tmp/propertyquarry-f7-live-v6.OCEyn0/ab-1-8-modern-and-fully-furnited-loft-apartment-top-moderne-und-voll-mblierte-loft-wohnung-nas-layout-first-d07edad7af3fc379574d"
 	tourV4DetachedTTLSeconds             int64 = 3600
 )
 
@@ -152,17 +152,17 @@ var tourV4AuthorizedPermits = []tourV4Permit{
 		Provider:                  "propertyquarry_generated_reconstruction",
 		ViewerVersion:             "propertyquarry_3d_tour_viewer_v3",
 		Disclosure:                "Planning preview built from the floor plan and listing photos. Use it as a layout aid, not as a captured tour.",
-		ArtifactTreeSHA256:        "sha256:862b282b297d6d16df8b715770934101a8afed77f50829f35890270ba9e364d7",
-		PublicTreeSHA256:          "sha256:5cc6098565d79549089db385e133671c6de8748b17a171c699a997004412efb1",
+		ArtifactTreeSHA256:        "sha256:dd056b097bb98438594f0e6e09fcaabb52e727e698bb254221267fb27c4d01d4",
+		PublicTreeSHA256:          "sha256:1d2de2be6c8e11eca686ab3e7c76c1d4c7ba12d231f14276eb9da8bf7fe3d545",
 		BrowserReceiptSHA256:      "sha256:800b2ba29a7c33ec64651db26ef23a1e0756d0223286eb43d742fc23c6bb34f8",
 		BrowserEvidenceTreeSHA256: "sha256:838ff0b8e236dbd5e5695c6bc20a862182d42075bba4202cd1a63083bfcb0d08",
 		QualityReceiptSHA256:      "sha256:0fc7dc5b0a63a49bfd3d63a9c748a0a04d7397a46d5f81d3b517d85ca753b721",
 		WalkthroughSHA256:         "sha256:16197ec466ed41eab0ed05034e8e0132a1f15cd2387263d792b7b4492c6d7aed",
-		TourManifestSHA256:        "sha256:794db94b7bcccd9b33e5dcbed4c1b0bbe5ed7d221fc0b07733b95a3f61fb9c47",
+		TourManifestSHA256:        "sha256:7f65e5b02fa3f173a7f09696d9740f7827810bd612804371dff8621e7d55d823",
 		ReconstructionSHA256:      "sha256:6d8d967e3447e783c1e9cb9e81bcb6a88b2d08cd85f0104edad2172b522c1e1b",
-		RenderCommitSHA256:        "sha256:d45597b5fb4f789e02507dec5cca75c0323c2f58ad4b9a30c23b55f62074bfb3",
+		RenderCommitSHA256:        "sha256:d970b190ec3765bfa2f4a8b4e225c73ae8e441c1cf033b8514a529db8157b6a8",
 		Files: []tourV4PermitFile{
-			{Path: ".propertyquarry-render-commit.json", Mode: 0o600, Size: 339, SHA256: "sha256:d45597b5fb4f789e02507dec5cca75c0323c2f58ad4b9a30c23b55f62074bfb3", Public: false},
+			{Path: ".propertyquarry-render-commit.json", Mode: 0o600, Size: 339, SHA256: "sha256:d970b190ec3765bfa2f4a8b4e225c73ae8e441c1cf033b8514a529db8157b6a8", Public: false},
 			{Path: "diorama-preview.png", Mode: 0o644, Size: 799183, SHA256: "sha256:c7e9de76097173dfea1a3fd1f79bdc58cc9cc5cc0efe662dc3479b857faf9bfc", Public: true},
 			{Path: "generated-reconstruction/generated-walkthrough.mp4", Mode: 0o644, Size: 1984340, SHA256: "sha256:16197ec466ed41eab0ed05034e8e0132a1f15cd2387263d792b7b4492c6d7aed", Public: true},
 			{Path: "generated-reconstruction/generated-walkthrough.quality.json", Mode: 0o644, Size: 3096, SHA256: "sha256:0fc7dc5b0a63a49bfd3d63a9c748a0a04d7397a46d5f81d3b517d85ca753b721", Public: true},
@@ -183,7 +183,7 @@ var tourV4AuthorizedPermits = []tourV4Permit{
 			{Path: "generated-reconstruction/vendor/three.module.js", Mode: 0o644, Size: 1296547, SHA256: "sha256:2fdbd590b5a285d9a9b1aa39dcba2d41fd8b7749361a84fcef1fc422696996ed", Public: true},
 			{Path: "generated-reconstruction/viewer.html", Mode: 0o644, Size: 87416, SHA256: "sha256:81d1e33205835cca27d69d389a8b848803503fdad3bece53c532870dc7a472e5", Public: true},
 			{Path: "telegram-preview.png", Mode: 0o644, Size: 761300, SHA256: "sha256:8e298b1c9643bd30252c986f2c9ca68ad16b20f84b695b34fdec6896ed093d67", Public: true},
-			{Path: "tour.json", Mode: 0o644, Size: 11440, SHA256: "sha256:794db94b7bcccd9b33e5dcbed4c1b0bbe5ed7d221fc0b07733b95a3f61fb9c47", Public: true},
+			{Path: "tour.json", Mode: 0o644, Size: 12386, SHA256: "sha256:7f65e5b02fa3f173a7f09696d9740f7827810bd612804371dff8621e7d55d823", Public: true},
 			{Path: "tour.private.json", Mode: 0o600, Size: 2875, SHA256: "sha256:12a9fd7fae6f1bafd4b1b78f7d18242840adf3aba29064811ce3593337c4a7c9", Public: false},
 		},
 	},
