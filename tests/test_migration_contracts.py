@@ -107,7 +107,7 @@ def test_legacy_migration_regression_smoke_contract_is_wired() -> None:
     assert "secrets.token_hex(32)" in smoke
     assert 'set_env_value "EA_SIGNING_SECRET" "${smoke_signing_secret}"' in smoke
     assert 'export EA_SIGNING_SECRET="${smoke_signing_secret}"' in smoke
-    assert 'python -m app.product.property_search_schema migrate' in smoke
+    assert 'python -m app.product.propertyquarry_schema migrate' in smoke
     assert '--applied-by smoke-postgres' in smoke
     assert '"${PYTHON_BIN}" -m app.product.property_search_schema migrate' in postgres_contracts
     assert '--applied-by postgres-contracts' in postgres_contracts

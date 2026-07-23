@@ -339,6 +339,15 @@ def test_visual_request_passes_authoritative_run_id_to_tour_and_reconstruction(
         _container = _Container()
 
         @staticmethod
+        def _resolve_property_search_run_owner_principal_id(**kwargs: object) -> str:
+            assert kwargs == {
+                "run_id": "authoritative-run",
+                "principal_id": "visual-principal",
+                "account_email": "",
+            }
+            return "visual-principal"
+
+        @staticmethod
         def _current_property_search_visual_state(**_kwargs: object) -> dict[str, object]:
             return {}
 

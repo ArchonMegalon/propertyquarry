@@ -136,9 +136,24 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
             "postgresql://pq_migration:review-only@db/property"
         ),
     }
+    identity_placeholders = {
+        "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID": (
+            "review-only-google-client-id-placeholder"
+        ),
+        "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET": (
+            "review-only-google-client-secret-placeholder"
+        ),
+        "PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET": (
+            "review-only-google-state-secret-placeholder"
+        ),
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET": (
+            "review-only-identity-session-secret-placeholder"
+        ),
+    }
     command_env = {
         **os.environ,
         **role_urls,
+        **identity_placeholders,
         "DATABASE_URL": "postgresql://generic-forbidden:review-only@db/property",
         "POSTGRES_PASSWORD": "review-only-bootstrap-placeholder",
         "EA_SIGNING_SECRET": "review-only-signing-placeholder",
@@ -182,3 +197,12 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
     assert services["propertyquarry-api"]["environment"][
         "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"
     ] == role_urls["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"]
+    api_environment = dict(services["propertyquarry-api"]["environment"])
+    assert {
+        key: api_environment.get(key)
+        for key in identity_placeholders
+    } == identity_placeholders
+    assert api_environment["PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET"] not in {
+        command_env["EA_SIGNING_SECRET"],
+        api_environment["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"],
+    }

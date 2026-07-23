@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import os
+import pathlib
 from pathlib import Path
 import shutil
 import stat
@@ -32,6 +33,97 @@ IMAGE_IDS = {
     CLOUDFLARED_IMAGE: f"sha256:{'3' * 64}",
     DATABASE_IMAGE: f"sha256:{'4' * 64}",
 }
+
+
+def _production_identity_stat(metadata: os.stat_result) -> os.stat_result:
+    fields = list(metadata)
+    fields[4] = 1000
+    fields[5] = 1000
+    return os.stat_result(fields)
+
+
+class _RuntimeFixtureOS:
+    """Expose one pytest tree as the production service identity."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = os.path.abspath(os.fspath(root))
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(os, name)
+
+    @staticmethod
+    def _descriptor_path(descriptor: int) -> str:
+        try:
+            return os.readlink(f"/proc/self/fd/{descriptor}")
+        except OSError:
+            return ""
+
+    def _resolved_path(
+        self,
+        path: object,
+        *,
+        dir_fd: int | None = None,
+    ) -> str:
+        if isinstance(path, int):
+            return self._descriptor_path(path)
+        raw = os.fsdecode(os.fspath(path))
+        if dir_fd is not None and not os.path.isabs(raw):
+            parent = self._descriptor_path(dir_fd)
+            if parent:
+                raw = os.path.join(parent, raw)
+        return os.path.abspath(os.path.normpath(raw))
+
+    def _is_fixture_path(
+        self,
+        path: object,
+        *,
+        dir_fd: int | None = None,
+    ) -> bool:
+        resolved = self._resolved_path(path, dir_fd=dir_fd)
+        if not resolved:
+            return False
+        try:
+            return os.path.commonpath((self._root, resolved)) == self._root
+        except ValueError:
+            return False
+
+    def stat(self, path: object, *args: object, **kwargs: object) -> os.stat_result:
+        metadata = os.stat(path, *args, **kwargs)
+        if self._is_fixture_path(path, dir_fd=kwargs.get("dir_fd")):
+            return _production_identity_stat(metadata)
+        return metadata
+
+    def lstat(self, path: object, *args: object, **kwargs: object) -> os.stat_result:
+        metadata = os.lstat(path, *args, **kwargs)
+        if self._is_fixture_path(path, dir_fd=kwargs.get("dir_fd")):
+            return _production_identity_stat(metadata)
+        return metadata
+
+    def fstat(self, descriptor: int) -> os.stat_result:
+        metadata = os.fstat(descriptor)
+        if self._is_fixture_path(descriptor):
+            return _production_identity_stat(metadata)
+        return metadata
+
+    @staticmethod
+    def geteuid() -> int:
+        return 0 if os.geteuid() == 0 else 1000
+
+    @staticmethod
+    def getegid() -> int:
+        return 0 if os.getegid() == 0 else 1000
+
+
+def _bind_runtime_fixture_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path.chmod(0o700)
+    if os.geteuid() in {0, 1000}:
+        os.chown(tmp_path, 1000, 1000)
+    facade = _RuntimeFixtureOS(tmp_path)
+    monkeypatch.setattr(isolation, "os", facade)
+    monkeypatch.setattr(pathlib, "os", facade)
 
 
 def _runtime_retirement(
@@ -66,6 +158,8 @@ def _write_env(path: Path, values: dict[str, str]) -> None:
         encoding="utf-8",
     )
     path.chmod(0o600)
+    if os.geteuid() in {0, 1000}:
+        os.chown(path, 1000, 1000)
 
 
 def _mail_values() -> dict[str, str]:
@@ -87,6 +181,7 @@ def test_registration_email_input_is_atomic_exact_and_idempotent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _bind_runtime_fixture_metadata(tmp_path, monkeypatch)
     root_env = tmp_path / ".env"
     registration_env = tmp_path / "propertyquarry_registration_email.env"
     values = _mail_values()
@@ -122,6 +217,7 @@ def test_registration_email_input_accepts_legacy_eight_only_with_dedicated_ten(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _bind_runtime_fixture_metadata(tmp_path, monkeypatch)
     root_env = tmp_path / ".env"
     registration_env = tmp_path / "propertyquarry_registration_email.env"
     scene_env = tmp_path / "scene.env"
@@ -160,6 +256,7 @@ def test_registration_email_input_rejects_partial_or_conflicting_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _bind_runtime_fixture_metadata(tmp_path, monkeypatch)
     root_env = tmp_path / ".env"
     registration_env = tmp_path / "propertyquarry_registration_email.env"
     values = _mail_values()
@@ -206,6 +303,7 @@ def test_legacy_source_purge_preserves_every_unrelated_byte_and_is_idempotent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _bind_runtime_fixture_metadata(tmp_path, monkeypatch)
     root_env = tmp_path / ".env"
     values = _mail_values()
     before = (
@@ -557,6 +655,7 @@ def _runtime_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    _bind_runtime_fixture_metadata(tmp_path, monkeypatch)
     mail = _mail_values()
     google = _google_values()
     scene = {
@@ -1446,6 +1545,7 @@ def test_installed_contract_binds_cloudflared_and_scene_input_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _bind_runtime_fixture_metadata(tmp_path, monkeypatch)
     scene = tmp_path / "scene.env"
     scene.write_bytes(b"SCENE=value\n")
     scene.chmod(0o600)
@@ -1694,6 +1794,7 @@ def test_signed_purge_recovers_idempotently_after_post_replace_crash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _bind_runtime_fixture_metadata(tmp_path, monkeypatch)
     mail = _mail_values()
     google = _google_values()
     root_env = tmp_path / ".env"
@@ -1759,6 +1860,7 @@ def test_signed_purge_recovers_idempotently_after_post_replace_crash(
         google_env,
         registration_env,
     )
+    monkeypatch.setattr(isolation, "RUNTIME_INPUTS", runtime_paths)
 
     def descriptors(root_raw: bytes) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
