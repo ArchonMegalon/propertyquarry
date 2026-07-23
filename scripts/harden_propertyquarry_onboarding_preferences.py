@@ -36,7 +36,7 @@ DEFAULT_DATABASE_ENV = "PROPERTYQUARRY_COMPACTION_DATABASE_URL"
 TIMEOUT_SQL = (
     "SET LOCAL lock_timeout = '5s'",
     "SET LOCAL statement_timeout = '30s'",
-    "SET LOCAL idle_in_transaction_session_timeout = '30s'",
+    "SET LOCAL idle_in_transaction_session_timeout = '300s'",
 )
 
 
@@ -134,6 +134,8 @@ class Candidate:
     preferences: dict[str, object]
     stored_bytes: int
     full_row: dict[str, object] | None = None
+    content_sha256: str = ""
+    logical_bytes: int = 0
 
     @property
     def before_sha256(self) -> str:
@@ -151,9 +153,15 @@ class Candidate:
     def changed(self) -> bool:
         return self.before_sha256 != self.after_sha256
 
+    @property
+    def binding(self) -> str:
+        return f"{self.principal_sha256}:{self.content_sha256}:{self.logical_bytes}:{self.stored_bytes}"
+
 
 DISCOVERY_SQL = """
 SELECT principal_id,
+       encode(sha256(convert_to(property_search_preferences_json::text, 'UTF8')), 'hex'),
+       octet_length(convert_to(property_search_preferences_json::text, 'UTF8')),
        pg_column_size(property_search_preferences_json)
 FROM onboarding_states
 WHERE jsonb_typeof(property_search_preferences_json) = 'object'
@@ -164,17 +172,19 @@ ORDER BY principal_id
 """
 SINGLE_ROW_SQL = """
 SELECT principal_id,
-       property_search_preferences_json,
-       pg_column_size(property_search_preferences_json),
-       to_jsonb(onboarding_states)
+       to_jsonb(onboarding_states),
+       encode(sha256(convert_to(property_search_preferences_json::text, 'UTF8')), 'hex'),
+       octet_length(convert_to(property_search_preferences_json::text, 'UTF8')),
+       pg_column_size(property_search_preferences_json)
 FROM onboarding_states
 WHERE principal_id = %s
 """
 LOCKED_ROW_SQL = """
 SELECT principal_id,
-       property_search_preferences_json,
-       pg_column_size(property_search_preferences_json),
-       to_jsonb(onboarding_states)
+       to_jsonb(onboarding_states),
+       encode(sha256(convert_to(property_search_preferences_json::text, 'UTF8')), 'hex'),
+       octet_length(convert_to(property_search_preferences_json::text, 'UTF8')),
+       pg_column_size(property_search_preferences_json)
 FROM onboarding_states
 WHERE principal_id = %s
 FOR UPDATE
@@ -182,22 +192,28 @@ FOR UPDATE
 
 
 def _candidate_from_row(row: Sequence[object]) -> Candidate:
-    if len(row) == 2:
+    if len(row) == 4:
         identifier = str(row[0] or "")
         if not identifier:
             raise CompactorError("onboarding_principal_missing")
-        return Candidate(identifier, principal_digest(identifier), {}, int(row[1] or 0), None)
-    if len(row) < 4 or not isinstance(row[1], dict) or not isinstance(row[3], dict):
+        return Candidate(identifier, principal_digest(identifier), {}, int(row[3] or 0), None, str(row[1] or ""), int(row[2] or 0))
+    if len(row) < 5 or not isinstance(row[1], dict):
         raise CompactorError("onboarding_row_invalid")
     identifier = str(row[0] or "")
     if not identifier:
         raise CompactorError("onboarding_principal_missing")
+    full_row = dict(row[1])
+    preferences = full_row.get("property_search_preferences_json")
+    if not isinstance(preferences, dict):
+        raise CompactorError("onboarding_row_invalid")
     return Candidate(
         principal_id=identifier,
         principal_sha256=principal_digest(identifier),
-        preferences=dict(row[1]),
-        stored_bytes=int(row[2] or 0),
-        full_row=dict(row[3]),
+        preferences=dict(preferences),
+        stored_bytes=int(row[4] or 0),
+        full_row=full_row,
+        content_sha256=str(row[2] or ""),
+        logical_bytes=int(row[3] or 0),
     )
 
 
@@ -218,26 +234,39 @@ def _load_candidate(cursor: Any, principal_id: str, *, lock: bool) -> Candidate:
 
 
 def validate_scope(
-    candidates: Iterable[Candidate], *, expected_count: int | None, expected_principal_digests: Iterable[str]
+    candidates: Iterable[Candidate], *, expected_count: int | None, expected_candidate_bindings: Iterable[str]
 ) -> tuple[Candidate, ...]:
     if expected_count is None or expected_count < 0:
         raise CompactorError("expected_count_required")
-    expected = frozenset(str(item).strip() for item in expected_principal_digests)
-    if not expected or any(not _is_digest(item) for item in expected):
-        raise CompactorError("expected_principal_digest_set_required")
+    expected = frozenset(str(item).strip() for item in expected_candidate_bindings)
+    if expected_count == 0 and not expected:
+        return ()
+    if not expected or any(len(item.split(":")) != 4 or not _is_digest(item.split(":")[0]) or not _is_digest(item.split(":")[1]) for item in expected):
+        raise CompactorError("expected_candidate_binding_set_required")
     materialized = tuple(candidates)
-    actual = frozenset(candidate.principal_sha256 for candidate in materialized)
+    actual = frozenset(candidate.binding for candidate in materialized)
     if len(materialized) != expected_count:
         raise CompactorError("candidate_count_mismatch")
     if len(actual) != len(materialized) or actual != expected:
-        raise CompactorError("candidate_digest_set_mismatch")
+        raise CompactorError("candidate_binding_set_mismatch")
     return materialized
 
 
 def _open_secure_backup_directory(backup_dir: Path) -> int:
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(backup_dir, flags)
+        if backup_dir.is_absolute():
+            descriptor = os.open("/", flags)
+            components = backup_dir.parts[1:]
+        else:
+            descriptor = os.open(".", flags)
+            components = backup_dir.parts
+        for component in components:
+            if component in {"", "."}:
+                continue
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
     except OSError as error:
         raise CompactorError("backup_directory_missing") from error
     metadata = os.fstat(descriptor)
@@ -247,6 +276,9 @@ def _open_secure_backup_directory(backup_dir: Path) -> int:
     if stat.S_IMODE(metadata.st_mode) != 0o700:
         os.close(descriptor)
         raise CompactorError("backup_directory_mode_must_be_0700")
+    if metadata.st_uid != os.geteuid():
+        os.close(descriptor)
+        raise CompactorError("backup_directory_owner_invalid")
     return descriptor
 
 
@@ -283,6 +315,19 @@ def write_private_backup(backup_dir: Path, candidate: Candidate) -> tuple[Path, 
     content_digest = str(payload["backup_content_sha256"])
     target_name = f"onboarding-preferences-{candidate.principal_sha256}-{candidate.before_sha256}.json"
     directory_fd = _open_secure_backup_directory(backup_dir)
+    try:
+        existing_fd = os.open(target_name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+    except FileNotFoundError:
+        existing_fd = -1
+    if existing_fd >= 0:
+        try:
+            existing = b"".join(iter(lambda: os.read(existing_fd, 1_048_576), b""))
+            if stat.S_IMODE(os.fstat(existing_fd).st_mode) != 0o600 or existing != raw:
+                raise CompactorError("backup_target_already_exists")
+            return backup_dir / target_name, content_digest, len(raw)
+        finally:
+            os.close(existing_fd)
+            os.close(directory_fd)
     descriptor = -1
     temporary_name: str | None = None
     try:
@@ -293,6 +338,7 @@ def write_private_backup(backup_dir: Path, candidate: Candidate) -> tuple[Path, 
             0o600,
             dir_fd=directory_fd,
         )
+        os.fchmod(descriptor, 0o600)
         offset = 0
         while offset < len(raw):
             offset += os.write(descriptor, raw[offset:])
@@ -369,6 +415,7 @@ def _redacted_receipt(
                 "principal_sha256": principal_sha256,
                 "backup_content_sha256": digest,
                 "backup_bytes": byte_count,
+                "status": "applied" if principal_sha256 in {str(item["principal_sha256"]) for item in summaries} else "backup_only",
             }
             for principal_sha256, digest, byte_count in backups
         ],
@@ -376,13 +423,13 @@ def _redacted_receipt(
 
 
 def dry_run(
-    connection: Any, *, minimum_bytes: int, expected_count: int | None, expected_principal_digests: Iterable[str]
+    connection: Any, *, minimum_bytes: int, expected_count: int | None, expected_candidate_bindings: Iterable[str]
 ) -> dict[str, object]:
     with connection.cursor() as cursor:
         metadata = validate_scope(
             discover_candidates(cursor, minimum_bytes=minimum_bytes),
             expected_count=expected_count,
-            expected_principal_digests=expected_principal_digests,
+            expected_candidate_bindings=expected_candidate_bindings,
         )
         summaries: list[dict[str, object]] = []
         for candidate in metadata:
@@ -401,28 +448,13 @@ def _set_timeouts(cursor: Any) -> None:
         cursor.execute(statement)
 
 
-def _begin_explicit_transaction(connection: Any) -> object | None:
-    original = getattr(connection, "autocommit", None)
-    if original is not None:
-        try:
-            connection.autocommit = False
-        except Exception as error:
-            raise CompactorError("explicit_transaction_required") from error
-    return original
-
-
-def _finish_explicit_transaction(connection: Any, original_autocommit: object | None) -> None:
-    if original_autocommit is not None:
-        connection.autocommit = original_autocommit
-
-
 def apply(
     connection: Any,
     *,
     backup_dir: Path,
     minimum_bytes: int,
     expected_count: int | None,
-    expected_principal_digests: Iterable[str],
+    expected_candidate_bindings: Iterable[str],
 ) -> dict[str, object]:
     _assert_backup_directory(backup_dir)
     # The initial snapshot is a mandatory scope gate. No locks/writes occur
@@ -431,66 +463,64 @@ def apply(
         first_scope = validate_scope(
             discover_candidates(cursor, minimum_bytes=minimum_bytes),
             expected_count=expected_count,
-            expected_principal_digests=expected_principal_digests,
+            expected_candidate_bindings=expected_candidate_bindings,
         )
         # Re-read immediately before beginning any per-row transaction.  The
         # operator's reviewed set must remain exact, not merely be a subset.
         candidates = validate_scope(
             discover_candidates(cursor, minimum_bytes=minimum_bytes),
             expected_count=expected_count,
-            expected_principal_digests=expected_principal_digests,
+            expected_candidate_bindings=expected_candidate_bindings,
         )
-    if tuple(item.principal_sha256 for item in first_scope) != tuple(item.principal_sha256 for item in candidates):
+    if tuple(item.binding for item in first_scope) != tuple(item.binding for item in candidates):
         raise CompactorError("candidate_scope_changed_before_apply")
     backups: list[tuple[str, str, int]] = []
     summaries: list[dict[str, object]] = []
     for expected in candidates:
-        original_autocommit = _begin_explicit_transaction(connection)
         try:
-            with connection.cursor() as cursor:
-                _set_timeouts(cursor)
-                locked = _load_candidate(cursor, expected.principal_id, lock=True)
-                if locked.principal_sha256 != expected.principal_sha256 or not _candidate_is_eligible(
-                    locked, minimum_bytes=minimum_bytes
-                ):
-                    raise CompactorError("candidate_changed_before_lock")
-                backup_path, backup_digest, backup_bytes = write_private_backup(backup_dir, locked)
-                cursor.execute(
-                    "UPDATE onboarding_states SET property_search_preferences_json = %s::jsonb "
-                    "WHERE principal_id = %s AND property_search_preferences_json = %s::jsonb "
-                    "RETURNING property_search_preferences_json, pg_column_size(property_search_preferences_json)",
-                    (
-                        _canonical_json(locked.compacted).decode("utf-8"),
-                        locked.principal_id,
-                        _canonical_json(locked.preferences).decode("utf-8"),
-                    ),
-                )
-                updated = cursor.fetchone()
-                if updated is None or not isinstance(updated[0], dict):
-                    raise CompactorError("update_compare_and_swap_failed")
-                verified = Candidate(
-                    principal_id=locked.principal_id,
-                    principal_sha256=locked.principal_sha256,
-                    preferences=dict(updated[0]),
-                    stored_bytes=int(updated[1] or 0),
-                )
-                if verified.before_sha256 != locked.after_sha256:
-                    raise CompactorError("post_update_hash_mismatch")
-                if raw_preferences_depth(verified.preferences) != 1:
-                    raise CompactorError("post_update_depth_mismatch")
-                if _list_count(verified.preferences.get("saved_shortlist_candidates")) != _list_count(
-                    locked.preferences.get("saved_shortlist_candidates")
-                ) or _list_count(verified.preferences.get("search_agents")) != _list_count(
-                    locked.preferences.get("search_agents")
-                ):
-                    raise CompactorError("post_update_structural_count_mismatch")
-            connection.commit()
+            with connection.transaction():
+                with connection.cursor() as cursor:
+                    _set_timeouts(cursor)
+                    locked = _load_candidate(cursor, expected.principal_id, lock=True)
+                    if locked.binding != expected.binding or not _candidate_is_eligible(
+                        locked, minimum_bytes=minimum_bytes
+                    ):
+                        raise CompactorError("candidate_changed_before_lock")
+                    backup_path, backup_digest, backup_bytes = write_private_backup(backup_dir, locked)
+                    backups.append((locked.principal_sha256, backup_digest, backup_bytes))
+                    cursor.execute(
+                        "UPDATE onboarding_states SET property_search_preferences_json = %s::jsonb "
+                        "WHERE principal_id = %s AND property_search_preferences_json = %s::jsonb "
+                        "RETURNING property_search_preferences_json, pg_column_size(property_search_preferences_json)",
+                        (
+                            _canonical_json(locked.compacted).decode("utf-8"),
+                            locked.principal_id,
+                            _canonical_json(locked.preferences).decode("utf-8"),
+                        ),
+                    )
+                    updated = cursor.fetchone()
+                    if updated is None or not isinstance(updated[0], dict):
+                        raise CompactorError("update_compare_and_swap_failed")
+                    verified = Candidate(
+                        principal_id=locked.principal_id,
+                        principal_sha256=locked.principal_sha256,
+                        preferences=dict(updated[0]),
+                        stored_bytes=int(updated[1] or 0),
+                    )
+                    if verified.before_sha256 != locked.after_sha256:
+                        raise CompactorError("post_update_hash_mismatch")
+                    if raw_preferences_depth(verified.preferences) != 1:
+                        raise CompactorError("post_update_depth_mismatch")
+                    if _list_count(verified.preferences.get("saved_shortlist_candidates")) != _list_count(
+                        locked.preferences.get("saved_shortlist_candidates")
+                    ) or _list_count(verified.preferences.get("search_agents")) != _list_count(
+                        locked.preferences.get("search_agents")
+                    ):
+                        raise CompactorError("post_update_structural_count_mismatch")
             summaries.append(_candidate_summary(locked))
-            backups.append((locked.principal_sha256, backup_digest, backup_bytes))
             del verified
             del locked
         except Exception as error:
-            connection.rollback()
             if backups:
                 raise PartialApplyError(
                     "partial_apply_stopped",
@@ -502,8 +532,6 @@ def apply(
                     ),
                 ) from error
             raise
-        finally:
-            _finish_explicit_transaction(connection, original_autocommit)
     return _redacted_receipt(
         mode="apply",
         summaries=summaries,
@@ -562,8 +590,7 @@ def restore(connection: Any, *, backup_path: Path, expected_file_sha256: str) ->
     original = dict(row["property_search_preferences_json"])
     identifier = str(row["principal_id"])
     expected_after = str(payload["after_preferences_sha256"])
-    original_autocommit = _begin_explicit_transaction(connection)
-    try:
+    with connection.transaction():
         with connection.cursor() as cursor:
             _set_timeouts(cursor)
             locked = _load_candidate(cursor, identifier, lock=True)
@@ -584,12 +611,6 @@ def restore(connection: Any, *, backup_path: Path, expected_file_sha256: str) ->
             restored = cursor.fetchone()
             if restored is None or not isinstance(restored[0], dict) or _canonical_json(restored[0]) != _canonical_json(original):
                 raise CompactorError("restore_post_update_hash_mismatch")
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        _finish_explicit_transaction(connection, original_autocommit)
     return {
         "schema": RECEIPT_SCHEMA,
         "mode": "restore",
@@ -604,7 +625,7 @@ def _connect(database_url: str) -> Any:
         import psycopg  # type: ignore[import-not-found]
     except ImportError as error:
         raise CompactorError("psycopg_unavailable") from error
-    return psycopg.connect(database_url, autocommit=False)
+    return psycopg.connect(database_url, autocommit=True)
 
 
 def _database_url_from_env(environment_name: object) -> str:
@@ -628,7 +649,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--minimum-bytes", type=int, default=DEFAULT_MINIMUM_BYTES)
     parser.add_argument("--expected-count", type=int)
-    parser.add_argument("--principal-digest", action="append", default=[])
+    parser.add_argument("--candidate-binding", action="append", default=[], metavar="PRINCIPAL_SHA:CONTENT_SHA:LOGICAL_BYTES:STORED_BYTES")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--backup-dir", type=Path)
     parser.add_argument("--restore-backup", type=Path)
@@ -665,14 +686,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                         backup_dir=args.backup_dir,
                         minimum_bytes=args.minimum_bytes,
                         expected_count=args.expected_count,
-                        expected_principal_digests=args.principal_digest,
+                        expected_candidate_bindings=args.candidate_binding,
                     )
                 else:
                     receipt = dry_run(
                         connection,
                         minimum_bytes=args.minimum_bytes,
                         expected_count=args.expected_count,
-                        expected_principal_digests=args.principal_digest,
+                        expected_candidate_bindings=args.candidate_binding,
                     )
             finally:
                 connection.close()

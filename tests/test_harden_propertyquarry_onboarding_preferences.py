@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import importlib.util
 import json
 import os
@@ -56,8 +58,8 @@ class Cursor:
         self.connection.executed.append((" ".join(str(query).split()), params))
         normalized = " ".join(str(query).split())
         if normalized.startswith("SELECT principal_id") and "WHERE jsonb_typeof" in normalized:
-            self.rows = [(self.connection.principal, 999_999)]
-        elif normalized.startswith("SELECT principal_id") and "FOR UPDATE" in normalized:
+            self.rows = [self.connection.metadata()]
+        elif normalized.startswith("SELECT principal_id") and "WHERE principal_id" in normalized:
             self.rows = [self.connection.row()]
         elif normalized.startswith("UPDATE onboarding_states"):
             if self.connection.cas_fails:
@@ -87,13 +89,23 @@ class Connection:
         self.rollbacks = 0
         self.cas_fails = False
         self.autocommit = True
+        self.transactions = 0
 
     def row(self):
         payload = {"principal_id": self.principal, "property_search_preferences_json": self.preferences, "other": "recovery"}
-        return (self.principal, self.preferences, 999_999, payload)
+        encoded = json.dumps(self.preferences, sort_keys=True, separators=(",", ":")).encode()
+        return (self.principal, payload, hashlib.sha256(encoded).hexdigest(), len(encoded), 999_999)
+
+    def metadata(self):
+        encoded = json.dumps(self.preferences, sort_keys=True, separators=(",", ":")).encode()
+        return (self.principal, hashlib.sha256(encoded).hexdigest(), len(encoded), 999_999)
 
     def cursor(self):
         return Cursor(self)
+
+    def transaction(self):
+        self.transactions += 1
+        return contextlib.nullcontext()
 
     def commit(self):
         self.commits += 1
@@ -103,7 +115,8 @@ class Connection:
 
 
 def _scope(module, connection):
-    return dict(expected_count=1, expected_principal_digests=[module.principal_digest(connection.principal)])
+    candidate = module._candidate_from_row(connection.metadata())
+    return dict(expected_count=1, expected_candidate_bindings=[candidate.binding])
 
 
 def test_scope_requires_exact_count_and_full_digest_set():
@@ -111,9 +124,21 @@ def test_scope_requires_exact_count_and_full_digest_set():
     connection = Connection()
     candidate = module._candidate_from_row(connection.row())
     with pytest.raises(module.CompactorError, match="candidate_count_mismatch"):
-        module.validate_scope([candidate], expected_count=3, expected_principal_digests=[candidate.principal_sha256])
-    with pytest.raises(module.CompactorError, match="candidate_digest_set_mismatch"):
-        module.validate_scope([candidate], expected_count=1, expected_principal_digests=["0" * 64])
+        module.validate_scope([candidate], expected_count=3, expected_candidate_bindings=[candidate.binding])
+    with pytest.raises(module.CompactorError, match="candidate_binding_set_mismatch"):
+        module.validate_scope([candidate], expected_count=1, expected_candidate_bindings=["0" * 64 + ":" + "0" * 64 + ":1:1"])
+    assert module.validate_scope([], expected_count=0, expected_candidate_bindings=[]) == ()
+
+
+def test_same_principal_content_mutation_rejects_reviewed_binding(tmp_path):
+    module = _module()
+    connection = Connection()
+    reviewed_scope = _scope(module, connection)
+    connection.preferences["must_keep"] = {"changed": True}
+    backup_dir = tmp_path / "safe"
+    backup_dir.mkdir(mode=0o700)
+    with pytest.raises(module.CompactorError, match="candidate_binding_set_mismatch"):
+        module.apply(connection, backup_dir=backup_dir, minimum_bytes=1, **reviewed_scope)
 
 
 def test_database_secret_is_environment_only_and_help_has_no_url_argument(monkeypatch):
@@ -179,7 +204,7 @@ def test_apply_is_private_transactional_and_noop_rows_are_not_written(tmp_path):
     backup_dir.mkdir(mode=0o700)
     receipt = module.apply(connection, backup_dir=backup_dir, minimum_bytes=1, **_scope(module, connection))
     assert receipt["mode"] == "apply"
-    assert connection.commits == 1
+    assert connection.transactions == 1
     assert connection.autocommit is True
     assert any("FOR UPDATE" in query for query, _ in connection.executed)
     assert any("lock_timeout" in query for query, _ in connection.executed)
@@ -210,9 +235,10 @@ def test_apply_rejects_backup_policy_and_compare_and_swap(tmp_path):
     safe = tmp_path / "safe"
     safe.mkdir(mode=0o700)
     connection.cas_fails = True
-    with pytest.raises(module.CompactorError, match="update_compare_and_swap_failed"):
+    with pytest.raises(module.PartialApplyError, match="partial_apply_stopped") as partial:
         module.apply(connection, backup_dir=safe, minimum_bytes=1, **_scope(module, connection))
-    assert connection.rollbacks == 1
+    assert connection.transactions == 1
+    assert partial.value.receipt["backups"][0]["status"] == "backup_only"
 
 
 def test_restore_validates_backup_hash_and_refuses_later_edit(tmp_path):
