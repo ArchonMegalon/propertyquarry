@@ -1349,7 +1349,7 @@ def test_cleanup_attempts_full_inventory_then_preserves_first_exact_phase_failur
     ]
 
 
-def test_prod_runtime_has_fresh_erasure_secret_and_only_temp_state(
+def test_prod_runtime_has_fresh_product_secrets_and_only_temp_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1369,6 +1369,7 @@ def test_prod_runtime_has_fresh_erasure_secret_and_only_temp_state(
         admission_database_url="postgresql://admission/first",
         api_token="api-one",
         signing_secret="sign-one",
+        identity_session_secret="identity-one-" + "a" * 32,
         erasure_secret="erase-one",
         chromium_headless_shell=HEADLESS_SHELL,
         dependency_overlay_base=dependency_overlay,
@@ -1380,6 +1381,7 @@ def test_prod_runtime_has_fresh_erasure_secret_and_only_temp_state(
         admission_database_url="postgresql://admission/second",
         api_token="api-two",
         signing_secret="sign-two",
+        identity_session_secret="identity-two-" + "b" * 32,
         erasure_secret="erase-two",
         chromium_headless_shell=HEADLESS_SHELL,
         dependency_overlay_base=dependency_overlay,
@@ -1392,6 +1394,20 @@ def test_prod_runtime_has_fresh_erasure_secret_and_only_temp_state(
     assert second["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"] == (
         "postgresql://admission/second"
     )
+    assert first["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"] == (
+        "identity-one-" + "a" * 32
+    )
+    assert second["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"] == (
+        "identity-two-" + "b" * 32
+    )
+    assert first["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"] != second[
+        "PROPERTYQUARRY_IDENTITY_SESSION_SECRET"
+    ]
+    assert first["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"] not in {
+        first["EA_API_TOKEN"],
+        first["EA_SIGNING_SECRET"],
+        first["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"],
+    }
     assert first["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"] == "erase-one"
     assert second["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"] == "erase-two"
     assert first["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"] != second[

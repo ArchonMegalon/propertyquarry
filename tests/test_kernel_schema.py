@@ -423,6 +423,9 @@ def test_propertyquarry_compose_uses_verified_combined_migration_gate() -> None:
     assert "COPY ea/schema /app/schema" in (
         ROOT / "ea" / "Dockerfile.property-web"
     ).read_text(encoding="utf-8")
+    generic_dockerfile = (ROOT / "ea" / "Dockerfile").read_text(encoding="utf-8")
+    assert 'cp -r "$APP_SRC/schema" /app/schema' in generic_dockerfile
+    assert 'if [ -d "$APP_SRC/schema" ]' not in generic_dockerfile
 
 
 def test_auth_provider_environment_is_api_only_and_value_free() -> None:

@@ -100,6 +100,7 @@ def test_isolated_runtime_executes_the_authenticated_overlay_before_the_venv(
         ),
         api_token="api-token",
         signing_secret="signing-secret",
+        identity_session_secret="identity-session-secret-" + "x" * 32,
         erasure_secret="erasure-secret",
         chromium_headless_shell="/safe/chromium-headless-shell",
         dependency_overlay_base=overlay_base,
@@ -110,6 +111,12 @@ def test_isolated_runtime_executes_the_authenticated_overlay_before_the_venv(
         str(overlay_site),
     ]
     assert environment["PYTHONUSERBASE"] == str(overlay_base)
+    assert environment["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"] == (
+        "identity-session-secret-" + "x" * 32
+    )
+    assert environment["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"] != environment[
+        "EA_SIGNING_SECRET"
+    ]
 
 
 def test_disposable_capacity_owner_sql_is_exact_idempotent_and_fail_closed() -> None:
