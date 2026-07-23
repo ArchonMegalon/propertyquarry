@@ -7129,6 +7129,147 @@ def test_property_provider_repair_auto_resolves_stale_run_without_claiming_patch
     assert opened["resolution"] == "stale_run_restart_required"
 
 
+def test_property_provider_repair_rebuilds_missing_packet_from_exact_saved_brief(
+    monkeypatch,
+) -> None:
+    principal_id = "exec-property-provider-missing-packet-rebuild"
+    client = build_property_client(principal_id=principal_id)
+    start_workspace(client, mode="personal", workspace_name="Missing Packet Repair Office")
+    service = ProductService(client.app.state.container)
+    run_id = f"missing-packet-parent-{uuid.uuid4().hex}"
+    parent_state = product_service._new_property_search_run_record(
+        run_id=run_id,
+        principal_id=principal_id,
+        selected_platforms=("willhaben",),
+        property_search_preferences={
+            "country_code": "AT",
+            "listing_mode": "rent",
+            "location_query": "1020 Vienna",
+            "selected_platforms": ["willhaben"],
+        },
+        force_refresh=False,
+    )
+    observed: dict[str, object] = {}
+
+    def _start_replacement(
+        self,
+        *,
+        principal_id: str,
+        selected_platforms: tuple[str, ...],
+        property_search_preferences: dict[str, object],
+        max_results_per_source: int | None,
+        parent_run_id: str = "",
+    ) -> dict[str, object]:
+        observed.update(
+            {
+                "principal_id": principal_id,
+                "selected_platforms": selected_platforms,
+                "property_search_preferences": dict(property_search_preferences),
+                "max_results_per_source": max_results_per_source,
+                "parent_run_id": parent_run_id,
+            }
+        )
+        return {"run_id": "replacement-run-1"}
+
+    monkeypatch.setattr(
+        ProductService,
+        "_start_property_search_repair_replacement_run",
+        _start_replacement,
+    )
+
+    opened = service._open_property_provider_repair_task(
+        principal_id=principal_id,
+        property_url=f"propertyquarry://research-packet/{run_id}/missing-candidate",
+        title="Missing property page",
+        source_url="/app/shortlist",
+        source_label="Property page",
+        source_platform="propertyquarry",
+        source_family="research_packet",
+        filter_key="research_packet_missing",
+        diagnostics={
+            "run_id": run_id,
+            "candidate_ref": "missing-candidate",
+            "failure_class": "research_packet_missing",
+        },
+        source_ref=f"property-research-packet:{run_id}:missing-candidate",
+        run_id=run_id,
+    )
+
+    assert opened["status"] == "opened"
+    assert opened["repair_status"] == "deferred"
+    assert opened["reason"] == "research_packet_recovery_context_missing"
+
+    monkeypatch.setitem(product_service._PROPERTY_SEARCH_RUN_REGISTRY, run_id, parent_state)
+    repeated = service._open_property_provider_repair_task(
+        principal_id=principal_id,
+        property_url=f"propertyquarry://research-packet/{run_id}/missing-candidate",
+        title="Missing property page",
+        source_url="/app/shortlist",
+        source_label="Property page",
+        source_platform="propertyquarry",
+        source_family="research_packet",
+        filter_key="research_packet_missing",
+        diagnostics={
+            "run_id": run_id,
+            "candidate_ref": "missing-candidate",
+            "failure_class": "research_packet_missing",
+        },
+        source_ref=f"property-research-packet:{run_id}:missing-candidate",
+        run_id=run_id,
+    )
+    assert repeated["status"] == "existing"
+    assert repeated["repair_status"] == "returned"
+    assert repeated["resolution"] == "research_packet_rebuild_started"
+    assert repeated["replacement_run_id"] == "replacement-run-1"
+    assert observed["principal_id"] == principal_id
+    assert observed["parent_run_id"] == run_id
+    assert observed["selected_platforms"] == ("willhaben",)
+    assert dict(observed["property_search_preferences"])["location_query"] == "1020 Vienna"
+
+
+def test_property_provider_repair_missing_packet_fails_closed_without_saved_brief(
+    monkeypatch,
+) -> None:
+    principal_id = "exec-property-provider-missing-packet-no-context"
+    client = build_property_client(principal_id=principal_id)
+    start_workspace(client, mode="personal", workspace_name="Missing Packet No Context Office")
+    service = ProductService(client.app.state.container)
+    monkeypatch.setattr(
+        ProductService,
+        "list_property_search_runs",
+        lambda self, *, principal_id, limit=8: [],
+    )
+
+    def _unexpected_start(*args, **kwargs):
+        raise AssertionError("replacement search must not start without a persisted brief")
+
+    monkeypatch.setattr(
+        ProductService,
+        "_start_property_search_repair_replacement_run",
+        _unexpected_start,
+    )
+
+    opened = service._open_property_provider_repair_task(
+        principal_id=principal_id,
+        property_url="propertyquarry://research-packet/unknown/no-context-candidate",
+        title="Missing property page",
+        source_url="/app/shortlist",
+        source_label="Property page",
+        source_platform="propertyquarry",
+        source_family="research_packet",
+        filter_key="research_packet_missing",
+        diagnostics={
+            "candidate_ref": "no-context-candidate",
+            "failure_class": "research_packet_missing",
+        },
+        source_ref="property-research-packet:unknown:no-context-candidate",
+    )
+
+    assert opened["status"] == "opened"
+    assert opened["repair_status"] == "deferred"
+    assert opened["reason"] == "research_packet_recovery_context_missing"
+
+
 def test_property_provider_repair_auto_resolves_walkthrough_without_retrying_render() -> None:
     principal_id = "exec-property-provider-walkthrough-fallback"
     client = build_property_client(principal_id=principal_id)

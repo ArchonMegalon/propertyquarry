@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
 
-from starlette.background import BackgroundTask
 from starlette.requests import Request
 
 from ea.app.api.routes import landing
@@ -28,7 +26,7 @@ def _request(*, accept: str) -> Request:
     )
 
 
-def test_missing_packet_html_defers_repair_until_after_redirect(
+def test_missing_packet_html_stays_on_property_page_and_queues_recovery(
     monkeypatch,
 ) -> None:
     observed: list[dict[str, object]] = []
@@ -47,16 +45,18 @@ def test_missing_packet_html_defers_repair_until_after_redirect(
         candidate_ref="missing-ref",
     )
 
-    assert response.status_code == 307
-    assert response.headers["location"].startswith("/app/shortlist?")
-    assert observed == []
-    assert isinstance(response.background, BackgroundTask)
-
-    asyncio.run(response.background())
-
+    assert response.status_code == 202
+    assert response.background is None
     assert len(observed) == 1
     assert observed[0]["principal_id"] == "principal-1"
     assert observed[0]["candidate_ref"] == "missing-ref"
+    assert observed[0]["include_receipt"] is True
+    body = response.body.decode("utf-8")
+    assert "Property page is being rebuilt" in body
+    assert 'role="status"' in body
+    assert 'aria-live="polite"' in body
+    assert "data-property-packet-recovery" in body
+    assert "/app/shortlist?" in body
 
 
 def test_missing_packet_json_keeps_immediate_queue_receipt(
@@ -64,9 +64,13 @@ def test_missing_packet_json_keeps_immediate_queue_receipt(
 ) -> None:
     observed: list[dict[str, object]] = []
 
-    def _queue(**kwargs: object) -> str:
+    def _queue(**kwargs: object) -> dict[str, object]:
         observed.append(dict(kwargs))
-        return "queue:repair-2"
+        return {
+            "queue_item_ref": "queue:repair-2",
+            "repair_status": "returned",
+            "replacement_run_id": "replacement-run-2",
+        }
 
     monkeypatch.setattr(landing, "_property_queue_missing_research_packet_repair", _queue)
 
@@ -84,3 +88,9 @@ def test_missing_packet_json_keeps_immediate_queue_receipt(
     payload = json.loads(response.body)
     assert payload["queue_item_ref"] == "queue:repair-2"
     assert payload["run_id"] == "run-2"
+    assert payload["poll_url"] == "/app/research/missing-ref"
+    assert payload["poll_after_ms"] >= 1000
+    assert payload["fallback_url"].startswith("/app/shortlist?")
+    assert payload["status"] == "recovery_running"
+    assert payload["replacement_run_id"] == "replacement-run-2"
+    assert payload["replacement_status_url"].endswith("/replacement-run-2")

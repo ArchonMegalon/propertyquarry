@@ -39221,6 +39221,16 @@ class ProductService:
         normalized_filter_key = str(filter_key or "").strip().lower()
         normalized_source_ref = str(source_ref or "").strip()
         diagnostics_payload = dict(diagnostics or {})
+        auto_resolve_filter_keys = {
+            "generic_listing_page",
+            "source_fetch",
+            "location_scope",
+            "missing_location",
+            "missing_price",
+            "research_packet_missing",
+            "run_interrupted_stale",
+            "walkthrough_video",
+        }
         if not normalized_property_url or not normalized_filter_key:
             return {"status": "skipped", "reason": "property_provider_repair_key_missing"}
         existing = self._existing_property_provider_repair_task(
@@ -39247,6 +39257,25 @@ class ProductService:
                 if isinstance(getattr(existing, "returned_payload_json", None), dict)
                 else {}
             )
+            existing_auto_resolution: dict[str, object] = {}
+            if (
+                existing_status == "pending"
+                and normalized_filter_key == "research_packet_missing"
+            ):
+                existing_auto_resolution = self._auto_resolve_property_provider_repair_task(
+                    principal_id=principal_id,
+                    task=existing,
+                    actor="ea_one_manager",
+                )
+                if str(existing_auto_resolution.get("status") or "").strip() == "resolved":
+                    existing_status = "returned"
+                    existing_resolution = str(
+                        existing_auto_resolution.get("resolution") or ""
+                    ).strip()
+                    returned_payload = {
+                        **returned_payload,
+                        **existing_auto_resolution,
+                    }
             if existing_status in {"returned", "completed"} and str(run_id or "").strip() and existing_resolution:
                 self._record_property_search_run_repair_receipt(
                     principal_id=principal_id,
@@ -39262,8 +39291,23 @@ class ProductService:
                 "queue_item_ref": f"human_task:{existing.human_task_id}",
                 "queue_lane": repair_queue.key,
                 "task_type": "property_provider_repair_ooda",
-                "repair_status": "returned" if existing_status in {"returned", "completed"} else existing_status,
+                "repair_status": (
+                    "returned"
+                    if existing_status in {"returned", "completed"}
+                    else str(existing_auto_resolution.get("status") or existing_status).strip()
+                ),
                 "resolution": existing_resolution,
+                "reason": str(
+                    existing_auto_resolution.get("reason")
+                    or returned_payload.get("reason")
+                    or returned_payload.get("detail")
+                    or ""
+                ).strip(),
+                "replacement_run_id": str(
+                    existing_auto_resolution.get("replacement_run_id")
+                    or returned_payload.get("replacement_run_id")
+                    or ""
+                ).strip(),
             }
         urgent_filter_keys = {
             "generic_listing_page",
@@ -39351,15 +39395,7 @@ class ProductService:
             operator_id=repair_operator_id,
         )
         auto_resolution_result: dict[str, object] = {}
-        if normalized_filter_key in {
-            "generic_listing_page",
-            "source_fetch",
-            "location_scope",
-            "missing_location",
-            "missing_price",
-            "run_interrupted_stale",
-            "walkthrough_video",
-        }:
+        if normalized_filter_key in auto_resolve_filter_keys:
             auto_resolution_result = self._auto_resolve_property_provider_repair_task(
                 principal_id=principal_id,
                 task=task,
@@ -39391,6 +39427,13 @@ class ProductService:
             )
             if str(auto_resolution_result.get("replacement_run_id") or "").strip():
                 payload["replacement_run_id"] = str(auto_resolution_result.get("replacement_run_id") or "").strip()
+        elif auto_resolution_result:
+            payload.update(
+                {
+                    "repair_status": str(auto_resolution_result.get("status") or "deferred").strip() or "deferred",
+                    "reason": str(auto_resolution_result.get("reason") or "").strip(),
+                }
+            )
         self._record_product_event(
             principal_id=principal_id,
             event_type="property_provider_repair_task_created",
@@ -40017,10 +40060,14 @@ class ProductService:
                 reason = "provider source endpoint was removed"
             elif not bool(snapshot.get("http_ok")):
                 return {"status": "deferred", "reason": "manual_provider_patch_required"}
-        elif filter_key in {"run_interrupted_stale", "run_worker_exception"}:
+        elif filter_key in {"research_packet_missing", "run_interrupted_stale", "run_worker_exception"}:
+            research_packet_missing = filter_key == "research_packet_missing"
             if filter_key == "run_worker_exception":
                 resolution = "worker_exception_restart_required"
                 reason = "search worker failed before source rows could complete; started a fresh bounded run from the saved brief"
+            elif research_packet_missing:
+                resolution = "research_packet_rebuild_started"
+                reason = "the property page was missing; started a fresh bounded run from the safest saved search brief"
             else:
                 resolution = "stale_run_restart_required"
                 reason = "search run stopped updating before a durable checkpoint could complete; started a fresh bounded run from the saved brief"
@@ -40030,15 +40077,97 @@ class ProductService:
                 with _PROPERTY_SEARCH_RUN_LOCK:
                     parent_state = dict(_PROPERTY_SEARCH_RUN_REGISTRY.get(parent_run_id) or {})
                 if not parent_state:
-                    loaded_parent = _load_property_search_run_record(run_id=parent_run_id, principal_id=principal_id)
+                    try:
+                        loaded_parent = _load_property_search_run_record(
+                            run_id=parent_run_id,
+                            principal_id=principal_id,
+                        )
+                    except Exception:
+                        if research_packet_missing:
+                            loaded_parent = None
+                        else:
+                            raise
                     parent_state = dict(loaded_parent or {}) if isinstance(loaded_parent, dict) else {}
+            if parent_state and str(parent_state.get("principal_id") or "").strip() not in {"", principal_id}:
+                parent_state = {}
+
+            def _research_packet_parent_is_safe(state: dict[str, object]) -> bool:
+                if not state:
+                    return False
+                state_summary = (
+                    dict(state.get("summary") or {})
+                    if isinstance(state.get("summary"), dict)
+                    else {}
+                )
+                if str(state_summary.get("repair_replacement_run_id") or "").strip():
+                    return True
+                state_preferences = (
+                    dict(state.get("property_search_preferences") or {})
+                    if isinstance(state.get("property_search_preferences"), dict)
+                    else {}
+                )
+                state_platforms = tuple(
+                    str(item or "").strip()
+                    for item in list(
+                        state.get("selected_platforms")
+                        or state_preferences.get("selected_platforms")
+                        or ()
+                    )
+                    if str(item or "").strip()
+                )
+                return bool(
+                    state_preferences
+                    and state_platforms
+                    and _property_search_location_hints(state_preferences)
+                )
+
+            if research_packet_missing and not _research_packet_parent_is_safe(parent_state):
+                parent_state = {}
+                try:
+                    recent_runs = list(
+                        self.list_property_search_runs(
+                            principal_id=principal_id,
+                            limit=12,
+                        )
+                        or []
+                    )
+                except Exception:
+                    recent_runs = []
+                for raw_run in recent_runs[:12]:
+                    if not isinstance(raw_run, dict):
+                        continue
+                    recent_run_id = str(raw_run.get("run_id") or "").strip()
+                    if not recent_run_id:
+                        continue
+                    recent_state = dict(raw_run)
+                    if not isinstance(recent_state.get("property_search_preferences"), dict):
+                        try:
+                            loaded_recent = _load_property_search_run_record(
+                                run_id=recent_run_id,
+                                principal_id=principal_id,
+                            )
+                        except Exception:
+                            loaded_recent = None
+                        if isinstance(loaded_recent, dict):
+                            recent_state = dict(loaded_recent)
+                    if str(recent_state.get("principal_id") or "").strip() not in {"", principal_id}:
+                        continue
+                    if _research_packet_parent_is_safe(recent_state):
+                        parent_run_id = recent_run_id
+                        parent_state = recent_state
+                        break
+            if research_packet_missing and not parent_state:
+                return {
+                    "status": "deferred",
+                    "reason": "research_packet_recovery_context_missing",
+                }
             parent_summary = dict(parent_state.get("summary") or {}) if isinstance(parent_state, dict) else {}
             replacement_run_id = str(parent_summary.get("repair_replacement_run_id") or "").strip()
             if not replacement_run_id and parent_state:
                 parent_preferences = (
                     dict(parent_state.get("property_search_preferences") or {})
                     if isinstance(parent_state.get("property_search_preferences"), dict)
-                    else dict(current_preferences)
+                    else ({} if research_packet_missing else dict(current_preferences))
                 )
                 parent_preferences.pop("__property_search_run_id__", None)
                 parent_preferences.pop("__premerged_preferences__", None)
@@ -40048,6 +40177,15 @@ class ProductService:
                     for item in list(parent_state.get("selected_platforms") or parent_preferences.get("selected_platforms") or ())
                     if str(item or "").strip()
                 )
+                if research_packet_missing and (
+                    not parent_preferences
+                    or not parent_platforms
+                    or not _property_search_location_hints(parent_preferences)
+                ):
+                    return {
+                        "status": "deferred",
+                        "reason": "research_packet_recovery_context_missing",
+                    }
                 commercial_snapshot = property_commercial_snapshot(parent_preferences)
                 plan_key = normalize_property_plan_key(commercial_snapshot.get("current_plan_key") or "free")
                 plan_result_cap = int(commercial_snapshot.get("max_results_per_source") or 0)
@@ -40071,6 +40209,8 @@ class ProductService:
                     parent_run_id=parent_run_id,
                 )
                 replacement_run_id = str(dict(replacement or {}).get("run_id") or "").strip()
+            if research_packet_missing and not replacement_run_id:
+                return {"status": "deferred", "reason": "replacement_run_could_not_start"}
             if parent_state and not replacement_run_id:
                 return {"status": "deferred", "reason": "replacement_run_could_not_start"}
         elif filter_key == "walkthrough_video":

@@ -3811,56 +3811,95 @@ def _property_missing_packet_response(
     run_id: str = "",
     candidate_ref: str = "",
     allow_repair: bool = True,
-) -> JSONResponse | RedirectResponse:
+) -> JSONResponse | HTMLResponse:
     normalized_run_id = str(run_id or "").strip()
     normalized_candidate_ref = str(candidate_ref or "").strip()
     target = _property_missing_packet_target(
         run_id=normalized_run_id,
         candidate_ref=normalized_candidate_ref,
     )
-    accept_header = str(request.headers.get("accept") or "").lower()
-    requested_with = str(request.headers.get("x-requested-with") or "").lower()
-    if "application/json" in accept_header or requested_with == "xmlhttprequest":
-        repair_task_ref = (
-            _property_queue_missing_research_packet_repair(
-                container=container,
-                principal_id=principal_id,
-                run_id=normalized_run_id,
-                candidate_ref=normalized_candidate_ref,
-                recovery_url=target,
-            )
-            if allow_repair
-            else ""
-        )
-        return JSONResponse(
-            {
-                "status": "recovery_available",
-                "code": "property_research_packet_recovery",
-                "message": "That property page is not available right now. The shortlist is still available.",
-                "run_id": normalized_run_id,
-                "candidate_ref": normalized_candidate_ref,
-                "redirect_url": target,
-                "repair_status": "needs_rebuild",
-                "queue_item_ref": repair_task_ref,
-                "action_label": "Open shortlist",
-            },
-            status_code=202,
-        )
-    from starlette.background import BackgroundTask
-
-    background = (
-        BackgroundTask(
-            _property_queue_missing_research_packet_repair,
+    poll_url = str(request.url.path or "").strip() or (
+        f"/app/research/{urllib.parse.quote(normalized_candidate_ref, safe='')}"
+    )
+    if str(request.url.query or "").strip():
+        poll_url = f"{poll_url}?{request.url.query}"
+    queued_repair: object = (
+        _property_queue_missing_research_packet_repair(
             container=container,
             principal_id=principal_id,
             run_id=normalized_run_id,
             candidate_ref=normalized_candidate_ref,
             recovery_url=target,
+            include_receipt=True,
         )
         if allow_repair
-        else None
+        else ""
     )
-    return RedirectResponse(url=target, status_code=307, background=background)
+    repair_receipt = dict(queued_repair) if isinstance(queued_repair, dict) else {
+        "queue_item_ref": str(queued_repair or "").strip()
+    }
+    queue_item_ref = str(
+        repair_receipt.get("queue_item_ref")
+        or repair_receipt.get("human_task_id")
+        or ""
+    ).strip()
+    replacement_run_id = str(repair_receipt.get("replacement_run_id") or "").strip()
+    repair_status = str(repair_receipt.get("repair_status") or "").strip().lower()
+    if not repair_status:
+        repair_status = "queued" if queue_item_ref else ("read_only" if not allow_repair else "needs_rebuild")
+    recovery_status = (
+        "recovery_running"
+        if replacement_run_id
+        else ("recovery_queued" if queue_item_ref else "recovery_available")
+    )
+    message = (
+        "PropertyQuarry is rebuilding this property page from the saved search brief."
+        if replacement_run_id
+        else (
+            "PropertyQuarry queued this missing property page for recovery."
+            if queue_item_ref
+            else "That property page is not available right now. Your search and shortlist are still available."
+        )
+    )
+    payload = {
+        "status": recovery_status,
+        "code": "property_research_packet_recovery",
+        "message": message,
+        "run_id": normalized_run_id,
+        "candidate_ref": normalized_candidate_ref,
+        "redirect_url": target,
+        "fallback_url": target,
+        "poll_url": poll_url,
+        "poll_after_ms": 1600,
+        "poll_enabled": bool(allow_repair),
+        "repair_status": repair_status,
+        "repair_reason": str(repair_receipt.get("reason") or "").strip(),
+        "queue_item_ref": queue_item_ref,
+        "replacement_run_id": replacement_run_id,
+        "replacement_status_url": (
+            f"/app/api/signals/property/search/run/{urllib.parse.quote(replacement_run_id, safe='')}"
+            if replacement_run_id
+            else ""
+        ),
+        "action_label": "Open shortlist",
+    }
+    accept_header = str(request.headers.get("accept") or "").lower()
+    requested_with = str(request.headers.get("x-requested-with") or "").lower()
+    if "application/json" in accept_header or requested_with == "xmlhttprequest":
+        response: JSONResponse | HTMLResponse = JSONResponse(payload, status_code=202)
+    else:
+        response = _render_public_template(
+            request,
+            "app/property_research_recovery.html",
+            page_title="Property page recovery | PropertyQuarry",
+            brand=request_brand(request),
+            recovery=payload,
+            robots_directive="noindex, nofollow, noarchive",
+        )
+        response.status_code = 202
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    return response
 
 
 def _property_queue_missing_research_packet_repair(
@@ -3870,12 +3909,13 @@ def _property_queue_missing_research_packet_repair(
     run_id: str,
     candidate_ref: str,
     recovery_url: str,
-) -> str:
+    include_receipt: bool = False,
+) -> str | dict[str, object]:
     normalized_principal = str(principal_id or "").strip()
     normalized_run_id = str(run_id or "").strip()
     normalized_candidate_ref = str(candidate_ref or "").strip()
     if container is None or not normalized_principal or not normalized_candidate_ref:
-        return ""
+        return {} if include_receipt else ""
     try:
         repair = build_product_service(container)._open_property_provider_repair_task(
             principal_id=normalized_principal,
@@ -3900,9 +3940,19 @@ def _property_queue_missing_research_packet_repair(
             source_ref=f"property-research-packet:{normalized_run_id}:{normalized_candidate_ref}",
             run_id=normalized_run_id,
         )
-        return str(repair.get("queue_item_ref") or repair.get("human_task_id") or "").strip()
+        queue_item_ref = str(repair.get("queue_item_ref") or repair.get("human_task_id") or "").strip()
+        if include_receipt:
+            return {
+                "queue_item_ref": queue_item_ref,
+                "human_task_id": str(repair.get("human_task_id") or "").strip(),
+                "repair_status": str(repair.get("repair_status") or repair.get("status") or "").strip(),
+                "resolution": str(repair.get("resolution") or "").strip(),
+                "reason": str(repair.get("reason") or "").strip(),
+                "replacement_run_id": str(repair.get("replacement_run_id") or "").strip(),
+            }
+        return queue_item_ref
     except Exception:
-        return ""
+        return {} if include_receipt else ""
 
 
 def _principal_for_page(

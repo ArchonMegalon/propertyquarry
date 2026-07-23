@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="{{ robots_directive|default('noindex, nofollow, noarchive', true)|e }}">
+  <title>{{ page_title|e }}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f5f1;
+      --panel: #fff;
+      --line: #d5ddd2;
+      --text: #191714;
+      --soft: #626960;
+      --gold: #9b712f;
+      --gold-soft: #f4ead7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, #fafbf8, var(--bg));
+      color: var(--text);
+      font: 15px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: inherit; }
+    .recovery-wrap { width: min(1060px, calc(100% - 32px)); margin: 0 auto; }
+    .recovery-bar {
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, .94);
+    }
+    .recovery-bar .recovery-wrap {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .recovery-brand { font-size: 1.05rem; font-weight: 850; letter-spacing: -.02em; text-decoration: none; }
+    .recovery-back { color: var(--soft); font-weight: 700; }
+    main { padding: 36px 0 64px; }
+    .recovery-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(260px, .75fr); gap: 22px; }
+    .recovery-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: 0 10px 32px rgba(39, 50, 38, .07);
+      overflow: hidden;
+    }
+    .recovery-image {
+      min-height: 290px;
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(135deg, rgba(155, 113, 47, .10), rgba(39, 75, 58, .08)),
+        repeating-linear-gradient(90deg, transparent 0 70px, rgba(255,255,255,.42) 70px 72px);
+    }
+    .recovery-spinner {
+      width: 42px;
+      height: 42px;
+      border: 4px solid rgba(155, 113, 47, .22);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: recovery-spin .9s linear infinite;
+    }
+    @keyframes recovery-spin { to { transform: rotate(360deg); } }
+    .recovery-copy { padding: 26px; }
+    .recovery-kicker { margin: 0 0 6px; color: var(--gold); font-size: .78rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(1.65rem, 4vw, 2.5rem); line-height: 1.08; letter-spacing: -.035em; }
+    .recovery-live { min-height: 48px; margin: 14px 0 0; color: var(--soft); }
+    .recovery-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 18px; }
+    .recovery-fact { min-height: 82px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #fafbf9; }
+    .recovery-fact span { display: block; color: var(--soft); font-size: .78rem; }
+    .recovery-fact strong { display: block; margin-top: 8px; color: #8a9088; }
+    .recovery-actions { display: grid; gap: 10px; padding: 0 18px 18px; }
+    .recovery-action {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      font-weight: 800;
+      text-decoration: none;
+    }
+    .recovery-action-primary { border-color: var(--gold); background: var(--gold-soft); }
+    .recovery-meta { margin: 0; padding: 0 18px 18px; color: var(--soft); font-size: .78rem; overflow-wrap: anywhere; }
+    @media (max-width: 760px) {
+      .recovery-grid { grid-template-columns: 1fr; }
+      .recovery-image { min-height: 220px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .recovery-spinner { animation: none; background: var(--gold-soft); }
+    }
+  </style>
+</head>
+<body>
+  <header class="recovery-bar">
+    <div class="recovery-wrap">
+      <a class="recovery-brand" href="/app/search">PropertyQuarry</a>
+      <a class="recovery-back" href="{{ recovery.fallback_url|e }}">Back to results</a>
+    </div>
+  </header>
+  <main class="recovery-wrap" data-property-packet-recovery>
+    <div class="recovery-grid">
+      <section class="recovery-card" aria-labelledby="recovery-title">
+        <div class="recovery-image" aria-hidden="true">
+          {% if recovery.poll_enabled %}<span class="recovery-spinner"></span>{% endif %}
+        </div>
+        <div class="recovery-copy">
+          <p class="recovery-kicker">Property recovery</p>
+          <h1 id="recovery-title">Property page is being rebuilt</h1>
+          <p class="recovery-live" role="status" aria-live="polite" data-recovery-live>{{ recovery.message|e }}</p>
+        </div>
+      </section>
+      <aside class="recovery-card" aria-label="Property recovery details">
+        <div class="recovery-facts" aria-hidden="true">
+          <div class="recovery-fact"><span>Price</span><strong>Checking…</strong></div>
+          <div class="recovery-fact"><span>Area</span><strong>Checking…</strong></div>
+          <div class="recovery-fact"><span>Rooms</span><strong>Checking…</strong></div>
+          <div class="recovery-fact"><span>Location</span><strong>Checking…</strong></div>
+        </div>
+        <div class="recovery-actions">
+          <a class="recovery-action recovery-action-primary" href="{{ recovery.fallback_url|e }}">Open shortlist</a>
+          <a class="recovery-action" href="/app/search">Start a new search</a>
+        </div>
+        {% if recovery.queue_item_ref %}
+          <p class="recovery-meta">Recovery task queued · {{ recovery.queue_item_ref|e }}</p>
+        {% endif %}
+      </aside>
+    </div>
+  </main>
+  {% if recovery.poll_enabled %}
+  <script>
+    (() => {
+      const pollUrl = {{ recovery.poll_url|tojson }};
+      const live = document.querySelector('[data-recovery-live]');
+      const initialDelay = Math.max(1000, Number({{ recovery.poll_after_ms|default(1600) }}) || 1600);
+      let attempts = 0;
+      let stopped = false;
+
+      const schedule = (delay = initialDelay) => {
+        if (!stopped && attempts < 120) window.setTimeout(poll, delay);
+      };
+
+      const poll = async () => {
+        if (stopped) return;
+        if (document.hidden) {
+          schedule(4000);
+          return;
+        }
+        attempts += 1;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 8000);
+        try {
+          const response = await fetch(pollUrl, {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: {Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+            signal: controller.signal,
+          });
+          const contentType = response.headers.get('content-type') || '';
+          if (response.status === 200 && contentType.includes('text/html')) {
+            stopped = true;
+            window.location.reload();
+            return;
+          }
+          if (contentType.includes('application/json')) {
+            const payload = await response.json();
+            if (live && payload.message) live.textContent = payload.message;
+          }
+        } catch (_error) {
+          if (live && attempts > 3) live.textContent = 'Recovery is still running. You can safely leave this page and return later.';
+        } finally {
+          window.clearTimeout(timeout);
+        }
+        schedule(Math.min(5000, initialDelay + attempts * 80));
+      };
+
+      schedule();
+    })();
+  </script>
+  {% endif %}
+</body>
+</html>

@@ -30502,7 +30502,7 @@ def test_property_research_packet_uses_saved_shortlist_fallback(monkeypatch) -> 
     assert "Saved shortlist flat" in packet.text
 
 
-def test_property_research_packet_missing_candidate_redirects_to_shortlist(monkeypatch) -> None:
+def test_property_research_packet_missing_candidate_stays_on_recovery_page(monkeypatch) -> None:
     principal_id = "pq-research-packet-missing-redirect"
     client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property Office")
@@ -30531,18 +30531,15 @@ def test_property_research_packet_missing_candidate_redirects_to_shortlist(monke
         follow_redirects=False,
     )
 
-    assert packet.status_code == 307
-    assert packet.headers["location"] == (
-        "/app/shortlist?packet_missing=1&run_id=run-missing&missing_candidate_ref=missing-packet-ref#results-list"
-    )
-
-    shortlist = client.get(packet.headers["location"], headers={"host": "propertyquarry.com"})
-    assert shortlist.status_code == 200
-    assert "Property page is being rebuilt" in shortlist.text
-    assert "This property page is queued for refresh" in shortlist.text
-    assert "Queued" in shortlist.text
-    assert "Repair queued" not in shortlist.text
-    assert "missing-packet-ref" in shortlist.text
+    assert packet.status_code == 202
+    assert "location" not in packet.headers
+    assert "Property page is being rebuilt" in packet.text
+    assert "PropertyQuarry queued this missing property page for recovery." in packet.text
+    assert 'role="status"' in packet.text
+    assert 'aria-live="polite"' in packet.text
+    assert "data-property-packet-recovery" in packet.text
+    assert "Open shortlist" in packet.text
+    assert "Recovery task queued" in packet.text
     repair_tasks = [
         task
         for task in client.app.state.container.orchestrator.list_human_tasks(
@@ -30594,13 +30591,16 @@ def test_property_research_packet_missing_candidate_returns_recovery_json(monkey
     assert packet.status_code == 202
     payload = packet.json()
     assert payload["code"] == "property_research_packet_recovery"
-    assert payload["status"] == "recovery_available"
-    assert payload["repair_status"] == "needs_rebuild"
+    assert payload["status"] == "recovery_queued"
+    assert payload["repair_status"] == "deferred"
+    assert payload["repair_reason"] == "research_packet_recovery_context_missing"
     assert payload["candidate_ref"] == "missing-json-ref"
     assert payload["queue_item_ref"].startswith("human_task:")
     assert payload["redirect_url"] == (
         "/app/shortlist?packet_missing=1&run_id=run-json&missing_candidate_ref=missing-json-ref#results-list"
     )
+    assert payload["poll_url"] == "/app/research/missing-json-ref?run_id=run-json"
+    assert payload["replacement_status_url"] == ""
     assert "property_research_packet_not_found" not in packet.text
     repeated = client.get(
         "/app/research/missing-json-ref",
