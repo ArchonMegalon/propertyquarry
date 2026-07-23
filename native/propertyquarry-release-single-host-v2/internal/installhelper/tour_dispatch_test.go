@@ -4,11 +4,10 @@ package installhelper
 
 import (
 	"bytes"
+	"os"
 	"slices"
 	"strings"
 	"testing"
-
-	"propertyquarry.local/release-single-host-v2/internal/authority"
 )
 
 func TestTourV4DispatchArgumentAllowlist(t *testing.T) {
@@ -102,11 +101,25 @@ func TestTourV4DispatchArgumentAllowlist(t *testing.T) {
 }
 
 func TestTourV4DispatchUsesOnlyExactPackageBoundDetachedMaterials(t *testing.T) {
-	fixture := newInstallFixture(t)
-	verified := fixture.verifiedPackage(t, 1, strings.Repeat("a", 40), "genesis")
-	defer verified.Release()
 	sourceDigest := digest([]byte("tour-v4-dispatch-source"))
-	verified.SourceManifestDigest = sourceDigest
+	verified := &VerifiedTourPackage{
+		SourceManifestDigest: sourceDigest,
+		Files:                map[string]*FileRecord{},
+	}
+	defer verified.Release()
+	put := func(path string, mode os.FileMode, raw []byte) {
+		verified.Files[path] = &FileRecord{
+			InstallPath: path, PackagePath: path, Mode: mode,
+			Size: int64(len(raw)), Digest: digest(raw), Data: raw,
+		}
+	}
+	put(tourPackageBootstrapPath, 0o444, []byte("bootstrap"))
+	put(tourPackageBootstrapSignaturePath, 0o444, []byte("bootstrap-signature"))
+	put(tourPackageMaterializationPath, 0o444, []byte("materialization"))
+	put(tourPackageMaterializationSignaturePath, 0o444, []byte("materialization-signature"))
+	put(tourPackageAnchorPath, 0o444, []byte("package-anchor"))
+	put(tourPackageReceiptKeyPath, 0o400, []byte("receipt-key"))
+	put(tourPackageReceiptAnchorPath, 0o444, []byte("receipt-anchor"))
 	previousSource := InstallerSourceManifestDigest
 	InstallerSourceManifestDigest = sourceDigest
 	t.Cleanup(func() { InstallerSourceManifestDigest = previousSource })
@@ -115,25 +128,26 @@ func TestTourV4DispatchUsesOnlyExactPackageBoundDetachedMaterials(t *testing.T) 
 		t.Fatal(err)
 	}
 	for path, observed := range map[string][]byte{
-		authority.ConfigPath:          materials.Config,
-		authority.ConfigSignaturePath: materials.ConfigSignature,
-		authority.PackageAnchorPath:   materials.PackageAnchor,
-		authority.PlanPath:            materials.Plan,
-		authority.ReceiptKeyPath:      materials.ReceiptKey,
-		authority.ReceiptAnchorPath:   materials.ReceiptAnchor,
+		tourPackageBootstrapPath:                materials.AuthorityBootstrap,
+		tourPackageBootstrapSignaturePath:       materials.AuthorityBootstrapSignature,
+		tourPackageMaterializationPath:          materials.Materialization,
+		tourPackageMaterializationSignaturePath: materials.MaterializationSignature,
+		tourPackageAnchorPath:                   materials.PackageAnchor,
+		tourPackageReceiptKeyPath:               materials.ReceiptKey,
+		tourPackageReceiptAnchorPath:            materials.ReceiptAnchor,
 	} {
 		if !bytes.Equal(observed, verified.Files[path].Data) {
 			t.Fatalf("detached material did not alias exact verified package member: %s", path)
 		}
 	}
-	config := verified.Files[authority.ConfigPath]
-	delete(verified.Files, authority.ConfigPath)
+	materialization := verified.Files[tourPackageMaterializationPath]
+	delete(verified.Files, tourPackageMaterializationPath)
 	if _, err := tourV4DetachedMaterials(verified); err == nil {
-		t.Fatal("missing signed config package member was accepted")
+		t.Fatal("missing signed materialization package member was accepted")
 	}
-	verified.Files[authority.ConfigPath] = config
-	config.Digest = digest([]byte("rebound-config"))
+	verified.Files[tourPackageMaterializationPath] = materialization
+	materialization.Digest = digest([]byte("rebound-materialization"))
 	if _, err := tourV4DetachedMaterials(verified); err == nil {
-		t.Fatal("rebound signed config record was accepted")
+		t.Fatal("rebound signed materialization record was accepted")
 	}
 }

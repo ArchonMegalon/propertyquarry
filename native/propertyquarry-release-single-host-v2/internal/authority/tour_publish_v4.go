@@ -25,21 +25,30 @@ import (
 )
 
 const (
-	tourV4ManifestSchema     = "propertyquarry.generated-reconstruction-publication-manifest.v4"
-	tourV4InspectionSchema   = "propertyquarry.generated-reconstruction-publication-inspection.v4"
-	tourV4PreparedSchema     = "propertyquarry.generated-reconstruction-publication-prepared.v4"
-	tourV4TerminalSchema     = "propertyquarry.generated-reconstruction-publication-terminal.v4"
-	tourV4RollbackSchema     = "propertyquarry.generated-reconstruction-publication-rollback.v4"
-	tourV4InstalledBinary    = "/usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2"
-	tourV4LiveVolumeRoot     = "/var/lib/docker/volumes/property_propertyquarry_public_tours/_data"
-	tourV4ReceiptRoot        = "/var/lib/propertyquarry-release-single-host-v2/tour-publication-receipts"
-	tourV4ControlRelpath     = ".propertyquarry-publisher-v4"
-	tourV4AbsentSentinel     = "absent"
-	tourV4MaximumFiles       = 128
-	tourV4MaximumDirectories = 64
-	tourV4MaximumTreeBytes   = 64 * 1024 * 1024
-	tourV4MaximumFileBytes   = 32 * 1024 * 1024
-	tourV4RenameExchange     = 2
+	tourV4ManifestSchema                       = "propertyquarry.generated-reconstruction-publication-manifest.v4"
+	tourV4InspectionSchema                     = "propertyquarry.generated-reconstruction-publication-inspection.v4"
+	tourV4PreparedSchema                       = "propertyquarry.generated-reconstruction-publication-prepared.v4"
+	tourV4TerminalSchema                       = "propertyquarry.generated-reconstruction-publication-terminal.v4"
+	tourV4RollbackSchema                       = "propertyquarry.generated-reconstruction-publication-rollback.v4"
+	tourV4InstalledBinary                      = "/usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2"
+	tourV4LiveVolumeRoot                       = "/var/lib/docker/volumes/property_propertyquarry_public_tours/_data"
+	tourV4ReceiptRoot                          = "/var/lib/propertyquarry-release-single-host-v2/tour-publication-receipts"
+	tourV4ControlRelpath                       = ".propertyquarry-publisher-v4"
+	tourV4AbsentSentinel                       = "absent"
+	tourV4MaximumFiles                         = 128
+	tourV4MaximumDirectories                   = 64
+	tourV4MaximumTreeBytes                     = 64 * 1024 * 1024
+	tourV4MaximumFileBytes                     = 32 * 1024 * 1024
+	tourV4RenameExchange                       = 2
+	tourV4DetachedProfile                      = "single-host-tour-publication-v4"
+	tourV4DetachedMaterializationSchema        = "propertyquarry.release-control.single-host-tour-publication-materialization.v4"
+	tourV4DetachedMaterializationDomain        = "propertyquarry.release-control.single-host-tour-publication-materialization-signature.v4\x00"
+	tourV4DetachedBootstrapSchema              = "propertyquarry.release-control.single-host-production-authority-bootstrap.v2"
+	tourV4DetachedBootstrapDomain              = "propertyquarry.release-control.single-host-production-authority-bootstrap.v2\x00"
+	tourV4DetachedCanonicalAuthorityRoot       = "/docker/property/state/runtime/propertyquarry-release-authority-v2.private/authority-static-canonical"
+	tourV4DetachedCanonicalPrivateDigest       = "sha256:8b9106db85e8ce423d454bb14c863b6c0d481b061eaae0bd4b584d7071cbc2e1"
+	tourV4DetachedBundlePath                   = "/tmp/property-f7-tour-final-v4.HUQw8lU4/ab-1-8-modern-and-fully-furnited-loft-apartment-top-moderne-und-voll-mblierte-loft-wohnung-nas-layout-first-d07edad7af3fc379574d"
+	tourV4DetachedTTLSeconds             int64 = 3600
 )
 
 var (
@@ -58,6 +67,14 @@ var (
 	tourV4BeforeControlBindingCheck func()
 	tourV4AfterExchangeHook         func() error
 )
+
+var tourV4DetachedOperations = []string{
+	"tour-v4-authority-info",
+	"tour-inspect-v4",
+	"tour-publish-v4",
+	"tour-recover-v4",
+	"tour-rollback-v4",
+}
 
 type tourV4PermitFile struct {
 	Path   string
@@ -940,23 +957,31 @@ func tourV4ValidateArtifact(snapshot *tourV4TreeSnapshot, permit *tourV4Permit) 
 }
 
 type tourV4AuthorityBinding struct {
-	ConfigDigest string
-	RuntimeSHA   string
-	WorkflowSHA  string
-	DeploymentID string
-	ReceiptKeyID string
+	Profile                   string
+	ConfigDigest              string
+	RuntimeSHA                string
+	WorkflowSHA               string
+	DeploymentID              string
+	PackageAuthorityKeyID     string
+	TourMaterializationDigest string
+	SourceManifestDigest      string
+	HostMachineIDDigest       string
+	ReceiptKeyID              string
+	MaterializedAt            int64
+	ValidUntil                int64
 }
 
 // TourV4DetachedMaterials are the signed package members needed by the
 // self-contained, attested installer-image dispatcher. They are validated
 // again by the authority after the dispatcher chroots onto the host.
 type TourV4DetachedMaterials struct {
-	Config          []byte
-	ConfigSignature []byte
-	PackageAnchor   []byte
-	Plan            []byte
-	ReceiptKey      []byte
-	ReceiptAnchor   []byte
+	AuthorityBootstrap          []byte
+	AuthorityBootstrapSignature []byte
+	Materialization             []byte
+	MaterializationSignature    []byte
+	PackageAnchor               []byte
+	ReceiptKey                  []byte
+	ReceiptAnchor               []byte
 }
 
 type tourV4PublishInput struct {
@@ -1006,6 +1031,7 @@ func tourV4AuthorityBindingFor(config *Config, key ed25519.PrivateKey) (tourV4Au
 		return tourV4AuthorityBinding{}, fmt.Errorf("tour-v4-authority-binding-invalid")
 	}
 	return tourV4AuthorityBinding{
+		Profile:      "single-host-production-v2",
 		ConfigDigest: config.Digest, RuntimeSHA: config.RuntimeSHA,
 		WorkflowSHA: config.WorkflowSHA, DeploymentID: config.DeploymentID,
 		ReceiptKeyID: keyID,
@@ -1015,69 +1041,261 @@ func tourV4AuthorityBindingFor(config *Config, key ed25519.PrivateKey) (tourV4Au
 func tourV4DetachedAuthority(
 	root string,
 	materials TourV4DetachedMaterials,
-) (*Config, ed25519.PrivateKey, error) {
+) (tourV4AuthorityBinding, ed25519.PrivateKey, error) {
+	var empty tourV4AuthorityBinding
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root ||
-		len(materials.Config) < 2 || len(materials.ConfigSignature) != ed25519.SignatureSize ||
+		len(materials.AuthorityBootstrap) < 2 ||
+		len(materials.AuthorityBootstrapSignature) != ed25519.SignatureSize ||
+		len(materials.Materialization) < 2 ||
+		len(materials.MaterializationSignature) != ed25519.SignatureSize ||
 		len(materials.PackageAnchor) < 2 || len(materials.PackageAnchor) > 4096 ||
-		len(materials.Plan) < 2 || len(materials.ReceiptKey) < 2 ||
+		len(materials.ReceiptKey) < 2 ||
 		len(materials.ReceiptKey) > 4096 || len(materials.ReceiptAnchor) < 2 ||
 		len(materials.ReceiptAnchor) > 4096 {
-		return nil, nil, fmt.Errorf("tour-v4-detached-material-invalid")
+		return empty, nil, fmt.Errorf("tour-v4-detached-material-invalid")
 	}
 	packagePublic, packageKeyID, err := parsePublicKey(materials.PackageAnchor)
-	if err != nil || !ed25519.Verify(
-		packagePublic, framed(configDomain, materials.Config), materials.ConfigSignature,
-	) {
+	if err != nil {
 		zero(packagePublic)
-		return nil, nil, fmt.Errorf("tour-v4-detached-config-authentication-failed")
+		return empty, nil, fmt.Errorf("tour-v4-detached-package-anchor-invalid")
 	}
 	defer zero(packagePublic)
-	config, plan, err := ValidateDetachedConfigPlan(
-		materials.Config, materials.Plan, packageKeyID,
+	if !ed25519.Verify(
+		packagePublic,
+		framed(tourV4DetachedBootstrapDomain, materials.AuthorityBootstrap),
+		materials.AuthorityBootstrapSignature,
+	) {
+		return empty, nil, fmt.Errorf("tour-v4-detached-bootstrap-authentication-failed")
+	}
+	receiptPublic, receiptKeyID, err := parsePublicKey(materials.ReceiptAnchor)
+	if err != nil {
+		zero(receiptPublic)
+		return empty, nil, fmt.Errorf("tour-v4-detached-receipt-anchor-invalid")
+	}
+	defer zero(receiptPublic)
+	if err := tourV4ValidateDetachedBootstrap(
+		materials.AuthorityBootstrap,
+		materials.PackageAnchor,
+		materials.ReceiptAnchor,
+		packageKeyID,
+		receiptKeyID,
+	); err != nil {
+		return empty, nil, err
+	}
+	if !ed25519.Verify(
+		packagePublic,
+		framed(tourV4DetachedMaterializationDomain, materials.Materialization),
+		materials.MaterializationSignature,
+	) {
+		return empty, nil, fmt.Errorf("tour-v4-detached-materialization-authentication-failed")
+	}
+	binding, err := tourV4ParseDetachedMaterialization(
+		materials.Materialization,
+		digest(materials.AuthorityBootstrap),
+		digest(materials.ReceiptAnchor),
+		packageKeyID,
+		receiptKeyID,
 	)
 	if err != nil {
-		return nil, nil, err
+		return empty, nil, err
 	}
-	defer plan.Release()
 	ownerUID, ownerGID := secureOwner(root)
 	machineIDRaw, err := secureRead(
 		root, "/etc/machine-id", 0o444, ownerUID, ownerGID, 64,
 	)
 	if err != nil {
-		config.release()
-		return nil, nil, fmt.Errorf("tour-v4-detached-host-binding-unavailable")
+		return empty, nil, fmt.Errorf("tour-v4-detached-host-binding-unavailable")
 	}
 	machineID := strings.TrimSpace(string(machineIDRaw))
 	zero(machineIDRaw)
 	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(machineID) ||
-		digest([]byte(machineID)) != config.HostMachineIDDigest {
-		config.release()
-		return nil, nil, fmt.Errorf("tour-v4-detached-host-binding-invalid")
+		digest([]byte(machineID)) != binding.HostMachineIDDigest {
+		return empty, nil, fmt.Errorf("tour-v4-detached-host-binding-invalid")
 	}
 	receiptKey, err := parsePrivateKey(materials.ReceiptKey)
 	if err != nil {
-		config.release()
-		return nil, nil, fmt.Errorf("tour-v4-detached-receipt-key-invalid")
+		return empty, nil, fmt.Errorf("tour-v4-detached-receipt-key-invalid")
 	}
-	receiptPublic, receiptKeyID, err := parsePublicKey(materials.ReceiptAnchor)
-	if err != nil || !bytes.Equal(
+	if !bytes.Equal(
 		receiptPublic, receiptKey.Public().(ed25519.PublicKey),
-	) || receiptKeyID != config.ReceiptAuthorityKeyID {
-		config.release()
+	) || receiptKeyID != binding.ReceiptKeyID {
 		zero(receiptKey)
-		zero(receiptPublic)
-		return nil, nil, fmt.Errorf("tour-v4-detached-receipt-binding-invalid")
+		return empty, nil, fmt.Errorf("tour-v4-detached-receipt-binding-invalid")
 	}
-	zero(receiptPublic)
-	return config, receiptKey, nil
+	return binding, receiptKey, nil
+}
+
+func tourV4ValidateDetachedBootstrap(
+	raw, packageAnchor, receiptAnchor []byte,
+	packageKeyID, receiptKeyID string,
+) error {
+	value, err := strictJSON(raw, maximumConfigBytes)
+	if err != nil || !hasKeys(
+		value,
+		"created_at_epoch", "package_authority_key_id",
+		"package_authority_private_sha256", "package_authority_public_sha256",
+		"package_authority_source", "receipt_authority_key_id",
+		"receipt_authority_public_sha256", "schema", "version",
+	) {
+		return fmt.Errorf("tour-v4-detached-bootstrap-shape-invalid")
+	}
+	schema, _ := exactString(value["schema"])
+	source, _ := exactString(value["package_authority_source"])
+	configuredPackageID, _ := exactString(value["package_authority_key_id"])
+	privateDigest, _ := exactString(value["package_authority_private_sha256"])
+	publicDigest, _ := exactString(value["package_authority_public_sha256"])
+	configuredReceiptID, _ := exactString(value["receipt_authority_key_id"])
+	receiptDigest, _ := exactString(value["receipt_authority_public_sha256"])
+	created, createdOK := exactInt(value["created_at_epoch"], 1, 1<<62)
+	version, versionOK := exactInt(value["version"], 2, 2)
+	if schema != tourV4DetachedBootstrapSchema ||
+		source != tourV4DetachedCanonicalAuthorityRoot ||
+		configuredPackageID != packageKeyID ||
+		privateDigest != tourV4DetachedCanonicalPrivateDigest ||
+		publicDigest != digest(packageAnchor) ||
+		configuredReceiptID != receiptKeyID ||
+		receiptDigest != digest(receiptAnchor) ||
+		!createdOK || created < 1 || !versionOK || version != 2 {
+		return fmt.Errorf("tour-v4-detached-bootstrap-binding-invalid")
+	}
+	return nil
+}
+
+func tourV4ParseDetachedMaterialization(
+	raw []byte,
+	bootstrapDigest, receiptAnchorDigest, packageKeyID, receiptKeyID string,
+) (tourV4AuthorityBinding, error) {
+	var empty tourV4AuthorityBinding
+	value, err := strictJSON(raw, maximumConfigBytes)
+	if err != nil || !hasKeys(
+		value,
+		"accepted_installer_mode", "allowed_operations", "artifact_bundle_path",
+		"artifact_manifest_sha256", "artifact_public_tree_sha256", "artifact_slug",
+		"authoritative", "authority_bootstrap_sha256", "host_install_permitted",
+		"host_machine_id_digest", "materialized_at_epoch",
+		"native_build_receipt_sha256", "network_required",
+		"package_authority_key_id", "performs_release_effects",
+		"persistent_credential_installation_permitted", "production_ready",
+		"publication_dispatch_authorized", "publication_target_root",
+		"receipt_authority_key_id", "receipt_authority_public_sha256",
+		"root_helper_authorization_required", "runtime_deployment_permitted",
+		"schema", "source_manifest_digest", "valid_until_epoch", "version",
+	) {
+		return empty, fmt.Errorf("tour-v4-detached-materialization-shape-invalid")
+	}
+	schema, _ := exactString(value["schema"])
+	installerMode, _ := exactString(value["accepted_installer_mode"])
+	bundlePath, _ := exactString(value["artifact_bundle_path"])
+	manifestSHA, _ := exactString(value["artifact_manifest_sha256"])
+	publicTreeSHA, _ := exactString(value["artifact_public_tree_sha256"])
+	slug, _ := exactString(value["artifact_slug"])
+	targetRoot, _ := exactString(value["publication_target_root"])
+	configuredBootstrap, _ := exactString(value["authority_bootstrap_sha256"])
+	buildReceiptDigest, _ := exactString(value["native_build_receipt_sha256"])
+	configuredPackageID, _ := exactString(value["package_authority_key_id"])
+	configuredReceiptID, _ := exactString(value["receipt_authority_key_id"])
+	configuredReceiptAnchor, _ := exactString(value["receipt_authority_public_sha256"])
+	sourceDigest, _ := exactString(value["source_manifest_digest"])
+	hostDigest, _ := exactString(value["host_machine_id_digest"])
+	materialized, materializedOK := exactInt(value["materialized_at_epoch"], 1, 1<<62)
+	validUntil, validOK := exactInt(value["valid_until_epoch"], 1, 1<<62)
+	version, versionOK := exactInt(value["version"], 4, 4)
+	for _, field := range []string{
+		"authoritative", "host_install_permitted", "network_required",
+		"performs_release_effects", "persistent_credential_installation_permitted",
+		"production_ready", "runtime_deployment_permitted",
+	} {
+		flag, ok := value[field].(bool)
+		if !ok || flag {
+			return empty, fmt.Errorf("tour-v4-detached-materialization-claim-invalid")
+		}
+	}
+	for _, field := range []string{
+		"publication_dispatch_authorized", "root_helper_authorization_required",
+	} {
+		flag, ok := value[field].(bool)
+		if !ok || !flag {
+			return empty, fmt.Errorf("tour-v4-detached-materialization-claim-invalid")
+		}
+	}
+	operations, ok := value["allowed_operations"].([]any)
+	if !ok || len(operations) != len(tourV4DetachedOperations) {
+		return empty, fmt.Errorf("tour-v4-detached-materialization-operations-invalid")
+	}
+	for index, expected := range tourV4DetachedOperations {
+		observed, ok := operations[index].(string)
+		if !ok || observed != expected {
+			return empty, fmt.Errorf("tour-v4-detached-materialization-operations-invalid")
+		}
+	}
+	permit, observedManifestSHA, err := tourV4PermitByManifestDigest(manifestSHA)
+	if err != nil {
+		return empty, fmt.Errorf("tour-v4-detached-materialization-artifact-invalid")
+	}
+	if schema != tourV4DetachedMaterializationSchema ||
+		installerMode != "dispatch-tour-v4" ||
+		bundlePath != tourV4DetachedBundlePath ||
+		observedManifestSHA != manifestSHA ||
+		publicTreeSHA != permit.PublicTreeSHA256 || slug != permit.Slug ||
+		targetRoot != tourV4LiveVolumeRoot ||
+		configuredBootstrap != bootstrapDigest ||
+		!digestPattern.MatchString(buildReceiptDigest) ||
+		configuredPackageID != packageKeyID ||
+		configuredReceiptID != receiptKeyID ||
+		configuredReceiptAnchor != receiptAnchorDigest ||
+		!digestPattern.MatchString(sourceDigest) ||
+		!digestPattern.MatchString(hostDigest) ||
+		!materializedOK || !validOK ||
+		validUntil != materialized+tourV4DetachedTTLSeconds ||
+		!versionOK || version != 4 {
+		return empty, fmt.Errorf("tour-v4-detached-materialization-binding-invalid")
+	}
+	binding := tourV4AuthorityBinding{
+		Profile:                   tourV4DetachedProfile,
+		PackageAuthorityKeyID:     packageKeyID,
+		TourMaterializationDigest: digest(raw),
+		SourceManifestDigest:      sourceDigest,
+		HostMachineIDDigest:       hostDigest,
+		ReceiptKeyID:              receiptKeyID,
+		MaterializedAt:            materialized,
+		ValidUntil:                validUntil,
+	}
+	if err := tourV4ValidateAuthorityBinding(binding); err != nil {
+		return empty, err
+	}
+	return binding, nil
 }
 
 func tourV4ValidateAuthorityBinding(binding tourV4AuthorityBinding) error {
-	if !digestPattern.MatchString(binding.ConfigDigest) ||
-		!shaPattern.MatchString(binding.RuntimeSHA) ||
-		!shaPattern.MatchString(binding.WorkflowSHA) ||
-		!deploymentIDPattern.MatchString(binding.DeploymentID) ||
-		!digestPattern.MatchString(binding.ReceiptKeyID) {
+	switch binding.Profile {
+	case "single-host-production-v2":
+		if !digestPattern.MatchString(binding.ConfigDigest) ||
+			!shaPattern.MatchString(binding.RuntimeSHA) ||
+			!shaPattern.MatchString(binding.WorkflowSHA) ||
+			!deploymentIDPattern.MatchString(binding.DeploymentID) ||
+			!digestPattern.MatchString(binding.ReceiptKeyID) ||
+			binding.PackageAuthorityKeyID != "" ||
+			binding.TourMaterializationDigest != "" ||
+			binding.SourceManifestDigest != "" ||
+			binding.HostMachineIDDigest != "" ||
+			binding.MaterializedAt != 0 || binding.ValidUntil != 0 {
+			return fmt.Errorf("tour-v4-authority-binding-invalid")
+		}
+	case tourV4DetachedProfile:
+		if binding.ConfigDigest != "" ||
+			!digestPattern.MatchString(binding.PackageAuthorityKeyID) ||
+			!digestPattern.MatchString(binding.TourMaterializationDigest) ||
+			!digestPattern.MatchString(binding.SourceManifestDigest) ||
+			!digestPattern.MatchString(binding.HostMachineIDDigest) ||
+			!digestPattern.MatchString(binding.ReceiptKeyID) ||
+			binding.PackageAuthorityKeyID == binding.ReceiptKeyID ||
+			binding.MaterializedAt < 1 ||
+			binding.ValidUntil != binding.MaterializedAt+tourV4DetachedTTLSeconds ||
+			binding.RuntimeSHA != "" || binding.WorkflowSHA != "" ||
+			binding.DeploymentID != "" {
+			return fmt.Errorf("tour-v4-authority-binding-invalid")
+		}
+	default:
 		return fmt.Errorf("tour-v4-authority-binding-invalid")
 	}
 	return nil
@@ -1702,14 +1920,52 @@ func tourV4AuditFields(permit *tourV4Permit, manifestSHA string) map[string]any 
 }
 
 func tourV4AuthorityFields(binding tourV4AuthorityBinding) map[string]any {
+	if binding.Profile == tourV4DetachedProfile {
+		return map[string]any{
+			"authority_profile":           tourV4DetachedProfile,
+			"package_authority_key_id":    binding.PackageAuthorityKeyID,
+			"receipt_key_id":              binding.ReceiptKeyID,
+			"source_manifest_digest":      binding.SourceManifestDigest,
+			"tour_materialization_sha256": binding.TourMaterializationDigest,
+		}
+	}
 	return map[string]any{
-		"authority_profile": "single-host-production-v2",
+		"authority_profile": binding.Profile,
 		"config_digest":     binding.ConfigDigest,
 		"deployment_id":     binding.DeploymentID,
 		"receipt_key_id":    binding.ReceiptKeyID,
 		"runtime_sha":       binding.RuntimeSHA,
 		"workflow_sha":      binding.WorkflowSHA,
 	}
+}
+
+func tourV4AuthorityPayloadMatches(
+	payload map[string]any,
+	binding tourV4AuthorityBinding,
+) bool {
+	if payload == nil || tourV4ValidateAuthorityBinding(binding) != nil {
+		return false
+	}
+	expected := tourV4AuthorityFields(binding)
+	for key, value := range expected {
+		if payload[key] != value {
+			return false
+		}
+	}
+	known := []string{
+		"authority_profile", "config_digest", "deployment_id",
+		"package_authority_key_id", "receipt_key_id", "runtime_sha",
+		"source_manifest_digest", "tour_materialization_sha256", "workflow_sha",
+	}
+	for _, key := range known {
+		if _, required := expected[key]; required {
+			continue
+		}
+		if _, present := payload[key]; present {
+			return false
+		}
+	}
+	return true
 }
 
 func tourV4MergeFields(target map[string]any, source map[string]any) {
@@ -1805,32 +2061,29 @@ func tourV4ParsePrepared(
 	manifestSHA string,
 ) (*tourV4Prepared, error) {
 	expectedKeys := []string{
-		"artifact_tree_sha256", "atomic_operation", "authority_profile",
+		"artifact_tree_sha256", "atomic_operation",
 		"browser_evidence_tree_sha256", "browser_receipt_sha256",
-		"candidate_tree", "canonical_live_root", "config_digest", "control_relpath",
-		"deployment_id", "expected_old_tree_sha256", "manifest_sha256",
+		"candidate_tree", "canonical_live_root", "control_relpath",
+		"expected_old_tree_sha256", "manifest_sha256",
 		"observed_old_tree", "operation", "prepared_at_epoch",
 		"private_source_files_published", "public_file_count",
-		"quality_receipt_sha256", "receipt_key_id",
+		"quality_receipt_sha256",
 		"reconstruction_kind", "reconstruction_manifest_sha256",
-		"render_commit_sha256", "rollback_relpath", "runtime_sha",
+		"render_commit_sha256", "rollback_relpath",
 		"schema", "slug", "source_bundle_path_sha256", "source_tree",
 		"stage_relpath", "status", "tour_manifest_sha256",
 		"transaction_id", "version", "walkthrough_sha256",
-		"workflow_sha",
+	}
+	for key := range tourV4AuthorityFields(binding) {
+		expectedKeys = append(expectedKeys, key)
 	}
 	if payload == nil || !hasKeys(payload, expectedKeys...) ||
 		payload["schema"] != tourV4PreparedSchema || payload["version"] != json.Number("4") ||
 		payload["status"] != "prepared" ||
 		payload["operation"] != "publish-generated-reconstruction-v4" ||
-		payload["authority_profile"] != "single-host-production-v2" ||
+		!tourV4AuthorityPayloadMatches(payload, binding) ||
 		payload["canonical_live_root"] != tourV4LiveVolumeRoot ||
 		payload["control_relpath"] != tourV4ControlRelpath ||
-		payload["config_digest"] != binding.ConfigDigest ||
-		payload["runtime_sha"] != binding.RuntimeSHA ||
-		payload["workflow_sha"] != binding.WorkflowSHA ||
-		payload["deployment_id"] != binding.DeploymentID ||
-		payload["receipt_key_id"] != binding.ReceiptKeyID ||
 		payload["transaction_id"] != input.TransactionID ||
 		payload["expected_old_tree_sha256"] != input.ExpectedOldTreeSHA256 ||
 		payload["manifest_sha256"] != manifestSHA ||
@@ -1947,11 +2200,7 @@ func tourV4ValidateTerminalPayload(
 		payload["manifest_sha256"] != prepared.ManifestSHA256 ||
 		payload["prepared_receipt_sha256"] != prepared.PreparedReceiptSHA256 ||
 		payload["expected_old_tree_sha256"] != prepared.ExpectedOldTreeSHA256 ||
-		payload["config_digest"] != binding.ConfigDigest ||
-		payload["runtime_sha"] != binding.RuntimeSHA ||
-		payload["workflow_sha"] != binding.WorkflowSHA ||
-		payload["deployment_id"] != binding.DeploymentID ||
-		payload["receipt_key_id"] != binding.ReceiptKeyID ||
+		!tourV4AuthorityPayloadMatches(payload, binding) ||
 		payload["artifact_tree_sha256"] != permit.ArtifactTreeSHA256 ||
 		payload["browser_receipt_sha256"] != permit.BrowserReceiptSHA256 ||
 		payload["browser_evidence_tree_sha256"] != permit.BrowserEvidenceTreeSHA256 ||
@@ -2562,11 +2811,7 @@ func tourV4ValidateRollbackPayload(
 		payload["publication_receipt_sha256"] != publicationReceiptSHA ||
 		payload["expected_current_tree_sha256"] != permit.PublicTreeSHA256 ||
 		payload["published_tree_retained_relpath"] != tourV4ControlRelpath+"/"+prepared.RollbackRelpath ||
-		payload["config_digest"] != binding.ConfigDigest ||
-		payload["runtime_sha"] != binding.RuntimeSHA ||
-		payload["workflow_sha"] != binding.WorkflowSHA ||
-		payload["deployment_id"] != binding.DeploymentID ||
-		payload["receipt_key_id"] != binding.ReceiptKeyID {
+		!tourV4AuthorityPayloadMatches(payload, binding) {
 		return fmt.Errorf("tour-v4-rollback-receipt-binding-invalid")
 	}
 	return nil
@@ -2963,17 +3208,21 @@ func RunAttestedTourV4(
 		ScratchExecutionContract != "linux-amd64-static-et-exec-v1" {
 		return fmt.Errorf("tour-v4-attested-dispatch-binding-invalid")
 	}
-	config, key, err := tourV4DetachedAuthority("/", materials)
+	binding, key, err := tourV4DetachedAuthority("/", materials)
 	if err != nil {
 		return err
 	}
-	defer config.release()
 	defer zero(key)
-	binding, err := tourV4AuthorityBindingFor(config, key)
-	if err != nil {
-		return err
-	}
 	operation := command[0]
+	if binding.SourceManifestDigest != sourceManifestDigest {
+		return fmt.Errorf("tour-v4-attested-source-binding-invalid")
+	}
+	if operation == "tour-publish-v4" {
+		now := tourV4Now().UTC().Unix()
+		if now < binding.MaterializedAt-60 || now > binding.ValidUntil {
+			return fmt.Errorf("tour-v4-attested-materialization-expired")
+		}
+	}
 	if operation == "tour-v4-authority-info" {
 		if len(command) != 1 {
 			return fmt.Errorf("tour-v4-authority-info-arguments-invalid")

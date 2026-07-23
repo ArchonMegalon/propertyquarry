@@ -347,6 +347,109 @@ PY
   verify_installer_rootfs "$helper_image_id" "$installer_digest" "$installer_size" "$package_key_id" "$source_digest"
 }
 
+verify_tour_signed_package_image() {
+  local helper_image_id="$1"
+  local package_path="$2"
+  local package_anchor_path="$3"
+  local operation="$4"
+  local module_root tour_package_tool result_path fields_path
+  [[ "$helper_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || fail
+  [[ "$package_path" =~ ^/[A-Za-z0-9._/+:-]+$ ]] || fail
+  [[ "$package_anchor_path" =~ ^/[A-Za-z0-9._/+:-]+$ ]] || fail
+  [[ -f "$package_path" && ! -L "$package_path" ]] || fail
+  [[ "$(stat -Lc '%a:%h' -- "$package_path")" == "400:1" ]] || fail
+  [[ -f "$package_anchor_path" && ! -L "$package_anchor_path" ]] || fail
+  [[ "$(stat -Lc '%a:%h' -- "$package_anchor_path")" == "444:1" ]] || fail
+  local anchor_size
+  anchor_size="$(stat -Lc '%s' -- "$package_anchor_path")"
+  [[ "$anchor_size" =~ ^[1-9][0-9]*$ ]] || fail
+  (( 10#$anchor_size <= 4096 )) || fail
+  case "$operation" in
+    tour-v4-authority-info|tour-inspect-v4|tour-publish-v4|tour-recover-v4|tour-rollback-v4)
+      ;;
+    *)
+      fail
+      ;;
+  esac
+
+  module_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  tour_package_tool="${module_root}/tools/tour_package.py"
+  [[ -f "$tour_package_tool" && ! -L "$tour_package_tool" ]] || fail
+  begin_private_workspace
+  result_path="${private_workspace}/tour-package-verify-result.json"
+  fields_path="${private_workspace}/tour-package-image-fields"
+  /usr/bin/python3 "$tour_package_tool" verify \
+    --package "$package_path" \
+    --package-authority-public-key "$package_anchor_path" \
+    --operation "$operation" \
+    >"$result_path" 2>/dev/null || fail
+  /usr/bin/python3 - "$result_path" "$operation" >"$fields_path" <<'PY' || fail
+import json
+import re
+import sys
+
+sha = re.compile(r"^sha256:[0-9a-f]{64}$")
+raw = open(sys.argv[1], "rb").read()
+value = json.loads(raw)
+canonical = json.dumps(
+    value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+).encode("ascii") + b"\n"
+assert raw == canonical
+assert set(value) == {
+    "authoritative", "fresh", "host_install_permitted",
+    "installer_binary_sha256", "installer_binary_size",
+    "manifest_sha256", "network_required", "package_authority_key_id",
+    "package_sha256", "performs_release_effects", "production_ready",
+    "publication_dispatch_authorized", "receipt_authority_key_id",
+    "runtime_deployment_permitted", "schema", "source_manifest_digest",
+    "valid_until_epoch", "version",
+}
+assert value["schema"] == (
+    "propertyquarry.release-control.single-host-tour-publication-"
+    "package-verify-result.v4"
+)
+assert value["version"] == 4 and isinstance(value["fresh"], bool)
+if sys.argv[2] == "tour-publish-v4":
+    assert value["fresh"] is True
+assert value["publication_dispatch_authorized"] is True
+for key in (
+    "authoritative", "host_install_permitted", "network_required",
+    "performs_release_effects", "production_ready",
+    "runtime_deployment_permitted",
+):
+    assert value[key] is False
+for key in (
+    "installer_binary_sha256", "manifest_sha256",
+    "package_authority_key_id", "package_sha256",
+    "receipt_authority_key_id", "source_manifest_digest",
+):
+    assert isinstance(value[key], str) and sha.fullmatch(value[key])
+size = value["installer_binary_size"]
+assert isinstance(size, int) and not isinstance(size, bool)
+assert 1 <= size <= 268435456
+valid_until = value["valid_until_epoch"]
+assert isinstance(valid_until, int) and not isinstance(valid_until, bool)
+assert valid_until >= 1
+print(value["installer_binary_sha256"])
+print(size)
+print(value["package_authority_key_id"])
+print(value["source_manifest_digest"])
+PY
+  local -a tour_fields
+  readarray -t tour_fields <"$fields_path"
+  [[ "${#tour_fields[@]}" -eq 4 ]] || fail
+  local installer_digest="${tour_fields[0]}"
+  local installer_size="${tour_fields[1]}"
+  local package_key_id="${tour_fields[2]}"
+  local source_digest="${tour_fields[3]}"
+  unset tour_fields
+  finish_private_workspace
+
+  verify_installer_rootfs \
+    "$helper_image_id" "$installer_digest" "$installer_size" \
+    "$package_key_id" "$source_digest"
+}
+
 if [[ "$#" -eq 6 && "${1:-}" == "verify-rootfs" ]]; then
   verify_installer_rootfs "$2" "$3" "$4" "$5" "$6"
   exit 0
@@ -354,6 +457,11 @@ fi
 
 if [[ "$#" -eq 4 && "${1:-}" == "verify-image" ]]; then
   verify_signed_package_image "$2" "$3" "$4"
+  exit 0
+fi
+
+if [[ "$#" -eq 5 && "${1:-}" == "verify-tour-image" ]]; then
+  verify_tour_signed_package_image "$2" "$3" "$4" "$5"
   exit 0
 fi
 

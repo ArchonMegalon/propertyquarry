@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	tourV4BundlePath = "/tmp/property-f7-tour-final-v4.HUQw8lU4/" +
-		"ab-1-8-modern-and-fully-furnited-loft-apartment-top-moderne-und-voll-mblierte-" +
+	tourV4Slug = "ab-1-8-modern-and-fully-furnited-loft-apartment-top-moderne-und-voll-mblierte-" +
 		"loft-wohnung-nas-layout-first-d07edad7af3fc379574d"
+	tourV4BundlePath = "/tmp/property-f7-tour-final-v4.HUQw8lU4/" +
+		tourV4Slug
 	tourV4ManifestSHA256 = "sha256:5bc06e8758bc3d9b9e88a82a7608a1238340c19fd581d3ec3565a56d75d1fa06"
 	tourV4PublicSHA256   = "sha256:d69c032b96264d892bbd6e269b884a9f33cc11cf3d0f5a7d96a878a062058548"
 )
@@ -58,7 +59,7 @@ func tourV4ValidOldTree(value string, absentAllowed bool) bool {
 	return (absentAllowed && value == "absent") || digestPattern.MatchString(value)
 }
 
-func tourV4DetachedMaterials(verified *VerifiedPackage) (authority.TourV4DetachedMaterials, error) {
+func tourV4DetachedMaterials(verified *VerifiedTourPackage) (authority.TourV4DetachedMaterials, error) {
 	var empty authority.TourV4DetachedMaterials
 	if verified == nil || verified.SourceManifestDigest == "" ||
 		verified.SourceManifestDigest != InstallerSourceManifestDigest {
@@ -73,35 +74,62 @@ func tourV4DetachedMaterials(verified *VerifiedPackage) (authority.TourV4Detache
 		}
 		return record.Data, nil
 	}
-	config, err := get(authority.ConfigPath, 0o400)
+	materialization, err := get(tourPackageMaterializationPath, 0o444)
 	if err != nil {
 		return empty, err
 	}
-	configSignature, err := get(authority.ConfigSignaturePath, 0o444)
+	materializationSignature, err := get(tourPackageMaterializationSignaturePath, 0o444)
 	if err != nil {
 		return empty, err
 	}
-	packageAnchor, err := get(authority.PackageAnchorPath, 0o444)
+	bootstrap, err := get(tourPackageBootstrapPath, 0o444)
 	if err != nil {
 		return empty, err
 	}
-	receiptKey, err := get(authority.ReceiptKeyPath, 0o400)
+	bootstrapSignature, err := get(tourPackageBootstrapSignaturePath, 0o444)
 	if err != nil {
 		return empty, err
 	}
-	receiptAnchor, err := get(authority.ReceiptAnchorPath, 0o444)
+	packageAnchor, err := get(tourPackageAnchorPath, 0o444)
 	if err != nil {
 		return empty, err
 	}
-	plan, err := get(authority.PlanPath, 0o444)
+	receiptKey, err := get(tourPackageReceiptKeyPath, 0o400)
+	if err != nil {
+		return empty, err
+	}
+	receiptAnchor, err := get(tourPackageReceiptAnchorPath, 0o444)
 	if err != nil {
 		return empty, err
 	}
 	return authority.TourV4DetachedMaterials{
-		Config: config, ConfigSignature: configSignature,
-		PackageAnchor: packageAnchor, Plan: plan,
-		ReceiptKey: receiptKey, ReceiptAnchor: receiptAnchor,
+		AuthorityBootstrap:          bootstrap,
+		AuthorityBootstrapSignature: bootstrapSignature,
+		Materialization:             materialization,
+		MaterializationSignature:    materializationSignature,
+		PackageAnchor:               packageAnchor,
+		ReceiptKey:                  receiptKey, ReceiptAnchor: receiptAnchor,
 	}, nil
+}
+
+func validateTourInstallerSelfBinding(verified *VerifiedTourPackage) error {
+	if verified == nil || !digestPattern.MatchString(verified.InstallerBinaryDigest) ||
+		verified.InstallerBinarySize < 1 ||
+		verified.InstallerBinarySize > maximumMemberBytes {
+		return fmt.Errorf("tour-installer-self-binding-invalid")
+	}
+	actualDigest, actualSize, info, err := executableIdentityDetails()
+	if err != nil {
+		return fmt.Errorf("tour-installer-self-binding-mismatch")
+	}
+	metadata, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || info.Mode().Perm() != 0o555 || metadata.Uid != 0 ||
+		metadata.Gid != 0 || metadata.Nlink != 1 ||
+		actualDigest != verified.InstallerBinaryDigest ||
+		actualSize != verified.InstallerBinarySize {
+		return fmt.Errorf("tour-installer-self-binding-mismatch")
+	}
+	return nil
 }
 
 func DispatchFixedTourV4(args []string, stdout io.Writer) error {
@@ -117,12 +145,12 @@ func DispatchFixedTourV4(args []string, stdout io.Writer) error {
 		return err
 	}
 	defer zero(packageKey)
-	verified, err := VerifyPackageFile(FixedPackagePath, packageKey, packageKeyID)
+	verified, err := VerifyTourPackageFile(FixedPackagePath, packageKey, packageKeyID)
 	if err != nil {
 		return err
 	}
 	defer verified.Release()
-	if err := validateInstallerSelfBinding(verified); err != nil {
+	if err := validateTourInstallerSelfBinding(verified); err != nil {
 		return err
 	}
 	materials, err := tourV4DetachedMaterials(verified)

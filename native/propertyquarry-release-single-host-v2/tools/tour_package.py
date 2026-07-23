@@ -220,6 +220,7 @@ class VerifiedTourPackage:
     materialization: dict[str, Any]
     members: dict[str, bytes]
     modes: dict[str, int]
+    fresh: bool
 
 
 def _public_raw(public: Ed25519PublicKey) -> bytes:
@@ -497,6 +498,7 @@ def _validate_materialization(
     build_receipt_raw: bytes,
     build_receipt: dict[str, Any],
     current: int,
+    require_fresh: bool = True,
 ) -> dict[str, Any]:
     if len(signature) != 64:
         package.fail("tour-materialization-signature-size-invalid")
@@ -533,7 +535,7 @@ def _validate_materialization(
         or materialized < 1
         or valid_until != materialized + MATERIALIZATION_TTL_SECONDS
         or current < materialized
-        or current > valid_until
+        or (require_fresh and current > valid_until)
     ):
         package.fail("tour-materialization-shape-or-freshness-invalid")
     expected = _materialization_payload(
@@ -806,10 +808,22 @@ def _validate_file_records(
 
 
 def verify_package(
-    package_path: str, *, now: int | None = None
+    package_path: str,
+    *,
+    package_authority_public_key: str | None = None,
+    require_fresh: bool = True,
+    now: int | None = None,
 ) -> VerifiedTourPackage:
     current = int(time.time()) if now is None else now
     authority = _load_authority_material()
+    if package_authority_public_key is not None:
+        external_anchor = package.read_regular(
+            package_authority_public_key,
+            4096,
+            expected_modes=(0o444,),
+        )
+        if external_anchor != authority.package_anchor:
+            package.fail("tour-external-package-anchor-mismatch")
     archive_raw, members, modes = _archive_members(package_path)
     if (
         modes[MANIFEST_NAME] != 0o444
@@ -875,6 +889,7 @@ def verify_package(
         build_receipt_raw=members[BUILD_RECEIPT_PATH],
         build_receipt=build_receipt,
         current=current,
+        require_fresh=require_fresh,
     )
     payloads = {path: members[path] for path in FILE_LAYOUT}
     expected_manifest = _manifest_for(
@@ -891,14 +906,22 @@ def verify_package(
         materialization=materialization,
         members=members,
         modes=modes,
+        fresh=current <= materialization["valid_until_epoch"],
     )
 
 
 def _verified_result(verified: VerifiedTourPackage) -> dict[str, Any]:
+    build_receipt = package.parse_strict_json(
+        verified.members[BUILD_RECEIPT_PATH],
+        "tour-verified-native-build-receipt",
+        trailing_newline=True,
+    )
     return {
         "authoritative": False,
-        "fresh": True,
+        "fresh": verified.fresh,
         "host_install_permitted": False,
+        "installer_binary_sha256": build_receipt["installer_binary_sha256"],
+        "installer_binary_size": build_receipt["installer_binary_size"],
         "manifest_sha256": verified.manifest_sha256,
         "network_required": False,
         "package_authority_key_id": verified.manifest[
@@ -916,6 +939,7 @@ def _verified_result(verified: VerifiedTourPackage) -> dict[str, Any]:
             "propertyquarry.release-control.single-host-tour-publication-"
             "package-verify-result.v4"
         ),
+        "source_manifest_digest": verified.manifest["source_manifest_digest"],
         "valid_until_epoch": verified.materialization["valid_until_epoch"],
         "version": 4,
     }
@@ -935,6 +959,12 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--output", required=True)
     verify = commands.add_parser("verify")
     verify.add_argument("--package", required=True)
+    verify.add_argument("--package-authority-public-key", required=True)
+    verify.add_argument(
+        "--operation",
+        choices=("fresh", *ALLOWED_OPERATIONS),
+        default="fresh",
+    )
     return result
 
 
@@ -955,7 +985,18 @@ def main(argv: list[str] | None = None) -> int:
                 output=arguments.output,
             )
         else:
-            result = _verified_result(verify_package(arguments.package))
+            result = _verified_result(
+                verify_package(
+                    arguments.package,
+                    package_authority_public_key=(
+                        arguments.package_authority_public_key
+                    ),
+                    require_fresh=(
+                        arguments.operation
+                        in ("fresh", "tour-publish-v4")
+                    ),
+                )
+            )
         sys.stdout.buffer.write(package.canonical_json(result) + b"\n")
         return 0
     except (

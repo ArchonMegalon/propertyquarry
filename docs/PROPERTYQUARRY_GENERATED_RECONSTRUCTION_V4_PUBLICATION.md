@@ -39,16 +39,30 @@ The self-contained dispatch refuses unless all of the following hold:
 1. the host wrapper proves the local Docker daemon and an exact local `sha256:`
    image ID, saves and inspects the image, and verifies that its scratch rootfs
    contains exactly the expected static installer;
-2. the wrapper verifies the signed package with the independent package anchor
-   before starting a privileged container;
+2. the wrapper verifies the distinct tour-publication package with the
+   independent package anchor before starting the bounded root-helper
+   container; the ordinary runtime-package verifier rejects this protocol;
 3. the container has no network, no shell, no generic exec, a read-only
    rootfs, a fixed host bind, and only the capabilities needed for host chroot
    and the bounded filesystem operation;
 4. inside the container, the root helper re-verifies the package, its own
    binary digest/size/mode, and the shared source-manifest/static-ELF binding;
 5. after chrooting onto the host, the authority independently re-verifies the
-   detached signed profile, plan, host machine ID, and receipt key from package
-   memory, then accepts only the exact v4 command/argument grammar.
+   canonical-authority-signed receipt-key bootstrap and the short-lived signed
+   tour materialization, including host machine ID, build/source digest, exact
+   f7 artifact, destination, five-operation allowlist, and receipt key from
+   package memory, then accepts only the exact v4 command/argument grammar.
+
+The tour package has a distinct signature domain and exactly nine material
+members: the source-bound controller and native build receipt, canonical
+package anchor, signed receipt-authority bootstrap, bootstrapped receipt key
+and anchor, and signed tour materialization. It contains no runtime plan,
+runtime deployment helper, runner material, systemd unit, sysusers/tmpfiles
+definition, or install path. Its signed claims explicitly forbid host
+installation, runtime deployment, network use, and persistent credential
+installation. The materialization is valid for exactly 3,600 seconds for a new
+publish. Same-transaction recovery remains governed by the durable signed
+prepared receipt and exact compare-and-swap values.
 
 The only destination is
 `/var/lib/docker/volumes/property_propertyquarry_public_tours/_data/<permit-slug>`.
@@ -74,20 +88,50 @@ detected immediately after an exchange is reversed through the retained
 descriptor before the command fails closed. A receipt-authority-signed
 prepared receipt is durable before the rename, and a separately signed terminal
 receipt binds the old tree, new live tree, retained rollback tree, source
-artifact, all audit hashes, installed profile, runtime, workflow, deployment,
-and receipt key.
+artifact, all audit hashes, tour materialization/source authority, and receipt
+key.
 
 ## Exact production sequence
 
-Use only the newly built package and digest-pinned installer image. Set these
-three values from the verified package/image build receipts; tags are not
-accepted:
+Bootstrap the fixed receipt authority if it is absent, then build a
+package-authority-bound controller and installer, create the short-lived
+machine-bound tour materialization, and build/verify the distinct tour package.
+All output paths must be fresh absolute paths:
 
 ```sh
-PQ_TOUR_DISPATCH='/docker/property/native/propertyquarry-release-single-host-v2/tools/dispatch-tour-v4-with-docker.sh'
+PQ_NATIVE='/docker/property/native/propertyquarry-release-single-host-v2'
+PQ_TOOLCHAIN='/docker/property/state/runtime/propertyquarry_go_toolchain_1.26.5/go1.26.5.linux-amd64.tar.gz'
+PQ_PACKAGE_ANCHOR='/etc/propertyquarry-release-control-v2/package-authority-v2.pem'
+PQ_BUILD='/absolute/fresh/private/path/native-build'
+PQ_MATERIALIZATION='/absolute/fresh/private/path/tour-materialization'
+PQ_SIGNED_PACKAGE='/absolute/fresh/private/path/propertyquarry-tour-publication-v4.tar'
+
+python3 "$PQ_NATIVE/tools/materialize.py" bootstrap-authority
+"$PQ_NATIVE/tools/build.sh" "$PQ_TOOLCHAIN" "$PQ_BUILD" "$PQ_PACKAGE_ANCHOR"
+python3 "$PQ_NATIVE/tools/tour_package.py" materialize \
+  --controller "$PQ_BUILD/propertyquarry-release-single-host-v2" \
+  --native-build-receipt "$PQ_BUILD/build-receipt.v2.json" \
+  --output "$PQ_MATERIALIZATION"
+python3 "$PQ_NATIVE/tools/tour_package.py" build \
+  --controller "$PQ_BUILD/propertyquarry-release-single-host-v2" \
+  --native-build-receipt "$PQ_BUILD/build-receipt.v2.json" \
+  --materialization-root "$PQ_MATERIALIZATION" \
+  --output "$PQ_SIGNED_PACKAGE"
+python3 "$PQ_NATIVE/tools/tour_package.py" verify \
+  --package "$PQ_SIGNED_PACKAGE" \
+  --package-authority-public-key "$PQ_PACKAGE_ANCHOR"
+```
+
+Build the deterministic scratch image from that exact native build and retain
+the receipt emitted by the builder. Then set the exact image ID from the
+receipt; tags are not accepted:
+
+```sh
+PQ_IMAGE_RECEIPT='/absolute/fresh/private/path/installer-image-receipt.json'
+"$PQ_NATIVE/tools/build-installer-image.sh" "$PQ_BUILD" "$PQ_IMAGE_RECEIPT"
+
+PQ_TOUR_DISPATCH="$PQ_NATIVE/tools/dispatch-tour-v4-with-docker.sh"
 PQ_INSTALLER_IMAGE='sha256:<exact-64-lowercase-hex-image-id>'
-PQ_SIGNED_PACKAGE='/absolute/path/propertyquarry-release-single-host-v2.tar'
-PQ_PACKAGE_ANCHOR='/absolute/path/package-authority-v2.pem'
 ```
 
 The package must be mode `0400`, the anchor mode `0444`, and both must be

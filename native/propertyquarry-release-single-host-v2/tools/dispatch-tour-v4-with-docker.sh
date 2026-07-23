@@ -112,8 +112,9 @@ module_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 image_verifier="${module_root}/tools/install-with-docker.sh"
 [[ -f "$image_verifier" && ! -L "$image_verifier" && -x "$image_verifier" ]] || fail
 
-"$image_verifier" verify-image \
-  "$helper_image_id" "$package_path" "$package_anchor_path" >/dev/null || fail
+"$image_verifier" verify-tour-image \
+  "$helper_image_id" "$package_path" "$package_anchor_path" \
+  "${dispatch_args[0]}" >/dev/null || fail
 verify_local_docker
 [[ "$(docker image inspect --format '{{.Id}}' "$helper_image_id" 2>/dev/null)" == \
   "$helper_image_id" ]] || fail

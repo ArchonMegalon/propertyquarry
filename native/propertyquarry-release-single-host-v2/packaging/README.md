@@ -127,8 +127,18 @@ claim bindings with `tools/verify-install-receipt.py`. The runner wrapper applie
 the equivalent signed binding checks to its runner-install receipt.
 
 `tools/dispatch-tour-v4-with-docker.sh` is the separate no-input publication
-lane for the one compiled generated-reconstruction v4 permit. It first invokes
-the same external-anchor package/image verifier, then starts the exact scratch
+lane for the one compiled generated-reconstruction v4 permit. It consumes a
+distinct `single-host-tour-publication-v4` package that the ordinary runtime
+installer rejects. That deterministic mode-`0400` archive has a separate
+manifest/signature domain and exactly nine material members: the source-bound
+controller and build receipt, canonical package anchor, signed
+receipt-authority bootstrap, bootstrapped receipt key and anchor, and a
+canonical-authority-signed, machine-bound tour materialization valid for
+exactly 3,600 seconds. Its signed claims forbid host installation, runtime
+deployment, network use, and persistent credential installation; it has no
+install paths, runtime plan/helpers, runner material, or systemd/sysusers
+surface. The wrapper first invokes the tour-specific external-anchor
+package/image verifier, then starts the exact scratch
 image with `--network none`, a read-only container root, no host PID namespace,
 no Docker socket mount, all capabilities dropped except `CHOWN`,
 `DAC_OVERRIDE`, `FOWNER`, and `SYS_CHROOT`, and the host root at the single
@@ -136,10 +146,11 @@ fixed `/host` mount. Both the Bash wrapper and static Go helper accept only the
 exact authority-info, inspect, publish, recover, and rollback argument layouts;
 the artifact path, manifest digest, and published-tree rollback digest are
 compiled constants. The helper re-verifies the signed package and its own
-binary binding, derives the signed authority profile, plan, and receipt key
-from verified package memory, chroots to `/host`, and calls the v4 authority
-directly. It neither execs an installed controller nor reads a GitHub
-credential, and it exposes no shell or generic root command.
+binary binding, independently authenticates the receipt-authority bootstrap,
+host/source/artifact/operation-bound materialization, host machine ID, and
+receipt key from verified package memory, chroots to `/host`, and calls the v4
+authority directly. It neither installs nor execs a controller, reads a GitHub
+credential, deploys the runtime, nor exposes a shell or generic root command.
 
 An upgrade first stops new socket admissions and allows existing templated
 controller instances up to 315 minutes to finish before any installed file is

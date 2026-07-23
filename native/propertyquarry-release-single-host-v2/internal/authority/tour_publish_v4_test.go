@@ -41,13 +41,87 @@ func TestTourV4DetachedAuthorityNeedsNoInstalledControllerOrCredential(t *testin
 		}
 		return raw
 	}
+	packageAnchor := read(PackageAnchorPath)
+	receiptAnchor := read(ReceiptAnchorPath)
+	receiptKey := read(ReceiptKeyPath)
+	packageKeyID, err := publicKeyID(fixture.packageKey.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptKeyID, err := publicKeyID(fixture.receiptKey.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := canonicalJSON(map[string]any{
+		"created_at_epoch":                 json.Number("1800000000"),
+		"package_authority_key_id":         packageKeyID,
+		"package_authority_private_sha256": tourV4DetachedCanonicalPrivateDigest,
+		"package_authority_public_sha256":  digest(packageAnchor),
+		"package_authority_source":         tourV4DetachedCanonicalAuthorityRoot,
+		"receipt_authority_key_id":         receiptKeyID,
+		"receipt_authority_public_sha256":  digest(receiptAnchor),
+		"schema":                           tourV4DetachedBootstrapSchema,
+		"version":                          json.Number("2"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapSignature := ed25519.Sign(
+		fixture.packageKey,
+		framed(tourV4DetachedBootstrapDomain, bootstrap),
+	)
+	_, manifestSHA, err := tourV4PermitManifest(&tourV4AuthorizedPermits[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceDigest := digest([]byte("detached-source"))
+	operations := make([]any, len(tourV4DetachedOperations))
+	for index, operation := range tourV4DetachedOperations {
+		operations[index] = operation
+	}
+	materialization, err := canonicalJSON(map[string]any{
+		"accepted_installer_mode":                      "dispatch-tour-v4",
+		"allowed_operations":                           operations,
+		"artifact_bundle_path":                         tourV4DetachedBundlePath,
+		"artifact_manifest_sha256":                     manifestSHA,
+		"artifact_public_tree_sha256":                  tourV4AuthorizedPermits[0].PublicTreeSHA256,
+		"artifact_slug":                                tourV4AuthorizedPermits[0].Slug,
+		"authoritative":                                false,
+		"authority_bootstrap_sha256":                   digest(bootstrap),
+		"host_install_permitted":                       false,
+		"host_machine_id_digest":                       digest([]byte("0123456789abcdef0123456789abcdef")),
+		"materialized_at_epoch":                        json.Number("1800000000"),
+		"native_build_receipt_sha256":                  digest([]byte("build-receipt")),
+		"network_required":                             false,
+		"package_authority_key_id":                     packageKeyID,
+		"performs_release_effects":                     false,
+		"persistent_credential_installation_permitted": false,
+		"production_ready":                             false,
+		"publication_dispatch_authorized":              true,
+		"publication_target_root":                      tourV4LiveVolumeRoot,
+		"receipt_authority_key_id":                     receiptKeyID,
+		"receipt_authority_public_sha256":              digest(receiptAnchor),
+		"root_helper_authorization_required":           true,
+		"runtime_deployment_permitted":                 false,
+		"schema":                                       tourV4DetachedMaterializationSchema,
+		"source_manifest_digest":                       sourceDigest,
+		"valid_until_epoch":                            json.Number("1800003600"),
+		"version":                                      json.Number("4"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	materials := TourV4DetachedMaterials{
-		Config:          read(ConfigPath),
-		ConfigSignature: read(ConfigSignaturePath),
-		PackageAnchor:   read(PackageAnchorPath),
-		Plan:            read(PlanPath),
-		ReceiptKey:      read(ReceiptKeyPath),
-		ReceiptAnchor:   read(ReceiptAnchorPath),
+		AuthorityBootstrap:          bootstrap,
+		AuthorityBootstrapSignature: bootstrapSignature,
+		Materialization:             materialization,
+		MaterializationSignature: ed25519.Sign(
+			fixture.packageKey,
+			framed(tourV4DetachedMaterializationDomain, materialization),
+		),
+		PackageAnchor: packageAnchor,
+		ReceiptKey:    receiptKey,
+		ReceiptAnchor: receiptAnchor,
 	}
 	for _, path := range []string{
 		BaseEnvironmentPath,
@@ -61,31 +135,31 @@ func TestTourV4DetachedAuthorityNeedsNoInstalledControllerOrCredential(t *testin
 			t.Fatal(err)
 		}
 	}
-	config, key, err := tourV4DetachedAuthority(fixture.root, materials)
+	binding, key, err := tourV4DetachedAuthority(fixture.root, materials)
 	if err != nil {
 		t.Fatalf("detached signed tour authority required unrelated runtime credentials: %v", err)
 	}
-	if config.Digest != fixture.config.Digest ||
+	if binding.Profile != tourV4DetachedProfile ||
+		binding.SourceManifestDigest != sourceDigest ||
 		!bytes.Equal(key, fixture.receiptKey) {
 		t.Fatal("detached tour authority binding changed")
 	}
-	config.release()
 	zero(key)
 
 	tampered := materials
-	tampered.ConfigSignature = append([]byte(nil), materials.ConfigSignature...)
-	tampered.ConfigSignature[0] ^= 1
-	if config, key, err := tourV4DetachedAuthority(fixture.root, tampered); err == nil {
-		config.release()
+	tampered.MaterializationSignature = append(
+		[]byte(nil), materials.MaterializationSignature...,
+	)
+	tampered.MaterializationSignature[0] ^= 1
+	if _, key, err := tourV4DetachedAuthority(fixture.root, tampered); err == nil {
 		zero(key)
-		t.Fatal("tampered detached config signature was accepted")
+		t.Fatal("tampered detached materialization signature was accepted")
 	}
 	writeFixture(
 		t, rooted(fixture.root, "/etc/machine-id"),
 		[]byte("ffffffffffffffffffffffffffffffff\n"), 0o444,
 	)
-	if config, key, err := tourV4DetachedAuthority(fixture.root, materials); err == nil {
-		config.release()
+	if _, key, err := tourV4DetachedAuthority(fixture.root, materials); err == nil {
 		zero(key)
 		t.Fatal("detached authority replayed to a different host")
 	}
@@ -373,6 +447,7 @@ func tourV4TestAuthority(t *testing.T) (string, tourV4AuthorityBinding, ed25519.
 		t.Fatal(err)
 	}
 	return root, tourV4AuthorityBinding{
+		Profile:      "single-host-production-v2",
 		ConfigDigest: tourV4TestSHA([]byte("config")),
 		RuntimeSHA:   strings.Repeat("a", 40), WorkflowSHA: strings.Repeat("b", 40),
 		DeploymentID: strings.Repeat("c", 64), ReceiptKeyID: keyID,

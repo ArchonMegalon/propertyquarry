@@ -42,6 +42,8 @@ internal/installhelper/systemd_canary.go
 internal/installhelper/systemd_canary_test.go
 internal/installhelper/tour_dispatch.go
 internal/installhelper/tour_dispatch_test.go
+internal/installhelper/tour_package.go
+internal/installhelper/tour_package_test.go
 packaging/README.md
 packaging/templates/propertyquarry-release-single-host-v2-activation-canary.service
 packaging/templates/propertyquarry-release-single-host-v2.socket

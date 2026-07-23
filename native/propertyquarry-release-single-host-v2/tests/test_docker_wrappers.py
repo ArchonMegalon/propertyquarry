@@ -169,7 +169,7 @@ class DockerWrapperTests(unittest.TestCase):
     def test_tour_dispatch_is_package_first_and_has_no_generic_root_exec(self) -> None:
         text = TOUR_DISPATCH.read_text(encoding="utf-8")
         build = (TOOLS / "build.sh").read_text(encoding="utf-8")
-        verify = text.index('"$image_verifier" verify-image')
+        verify = text.index('"$image_verifier" verify-tour-image')
         run = text.index("docker run --rm --pull never")
         self.assertLess(verify, run)
         for token in (
@@ -208,6 +208,17 @@ class DockerWrapperTests(unittest.TestCase):
                 "authority.SourceManifestDigest=${source_digest}"
             ),
             2,
+        )
+        installer = INSTALL.read_text(encoding="utf-8")
+        self.assertIn("verify_tour_signed_package_image()", installer)
+        self.assertIn('tour_package_tool="${module_root}/tools/tour_package.py"', installer)
+        self.assertIn(
+            '--package-authority-public-key "$package_anchor_path"',
+            installer,
+        )
+        self.assertIn(
+            'if [[ "$#" -eq 5 && "${1:-}" == "verify-tour-image" ]]',
+            installer,
         )
         self.assertEqual(
             build.count(

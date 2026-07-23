@@ -434,14 +434,23 @@ class TourPackageTests(unittest.TestCase):
 
     def test_expired_materialization_is_rejected(self) -> None:
         _, archive = self._materialize_and_build()
+        expired_now = (
+            self.NOW + tour_package.MATERIALIZATION_TTL_SECONDS + 1
+        )
         with self.assertRaisesRegex(
             tour_package.package.PackageFailure,
             "tour-materialization-shape-or-freshness-invalid",
         ):
             tour_package.verify_package(
                 os.fspath(archive),
-                now=self.NOW + tour_package.MATERIALIZATION_TTL_SECONDS + 1,
+                now=expired_now,
             )
+        recovery = tour_package.verify_package(
+            os.fspath(archive),
+            require_fresh=False,
+            now=expired_now,
+        )
+        self.assertFalse(recovery.fresh)
 
 
 def stat_mode(path: Path) -> int:
