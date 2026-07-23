@@ -1093,6 +1093,42 @@ def _owned_hosted_property_tour_binding_identity(
         )
     if not public_payload or not private_payload:
         return {}
+    from app.product.property_search_tour_binding import (
+        canonical_property_source_url,
+        property_search_source_url_sha256,
+    )
+
+    canonical_property_urls: set[str] = set()
+    for key in ("property_url", "listing_url"):
+        raw_property_url = str(private_payload.get(key) or "").strip()
+        if not raw_property_url:
+            continue
+        canonical_property_url = canonical_property_source_url(raw_property_url)
+        if not canonical_property_url:
+            return {}
+        canonical_property_urls.add(canonical_property_url)
+    if len(canonical_property_urls) != 1:
+        return {}
+    property_url_sha256 = property_search_source_url_sha256(
+        next(iter(canonical_property_urls))
+    )
+    declared_property_url_sha256 = str(
+        public_payload.get("property_url_sha256") or ""
+    ).strip().lower()
+    if (
+        not property_url_sha256
+        or (
+            declared_property_url_sha256
+            and (
+                not re.fullmatch(r"[0-9a-f]{64}", declared_property_url_sha256)
+                or not hmac.compare_digest(
+                    declared_property_url_sha256,
+                    property_url_sha256,
+                )
+            )
+        )
+    ):
+        return {}
     return {
         "owner_verified": True,
         "slug": slug,
@@ -1102,9 +1138,7 @@ def _owned_hosted_property_tour_binding_identity(
         "property_url": str(private_payload.get("property_url") or "").strip(),
         "source_ref": str(private_payload.get("source_ref") or "").strip(),
         "external_id": str(private_payload.get("external_id") or "").strip(),
-        "property_url_sha256": str(
-            public_payload.get("property_url_sha256") or ""
-        ).strip().lower(),
+        "property_url_sha256": property_url_sha256,
     }
 
 

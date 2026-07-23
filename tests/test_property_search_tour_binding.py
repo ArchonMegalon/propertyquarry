@@ -496,6 +496,71 @@ def test_owned_bundle_identity_never_falls_back_to_public_manifest_for_wrong_own
     }
 
 
+def test_owned_bundle_identity_derives_legacy_hash_only_from_matching_private_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    slug = "prater-messe-ai-360-053ad185e1c44b2e"
+    bundle_dir = tmp_path / slug
+    bundle_dir.mkdir()
+    public_manifest_path = bundle_dir / "tour.json"
+    private_manifest_path = bundle_dir / "tour.private.json"
+    public_manifest_path.write_text(
+        json.dumps({"slug": slug}),
+        encoding="utf-8",
+    )
+    private_payload = {
+        "principal_id": PRINCIPAL_ID,
+        "search_run_id": RUN_ID,
+        "candidate_ref": CANDIDATE_REF,
+        "listing_url": PROPERTY_URL,
+        "property_url": PROPERTY_URL,
+        "source_ref": f"property-scout:{LISTING_ID}",
+        "external_id": LISTING_ID,
+    }
+    private_manifest_path.write_text(
+        json.dumps(private_payload),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(property_tour_hosting, "_public_tour_dir", lambda: tmp_path)
+
+    owned = property_tour_hosting._owned_hosted_property_tour_binding_identity(
+        TOUR_URL,
+        principal_id=PRINCIPAL_ID,
+    )
+    assert owned["owner_verified"] is True
+    assert owned["property_url_sha256"] == PROPERTY_URL_SHA256
+
+    public_manifest_path.write_text(
+        json.dumps({"slug": slug, "property_url_sha256": "0" * 64}),
+        encoding="utf-8",
+    )
+    assert (
+        property_tour_hosting._owned_hosted_property_tour_binding_identity(
+            TOUR_URL,
+            principal_id=PRINCIPAL_ID,
+        )
+        == {}
+    )
+
+    public_manifest_path.write_text(
+        json.dumps({"slug": slug}),
+        encoding="utf-8",
+    )
+    private_payload["listing_url"] = "https://findmyhome.at/conflicting-listing"
+    private_manifest_path.write_text(
+        json.dumps(private_payload),
+        encoding="utf-8",
+    )
+    assert (
+        property_tour_hosting._owned_hosted_property_tour_binding_identity(
+            TOUR_URL,
+            principal_id=PRINCIPAL_ID,
+        )
+        == {}
+    )
+
+
 def test_public_manifest_exposes_only_a_valid_property_url_digest() -> None:
     def _redact(value: object) -> dict[str, object]:
         return redacted_public_tour_payload(
