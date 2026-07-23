@@ -45,6 +45,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		zero(receipt)
+	} else if len(args) == 1 && args[0] == "provision-github-credential" {
+		var receipt []byte
+		receipt, err = ProvisionFixedGitHubCredential()
+		if len(receipt) > 0 {
+			if receiptErr := WriteReceipt(FixedGitHubCredentialReceiptPath, receipt); receiptErr != nil {
+				err = receiptErr
+			}
+		}
+		zero(receipt)
 	} else if len(args) == 1 && (args[0] == "install" || args[0] == "install-runner") {
 		var receipt []byte
 		var installErr error
@@ -88,7 +97,7 @@ func WriteReceipt(path string, raw []byte) error {
 	if _, err := strictJSON(raw, maximumManifestBytes); err != nil {
 		return fmt.Errorf("install-receipt-invalid")
 	}
-	if path != FixedReceiptPath && path != FixedRunnerReceiptPath {
+	if path != FixedReceiptPath && path != FixedRunnerReceiptPath && path != FixedGitHubCredentialReceiptPath {
 		return fmt.Errorf("install-receipt-path-invalid")
 	}
 	directoryInfo, err := os.Lstat(filepath.Dir(path))

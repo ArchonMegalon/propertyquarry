@@ -343,6 +343,53 @@ class ReceiptVerifierTests(unittest.TestCase):
         result = self._run("runner", receipt)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_signed_github_credential_receipt_is_secret_free_and_bound(self) -> None:
+        manifest = self.verified.manifest
+        payload: dict[str, object] = {
+            "archive_digest": self.verified.archive_sha256,
+            "authority_profile": package.PROFILE,
+            "credential_ciphertext_bytes": 512,
+            "credential_ciphertext_sha256": "sha256:" + "c" * 64,
+            "credential_gid": 0,
+            "credential_install_performed": True,
+            "credential_mode": "0400",
+            "credential_path": (
+                "/etc/propertyquarry-release-single-host-v2/"
+                "github-api-token.cred"
+            ),
+            "credential_present": True,
+            "credential_source_transport": "named-fifo-fd8",
+            "credential_uid": 0,
+            "disposition": "provisioned",
+            "host_mutation_performed": True,
+            "installed_at": 1,
+            "package_authority_key_id": manifest["package_authority_key_id"],
+            "plaintext_digest_recorded": False,
+            "production_ready": False,
+            "receipt_authority_key_id": manifest["receipt_authority_key_id"],
+            "recovery_performed": False,
+            "release_generation": manifest["release_generation"],
+            "rotation_performed": False,
+            "round_trip_verified": True,
+            "runtime_sha": manifest["runtime_sha"],
+            "schema": (
+                "propertyquarry.release-control.single-host-"
+                "github-credential-receipt.v2"
+            ),
+            "systemd_credential_key": "host",
+            "systemd_credential_name": "github-api-token",
+            "token_material_recorded": False,
+            "version": 2,
+            "workflow_sha": manifest["workflow_sha"],
+        }
+        receipt = self._receipt("credential-receipt.json", payload)
+        result = self._run("credential", receipt)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("github_pat_", receipt.read_text(encoding="utf-8"))
+        payload["token_material_recorded"] = True
+        invalid = self._receipt("credential-secret-claim.json", payload)
+        self.assertEqual(self._run("credential", invalid).returncode, 50)
+
 
 if __name__ == "__main__":
     unittest.main()

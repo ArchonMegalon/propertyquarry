@@ -27,6 +27,8 @@ internal/authority/runner_ticket_test.go
 internal/authority/runtime_contract.go
 internal/authority/runtime_inputs.go
 internal/installhelper/canonical.go
+internal/installhelper/credential.go
+internal/installhelper/credential_test.go
 internal/installhelper/install.go
 internal/installhelper/install_preadmission_test.go
 internal/installhelper/install_test.go
@@ -44,6 +46,7 @@ packaging/templates/propertyquarry-release-single-host-v2.tmpfiles.conf
 packaging/templates/propertyquarry-release-single-host-v2@.service
 packaging/trust/sigstore-public-good-trusted-root.jsonl
 runner.lock.json
+tests/test_credential_bootstrap_wrapper.py
 tests/test_docker_wrappers.py
 tests/test_fetch_attestation_verifier.py
 tests/test_materialize.py
@@ -63,6 +66,7 @@ tools/install-with-docker.sh
 tools/materialize.py
 tools/package.py
 tools/prepare-runner-reservation.py
+tools/provision-github-credential-with-docker.sh
 tools/run-ephemeral-runner-with-docker.sh
 tools/run-ephemeral-runner.sh
 tools/source-files.txt

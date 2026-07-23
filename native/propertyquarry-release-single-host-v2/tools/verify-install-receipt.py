@@ -398,9 +398,97 @@ def verify_runner(payload: dict[str, Any], verified: Any, key_id: str) -> None:
         fail("runner-receipt-binding-invalid")
 
 
+def verify_credential(
+    payload: dict[str, Any], verified: Any, key_id: str
+) -> None:
+    expected = {
+        "archive_digest",
+        "authority_profile",
+        "credential_ciphertext_bytes",
+        "credential_ciphertext_sha256",
+        "credential_gid",
+        "credential_install_performed",
+        "credential_mode",
+        "credential_path",
+        "credential_present",
+        "credential_source_transport",
+        "credential_uid",
+        "disposition",
+        "host_mutation_performed",
+        "installed_at",
+        "package_authority_key_id",
+        "plaintext_digest_recorded",
+        "production_ready",
+        "receipt_authority_key_id",
+        "recovery_performed",
+        "release_generation",
+        "rotation_performed",
+        "round_trip_verified",
+        "runtime_sha",
+        "schema",
+        "systemd_credential_key",
+        "systemd_credential_name",
+        "token_material_recorded",
+        "version",
+        "workflow_sha",
+    }
+    exact_keys(payload, expected, "credential-receipt-payload")
+    manifest = verified.manifest
+    disposition = payload.get("disposition")
+    expected_state = {
+        "provisioned": (True, False),
+        "recovered-and-provisioned": (True, True),
+        "already-provisioned": (False, False),
+    }.get(disposition)
+    if (
+        payload.get("schema")
+        != "propertyquarry.release-control.single-host-github-credential-receipt.v2"
+        or payload.get("version") != 2
+        or payload.get("authority_profile") != package.PROFILE
+        or expected_state is None
+        or payload.get("archive_digest") != verified.archive_sha256
+        or payload.get("runtime_sha") != manifest["runtime_sha"]
+        or payload.get("workflow_sha") != manifest["workflow_sha"]
+        or payload.get("release_generation") != manifest["release_generation"]
+        or payload.get("package_authority_key_id")
+        != manifest["package_authority_key_id"]
+        or payload.get("receipt_authority_key_id") != key_id
+        or payload.get("credential_path")
+        != "/etc/propertyquarry-release-single-host-v2/github-api-token.cred"
+        or payload.get("credential_mode") != "0400"
+        or payload.get("credential_uid") != 0
+        or payload.get("credential_gid") != 0
+        or payload.get("credential_source_transport") != "named-fifo-fd8"
+        or payload.get("systemd_credential_name") != "github-api-token"
+        or payload.get("systemd_credential_key") != "host"
+        or not isinstance(payload.get("credential_ciphertext_sha256"), str)
+        or not package.SHA256_PATTERN.fullmatch(
+            payload["credential_ciphertext_sha256"]
+        )
+        or not isinstance(payload.get("credential_ciphertext_bytes"), int)
+        or isinstance(payload.get("credential_ciphertext_bytes"), bool)
+        or not 64 <= payload["credential_ciphertext_bytes"] <= 64 * 1024
+        or not isinstance(payload.get("installed_at"), int)
+        or isinstance(payload.get("installed_at"), bool)
+        or payload["installed_at"] < 1
+        or payload.get("credential_present") is not True
+        or payload.get("round_trip_verified") is not True
+        or payload.get("rotation_performed") is not False
+        or payload.get("token_material_recorded") is not False
+        or payload.get("plaintext_digest_recorded") is not False
+        or payload.get("production_ready") is not False
+        or payload.get("credential_install_performed") is not expected_state[0]
+        or payload.get("host_mutation_performed") is not expected_state[0]
+        or payload.get("recovery_performed") is not expected_state[1]
+    ):
+        fail("credential-receipt-binding-invalid")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--kind", choices=("install", "runner"), required=True)
+    parser.add_argument(
+        "--kind", choices=("credential", "install", "runner"), required=True
+    )
     parser.add_argument("--package", required=True)
     parser.add_argument("--package-authority-public-key", required=True)
     parser.add_argument("--receipt", required=True)
@@ -416,8 +504,10 @@ def main() -> int:
     payload, key_id = verify_wire(raw, verified)
     if arguments.kind == "install":
         verify_install(payload, verified, key_id)
-    else:
+    elif arguments.kind == "runner":
         verify_runner(payload, verified, key_id)
+    else:
+        verify_credential(payload, verified, key_id)
     result = {
         "authoritative": False,
         "kind": arguments.kind,
