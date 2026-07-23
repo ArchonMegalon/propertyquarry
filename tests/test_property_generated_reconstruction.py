@@ -3004,6 +3004,53 @@ def test_generated_reconstruction_previews_disclose_floorplan_only_and_fit_share
         assert rendered.size == (1600, 1000)
 
 
+def test_generated_reconstruction_discloses_photo_inferred_schematic_as_unverified(tmp_path: Path) -> None:
+    disclosure = reconstruction_script._generated_reconstruction_disclosure(
+        photo_count=8,
+        floorplan_inferred=True,
+    )
+
+    assert disclosure == (
+        "Generated planning preview built from an inferred schematic and listing photos. "
+        "The layout and dimensions are not verified; use it as an orientation aid, not as a captured tour."
+    )
+    assert "built from the floor plan" not in disclosure
+
+    inferred_floorplan = tmp_path / "inferred-floorplan.jpg"
+    photo_a = tmp_path / "living.jpg"
+    photo_b = tmp_path / "bedroom.jpg"
+    preview = tmp_path / "inferred-preview.png"
+    telegram_preview = tmp_path / "inferred-telegram-preview.png"
+    _write_floorplan(inferred_floorplan)
+    _write_photo(photo_a, (126, 108, 82))
+    _write_photo(photo_b, (86, 104, 112))
+    walkable_scene = reconstruction_script._reconstruction_walkable_scene(
+        route_labels=["living room", "bedroom"],
+        width_m=10.0,
+        depth_m=7.4,
+        height_m=2.8,
+    )
+
+    preview_receipt = reconstruction_script._write_generated_reconstruction_diorama_preview(
+        preview,
+        floorplan_path=inferred_floorplan,
+        photo_paths=[photo_a, photo_b],
+        walkable_scene=walkable_scene,
+        floorplan_inferred=True,
+    )
+
+    assert preview_receipt["status"] == "generated", preview_receipt
+    assert preview_receipt["source_mode"] == "inferred_schematic_and_listing_photos"
+    assert preview_receipt["source_disclosure"] == disclosure
+    assert preview.is_file()
+    telegram_receipt = reconstruction_script._write_generated_reconstruction_telegram_preview(
+        telegram_preview,
+        source_path=preview,
+    )
+    assert telegram_receipt["status"] == "generated", telegram_receipt
+    assert telegram_preview.is_file()
+
+
 def test_generated_reconstruction_walkable_scene_snaps_route_stops_to_open_floorplan_cells() -> None:
     wall_mask = [
         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -3187,6 +3234,53 @@ def test_generated_reconstruction_recovers_thin_dark_dividers_without_colored_an
     assert sum(abs(float(segment["rotation_y"])) < 0.2 for segment in wall_segments) == 3
     assert any(-4.0 < float(segment["center_x"]) < -0.5 for segment in wall_segments)
     assert any(-1.0 < float(segment["center_z"]) < 1.0 for segment in wall_segments)
+
+
+def test_generated_reconstruction_discloses_boundary_completion_for_sparse_geometry() -> None:
+    extracted = [
+        {
+            "center_x": -3.0,
+            "center_z": 2.5,
+            "width": 1.4,
+            "depth": 0.18,
+            "rotation_y": 0.0,
+        },
+        {
+            "center_x": 0.0,
+            "center_z": 0.0,
+            "width": 4.2,
+            "depth": 0.16,
+            "rotation_y": -0.04,
+        },
+        {
+            "center_x": 2.8,
+            "center_z": -1.0,
+            "width": 2.0,
+            "depth": 0.15,
+            "rotation_y": -1.570796,
+        },
+    ]
+
+    completed, receipt = reconstruction_script._wall_rectangles_with_boundary_completion(
+        extracted,
+        width_m=10.0,
+        depth_m=8.5,
+    )
+
+    assert completed[:3] == extracted
+    assert len(completed) == 7
+    assert receipt == {
+        "status": "applied",
+        "method": "generated_room_envelope_v1",
+        "reason": "extracted_wall_count_below_four",
+        "extracted_wall_count": 3,
+        "added_wall_count": 4,
+        "boundary_width_m": 10.0,
+        "boundary_depth_m": 8.5,
+        "boundary_thickness_m": 0.153,
+    }
+    assert {float(row["center_z"]) for row in completed[-4:-2]} == {-4.25, 4.25}
+    assert {float(row["center_x"]) for row in completed[-2:]} == {-5.0, 5.0}
 
 
 def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthrough(

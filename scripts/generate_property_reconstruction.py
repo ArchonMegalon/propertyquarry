@@ -1870,7 +1870,16 @@ def _remove_generation_input_snapshot(
             os.close(stage_fd)
 
 
-def _generated_reconstruction_disclosure(*, photo_count: int) -> str:
+def _generated_reconstruction_disclosure(
+    *,
+    photo_count: int,
+    floorplan_inferred: bool = False,
+) -> str:
+    if floorplan_inferred:
+        return (
+            "Generated planning preview built from an inferred schematic and listing photos. "
+            "The layout and dimensions are not verified; use it as an orientation aid, not as a captured tour."
+        )
     source_noun = "the floor plan and listing photos" if max(0, int(photo_count)) else "the floor plan"
     return f"Planning preview built from {source_noun}. Use it as a layout aid, not as a captured tour."
 
@@ -3220,6 +3229,7 @@ def _write_generated_reconstruction_diorama_preview(
     photo_paths: list[Path],
     walkable_scene: dict[str, object],
     style_label: str = "",
+    floorplan_inferred: bool = False,
 ) -> dict[str, object]:
     palette = _generated_reconstruction_diorama_palette(style_label)
     route_stops = [dict(stop) for stop in list(walkable_scene.get("route") or []) if isinstance(stop, dict)]
@@ -3234,11 +3244,26 @@ def _write_generated_reconstruction_diorama_preview(
     ]
     route_stop_count = max(1, len(route_stops))
     photo_count = len(photo_paths)
-    source_mode = "floorplan_and_listing_photos" if photo_count else "floorplan_only"
-    source_noun = "the floor plan and listing photos" if photo_count else "the floor plan"
-    source_disclosure = (
-        f"Generated from {source_noun}. Use it as a layout-first briefing image, not as a captured tour."
-    )
+    if floorplan_inferred:
+        source_mode = "inferred_schematic_and_listing_photos"
+        source_noun = "an inferred schematic and listing photos"
+        source_disclosure = _generated_reconstruction_disclosure(
+            photo_count=photo_count,
+            floorplan_inferred=True,
+        )
+        body_copy = "Perspective staging from an inferred photo schematic."
+        footer_copy = (
+            "Inferred from listing photos; layout and dimensions are unverified. "
+            "Not a captured tour."
+        )
+    else:
+        source_mode = "floorplan_and_listing_photos" if photo_count else "floorplan_only"
+        source_noun = "the floor plan and listing photos" if photo_count else "the floor plan"
+        source_disclosure = (
+            f"Generated from {source_noun}. Use it as a layout-first briefing image, not as a captured tour."
+        )
+        body_copy = f"Perspective staging from {source_noun}."
+        footer_copy = source_disclosure
     preview_sources = list(photo_paths[:3]) or [floorplan_path]
     try:
         eyebrow_font = _preview_font(22, bold=True)
@@ -3346,7 +3371,6 @@ def _write_generated_reconstruction_diorama_preview(
         first_title_origin = (100, 121)
         second_title_origin = (100, 172)
         body_origin = (102, 234)
-        body_copy = f"Perspective staging from {source_noun}."
         draw.text(eyebrow_origin, "Generated diorama", font=eyebrow_font, fill=(96, 72, 38))
         draw.text(first_title_origin, "Layout-first", font=title_font, fill=(42, 35, 26))
         draw.text(second_title_origin, "room route", font=title_font, fill=(42, 35, 26))
@@ -3485,7 +3509,7 @@ def _write_generated_reconstruction_diorama_preview(
         _draw_wrapped_text(
             draw,
             footer_origin,
-            source_disclosure,
+            footer_copy,
             font=footer_font,
             fill=(84, 66, 40),
             max_width=(footer_box[2] - footer_box[0]) - 48,
@@ -3493,7 +3517,7 @@ def _write_generated_reconstruction_diorama_preview(
         )
         footer_text_box = _preview_wrapped_text_box(
             footer_origin,
-            source_disclosure,
+            footer_copy,
             font=footer_font,
             max_width=(footer_box[2] - footer_box[0]) - 48,
             line_gap=2,
@@ -5512,6 +5536,82 @@ def _wall_rectangles_from_mask(
     if oriented:
         return oriented
     return _axis_aligned_wall_rectangles_from_mask(wall_mask, width_m=width_m, depth_m=depth_m)
+
+
+def _wall_rectangles_with_boundary_completion(
+    wall_rectangles: list[dict[str, float]],
+    *,
+    width_m: float,
+    depth_m: float,
+) -> tuple[list[dict[str, float]], dict[str, object]]:
+    """Close sparse extracted geometry with a disclosed room envelope.
+
+    Some listing floorplans use furniture, fills, or fine antialiased strokes
+    that leave fewer than four connected wall segments after annotation
+    filtering.  A walkable preview still needs a closed outer envelope.  Keep
+    every extracted segment and add four clearly disclosed boundary walls;
+    this remains a generated planning aid and is never treated as a verified
+    provider capture.
+    """
+
+    extracted = [dict(row) for row in wall_rectangles]
+    extracted_count = len(extracted)
+    if extracted_count >= 4:
+        return extracted, {
+            "status": "not_needed",
+            "method": "none",
+            "reason": "extracted_wall_count_sufficient",
+            "extracted_wall_count": extracted_count,
+            "added_wall_count": 0,
+        }
+    normalized_width = max(3.0, float(width_m or 0.0))
+    normalized_depth = max(3.0, float(depth_m or 0.0))
+    thickness = round(
+        max(0.12, min(0.28, min(normalized_width, normalized_depth) * 0.018)),
+        4,
+    )
+    half_width = normalized_width / 2.0
+    half_depth = normalized_depth / 2.0
+    boundary_walls = [
+        {
+            "center_x": 0.0,
+            "center_z": round(-half_depth, 4),
+            "width": round(normalized_width, 4),
+            "depth": thickness,
+            "rotation_y": 0.0,
+        },
+        {
+            "center_x": 0.0,
+            "center_z": round(half_depth, 4),
+            "width": round(normalized_width, 4),
+            "depth": thickness,
+            "rotation_y": 0.0,
+        },
+        {
+            "center_x": round(-half_width, 4),
+            "center_z": 0.0,
+            "width": round(normalized_depth, 4),
+            "depth": thickness,
+            "rotation_y": round(-math.pi / 2.0, 6),
+        },
+        {
+            "center_x": round(half_width, 4),
+            "center_z": 0.0,
+            "width": round(normalized_depth, 4),
+            "depth": thickness,
+            "rotation_y": round(-math.pi / 2.0, 6),
+        },
+    ]
+    return [*extracted, *boundary_walls], {
+        "status": "applied",
+        "method": "generated_room_envelope_v1",
+        "reason": "extracted_wall_count_below_four",
+        "extracted_wall_count": extracted_count,
+        "added_wall_count": len(boundary_walls),
+        "boundary_width_m": round(normalized_width, 4),
+        "boundary_depth_m": round(normalized_depth, 4),
+        "boundary_thickness_m": thickness,
+    }
 
 
 def _write_obj(
@@ -9505,8 +9605,13 @@ def _generate_reconstruction_on_anchored_surface(
         int(geometry_content_size.get("height") or floorplan_meta["height"]),
         max_width_m=max(3.0, float(args.max_width_m)),
     )
-    wall_rectangles = _wall_rectangles_from_mask(
+    extracted_wall_rectangles = _wall_rectangles_from_mask(
         list(geometry.get("wall_mask") or []),
+        width_m=width_m,
+        depth_m=depth_m,
+    )
+    wall_rectangles, boundary_completion = _wall_rectangles_with_boundary_completion(
+        extracted_wall_rectangles,
         width_m=width_m,
         depth_m=depth_m,
     )
@@ -9575,13 +9680,18 @@ def _generate_reconstruction_on_anchored_surface(
         height_m=height_m,
     )
     style_label = str(args.style_label or "").strip()
-    source_disclosure = _generated_reconstruction_disclosure(photo_count=len(photo_rows))
+    floorplan_inferred = bool(floorplan_meta.get("inferred"))
+    source_disclosure = _generated_reconstruction_disclosure(
+        photo_count=len(photo_rows),
+        floorplan_inferred=floorplan_inferred,
+    )
     diorama_preview = _write_generated_reconstruction_diorama_preview(
         bundle_dir / "diorama-preview.png",
         floorplan_path=floorplan_target,
         photo_paths=photo_paths,
         walkable_scene=walkable_scene,
         style_label=style_label,
+        floorplan_inferred=floorplan_inferred,
     )
     telegram_preview = (
         _write_generated_reconstruction_telegram_preview(
@@ -9601,7 +9711,11 @@ def _generate_reconstruction_on_anchored_surface(
         "verified_provider_capture": False,
         "satisfies_verified_tour_gate": False,
         "style_label": style_label,
-        "method": "floorplan_directional_wall_segments_with_source_photo_reference_panels",
+        "method": (
+            "photo_inferred_schematic_with_source_photo_reference_panels"
+            if floorplan_inferred
+            else "floorplan_directional_wall_segments_with_source_photo_reference_panels"
+        ),
         "room_dimensions_m": {"width": width_m, "depth": depth_m, "height": height_m},
         "geometry": {
             "content_bbox_px": dict(geometry.get("content_bbox_px") or {}),
@@ -9609,8 +9723,11 @@ def _generate_reconstruction_on_anchored_surface(
             "mask_size_cells": dict(geometry.get("mask_size_cells") or {}),
             "extraction_method": str(geometry.get("extraction_method") or ""),
             "floor_texture_crop": _floorplan_texture_crop(geometry, floorplan_meta),
+            "floorplan_inferred": floorplan_inferred,
             "wall_rectangles": wall_rectangles,
             "wall_rect_count": len(wall_rectangles),
+            "extracted_wall_rect_count": len(extracted_wall_rectangles),
+            "boundary_completion": boundary_completion,
         },
         "floorplan": floorplan_meta,
         "photos": photo_rows,
