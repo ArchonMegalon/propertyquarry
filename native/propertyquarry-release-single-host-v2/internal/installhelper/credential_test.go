@@ -159,8 +159,20 @@ func TestReadGitHubTokenFIFOAcceptsOneTrailingNewlineOnly(t *testing.T) {
 }
 
 func TestCredentialValidatorsRejectWhitespaceAndNonCiphertext(t *testing.T) {
-	if validGitHubToken([]byte(strings.Repeat("a", 31))) || validGitHubToken([]byte("github_pat_"+strings.Repeat("a", 40)+"\n")) {
-		t.Fatal("invalid token accepted")
+	for _, invalid := range [][]byte{
+		[]byte(strings.Repeat("a", 31)),
+		[]byte("github_pat_" + strings.Repeat("a", 40) + "\n"),
+		[]byte("github_pat_" + strings.Repeat("a", 19)),
+		[]byte("github_pat_" + strings.Repeat("a", 20) + "-"),
+		[]byte("ghp_" + strings.Repeat("a", 48)),
+		[]byte("gho_" + strings.Repeat("a", 48)),
+		[]byte("ghu_" + strings.Repeat("a", 48)),
+		[]byte("ghs_" + strings.Repeat("a", 48)),
+		[]byte("ghr_" + strings.Repeat("a", 48)),
+	} {
+		if validGitHubToken(invalid) {
+			t.Fatalf("invalid/classic token accepted: %q", invalid[:4])
+		}
 	}
 	if !validGitHubToken(testGitHubToken('a')) {
 		t.Fatal("valid token rejected")

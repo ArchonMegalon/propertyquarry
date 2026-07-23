@@ -117,20 +117,39 @@ class ReceiptVerifierTests(unittest.TestCase):
         }
         return wrapper, package.sha256(package.canonical_json(wrapper))
 
-    def _run(self, kind: str, receipt: Path) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self,
+        kind: str,
+        receipt: Path,
+        expected_credential_instance_sha256: str | None = (
+            "sha256:" + "d" * 64
+        ),
+    ) -> subprocess.CompletedProcess[str]:
+        arguments = [
+            "python3",
+            "-B",
+            os.fspath(VERIFIER),
+            "--kind",
+            kind,
+            "--package",
+            os.fspath(self.archive),
+            "--package-authority-public-key",
+            os.fspath(self.fixture.paths["package_public"]),
+            "--receipt",
+            os.fspath(receipt),
+        ]
+        if (
+            kind == "credential"
+            and expected_credential_instance_sha256 is not None
+        ):
+            arguments.extend(
+                [
+                    "--expected-credential-instance-sha256",
+                    expected_credential_instance_sha256,
+                ]
+            )
         return subprocess.run(
-            [
-                "python3",
-                os.fspath(VERIFIER),
-                "--kind",
-                kind,
-                "--package",
-                os.fspath(self.archive),
-                "--package-authority-public-key",
-                os.fspath(self.fixture.paths["package_public"]),
-                "--receipt",
-                os.fspath(receipt),
-            ],
+            arguments,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -351,6 +370,7 @@ class ReceiptVerifierTests(unittest.TestCase):
             "credential_ciphertext_bytes": 512,
             "credential_ciphertext_sha256": "sha256:" + "c" * 64,
             "credential_gid": 0,
+            "credential_instance_sha256": "sha256:" + "d" * 64,
             "credential_install_performed": True,
             "credential_mode": "0400",
             "credential_path": (
@@ -364,7 +384,7 @@ class ReceiptVerifierTests(unittest.TestCase):
             "host_mutation_performed": True,
             "installed_at": 1,
             "package_authority_key_id": manifest["package_authority_key_id"],
-            "plaintext_digest_recorded": False,
+            "plaintext_digest_recorded": True,
             "production_ready": False,
             "receipt_authority_key_id": manifest["receipt_authority_key_id"],
             "recovery_performed": False,
@@ -386,6 +406,22 @@ class ReceiptVerifierTests(unittest.TestCase):
         result = self._run("credential", receipt)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("github_pat_", receipt.read_text(encoding="utf-8"))
+        self.assertEqual(
+            self._run(
+                "credential",
+                receipt,
+                "sha256:" + "e" * 64,
+            ).returncode,
+            50,
+        )
+        self.assertEqual(
+            self._run(
+                "credential",
+                receipt,
+                None,
+            ).returncode,
+            50,
+        )
         payload["token_material_recorded"] = True
         invalid = self._receipt("credential-secret-claim.json", payload)
         self.assertEqual(self._run("credential", invalid).returncode, 50)

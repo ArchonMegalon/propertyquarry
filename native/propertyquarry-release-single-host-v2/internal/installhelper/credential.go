@@ -36,9 +36,15 @@ type credentialPublishResult struct {
 // ProvisionFixedGitHubCredential verifies the release package before reading
 // the token from the fixed FIFO. The plaintext is only ever passed to
 // systemd-creds through stdin and is cleared from process-owned byte slices.
-func ProvisionFixedGitHubCredential() ([]byte, error) {
+func ProvisionFixedGitHubCredential(expectedCredentialInstanceSHA256 string) ([]byte, error) {
+	if err := disableCredentialDumps(); err != nil {
+		return nil, err
+	}
 	if os.Geteuid() != 0 || os.Getegid() != 0 {
 		return nil, fmt.Errorf("credential-provision-root-required")
+	}
+	if !digestPattern.MatchString(expectedCredentialInstanceSHA256) {
+		return nil, fmt.Errorf("credential-instance-binding-invalid")
 	}
 	packageKey, packageKeyID, err := EmbeddedPackageAuthority()
 	if err != nil {
@@ -76,6 +82,13 @@ func ProvisionFixedGitHubCredential() ([]byte, error) {
 		return nil, err
 	}
 	defer zero(token)
+	credentialInstanceSHA256 := digest(token)
+	if subtle.ConstantTimeCompare(
+		[]byte(credentialInstanceSHA256),
+		[]byte(expectedCredentialInstanceSHA256),
+	) != 1 {
+		return nil, fmt.Errorf("credential-instance-binding-invalid")
+	}
 	if err := validateHostSystemdCredentialRuntime(FixedHostRoot); err != nil {
 		return nil, err
 	}
@@ -115,6 +128,7 @@ func ProvisionFixedGitHubCredential() ([]byte, error) {
 		"authority_profile":            "single-host-production-v2",
 		"credential_ciphertext_bytes":  json.Number(strconv.Itoa(len(published.ciphertext))),
 		"credential_ciphertext_sha256": digest(published.ciphertext),
+		"credential_instance_sha256":   credentialInstanceSHA256,
 		"credential_install_performed": published.installPerformed,
 		"credential_mode":              "0400",
 		"credential_path":              githubCredentialSource,
@@ -126,7 +140,7 @@ func ProvisionFixedGitHubCredential() ([]byte, error) {
 		"host_mutation_performed":      published.installPerformed,
 		"installed_at":                 json.Number(strconv.FormatInt(time.Now().UTC().Unix(), 10)),
 		"package_authority_key_id":     verified.PackageAuthorityKeyID,
-		"plaintext_digest_recorded":    false,
+		"plaintext_digest_recorded":    true,
 		"production_ready":             false,
 		"receipt_authority_key_id":     verified.ReceiptAuthorityKeyID,
 		"recovery_performed":           published.recoveryPerformed,
@@ -142,6 +156,25 @@ func ProvisionFixedGitHubCredential() ([]byte, error) {
 		"workflow_sha":                 verified.WorkflowSHA,
 	}
 	return signedWire(payload, receiptKey, verified.ReceiptAuthorityKeyID)
+}
+
+func disableCredentialDumps() error {
+	limit := &syscall.Rlimit{Cur: 0, Max: 0}
+	if err := syscall.Setrlimit(syscall.RLIMIT_CORE, limit); err != nil {
+		return fmt.Errorf("credential-core-limit-failed")
+	}
+	var actual syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_CORE, &actual); err != nil || actual.Cur != 0 || actual.Max != 0 {
+		return fmt.Errorf("credential-core-limit-failed")
+	}
+	if _, _, errno := syscall.Syscall6(syscall.SYS_PRCTL, uintptr(4), 0, 0, 0, 0, 0); errno != 0 {
+		return fmt.Errorf("credential-dump-disable-failed")
+	}
+	dumpable, _, errno := syscall.Syscall6(syscall.SYS_PRCTL, uintptr(3), 0, 0, 0, 0, 0)
+	if errno != 0 || dumpable != 0 {
+		return fmt.Errorf("credential-dump-disable-failed")
+	}
+	return nil
 }
 
 func validateCredentialGenesisBinding(verified *VerifiedPackage) error {
@@ -209,11 +242,15 @@ func afterSyscallStat(info os.FileInfo) (*syscall.Stat_t, bool) {
 }
 
 func validGitHubToken(raw []byte) bool {
-	if len(raw) < 32 || len(raw) > githubTokenMaximumBytes {
+	const fineGrainedPrefix = "github_pat_"
+	if len(raw) < len(fineGrainedPrefix)+20 || len(raw) > 257 || !bytes.HasPrefix(raw, []byte(fineGrainedPrefix)) {
 		return false
 	}
-	for _, value := range raw {
-		if value < 0x21 || value > 0x7e {
+	for _, value := range raw[len(fineGrainedPrefix):] {
+		if (value < 'A' || value > 'Z') &&
+			(value < 'a' || value > 'z') &&
+			(value < '0' || value > '9') &&
+			value != '_' {
 			return false
 		}
 	}

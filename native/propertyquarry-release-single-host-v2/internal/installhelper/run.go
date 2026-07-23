@@ -45,9 +45,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		zero(receipt)
-	} else if len(args) == 1 && args[0] == "provision-github-credential" {
+	} else if len(args) == 2 && args[0] == "provision-github-credential" {
 		var receipt []byte
-		receipt, err = ProvisionFixedGitHubCredential()
+		receipt, err = ProvisionFixedGitHubCredential(args[1])
 		if len(receipt) > 0 {
 			if receiptErr := WriteReceipt(FixedGitHubCredentialReceiptPath, receipt); receiptErr != nil {
 				err = receiptErr

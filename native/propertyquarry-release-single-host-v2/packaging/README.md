@@ -300,8 +300,59 @@ and output attached to that peer. The service obtains `github-api-token` with
 path with a read-only bind. The encrypted credential file is deliberately not
 part of the package. The separate activation-canary unit is the only bridge
 from the network-isolated installer to the live GitHub prerequisite check; its
-per-attempt challenge prevents reuse of a prior successful oneshot result. The
-independently signed Google identity environment file
+per-attempt challenge prevents reuse of a prior successful oneshot result.
+
+Initial GitHub credential provisioning has its own narrower admission path.
+`tools/provision-github-credential-with-docker.sh` requires the caller to set
+`PROPERTYQUARRY_GITHUB_CREDENTIAL_TOKEN_FD=8` and attach a single-use,
+read-only pipe as descriptor 8. The descriptor must be a mode-`0600`,
+UID/GID-1000 FIFO and its producer must write exactly one token, optionally
+followed by one newline, then close it. The wrapper never consults
+`/home/tibor/.config/gh`, `gh auth`, a token environment variable, argv, or a
+regular token file. It starts the fixed credential broker as the first and only
+child that inherits descriptor 8, closes the wrapper's copy, verifies the
+signed package and pinned helper image, and only then opens the broker's
+private verification gate.
+
+The broker accepts only the `github_pat_` fine-grained token form. Classic
+`ghp_`, `gho_`, `ghu_`, `ghs_`, and `ghr_` tokens and ambiguous input fail
+closed. The fine-grained token must select only
+`ArchonMegalon/propertyquarry` and grant only Metadata(read),
+Administration(read), and Actions(read). Before any privileged container
+starts, the broker uses direct TLS with proxies and redirects disabled to bind
+the exact repository and immutable owner/repository numeric IDs, require that
+the authenticated repository listing contains exactly that one repository
+with no next page, verify the runner and OIDC read endpoints, and require the
+immutable OIDC subject policy. Non-empty classic OAuth scope headers or
+unexpected endpoint permission contracts are rejected.
+
+The broker hashes the verified high-entropy token instance and sends that
+non-secret `sha256:` commitment to both the wrapper and the root helper. The
+broker then writes that exact in-memory token instance to the private installer
+FIFO. The root helper recomputes and compares the commitment before any host
+mutation, and the signed credential receipt records
+`credential_instance_sha256`, `plaintext_digest_recorded:true`, and
+`token_material_recorded:false`. The independent receipt verifier requires the
+caller's expected commitment. A substituted FIFO writer therefore cannot
+produce an accepted mutation or terminal receipt.
+
+All three token-bearing process layers disable core materialization: the host
+wrapper sets a zero core limit, the broker sets `RLIMIT_CORE=0` and
+`PR_SET_DUMPABLE=0` before reading descriptor 8, and the Docker helper receives
+`--ulimit core=0:0` while the Go helper independently repeats both controls
+before reading or executing a credential transform.
+
+GitHub currently provides no token-self-introspection endpoint that
+cryptographically enumerates every permission granted to a fine-grained PAT.
+The admission path therefore proves the fine-grained prefix, exact observed
+repository visibility, required read calls, absence of classic OAuth scopes,
+and exact accepted-permission headers, but it cannot prove that GitHub has not
+granted an additional fine-grained permission that those read responses do not
+expose. Token issuance must still enforce the exact three-permission policy
+above; any future GitHub introspection API must be added as a mandatory
+fail-closed check before that limitation can be removed.
+
+The independently signed Google identity environment file
 and `/docker/property/state/runtime/propertyquarry_registration_email.env` are
 also not copied or read by the packager; only their signed paths, digests,
 modes, UIDs, and GIDs remain in the byte-preserved profile and plan. The latter

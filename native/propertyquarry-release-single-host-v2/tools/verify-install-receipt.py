@@ -399,7 +399,10 @@ def verify_runner(payload: dict[str, Any], verified: Any, key_id: str) -> None:
 
 
 def verify_credential(
-    payload: dict[str, Any], verified: Any, key_id: str
+    payload: dict[str, Any],
+    verified: Any,
+    key_id: str,
+    expected_credential_instance_sha256: str,
 ) -> None:
     expected = {
         "archive_digest",
@@ -407,6 +410,7 @@ def verify_credential(
         "credential_ciphertext_bytes",
         "credential_ciphertext_sha256",
         "credential_gid",
+        "credential_instance_sha256",
         "credential_install_performed",
         "credential_mode",
         "credential_path",
@@ -459,6 +463,11 @@ def verify_credential(
         or payload.get("credential_uid") != 0
         or payload.get("credential_gid") != 0
         or payload.get("credential_source_transport") != "named-fifo-fd8"
+        or payload.get("credential_instance_sha256")
+        != expected_credential_instance_sha256
+        or not package.SHA256_PATTERN.fullmatch(
+            expected_credential_instance_sha256
+        )
         or payload.get("systemd_credential_name") != "github-api-token"
         or payload.get("systemd_credential_key") != "host"
         or not isinstance(payload.get("credential_ciphertext_sha256"), str)
@@ -475,7 +484,7 @@ def verify_credential(
         or payload.get("round_trip_verified") is not True
         or payload.get("rotation_performed") is not False
         or payload.get("token_material_recorded") is not False
-        or payload.get("plaintext_digest_recorded") is not False
+        or payload.get("plaintext_digest_recorded") is not True
         or payload.get("production_ready") is not False
         or payload.get("credential_install_performed") is not expected_state[0]
         or payload.get("host_mutation_performed") is not expected_state[0]
@@ -492,7 +501,20 @@ def main() -> int:
     parser.add_argument("--package", required=True)
     parser.add_argument("--package-authority-public-key", required=True)
     parser.add_argument("--receipt", required=True)
+    parser.add_argument("--expected-credential-instance-sha256")
     arguments = parser.parse_args()
+    if arguments.kind == "credential":
+        if (
+            not isinstance(
+                arguments.expected_credential_instance_sha256, str
+            )
+            or not package.SHA256_PATTERN.fullmatch(
+                arguments.expected_credential_instance_sha256
+            )
+        ):
+            fail("credential-instance-binding-invalid")
+    elif arguments.expected_credential_instance_sha256 is not None:
+        fail("credential-instance-binding-invalid")
     verified = package.verify_package(
         arguments.package, arguments.package_authority_public_key
     )
@@ -507,7 +529,12 @@ def main() -> int:
     elif arguments.kind == "runner":
         verify_runner(payload, verified, key_id)
     else:
-        verify_credential(payload, verified, key_id)
+        verify_credential(
+            payload,
+            verified,
+            key_id,
+            arguments.expected_credential_instance_sha256,
+        )
     result = {
         "authoritative": False,
         "kind": arguments.kind,
