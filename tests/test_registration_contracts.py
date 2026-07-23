@@ -2317,6 +2317,76 @@ def test_registration_email_can_force_verified_sender_without_primary_attempt(
     assert observed_payloads == []
 
 
+@pytest.mark.parametrize(
+    "sender",
+    (
+        "PropertyQuarry <property@propertyquarry.com>, Evil <evil@example.com>",
+        "property@propertyquarry.com,evil@example.com",
+        "property@propertyquarry.com;evil@example.com",
+        "property@propertyquarry.com\r\nBcc: evil@example.com",
+        "PropertyQuarry <property@propertyquarry.com>",
+    ),
+)
+def test_registration_email_prod_rejects_non_single_sender_mailboxes(
+    monkeypatch: pytest.MonkeyPatch,
+    sender: str,
+) -> None:
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv("EA_RUNTIME_MODE", "prod")
+    monkeypatch.setenv("EA_REGISTRATION_EMAIL_FROM", sender)
+
+    from app.services import registration_email as service
+
+    with pytest.raises(RuntimeError, match="registration_email_sender_domain_forbidden"):
+        service.send_registration_email(
+            recipient_email="tibor.girschele@gmail.com",
+            verification_code="654321",
+            magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
+            expires_at=2_000_000_000,
+        )
+
+
+def test_registration_email_prod_accepts_one_propertyquarry_subdomain_mailbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv("EA_RUNTIME_MODE", "prod")
+    monkeypatch.setenv(
+        "EA_REGISTRATION_EMAIL_FROM", "property@auth.propertyquarry.com"
+    )
+
+    from app.services import registration_email as service
+
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps({"id": "emailit-subdomain-sender-1"}).encode("utf-8")
+
+    def _fake_urlopen(request, timeout=0):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return _Response()
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", _fake_urlopen)
+    receipt = service.send_registration_email(
+        recipient_email="tibor.girschele@gmail.com",
+        verification_code="654321",
+        magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
+        expires_at=2_000_000_000,
+    )
+
+    assert dict(captured["payload"])["from"] == (
+        "PropertyQuarry <property@auth.propertyquarry.com>"
+    )
+    assert receipt.message_id == "emailit-subdomain-sender-1"
+
+
 def test_property_search_results_email_serializes_emailit_meta(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
     monkeypatch.setenv("EA_REGISTRATION_EMAIL_FROM", "property@propertyquarry.com")

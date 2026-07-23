@@ -19,6 +19,11 @@ EMAILIT_API_BASE = "https://api.emailit.com/v2/emails"
 DEFAULT_SENDER_EMAIL = "property@propertyquarry.com"
 DEFAULT_SENDER_NAME = "PropertyQuarry"
 _PLAINTEXT_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+_SENDER_ADDR_SPEC_RE = re.compile(
+    r"(?=.{3,254}\Z)[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z]{2,63}\Z"
+)
 
 
 @dataclass(frozen=True)
@@ -37,12 +42,10 @@ def _propertyquarry_production_sender_required() -> bool:
 
 
 def _propertyquarry_sender_email_allowed(value: str) -> bool:
-    normalized = str(value or "").strip().lower()
-    if "<" in normalized and ">" in normalized:
-        normalized = normalized.split("<", 1)[1].split(">", 1)[0].strip()
-    if "@" not in normalized:
+    normalized = str(value or "").strip()
+    if not _SENDER_ADDR_SPEC_RE.fullmatch(normalized):
         return False
-    domain = normalized.rsplit("@", 1)[1].strip().strip(".")
+    domain = normalized.rsplit("@", 1)[1].lower()
     return domain == "propertyquarry.com" or domain.endswith(".propertyquarry.com")
 
 

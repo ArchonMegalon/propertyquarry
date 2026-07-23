@@ -205,6 +205,29 @@ def test_prod_rejects_registration_sender_domain_allowlist() -> None:
         validate_startup_settings(get_settings())
 
 
+@pytest.mark.parametrize(
+    "sender",
+    (
+        "PropertyQuarry <property@propertyquarry.com>, Evil <evil@example.com>",
+        "property@propertyquarry.com,evil@example.com",
+        "property@propertyquarry.com;evil@example.com",
+        "property@propertyquarry.com\r\nBcc: evil@example.com",
+        "PropertyQuarry <property@propertyquarry.com>",
+    ),
+)
+def test_prod_rejects_registration_sender_values_that_are_not_one_bare_mailbox(
+    sender: str,
+) -> None:
+    _clear_env()
+    os.environ["EA_RUNTIME_MODE"] = "prod"
+    os.environ["EA_API_TOKEN"] = "secret-token"
+    os.environ["EA_SIGNING_SECRET"] = "signing-secret"
+    os.environ["DATABASE_URL"] = "postgresql://example.invalid/ea"
+    os.environ["EA_REGISTRATION_EMAIL_FROM"] = sender
+    with pytest.raises(RuntimeError, match="PropertyQuarry email sender"):
+        validate_startup_settings(get_settings())
+
+
 def test_prod_runtime_profile_requires_verified_identity_principal() -> None:
     _clear_env()
     os.environ["EA_RUNTIME_MODE"] = "prod"

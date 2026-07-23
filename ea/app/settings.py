@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import warnings
 from dataclasses import dataclass, replace
@@ -396,12 +397,15 @@ def ensure_prod_loopback_no_auth_disabled(settings: Settings) -> None:
 
 
 def _email_sender_domain(value: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if "<" in normalized and ">" in normalized:
-        normalized = normalized.split("<", 1)[1].split(">", 1)[0].strip()
-    if "@" not in normalized:
+    normalized = str(value or "").strip()
+    if not re.fullmatch(
+        r"(?=.{3,254}\Z)[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+        r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+        r"[A-Za-z]{2,63}\Z",
+        normalized,
+    ):
         return ""
-    return normalized.rsplit("@", 1)[1].strip().strip(".")
+    return normalized.rsplit("@", 1)[1].lower()
 
 
 def _propertyquarry_sender_domain_allowed(value: str) -> bool:
