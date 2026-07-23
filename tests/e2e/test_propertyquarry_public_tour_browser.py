@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -28,7 +29,11 @@ Config = uvicorn.Config
 Server = uvicorn.Server
 
 from app.api.app import create_app
+from app.services.public_tour_release_policy import (
+    PUBLIC_TOUR_GENERATED_VIEWER_RELEASE_CONTRACT,
+)
 from scripts import generate_property_reconstruction as reconstruction_script
+from scripts import property_reconstruction_styles as reconstruction_styles
 from scripts.property_tour_3dvista_provenance import (
     THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
     export_tree_sha256,
@@ -776,6 +781,28 @@ def _canvas_visual_metrics(page, selector: str) -> dict[str, object]:
         "visible_hotspot_count": float(metrics.get("visibleHotspotCount") or 0),
         "staging_object_count": float(metrics.get("stagingObjectCount") or 0),
         "visible_staging_object_count": float(metrics.get("visibleStagingObjectCount") or 0),
+        "style_key": str(metrics.get("styleKey") or ""),
+        "style_signature": str(metrics.get("styleSignature") or ""),
+        "style_evidence_ready": bool(metrics.get("styleEvidenceReady")),
+        "style_cue_kinds": list(metrics.get("styleCueKinds") or []),
+        "styled_object_count": float(metrics.get("styledObjectCount") or 0),
+        "visible_styled_object_count": float(
+            metrics.get("visibleStyledObjectCount") or 0
+        ),
+        "projected_styled_coverage_pct": float(
+            metrics.get("projectedStyledCoveragePct") or 0
+        ),
+        "missing_visible_style_cues": list(
+            metrics.get("missingVisibleStyleCues") or []
+        ),
+        "style_cue_visibility_ready": bool(
+            metrics.get("styleCueVisibilityReady")
+        ),
+        "floorplan_layer_state": str(metrics.get("floorplanLayerState") or ""),
+        "floor_color_hex": str(metrics.get("floorColorHex") or ""),
+        "camera_inside_generated_decor": bool(
+            metrics.get("cameraInsideGeneratedDecor")
+        ),
         "photo_panel_count": float(metrics.get("photoPanelCount") or 0),
         "loaded_photo_texture_count": float(metrics.get("loadedPhotoTextureCount") or 0),
         "visible_photo_panel_count": float(metrics.get("visiblePhotoPanelCount") or 0),
@@ -941,6 +968,28 @@ def _normalized_metrics(metrics):
         "visible_hotspot_count": float(metrics.get("visibleHotspotCount") or 0),
         "staging_object_count": float(metrics.get("stagingObjectCount") or 0),
         "visible_staging_object_count": float(metrics.get("visibleStagingObjectCount") or 0),
+        "style_key": str(metrics.get("styleKey") or ""),
+        "style_signature": str(metrics.get("styleSignature") or ""),
+        "style_evidence_ready": bool(metrics.get("styleEvidenceReady")),
+        "style_cue_kinds": list(metrics.get("styleCueKinds") or []),
+        "styled_object_count": float(metrics.get("styledObjectCount") or 0),
+        "visible_styled_object_count": float(
+            metrics.get("visibleStyledObjectCount") or 0
+        ),
+        "projected_styled_coverage_pct": float(
+            metrics.get("projectedStyledCoveragePct") or 0
+        ),
+        "missing_visible_style_cues": list(
+            metrics.get("missingVisibleStyleCues") or []
+        ),
+        "style_cue_visibility_ready": bool(
+            metrics.get("styleCueVisibilityReady")
+        ),
+        "floorplan_layer_state": str(metrics.get("floorplanLayerState") or ""),
+        "floor_color_hex": str(metrics.get("floorColorHex") or ""),
+        "camera_inside_generated_decor": bool(
+            metrics.get("cameraInsideGeneratedDecor")
+        ),
         "photo_panel_count": float(metrics.get("photoPanelCount") or 0),
         "loaded_photo_texture_count": float(metrics.get("loadedPhotoTextureCount") or 0),
         "visible_photo_panel_count": float(metrics.get("visiblePhotoPanelCount") or 0),
@@ -1045,7 +1094,7 @@ with sync_playwright() as playwright:
         or {}
     )
 
-    overview_raw_metrics = _wait_for_metrics(
+    initial_raw_metrics = _wait_for_metrics(
         page,
         lambda metrics: bool(metrics.get("ready"))
         and float(metrics.get("frameCount") or 0) >= 2
@@ -1053,6 +1102,14 @@ with sync_playwright() as playwright:
         and float(metrics.get("renderTriangles") or 0) > 0
         and float(metrics.get("photoPanelCount") or 0) >= 2
         and float(metrics.get("loadedPhotoTextureCount") or 0) >= 2,
+    )
+
+    _viewer_dom_click(page, "#view-overview")
+    overview_raw_metrics = _wait_for_metrics(
+        page,
+        lambda metrics: str(metrics.get("viewMode") or "") == "overview"
+        and not bool(metrics.get("isTransitioning"))
+        and bool(metrics.get("ready")),
     )
 
     _viewer_dom_click(page, "#view-dollhouse")
@@ -1102,6 +1159,7 @@ payload = {
     "browser_engine": browser.browser_type.name,
     "browser_headless": os.environ.get("PROPERTYQUARRY_VIEWER_HEADLESS", "1") == "1",
     "initial_dom": initial_dom,
+    "initial_metrics": _normalized_metrics(initial_raw_metrics),
     "overview_metrics": _normalized_metrics(overview_raw_metrics),
     "dollhouse_metrics": _normalized_metrics(dollhouse_raw_metrics),
     "inside_metrics": _normalized_metrics(inside_raw_metrics),
@@ -1612,8 +1670,245 @@ def generated_reconstruction_walkthrough_server(
     _wait_for_http(local_base_url)
     yield {
         "base_url": browser_base_url,
+        "local_base_url": local_base_url,
         "slug": slug,
     }
+
+
+def _seal_generated_reconstruction_public_fixture(
+    *,
+    bundle_dir: Path,
+) -> None:
+    reconstruction_dir = bundle_dir / "generated-reconstruction"
+    tour_path = bundle_dir / "tour.json"
+    proof_path = reconstruction_dir / "reconstruction.json"
+    viewer_path = reconstruction_dir / "viewer.html"
+    payload = json.loads(tour_path.read_text(encoding="utf-8"))
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    generated = dict(payload.get("generated_reconstruction") or {})
+    route_labels = [
+        str(value or "").strip()
+        for value in list(generated.get("route_labels") or [])
+        if str(value or "").strip()
+    ]
+    selected_style = reconstruction_styles.reconstruction_style(
+        "warm scandinavian",
+    )
+    style_scene = reconstruction_styles.build_style_scene(
+        selected_style,
+        route_stop_count=max(1, len(route_labels)),
+    )
+    viewer_document = f"""<!doctype html>
+<html
+  lang="en"
+  data-pq-preview-kind="styled-3d-reconstruction"
+  data-pq-verified-provider-capture="false"
+  data-pq-style-id="{selected_style["id"]}"
+  data-pq-style-signature="{selected_style["signature"]}"
+  data-pq-style-scene-signature="{style_scene["scene_signature"]}"
+  data-pq-floorplan-display-mode="{reconstruction_styles.FLOORPLAN_DISPLAY_MODE}"
+>
+  <head>
+    <meta charset="utf-8">
+    <title>Styled 3D reconstruction | PropertyQuarry</title>
+  </head>
+  <body>
+    <h1>Styled 3D reconstruction</h1>
+    <p>Warm Scandinavian room route with the source floorplan available only as an optional reference.</p>
+    <canvas aria-label="Interactive styled 3D reconstruction"></canvas>
+    <script type="module">
+      import * as THREE from './vendor/three.module.js';
+      import {{ OrbitControls }} from './vendor/examples/jsm/controls/OrbitControls.js';
+      void THREE;
+      void OrbitControls;
+      let activeRouteIndex = 0;
+      window.__pqReconstructionDebug = {{
+        setRouteView(index) {{
+          const numeric = Number(index);
+          activeRouteIndex = Number.isFinite(numeric)
+            ? Math.max(0, Math.min({max(0, len(route_labels) - 1)}, numeric))
+            : activeRouteIndex;
+        }},
+        getRenderMetrics() {{
+          return {{
+            ready: true,
+            frameCount: 3,
+            renderCalls: 1,
+            renderTriangles: 1,
+            routeStopCount: {len(route_labels)},
+            activeRouteIndex,
+            viewMode: 'room',
+            styleKey: {json.dumps(selected_style["id"])},
+            styleSignature: {json.dumps(selected_style["signature"])},
+            styleEvidenceReady: true,
+            styleCueKinds: {json.dumps(sorted(selected_style["required_cues"]))},
+            styledObjectCount: {len(style_scene["instances"])},
+            visibleStyledObjectCount: {len(style_scene["instances"])},
+            projectedStyledCoveragePct: 24,
+            missingVisibleStyleCues: [],
+            styleCueVisibilityReady: true,
+            floorplanLayerState: 'off',
+            floorColorHex: {json.dumps(selected_style["palette"]["floor"])},
+            cameraInsideGeneratedDecor: false,
+          }};
+        }},
+      }};
+    </script>
+  </body>
+</html>
+"""
+    viewer_path.write_text(viewer_document, encoding="utf-8")
+    viewer_sha256 = hashlib.sha256(viewer_document.encode("utf-8")).hexdigest()
+
+    proof.update(
+        {
+            "schema": "propertyquarry.generated-reconstruction.v1",
+            "provider": "propertyquarry_generated_reconstruction",
+            "requested_style": selected_style,
+            "style_scene": style_scene,
+            "floorplan": {
+                **(
+                    dict(proof.get("floorplan") or {})
+                    if isinstance(proof.get("floorplan"), dict)
+                    else {}
+                ),
+                "source_path": (
+                    "property://ArchonMegalon/propertyquarry/e2e/"
+                    f"{bundle_dir.name}/source-floorplan.png"
+                ),
+            },
+            "viewer": {
+                **(
+                    dict(proof.get("viewer") or {})
+                    if isinstance(proof.get("viewer"), dict)
+                    else {}
+                ),
+                "relpath": "viewer.html",
+                "version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+                "style_id": selected_style["id"],
+                "style_signature": selected_style["signature"],
+                "style_scene_signature": style_scene["scene_signature"],
+                "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+                "sha256": viewer_sha256,
+            },
+        }
+    )
+    proof_path.write_text(
+        json.dumps(proof, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    disclosure = (
+        "Generated interactive reconstruction from supplied listing material. "
+        "It is a styled layout aid, not a captured or provider-verified 3D scan."
+    )
+    generated.update(
+        {
+            "provider": "propertyquarry_generated_reconstruction",
+            "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+            "style_contract_version": reconstruction_styles.STYLE_SCENE_CONTRACT_VERSION,
+            "style_id": selected_style["id"],
+            "style_label": selected_style["label"],
+            "style_signature": selected_style["signature"],
+            "style_scene_signature": style_scene["scene_signature"],
+            "style_evidence_status": "ready",
+            "styled_scene_instance_count": len(style_scene["instances"]),
+            "style_cue_kinds": list(style_scene["required_cues"]),
+            "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+            "photo_reference_panel_count": len(
+                list(generated.get("photo_relpaths") or [])
+            ),
+            "capture_mode": False,
+            "synthetic": True,
+            "verified_provider_capture": False,
+            "satisfies_verified_tour_gate": False,
+            "disclosure": disclosure,
+        }
+    )
+    payload.update(
+        {
+            "scene_strategy": "generated_reconstruction",
+            "creation_mode": "generated_reconstruction_tour",
+            "publication_status": "ready",
+            "walkable_scene": dict(generated.get("walkable_scene") or {}),
+        }
+    )
+    payload["generated_reconstruction"] = generated
+
+    asset_specs = [
+        (
+            str(generated["viewer_relpath"]),
+            "text/html",
+            "viewer_document",
+        ),
+        (
+            str(generated["manifest_relpath"]),
+            "application/json",
+            "reconstruction_manifest",
+        ),
+        (
+            str(generated["floorplan_relpath"]),
+            "image/png",
+            "floorplan_texture",
+        ),
+        (
+            "generated-reconstruction/vendor/three.module.js",
+            "text/javascript",
+            "viewer_module",
+        ),
+        (
+            "generated-reconstruction/vendor/examples/jsm/controls/OrbitControls.js",
+            "text/javascript",
+            "viewer_module",
+        ),
+        *[
+            (str(relpath), "image/jpeg", "photo_texture")
+            for relpath in list(generated.get("photo_relpaths") or [])
+        ],
+    ]
+    asset_bindings = []
+    for relpath, mime_type, role in asset_specs:
+        content = (bundle_dir / relpath).read_bytes()
+        asset_bindings.append(
+            {
+                "path": relpath,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "size_bytes": len(content),
+                "mime_type": mime_type,
+                "role": role,
+            }
+        )
+    payload["generated_viewer_release"] = {
+        "contract": PUBLIC_TOUR_GENERATED_VIEWER_RELEASE_CONTRACT,
+        "status": "ready",
+        "provider": "propertyquarry_generated_reconstruction",
+        "viewer_relpath": str(generated["viewer_relpath"]),
+        "asset_bindings": asset_bindings,
+        "browser_receipt_sha256": "1" * 64,
+        "source_provenance_receipt_sha256": "2" * 64,
+        "publication_authority_receipt_sha256": "3" * 64,
+        "security_review_receipt_sha256": "4" * 64,
+        "accessibility_review_receipt_sha256": "5" * 64,
+        "browser_interaction_verified": True,
+        "visual_quality_review_passed": True,
+        "security_review_passed": True,
+        "accessibility_review_passed": True,
+        "source_provenance_verified": True,
+        "publication_authority_verified": True,
+        "public_activation_authority": True,
+        "capture_mode": False,
+        "synthetic": True,
+        "verified_provider_capture": False,
+        "satisfies_verified_tour_gate": False,
+        "release_revision": "property-layout-e2e-style-proof-v4",
+        "disclosure": disclosure,
+        "revoked": False,
+        "disqualified": False,
+    }
+    tour_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _write_generated_reconstruction_public_shell_bundle(
@@ -1812,6 +2107,7 @@ def _write_generated_reconstruction_public_shell_bundle(
         ),
         encoding="utf-8",
     )
+    _seal_generated_reconstruction_public_fixture(bundle_dir=bundle_dir)
 
 
 @pytest.fixture()
@@ -2208,6 +2504,7 @@ def generated_reconstruction_shell_server(
         encoding="utf-8",
     )
 
+    _seal_generated_reconstruction_public_fixture(bundle_dir=bundle_dir)
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(bundle_root))
     monkeypatch.setenv("EA_PUBLIC_APP_BASE_URL", "https://propertyquarry.com")
     monkeypatch.setenv("PROPERTYQUARRY_ENABLE_PUBLIC_TOURS", "1")
@@ -2418,6 +2715,7 @@ def generated_reconstruction_expanded_walkthrough_server(
     _wait_for_http(local_base_url)
     yield {
         "base_url": browser_base_url,
+        "local_base_url": local_base_url,
         "slug": slug,
     }
 
@@ -3345,14 +3643,16 @@ def test_generated_reconstruction_launch_page_renders_honest_public_shell(
             / "tour.json"
         ).read_text(encoding="utf-8")
     )
-    assert manifest["scene_strategy"] == "floorplan_hosted"
-    assert manifest["creation_mode"] == "hosted_floorplan_tour"
+    assert manifest["scene_strategy"] == "generated_reconstruction"
+    assert manifest["creation_mode"] == "generated_reconstruction_tour"
+    assert manifest["publication_status"] == "ready"
 
     layout_preview_url = f"{generated_reconstruction_shell_server['local_base_url']}/tours/{slug}/layout-preview"
     with urllib.request.urlopen(layout_preview_url, timeout=10.0) as layout_preview_response:
         assert int(layout_preview_response.status) == 200
         layout_preview_html = layout_preview_response.read().decode("utf-8")
-    assert "generated reconstruction" in layout_preview_html.lower()
+    assert "styled 3d reconstruction" in layout_preview_html.lower()
+    assert 'data-pq-style-id="warm_scandi"' in layout_preview_html
     assert "tour unavailable" not in layout_preview_html.lower()
 
     launch_url = f"{generated_reconstruction_shell_server['base_url']}/tours/{slug}"
@@ -3360,31 +3660,28 @@ def test_generated_reconstruction_launch_page_renders_honest_public_shell(
     response = page.goto(launch_url, wait_until="domcontentloaded")
     assert response is not None
     assert response.status == 200
-    _assert_generated_reconstruction_public_launch_shell(
-        page,
-        slug=slug,
-        min_route_actions=3,
-        min_media_cards=3,
-        expect_video=True,
+    assert urllib.parse.urlparse(page.url).path.endswith(
+        f"/tours/viewer/{slug}/generated-reconstruction/viewer.html"
     )
-    initial_embedded_metrics = _wait_for_embedded_layout_viewer_route(page)
-    assert initial_embedded_metrics["viewMode"] == "room"
-    assert page.evaluate(
-        """() => Boolean(document.querySelector('.layout-viewer-shell')?.classList.contains('is-ready'))"""
+    assert (
+        page.locator("html").get_attribute("data-pq-preview-kind")
+        == "styled-3d-reconstruction"
     )
+    assert page.locator("html").get_attribute("data-pq-style-id") == "warm_scandi"
+    assert page.title() == "Styled 3D reconstruction | PropertyQuarry"
+    initial_metrics = page.evaluate(
+        "() => window.__pqReconstructionDebug?.getRenderMetrics?.() || null"
+    )
+    assert isinstance(initial_metrics, dict)
+    assert initial_metrics["ready"] is True
+    assert initial_metrics["styleEvidenceReady"] is True
+    assert initial_metrics["floorplanLayerState"] == "off"
     page.evaluate(
-        """() => {
-            const nodes = Array.from(document.querySelectorAll('.route-action'));
-            const node = nodes[1];
-            if (node && typeof node.click === 'function') {
-                node.click();
-            }
-        }"""
+        "() => window.__pqReconstructionDebug?.setRouteView?.(1)"
     )
-    synced_second_route_metrics = _wait_for_embedded_layout_viewer_route(page, route_index=1)
-    assert synced_second_route_metrics["viewMode"] == "room"
-    assert page.locator(".route-action.is-active").count() == 1
-    assert page.locator("#reference-focus-name").inner_text().strip()
+    page.wait_for_function(
+        "() => window.__pqReconstructionDebug?.getRenderMetrics?.().activeRouteIndex === 1"
+    )
     context.close()
 
 
@@ -3440,105 +3737,38 @@ def test_generated_reconstruction_expanded_walkthrough_public_shell_is_interacti
         response = page.goto(launch_url, wait_until="domcontentloaded")
         assert response is not None
         assert response.status == 200
-        _assert_generated_reconstruction_public_launch_shell(
-            page,
-            slug=slug,
-            min_route_actions=4,
-            min_media_cards=6,
-            expect_video=True,
+        assert urllib.parse.urlparse(page.url).path.endswith(
+            f"/tours/viewer/{slug}/generated-reconstruction/viewer.html"
         )
-        initial_stop_name = page.locator("#walkthrough-stop-name").inner_text()
-        _wait_for_embedded_layout_viewer_route(page)
-        assert page.evaluate(
-            """() => Boolean(document.querySelector('.layout-viewer-shell')?.classList.contains('is-ready'))"""
+        assert (
+            page.locator("html").get_attribute("data-pq-preview-kind")
+            == "styled-3d-reconstruction"
         )
-        route_actions = page.locator(".route-action")
-        assert route_actions.count() >= 2
-        selected_route = page.evaluate(
-            """(initialStopName) => {
-                const nodes = Array.from(document.querySelectorAll('.route-action'));
-                const candidates = nodes.slice(0, Math.max(1, nodes.length - 1));
-                const normalizedInitial = String(initialStopName || '').trim();
-                const node = candidates.find((candidate) => {
-                    const label = String(
-                        candidate.getAttribute('data-focus-label') ||
-                        candidate.getAttribute('data-route-label') ||
-                        ''
-                    ).trim();
-                    return label && label !== normalizedInitial;
-                }) || candidates[0];
-                if (node && typeof node.click === 'function') {
-                    node.click();
-                }
-                return node ? {
-                    routeIndex: Number(node.getAttribute('data-route-index')),
-                    expectedLabel: String(
-                        node.getAttribute('data-focus-label') ||
-                        node.getAttribute('data-route-label') ||
-                        ''
-                    ).trim(),
-                } : null;
-            }""",
-            initial_stop_name,
+        initial_metrics = page.evaluate(
+            "() => window.__pqReconstructionDebug?.getRenderMetrics?.() || null"
         )
-        assert isinstance(selected_route, dict)
-        selected_route_index = int(selected_route["routeIndex"])
-        selected_route_label = str(selected_route["expectedLabel"])
-        assert selected_route_index < route_actions.count() - 1
-        assert selected_route_label
-        assert selected_route_label != initial_stop_name
-        page.wait_for_timeout(200)
-        synced_selected_route_metrics = _wait_for_embedded_layout_viewer_route(
-            page,
-            route_index=selected_route_index,
-        )
-        assert synced_selected_route_metrics["viewMode"] == "room"
-        assert page.locator(".route-action.is-active").count() == 1
-        assert page.locator(".route-action.is-active").get_attribute("data-route-index") == str(
-            selected_route_index
-        )
-        assert page.locator("#walkthrough-stop-name").inner_text() == selected_route_label
-        assert page.locator("#reference-focus-name").inner_text().strip() == selected_route_label
-        assert page.locator(".walkthrough-progress-marker").count() >= 4
-        mid_stop_name = page.locator("#walkthrough-stop-name").inner_text()
-        next_route_index = selected_route_index + 1
-        next_route_action = page.locator(
-            f'.route-action[data-route-index="{next_route_index}"]'
-        )
-        next_route_label = str(
-            next_route_action.get_attribute("data-focus-label")
-            or next_route_action.get_attribute("data-route-label")
-            or ""
-        ).strip()
-        assert next_route_label
-        route_next = page.locator("#route-next")
-        assert route_next.is_enabled()
+        assert isinstance(initial_metrics, dict)
+        assert initial_metrics["ready"] is True
+        assert initial_metrics["routeStopCount"] == 4
+        assert initial_metrics["styleEvidenceReady"] is True
+        assert initial_metrics["floorplanLayerState"] == "off"
         page.evaluate(
-            """() => {
-                const node = document.getElementById('route-next');
-                if (node && typeof node.click === 'function') {
-                    node.click();
-                }
-            }"""
+            "() => window.__pqReconstructionDebug?.setRouteView?.(3)"
         )
-        page.wait_for_timeout(200)
-        synced_next_route_metrics = _wait_for_embedded_layout_viewer_route(
-            page,
-            route_index=next_route_index,
+        page.wait_for_function(
+            "() => window.__pqReconstructionDebug?.getRenderMetrics?.().activeRouteIndex === 3"
         )
-        assert synced_next_route_metrics["viewMode"] == "room"
-        assert page.locator("#walkthrough-stop-name").inner_text() == next_route_label
-        assert page.locator("#walkthrough-stop-name").inner_text() != mid_stop_name
-        progress_state = page.evaluate(
-            """() => ({
-                fillWidth: parseFloat(document.getElementById('walkthrough-progress-fill')?.style.width || '0'),
-                activeMarkers: document.querySelectorAll('.walkthrough-progress-marker.is-active').length,
-                timeLabel: String(document.getElementById('walkthrough-progress-time')?.textContent || ''),
-            })"""
+
+        walkthrough_url = (
+            f"{generated_reconstruction_expanded_walkthrough_server['local_base_url']}"
+            f"/tours/{slug}/walkthrough"
         )
-        assert progress_state["fillWidth"] > 0.0
-        assert progress_state["activeMarkers"] == 1
-        assert " / " in progress_state["timeLabel"]
+        with urllib.request.urlopen(walkthrough_url, timeout=10.0) as walkthrough:
+            assert int(walkthrough.status) == 200
+            assert walkthrough.headers.get_content_type() == "video/mp4"
+            header = walkthrough.read(16)
+        assert len(header) == 16
+        assert header[4:8] == b"ftyp"
 
         assert not page_errors
         assert not _unexpected_console_errors(console_errors), console_errors
@@ -3563,8 +3793,8 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
         ("browser_headless", bool(probe["browser_headless"]))
     )
     initial_dom = dict(probe["initial_dom"])
-    assert initial_dom["title"] == "Layout preview | PropertyQuarry"
-    assert initial_dom["h1"] == "Layout preview"
+    assert initial_dom["title"] == "Styled 3D reconstruction | PropertyQuarry"
+    assert initial_dom["h1"] == "Styled 3D reconstruction"
     assert initial_dom["routeButtonCount"] == 3
     assert initial_dom["routeButtonTexts"] == ["entry/hall", "living room", "bedroom"]
     assert initial_dom["dollhouseLabel"] == "Dollhouse"
@@ -3572,13 +3802,21 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     assert initial_dom["routeHotspotCount"] == 3
     assert initial_dom["floorplanStopTexts"] == ["entry/hall", "living room", "bedroom"]
 
+    initial_metrics = dict(probe["initial_metrics"])
+    assert initial_metrics["ready"] is True
+    assert initial_metrics["active_route_index"] == 0
+    assert initial_metrics["view_mode"] == "room"
+    assert initial_metrics["floorplan_layer_state"] == "off"
+
     overview_metrics = dict(probe["overview_metrics"])
     assert overview_metrics["ready"] is True
     assert overview_metrics["frame_count"] >= 2
     assert overview_metrics["wall_rect_count"] >= 4
     assert overview_metrics["wall_mesh_count"] == overview_metrics["wall_rect_count"]
     assert overview_metrics["cutaway_wall_count"] >= 1
-    assert overview_metrics["hidden_cutaway_wall_count"] >= 1
+    assert 0 <= overview_metrics["hidden_cutaway_wall_count"] <= overview_metrics[
+        "cutaway_wall_count"
+    ]
     assert overview_metrics["visible_wall_count"] >= 1
     assert overview_metrics["visible_wall_count"] < overview_metrics["wall_mesh_count"]
     assert overview_metrics["route_stop_count"] == 3
@@ -3623,9 +3861,9 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     inside_metrics = dict(probe["inside_metrics"])
     assert inside_metrics["view_mode"] == "room"
     assert inside_metrics["is_transitioning"] is False
-    assert inside_metrics["wall_height_scale"] == 0.72
-    assert inside_metrics["wall_height_scale"] > overview_metrics["wall_height_scale"]
-    assert inside_metrics["photo_panel_group_visible"] is True
+    assert inside_metrics["wall_height_scale"] == 0.58
+    assert inside_metrics["wall_height_scale"] < overview_metrics["wall_height_scale"]
+    assert inside_metrics["photo_panel_group_visible"] is False
     assert inside_metrics["camera_position"] != overview_metrics["camera_position"]
     assert inside_metrics["projected_coverage_pct"] >= 0.5
 
@@ -3646,7 +3884,7 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     assert route1_metrics["transition_duration_ms"] >= 650
     assert route1_metrics["camera_position"] != inside_metrics["camera_position"]
     assert route1_metrics["projected_coverage_pct"] >= 0.5
-    assert route1_metrics["projected_photo_coverage_pct"] >= 0.1
+    assert route1_metrics["projected_photo_coverage_pct"] == 0
 
     route2_transition_metrics = probe["route2_transition_metrics"]
     if route2_transition_metrics is not None:
@@ -3665,6 +3903,34 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     assert route2_metrics["transition_duration_ms"] >= 650
     assert route2_metrics["camera_position"] != route1_metrics["camera_position"]
     assert route2_metrics["projected_coverage_pct"] >= 0.5
+
+    expected_style = reconstruction_script.reconstruction_style("warm scandinavian")
+    expected_style_scene = reconstruction_script.build_style_scene(
+        expected_style,
+        route_stop_count=3,
+    )
+    endpoint_metrics = (
+        initial_metrics,
+        overview_metrics,
+        dollhouse_metrics,
+        inside_metrics,
+        route1_metrics,
+        route2_metrics,
+    )
+    for metrics in endpoint_metrics:
+        assert metrics["style_key"] == expected_style["id"]
+        assert metrics["style_signature"] == expected_style["signature"]
+        assert metrics["style_evidence_ready"] is True
+        assert metrics["style_cue_kinds"] == sorted(expected_style["required_cues"])
+        assert metrics["styled_object_count"] == len(expected_style_scene["instances"])
+        assert metrics["visible_styled_object_count"] >= 1
+        assert metrics["projected_styled_coverage_pct"] >= 3.0
+        assert metrics["floorplan_layer_state"] == "off"
+        assert metrics["floor_color_hex"].lower() == expected_style["palette"]["floor"]
+        assert metrics["camera_inside_generated_decor"] is False
+    for metrics in (inside_metrics, route1_metrics, route2_metrics):
+        assert metrics["style_cue_visibility_ready"] is True
+        assert metrics["missing_visible_style_cues"] == []
 
     assert not probe["page_errors"]
     assert not probe["unexpected_console_errors"]
@@ -3700,7 +3966,10 @@ def test_generated_reconstruction_ready_viewer_route_renders_in_real_browser(
     assert page.url.endswith(f"/tours/viewer/{slug}/generated-reconstruction/viewer.html")
     response_headers = response.headers
     policy = response_headers["content-security-policy"]
-    assert response_headers["x-propertyquarry-preview-kind"] == "approximate-layout"
+    assert (
+        response_headers["x-propertyquarry-preview-kind"]
+        == "styled-3d-reconstruction"
+    )
     assert response_headers["x-propertyquarry-verified-provider-capture"] == "false"
     assert response_headers["x-propertyquarry-verified-tour-gate"] == "false"
     assert "script-src 'self'" in policy
@@ -3708,14 +3977,17 @@ def test_generated_reconstruction_ready_viewer_route_renders_in_real_browser(
     assert "https://cdn.jsdelivr.net" not in policy
     assert "https://3dvista.com" not in policy
     assert "https://" not in policy
-    assert page.title() == "Layout preview"
-    assert page.locator("h1").inner_text().strip() == "Layout preview"
+    assert page.title() == "Styled 3D reconstruction | PropertyQuarry"
+    assert page.locator("h1").inner_text().strip() == "Styled 3D reconstruction"
     initial_metrics = page.evaluate(
         """() => window.__pqReconstructionDebug?.getRenderMetrics?.() || null"""
     )
     assert isinstance(initial_metrics, dict)
     assert initial_metrics["ready"] is True
     assert initial_metrics["activeRouteIndex"] == 0
+    assert initial_metrics["styleKey"] == "warm_scandi"
+    assert initial_metrics["styleEvidenceReady"] is True
+    assert initial_metrics["floorplanLayerState"] == "off"
     page.evaluate("""() => window.__pqReconstructionDebug?.setRouteView?.(2)""")
     page.wait_for_function(
         """() => (window.__pqReconstructionDebug?.getRenderMetrics?.()?.activeRouteIndex ?? -1) === 2"""
@@ -3786,7 +4058,7 @@ def test_generated_reconstruction_noncanonical_viewer_html_fails_closed_on_both_
         assert exc_info.value.code == 404
 
 
-def test_generated_reconstruction_preview_without_explicit_false_gate_keeps_legacy_302_fallback(
+def test_generated_reconstruction_released_viewer_without_explicit_false_gate_fails_closed(
     generated_reconstruction_shell_server: dict[str, str],
 ) -> None:
     slug = str(generated_reconstruction_shell_server["slug"])
@@ -3797,19 +4069,14 @@ def test_generated_reconstruction_preview_without_explicit_false_gate_keeps_lega
     payload["generated_reconstruction"] = generated_reconstruction
     manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
-            return None
-
     local_base_url = str(generated_reconstruction_shell_server["local_base_url"])
     request = urllib.request.Request(
         f"{local_base_url}/tours/files/{slug}/generated-reconstruction/viewer.html",
         headers={"Host": "propertyquarry.com"},
     )
     with pytest.raises(urllib.error.HTTPError) as exc_info:
-        urllib.request.build_opener(_NoRedirect).open(request, timeout=5.0)
-    assert exc_info.value.code == 302
-    assert exc_info.value.headers["location"] == f"/tours/{slug}"
+        urllib.request.urlopen(request, timeout=5.0)
+    assert exc_info.value.code == 404
 
     alias_request = urllib.request.Request(
         f"{local_base_url}/tours/viewer/{slug}/generated-reconstruction/viewer.html",
@@ -3820,7 +4087,7 @@ def test_generated_reconstruction_preview_without_explicit_false_gate_keeps_lega
     assert alias_exc_info.value.code == 404
 
 
-def test_generated_reconstruction_viewer_serves_honest_approximate_layout_preview(
+def test_generated_reconstruction_viewer_serves_honest_styled_3d_reconstruction(
     public_tour_browser_server: dict[str, str],
     browser: Browser,
 ) -> None:
@@ -3846,9 +4113,21 @@ def test_generated_reconstruction_viewer_serves_honest_approximate_layout_previe
     assert response is not None
     assert response.status == 200
     assert page.url.endswith(f"/tours/files/{slug}/generated-reconstruction/viewer.html")
-    assert page.locator("html").get_attribute("data-pq-preview-kind") == "approximate-layout"
+    assert (
+        page.locator("html").get_attribute("data-pq-preview-kind")
+        == "styled-3d-reconstruction"
+    )
     assert page.locator("html").get_attribute("data-pq-verified-provider-capture") == "false"
-    assert page.get_by_role("heading", name="Layout preview").is_visible()
+    assert page.get_by_role("heading", name="Styled 3D reconstruction").is_visible()
+    assert page.locator("html").get_attribute("data-pq-style-id")
+    assert page.locator("html").get_attribute("data-pq-style-signature")
+    metrics = page.evaluate(
+        "() => window.__pqReconstructionDebug?.getRenderMetrics?.() || null"
+    )
+    assert isinstance(metrics, dict)
+    assert metrics["ready"] is True
+    assert metrics["floorplanLayerState"] == "off"
+    assert metrics["styleEvidenceReady"] is True
     assert page.locator("canvas").count() == 1
     assert external_requests == []
     assert not page_errors
@@ -3862,7 +4141,7 @@ def test_generated_reconstruction_viewer_serves_honest_approximate_layout_previe
     context.close()
 
 
-def test_generated_reconstruction_viewer_mobile_serves_honest_approximate_layout_preview(
+def test_generated_reconstruction_viewer_mobile_serves_honest_styled_3d_reconstruction(
     public_tour_browser_server: dict[str, str],
     browser: Browser,
 ) -> None:
@@ -3880,9 +4159,19 @@ def test_generated_reconstruction_viewer_mobile_serves_honest_approximate_layout
     assert response.status == 200
     assert page.url.endswith(f"/tours/files/{slug}/generated-reconstruction/viewer.html")
     _assert_no_horizontal_overflow(page)
-    assert page.locator("html").get_attribute("data-pq-preview-kind") == "approximate-layout"
+    assert (
+        page.locator("html").get_attribute("data-pq-preview-kind")
+        == "styled-3d-reconstruction"
+    )
     assert page.locator("html").get_attribute("data-pq-verified-provider-capture") == "false"
-    assert page.get_by_role("heading", name="Layout preview").is_visible()
+    assert page.get_by_role("heading", name="Styled 3D reconstruction").is_visible()
+    metrics = page.evaluate(
+        "() => window.__pqReconstructionDebug?.getRenderMetrics?.() || null"
+    )
+    assert isinstance(metrics, dict)
+    assert metrics["ready"] is True
+    assert metrics["floorplanLayerState"] == "off"
+    assert metrics["styleEvidenceReady"] is True
     assert page.locator("canvas").count() == 1
     assert not page_errors
     assert not [

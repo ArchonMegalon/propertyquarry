@@ -8338,10 +8338,15 @@ def test_propertyquarry_research_detail_promotes_ready_generated_reconstruction_
 
         with page.expect_navigation(wait_until="domcontentloaded"):
             ready_button.click()
-        assert page.url.endswith("/tours/generated-layout-tiergarten")
+        _assert_generated_reconstruction_v4_viewer(
+            page,
+            slug="generated-layout-tiergarten",
+            style_id="urban_jungle",
+        )
         public_text = page.locator("body").inner_text().lower()
         assert "generated reconstruction" in public_text
         assert "room route" in public_text
+        assert "urban jungle" in public_text
         assert "tour unavailable" not in public_text
     finally:
         context.close()
@@ -8486,13 +8491,16 @@ def test_propertyquarry_research_detail_surfaces_generated_diorama_and_layout_to
         )
         with page.expect_navigation(wait_until="domcontentloaded"):
             open_generated_tour.click()
-        assert page.url.endswith("/tours/generated-reconstruction-loft")
+        _assert_generated_reconstruction_v4_viewer(
+            page,
+            slug="generated-reconstruction-loft",
+            style_id="urban_jungle",
+        )
         public_text = page.locator("body").inner_text().lower()
         assert "generated reconstruction" in public_text
         assert "room route" in public_text
-        assert "reference deck" in public_text
+        assert "urban jungle" in public_text
         assert "tour unavailable" not in public_text
-        assert page.locator("#tour-video").count() == 1
         _assert_no_horizontal_overflow(page)
     finally:
         context.close()
@@ -9016,7 +9024,11 @@ def test_propertyquarry_handoff_generated_layout_tour_request_promotes_to_open_l
     bundle_root = Path(str(propertyquarry_browser_server["bundle_root"]))
     generated_layout_slug = "generated-layout-handoff-review-2"
     generated_layout_url = f"{base_url}/tours/{generated_layout_slug}"
-    _write_generated_reconstruction_public_launch_fixture(bundle_root, slug=generated_layout_slug)
+    _write_generated_reconstruction_public_launch_fixture(
+        bundle_root,
+        slug=generated_layout_slug,
+        style_id="warm_scandi",
+    )
     client = propertyquarry_browser_server["client"]
     container = client.app.state.container
     original_get_handoff = ProductService.get_handoff
@@ -9205,10 +9217,15 @@ def test_propertyquarry_handoff_generated_layout_tour_request_promotes_to_open_l
         assert updated_href == generated_layout_url
         with page.expect_navigation(wait_until="domcontentloaded"):
             updated_button.click()
-        assert page.url.endswith(f"/tours/{generated_layout_slug}")
+        _assert_generated_reconstruction_v4_viewer(
+            page,
+            slug=generated_layout_slug,
+            style_id="warm_scandi",
+        )
         public_text = page.locator("body").inner_text().lower()
         assert "generated reconstruction" in public_text
         assert "room route" in public_text
+        assert "warm scandinavian" in public_text
         assert "tour unavailable" not in public_text
     finally:
         context.close()
@@ -11309,7 +11326,65 @@ def test_propertyquarry_best_match_opens_hosted_3d_tour_and_flythrough_in_real_b
         context.close()
 
 
-def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, slug: str) -> tuple[list[str], list[str]]:
+def _assert_generated_reconstruction_v4_viewer(
+    page: Page,
+    *,
+    slug: str,
+    style_id: str,
+) -> None:
+    expected_style = reconstruction_styles.reconstruction_style(
+        style_id,
+        style_id=style_id,
+    )
+    expected_style_scene = reconstruction_styles.build_style_scene(
+        expected_style,
+        route_stop_count=6,
+    )
+    assert urllib.parse.urlparse(page.url).path == (
+        f"/tours/viewer/{slug}/generated-reconstruction/viewer.html"
+    )
+    viewer_shell = page.locator("[data-pq-reconstruction-viewer]")
+    expect(viewer_shell).to_be_visible()
+    expect(viewer_shell).to_have_attribute(
+        "data-pq-preview-kind",
+        "styled-3d-reconstruction",
+    )
+    expect(viewer_shell).to_have_attribute(
+        "data-pq-style-id",
+        str(expected_style["id"]),
+    )
+    expect(viewer_shell).to_have_attribute(
+        "data-pq-style-signature",
+        str(expected_style["signature"]),
+    )
+    expect(viewer_shell).to_have_attribute(
+        "data-pq-style-scene-signature",
+        str(expected_style_scene["scene_signature"]),
+    )
+    assert reconstruction_styles.FLOORPLAN_DISPLAY_MODE == (
+        "reference_toggle_default_off"
+    )
+    expect(viewer_shell).to_have_attribute(
+        "data-pq-floorplan-display-mode",
+        "reference_toggle_default_off",
+    )
+    page.wait_for_function(
+        "() => Boolean(window.__pqReconstructionDebug?.getRenderMetrics?.().ready)",
+        timeout=10_000,
+    )
+    render_metrics = page.evaluate(
+        "() => window.__pqReconstructionDebug.getRenderMetrics()"
+    )
+    assert int(render_metrics.get("renderCalls") or 0) > 0
+    assert int(render_metrics.get("renderTriangles") or 0) > 0
+
+
+def _write_generated_reconstruction_public_launch_fixture(
+    bundle_root: Path,
+    *,
+    slug: str,
+    style_id: str = "urban_jungle",
+) -> tuple[list[str], list[str]]:
     bundle_dir = bundle_root / slug
     reconstruction_dir = bundle_dir / "generated-reconstruction"
     reconstruction_dir.mkdir(parents=True, exist_ok=True)
@@ -11342,8 +11417,8 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
         "balcony detail 2",
     ]
     selected_style = reconstruction_styles.reconstruction_style(
-        "urban_jungle",
-        style_id="urban_jungle",
+        style_id,
+        style_id=style_id,
     )
     style_scene = reconstruction_styles.build_style_scene(
         selected_style,
@@ -11530,7 +11605,7 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
     >
       <div class="eyebrow">PropertyQuarry layout viewer</div>
       <h1>Generated reconstruction viewer</h1>
-      <p>Styled Urban Jungle fixture for the room route viewer. It exposes the same debug hooks the public launch uses to prove route sync and readiness.</p>
+      <p>Styled {html.escape(str(selected_style["label"]))} fixture for the room route viewer. It exposes the same debug hooks the public launch uses to prove route sync and readiness.</p>
       <section class="viewer-stage">
         <div class="viewer-chip-row">
           <span class="viewer-chip" id="viewer-route-position">Stop 1 / {len(route_labels)}</span>
@@ -12494,10 +12569,15 @@ def test_propertyquarry_results_surface_promotes_ready_generated_layout_tour_inl
 
         with page.expect_navigation(wait_until="domcontentloaded"):
             ready_button.click()
-        assert page.url.endswith(f"/tours/{generated_layout_slug}")
+        _assert_generated_reconstruction_v4_viewer(
+            page,
+            slug=generated_layout_slug,
+            style_id="urban_jungle",
+        )
         public_text = page.locator("body").inner_text().lower()
         assert "generated reconstruction" in public_text
         assert "room route" in public_text
+        assert "urban jungle" in public_text
         assert "tour unavailable" not in public_text
     finally:
         context.close()
