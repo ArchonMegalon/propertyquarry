@@ -1440,7 +1440,31 @@ class OnboardingService(AssistantOnboardingService):
 
     def list_property_search_agent_principals(self, *, limit: int = 1000) -> tuple[str, ...]:
         try:
-            rows = self._repo.list_states(limit=max(int(limit or 0), 1))
+            normalized_limit = max(int(limit or 0), 1)
+        except Exception:
+            return ()
+        projected_list = getattr(
+            self._repo,
+            "list_enabled_property_search_agent_principals",
+            None,
+        )
+        if callable(projected_list):
+            try:
+                projected_principals = projected_list(limit=normalized_limit)
+                return tuple(
+                    dict.fromkeys(
+                        principal_id
+                        for value in projected_principals
+                        for principal_id in (str(value or "").strip(),)
+                        if principal_id
+                    )
+                )
+            except Exception:
+                # A projection-capable repository must fail closed. Falling
+                # back to full onboarding rows can exhaust scheduler memory.
+                return ()
+        try:
+            rows = self._repo.list_states(limit=normalized_limit)
         except Exception:
             return ()
         principals: list[str] = []

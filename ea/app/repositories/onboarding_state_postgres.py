@@ -252,6 +252,72 @@ class PostgresOnboardingStateRepository:
                 rows = cur.fetchall() or []
         return tuple(self._from_row(row) for row in rows)
 
+    def list_enabled_property_search_agent_principals(self, *, limit: int = 1000) -> tuple[str, ...]:
+        """Return scheduler principals without hydrating onboarding documents."""
+
+        normalized_limit = max(int(limit or 0), 1)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT principal_id
+                    FROM onboarding_states
+                    WHERE CASE
+                        WHEN jsonb_typeof(property_search_preferences_json -> 'search_agents') = 'array'
+                        THEN EXISTS (
+                            SELECT 1
+                            FROM jsonb_array_elements(
+                                property_search_preferences_json -> 'search_agents'
+                            ) AS saved_agent(value)
+                            WHERE jsonb_typeof(saved_agent.value) = 'object'
+                              AND lower(
+                                  btrim(
+                                      COALESCE(
+                                          CASE
+                                              WHEN saved_agent.value ? 'enabled'
+                                                   AND jsonb_typeof(saved_agent.value -> 'enabled') <> 'null'
+                                              THEN saved_agent.value ->> 'enabled'
+                                              WHEN saved_agent.value ? 'search_agent_enabled'
+                                              THEN saved_agent.value ->> 'search_agent_enabled'
+                                              ELSE property_search_preferences_json ->> 'search_agent_enabled'
+                                          END,
+                                          ''
+                                      )
+                                  )
+                              ) IN ('1', 'active', 'enabled', 'on', 'true', 'y', 'yes')
+                        )
+                        ELSE lower(
+                            btrim(
+                                COALESCE(
+                                    CASE
+                                        WHEN property_search_preferences_json ? 'enabled'
+                                             AND jsonb_typeof(
+                                                 property_search_preferences_json -> 'enabled'
+                                             ) <> 'null'
+                                        THEN property_search_preferences_json ->> 'enabled'
+                                        ELSE property_search_preferences_json ->> 'search_agent_enabled'
+                                    END,
+                                    ''
+                                )
+                            )
+                        ) IN ('1', 'active', 'enabled', 'on', 'true', 'y', 'yes')
+                    END
+                    ORDER BY updated_at DESC, principal_id ASC
+                    LIMIT %s
+                    """,
+                    (normalized_limit,),
+                )
+                rows = cur.fetchall() or []
+        return tuple(
+            dict.fromkeys(
+                principal_id
+                for row in rows
+                if row
+                for principal_id in (str(row[0] or "").strip(),)
+                if principal_id
+            )
+        )
+
     def erase_principal(self, principal_id: str) -> bool:
         principal = str(principal_id or "").strip()
         if not principal:

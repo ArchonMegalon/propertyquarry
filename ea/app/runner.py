@@ -1299,7 +1299,7 @@ def _scheduler_property_scout_principal_ids(container) -> tuple[str, ...]:  # ty
     if onboarding_service is not None:
         list_principals = getattr(onboarding_service, "list_property_search_agent_principals", None)
         if callable(list_principals):
-            with contextlib.suppress(Exception):
+            try:
                 discovered = tuple(
                     sorted(
                         {
@@ -1309,8 +1309,12 @@ def _scheduler_property_scout_principal_ids(container) -> tuple[str, ...]:  # ty
                         }
                     )
                 )
-                if discovered:
-                    return discovered
+            except Exception:
+                return ()
+            # An available discovery service is authoritative. An empty result
+            # means every saved search is paused; it must not launch a legacy
+            # default principal.
+            return discovered
     settings = getattr(container, "settings", None)
     principal_candidates = {
         str(os.environ.get("EA_TELEGRAM_DEFAULT_PRINCIPAL_ID") or "").strip(),

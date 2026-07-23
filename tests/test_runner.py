@@ -941,6 +941,43 @@ def test_scheduler_property_scout_principal_ids_discover_enabled_saved_search_pr
     assert principals == ("principal-a", "principal-b")
 
 
+def test_scheduler_property_scout_principal_ids_empty_discovery_does_not_use_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    monkeypatch.delenv("EA_PROPERTY_SCOUT_PRINCIPAL_IDS", raising=False)
+    monkeypatch.setenv("EA_DEFAULT_PRINCIPAL_ID", "legacy-default")
+
+    container = SimpleNamespace(
+        onboarding=SimpleNamespace(
+            list_property_search_agent_principals=lambda limit=1000: ()
+        ),
+        settings=SimpleNamespace(auth=SimpleNamespace(default_principal_id="fallback")),
+    )
+
+    assert runner._scheduler_property_scout_principal_ids(container) == ()
+
+
+def test_scheduler_property_scout_principal_ids_failed_discovery_does_not_use_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    monkeypatch.delenv("EA_PROPERTY_SCOUT_PRINCIPAL_IDS", raising=False)
+    monkeypatch.setenv("EA_DEFAULT_PRINCIPAL_ID", "legacy-default")
+
+    def _failed_discovery(*, limit: int = 1000):
+        raise RuntimeError("projection unavailable")
+
+    container = SimpleNamespace(
+        onboarding=SimpleNamespace(
+            list_property_search_agent_principals=_failed_discovery
+        ),
+        settings=SimpleNamespace(auth=SimpleNamespace(default_principal_id="fallback")),
+    )
+
+    assert runner._scheduler_property_scout_principal_ids(container) == ()
+
+
 def test_scheduler_log_ref_is_stable_without_disclosing_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = _load_runner_module(monkeypatch)
     principal_id = "cf-email:person@example.test"

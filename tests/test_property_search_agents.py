@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from app.api.routes.landing_property_saved_searches import (
     build_agent_management_rows,
     build_property_search_agents,
@@ -181,6 +183,108 @@ def test_property_search_agent_principal_listing_only_returns_enabled_saved_sear
     principals = onboarding.list_property_search_agent_principals(limit=20)
 
     assert principals == ("principal-enabled",)
+
+
+def test_property_search_agent_principal_listing_uses_bounded_repository_projection() -> None:
+    full_state_requests: list[int] = []
+
+    class _HugePreferenceSentinel:
+        def keys(self):
+            raise AssertionError("huge preferences must not be materialized")
+
+    class _ProjectionRepository:
+        def list_enabled_property_search_agent_principals(self, *, limit: int = 1000):
+            assert limit == 20
+            return (" principal-enabled ", "", "principal-enabled", "principal-legacy")
+
+        def list_states(self, *, limit: int = 1000):
+            full_state_requests.append(limit)
+            return (
+                SimpleNamespace(
+                    principal_id="must-not-load",
+                    property_search_preferences_json=_HugePreferenceSentinel(),
+                ),
+            )
+
+    service = object.__new__(OnboardingService)
+    service._repo = _ProjectionRepository()
+
+    principals = service.list_property_search_agent_principals(limit=20)
+
+    assert principals == ("principal-enabled", "principal-legacy")
+    assert full_state_requests == []
+
+
+def test_property_search_agent_principal_projection_failure_does_not_fall_back_to_full_states() -> None:
+    class _FailingProjectionRepository:
+        def list_enabled_property_search_agent_principals(self, *, limit: int = 1000):
+            raise RuntimeError("projection unavailable")
+
+        def list_states(self, *, limit: int = 1000):
+            raise AssertionError("projection errors must fail closed")
+
+    service = object.__new__(OnboardingService)
+    service._repo = _FailingProjectionRepository()
+
+    assert service.list_property_search_agent_principals(limit=20) == ()
+
+
+def test_property_search_agent_principal_listing_non_postgres_fallback_preserves_legacy_semantics() -> None:
+    class _FallbackRepository:
+        def list_states(self, *, limit: int = 1000):
+            assert limit == 20
+            return (
+                SimpleNamespace(
+                    principal_id="explicit-enabled",
+                    property_search_preferences_json={
+                        "search_agents": [{"enabled": " YES "}],
+                    },
+                ),
+                SimpleNamespace(
+                    principal_id="explicit-disabled",
+                    property_search_preferences_json={
+                        "search_agent_enabled": True,
+                        "search_agents": [{"enabled": False}],
+                    },
+                ),
+                SimpleNamespace(
+                    principal_id="explicit-inherits-legacy",
+                    property_search_preferences_json={
+                        "search_agent_enabled": "active",
+                        "search_agents": [{"name": "Legacy inherited flag"}],
+                    },
+                ),
+                SimpleNamespace(
+                    principal_id="explicit-empty",
+                    property_search_preferences_json={
+                        "search_agent_enabled": True,
+                        "search_agents": [],
+                    },
+                ),
+                SimpleNamespace(
+                    principal_id="legacy-enabled",
+                    property_search_preferences_json={
+                        "search_agent_enabled": 1,
+                    },
+                ),
+                SimpleNamespace(
+                    principal_id="legacy-paused",
+                    property_search_preferences_json={
+                        "search_agent_enabled": False,
+                    },
+                ),
+            )
+
+    service = object.__new__(OnboardingService)
+    service._repo = _FallbackRepository()
+
+    principals = service.list_property_search_agent_principals(limit=20)
+
+    assert principals == (
+        "explicit-enabled",
+        "explicit-inherits-legacy",
+        "legacy-enabled",
+    )
 
 
 def test_property_search_preferences_drop_cross_country_providers() -> None:
