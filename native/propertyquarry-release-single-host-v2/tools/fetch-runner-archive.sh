@@ -20,10 +20,11 @@ cleanup() {
   fi
 }
 trap cleanup EXIT INT TERM HUP
-chmod 0400 "$stage"
+chmod 0600 "$stage"
 curl --fail --silent --show-error --location --max-redirs 3 --proto '=https' --proto-redir '=https' --tlsv1.2 --noproxy '*' --max-time 1800 \
   --output "$stage" \
   https://github.com/actions/runner/releases/download/v2.335.1/actions-runner-linux-x64-2.335.1.tar.gz
+chmod 0400 "$stage"
 [[ "$(stat -Lc '%a:%h:%s' -- "$stage")" == "400:1:225628509" ]] || fail
 [[ "$(sha256sum -- "$stage" | cut -d' ' -f1)" == "4ef2f25285f0ae4477f1fe1e346db76d2f3ebf03824e2ddd1973a2819bf6c8cf" ]] || fail
 python3 - "$stage" "$output" <<'PY'

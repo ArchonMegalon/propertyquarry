@@ -24,6 +24,7 @@ TOUR_DISPATCH = TOOLS / "dispatch-tour-v4-with-docker.sh"
 EPHEMERAL = TOOLS / "run-ephemeral-runner.sh"
 LIFECYCLE = TOOLS / "run-ephemeral-runner-with-docker.sh"
 RUNNER_LAUNCH = TOOLS / "launch-ephemeral-runner-with-docker.sh"
+RUNNER_FETCH = TOOLS / "fetch-runner-archive.sh"
 SCRIPTS = (
     INSTALL,
     RUNNER,
@@ -71,6 +72,20 @@ class DockerWrapperTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 50)
                 self.assertEqual(result.stdout, "")
                 self.assertEqual(result.stderr, error)
+
+    def test_runner_archive_stage_remains_writable_until_curl_finishes(self) -> None:
+        text = RUNNER_FETCH.read_text(encoding="utf-8")
+        writable = text.index('chmod 0600 "$stage"')
+        download = text.index("curl --fail", writable)
+        seal = text.index('chmod 0400 "$stage"', download)
+        verify = text.index(
+            '''[[ "$(stat -Lc '%a:%h:%s' -- "$stage")" == "400:1:225628509" ]]''',
+            seal,
+        )
+        self.assertLess(writable, download)
+        self.assertLess(download, seal)
+        self.assertLess(seal, verify)
+        self.assertEqual(text.count('chmod 0400 "$stage"'), 1)
 
     def test_every_wrapper_forces_and_proves_the_local_daemon(self) -> None:
         required = (
