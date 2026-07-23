@@ -21,6 +21,21 @@ def _default_env_file() -> Path:
     return _root() / ".env"
 
 
+def _decode_env_value(raw_value: str) -> str:
+    raw = str(raw_value or "").strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit("emailit_env_value_invalid") from exc
+        if not isinstance(value, str):
+            raise SystemExit("emailit_env_value_invalid")
+        return value
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
+        return raw[1:-1]
+    return raw
+
+
 def _parse_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -30,7 +45,7 @@ def _parse_env(path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
+        values[key.strip()] = _decode_env_value(value)
     return values
 
 
@@ -57,8 +72,17 @@ def _request(*, method: str, url: str, api_key: str, payload: dict[str, object] 
 def _find_domain(*, api_key: str, domain_name: str) -> dict[str, object] | None:
     payload = _request(method="GET", url=f"{EMAILIT_API_BASE}/domains", api_key=api_key)
     for item in list(payload.get("data") or []):
-        if str(dict(item).get("name") or "").strip().lower() == domain_name.lower():
-            return dict(item)
+        candidate = dict(item)
+        if str(candidate.get("name") or "").strip().lower() != domain_name.lower():
+            continue
+        domain_id = str(candidate.get("id") or "").strip()
+        if not domain_id:
+            raise SystemExit("emailit_domain_id_missing")
+        return _request(
+            method="GET",
+            url=f"{EMAILIT_API_BASE}/domains/{domain_id}",
+            api_key=api_key,
+        )
     return None
 
 

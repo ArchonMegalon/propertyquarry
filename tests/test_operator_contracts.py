@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -994,6 +995,77 @@ def test_emailit_bootstrap_script_help_and_wiring() -> None:
     assert "scripts/bootstrap_emailit_propertyquarry.py" in makefile
     assert "scripts/bootstrap_emailit_propertyquarry.py" in runbook
     assert "bootstrap_emailit_propertyquarry.py" in readme
+
+
+def test_emailit_bootstrap_decodes_quoted_env_values(tmp_path: Path) -> None:
+    script = ROOT / "scripts" / "bootstrap_emailit_propertyquarry.py"
+    spec = importlib.util.spec_from_file_location(
+        "bootstrap_emailit_propertyquarry", script
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    env_file = tmp_path / "propertyquarry_registration_email.env"
+    env_file.write_text(
+        '\n'.join(
+            (
+                'EMAILIT_API_KEY="emailit-key-with-quoted-runtime-format"',
+                "EA_REGISTRATION_EMAIL_FROM='property@propertyquarry.com'",
+                "EA_REGISTRATION_EMAIL_NAME=PropertyQuarry",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    values = module._parse_env(env_file)
+
+    assert values == {
+        "EMAILIT_API_KEY": "emailit-key-with-quoted-runtime-format",
+        "EA_REGISTRATION_EMAIL_FROM": "property@propertyquarry.com",
+        "EA_REGISTRATION_EMAIL_NAME": "PropertyQuarry",
+    }
+
+
+def test_emailit_bootstrap_loads_full_existing_domain(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = ROOT / "scripts" / "bootstrap_emailit_propertyquarry.py"
+    spec = importlib.util.spec_from_file_location(
+        "bootstrap_emailit_propertyquarry_domain", script
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    observed: list[tuple[str, str]] = []
+
+    def fake_request(*, method: str, url: str, api_key: str, payload=None):
+        observed.append((method, url))
+        assert api_key == "emailit-key"
+        assert payload is None
+        if url == f"{module.EMAILIT_API_BASE}/domains":
+            return {
+                "data": [
+                    {"id": "dom_propertyquarry", "name": "propertyquarry.com"}
+                ]
+            }
+        assert url == f"{module.EMAILIT_API_BASE}/domains/dom_propertyquarry"
+        return {
+            "id": "dom_propertyquarry",
+            "name": "propertyquarry.com",
+            "dns_records": [{"type": "TXT", "status": "ok"}],
+        }
+
+    monkeypatch.setattr(module, "_request", fake_request)
+
+    domain = module._find_domain(
+        api_key="emailit-key", domain_name="propertyquarry.com"
+    )
+
+    assert domain is not None
+    assert domain["dns_records"] == [{"type": "TXT", "status": "ok"}]
+    assert observed == [
+        ("GET", f"{module.EMAILIT_API_BASE}/domains"),
+        ("GET", f"{module.EMAILIT_API_BASE}/domains/dom_propertyquarry"),
+    ]
 
 
 def test_postgres_contract_and_fastestvpn_helpers_support_standalone_paths() -> None:
