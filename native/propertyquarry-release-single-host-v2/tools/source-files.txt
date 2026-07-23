@@ -61,6 +61,7 @@ tests/test_receipt_verifier.py
 tests/test_runner_prerequisite.py
 tests/test_runner_reservation.py
 tests/test_source_closure.py
+tests/test_tour_package.py
 toolchain.lock.json
 tools/approve-runner-prerequisite.py
 tools/build-installer-image.sh
@@ -78,6 +79,7 @@ tools/run-ephemeral-runner-with-docker.sh
 tools/run-ephemeral-runner.sh
 tools/source-files.txt
 tools/sync-runtime-compose.py
+tools/tour_package.py
 tools/verify-github-credential-stream.py
 tools/verify-install-receipt.py
 tools/verify-source-closure.py
