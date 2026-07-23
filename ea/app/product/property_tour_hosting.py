@@ -251,8 +251,32 @@ def _public_tour_asset_content_type_allowed(content_type: str) -> bool:
 
 def _public_tour_public_payload(payload: dict[str, object]) -> dict[str, object]:
     from app.api.routes.public_tour_payloads import build_public_tour_manifest
+    from app.product.property_search_tour_binding import (
+        canonical_property_source_url,
+        property_search_source_url_sha256,
+    )
 
     normalized_payload = dict(payload or {})
+    canonical_property_urls = {
+        canonical
+        for key in ("property_url", "listing_url")
+        if str(normalized_payload.get(key) or "").strip()
+        and (
+            canonical := canonical_property_source_url(
+                normalized_payload.get(key)
+            )
+        )
+    }
+    if len(canonical_property_urls) == 1:
+        property_url_sha256 = property_search_source_url_sha256(
+            next(iter(canonical_property_urls))
+        )
+        if property_url_sha256:
+            normalized_payload["property_url_sha256"] = property_url_sha256
+    else:
+        # Never preserve a caller-supplied identity hash when the private
+        # property/listing URL is absent, invalid, or internally conflicting.
+        normalized_payload.pop("property_url_sha256", None)
     slug = str(normalized_payload.get("slug") or "").strip()
     bundle_dir = _public_tour_dir() / slug if slug else None
     public_payload = build_public_tour_manifest(

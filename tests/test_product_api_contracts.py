@@ -15925,6 +15925,7 @@ def test_hosted_property_tour_writer_keeps_raw_public_manifest_narrow(monkeypatc
             "mime_type": "image/jpeg",
         }
     ]
+    assert "property_url_sha256" not in public_manifest
     for private_marker in (
         "listing_url",
         "property_url",
@@ -15946,6 +15947,61 @@ def test_hosted_property_tour_writer_keeps_raw_public_manifest_narrow(monkeypatc
     assert private_manifest["listing_url"] == "https://www.willhaben.at/iad/private-listing"
     assert private_manifest["property_url"] == "https://broker.example.test/private-property"
     assert private_manifest["source_virtual_tour_url"] == "https://private.example.test/not-a-public-live-tour"
+
+
+def test_hosted_property_tour_writer_exposes_only_normalized_property_url_sha256(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from app.product.property_search_tour_binding import (
+        property_search_source_url_sha256,
+    )
+    from app.product.property_tour_hosting import _write_hosted_property_tour_payload
+
+    slug = "public-property-url-hash"
+    bundle_dir = tmp_path / slug
+    bundle_dir.mkdir(parents=True)
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
+    private_property_url = (
+        "https://WWW.WILLHABEN.AT:443/iad/immobilien/d/"
+        "mietwohnungen/wien/wien-1010/private-listing?view=detail#owner"
+    )
+    canonical_equivalent = (
+        "https://www.willhaben.at/iad/immobilien/d/"
+        "mietwohnungen/wien/wien-1010/private-listing?view=detail"
+    )
+
+    _write_hosted_property_tour_payload(
+        bundle_dir,
+        {
+            "slug": slug,
+            "title": "Hashed source identity",
+            "principal_id": "cf-email:owner@example.com",
+            "property_url": private_property_url,
+            "listing_url": canonical_equivalent,
+            "property_url_sha256": "forged-caller-value",
+            "facts": {"rooms": 2},
+            "scenes": [],
+        },
+    )
+
+    public_manifest = json.loads(
+        (bundle_dir / "tour.json").read_text(encoding="utf-8")
+    )
+    private_manifest = json.loads(
+        (bundle_dir / "tour.private.json").read_text(encoding="utf-8")
+    )
+    serialized_public = json.dumps(public_manifest, sort_keys=True)
+    expected_sha256 = property_search_source_url_sha256(private_property_url)
+
+    assert expected_sha256
+    assert public_manifest["property_url_sha256"] == expected_sha256
+    assert private_manifest["property_url"] == private_property_url
+    assert private_manifest["listing_url"] == canonical_equivalent
+    assert private_property_url not in serialized_public
+    assert canonical_equivalent not in serialized_public
+    assert "willhaben.at" not in serialized_public.lower()
+    assert "forged-caller-value" not in serialized_public
 
 
 def test_hosted_floorplan_tour_revalidates_asset_suffix_after_content_type(monkeypatch, tmp_path: Path) -> None:
