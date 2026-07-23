@@ -26,6 +26,7 @@ ORBIT = "generated-reconstruction/vendor/examples/jsm/controls/OrbitControls.js"
 MODEL_OBJ = "generated-reconstruction/model.obj"
 MODEL_MTL = "generated-reconstruction/model.mtl"
 MODEL_GLB = "generated-reconstruction/model.glb"
+SIGNED_WEBP = "generated-reconstruction/source-floorplan-signed.webp"
 
 
 def _sha256(value: bytes) -> str:
@@ -651,6 +652,95 @@ def test_governed_layout_model_assets_and_viewer_dependency_are_served(
     assert isinstance(head_response, Response)
     assert head_response.status_code == 200
     assert head_response.body == b""
+    assert head_response.headers["content-length"] == str(len(assets[MODEL_GLB]))
+
+
+def test_governed_layout_signed_mime_is_independent_of_host_mime_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, payload, assets = _write_governed_layout_model_bundle(
+        tmp_path,
+        monkeypatch,
+    )
+    webp_bytes = b"RIFF\x10\x00\x00\x00WEBPVP8 signed-layout-preview"
+    assets[SIGNED_WEBP] = webp_bytes
+    webp_path = bundle / SIGNED_WEBP
+    webp_path.parent.mkdir(parents=True, exist_ok=True)
+    webp_path.write_bytes(webp_bytes)
+    payload["generated_reconstruction"]["floorplan_relpath"] = SIGNED_WEBP
+    payload["public_assets"].append(
+        {
+            "path": SIGNED_WEBP,
+            "privacy_class": "generated_reconstruction_public",
+            "role": "floorplan",
+            "mime_type": "image/webp",
+            "sha256": _sha256(webp_bytes),
+            "size_bytes": len(webp_bytes),
+        }
+    )
+    (bundle / "tour.json").write_text(
+        json.dumps(payload, sort_keys=True),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        public_tours.mimetypes,
+        "guess_type",
+        lambda *_args, **_kwargs: (None, None),
+    )
+
+    expected_mime_types = {
+        MODEL_OBJ: "model/obj",
+        MODEL_MTL: "model/mtl",
+        MODEL_GLB: "model/gltf-binary",
+        SIGNED_WEBP: "image/webp",
+    }
+    for relpath, expected_mime_type in expected_mime_types.items():
+        for response in (
+            public_tours.public_tour_file(
+                SLUG,
+                relpath,
+                _request(f"/tours/files/{SLUG}/{relpath}"),
+            ),
+            public_tours.public_tour_generated_reconstruction_preview_asset(
+                SLUG,
+                relpath,
+                _request(f"/tours/viewer/{SLUG}/{relpath}"),
+            ),
+        ):
+            assert isinstance(response, StreamingResponse)
+            assert response.status_code == 200
+            assert _streaming_body(response) == assets[relpath]
+            assert response.headers["content-type"].split(";", 1)[0] == (
+                expected_mime_type
+            )
+
+    range_response = public_tours.public_tour_file(
+        SLUG,
+        MODEL_GLB,
+        _request(
+            f"/tours/files/{SLUG}/{MODEL_GLB}",
+            headers=[(b"range", b"bytes=0-3")],
+        ),
+    )
+    assert isinstance(range_response, StreamingResponse)
+    assert range_response.status_code == 206
+    assert _streaming_body(range_response) == assets[MODEL_GLB][:4]
+    assert range_response.headers["content-type"].split(";", 1)[0] == (
+        "model/gltf-binary"
+    )
+
+    head_response = public_tours.public_tour_file(
+        SLUG,
+        MODEL_GLB,
+        _request(f"/tours/files/{SLUG}/{MODEL_GLB}", method="HEAD"),
+    )
+    assert isinstance(head_response, Response)
+    assert head_response.status_code == 200
+    assert head_response.body == b""
+    assert head_response.headers["content-type"].split(";", 1)[0] == (
+        "model/gltf-binary"
+    )
     assert head_response.headers["content-length"] == str(len(assets[MODEL_GLB]))
 
 

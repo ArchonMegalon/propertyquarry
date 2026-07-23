@@ -7976,7 +7976,17 @@ def _public_tour_file_from_snapshot(
     except Exception:
         os.close(opened.descriptor)
         raise
-    media_type = mimetypes.guess_type(safe_relpath)[0] or "application/octet-stream"
+    verified_generated_manifest_row = (
+        generated_model_manifest_row or preview_manifest_row
+    )
+    media_type = str(
+        verified_generated_manifest_row.get("mime_type") or ""
+    ).strip().lower()
+    if not media_type:
+        media_type = (
+            mimetypes.guess_type(safe_relpath)[0]
+            or "application/octet-stream"
+        )
     if PurePosixPath(safe_relpath).suffix.lower() == ".pdf":
         max_bytes = max(
             int(os.getenv("PROPERTYQUARRY_PUBLIC_PDF_MAX_BYTES") or "15728640"),
