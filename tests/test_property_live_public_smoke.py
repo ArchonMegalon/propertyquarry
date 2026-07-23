@@ -14,7 +14,9 @@ SECURITY_HEADERS = {
 SIGN_IN_COPY = (
     "PropertyQuarry Use a secure email link if your address already has access. "
     "Create an account with email. "
-    "Sign-in providers open the same account and create it if needed. "
+    "Google only verifies your identity for a PropertyQuarry-local session. "
+    "Identity only "
+    "Sign-in providers verify who you are, then open the same local account or create it if needed. "
 )
 
 
@@ -67,7 +69,9 @@ def test_live_public_smoke_passes_core_public_routes_without_network() -> None:
         "https://propertyquarry.com/sign-in": (
             'PropertyQuarry Use a secure email link if your address already has access. '
             '<form action="/sign-in/email-link">Create an account with email.</form> '
-            "Sign-in providers open the same account and create it if needed. "
+            "Google only verifies your identity for a PropertyQuarry-local session. "
+            "Identity only "
+            "Sign-in providers verify who you are, then open the same local account or create it if needed. "
             '<a href="/sign-in/google?return_to=%2Fapp%2Fsearch" aria-label="Continue with Google" '
             'data-submitting-label="Opening Google...">Continue</a>'
         ),

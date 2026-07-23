@@ -2688,9 +2688,9 @@ def test_propertyquarry_sign_in_desktop_uses_balanced_two_column_entry_surface(
             or page.get_by_text("Email sign-in is not available right now.").count()
         )
         if page.get_by_role("link", name="Continue with Google").count() or page.get_by_role("link", name="Continue with Facebook").count() or page.get_by_role("link", name="Continue with ID Austria").count():
-            expect(page.get_by_text("Sign-in providers open the same account and create it if needed.")).to_be_visible()
+            expect(page.get_by_text("Sign-in providers verify who you are, then open the same local account or create it if needed.")).to_be_visible()
         else:
-            assert page.get_by_text("Sign-in providers open the same account and create it if needed.").count() == 0
+            assert page.get_by_text("Sign-in providers verify who you are, then open the same local account or create it if needed.").count() == 0
             assert page.get_by_text("Trusted device").count() == 0
             assert page.get_by_text("Private hardware access stays limited to approved devices.").count() == 0
         _assert_no_horizontal_overflow(page)
