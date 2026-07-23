@@ -128,6 +128,8 @@ def test_scope_requires_exact_count_and_full_digest_set():
     with pytest.raises(module.CompactorError, match="candidate_binding_set_mismatch"):
         module.validate_scope([candidate], expected_count=1, expected_candidate_bindings=["0" * 64 + ":" + "0" * 64 + ":1:1"])
     assert module.validate_scope([], expected_count=0, expected_candidate_bindings=[]) == ()
+    with pytest.raises(module.CompactorError, match="candidate_count_mismatch"):
+        module.validate_scope([candidate], expected_count=0, expected_candidate_bindings=[])
 
 
 def test_same_principal_content_mutation_rejects_reviewed_binding(tmp_path):
@@ -214,6 +216,7 @@ def test_apply_is_private_transactional_and_noop_rows_are_not_written(tmp_path):
     assert connection.principal in text  # full private recovery row
     assert connection.principal not in json.dumps(receipt)
     assert "must_keep" not in json.dumps(receipt)
+    assert receipt["backups"][0]["backup_file_sha256"] == module._sha256(backup.read_bytes())
     with pytest.raises(module.CompactorError, match="candidate_changed_before_lock"):
         module.apply(connection, backup_dir=backup_dir, minimum_bytes=1, **_scope(module, connection))
 
@@ -246,9 +249,9 @@ def test_restore_validates_backup_hash_and_refuses_later_edit(tmp_path):
     connection = Connection()
     backup_dir = tmp_path / "safe"
     backup_dir.mkdir(mode=0o700)
-    module.apply(connection, backup_dir=backup_dir, minimum_bytes=1, **_scope(module, connection))
+    apply_receipt = module.apply(connection, backup_dir=backup_dir, minimum_bytes=1, **_scope(module, connection))
     backup = next(backup_dir.iterdir())
-    receipt = module.restore(connection, backup_path=backup, expected_file_sha256=module._sha256(backup.read_bytes()))
+    receipt = module.restore(connection, backup_path=backup, expected_file_sha256=apply_receipt["backups"][0]["backup_file_sha256"])
     assert receipt["mode"] == "restore"
     assert connection.preferences == _preferences()
     second_backup_dir = tmp_path / "safe-second"
@@ -273,3 +276,15 @@ def test_restore_validates_backup_hash_and_refuses_later_edit(tmp_path):
     alias.symlink_to(backup)
     with pytest.raises(module.CompactorError, match="backup_file_invalid"):
         module.restore(connection, backup_path=alias, expected_file_sha256=module._sha256(backup.read_bytes()))
+
+
+def test_deterministic_backup_is_safely_reused(tmp_path):
+    module = _module()
+    connection = Connection()
+    candidate = module._candidate_from_row(connection.row())
+    backup_dir = tmp_path / "safe"
+    backup_dir.mkdir(mode=0o700)
+    first = module.write_private_backup(backup_dir, candidate)
+    second = module.write_private_backup(backup_dir, candidate)
+    assert first == second
+    assert first[1] == module._sha256(first[0].read_bytes())

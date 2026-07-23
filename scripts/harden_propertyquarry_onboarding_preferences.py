@@ -20,7 +20,6 @@ import re
 import stat
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -239,11 +238,13 @@ def validate_scope(
     if expected_count is None or expected_count < 0:
         raise CompactorError("expected_count_required")
     expected = frozenset(str(item).strip() for item in expected_candidate_bindings)
+    materialized = tuple(candidates)
     if expected_count == 0 and not expected:
+        if materialized:
+            raise CompactorError("candidate_count_mismatch")
         return ()
     if not expected or any(len(item.split(":")) != 4 or not _is_digest(item.split(":")[0]) or not _is_digest(item.split(":")[1]) for item in expected):
         raise CompactorError("expected_candidate_binding_set_required")
-    materialized = tuple(candidates)
     actual = frozenset(candidate.binding for candidate in materialized)
     if len(materialized) != expected_count:
         raise CompactorError("candidate_count_mismatch")
@@ -253,6 +254,8 @@ def validate_scope(
 
 
 def _open_secure_backup_directory(backup_dir: Path) -> int:
+    if ".." in backup_dir.parts:
+        raise CompactorError("backup_directory_path_invalid")
     flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
     try:
         if backup_dir.is_absolute():
@@ -298,7 +301,6 @@ def _backup_payload(candidate: Candidate) -> dict[str, object]:
         raise CompactorError("full_row_recovery_record_missing")
     payload: dict[str, object] = {
         "schema": BACKUP_SCHEMA,
-        "created_at": datetime.now(timezone.utc).isoformat(),
         "principal_sha256": candidate.principal_sha256,
         "before_preferences_sha256": candidate.before_sha256,
         "after_preferences_sha256": candidate.after_sha256,
@@ -312,7 +314,7 @@ def write_private_backup(backup_dir: Path, candidate: Candidate) -> tuple[Path, 
     """Create a non-overwritable, mode-0600 private recovery record."""
     payload = _backup_payload(candidate)
     raw = _canonical_json(payload)
-    content_digest = str(payload["backup_content_sha256"])
+    file_digest = _sha256(raw)
     target_name = f"onboarding-preferences-{candidate.principal_sha256}-{candidate.before_sha256}.json"
     directory_fd = _open_secure_backup_directory(backup_dir)
     try:
@@ -324,7 +326,7 @@ def write_private_backup(backup_dir: Path, candidate: Candidate) -> tuple[Path, 
             existing = b"".join(iter(lambda: os.read(existing_fd, 1_048_576), b""))
             if stat.S_IMODE(os.fstat(existing_fd).st_mode) != 0o600 or existing != raw:
                 raise CompactorError("backup_target_already_exists")
-            return backup_dir / target_name, content_digest, len(raw)
+            return backup_dir / target_name, file_digest, len(raw)
         finally:
             os.close(existing_fd)
             os.close(directory_fd)
@@ -369,7 +371,7 @@ def write_private_backup(backup_dir: Path, candidate: Candidate) -> tuple[Path, 
         os.close(directory_fd)
     if target_mode != 0o600:
         raise CompactorError("backup_file_mode_invalid")
-    return backup_dir / target_name, content_digest, len(raw)
+    return backup_dir / target_name, file_digest, len(raw)
 
 
 def _candidate_is_eligible(candidate: Candidate, *, minimum_bytes: int) -> bool:
@@ -413,7 +415,7 @@ def _redacted_receipt(
         "backups": [
             {
                 "principal_sha256": principal_sha256,
-                "backup_content_sha256": digest,
+                "backup_file_sha256": digest,
                 "backup_bytes": byte_count,
                 "status": "applied" if principal_sha256 in {str(item["principal_sha256"]) for item in summaries} else "backup_only",
             }
@@ -434,6 +436,8 @@ def dry_run(
         summaries: list[dict[str, object]] = []
         for candidate in metadata:
             loaded = _load_candidate(cursor, candidate.principal_id, lock=False)
+            if loaded.binding != candidate.binding:
+                raise CompactorError("candidate_changed_during_dry_run")
             summaries.append(_candidate_summary(loaded))
             del loaded
     return _redacted_receipt(
@@ -544,7 +548,7 @@ def _load_backup(path: Path, *, expected_file_sha256: str) -> dict[str, object]:
     if not _is_digest(expected_file_sha256):
         raise CompactorError("restore_backup_file_sha256_required")
     try:
-        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+        parent_fd = _open_secure_backup_directory(path.parent)
         descriptor = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
     except OSError as error:
         raise CompactorError("backup_file_invalid") from error
