@@ -3093,6 +3093,58 @@ def _property_feedback_summary_has_signal(summary: dict[str, object]) -> bool:
 
 
 
+def _property_lookup_indexed_candidate(
+    product: Any,
+    *,
+    principal_id: str,
+    access_email: str = "",
+    candidate_ref: str,
+    run_id: str = "",
+) -> tuple[dict[str, object] | None, str]:
+    """Load one bounded packet projection without hydrating its search run."""
+
+    normalized_candidate_ref = str(candidate_ref or "").strip()
+    normalized_run_id = str(run_id or "").strip()
+    if not normalized_candidate_ref:
+        return None, ""
+    indexed_lookup = getattr(product, "get_property_research_packet_link", None)
+    if not callable(indexed_lookup):
+        return None, ""
+    try:
+        indexed_link = indexed_lookup(
+            principal_id=principal_id,
+            candidate_ref=normalized_candidate_ref,
+            account_email=access_email,
+        )
+    except TypeError:
+        try:
+            indexed_link = indexed_lookup(
+                principal_id=principal_id,
+                candidate_ref=normalized_candidate_ref,
+            )
+        except Exception:
+            return None, ""
+    except Exception:
+        return None, ""
+    if not isinstance(indexed_link, dict):
+        return None, ""
+    indexed_candidate = indexed_link.get("candidate") or indexed_link.get("packet_json")
+    if not isinstance(indexed_candidate, dict):
+        return None, ""
+    candidate = dict(indexed_candidate)
+    if str(_property_candidate_ref(candidate) or "").strip() != normalized_candidate_ref:
+        return None, ""
+    packet_source_run_id = str(candidate.get("packet_source_run_id") or "").strip()
+    matched_run_id = str(
+        packet_source_run_id
+        or indexed_link.get("last_run_id")
+        or ""
+    ).strip()
+    if normalized_run_id and packet_source_run_id != normalized_run_id:
+        return None, ""
+    return candidate, matched_run_id
+
+
 def _property_lookup_candidate_across_runs(
     product: Any,
     *,
@@ -3111,7 +3163,15 @@ def _property_lookup_candidate_across_runs(
     indexed_coverage_complete = False
     indexed_lookup = getattr(product, "get_property_research_packet_link", None)
     if callable(indexed_lookup):
-        indexed_link: object = None
+        indexed_candidate, indexed_run_id = _property_lookup_indexed_candidate(
+            product,
+            principal_id=principal_id,
+            access_email=access_email,
+            candidate_ref=normalized_candidate_ref,
+            run_id=normalized_run_id,
+        )
+        if indexed_candidate is not None:
+            return indexed_candidate, indexed_run_id
         try:
             indexed_link = indexed_lookup(
                 principal_id=principal_id,
@@ -3125,30 +3185,12 @@ def _property_lookup_candidate_across_runs(
                     candidate_ref=normalized_candidate_ref,
                 )
             except Exception:
+                indexed_link = False
                 indexed_lookup_failed = True
         except Exception:
+            indexed_link = False
             indexed_lookup_failed = True
-        if isinstance(indexed_link, dict):
-            indexed_candidate = indexed_link.get("candidate") or indexed_link.get("packet_json")
-            if isinstance(indexed_candidate, dict) and (
-                str(_property_candidate_ref(indexed_candidate) or "").strip()
-                == normalized_candidate_ref
-            ):
-                matched_run_id = str(
-                    indexed_link.get("last_run_id")
-                    or indexed_candidate.get("packet_source_run_id")
-                    or normalized_run_id
-                    or ""
-                ).strip()
-                packet_source_run_id = str(
-                    indexed_candidate.get("packet_source_run_id") or matched_run_id
-                ).strip()
-                if not normalized_run_id or packet_source_run_id == normalized_run_id:
-                    return dict(indexed_candidate), matched_run_id
-                indexed_lookup_failed = True
-            else:
-                indexed_lookup_failed = True
-        elif indexed_link is None and not indexed_lookup_failed:
+        if indexed_link is None and not indexed_lookup_failed:
             indexed_clean_miss = True
             coverage_lookup = getattr(
                 product,
@@ -3161,7 +3203,7 @@ def _property_lookup_candidate_across_runs(
                 except Exception:
                     indexed_lookup_failed = True
                     indexed_coverage_complete = False
-        else:
+        elif indexed_link is not None:
             indexed_lookup_failed = True
     run_ids: list[str] = []
     listed_runs: list[dict[str, object]] = []
@@ -5320,9 +5362,7 @@ def _property_console_context(
         if surface_scope.section == "shortlist" and active_summary.get("ranked_candidates"):
             should_hydrate_run_status = False
         if should_hydrate_run_status:
-            lightweight_run_status = surface_scope.section == "shortlist" or (
-                surface_scope.section == "research" and not explicit_run_requested
-            )
+            lightweight_run_status = surface_scope.section in {"shortlist", "research"}
             try:
                 run_payload = dict(
                     product.get_property_search_run_status(
@@ -5368,10 +5408,9 @@ def _property_console_context(
             normalized_run_id,
         )
     ):
-        # Preserve the already-fetched, unprojected exact run only inside the
-        # server-side context. Research candidate normalization intentionally
-        # removes retired provider targets, while this private snapshot lets the
-        # page decide whether a scoped handoff exists without a second run read.
+        # Preserve the already-fetched bounded exact-run projection only inside
+        # the server-side context. Research first paint must never retain the
+        # full search-run graph merely to resolve one candidate.
         raw_requested_run_payload = dict(run_payload)
     if run_payload and not prefer_saved_brief_only:
         run_preferences_payload = (
@@ -7778,11 +7817,21 @@ def _property_original_tour_exact_run_candidate(
         or not normalized_candidate_ref
     ):
         return None
+    indexed_candidate, _matched_run_id = _property_lookup_indexed_candidate(
+        product,
+        principal_id=normalized_principal_id,
+        access_email=str(account_email or "").strip(),
+        candidate_ref=normalized_candidate_ref,
+        run_id=normalized_run_id,
+    )
+    if indexed_candidate is not None:
+        return indexed_candidate
     try:
         run_payload = dict(
             product.get_property_search_run_status(
                 principal_id=normalized_principal_id,
                 run_id=normalized_run_id,
+                lightweight=True,
                 account_email=str(account_email or "").strip(),
             )
             or {}
@@ -7793,6 +7842,7 @@ def _property_original_tour_exact_run_candidate(
                 product.get_property_search_run_status(
                     principal_id=normalized_principal_id,
                     run_id=normalized_run_id,
+                    lightweight=True,
                 )
                 or {}
             )
@@ -7933,10 +7983,25 @@ def property_research_packet(
     normalized_candidate_ref = str(candidate_ref or "").strip()
     requested_run_id = str(run_id or "").strip()
     resolved_run_id = requested_run_id
-    candidate = _property_lookup_candidate(
-        property_context=property_context,
+    candidate, indexed_run_id = _property_lookup_indexed_candidate(
+        product,
+        principal_id=context.principal_id,
+        access_email=context.access_email,
         candidate_ref=normalized_candidate_ref,
+        run_id=requested_run_id,
     )
+    candidate_from_exact_index = bool(
+        candidate is not None
+        and requested_run_id
+        and _property_constant_text_equal(indexed_run_id, requested_run_id)
+    )
+    if candidate is None:
+        candidate = _property_lookup_candidate(
+            property_context=property_context,
+            candidate_ref=normalized_candidate_ref,
+        )
+    elif not resolved_run_id:
+        resolved_run_id = indexed_run_id
     if candidate is None:
         candidate = _property_lookup_candidate_in_saved_shortlist(
             product,
@@ -8655,11 +8720,15 @@ def property_research_packet(
         and _property_constant_text_equal(effective_run_id, requested_run_id)
         and _property_original_tour_authenticated(context)
     ):
-        original_tour_candidate = _property_original_tour_candidate_from_exact_run_payload(
-            run_payload=raw_requested_run_payload,
-            principal_id=context.principal_id,
-            run_id=requested_run_id,
-            candidate_ref=normalized_candidate_ref,
+        original_tour_candidate = (
+            dict(candidate)
+            if candidate_from_exact_index
+            else _property_original_tour_candidate_from_exact_run_payload(
+                run_payload=raw_requested_run_payload,
+                principal_id=context.principal_id,
+                run_id=requested_run_id,
+                candidate_ref=normalized_candidate_ref,
+            )
         )
         if original_tour_candidate is not None:
             original_tour_handoff_href = _property_original_tour_handoff_href(

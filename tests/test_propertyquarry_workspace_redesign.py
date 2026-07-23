@@ -9684,7 +9684,7 @@ def test_property_console_context_skips_recent_run_hydration_for_explicit_shortl
     assert calls == [True]
 
 
-def test_property_console_context_uses_full_status_for_explicit_research_run(monkeypatch) -> None:
+def test_property_console_context_uses_lightweight_status_for_explicit_research_run(monkeypatch) -> None:
     client = build_property_client(principal_id="pq-research-lightweight-run")
     calls: list[bool] = []
 
@@ -9720,7 +9720,7 @@ def test_property_console_context_uses_full_status_for_explicit_research_run(mon
         surface_mode="research",
     )
 
-    assert calls == [False]
+    assert calls == [True]
     assert context["recent_search_runs"] == []
     assert context["run"]["summary"]["ranked_candidates"][0]["candidate_ref"] == "research-cand-1"
 
@@ -15178,7 +15178,7 @@ def test_property_research_route_uses_research_surface_contract(monkeypatch) -> 
     assert "PropertyQuarry Shortlist" not in research.text
 
 
-def test_property_research_packet_uses_full_run_status_for_explicit_run(monkeypatch) -> None:
+def test_property_research_packet_uses_lightweight_run_status_for_explicit_run(monkeypatch) -> None:
     principal_id = "pq-research-packet-lightweight"
     client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property Office")
@@ -15229,8 +15229,105 @@ def test_property_research_packet_uses_full_run_status_for_explicit_run(monkeypa
     )
 
     assert response.status_code == 200
-    assert calls == [False]
+    assert calls == [True]
     assert "Lightweight packet flat" in response.text
+
+
+def test_property_research_packet_prefers_bounded_index_and_never_full_hydrates(
+    monkeypatch,
+) -> None:
+    principal_id = "pq-research-index-first-paint"
+    run_id = "run-research-index-first-paint"
+    candidate_ref = "research-index-first-paint-candidate"
+    client = build_property_client(principal_id=principal_id)
+    start_workspace(client, mode="personal", workspace_name="Property Office")
+    status_calls: list[bool] = []
+    captured_candidate: dict[str, object] = {}
+    indexed_candidate = {
+        "candidate_ref": candidate_ref,
+        "packet_source_run_id": run_id,
+        "title": "Indexed first-paint home",
+        "summary": "EUR 1,880 · 72 m² · 1060 Wien",
+        "property_url": "https://example.test/research-index-first-paint",
+        "property_facts": {
+            "price_eur": 1880.0,
+            "area_m2": 72.0,
+            "postal_name": "1060 Wien",
+            "nearest_supermarket_m": 140,
+        },
+    }
+
+    def _fake_run_status(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        lightweight: bool = False,
+        **_kwargs,
+    ):
+        status_calls.append(lightweight)
+        if not lightweight:
+            raise AssertionError("research first paint must not hydrate the full run")
+        return {
+            "run_id": run_id,
+            "principal_id": principal_id,
+            "status": "processed",
+            "property_search_preferences": {
+                "country_code": "AT",
+                "max_distance_to_supermarket_m": 500,
+                "max_distance_to_supermarket_importance": "must_have",
+            },
+            "summary": {
+                "status": "processed",
+                "ranked_candidates": [],
+                "sources": [],
+            },
+        }
+
+    def _fake_packet_link(
+        self,
+        *,
+        principal_id: str,
+        candidate_ref: str,
+        account_email: str = "",
+    ):
+        del account_email
+        assert principal_id == "pq-research-index-first-paint"
+        assert candidate_ref == "research-index-first-paint-candidate"
+        return {
+            "candidate": dict(indexed_candidate),
+            "last_run_id": run_id,
+        }
+
+    monkeypatch.setattr(ProductService, "get_property_search_run_status", _fake_run_status)
+    monkeypatch.setattr(ProductService, "get_property_research_packet_link", _fake_packet_link)
+    original_enriched_facts = landing_routes._property_enriched_candidate_facts
+
+    def _capture_enriched_facts(**kwargs):
+        captured_candidate.update(dict(kwargs.get("candidate") or {}))
+        return original_enriched_facts(**kwargs)
+
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_enriched_candidate_facts",
+        _capture_enriched_facts,
+    )
+    monkeypatch.setattr(
+        landing_property_research,
+        "_property_investment_research_snapshot",
+        lambda **_kwargs: {},
+    )
+
+    response = client.get(
+        f"/app/research/{candidate_ref}",
+        params={"run_id": run_id},
+        headers={"host": "propertyquarry.com"},
+    )
+
+    assert response.status_code == 200
+    assert status_calls == [True]
+    assert "Indexed first-paint home" in response.text
+    assert dict(captured_candidate["property_facts"])["nearest_supermarket_m"] == 140
 
 
 def test_property_research_media_does_not_embed_stale_hosted_tour_record(monkeypatch) -> None:
@@ -15798,7 +15895,7 @@ def test_property_research_page_without_matterport_uses_one_exact_run_read(
     assert len(run_reads) == 1
     assert run_reads[0]["principal_id"] == principal_id
     assert run_reads[0]["run_id"] == run_id
-    assert run_reads[0]["lightweight"] is False
+    assert run_reads[0]["lightweight"] is True
 
 
 @pytest.mark.parametrize("requested_run_id", (None, "run-requested-before-recovery"))
@@ -29963,6 +30060,7 @@ def test_property_research_packet_embeds_only_canonical_ai_panorama_control(
     expected_control = f"/tours/{slug}/control"
     assert 'data-prd-ai-360-embed' in rendered_html
     assert f'src="{expected_control}"' in rendered_html
+    assert 'loading="lazy"' in rendered_html
     assert 'title="Interactive AI 360 tour: Flagship AI panorama apartment"' in rendered_html
     assert 'sandbox="allow-scripts allow-same-origin"' in rendered_html
     assert 'allow="fullscreen"' in rendered_html
