@@ -63,10 +63,13 @@ from app.product.property_score_methodology import build_property_score_methodol
 from app.product.property_delivery_governance import property_delivery_governance_rows
 from app.product import property_tour_hosting
 from app.product.service import (
+    _PROPERTY_GENERATED_TOUR_STATUS_DETAIL,
+    _PROPERTY_GENERATED_TOUR_STATUS_LABEL,
     _hosted_property_tour_telegram_preview_image_url_for_style,
     _hosted_property_visual_progress_snapshot,
     _hosted_property_visual_progress_stage_label,
     _property_visual_eta_label,
+    _property_visual_layout_preview_url,
     _property_visual_progress_pct,
     _property_visual_ready_tour_url,
     _property_visual_terminal_status_for_reason,
@@ -314,6 +317,16 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
     raw = dict(candidate or {})
     raw_tour_payload = dict(raw.get("tour") or {}) if isinstance(raw.get("tour"), dict) else {}
     recognized_source_url = _property_candidate_source_virtual_tour_url(raw)
+    generated_source_urls = {
+        str(value or "").strip()
+        for value in (
+            raw.get("generated_reconstruction_url"),
+            raw.get("layout_preview_url"),
+            raw_tour_payload.get("generated_reconstruction_url"),
+            raw_tour_payload.get("layout_preview_url"),
+        )
+        if str(value or "").strip()
+    }
     candidates = (
         raw.get("tour_url"),
         raw.get("open_tour_url"),
@@ -331,6 +344,10 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
         if not normalized_candidate_url or normalized_candidate_url in seen:
             continue
         seen.add(normalized_candidate_url)
+        if normalized_candidate_url in generated_source_urls or _property_visual_layout_preview_url(
+            normalized_candidate_url
+        ):
+            continue
         ready_tour_url = _property_visual_ready_tour_url(
             tour_url=normalized_candidate_url,
             open_tour_url=normalized_candidate_url,
@@ -340,7 +357,6 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
             continue
         verified_hosted_url = str(
             property_tour_hosting._hosted_property_tour_verified_open_url(safe_ready_tour_url)
-            or property_tour_hosting._hosted_property_tour_first_party_open_url(safe_ready_tour_url)
             or ""
         ).strip()
         safe_hosted_url = _property_workbench_client_safe_web_or_local_url(verified_hosted_url)
@@ -349,6 +365,45 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
         safe_provider_url = _property_workbench_client_provider_viewer_url(safe_ready_tour_url)
         if safe_provider_url:
             return safe_provider_url
+    return ""
+
+
+def _property_workbench_candidate_generated_layout_url(candidate: dict[str, object]) -> str:
+    raw = dict(candidate or {})
+    raw_tour_payload = dict(raw.get("tour") or {}) if isinstance(raw.get("tour"), dict) else {}
+    generated_mode = bool(
+        str(raw.get("tour_media_mode") or raw_tour_payload.get("tour_media_mode") or "").strip().lower()
+        == "generated_reconstruction"
+    )
+    candidates = [
+        raw.get("generated_reconstruction_url"),
+        raw.get("layout_preview_url"),
+        raw_tour_payload.get("generated_reconstruction_url"),
+        raw_tour_payload.get("layout_preview_url"),
+    ]
+    if generated_mode:
+        candidates.extend(
+            (
+                raw.get("open_tour_url"),
+                raw.get("tour_url"),
+                raw_tour_payload.get("open_tour_url"),
+                raw_tour_payload.get("url"),
+                raw_tour_payload.get("embed_url"),
+            )
+        )
+    for candidate_url in candidates:
+        normalized_candidate_url = str(candidate_url or "").strip()
+        if not normalized_candidate_url:
+            continue
+        layout_preview_url = _property_visual_layout_preview_url(normalized_candidate_url)
+        safe_layout_preview_url = _property_workbench_client_safe_web_or_local_url(
+            layout_preview_url
+        )
+        if (
+            safe_layout_preview_url
+            and not _property_workbench_client_url_is_tracking(safe_layout_preview_url)
+        ):
+            return safe_layout_preview_url
     return ""
 
 
@@ -401,6 +456,7 @@ def _property_workbench_candidate_diorama_preview_url(candidate: dict[str, objec
     raw_tour_payload = dict(raw.get("tour") or {}) if isinstance(raw.get("tour"), dict) else {}
     raw_tour_url = str(
         raw.get("generated_reconstruction_url")
+        or raw.get("tour_runtime_url")
         or raw.get("tour_url")
         or raw.get("verified_tour_url")
         or raw_tour_payload.get("url")
@@ -639,6 +695,17 @@ def _property_workbench_client_tour_payload(
         compact["reason_key"] = reason_key
     normalized_kind = "flythrough" if str(request_kind or "").strip().lower() == "flythrough" else "tour"
     status = str(raw.get("status") or "").strip().lower()
+    generated_reconstruction_ready = bool(
+        normalized_kind == "tour"
+        and (
+            str(raw.get("tour_media_mode") or "").strip().lower() == "generated_reconstruction"
+            or str(raw.get("provider_key") or "").strip().lower() == "generated_reconstruction"
+            or str(raw.get("label") or raw.get("control_label") or "").strip()
+            == "Open AI-generated 3D tour"
+        )
+    )
+    if generated_reconstruction_ready:
+        compact["tour_media_mode"] = "generated_reconstruction"
     safe_validated_url = _property_workbench_client_safe_web_or_local_url(validated_url)
     safe_provider_url = (
         _property_workbench_client_provider_viewer_url(validated_provider_url)
@@ -650,6 +717,9 @@ def _property_workbench_client_tour_payload(
         compact["embed_url"] = safe_validated_url
     if safe_provider_url:
         compact["provider_url"] = safe_provider_url
+    if generated_reconstruction_ready and safe_validated_url:
+        status = "ready"
+        compact["status"] = "ready"
     if status in _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES and not (safe_validated_url or safe_provider_url):
         status = "unavailable"
         compact["status"] = status
@@ -660,6 +730,7 @@ def _property_workbench_client_tour_payload(
         "3D tour unavailable",
         "Layout tour available",
         "Open 3D tour",
+        "Open AI-generated 3D tour",
         "Open layout tour",
         "Open original tour",
         "Original tour",
@@ -676,7 +747,7 @@ def _property_workbench_client_tour_payload(
         if label in safe_labels:
             compact[key] = label
     provider_label = str(raw.get("provider_label") or "").strip()
-    if provider_label in {"3D tour", "Layout tour", "Original tour", "Walkthrough"}:
+    if provider_label in {"3D tour", "AI-generated 3D tour", "Layout tour", "Original tour", "Walkthrough"}:
         compact["provider_label"] = provider_label
     eta_label = str(raw.get("eta_label") or "").strip().lower()
     active_statuses = {"queued", "pending", "processing", "running", "in_progress", "started", "rendering", "repairing"}
@@ -687,7 +758,11 @@ def _property_workbench_client_tour_payload(
         compact["status_detail"] = (
             "Walkthrough is ready."
             if normalized_kind == "flythrough"
-            else ("3D tour is ready." if status != "source" else "Original tour is available.")
+            else (
+                _PROPERTY_GENERATED_TOUR_STATUS_DETAIL
+                if generated_reconstruction_ready
+                else ("3D tour is ready." if status != "source" else "Original tour is available.")
+            )
         )
     elif status in {"queued", "pending"}:
         compact["status_detail"] = "Walkthrough queued." if normalized_kind == "flythrough" else "Queued."
@@ -851,10 +926,21 @@ def _property_workbench_client_candidate_payload(
     if derived_source_virtual_tour_url:
         compact["source_virtual_tour_url"] = derived_source_virtual_tour_url
     ready_tour_url = _property_workbench_candidate_ready_tour_url(raw)
+    generated_layout_url = _property_workbench_candidate_generated_layout_url(raw)
     if ready_tour_url:
         compact["tour_url"] = ready_tour_url
         compact["verified_tour_url"] = ready_tour_url
         compact["open_tour_url"] = ready_tour_url
+    elif generated_layout_url:
+        compact["tour_url"] = ""
+        compact["verified_tour_url"] = ""
+        compact["open_tour_url"] = generated_layout_url
+        compact["generated_reconstruction_url"] = generated_layout_url
+        compact["layout_preview_url"] = generated_layout_url
+        compact["layout_preview_status"] = "ready"
+        compact["tour_media_mode"] = "generated_reconstruction"
+        if str(compact.get("tour_status") or "").strip().lower() in _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES:
+            compact["tour_status"] = "blocked"
     elif str(compact.get("tour_status") or "").strip().lower() in _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES:
         compact["tour_status"] = "unavailable"
     flythrough_url = _property_workbench_candidate_flythrough_url(
@@ -880,7 +966,7 @@ def _property_workbench_client_candidate_payload(
     tour_payload = _property_workbench_client_tour_payload(
         raw.get("tour"),
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),
-        validated_url=ready_tour_url,
+        validated_url=ready_tour_url or generated_layout_url,
         validated_provider_url=(
             dict(raw.get("tour") or {}).get("provider_url")
             if isinstance(raw.get("tour"), dict)
@@ -2104,9 +2190,15 @@ def property_workspace_payload(
     def _normalize_verified_candidate_tour(candidate: dict[str, object]) -> dict[str, object]:
         normalized = dict(candidate)
         tour_payload = dict(normalized.get("tour") or {}) if isinstance(normalized.get("tour"), dict) else {}
-        raw_tour_url = str(
+        raw_generated_reconstruction_url = str(
             normalized.get("generated_reconstruction_url")
-            or normalized.get("tour_runtime_url")
+            or normalized.get("layout_preview_url")
+            or tour_payload.get("generated_reconstruction_url")
+            or tour_payload.get("layout_preview_url")
+            or ""
+        ).strip()
+        raw_tour_url = str(
+            normalized.get("tour_runtime_url")
             or normalized.get("tour_url")
             or normalized.get("verified_tour_url")
             or tour_payload.get("tour_url")
@@ -2122,14 +2214,37 @@ def property_workspace_payload(
             or tour_payload.get("embed_url")
             or ""
         ).strip()
-        if not raw_tour_url and not raw_open_tour_url:
+        if not raw_generated_reconstruction_url and raw_tour_url:
+            raw_tour_layout_preview_url = _property_visual_layout_preview_url(raw_tour_url)
+            if raw_tour_layout_preview_url:
+                raw_generated_reconstruction_url = raw_tour_url
+                raw_tour_url = ""
+        generated_layout_preview_url = _property_visual_layout_preview_url(
+            raw_generated_reconstruction_url
+        )
+        if generated_layout_preview_url and raw_open_tour_url in {
+            raw_generated_reconstruction_url,
+            generated_layout_preview_url,
+        }:
+            raw_open_tour_url = ""
+        if not raw_tour_url and not raw_open_tour_url and not generated_layout_preview_url:
             if tour_payload:
                 normalized["tour"] = tour_payload
             return normalized
-        normalized["tour_runtime_url"] = raw_tour_url or raw_open_tour_url
-        ready_tour_url = _property_visual_ready_tour_url(
-            tour_url=raw_tour_url,
-            open_tour_url=raw_open_tour_url,
+        normalized["tour_runtime_url"] = (
+            raw_tour_url
+            or raw_open_tour_url
+            or raw_generated_reconstruction_url
+        )
+        ready_tour_url = _property_workbench_candidate_ready_tour_url(
+            {
+                **normalized,
+                "tour_url": raw_tour_url,
+                "open_tour_url": raw_open_tour_url,
+                "generated_reconstruction_url": raw_generated_reconstruction_url,
+                "layout_preview_url": generated_layout_preview_url,
+                "tour": tour_payload,
+            }
         )
         if ready_tour_url:
             normalized["tour_url"] = ready_tour_url
@@ -2140,6 +2255,33 @@ def property_workspace_payload(
                 tour_payload["embed_url"] = ready_tour_url
             elif "embed_url" not in tour_payload:
                 tour_payload["embed_url"] = ready_tour_url
+            normalized["tour"] = tour_payload
+        elif generated_layout_preview_url:
+            normalized["tour_url"] = ""
+            normalized["verified_tour_url"] = ""
+            normalized["open_tour_url"] = generated_layout_preview_url
+            normalized["generated_reconstruction_url"] = raw_generated_reconstruction_url
+            normalized["layout_preview_url"] = generated_layout_preview_url
+            normalized["layout_preview_status"] = "ready"
+            normalized["tour_media_mode"] = "generated_reconstruction"
+            if str(normalized.get("tour_status") or "").strip().lower() in _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES:
+                normalized["tour_status"] = "blocked"
+            tour_payload.update(
+                {
+                    "status": "ready",
+                    "label": _PROPERTY_GENERATED_TOUR_STATUS_LABEL,
+                    "control_label": _PROPERTY_GENERATED_TOUR_STATUS_LABEL,
+                    "status_detail": _PROPERTY_GENERATED_TOUR_STATUS_DETAIL,
+                    "url": generated_layout_preview_url,
+                    "embed_url": generated_layout_preview_url,
+                    "generated_reconstruction_url": raw_generated_reconstruction_url,
+                    "layout_preview_url": generated_layout_preview_url,
+                    "layout_preview_status": "ready",
+                    "tour_media_mode": "generated_reconstruction",
+                    "provider_key": "generated_reconstruction",
+                    "provider_label": "AI-generated 3D tour",
+                }
+            )
             normalized["tour"] = tour_payload
         elif raw_tour_url:
             from app.product import property_tour_hosting

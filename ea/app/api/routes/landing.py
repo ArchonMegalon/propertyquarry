@@ -8895,7 +8895,7 @@ def property_research_packet(
                 "href": generated_reconstruction_action_href,
                 "label": str(
                     research_media.get("generated_reconstruction_label")
-                    or ("Open AI 360 tour" if ai_360_ready else "Open layout tour")
+                    or ("Open AI 360 tour" if ai_360_ready else "Open AI-generated 3D tour")
                 ).strip(),
                 "external": False,
                 "kind": "ai_360_reconstruction" if ai_360_ready else "generated_reconstruction",
@@ -8904,7 +8904,10 @@ def property_research_packet(
                     or (
                         "AI reconstruction based on property photos; not a captured 360 or measured survey."
                         if ai_360_ready
-                        else "Generated from the floor plan and listing photos."
+                        else (
+                            "AI-generated from the floor plan and listing photos; "
+                            "not a captured 360° tour."
+                        )
                     )
                 ).strip(),
             }
@@ -8982,7 +8985,7 @@ def property_research_packet(
         visual_status_line = str(
             research_media.get("generated_reconstruction_status_detail")
             or research_media.get("status_detail")
-            or "Layout tour is ready."
+            or "AI-generated 3D tour is ready."
         ).strip()
     elif flythrough_url:
         visual_status_line = str(research_media.get("walkthrough_status_detail") or "Walkthrough is ready.").strip()

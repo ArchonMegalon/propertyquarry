@@ -1108,6 +1108,7 @@ def create_willhaben_property_tour(
     try:
         payload = service.request_property_visual_asset(
             principal_id=context.principal_id,
+            account_email=str(context.access_email or "").strip(),
             property_url=body.property_url,
             request_kind=body.request_kind,
             recipient_email=body.recipient_email,
@@ -1143,6 +1144,7 @@ def get_property_visual_status(
     try:
         payload = service.get_property_visual_request_status(
             principal_id=context.principal_id,
+            account_email=str(context.access_email or "").strip(),
             run_id=run_id,
             request_kind=request_kind,
             candidate_ref=candidate_ref,

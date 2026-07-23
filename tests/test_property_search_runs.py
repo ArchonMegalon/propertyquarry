@@ -23,6 +23,7 @@ import app.product.service as product_service
 import app.product.property_search_storage as property_search_storage
 import app.product.property_investment_external_data as property_investment_external_data
 import app.api.routes.product_api_delivery as product_api_delivery_routes
+import app.api.routes.landing_property_workspace_payload as property_workspace_payload
 from app.api.routes.product_api_contracts import PropertySearchRunStatusOut
 from app.api.routes.product_api_delivery import (
     _property_search_apply_response_display_totals,
@@ -575,6 +576,143 @@ def test_property_search_compact_record_never_infers_unverified_tour_url_as_read
     assert summary["eligible_tour_total"] == 1
     assert summary["ready_tour_total"] == 0
     assert summary["pending_tour_total"] == 1
+
+
+def test_property_search_compact_record_never_counts_generated_layout_as_verified_ready() -> None:
+    generated_tour_url = "https://propertyquarry.com/tours/generated-layout-only"
+    compact = property_search_storage._compact_property_search_run_record(
+        {
+            "run_id": "run-generated-layout-only",
+            "principal_id": "principal-generated-layout-only",
+            "status": "processed",
+            "summary": {
+                "ranked_candidates": [
+                    {
+                        "candidate_ref": "candidate-generated-layout-only",
+                        "property_url": "https://example.test/generated-layout-only",
+                        "tour_status": "ready",
+                        "tour_url": "",
+                        "generated_reconstruction_url": generated_tour_url,
+                    }
+                ]
+            },
+        }
+    )
+
+    summary = dict(compact["summary"])
+    projection = dict(summary["_delivery_candidates"][0])
+    assert summary["eligible_tour_total"] == 1
+    assert summary["ready_tour_total"] == 0
+    assert summary["blocked_tour_total"] == 1
+    assert summary["pending_tour_total"] == 0
+    assert projection["generated_reconstruction_url"] == generated_tour_url
+    assert projection["tour_status"] == "blocked"
+    assert projection["blocked_reason"] == "property_tour_rebuild_required"
+
+
+def test_property_search_compact_record_counts_verified_open_only_tour_as_ready() -> None:
+    verified_open_tour_url = (
+        "https://propertyquarry.com/tours/verified-open-only/control/matterport"
+    )
+    compact = property_search_storage._compact_property_search_run_record(
+        {
+            "run_id": "run-verified-open-only",
+            "principal_id": "principal-verified-open-only",
+            "status": "processed",
+            "summary": {
+                "ranked_candidates": [
+                    {
+                        "candidate_ref": "candidate-verified-open-only",
+                        "property_url": "https://example.test/verified-open-only",
+                        "tour_status": "ready",
+                        "tour_url": "",
+                        "open_tour_url": verified_open_tour_url,
+                        "verified_tour_url": verified_open_tour_url,
+                    }
+                ]
+            },
+        }
+    )
+
+    summary = dict(compact["summary"])
+    projection = dict(summary["_delivery_candidates"][0])
+    assert summary["eligible_tour_total"] == 1
+    assert summary["ready_tour_total"] == 1
+    assert summary["blocked_tour_total"] == 0
+    assert summary["pending_tour_total"] == 0
+    assert projection["tour_status"] == "ready"
+    assert projection["verified_tour_url"] == verified_open_tour_url
+
+
+def test_property_workbench_ai_tour_payload_preserves_disclosure_and_safe_label() -> None:
+    generated_tour_url = "/tours/generated-layout-only"
+    payload = property_workspace_payload._property_workbench_client_tour_payload(
+        {
+            "status": "ready",
+            "label": "Open AI-generated 3D tour",
+            "provider_label": "AI-generated 3D tour",
+            "provider_key": "generated_reconstruction",
+            "tour_media_mode": "generated_reconstruction",
+        },
+        validated_url=generated_tour_url,
+    )
+
+    assert payload["status"] == "ready"
+    assert payload["url"] == generated_tour_url
+    assert payload["label"] == "Open AI-generated 3D tour"
+    assert payload["provider_label"] == "AI-generated 3D tour"
+    assert payload["tour_media_mode"] == "generated_reconstruction"
+    assert "AI-generated from the floor plan and listing photos" in str(payload["status_detail"])
+    assert "not a captured 360° tour" in str(payload["status_detail"])
+
+
+def test_property_workbench_generated_layout_never_populates_verified_tour_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated_tour_url = "/tours/generated-layout-only"
+    monkeypatch.setattr(
+        property_workspace_payload,
+        "_property_visual_layout_preview_url",
+        lambda value, **_kwargs: (
+            generated_tour_url
+            if str(value or "").strip() == generated_tour_url
+            else ""
+        ),
+    )
+    monkeypatch.setattr(
+        property_workspace_payload.property_tour_hosting,
+        "_hosted_property_tour_verified_open_url",
+        lambda *_args, **_kwargs: "",
+    )
+
+    payload = property_workspace_payload._property_workbench_client_candidate_payload(
+        {
+            "candidate_ref": "candidate-generated-layout-only",
+            "title": "Generated layout only",
+            "property_url": "https://example.test/generated-layout-only",
+            "tour_status": "blocked",
+            "generated_reconstruction_url": generated_tour_url,
+            "layout_preview_url": generated_tour_url,
+            "layout_preview_status": "ready",
+            "tour_media_mode": "generated_reconstruction",
+            "tour": {
+                "status": "blocked",
+                "label": "Open AI-generated 3D tour",
+                "provider_key": "generated_reconstruction",
+                "provider_label": "AI-generated 3D tour",
+                "tour_media_mode": "generated_reconstruction",
+            },
+        }
+    )
+
+    assert payload["tour_status"] == "blocked"
+    assert payload["tour_url"] == ""
+    assert payload["verified_tour_url"] == ""
+    assert payload["open_tour_url"] == generated_tour_url
+    assert payload["layout_preview_status"] == "ready"
+    assert payload["tour"]["status"] == "ready"
+    assert payload["tour"]["label"] == "Open AI-generated 3D tour"
+    assert "not a captured 360° tour" in str(payload["tour"]["status_detail"])
 
 
 def test_property_search_delivery_work_filter_runs_before_limit(monkeypatch: pytest.MonkeyPatch) -> None:

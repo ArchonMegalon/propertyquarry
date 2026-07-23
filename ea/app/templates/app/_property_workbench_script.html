@@ -1683,9 +1683,12 @@
         };
       }
       const rawTourState = String(payload?.tour_status || payload?.status || '').trim().toLowerCase();
-      const generatedReconstructionReadyUrl = rawTourState === 'ready'
-        ? directGeneratedReconstructionLaunchUrl(payload?.generated_reconstruction_url)
-        : '';
+      const rawLayoutPreviewState = String(payload?.layout_preview_status || '').trim().toLowerCase();
+      const generatedReconstructionReadyUrl = rawLayoutPreviewState === 'ready'
+        ? directGeneratedReconstructionLaunchUrl(payload?.layout_preview_url || payload?.generated_reconstruction_url)
+        : (rawTourState === 'ready'
+          ? directGeneratedReconstructionLaunchUrl(payload?.generated_reconstruction_url)
+          : '');
       const directReadyTourUrl = directHostedTourUrl(
         payload?.verified_tour_url,
         payload?.open_tour_url,
@@ -1704,13 +1707,16 @@
       ).trim().toLowerCase();
       const retryableTerminal = visualTerminalStates.includes(state) && !resolvedTourUrl;
       const normalizedReadyDetail = usesGeneratedReconstruction && resolvedTourUrl
-        ? 'Generated from the floor plan and listing photos.'
+        ? String(
+            payload?.status_detail
+            || 'AI-generated from the floor plan and listing photos. It is an interactive spatial aid, not a captured 360° tour.'
+          ).trim()
         : (malformedReadyState ? 'A real 3D tour is not available yet.' : String(payload?.status_detail || '').trim());
       return {
         state,
         label: String(
           resolvedTourUrl
-            ? (usesGeneratedReconstruction ? 'Open layout tour' : 'Open 3D tour')
+            ? (usesGeneratedReconstruction ? 'Open AI-generated 3D tour' : 'Open 3D tour')
             : (
                 retryableTerminal
                   ? (['blocked', 'failed'].includes(state) ? 'Retry 3D tour' : 'Request 3D tour')
@@ -1975,10 +1981,10 @@
         );
         const nextTourUrl = nextDirectTourUrl || nextGeneratedReconstructionUrl || nextVendorTourUrl;
         const nextTourLabel = nextGeneratedReconstructionUrl && nextTourUrl === nextGeneratedReconstructionUrl
-          ? 'Open layout tour'
+          ? 'Open AI-generated 3D tour'
           : 'Open 3D tour';
-        const nextTourDetail = nextTourLabel === 'Open layout tour'
-          ? 'Generated from the floor plan and listing photos.'
+        const nextTourDetail = nextTourLabel === 'Open AI-generated 3D tour'
+          ? 'AI-generated from the floor plan and listing photos; not a captured 360° tour.'
           : String(payload.status_detail || '').trim();
         const nextFlythroughUrl = directHostedWalkthroughUrl(
           payload.flythrough_url,
@@ -1996,7 +2002,7 @@
         candidate.tour.url = nextTourUrl;
         candidate.tour.status = nextTourStatus;
         candidate.tour.label = nextTourUrl
-          ? (nextTourLabel === 'Open layout tour' ? 'Layout tour available' : '3D tour available')
+          ? (nextTourLabel === 'Open AI-generated 3D tour' ? 'AI-generated 3D tour available' : '3D tour available')
           : (payload.status_label || candidate.tour.label || '');
         candidate.tour.eta_label = '';
         candidate.tour.embed_url = nextTourUrl;

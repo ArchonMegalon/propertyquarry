@@ -1408,8 +1408,11 @@ def _property_tour_media_payload(
         status_label = "AI 360 tour available"
         status_detail = _PROPERTY_AI_360_DISCLOSURE
     elif generated_reconstruction_ready:
-        status_label = "Layout tour available"
-        status_detail = "Generated from the floor plan and listing photos. Open it as a layout aid while captured 3D media is still unavailable."
+        status_label = "AI-generated 3D tour available"
+        status_detail = (
+            "AI-generated from the floor plan and listing photos. "
+            "It is an interactive spatial aid, not a captured 360° tour."
+        )
     elif tour_url:
         status_label = "3D tour unavailable"
         status_detail = _hosted_tour_rebuild_detail()
@@ -1467,12 +1470,15 @@ def _property_tour_media_payload(
         "generated_reconstruction_label": (
             "Open AI 360 tour"
             if ai_360_ready
-            else ("Open layout tour" if generated_reconstruction_ready else "")
+            else ("Open AI-generated 3D tour" if generated_reconstruction_ready else "")
         ),
         "generated_reconstruction_status_detail": (
             _PROPERTY_AI_360_DISCLOSURE
             if ai_360_ready
-            else "Generated from the floor plan and listing photos. Open it as a layout aid while captured 3D media is still unavailable."
+            else (
+                "AI-generated from the floor plan and listing photos. "
+                "It is an interactive spatial aid, not a captured 360° tour."
+            )
             if generated_reconstruction_ready
             else ""
         ),
@@ -1490,7 +1496,7 @@ def _property_tour_media_payload(
             "Open 3D tour"
             if open_tour_href
             else (
-                "Open layout tour"
+                "Open AI-generated 3D tour"
                 if generated_reconstruction_href and not ai_360_ready
                 else (
                     "Open AI 360 tour"
@@ -1510,7 +1516,7 @@ def _property_tour_media_payload(
             else (
                 "AI 360 reconstruction"
                 if ai_360_ready
-                else ("Layout tour" if generated_reconstruction_href else "")
+                else ("AI-generated 3D tour" if generated_reconstruction_href else "")
             )
         ),
         "provider_key": (

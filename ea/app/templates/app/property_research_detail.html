@@ -3405,8 +3405,8 @@
       {% set action_label = (action.get('label') or '')|lower %}
       {% if action.get('kind') == 'ai_360_reconstruction' or 'ai 360 tour' in action_label %}
         {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'ai_360_reconstruction', 'eyebrow': 'AI 360 reconstruction', 'title': 'AI 360 tour', 'copy': action.get('status_detail') or research_media.get('ai_360_disclosure') or 'AI reconstruction based on property photos; not a captured 360 or measured survey.', 'action': action}] %}
-      {% elif action.get('kind') == 'generated_reconstruction' or 'layout tour' in action_label %}
-        {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'generated_reconstruction', 'eyebrow': 'Layout tour', 'title': 'Layout tour', 'copy': action.get('status_detail') or research_media.get('generated_reconstruction_status_detail') or research_media.get('status_detail') or 'Open the generated layout tour here.', 'action': action}] %}
+      {% elif action.get('kind') == 'generated_reconstruction' or 'layout tour' in action_label or 'ai-generated 3d tour' in action_label %}
+        {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'generated_reconstruction', 'eyebrow': 'AI-generated 3D tour', 'title': 'AI-generated 3D tour', 'copy': action.get('status_detail') or research_media.get('generated_reconstruction_status_detail') or research_media.get('status_detail') or 'Open the generated spatial tour here.', 'action': action}] %}
       {% elif action.get('kind') == 'tour' or '3d tour' in action_label or 'matterport' in action_label or '3dvista' in action_label or 'original tour' in action_label %}
         {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'tour', 'eyebrow': '3D tour', 'title': '3D tour', 'copy': action.get('status_detail') or research_media.get('status_detail') or 'Open or request it here.', 'action': action}] %}
       {% elif action.get('kind') == 'flythrough' or 'walkthrough' in action_label %}
@@ -3451,10 +3451,10 @@
     {% elif visual_ready_layout %}
       {% set visual_rail.kind = 'generated_reconstruction' %}
       {% set visual_rail.state = 'ready' %}
-      {% set visual_rail.label = research_media.get('status_label') or 'Open layout preview' %}
+      {% set visual_rail.label = research_media.get('status_label') or 'Open AI-generated 3D tour' %}
       {% set visual_rail.eta = '' %}
       {% set visual_rail.progress = 100 %}
-      {% set visual_rail.detail = research_visual_status_line or research_media.get('generated_reconstruction_status_detail') or 'Layout preview is ready.' %}
+      {% set visual_rail.detail = research_visual_status_line or research_media.get('generated_reconstruction_status_detail') or 'AI-generated 3D tour is ready.' %}
     {% elif visual_status.active %}
       {% set visual_rail.kind = visual_status.active.get('kind') or '' %}
       {% set visual_rail.state = visual_status.active.get('state') or '' %}
@@ -3486,7 +3486,7 @@
     {% elif visual_rail.state == 'ready' and visual_rail.kind == 'ai_360_reconstruction' %}
       {% set visual_rail_label_display = 'AI 360 reconstruction' %}
     {% elif visual_rail.state == 'ready' and visual_rail.kind == 'generated_reconstruction' %}
-      {% set visual_rail_label_display = 'Layout tour' %}
+      {% set visual_rail_label_display = 'AI-generated 3D tour' %}
     {% elif visual_rail.state == 'ready' and visual_rail.kind in ['flythrough', 'walkthrough'] %}
       {% set visual_rail_label_display = 'Walkthrough' %}
     {% elif visual_rail.state in visual_pending_states and visual_rail.kind == 'tour' %}
@@ -3498,7 +3498,7 @@
     {% if visual_ready_ai_360 %}
       {% set research_media_badge_label = 'AI 360 reconstruction' %}
     {% elif visual_ready_layout %}
-      {% set research_media_badge_label = 'Layout tour' %}
+      {% set research_media_badge_label = 'AI-generated 3D tour' %}
     {% elif visual_ready_tour %}
       {% set research_media_badge_label = '3D tour' %}
     {% elif visual_ready_walkthrough %}
@@ -5413,7 +5413,7 @@
     const normalizedKind = normalizedVisualKind(kind);
     if (href) {
       if (normalizedKind === 'flythrough') return 'Open walkthrough';
-      if (normalizedKind === 'generated_reconstruction') return 'Open layout tour';
+      if (normalizedKind === 'generated_reconstruction') return 'Open AI-generated 3D tour';
       return 'Open 3D tour';
     }
     if (retryableTerminal) {
@@ -5430,7 +5430,7 @@
     const normalizedKind = normalizedVisualKind(kind);
     if (state === 'ready') {
       if (normalizedKind === 'flythrough') return 'Walkthrough';
-      if (normalizedKind === 'generated_reconstruction') return 'Layout tour';
+      if (normalizedKind === 'generated_reconstruction') return 'AI-generated 3D tour';
       return '3D tour';
     }
     if (visualPendingStates.includes(state)) return normalizedKind === 'flythrough' ? 'Preparing walkthrough' : 'Preparing 3D tour';
@@ -5514,9 +5514,12 @@
     const payloadStatusLabel = String(payload?.status_label || fallbackLabel || '').trim();
     const rawTourState = String(payload?.tour_status || payload?.status || '').trim().toLowerCase();
     const rawReadyTourUrl = String(payload?.tour_url || '').trim();
-    const generatedReconstructionReadyUrl = rawTourState === 'ready'
-      ? directGeneratedReconstructionLaunchUrl(payload?.generated_reconstruction_url)
-      : '';
+    const rawLayoutPreviewState = String(payload?.layout_preview_status || '').trim().toLowerCase();
+    const generatedReconstructionReadyUrl = rawLayoutPreviewState === 'ready'
+      ? directGeneratedReconstructionLaunchUrl(payload?.layout_preview_url || payload?.generated_reconstruction_url)
+      : (rawTourState === 'ready'
+        ? directGeneratedReconstructionLaunchUrl(payload?.generated_reconstruction_url)
+        : '');
     const openTourUrl = String(
       payload?.verified_tour_url
       || payload?.open_tour_url
@@ -5535,7 +5538,10 @@
     ).trim().toLowerCase();
     const retryableTerminal = visualTerminalStates.includes(state) && !openTourUrl;
     const normalizedReadyDetail = visualKind === 'generated_reconstruction' && openTourUrl
-      ? 'Generated from the floor plan and listing photos.'
+      ? String(
+          payload?.status_detail
+          || 'AI-generated from the floor plan and listing photos. It is an interactive spatial aid, not a captured 360° tour.'
+        ).trim()
       : (malformedReadyState ? 'A real 3D tour is not available yet.' : String(payload?.status_detail || '').trim());
     return {
       state,

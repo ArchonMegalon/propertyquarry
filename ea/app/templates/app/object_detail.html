@@ -2341,7 +2341,7 @@
     const normalizedKind = normalizedVisualKind(kind);
     if (href) {
       if (normalizedKind === 'flythrough') return 'Open walkthrough';
-      if (normalizedKind === 'generated_reconstruction') return 'Open layout tour';
+      if (normalizedKind === 'generated_reconstruction') return 'Open AI-generated 3D tour';
       return 'Open 3D tour';
     }
     if (retryableTerminal) {
@@ -2447,7 +2447,10 @@
     ).trim().toLowerCase();
     const retryableTerminal = visualTerminalStates.includes(state) && !resolvedTourUrl;
     const normalizedReadyDetail = visualKind === 'generated_reconstruction' && resolvedTourUrl
-      ? 'Generated from the floor plan and listing photos.'
+      ? String(
+          payload?.status_detail
+          || 'AI-generated from the floor plan and listing photos. It is an interactive spatial aid, not a captured 360° tour.'
+        ).trim()
       : (malformedReadyState ? 'A real 3D tour is not available yet.' : String(payload?.status_detail || '').trim());
     return {
       state,

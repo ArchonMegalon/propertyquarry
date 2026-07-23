@@ -369,8 +369,13 @@ _PROPERTY_SEARCH_RUN_COMPACT_DELIVERY_CANDIDATE_KEYS = (
     "floorplan_url",
     "floorplan_urls_json",
     "tour_url",
+    "open_tour_url",
+    "verified_tour_url",
     "vendor_tour_url",
     "generated_reconstruction_url",
+    "layout_preview_url",
+    "layout_preview_status",
+    "tour_media_mode",
     "generated_reconstruction_kind",
     "generated_reconstruction_disclosure",
     "tour_status",
@@ -1315,12 +1320,53 @@ def _compact_property_search_run_record(record: dict[str, object]) -> dict[str, 
                 seen_delivery_candidates.add(identity)
                 inferred_eligible += 1
                 candidate_status = str(compact_candidate.get("tour_status") or "").strip().lower()
+                generated_urls = {
+                    str(value or "").strip()
+                    for value in (
+                        compact_candidate.get("generated_reconstruction_url"),
+                        compact_candidate.get("layout_preview_url"),
+                    )
+                    if str(value or "").strip()
+                }
+                tour_media_mode = str(
+                    compact_candidate.get("tour_media_mode") or ""
+                ).strip().lower()
+                verified_tour_url = str(
+                    compact_candidate.get("verified_tour_url") or ""
+                ).strip()
+                candidate_tour_url = str(
+                    compact_candidate.get("tour_url") or ""
+                ).strip()
+                candidate_open_tour_url = str(
+                    compact_candidate.get("open_tour_url") or ""
+                ).strip()
+                candidate_ready_urls = [
+                    candidate_url
+                    for field_name, candidate_url in (
+                        ("verified_tour_url", verified_tour_url),
+                        ("tour_url", candidate_tour_url),
+                        ("open_tour_url", candidate_open_tour_url),
+                    )
+                    if candidate_url
+                    and candidate_url not in generated_urls
+                    and not (
+                        tour_media_mode == "generated_reconstruction"
+                        and field_name != "verified_tour_url"
+                    )
+                ]
                 if candidate_status in {"blocked", "failed", "skipped", "not_applicable"} or str(
                     compact_candidate.get("blocked_reason") or ""
                 ).strip():
                     inferred_blocked += 1
-                elif candidate_status == "ready":
+                elif candidate_status == "ready" and candidate_ready_urls:
                     inferred_ready += 1
+                elif candidate_status == "ready":
+                    compact_candidate["tour_status"] = "blocked"
+                    compact_candidate.setdefault(
+                        "blocked_reason",
+                        "property_tour_rebuild_required",
+                    )
+                    inferred_blocked += 1
                 else:
                     inferred_pending += 1
                 if len(delivery_candidates) >= _PROPERTY_SEARCH_RUN_COMPACT_DELIVERY_CANDIDATE_LIMIT:

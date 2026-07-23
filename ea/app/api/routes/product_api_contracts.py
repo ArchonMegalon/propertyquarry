@@ -1645,6 +1645,7 @@ class WillhabenPropertyTourOut(BaseModel):
     flythrough_status: str = ""
     flythrough_reason: str = ""
     tour_status: str = ""
+    upstream_tour_status: str = ""
     status_label: str = ""
     status_detail: str = ""
     eta_label: str = ""

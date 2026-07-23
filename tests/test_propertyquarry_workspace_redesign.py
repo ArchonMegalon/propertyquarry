@@ -16701,12 +16701,14 @@ def test_property_research_media_surfaces_generated_reconstruction_as_layout_tou
     assert payload["has_live_viewer"] is False
     assert payload["embed_href"] == ""
     assert payload["primary_href"] == "https://propertyquarry.com/tours/generated-tour"
-    assert payload["primary_label"] == "Open layout tour"
-    assert payload["provider_label"] == "Layout tour"
+    assert payload["primary_label"] == "Open AI-generated 3D tour"
+    assert "not a captured 360° tour" in payload["status_detail"]
+    assert payload["provider_label"] == "AI-generated 3D tour"
     assert payload["provider_key"] == "propertyquarry_generated_reconstruction"
-    assert payload["status_label"] == "Layout tour available"
-    assert payload["generated_reconstruction_label"] == "Open layout tour"
-    assert payload["generated_reconstruction_status_detail"].startswith("Generated from the floor plan")
+    assert payload["status_label"] == "AI-generated 3D tour available"
+    assert "not a captured 360° tour" in payload["status_detail"]
+    assert payload["generated_reconstruction_label"] == "Open AI-generated 3D tour"
+    assert payload["generated_reconstruction_status_detail"].startswith("AI-generated from the floor plan")
     assert {kind for kind, _principal_id in validated_principals} == {"verified", "generated"}
     assert {principal_id for _kind, principal_id in validated_principals} == {"pq-research-unit"}
 
@@ -16733,10 +16735,10 @@ def test_property_research_media_uses_generated_reconstruction_layout_tour_when_
     assert payload["generated_reconstruction_href"] == "https://propertyquarry.com/tours/generated-preview"
     assert payload["has_live_viewer"] is False
     assert payload["embed_href"] == ""
-    assert payload["status_label"] == "Layout tour available"
-    assert payload["status_detail"].startswith("Generated from the floor plan and listing photos.")
+    assert payload["status_label"] == "AI-generated 3D tour available"
+    assert payload["status_detail"].startswith("AI-generated from the floor plan and listing photos.")
     assert payload["show_status_line"] is True
-    assert payload["primary_label"] == "Open layout tour"
+    assert payload["primary_label"] == "Open AI-generated 3D tour"
     assert payload["primary_href"] == "https://propertyquarry.com/tours/generated-preview"
 
 
@@ -25974,6 +25976,11 @@ def test_propertyquarry_results_selected_review_opens_nested_ready_tour_on_first
         if str(tour_url or open_tour_url).strip()
         else "",
     )
+    monkeypatch.setattr(
+        landing_property_workspace_payload.property_tour_hosting,
+        "_hosted_property_tour_verified_open_url",
+        lambda _url, **_kwargs: hosted_href,
+    )
     response = client.get("/app/search", params={"run_id": "run-selected-review-ready-tour"}, headers={"host": "propertyquarry.com"})
     rendered_html = re.sub(r"<script\b[^>]*>.*?</script>", " ", response.text, flags=re.IGNORECASE | re.DOTALL)
     rendered_html = re.sub(r"<style\b[^>]*>.*?</style>", " ", rendered_html, flags=re.IGNORECASE | re.DOTALL)
@@ -29828,10 +29835,11 @@ def test_property_research_packet_surfaces_generated_reconstruction_as_layout_to
     rendered_html = re.sub(r"<script\b[^>]*>.*?</script>", " ", packet.text, flags=re.IGNORECASE | re.DOTALL)
     rendered_html = re.sub(r"<style\b[^>]*>.*?</style>", " ", rendered_html, flags=re.IGNORECASE | re.DOTALL)
     assert 'data-prd-visual-card="generated_reconstruction"' in packet.text
-    assert ">Open layout tour</a>" in rendered_html
+    assert ">Open AI-generated 3D tour</a>" in rendered_html
+    assert "not a captured 360° tour" in rendered_html
     assert 'data-pw-visual-request="tour"' not in rendered_html
     assert "Request 3D tour" not in rendered_html
-    assert "Layout tour available" in rendered_html
+    assert "AI-generated 3D tour available" in rendered_html
     assert "generated-reconstruction-diorama.png" in rendered_html
     assert "Hosted viewer unavailable. Rebuild it here." not in rendered_html
 
@@ -29864,8 +29872,9 @@ def test_property_research_packet_accepts_generated_reconstruction_launch_page_a
     assert payload["has_live_viewer"] is False
     assert payload["embed_href"] == ""
     assert payload["primary_href"] == "https://propertyquarry.com/tours/generated-reconstruction-only-loft"
-    assert payload["primary_label"] == "Open layout tour"
-    assert payload["status_label"] == "Layout tour available"
+    assert payload["primary_label"] == "Open AI-generated 3D tour"
+    assert "not a captured 360° tour" in payload["status_detail"]
+    assert payload["status_label"] == "AI-generated 3D tour available"
 
 
 def test_property_research_media_labels_ai_panorama_as_disclosed_reconstruction(
