@@ -76,6 +76,18 @@ _CANONICAL_DISTANCE_IMPORTANCE_STATES = (
 )
 
 
+def _property_tour_manifest_nested_keys(value: object) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            keys.add(str(key))
+            keys.update(_property_tour_manifest_nested_keys(nested_value))
+    elif isinstance(value, list):
+        for nested_value in value:
+            keys.update(_property_tour_manifest_nested_keys(nested_value))
+    return keys
+
+
 def _attested_search_distance_facts(
     *,
     property_url: str,
@@ -10791,6 +10803,29 @@ def test_hosted_property_tour_bundle_splits_public_manifest_from_private_receipt
     assert "external_id" not in public_manifest
     assert "listing_url" not in public_manifest
     assert "property_url" not in public_manifest
+    public_manifest_keys = _property_tour_manifest_nested_keys(public_manifest)
+    for private_key in (
+        "map_lat",
+        "map_lng",
+        "listing_url",
+        "property_url",
+        "source_url",
+        "exact_address",
+        "principal_id",
+        "source_ref",
+        "external_id",
+        "private_recipient_email",
+        "recipient_email",
+        "public_preference_snapshot",
+        "preference_nodes",
+    ):
+        assert private_key not in public_manifest_keys
+    assert {
+        key for key in public_manifest_keys if "property_url" in key
+    } == {"property_url_sha256"}
+    assert public_manifest["property_url_sha256"] == hashlib.sha256(
+        b"https://www.willhaben.at/iad/object?adId=private-floorplan-1"
+    ).hexdigest()
     serialized_public_manifest = json.dumps(public_manifest, sort_keys=True)
     for private_marker in (
         "exec-private-tour",
@@ -10798,13 +10833,7 @@ def test_hosted_property_tour_bundle_splits_public_manifest_from_private_receipt
         "property-scout:private-floorplan-1",
         "ext-private-floorplan-1",
         "Private Street 1",
-        "source_url",
-        "listing_url",
-        "property_url",
-        "map_lat",
-        "map_lng",
-        "public_preference_snapshot",
-        "preference_nodes",
+        "https://www.willhaben.at/iad/object?adId=private-floorplan-1",
     ):
         assert private_marker not in serialized_public_manifest
     assert private_manifest["principal_id"] == "exec-private-tour"
@@ -10847,6 +10876,7 @@ def test_hosted_property_tour_public_manifest_has_no_private_fields(monkeypatch,
     public_manifest = json.loads((bundle_dir / "tour.json").read_text(encoding="utf-8"))
     serialized_public_manifest = json.dumps(public_manifest, sort_keys=True)
     assert "brief" not in public_manifest
+    public_manifest_keys = _property_tour_manifest_nested_keys(public_manifest)
     for private_key in (
         "map_lat",
         "map_lng",
@@ -10862,7 +10892,22 @@ def test_hosted_property_tour_public_manifest_has_no_private_fields(monkeypatch,
         "public_preference_snapshot",
         "preference_nodes",
     ):
-        assert private_key not in serialized_public_manifest
+        assert private_key not in public_manifest_keys
+    assert {
+        key for key in public_manifest_keys if "property_url" in key
+    } == {"property_url_sha256"}
+    assert public_manifest["property_url_sha256"] == hashlib.sha256(
+        b"https://www.willhaben.at/iad/object?adId=private-floorplan-2"
+    ).hexdigest()
+    for private_value in (
+        "exec-manifest-safety",
+        "private@example.com",
+        "property-scout:private-floorplan-2",
+        "ext-private-floorplan-2",
+        "Private Street 12",
+        "https://www.willhaben.at/iad/object?adId=private-floorplan-2",
+    ):
+        assert private_value not in serialized_public_manifest
 
 
 def test_hosted_live_provider_tour_writer_rejects_url_without_provenance_proof(
