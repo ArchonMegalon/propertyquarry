@@ -29,8 +29,8 @@ verify_local_docker() {
     "linux:amd64" ]] || fail
 }
 
-manifest_sha256='sha256:5bc06e8758bc3d9b9e88a82a7608a1238340c19fd581d3ec3565a56d75d1fa06'
-public_tree_sha256='sha256:d69c032b96264d892bbd6e269b884a9f33cc11cf3d0f5a7d96a878a062058548'
+manifest_sha256='sha256:4cff91610a4105ad579a88e94201d84e44838808610cb8119eabb61d5f954beb'
+public_tree_sha256='sha256:5cc6098565d79549089db385e133671c6de8748b17a171c699a997004412efb1'
 bundle_path='/tmp/property-f7-tour-final-v4.HUQw8lU4/ab-1-8-modern-and-fully-furnited-loft-apartment-top-moderne-und-voll-mblierte-loft-wohnung-nas-layout-first-d07edad7af3fc379574d'
 
 valid_old_tree() {
