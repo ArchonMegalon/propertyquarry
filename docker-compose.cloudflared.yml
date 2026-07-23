@@ -14,7 +14,7 @@ services:
     memswap_limit: "${PROPERTYQUARRY_CLOUDFLARED_MEMORY_LIMIT:-128m}"
     pids_limit: ${PROPERTYQUARRY_CLOUDFLARED_PIDS_LIMIT:-64}
     oom_score_adj: 500
-    stop_grace_period: 20s
+    stop_grace_period: 45s
     tmpfs:
       - /tmp:size=${PROPERTYQUARRY_CLOUDFLARED_TMPFS_LIMIT:-16m},mode=1777
     cap_drop:
@@ -26,7 +26,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    command: tunnel run
+    command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${PROPERTYQUARRY_CF_TUNNEL_TOKEN:?Set PROPERTYQUARRY_CF_TUNNEL_TOKEN for the dedicated PropertyQuarry tunnel}
     depends_on:

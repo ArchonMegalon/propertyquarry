@@ -221,3 +221,5 @@ def test_propertyquarry_tunnel_is_bounded_and_read_only() -> None:
     assert service["cap_drop"] == ["ALL"]
     assert service["security_opt"] == ["no-new-privileges:true"]
     assert service["tmpfs"]
+    assert service["command"] == "tunnel --no-autoupdate run"
+    assert service["stop_grace_period"] == "45s"
