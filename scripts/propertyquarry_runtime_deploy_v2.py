@@ -57,6 +57,7 @@ MANIFEST_SCHEMA = "propertyquarry.release-control.single-host-package.v2"
 BACKUP_SCHEMA = "propertyquarry.predeploy-backup-receipt.v2"
 ISOLATION_SCHEMA = "propertyquarry.runtime-isolation-receipt.v2"
 DATABASE_SCHEMA = "propertyquarry.database-control-receipt.v2"
+LEGACY_REGISTRATION_EMAIL_KEY_COUNT = 8
 REGISTRATION_EMAIL_KEY_COUNT = 10
 
 INSTALL_ROOT = Path("/etc/propertyquarry-release-single-host-v2")
@@ -1180,19 +1181,32 @@ def _validate_purge_receipt(
     }
     if not isinstance(result, dict) or set(result) != expected_keys:
         raise DeployError("purge_receipt_result_shape_invalid")
+    expected_removed = _exact_int(
+        result.get("rollback_artifact_expected_removed_keys"),
+        LEGACY_REGISTRATION_EMAIL_KEY_COUNT,
+        REGISTRATION_EMAIL_KEY_COUNT,
+    )
+    removed = _exact_int(
+        result.get("legacy_keys_removed"),
+        0,
+        REGISTRATION_EMAIL_KEY_COUNT,
+    )
     if (
         result.get("backup_receipt_sha256") != backup_digest
         or result.get("pre_purge_root_env_digest")
         != contract.authority.get("pre_purge_root_env_digest")
         or not SHA256_RE.fullmatch(str(result.get("post_purge_root_env_digest") or ""))
         or not isinstance(result.get("rollback_artifact"), dict)
-        or result.get("rollback_artifact_expected_removed_keys")
-        != REGISTRATION_EMAIL_KEY_COUNT
+        or expected_removed
+        not in {
+            LEGACY_REGISTRATION_EMAIL_KEY_COUNT,
+            REGISTRATION_EMAIL_KEY_COUNT,
+        }
+        or removed not in {0, expected_removed}
         or result.get("post_purge_root_env_digest")
         != contract.runtime_inputs[0]["sha256"]
     ):
         raise DeployError("purge_receipt_result_binding_invalid")
-    _exact_int(result.get("legacy_keys_removed"), 0, 4096)
     inputs = result.get("inputs")
     input_keys = {
         "file_digests",

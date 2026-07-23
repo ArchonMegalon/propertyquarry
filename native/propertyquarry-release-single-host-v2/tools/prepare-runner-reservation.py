@@ -192,6 +192,256 @@ def _run_git(checkout: Path, *arguments: str) -> str:
     return value.removesuffix("\n")
 
 
+def _tracked_checkout_entries(
+    checkout: Path,
+) -> tuple[list[tuple[str, int, str]], bytes]:
+    tree_raw = _run_git_bytes(
+        checkout,
+        "ls-tree",
+        "-r",
+        "--full-tree",
+        "-z",
+        "HEAD",
+        allow_nul=True,
+    )
+    index_raw = _run_git_bytes(
+        checkout,
+        "ls-files",
+        "--cached",
+        "--stage",
+        "--full-name",
+        "-z",
+        allow_nul=True,
+    )
+
+    def parse(raw: bytes, *, index: bool) -> list[tuple[str, int, str]]:
+        if not raw or not raw.endswith(b"\0"):
+            fail("runner-reservation-checkout-tree-invalid")
+        result: list[tuple[str, int, str]] = []
+        previous = b""
+        for record in raw.removesuffix(b"\0").split(b"\0"):
+            if record.count(b"\t") != 1:
+                fail("runner-reservation-checkout-tree-invalid")
+            header, path_raw = record.split(b"\t", 1)
+            fields = header.split(b" ")
+            if len(fields) != 3:
+                fail("runner-reservation-checkout-tree-invalid")
+            mode_raw, kind_or_oid, oid_or_stage = fields
+            if mode_raw not in {b"100644", b"100755"}:
+                fail("runner-reservation-checkout-tree-mode-invalid")
+            if index:
+                oid_raw, stage_raw = kind_or_oid, oid_or_stage
+                if stage_raw != b"0":
+                    fail("runner-reservation-checkout-index-invalid")
+            else:
+                kind_raw, oid_raw = kind_or_oid, oid_or_stage
+                if kind_raw != b"blob":
+                    fail("runner-reservation-checkout-tree-mode-invalid")
+            if re.fullmatch(rb"[0-9a-f]{40}", oid_raw) is None:
+                fail("runner-reservation-checkout-tree-invalid")
+            if (
+                not path_raw
+                or path_raw <= previous
+                or path_raw.startswith(b"/")
+                or b"\\" in path_raw
+                or any(character < 0x20 or character == 0x7F for character in path_raw)
+            ):
+                fail("runner-reservation-checkout-tree-path-invalid")
+            try:
+                relative = path_raw.decode("ascii")
+            except UnicodeDecodeError:
+                fail("runner-reservation-checkout-tree-path-invalid")
+            parts = relative.split("/")
+            if any(not part or part in {".", ".."} for part in parts):
+                fail("runner-reservation-checkout-tree-path-invalid")
+            result.append(
+                (relative, int(mode_raw, 8) & 0o777, oid_raw.decode("ascii"))
+            )
+            previous = path_raw
+        return result
+
+    tree = parse(tree_raw, index=False)
+    tracked = parse(index_raw, index=True)
+    if tree != tracked:
+        fail("runner-reservation-checkout-index-invalid")
+    return tree, tree_raw
+
+
+def _tracked_checkout_filesystem(
+    checkout: Path,
+    entries: list[tuple[str, int, str]],
+    *,
+    normalize: bool,
+) -> None:
+    try:
+        root_metadata = checkout.lstat()
+        root_descriptor = os.open(
+            checkout,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+    except OSError:
+        fail("runner-reservation-checkout-worktree-invalid")
+    try:
+        root_observed = os.fstat(root_descriptor)
+        if (
+            stat.S_ISLNK(root_metadata.st_mode)
+            or not stat.S_ISDIR(root_metadata.st_mode)
+            or not stat.S_ISDIR(root_observed.st_mode)
+            or root_metadata.st_dev != root_observed.st_dev
+            or root_metadata.st_ino != root_observed.st_ino
+            or stat.S_IMODE(root_observed.st_mode) != 0o700
+            or root_observed.st_uid != 1000
+            or root_observed.st_gid != 1000
+        ):
+            fail("runner-reservation-checkout-worktree-invalid")
+
+        for relative, mode, oid in entries:
+            parts = relative.split("/")
+            parent_descriptor = os.dup(root_descriptor)
+            try:
+                for component in parts[:-1]:
+                    try:
+                        metadata = os.stat(
+                            component,
+                            dir_fd=parent_descriptor,
+                            follow_symlinks=False,
+                        )
+                        child_descriptor = os.open(
+                            component,
+                            os.O_RDONLY
+                            | os.O_DIRECTORY
+                            | os.O_NOFOLLOW
+                            | os.O_CLOEXEC,
+                            dir_fd=parent_descriptor,
+                        )
+                    except OSError:
+                        fail("runner-reservation-checkout-worktree-invalid")
+                    observed = os.fstat(child_descriptor)
+                    if (
+                        stat.S_ISLNK(metadata.st_mode)
+                        or not stat.S_ISDIR(metadata.st_mode)
+                        or not stat.S_ISDIR(observed.st_mode)
+                        or metadata.st_dev != observed.st_dev
+                        or metadata.st_ino != observed.st_ino
+                        or observed.st_uid != 1000
+                        or observed.st_gid != 1000
+                    ):
+                        os.close(child_descriptor)
+                        fail("runner-reservation-checkout-worktree-invalid")
+                    if normalize:
+                        os.fchmod(child_descriptor, 0o755)
+                        os.fsync(child_descriptor)
+                    elif stat.S_IMODE(observed.st_mode) != 0o755:
+                        os.close(child_descriptor)
+                        fail("runner-reservation-checkout-worktree-mode-invalid")
+                    os.close(parent_descriptor)
+                    parent_descriptor = child_descriptor
+
+                try:
+                    metadata = os.stat(
+                        parts[-1],
+                        dir_fd=parent_descriptor,
+                        follow_symlinks=False,
+                    )
+                    descriptor = os.open(
+                        parts[-1],
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                        dir_fd=parent_descriptor,
+                    )
+                except OSError:
+                    fail("runner-reservation-checkout-worktree-invalid")
+                try:
+                    observed = os.fstat(descriptor)
+                    if (
+                        stat.S_ISLNK(metadata.st_mode)
+                        or not stat.S_ISREG(metadata.st_mode)
+                        or not stat.S_ISREG(observed.st_mode)
+                        or metadata.st_dev != observed.st_dev
+                        or metadata.st_ino != observed.st_ino
+                        or observed.st_uid != 1000
+                        or observed.st_gid != 1000
+                        or observed.st_nlink != 1
+                    ):
+                        fail("runner-reservation-checkout-worktree-invalid")
+                    if normalize:
+                        os.fchmod(descriptor, mode)
+                        os.fsync(descriptor)
+                        observed = os.fstat(descriptor)
+                    if (
+                        stat.S_IMODE(observed.st_mode) != mode
+                        or observed.st_nlink != 1
+                    ):
+                        fail("runner-reservation-checkout-worktree-mode-invalid")
+                    blob = hashlib.sha1(usedforsecurity=False)
+                    blob.update(f"blob {observed.st_size}\0".encode("ascii"))
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    while True:
+                        chunk = os.read(descriptor, 1024 * 1024)
+                        if not chunk:
+                            break
+                        blob.update(chunk)
+                    after = os.fstat(descriptor)
+                    if (
+                        blob.hexdigest() != oid
+                        or after.st_dev != observed.st_dev
+                        or after.st_ino != observed.st_ino
+                        or after.st_size != observed.st_size
+                        or after.st_mtime_ns != observed.st_mtime_ns
+                        or after.st_nlink != 1
+                    ):
+                        fail("runner-reservation-checkout-worktree-content-invalid")
+                finally:
+                    os.close(descriptor)
+                os.fsync(parent_descriptor)
+            finally:
+                os.close(parent_descriptor)
+        os.fsync(root_descriptor)
+    finally:
+        os.close(root_descriptor)
+
+
+def _normalize_checkout_worktree(checkout: Path, workflow_sha: str) -> None:
+    try:
+        observed = _validate_checkout(checkout, refresh=False)
+    except ReservationFailure as exc:
+        if str(exc) != "runner-reservation-checkout-worktree-mode-invalid":
+            raise
+    else:
+        if observed["workflow_sha"] != workflow_sha:
+            fail("runner-reservation-checkout-normalization-invalid")
+    if (
+        not SHA_PATTERN.fullmatch(workflow_sha)
+        or _run_git(checkout, "rev-parse", "--verify", "HEAD") != workflow_sha
+        or _run_git(
+            checkout,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored=matching",
+        )
+        != ""
+    ):
+        fail("runner-reservation-checkout-normalization-invalid")
+    entries, tree_raw = _tracked_checkout_entries(checkout)
+    _tracked_checkout_filesystem(checkout, entries, normalize=True)
+    observed_entries, observed_tree_raw = _tracked_checkout_entries(checkout)
+    if (
+        observed_entries != entries
+        or observed_tree_raw != tree_raw
+        or _run_git(checkout, "rev-parse", "--verify", "HEAD") != workflow_sha
+        or _run_git(
+            checkout,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored=matching",
+        )
+        != ""
+    ):
+        fail("runner-reservation-checkout-normalization-invalid")
+    _tracked_checkout_filesystem(checkout, entries, normalize=False)
+
+
 def _ensure_checkout_root() -> None:
     _exact_metadata(RESERVATION_PARENT, kind="directory", mode=0o700)
     if not SOURCE_CHECKOUT_ROOT.exists():
@@ -316,7 +566,13 @@ def _validate_checkout(checkout: Path, *, refresh: bool) -> dict[str, Any]:
         _run_git(checkout, "rev-parse", "--abbrev-ref", "HEAD") != "HEAD"
         or _run_git(checkout, "rev-parse", "--verify", "refs/remotes/origin/main")
         != workflow_sha
-        or _run_git(checkout, "status", "--porcelain=v1", "--untracked-files=all")
+        or _run_git(
+            checkout,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored=matching",
+        )
         != ""
         or not SHA_PATTERN.fullmatch(workflow_sha)
         or checkout.name != workflow_sha
@@ -328,18 +584,18 @@ def _validate_checkout(checkout: Path, *, refresh: bool) -> dict[str, Any]:
         "-e",
         f"{workflow_sha}:.github/workflows/smoke-runtime.yml",
     )
-    tree_raw = _run_git_bytes(
-        checkout, "ls-tree", "-r", "--full-tree", "-z", "HEAD", allow_nul=True
-    )
-    if not tree_raw or not tree_raw.endswith(b"\0"):
-        fail("runner-reservation-checkout-tree-invalid")
-    for record in tree_raw.removesuffix(b"\0").split(b"\0"):
-        if not (record.startswith(b"100644 ") or record.startswith(b"100755 ")):
-            fail("runner-reservation-checkout-tree-mode-invalid")
+    entries, tree_raw = _tracked_checkout_entries(checkout)
+    _tracked_checkout_filesystem(checkout, entries, normalize=False)
     identity = _checkout_identity(checkout, workflow_sha)
     if (
         _run_git(checkout, "rev-parse", "--verify", "HEAD") != workflow_sha
-        or _run_git(checkout, "status", "--porcelain=v1", "--untracked-files=all")
+        or _run_git(
+            checkout,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored=matching",
+        )
         != ""
         or _checkout_identity(checkout, workflow_sha) != identity
     ):
@@ -398,6 +654,7 @@ def _create_source_checkout() -> dict[str, Any]:
         _run_git(stage, "checkout", "--quiet", "--detach", "--force", workflow_sha)
         target = SOURCE_CHECKOUT_ROOT / workflow_sha
         if target.exists():
+            _normalize_checkout_worktree(target, workflow_sha)
             observed = _validate_checkout(target, refresh=True)
             if observed["workflow_sha"] != workflow_sha:
                 fail("runner-reservation-checkout-existing-conflict")
@@ -405,6 +662,7 @@ def _create_source_checkout() -> dict[str, Any]:
         materialize._rename_noreplace(stage, target)
         published = True
         _directory_sync(SOURCE_CHECKOUT_ROOT)
+        _normalize_checkout_worktree(target, workflow_sha)
         return _validate_checkout(target, refresh=False)
     finally:
         if not published and stage.exists():

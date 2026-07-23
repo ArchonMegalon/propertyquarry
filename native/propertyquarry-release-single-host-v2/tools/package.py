@@ -179,9 +179,9 @@ DATABASE_CONTROL_HELPER_PATH = (
     "/usr/libexec/propertyquarry-release-control/propertyquarry-database-control-v2"
 )
 DATABASE_CONTROL_HELPER_SHA256 = (
-    "sha256:cb6ccfd9e043efa13a559dd1c9538fb557c76890f4c1fda69f0dd623dc72664b"
+    "sha256:9bdebcd2bae867ef9ac4e38374e964dc81752b2a572eb8a0568f3bb45d5bfe18"
 )
-DATABASE_CONTROL_HELPER_BYTES = 60_006
+DATABASE_CONTROL_HELPER_BYTES = 60_449
 RUNTIME_DATABASE_HELPER_PATH = (
     "/usr/libexec/propertyquarry-release-control/"
     "provision_propertyquarry_runtime_database.py"
@@ -198,9 +198,9 @@ RUNTIME_ISOLATION_HELPER_PATH = (
     "propertyquarry-runtime-isolation-v2"
 )
 RUNTIME_ISOLATION_HELPER_SHA256 = (
-    "sha256:0310d09ddb2df14b0e766e52d53270cc381e29c009c55995c19f6e6ceff2cca8"
+    "sha256:a441c978b1fec877d27828f264f35a5dfa203999a8b1260b06ee12fb6f45c413"
 )
-RUNTIME_ISOLATION_HELPER_BYTES = 159_586
+RUNTIME_ISOLATION_HELPER_BYTES = 161_070
 RUNTIME_ISOLATION_RECEIPT_ROOT = (
     "/var/lib/propertyquarry-release-single-host-v2/isolation-receipts"
 )
@@ -208,9 +208,9 @@ RUNTIME_DEPLOY_HELPER_PATH = (
     "/usr/libexec/propertyquarry-release-control/propertyquarry-runtime-deploy-v2"
 )
 RUNTIME_DEPLOY_HELPER_SHA256 = (
-    "sha256:85518c562f05834407f758f44044195435a1f4c84c3df90d2c7219b28aa0a9a6"
+    "sha256:a762c418ffa83aac86b8b503dbd6e9c0ccf41cbc37cd72b21931a9781090691c"
 )
-RUNTIME_DEPLOY_HELPER_BYTES = 82_510
+RUNTIME_DEPLOY_HELPER_BYTES = 82_995
 RUNTIME_DEPLOY_RECEIPT_ROOT = (
     "/var/lib/propertyquarry-release-single-host-v2/deploy-receipts"
 )

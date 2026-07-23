@@ -40,9 +40,21 @@ def _key_id(key: Ed25519PrivateKey) -> str:
 
 
 class Harness:
-    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(
+        self,
+        root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        removal_count: int = deploy.LEGACY_REGISTRATION_EMAIL_KEY_COUNT,
+    ) -> None:
         self.root = root
         self.monkeypatch = monkeypatch
+        if removal_count not in {
+            deploy.LEGACY_REGISTRATION_EMAIL_KEY_COUNT,
+            deploy.REGISTRATION_EMAIL_KEY_COUNT,
+        }:
+            raise ValueError("invalid removal count")
+        self.removal_count = removal_count
         self.uid = os.getuid()
         self.gid = os.getgid()
         self.runtime_sha = "1" * 40
@@ -461,11 +473,11 @@ class Harness:
                     "legacy_registration_email_present": False,
                     "registration_email_key_count": deploy.REGISTRATION_EMAIL_KEY_COUNT,
                 },
-                "legacy_keys_removed": deploy.REGISTRATION_EMAIL_KEY_COUNT,
+                "legacy_keys_removed": self.removal_count,
                 "post_purge_root_env_digest": post_inputs[0]["sha256"],
                 "pre_purge_root_env_digest": pre_inputs[0]["sha256"],
                 "rollback_artifact": {"ciphertext_sha256": "sha256:" + "b" * 64},
-                "rollback_artifact_expected_removed_keys": deploy.REGISTRATION_EMAIL_KEY_COUNT,
+                "rollback_artifact_expected_removed_keys": self.removal_count,
             },
             "started_at_epoch": self.now - 80,
         }
@@ -699,6 +711,19 @@ def test_signed_deploy_receipt_binds_every_predecessor_and_redacts_output(
     assert stat.S_IMODE(harness.receipt_path.stat().st_mode) == 0o600
 
 
+def test_signed_deploy_accepts_full_ten_key_root_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = Harness(
+        tmp_path,
+        monkeypatch,
+        removal_count=deploy.REGISTRATION_EMAIL_KEY_COUNT,
+    )
+    payload = harness.run()["payload"]
+    assert payload["purge_receipt_sha256"] == harness.purge_digest
+
+
 def test_rejects_wrong_deployment_namespace(harness: Harness) -> None:
     args = harness.args
     args.deployment_id = "f" * 64
@@ -804,6 +829,55 @@ def test_rejects_resigned_purge_input_summary_substitution(
     )
     with pytest.raises(
         deploy.DeployError, match="purge_receipt_environment_invalid"
+    ):
+        harness.run()
+
+
+def test_rejects_resigned_purge_registration_count_substitution(
+    harness: Harness,
+) -> None:
+    harness.resign_receipt(
+        harness.purge_path,
+        deploy.ISOLATION_SIGNATURE_DOMAIN,
+        lambda payload: payload["result"]["inputs"].__setitem__(
+            "registration_email_key_count",
+            deploy.LEGACY_REGISTRATION_EMAIL_KEY_COUNT,
+        ),
+    )
+    with pytest.raises(
+        deploy.DeployError,
+        match="purge_receipt_environment_invalid",
+    ):
+        harness.run()
+
+
+@pytest.mark.parametrize(
+    ("removed", "expected"),
+    (
+        (deploy.REGISTRATION_EMAIL_KEY_COUNT, deploy.LEGACY_REGISTRATION_EMAIL_KEY_COUNT),
+        (deploy.LEGACY_REGISTRATION_EMAIL_KEY_COUNT, 9),
+        (deploy.LEGACY_REGISTRATION_EMAIL_KEY_COUNT, deploy.REGISTRATION_EMAIL_KEY_COUNT),
+    ),
+)
+def test_rejects_resigned_purge_removal_count_mismatch(
+    harness: Harness,
+    removed: int,
+    expected: int,
+) -> None:
+    def mutate(payload: dict[str, object]) -> None:
+        result = payload["result"]
+        assert isinstance(result, dict)
+        result["legacy_keys_removed"] = removed
+        result["rollback_artifact_expected_removed_keys"] = expected
+
+    harness.resign_receipt(
+        harness.purge_path,
+        deploy.ISOLATION_SIGNATURE_DOMAIN,
+        mutate,
+    )
+    with pytest.raises(
+        deploy.DeployError,
+        match="purge_receipt_result_binding_invalid",
     ):
         harness.run()
 

@@ -17,43 +17,60 @@ import (
 )
 
 const (
-	ProfileSchema                  = "propertyquarry.release-control.single-host-profile.v2"
-	PlanSchema                     = "propertyquarry.release-control.single-host-transaction-plan.v2"
-	Repository                     = "ArchonMegalon/propertyquarry"
-	RepositoryID                   = "1257593732"
-	RepositoryOwnerID              = "11421547"
-	WorkflowRef                    = "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"
-	ReleaseJob                     = "propertyquarry-release-v2"
-	Environment                    = "propertyquarry-production"
-	Audience                       = "propertyquarry-release-single-host-v2"
-	ProjectName                    = "property"
-	PublicOrigin                   = "https://propertyquarry.com"
-	APIHostIP                      = "127.0.0.1"
-	APIHostPort              int64 = 8097
-	APIContainerPort         int64 = 8090
-	DatabaseImage                  = "postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229"
-	ConfigPath                     = "/etc/propertyquarry-release-single-host-v2/authority.v2.json"
-	ConfigSignaturePath            = "/etc/propertyquarry-release-single-host-v2/authority.v2.sig"
-	PackageAnchorPath              = "/etc/propertyquarry-release-single-host-v2/package-authority-v2.pem"
-	ReceiptKeyPath                 = "/etc/propertyquarry-release-single-host-v2/receipt-authority-v2.key"
-	ReceiptAnchorPath              = "/etc/propertyquarry-release-single-host-v2/receipt-authority-v2.pem"
-	PlanPath                       = "/etc/propertyquarry-release-single-host-v2/transaction-plan.v2.json"
-	BaseEnvironmentPath            = "/docker/property/.env"
-	SceneVideoEnvPath              = "/docker/property/state/runtime/property_scene_video_shared.env"
-	AdmissionEnvPath               = "/docker/property/state/runtime/propertyquarry_admission.env"
-	GoogleIdentityEnvPath          = "/docker/property/state/runtime/propertyquarry_google_identity.env"
-	RegistrationEmailEnvPath       = "/docker/property/state/runtime/propertyquarry_registration_email.env"
-	JournalPath                    = "/var/lib/propertyquarry-release-single-host-v2/journal"
-	SocketPath                     = "/run/propertyquarry-release-single-host-v2/request.sock"
-	configDomain                   = "propertyquarry.release-control.single-host-profile-signature.v2\x00"
-	maximumConfigBytes             = 262144
-	BackupMaxAgeSeconds      int64 = 3600
+	ProfileSchema                         = "propertyquarry.release-control.single-host-profile.v2"
+	PlanSchema                            = "propertyquarry.release-control.single-host-transaction-plan.v2"
+	Repository                            = "ArchonMegalon/propertyquarry"
+	RepositoryID                          = "1257593732"
+	RepositoryOwnerID                     = "11421547"
+	WorkflowRef                           = "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"
+	ReleaseJob                            = "propertyquarry-release-v2"
+	Environment                           = "propertyquarry-production"
+	Audience                              = "propertyquarry-release-single-host-v2"
+	ProjectName                           = "property"
+	PublicOrigin                          = "https://propertyquarry.com"
+	APIHostIP                             = "127.0.0.1"
+	APIHostPort                     int64 = 8097
+	APIContainerPort                int64 = 8090
+	DatabaseImage                         = "postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229"
+	ConfigPath                            = "/etc/propertyquarry-release-single-host-v2/authority.v2.json"
+	ConfigSignaturePath                   = "/etc/propertyquarry-release-single-host-v2/authority.v2.sig"
+	PackageAnchorPath                     = "/etc/propertyquarry-release-single-host-v2/package-authority-v2.pem"
+	ReceiptKeyPath                        = "/etc/propertyquarry-release-single-host-v2/receipt-authority-v2.key"
+	ReceiptAnchorPath                     = "/etc/propertyquarry-release-single-host-v2/receipt-authority-v2.pem"
+	PlanPath                              = "/etc/propertyquarry-release-single-host-v2/transaction-plan.v2.json"
+	BaseEnvironmentPath                   = "/docker/property/.env"
+	SceneVideoEnvPath                     = "/docker/property/state/runtime/property_scene_video_shared.env"
+	AdmissionEnvPath                      = "/docker/property/state/runtime/propertyquarry_admission.env"
+	GoogleIdentityEnvPath                 = "/docker/property/state/runtime/propertyquarry_google_identity.env"
+	RegistrationEmailEnvPath              = "/docker/property/state/runtime/propertyquarry_registration_email.env"
+	JournalPath                           = "/var/lib/propertyquarry-release-single-host-v2/journal"
+	SocketPath                            = "/run/propertyquarry-release-single-host-v2/request.sock"
+	configDomain                          = "propertyquarry.release-control.single-host-profile-signature.v2\x00"
+	maximumConfigBytes                    = 262144
+	BackupMaxAgeSeconds             int64 = 3600
+	LegacyRegistrationEmailKeyCount int64 = 8
+	RegistrationEmailKeyCount       int64 = 10
 )
 
 var imagePattern = regexp.MustCompile(`^ghcr\.io/archonmegalon/propertyquarry-standalone-(web|render)-runtime@sha256:[0-9a-f]{64}$`)
 var cloudflaredImagePattern = regexp.MustCompile(`^cloudflare/cloudflared@sha256:[0-9a-f]{64}$`)
 var deploymentIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var envelopeSHAPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func RegistrationEmailEnvironmentNames() []string {
+	return []string{
+		"EMAILIT_API_KEY",
+		"PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+		"PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID",
+		"EA_REGISTRATION_EMAIL_FROM",
+		"EA_REGISTRATION_EMAIL_NAME",
+		"EA_REGISTRATION_EMAIL_FROM_FALLBACK",
+		"EA_REGISTRATION_EMAIL_NAME_FALLBACK",
+		"EA_REGISTRATION_EMAIL_FORCE_FALLBACK",
+		"EA_EMAIL_DEFAULT_FROM",
+		"EA_EMAIL_DEFAULT_NAME",
+	}
+}
 
 type Config struct {
 	Raw                                     []byte
@@ -431,23 +448,17 @@ func validateGoogleIdentityEnvelope(root string, uid, gid uint32, expectedDigest
 		"PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI",
 		"PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET",
 		"PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
-	})
+	}, false)
 }
 
 func validateRegistrationEmailEnvelope(root string, uid, gid uint32, expectedDigest string) error {
-	return validateExactExternalEnvelope(root, RegistrationEmailEnvPath, uid, gid, expectedDigest, "registration-email", []string{
-		"EMAILIT_API_KEY",
-		"EA_REGISTRATION_EMAIL_FROM",
-		"EA_REGISTRATION_EMAIL_NAME",
-		"EA_REGISTRATION_EMAIL_FROM_FALLBACK",
-		"EA_REGISTRATION_EMAIL_NAME_FALLBACK",
-		"EA_REGISTRATION_EMAIL_FORCE_FALLBACK",
-		"EA_EMAIL_DEFAULT_FROM",
-		"EA_EMAIL_DEFAULT_NAME",
-	})
+	return validateExactExternalEnvelope(
+		root, RegistrationEmailEnvPath, uid, gid, expectedDigest,
+		"registration-email", RegistrationEmailEnvironmentNames(), true,
+	)
 }
 
-func validateExactExternalEnvelope(root, absolutePath string, uid, gid uint32, expectedDigest, label string, expectedNames []string) error {
+func validateExactExternalEnvelope(root, absolutePath string, uid, gid uint32, expectedDigest, label string, expectedNames []string, ordered bool) error {
 	path := rooted(root, absolutePath)
 	if err := validateExternalParentChain(root, path, uid, gid); err != nil {
 		return fmt.Errorf("%s-envelope-parent-invalid", label)
@@ -468,14 +479,14 @@ func validateExactExternalEnvelope(root, absolutePath string, uid, gid uint32, e
 	for _, name := range expectedNames {
 		expected[name] = false
 	}
-	for _, line := range lines {
+	for index, line := range lines {
 		parts := bytes.SplitN(line, []byte{'='}, 2)
 		if len(parts) != 2 || !validLiteralEnvironmentValue(parts[1]) {
 			return fmt.Errorf("%s-envelope-entry-invalid", label)
 		}
 		name := string(parts[0])
 		seen, allowed := expected[name]
-		if !allowed || seen {
+		if !allowed || seen || (ordered && name != expectedNames[index]) {
 			return fmt.Errorf("%s-envelope-name-invalid", label)
 		}
 		if name == "EA_REGISTRATION_EMAIL_FORCE_FALLBACK" && !bytes.Equal(parts[1], []byte("true")) && !bytes.Equal(parts[1], []byte("false")) {

@@ -44,10 +44,10 @@ archive="${archive_directory}/actions-runner-linux-x64-2.335.1.tar.gz"
 session_root=/var/lib/propertyquarry-release-runner-v2/sessions
 authority_config=/etc/propertyquarry-release-single-host-v2
 authority_runtime=/run/propertyquarry-release-single-host-v2
-for executable in "$controller" "$launcher"; do
-  [[ -f "$executable" && ! -L "$executable" && -x "$executable" ]] || fail
-  [[ "$(stat -Lc '%a:%u:%g:%h' -- "$executable")" == "555:0:0:1" ]] || fail
-done
+[[ -f "$controller" && ! -L "$controller" && -x "$controller" ]] || fail
+[[ "$(stat -Lc '%a:%u:%g:%h' -- "$controller")" == "755:0:0:1" ]] || fail
+[[ -f "$launcher" && ! -L "$launcher" && -x "$launcher" ]] || fail
+[[ "$(stat -Lc '%a:%u:%g:%h' -- "$launcher")" == "555:0:0:1" ]] || fail
 [[ -f "$archive" && ! -L "$archive" && "$(stat -Lc '%a:%u:%g:%h:%s' -- "$archive")" == \
   "444:0:0:1:225628509" ]] || fail
 [[ "$(sha256sum -- "$archive" | cut -d' ' -f1)" == \

@@ -121,6 +121,8 @@ RUNTIME_INPUT_PATHS = (
     Path("/docker/property/state/runtime/propertyquarry_google_identity.env"),
     Path("/docker/property/state/runtime/propertyquarry_registration_email.env"),
 )
+LEGACY_REGISTRATION_EMAIL_KEY_COUNT = 8
+REGISTRATION_EMAIL_KEY_COUNT = 10
 DATABASE_RECEIPT_PAYLOAD_KEYS = {
     "authority_digest",
     "backup_max_age_seconds",
@@ -1223,6 +1225,16 @@ def _load_predecessor_chain(
     )
     purge_result = purge_payload.get("result")
     purge_inputs = purge_result.get("inputs") if isinstance(purge_result, dict) else None
+    removed = (
+        purge_result.get("legacy_keys_removed")
+        if isinstance(purge_result, dict)
+        else None
+    )
+    expected_removed = (
+        purge_result.get("rollback_artifact_expected_removed_keys")
+        if isinstance(purge_result, dict)
+        else None
+    )
     expected_file_digests = {
         str(item["path"]): str(item["sha256"])
         for item in runtime_inputs
@@ -1240,13 +1252,18 @@ def _load_predecessor_chain(
         or purge_inputs.get("file_digests") != expected_file_digests
         or purge_inputs.get("google_key_count") != 5
         or purge_inputs.get("legacy_registration_email_present") is not False
-        or purge_inputs.get("registration_email_key_count") != 8
-        or purge_result.get("legacy_keys_removed") not in {0, 8}
-        or isinstance(purge_result.get("legacy_keys_removed"), bool)
-        or purge_result.get("rollback_artifact_expected_removed_keys") != 8
-        or isinstance(
-            purge_result.get("rollback_artifact_expected_removed_keys"), bool
-        )
+        or purge_inputs.get("registration_email_key_count")
+        != REGISTRATION_EMAIL_KEY_COUNT
+        or isinstance(removed, bool)
+        or not isinstance(removed, int)
+        or isinstance(expected_removed, bool)
+        or not isinstance(expected_removed, int)
+        or expected_removed
+        not in {
+            LEGACY_REGISTRATION_EMAIL_KEY_COUNT,
+            REGISTRATION_EMAIL_KEY_COUNT,
+        }
+        or removed not in {0, expected_removed}
         or purge_payload.get("pre_purge_runtime_inputs")
         != authority.get("pre_purge_runtime_inputs")
         or purge_payload.get("runtime_inputs") != runtime_inputs

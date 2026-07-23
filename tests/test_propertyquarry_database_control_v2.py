@@ -14,6 +14,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
 
 from scripts import propertyquarry_database_control_v2 as control
+from scripts import propertyquarry_runtime_deploy_v2 as deploy
+from scripts import propertyquarry_runtime_isolation_v2 as isolation
 
 
 RUNTIME_SHA = "a" * 40
@@ -24,6 +26,49 @@ DATABASE_IMAGE_ID = "sha256:" + "c" * 64
 DATABASE_CONTAINER_ID = "e" * 64
 MIGRATOR_URL = "postgresql://migrator:migrator-secret@propertyquarry-db/propertyquarry"
 API_URL = "postgresql://api:api-secret@propertyquarry-db/propertyquarry"
+
+EXPECTED_REGISTRATION_EMAIL_KEYS = (
+    "EMAILIT_API_KEY",
+    "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+    "PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID",
+    "EA_REGISTRATION_EMAIL_FROM",
+    "EA_REGISTRATION_EMAIL_NAME",
+    "EA_REGISTRATION_EMAIL_FROM_FALLBACK",
+    "EA_REGISTRATION_EMAIL_NAME_FALLBACK",
+    "EA_REGISTRATION_EMAIL_FORCE_FALLBACK",
+    "EA_EMAIL_DEFAULT_FROM",
+    "EA_EMAIL_DEFAULT_NAME",
+)
+EXPECTED_LEGACY_REGISTRATION_EMAIL_KEYS = (
+    "EMAILIT_API_KEY",
+    "EA_REGISTRATION_EMAIL_FROM",
+    "EA_REGISTRATION_EMAIL_NAME",
+    "EA_REGISTRATION_EMAIL_FROM_FALLBACK",
+    "EA_REGISTRATION_EMAIL_NAME_FALLBACK",
+    "EA_REGISTRATION_EMAIL_FORCE_FALLBACK",
+    "EA_EMAIL_DEFAULT_FROM",
+    "EA_EMAIL_DEFAULT_NAME",
+)
+
+
+def test_registration_email_receipt_count_matches_ordered_runtime_contract() -> None:
+    assert isolation.MAIL_KEYS == EXPECTED_REGISTRATION_EMAIL_KEYS
+    assert (
+        isolation.LEGACY_MAIL_KEYS
+        == EXPECTED_LEGACY_REGISTRATION_EMAIL_KEYS
+    )
+    assert (
+        control.REGISTRATION_EMAIL_KEY_COUNT
+        == deploy.REGISTRATION_EMAIL_KEY_COUNT
+        == len(EXPECTED_REGISTRATION_EMAIL_KEYS)
+        == 10
+    )
+    assert (
+        control.LEGACY_REGISTRATION_EMAIL_KEY_COUNT
+        == deploy.LEGACY_REGISTRATION_EMAIL_KEY_COUNT
+        == len(EXPECTED_LEGACY_REGISTRATION_EMAIL_KEYS)
+        == 8
+    )
 
 
 def _runtime_values() -> dict[str, str]:
@@ -170,7 +215,7 @@ def _external_predecessor_payloads() -> dict[str, tuple[dict[str, object], str]]
                 },
                 "google_key_count": 5,
                 "legacy_registration_email_present": False,
-                "registration_email_key_count": 8,
+                "registration_email_key_count": control.REGISTRATION_EMAIL_KEY_COUNT,
             },
             "post_purge_root_env_digest": authority[
                 "post_purge_root_env_digest"
@@ -178,9 +223,11 @@ def _external_predecessor_payloads() -> dict[str, tuple[dict[str, object], str]]
             "pre_purge_root_env_digest": authority[
                 "pre_purge_root_env_digest"
             ],
-            "legacy_keys_removed": 8,
+            "legacy_keys_removed": control.LEGACY_REGISTRATION_EMAIL_KEY_COUNT,
             "rollback_artifact": {"sha256": "sha256:" + "9" * 64},
-            "rollback_artifact_expected_removed_keys": 8,
+            "rollback_artifact_expected_removed_keys": (
+                control.LEGACY_REGISTRATION_EMAIL_KEY_COUNT
+            ),
         },
         "runtime_inputs": copy.deepcopy(authority["runtime_inputs"]),
         "schema": control.ISOLATION_RECEIPT_SCHEMA,
@@ -629,6 +676,54 @@ def test_predecessor_chain_rejects_backup_outside_signed_window(
             receipt_key_id="sha256:key",
             host_machine_id_digest="sha256:machine",
             gate_started_at=3612,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("registration_email_key_count", 8),
+        ("legacy_keys_removed", 10),
+        ("rollback_artifact_expected_removed_keys", 9),
+        ("rollback_artifact_expected_removed_keys", 10),
+    ),
+)
+def test_predecessor_chain_rejects_invalid_mail_removal_receipt(
+    field: str,
+    value: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipts = _external_predecessor_payloads()
+    purge = receipts["purge-legacy-runtime-exposure.json"][0]["result"]
+    assert isinstance(purge, dict)
+    if field == "registration_email_key_count":
+        inputs = purge["inputs"]
+        assert isinstance(inputs, dict)
+        inputs[field] = value
+    else:
+        purge[field] = value
+    monkeypatch.setattr(
+        control,
+        "_read_signed_receipt",
+        lambda path, **_kwargs: copy.deepcopy(receipts[path.name]),
+    )
+
+    with pytest.raises(
+        control.DatabaseControlError,
+        match="purge_receipt_chain_invalid",
+    ):
+        control._load_predecessor_chain(
+            operation="provision-roles",
+            runtime_sha=RUNTIME_SHA,
+            deployment_id=DEPLOYMENT_ID,
+            web_image=WEB_IMAGE,
+            database_image=DATABASE_IMAGE,
+            authority=_authority(),
+            authority_digest="sha256:authority",
+            public_key=object(),
+            receipt_key_id="sha256:key",
+            host_machine_id_digest="sha256:machine",
+            gate_started_at=20,
         )
 
 

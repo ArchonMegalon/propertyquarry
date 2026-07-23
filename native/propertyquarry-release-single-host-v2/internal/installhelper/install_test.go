@@ -178,7 +178,18 @@ func newInstallFixture(t *testing.T) *installFixture {
 	writeTestFile(t, filepath.Join(root, "etc/machine-id"), []byte(machineID+"\n"), 0o444)
 	envelope := []byte("PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID=client\nPROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET=secret\nPROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI=https://propertyquarry.com/app/auth/google/callback\nPROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET=state\nPROPERTYQUARRY_IDENTITY_SESSION_SECRET=session\n")
 	writeTestFile(t, filepath.Join(root, "docker/property/state/runtime/propertyquarry_google_identity.env"), envelope, 0o600)
-	registrationEnvelope := []byte("EMAILIT_API_KEY=key\nEA_REGISTRATION_EMAIL_FROM=register@propertyquarry.com\nEA_REGISTRATION_EMAIL_NAME=PropertyQuarry\nEA_REGISTRATION_EMAIL_FROM_FALLBACK=fallback@propertyquarry.com\nEA_REGISTRATION_EMAIL_NAME_FALLBACK=PropertyQuarry fallback\nEA_REGISTRATION_EMAIL_FORCE_FALLBACK=false\nEA_EMAIL_DEFAULT_FROM=hello@propertyquarry.com\nEA_EMAIL_DEFAULT_NAME=PropertyQuarry\n")
+	registrationEnvelope := []byte(strings.Join([]string{
+		"EMAILIT_API_KEY=key",
+		"PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN=cloudflare-token",
+		"PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"EA_REGISTRATION_EMAIL_FROM=register@propertyquarry.com",
+		"EA_REGISTRATION_EMAIL_NAME=PropertyQuarry",
+		"EA_REGISTRATION_EMAIL_FROM_FALLBACK=fallback@propertyquarry.com",
+		"EA_REGISTRATION_EMAIL_NAME_FALLBACK=PropertyQuarry fallback",
+		"EA_REGISTRATION_EMAIL_FORCE_FALLBACK=false",
+		"EA_EMAIL_DEFAULT_FROM=hello@propertyquarry.com",
+		"EA_EMAIL_DEFAULT_NAME=PropertyQuarry",
+	}, "\n") + "\n")
 	writeTestFile(t, filepath.Join(root, "docker/property/state/runtime/propertyquarry_registration_email.env"), registrationEnvelope, 0o600)
 	sceneEnvelope := []byte("PROPERTYQUARRY_RENDER_BRIDGE_TOKEN=fixture-render-bridge-token\n")
 	writeTestFile(t, filepath.Join(root, "docker/property/state/runtime/property_scene_video_shared.env"), sceneEnvelope, 0o600)
@@ -897,6 +908,36 @@ func TestInstallerSelfBindingUsesSignedRuntimeDigestAndSize(t *testing.T) {
 	verified.InstallerBinarySize++
 	if err := installerIdentityBindingMatches(verified, digestValue, size); err == nil {
 		t.Fatal("installer size substitution accepted")
+	}
+}
+
+func TestRegistrationEnvelopeValidatorRequiresExactOrderedCloudflareContract(t *testing.T) {
+	fixture := newInstallFixture(t)
+	valid := fixture.registrationEnvelope
+	if !validRegistrationEmailEnvelope(valid) {
+		t.Fatal("valid registration email envelope rejected")
+	}
+	tokenLine := []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN=cloudflare-token\n")
+	accountLine := []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+	orderedPair := append(append([]byte{}, tokenLine...), accountLine...)
+	swappedPair := append(append([]byte{}, accountLine...), tokenLine...)
+	cases := []struct {
+		name string
+		raw  []byte
+	}{
+		{name: "missing-token", raw: bytes.Replace(valid, tokenLine, nil, 1)},
+		{name: "missing-account", raw: bytes.Replace(valid, accountLine, nil, 1)},
+		{name: "swapped", raw: bytes.Replace(valid, orderedPair, swappedPair, 1)},
+		{name: "extra", raw: append(append([]byte{}, valid...), []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_EXTRA=unexpected\n")...)},
+		{name: "empty-token", raw: bytes.Replace(valid, tokenLine, []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN=\n"), 1)},
+		{name: "empty-account", raw: bytes.Replace(valid, accountLine, []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID=\n"), 1)},
+	}
+	for _, candidate := range cases {
+		t.Run(candidate.name, func(t *testing.T) {
+			if validRegistrationEmailEnvelope(candidate.raw) {
+				t.Fatal("invalid registration email envelope accepted")
+			}
+		})
 	}
 }
 

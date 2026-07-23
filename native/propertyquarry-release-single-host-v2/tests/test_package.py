@@ -126,6 +126,45 @@ class PackageTests(unittest.TestCase):
             raise AssertionError(completed.stderr.decode("utf-8", "replace"))
         return completed.stdout
 
+    def test_sealed_helper_constants_match_current_repository_bytes(self) -> None:
+        expected = (
+            (
+                "scripts/propertyquarry_predeploy_backup_v2.py",
+                package.PREDEPLOY_BACKUP_HELPER_SHA256,
+                package.PREDEPLOY_BACKUP_HELPER_BYTES,
+            ),
+            (
+                "scripts/propertyquarry_database_control_v2.py",
+                package.DATABASE_CONTROL_HELPER_SHA256,
+                package.DATABASE_CONTROL_HELPER_BYTES,
+            ),
+            (
+                "scripts/provision_propertyquarry_runtime_database.py",
+                package.RUNTIME_DATABASE_HELPER_SHA256,
+                package.RUNTIME_DATABASE_HELPER_BYTES,
+            ),
+            (
+                "scripts/propertyquarry_runtime_isolation_v2.py",
+                package.RUNTIME_ISOLATION_HELPER_SHA256,
+                package.RUNTIME_ISOLATION_HELPER_BYTES,
+            ),
+            (
+                "scripts/propertyquarry_runtime_deploy_v2.py",
+                package.RUNTIME_DEPLOY_HELPER_SHA256,
+                package.RUNTIME_DEPLOY_HELPER_BYTES,
+            ),
+        )
+        for relative, digest, size in expected:
+            with self.subTest(relative=relative):
+                path = REPOSITORY_ROOT / relative
+                metadata = path.lstat()
+                raw = path.read_bytes()
+                self.assertTrue(stat.S_ISREG(metadata.st_mode))
+                self.assertFalse(stat.S_ISLNK(metadata.st_mode))
+                self.assertEqual(metadata.st_nlink, 1)
+                self.assertEqual(len(raw), size)
+                self.assertEqual(package.sha256(raw), digest)
+
     def _fixture_files(self) -> dict[str, Path]:
         package_public_pem = self._public_pem(self.package_private)
         receipt_public_pem = self._public_pem(self.receipt_private)

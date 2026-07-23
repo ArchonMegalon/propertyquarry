@@ -297,9 +297,10 @@ func validatePurgeIsolationResult(root string, config *Config, receiptPublic ed2
 	backupDigest, backupOK := exactString(result["backup_receipt_sha256"])
 	preDigest, preOK := exactString(result["pre_purge_root_env_digest"])
 	postDigest, postOK := exactString(result["post_purge_root_env_digest"])
-	removed, removedOK := exactInt(result["legacy_keys_removed"], 0, 8)
-	expectedRemoved, expectedRemovedOK := exactInt(result["rollback_artifact_expected_removed_keys"], 8, 8)
-	if !backupOK || backupDigest != backupProof.receiptDigest || !preOK || preDigest != config.PrePurgeRootEnvDigest || !postOK || postDigest != config.PostPurgeRootEnvDigest || !removedOK || (removed != 0 && removed != 8) || !expectedRemovedOK || expectedRemoved != 8 {
+	removed, removedOK := exactInt(result["legacy_keys_removed"], 0, RegistrationEmailKeyCount)
+	expectedRemoved, expectedRemovedOK := exactInt(result["rollback_artifact_expected_removed_keys"], LegacyRegistrationEmailKeyCount, RegistrationEmailKeyCount)
+	validExpectedRemoved := expectedRemoved == LegacyRegistrationEmailKeyCount || expectedRemoved == RegistrationEmailKeyCount
+	if !backupOK || backupDigest != backupProof.receiptDigest || !preOK || preDigest != config.PrePurgeRootEnvDigest || !postOK || postDigest != config.PostPurgeRootEnvDigest || !removedOK || !expectedRemovedOK || !validExpectedRemoved || (removed != 0 && removed != expectedRemoved) {
 		return fmt.Errorf("isolation-purge-result-binding-invalid")
 	}
 	inputs, err := validateIsolationInputs(root, config, result["inputs"], false)
@@ -478,7 +479,7 @@ func validateIsolationInputs(root string, config *Config, value any, legacyMail 
 	if count, ok := exactInt(inputs["google_key_count"], 5, 5); !ok || count != 5 {
 		return nil, fmt.Errorf("isolation-inputs-key-count-invalid")
 	}
-	if count, ok := exactInt(inputs["registration_email_key_count"], 8, 8); !ok || count != 8 {
+	if count, ok := exactInt(inputs["registration_email_key_count"], RegistrationEmailKeyCount, RegistrationEmailKeyCount); !ok || count != RegistrationEmailKeyCount {
 		return nil, fmt.Errorf("isolation-inputs-key-count-invalid")
 	}
 	if present, ok := inputs["legacy_registration_email_present"].(bool); !ok || present != legacyMail {
@@ -629,7 +630,7 @@ func validateIsolationExposure(config *Config, value any, inputs map[string]stri
 	if exposure["topology_isolated"] != true || exposure["legacy_registration_email_present"] != false || exposure["admission_env_sha256"] != inputs[AdmissionEnvPath] || exposure["database_env_sha256"] != inputs[DatabaseRuntimeEnvironmentPath] || exposure["google_env_sha256"] != config.GoogleIdentityEnvDigest || exposure["registration_email_env_sha256"] != config.RegistrationEmailEnvDigest || exposure["render_provider_env_sha256"] != config.SceneVideoEnvDigest {
 		return "", "", fmt.Errorf("isolation-exposure-binding-invalid")
 	}
-	for field, expected := range map[string]int64{"google_key_count": 5, "registration_email_key_count": 8} {
+	for field, expected := range map[string]int64{"google_key_count": 5, "registration_email_key_count": RegistrationEmailKeyCount} {
 		if count, ok := exactInt(exposure[field], expected, expected); !ok || count != expected {
 			return "", "", fmt.Errorf("isolation-exposure-count-invalid")
 		}

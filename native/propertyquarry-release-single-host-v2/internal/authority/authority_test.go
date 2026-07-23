@@ -190,12 +190,33 @@ func newAuthorityFixture(t *testing.T, releaseFailure bool) *authorityFixture {
 	}
 	machineID := []byte("0123456789abcdef0123456789abcdef\n")
 	writeFixture(t, rooted(root, "/etc/machine-id"), machineID, 0o444)
-	prePurgeRootEnv := []byte("EA_EMAIL_DEFAULT_FROM=legacy@example.test\nEA_EMAIL_DEFAULT_NAME=Legacy sender\nEA_REGISTRATION_EMAIL_FORCE_FALLBACK=false\nPOST_PURGE_STATE=true\n")
+	registrationEmailEnv := []byte(strings.Join([]string{
+		"EMAILIT_API_KEY=secret",
+		"PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN=cloudflare-token",
+		"PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"EA_REGISTRATION_EMAIL_FROM=primary@example.test",
+		"EA_REGISTRATION_EMAIL_NAME=PropertyQuarry",
+		"EA_REGISTRATION_EMAIL_FROM_FALLBACK=fallback@example.test",
+		"EA_REGISTRATION_EMAIL_NAME_FALLBACK=PropertyQuarry fallback",
+		"EA_REGISTRATION_EMAIL_FORCE_FALLBACK=false",
+		"EA_EMAIL_DEFAULT_FROM=legacy@example.test",
+		"EA_EMAIL_DEFAULT_NAME=PropertyQuarry legacy",
+	}, "\n") + "\n")
+	legacyRegistrationEmailEnv := []byte(strings.Join([]string{
+		"EMAILIT_API_KEY=secret",
+		"EA_REGISTRATION_EMAIL_FROM=primary@example.test",
+		"EA_REGISTRATION_EMAIL_NAME=PropertyQuarry",
+		"EA_REGISTRATION_EMAIL_FROM_FALLBACK=fallback@example.test",
+		"EA_REGISTRATION_EMAIL_NAME_FALLBACK=PropertyQuarry fallback",
+		"EA_REGISTRATION_EMAIL_FORCE_FALLBACK=false",
+		"EA_EMAIL_DEFAULT_FROM=legacy@example.test",
+		"EA_EMAIL_DEFAULT_NAME=PropertyQuarry legacy",
+	}, "\n") + "\n")
+	prePurgeRootEnv := append(append([]byte{}, legacyRegistrationEmailEnv...), []byte("POST_PURGE_STATE=true\n")...)
 	postPurgeRootEnv := []byte("POST_PURGE_STATE=true\n")
 	writeFixture(t, rooted(root, BaseEnvironmentPath), prePurgeRootEnv, 0o600)
 	googleIdentityEnv := []byte("PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID=client\nPROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET=secret\nPROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI=https://propertyquarry.com/app/auth/google/callback\nPROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET=state\nPROPERTYQUARRY_IDENTITY_SESSION_SECRET=session\n")
 	writeFixture(t, rooted(root, GoogleIdentityEnvPath), googleIdentityEnv, 0o600)
-	registrationEmailEnv := []byte("EMAILIT_API_KEY=secret\nEA_REGISTRATION_EMAIL_FROM=primary@example.test\nEA_REGISTRATION_EMAIL_NAME=PropertyQuarry\nEA_REGISTRATION_EMAIL_FROM_FALLBACK=fallback@example.test\nEA_REGISTRATION_EMAIL_NAME_FALLBACK=PropertyQuarry fallback\nEA_REGISTRATION_EMAIL_FORCE_FALLBACK=false\nEA_EMAIL_DEFAULT_FROM=legacy@example.test\nEA_EMAIL_DEFAULT_NAME=PropertyQuarry legacy\n")
 	writeFixture(t, rooted(root, RegistrationEmailEnvPath), registrationEmailEnv, 0o600)
 	sceneVideoEnv := []byte("PROPERTYQUARRY_RENDER_BRIDGE_TOKEN=fixture-render-bridge-token\n")
 	writeFixture(t, rooted(root, SceneVideoEnvPath), sceneVideoEnv, 0o600)
@@ -761,6 +782,57 @@ func TestPrePurgeRootEnvironmentDigestIsHistoricalNotStartupCurrentFile(t *testi
 	zero(key)
 }
 
+func TestRegistrationEmailEnvelopeRequiresExactOrderedCloudflareContract(t *testing.T) {
+	fixture := newAuthorityFixture(t, false)
+	defer fixture.close()
+	expectedNames := []string{
+		"EMAILIT_API_KEY",
+		"PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+		"PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID",
+		"EA_REGISTRATION_EMAIL_FROM",
+		"EA_REGISTRATION_EMAIL_NAME",
+		"EA_REGISTRATION_EMAIL_FROM_FALLBACK",
+		"EA_REGISTRATION_EMAIL_NAME_FALLBACK",
+		"EA_REGISTRATION_EMAIL_FORCE_FALLBACK",
+		"EA_EMAIL_DEFAULT_FROM",
+		"EA_EMAIL_DEFAULT_NAME",
+	}
+	if RegistrationEmailKeyCount != int64(len(expectedNames)) || !equalStrings(RegistrationEmailEnvironmentNames(), expectedNames) {
+		t.Fatal("registration email key contract drifted")
+	}
+	path := rooted(fixture.root, RegistrationEmailEnvPath)
+	valid, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRegistrationEmailEnvelope(fixture.root, uint32(os.Geteuid()), uint32(os.Getegid()), digest(valid)); err != nil {
+		t.Fatalf("valid registration email envelope rejected: %v", err)
+	}
+	tokenLine := []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN=cloudflare-token\n")
+	accountLine := []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+	orderedPair := append(append([]byte{}, tokenLine...), accountLine...)
+	swappedPair := append(append([]byte{}, accountLine...), tokenLine...)
+	cases := []struct {
+		name string
+		raw  []byte
+	}{
+		{name: "missing-token", raw: bytes.Replace(valid, tokenLine, nil, 1)},
+		{name: "missing-account", raw: bytes.Replace(valid, accountLine, nil, 1)},
+		{name: "swapped", raw: bytes.Replace(valid, orderedPair, swappedPair, 1)},
+		{name: "extra", raw: append(append([]byte{}, valid...), []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_EXTRA=unexpected\n")...)},
+		{name: "empty-token", raw: bytes.Replace(valid, tokenLine, []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN=\n"), 1)},
+		{name: "empty-account", raw: bytes.Replace(valid, accountLine, []byte("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID=\n"), 1)},
+	}
+	for _, candidate := range cases {
+		t.Run(candidate.name, func(t *testing.T) {
+			writeFixture(t, path, candidate.raw, 0o600)
+			if err := validateRegistrationEmailEnvelope(fixture.root, uint32(os.Geteuid()), uint32(os.Getegid()), digest(candidate.raw)); err == nil {
+				t.Fatal("invalid registration email envelope accepted")
+			}
+		})
+	}
+}
+
 func TestPlanCannotOmitOrRebindPredeployBackup(t *testing.T) {
 	fixture := newAuthorityFixture(t, false)
 	defer fixture.close()
@@ -1146,7 +1218,7 @@ func TestRuntimeIsolationPurgeReceiptAuthenticatesExactPreimageAndRollbackArtifa
 			BaseEnvironmentPath: digest(baseRaw), SceneVideoEnvPath: digest(sceneRaw), DatabaseRuntimeEnvironmentPath: digest(databaseRaw),
 			AdmissionEnvPath: digest(admissionRaw), GoogleIdentityEnvPath: digest(googleRaw), RegistrationEmailEnvPath: digest(registrationRaw),
 		},
-		"google_key_count": json.Number("5"), "legacy_registration_email_present": false, "registration_email_key_count": json.Number("8"),
+		"google_key_count": json.Number("5"), "legacy_registration_email_present": false, "registration_email_key_count": json.Number("10"),
 	}
 	result := map[string]any{
 		"backup_receipt_sha256": backupDigest, "inputs": inputs, "legacy_keys_removed": json.Number("8"),
@@ -1182,6 +1254,35 @@ func TestRuntimeIsolationPurgeReceiptAuthenticatesExactPreimageAndRollbackArtifa
 	}
 	if proof.backupReceiptDigest != backupDigest || proof.prePurgeRootEnvDigest != fixture.config.PrePurgeRootEnvDigest || proof.postPurgeRootEnvDigest != digest(baseRaw) || proof.rollbackArtifactDigest != digest(artifactRaw) {
 		t.Fatalf("purge isolation proof incomplete: %#v", proof)
+	}
+	result["legacy_keys_removed"] = json.Number("10")
+	result["rollback_artifact_expected_removed_keys"] = json.Number("10")
+	writeIsolationReceiptFixture(t, fixture, operationPurgeRuntimeIsolation, payload)
+	if proof, err := verifyRuntimeIsolationReceipt(fixture.root, fixture.config, fixture.receiptKey.Public().(ed25519.PublicKey), operationPurgeRuntimeIsolation, 1_799_999_999, 1_800_000_002); err != nil {
+		t.Fatalf("full ten-key purge receipt rejected: %v", err)
+	} else {
+		zero([]byte(proof.receiptDigest))
+	}
+	result["legacy_keys_removed"] = json.Number("8")
+	result["rollback_artifact_expected_removed_keys"] = json.Number("8")
+	for _, invalid := range []struct {
+		field map[string]any
+		name  string
+		value json.Number
+	}{
+		{field: inputs, name: "registration_email_key_count", value: json.Number("8")},
+		{field: result, name: "legacy_keys_removed", value: json.Number("10")},
+		{field: result, name: "rollback_artifact_expected_removed_keys", value: json.Number("9")},
+		{field: result, name: "rollback_artifact_expected_removed_keys", value: json.Number("10")},
+	} {
+		original := invalid.field[invalid.name]
+		invalid.field[invalid.name] = invalid.value
+		writeIsolationReceiptFixture(t, fixture, operationPurgeRuntimeIsolation, payload)
+		if proof, err := verifyRuntimeIsolationReceipt(fixture.root, fixture.config, fixture.receiptKey.Public().(ed25519.PublicKey), operationPurgeRuntimeIsolation, 1_799_999_999, 1_800_000_002); err == nil {
+			zero([]byte(proof.receiptDigest))
+			t.Fatalf("invalid mail-removal %s=%s accepted", invalid.name, invalid.value)
+		}
+		invalid.field[invalid.name] = original
 	}
 	result["pre_purge_root_env_digest"] = "sha256:" + strings.Repeat("0", 64)
 	writeIsolationReceiptFixture(t, fixture, operationPurgeRuntimeIsolation, payload)

@@ -72,6 +72,10 @@ def _mail_values() -> dict[str, str]:
     return {key: f"mail-value-{index}" for index, key in enumerate(isolation.MAIL_KEYS)}
 
 
+def _legacy_mail_values(values: dict[str, str]) -> dict[str, str]:
+    return {key: values[key] for key in isolation.LEGACY_MAIL_KEYS}
+
+
 def _google_values() -> dict[str, str]:
     return {
         key: f"google-value-{index}"
@@ -114,6 +118,44 @@ def test_registration_email_input_is_atomic_exact_and_idempotent(
     assert parsed == values
 
 
+def test_registration_email_input_accepts_legacy_eight_only_with_dedicated_ten(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root_env = tmp_path / ".env"
+    registration_env = tmp_path / "propertyquarry_registration_email.env"
+    scene_env = tmp_path / "scene.env"
+    values = _mail_values()
+    _write_env(root_env, {"UNRELATED": "keep", **_legacy_mail_values(values)})
+    _write_env(registration_env, values)
+    _write_env(scene_env, {"EXISTING": "keep"})
+    monkeypatch.setattr(isolation, "ROOT_ENV", root_env)
+    monkeypatch.setattr(isolation, "REGISTRATION_ENV", registration_env)
+    monkeypatch.setattr(isolation, "SCENE_ENV", scene_env)
+
+    result = isolation.prepare_registration_email_input()
+
+    root_values, _root_keys = isolation._parse_env(
+        root_env.read_bytes(),
+        path=root_env,
+    )
+    assert result["key_count"] == len(isolation.MAIL_KEYS) == 10
+    assert result["legacy_source_present"] is True
+    assert tuple(key for key in isolation.MAIL_KEYS if key in root_values) == (
+        isolation.LEGACY_MAIL_KEYS
+    )
+    assert all(
+        root_values[key] == values[key] for key in isolation.LEGACY_MAIL_KEYS
+    )
+    assert all(
+        key not in root_values
+        for key in (
+            "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+            "PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID",
+        )
+    )
+
+
 def test_registration_email_input_rejects_partial_or_conflicting_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -129,6 +171,27 @@ def test_registration_email_input_rejects_partial_or_conflicting_sources(
     _write_env(root_env, {isolation.MAIL_KEYS[0]: values[isolation.MAIL_KEYS[0]]})
 
     with pytest.raises(isolation.IsolationError, match="legacy_registration_email_partial"):
+        isolation.prepare_registration_email_input()
+
+    _write_env(root_env, _legacy_mail_values(values))
+    with pytest.raises(
+        isolation.IsolationError,
+        match="registration_email_source_missing",
+    ):
+        isolation.prepare_registration_email_input()
+
+    _write_env(registration_env, values)
+    mixed = {
+        **_legacy_mail_values(values),
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN": values[
+            "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN"
+        ],
+    }
+    _write_env(root_env, mixed)
+    with pytest.raises(
+        isolation.IsolationError,
+        match="legacy_registration_email_partial",
+    ):
         isolation.prepare_registration_email_input()
 
     _write_env(root_env, values)
@@ -1646,7 +1709,7 @@ def test_signed_purge_recovers_idempotently_after_post_replace_crash(
             isolation.CLOUDFLARED_IMAGE_KEY: isolation.CLOUDFLARED_IMAGE,
             isolation.API_HOST_BIND_KEY: "127.0.0.1",
             isolation.API_HOST_PORT_KEY: "8097",
-            **mail,
+            **_legacy_mail_values(mail),
         },
     )
     _write_env(registration_env, mail)
@@ -1665,7 +1728,7 @@ def test_signed_purge_recovers_idempotently_after_post_replace_crash(
         monkeypatch.setattr(isolation, constant, path)
     pre_digest = isolation._sha256_id(root_env.read_bytes())
     post_bytes, expected_removed = isolation._filtered_root_env(root_env.read_bytes())
-    assert expected_removed == len(isolation.MAIL_KEYS)
+    assert expected_removed == len(isolation.LEGACY_MAIL_KEYS)
     post_digest = isolation._sha256_id(post_bytes)
     receipt = tmp_path / "purge.json"
     rollback_root = tmp_path / "rollback"
@@ -1816,8 +1879,11 @@ def test_signed_purge_recovers_idempotently_after_post_replace_crash(
     second = isolation.execute_signed(args)
 
     assert first["payload"]["result"]["legacy_keys_removed"] == len(
-        isolation.MAIL_KEYS
+        isolation.LEGACY_MAIL_KEYS
     )
+    assert first["payload"]["result"][
+        "rollback_artifact_expected_removed_keys"
+    ] == len(isolation.LEGACY_MAIL_KEYS)
     assert second["payload"]["result"]["legacy_keys_removed"] == 0
     assert first["payload"]["result"]["pre_purge_root_env_digest"] == pre_digest
     assert (
@@ -1850,9 +1916,14 @@ def test_signed_purge_recovers_idempotently_after_post_replace_crash(
     assert len(written) == 3
 
 
+@pytest.mark.parametrize(
+    "mail_keys",
+    (isolation.LEGACY_MAIL_KEYS, isolation.MAIL_KEYS),
+)
 def test_encrypted_rollback_artifact_recovers_pending_link_and_partial_write(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mail_keys: tuple[str, ...],
 ) -> None:
     rollback_root = tmp_path / "rollback"
     parent = rollback_root / RUNTIME_SHA / DEPLOYMENT_ID
@@ -1881,7 +1952,7 @@ def test_encrypted_rollback_artifact_recovers_pending_link_and_partial_write(
     monkeypatch.setattr(isolation, "_read_regular", relaxed_read)
     preimage = b"UNRELATED=keep\n" + b"".join(
         f"{key}=secret-{index}\n".encode("ascii")
-        for index, key in enumerate(isolation.MAIL_KEYS)
+        for index, key in enumerate(mail_keys)
     )
     digest = isolation._sha256_id(preimage)
 

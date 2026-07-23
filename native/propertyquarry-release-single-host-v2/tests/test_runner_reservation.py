@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -320,31 +321,57 @@ class RunnerReservationTests(unittest.TestCase):
             )
             return completed.stdout.strip()
 
-        git("init", "--quiet")
-        os.chmod(build / ".git", 0o700)
-        git("config", "user.name", "PropertyQuarry test")
-        git("config", "user.email", "propertyquarry@example.invalid")
-        git(
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/ArchonMegalon/propertyquarry.git",
-        )
-        workflow = build / ".github/workflows/smoke-runtime.yml"
-        workflow.parent.mkdir(mode=0o700, parents=True)
-        workflow.write_text("name: fixture\n", encoding="utf-8")
-        git("add", ".github/workflows/smoke-runtime.yml")
-        git("commit", "--quiet", "-m", "fixture")
-        workflow_sha = git("rev-parse", "HEAD")
-        git("update-ref", "refs/remotes/origin/main", workflow_sha)
-        git("checkout", "--quiet", "--detach", workflow_sha)
+        previous_umask = os.umask(0o077)
+        try:
+            git("init", "--quiet")
+            os.chmod(build / ".git", 0o700)
+            git("config", "user.name", "PropertyQuarry test")
+            git("config", "user.email", "propertyquarry@example.invalid")
+            git(
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ArchonMegalon/propertyquarry.git",
+            )
+            workflow = build / ".github/workflows/smoke-runtime.yml"
+            workflow.parent.mkdir(mode=0o777, parents=True)
+            workflow.write_text("name: fixture\n", encoding="utf-8")
+            helper = build / "scripts/propertyquarry_runtime_isolation_v2.py"
+            helper.parent.mkdir(mode=0o777)
+            helper.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            helper.chmod(0o700)
+            regular = build / "README.md"
+            regular.write_text("fixture\n", encoding="utf-8")
+            git(
+                "add",
+                ".github/workflows/smoke-runtime.yml",
+                "scripts/propertyquarry_runtime_isolation_v2.py",
+                "README.md",
+            )
+            git("commit", "--quiet", "-m", "fixture")
+            workflow_sha = git("rev-parse", "HEAD")
+            git("update-ref", "refs/remotes/origin/main", workflow_sha)
+            git("checkout", "--quiet", "--detach", workflow_sha)
+        finally:
+            os.umask(previous_umask)
         target = self.checkout_root / workflow_sha
         build.rename(target)
         build = target
         os.chmod(target, 0o700)
         os.chmod(target / ".git", 0o700)
         workflow = target / ".github/workflows/smoke-runtime.yml"
+        helper = target / "scripts/propertyquarry_runtime_isolation_v2.py"
+        regular = target / "README.md"
 
+        self.assertEqual(stat.S_IMODE(workflow.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(helper.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(regular.stat().st_mode), 0o600)
+        with self.assertRaisesRegex(
+            reservation.ReservationFailure,
+            "runner-reservation-checkout-worktree-mode-invalid",
+        ):
+            reservation._validate_checkout(target, refresh=False)
+        reservation._normalize_checkout_worktree(target, workflow_sha)
         observed = reservation._validate_checkout(target, refresh=False)
         self.assertEqual(observed["workflow_sha"], workflow_sha)
         self.assertEqual(observed["source_checkout_path"], os.fspath(target))
@@ -352,11 +379,31 @@ class RunnerReservationTests(unittest.TestCase):
             observed["source_checkout_identity_sha256"], r"^sha256:[0-9a-f]{64}$"
         )
         self.assertRegex(observed["source_tree_sha256"], r"^sha256:[0-9a-f]{64}$")
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE((target / ".git").stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(workflow.parent.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(helper.parent.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(workflow.stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(helper.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(regular.stat().st_mode), 0o644)
 
         symlink = self.checkout_root / ("f" * 40)
         symlink.symlink_to(target, target_is_directory=True)
         with self.assertRaises(reservation.ReservationFailure):
             reservation._validate_checkout(symlink, refresh=False)
+
+        exclude = target / ".git/info/exclude"
+        original_exclude = exclude.read_bytes()
+        exclude.write_bytes(original_exclude + b"\nignored-fixture\n")
+        ignored = target / "ignored-fixture"
+        ignored.write_text("not part of the signed tree\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+            reservation.ReservationFailure,
+            "runner-reservation-checkout-binding-invalid",
+        ):
+            reservation._validate_checkout(target, refresh=False)
+        ignored.unlink()
+        exclude.write_bytes(original_exclude)
 
         workflow.write_text("name: dirty\n", encoding="utf-8")
         with self.assertRaisesRegex(
@@ -364,6 +411,16 @@ class RunnerReservationTests(unittest.TestCase):
             "runner-reservation-checkout-binding-invalid",
         ):
             reservation._validate_checkout(target, refresh=False)
+        entries, _tree_raw = reservation._tracked_checkout_entries(target)
+        with self.assertRaisesRegex(
+            reservation.ReservationFailure,
+            "runner-reservation-checkout-worktree-content-invalid",
+        ):
+            reservation._tracked_checkout_filesystem(
+                target,
+                entries,
+                normalize=False,
+            )
         source = (MODULE_ROOT / "tools/prepare-runner-reservation.py").read_text(
             encoding="utf-8"
         )

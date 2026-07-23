@@ -1312,32 +1312,26 @@ func validGoogleEnvelope(raw []byte) bool {
 }
 
 func validRegistrationEmailEnvelope(raw []byte) bool {
-	expected := map[string]bool{
-		"EMAILIT_API_KEY": false, "EA_REGISTRATION_EMAIL_FROM": false, "EA_REGISTRATION_EMAIL_NAME": false,
-		"EA_REGISTRATION_EMAIL_FROM_FALLBACK": false, "EA_REGISTRATION_EMAIL_NAME_FALLBACK": false,
-		"EA_REGISTRATION_EMAIL_FORCE_FALLBACK": false, "EA_EMAIL_DEFAULT_FROM": false, "EA_EMAIL_DEFAULT_NAME": false,
-	}
+	expected := authority.RegistrationEmailEnvironmentNames()
 	if len(raw) < 1 || raw[len(raw)-1] != '\n' || bytes.IndexAny(raw, "\x00\r") >= 0 {
 		return false
 	}
 	lines := bytes.Split(raw[:len(raw)-1], []byte{'\n'})
-	if len(lines) != len(expected) {
+	if len(expected) != int(authority.RegistrationEmailKeyCount) || len(lines) != len(expected) {
 		return false
 	}
-	for _, line := range lines {
+	for index, line := range lines {
 		parts := bytes.SplitN(line, []byte{'='}, 2)
 		if len(parts) != 2 || !validLiteralEnvelopeValue(parts[1]) {
 			return false
 		}
 		name := string(parts[0])
-		seen, ok := expected[name]
-		if !ok || seen {
+		if name != expected[index] {
 			return false
 		}
 		if name == "EA_REGISTRATION_EMAIL_FORCE_FALLBACK" && !bytes.Equal(parts[1], []byte("true")) && !bytes.Equal(parts[1], []byte("false")) {
 			return false
 		}
-		expected[name] = true
 	}
 	return true
 }

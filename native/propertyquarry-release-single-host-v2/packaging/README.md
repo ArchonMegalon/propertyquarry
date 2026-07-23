@@ -155,6 +155,13 @@ authority/receipt key and streams the archive into its root-owned mode-`0444`
 target before emitting a signed runner-install receipt. This installs only the
 runner payload. Registration remains one-shot and the launcher still requires
 an ephemeral `pqrelease-<32 hex>` label and registration token on descriptor 8.
+Reservation preparation normalizes the detached source checkout after its
+no-replace publication: only exact `100644` and `100755` Git blobs are
+accepted, the index must equal the committed tree, tracked files must be
+single-link regular files whose content rehashes to the bound Git blob OIDs,
+and their on-disk modes become `0644` or `0755` despite the caller's
+restrictive umask. Source directories are fsynced at `0755`; the checkout root
+and Git metadata remain private at `0700`.
 
 The release dispatch has no manual environment-review step. Its exact order is:
 
@@ -283,9 +290,28 @@ independently signed Google identity environment file
 and `/docker/property/state/runtime/propertyquarry_registration_email.env` are
 also not copied or read by the packager; only their signed paths, digests,
 modes, UIDs, and GIDs remain in the byte-preserved profile and plan. The latter
-must contain exactly the eight registration-mail variable names required by the
-PropertyQuarry API. Neither envelope's values may appear in packages, journals,
-or receipts.
+must contain exactly these ten non-empty registration-mail variables, in this
+order:
+
+```
+EMAILIT_API_KEY
+PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN
+PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID
+EA_REGISTRATION_EMAIL_FROM
+EA_REGISTRATION_EMAIL_NAME
+EA_REGISTRATION_EMAIL_FROM_FALLBACK
+EA_REGISTRATION_EMAIL_NAME_FALLBACK
+EA_REGISTRATION_EMAIL_FORCE_FALLBACK
+EA_EMAIL_DEFAULT_FROM
+EA_EMAIL_DEFAULT_NAME
+```
+
+Neither envelope's values may appear in packages, journals, or receipts.
+The historical root `.env` preimage may contain either the former exact
+eight-key subset (without the two Cloudflare variables) or the full ten-key
+set. The purge receipt binds which complete set existed: its expected removal
+count is exactly eight or ten, while an idempotent retry removes zero. The
+dedicated envelope and every post-purge exposure proof always remain exact-ten.
 
 The signed deploy contract uses fixed, ordered Compose interpolation sources
 for the base environment, render-only environment, database roles, admission,
@@ -331,8 +357,8 @@ seconds). Each step is idempotent, expects exit code zero, uses the sealed
 `propertyquarry-database-control-v2` executable, and receives only the candidate
 runtime, pinned web image, exact signed database image, and its fixed
 candidate-specific receipt path. The
-package verifier fixes that executable to 60,006 bytes with SHA-256
-`cb6ccfd9e043efa13a559dd1c9538fb557c76890f4c1fda69f0dd623dc72664b` and
+package verifier fixes that executable to 60,449 bytes with SHA-256
+`9bdebcd2bae867ef9ac4e38374e964dc81752b2a572eb8a0568f3bb45d5bfe18` and
 its adjacent implementation to 50,478 bytes with SHA-256
 `bd7be57c75e22e645ed6ec2acf5fc521e05f1d76ff4afa5abe233a8faa92d5e2`.
 

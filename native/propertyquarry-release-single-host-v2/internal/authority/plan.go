@@ -27,7 +27,7 @@ const (
 	PredeployBackupEncryptionKeyPath = "/home/tibor/.local/share/propertyquarry-backup-keys/propertyquarry-predeploy-backup-v2.key"
 	PredeployBackupReceiptDirectory  = "/var/lib/propertyquarry-release-single-host-v2/backup-receipts"
 	DatabaseControlExecutablePath    = "/usr/libexec/propertyquarry-release-control/propertyquarry-database-control-v2"
-	DatabaseControlExecutableDigest  = "sha256:cb6ccfd9e043efa13a559dd1c9538fb557c76890f4c1fda69f0dd623dc72664b"
+	DatabaseControlExecutableDigest  = "sha256:9bdebcd2bae867ef9ac4e38374e964dc81752b2a572eb8a0568f3bb45d5bfe18"
 	DatabaseReceiptDirectory         = "/var/lib/propertyquarry-release-single-host-v2/database-receipts"
 	DatabaseRuntimeEnvironmentPath   = "/docker/property/state/runtime/propertyquarry_database_roles.env"
 	VerifyIsolationInputsStepID      = "verify-propertyquarry-isolation-inputs"

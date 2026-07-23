@@ -142,6 +142,16 @@ MAIL_KEYS = (
     "EA_EMAIL_DEFAULT_FROM",
     "EA_EMAIL_DEFAULT_NAME",
 )
+LEGACY_MAIL_KEYS = (
+    "EMAILIT_API_KEY",
+    "EA_REGISTRATION_EMAIL_FROM",
+    "EA_REGISTRATION_EMAIL_NAME",
+    "EA_REGISTRATION_EMAIL_FROM_FALLBACK",
+    "EA_REGISTRATION_EMAIL_NAME_FALLBACK",
+    "EA_REGISTRATION_EMAIL_FORCE_FALLBACK",
+    "EA_EMAIL_DEFAULT_FROM",
+    "EA_EMAIL_DEFAULT_NAME",
+)
 GOOGLE_KEYS = (
     "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID",
     "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET",
@@ -938,6 +948,26 @@ def _set_runtime_value(path: Path, *, key: str, value: str) -> tuple[bytes, bool
     return after, True
 
 
+def _mail_source_keys(values: Mapping[str, str]) -> tuple[str, ...]:
+    present = tuple(key for key in MAIL_KEYS if key in values)
+    if present not in ((), LEGACY_MAIL_KEYS, MAIL_KEYS):
+        raise IsolationError("legacy_registration_email_partial")
+    return present
+
+
+def _validate_mail_source_against_dedicated(
+    source: Mapping[str, str],
+    source_keys: Sequence[str],
+    dedicated: Mapping[str, str],
+    *,
+    error_code: str,
+) -> None:
+    if any(not source[key] for key in source_keys):
+        raise IsolationError("registration_email_value_missing")
+    if any(source[key] != dedicated[key] for key in source_keys):
+        raise IsolationError(error_code)
+
+
 def prepare_registration_email_input() -> dict[str, object]:
     for path in (ROOT_ENV, REGISTRATION_ENV, SCENE_ENV):
         _cleanup_atomic_user_temps(path)
@@ -949,23 +979,25 @@ def prepare_registration_email_input() -> dict[str, object]:
         gid=1000,
     )
     root_values, _root_keys = _parse_env(root_raw, path=ROOT_ENV)
-    present = tuple(key for key in MAIL_KEYS if key in root_values)
-    if present not in {(), MAIL_KEYS}:
-        raise IsolationError("legacy_registration_email_partial")
+    present = _mail_source_keys(root_values)
     dedicated_exists = REGISTRATION_ENV.exists()
     if not present and not dedicated_exists:
         raise IsolationError("registration_email_source_missing")
     if present:
-        source = {key: root_values[key] for key in MAIL_KEYS}
-        if any(not source[key] for key in MAIL_KEYS):
-            raise IsolationError("registration_email_value_missing")
+        source = {key: root_values[key] for key in present}
         if dedicated_exists:
             dedicated, dedicated_raw = _strict_env(
                 REGISTRATION_ENV,
                 expected_keys=MAIL_KEYS,
             )
-            if dedicated != source:
-                raise IsolationError("registration_email_input_conflict")
+            _validate_mail_source_against_dedicated(
+                source,
+                present,
+                dedicated,
+                error_code="registration_email_input_conflict",
+            )
+        elif present == LEGACY_MAIL_KEYS:
+            raise IsolationError("registration_email_source_missing")
         else:
             _atomic_user_file(REGISTRATION_ENV, _encoded_env(source, MAIL_KEYS))
             dedicated, dedicated_raw = _strict_env(
@@ -1036,12 +1068,16 @@ def _validate_runtime_inputs(*, require_legacy_mail: bool) -> dict[str, object]:
     )
     google, google_raw = _strict_env(GOOGLE_ENV, expected_keys=GOOGLE_KEYS)
     _ = google
-    present = tuple(key for key in MAIL_KEYS if key in root_values)
+    present = _mail_source_keys(root_values)
     if require_legacy_mail:
-        if present != MAIL_KEYS:
+        if present not in (LEGACY_MAIL_KEYS, MAIL_KEYS):
             raise IsolationError("legacy_registration_email_source_invalid")
-        if any(root_values[key] != dedicated[key] for key in MAIL_KEYS):
-            raise IsolationError("registration_email_source_mismatch")
+        _validate_mail_source_against_dedicated(
+            root_values,
+            present,
+            dedicated,
+            error_code="registration_email_source_mismatch",
+        )
     elif present:
         raise IsolationError("legacy_registration_email_not_purged")
     digests: dict[str, str] = {
@@ -1607,7 +1643,8 @@ def _load_rollback_artifact_from(
     ):
         raise IsolationError("rollback_artifact_binding_invalid")
     values, _keys = _parse_env(encoded, path=ROOT_ENV)
-    if tuple(key for key in MAIL_KEYS if key in values) != MAIL_KEYS:
+    present = tuple(key for key in MAIL_KEYS if key in values)
+    if present not in (LEGACY_MAIL_KEYS, MAIL_KEYS):
         raise IsolationError("rollback_artifact_legacy_source_invalid")
     evidence = {
         "ciphertext_bytes": len(ciphertext),
@@ -1714,9 +1751,7 @@ def _ensure_rollback_artifact(
 
 def _filtered_root_env(raw: bytes) -> tuple[bytes, int]:
     values, _keys = _parse_env(raw, path=ROOT_ENV)
-    present = tuple(key for key in MAIL_KEYS if key in values)
-    if present not in {(), MAIL_KEYS}:
-        raise IsolationError("legacy_registration_email_partial")
+    present = _mail_source_keys(values)
     if not present:
         return raw, 0
     kept: list[bytes] = []
@@ -3799,15 +3834,11 @@ def execute_signed(args: argparse.Namespace) -> dict[str, object]:
             current_root_raw,
             path=ROOT_ENV,
         )
-        legacy_present = tuple(
-            key for key in MAIL_KEYS if key in current_root_values
-        )
-        if legacy_present not in {(), MAIL_KEYS}:
-            raise IsolationError("legacy_registration_email_partial")
+        legacy_present = _mail_source_keys(current_root_values)
         current_runtime_inputs = _current_runtime_inputs()
         expected_current_inputs = (
             bindings.get("pre_purge_runtime_inputs")
-            if legacy_present == MAIL_KEYS
+            if legacy_present
             else bindings.get("runtime_inputs")
         )
         if current_runtime_inputs != expected_current_inputs:
@@ -3816,7 +3847,7 @@ def execute_signed(args: argparse.Namespace) -> dict[str, object]:
             request.runtime_sha,
             request.deployment_id,
         )
-        if legacy_present == MAIL_KEYS:
+        if legacy_present:
             pre_purge_inputs = _validate_runtime_inputs(require_legacy_mail=True)
             if (
                 pre_purge_inputs["file_digests"].get(str(ROOT_ENV))
@@ -3842,6 +3873,20 @@ def execute_signed(args: argparse.Namespace) -> dict[str, object]:
             rollback_artifact = None
         else:
             raise IsolationError("rollback_artifact_missing")
+        preimage_values, _preimage_keys = _parse_env(preimage, path=ROOT_ENV)
+        preimage_mail_keys = _mail_source_keys(preimage_values)
+        if preimage_mail_keys not in (LEGACY_MAIL_KEYS, MAIL_KEYS):
+            raise IsolationError("rollback_artifact_legacy_source_invalid")
+        dedicated, _dedicated_raw = _strict_env(
+            REGISTRATION_ENV,
+            expected_keys=MAIL_KEYS,
+        )
+        _validate_mail_source_against_dedicated(
+            preimage_values,
+            preimage_mail_keys,
+            dedicated,
+            error_code="registration_email_source_mismatch",
+        )
         postimage, expected_removed = _filtered_root_env(preimage)
         expected_post_purge_digest = _sha256_id(postimage)
         if expected_post_purge_digest != bindings.get(

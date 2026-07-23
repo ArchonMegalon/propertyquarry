@@ -4299,7 +4299,10 @@ def observe_live(release: dict[str, str], deployment_id: str) -> dict[str, Any]:
     ):
         fail("live-root-env-observation-mismatch")
     post_raw, removed = isolation._filtered_root_env(root_raw)  # noqa: SLF001
-    if removed != len(isolation.MAIL_KEYS) or len(post_raw) >= len(root_raw):
+    if removed not in {
+        len(isolation.LEGACY_MAIL_KEYS),
+        len(isolation.MAIL_KEYS),
+    } or len(post_raw) >= len(root_raw):
         fail("live-root-env-transition-invalid")
     post_inputs = [dict(item) for item in pre_inputs]
     post_inputs[0]["sha256"] = _digest(post_raw)

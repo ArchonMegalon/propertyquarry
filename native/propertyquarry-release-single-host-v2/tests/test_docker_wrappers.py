@@ -109,6 +109,18 @@ class DockerWrapperTests(unittest.TestCase):
         self.assertIn("./bin/Runner.Listener configure", launcher)
         self.assertIn("--no-default-labels", launcher)
 
+    def test_ephemeral_runner_preseal_modes_match_installed_package_contract(self) -> None:
+        wrapper = LIFECYCLE.read_text(encoding="utf-8")
+        self.assertIn(
+            '''[[ "$(stat -Lc '%a:%u:%g:%h' -- "$controller")" == "755:0:0:1" ]]''',
+            wrapper,
+        )
+        self.assertIn(
+            '''[[ "$(stat -Lc '%a:%u:%g:%h' -- "$launcher")" == "555:0:0:1" ]]''',
+            wrapper,
+        )
+        self.assertNotIn('for executable in "$controller" "$launcher"', wrapper)
+
     def test_runner_tokens_are_fd_only_and_never_docker_arguments_or_environment(self) -> None:
         wrapper = LIFECYCLE.read_text(encoding="utf-8")
         launcher = EPHEMERAL.read_text(encoding="utf-8")
