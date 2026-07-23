@@ -38,12 +38,14 @@ fi
 
 source_manifest="${module_root}/tools/source-files.txt"
 [[ -f "$source_manifest" && ! -L "$source_manifest" ]]
-closure_work="$(mktemp -d)"
+temporary_root="${TMPDIR:-/tmp}"
+[[ "$temporary_root" = /* && -d "$temporary_root" && ! -L "$temporary_root" ]]
+closure_work="$(mktemp -d "${temporary_root%/}/propertyquarry-native-closure.XXXXXXXXXX")"
 source_snapshot="${closure_work}/snapshot"
 manifest_material="${closure_work}/source-manifest.material"
 mkdir -m 0700 "$source_snapshot"
-work_one="$(mktemp -d)"
-work_two="$(mktemp -d)"
+work_one="$(mktemp -d "${temporary_root%/}/propertyquarry-native-build-one.XXXXXXXXXX")"
+work_two="$(mktemp -d "${temporary_root%/}/propertyquarry-native-build-two.XXXXXXXXXX")"
 stage_parent="$(dirname -- "$output")"
 stage="$(mktemp -d "${stage_parent}/.propertyquarry-single-host-build.XXXXXX")"
 cleanup() {

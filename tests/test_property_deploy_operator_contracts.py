@@ -2990,6 +2990,7 @@ def test_property_dockerfile_allowlists_runtime_scripts() -> None:
         "property_render_video_probe.py",
         "propertyquarry_playwright_runtime.py",
         "generate_property_reconstruction.py",
+        "property_reconstruction_styles.py",
         "property_reconstruction_render_bridge.py",
     ]
     for retained_runtime_source in (
@@ -3342,6 +3343,7 @@ def test_property_runtime_copied_scripts_do_not_depend_on_fleet_paths() -> None:
         "property_render_video_probe.py",
         "propertyquarry_playwright_runtime.py",
         "generate_property_reconstruction.py",
+        "property_reconstruction_styles.py",
         "property_reconstruction_render_bridge.py",
     ]
     for script_name in copied_scripts:

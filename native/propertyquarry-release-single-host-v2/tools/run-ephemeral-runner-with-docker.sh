@@ -4,7 +4,8 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C TZ=UTC
 unset BASH_ENV ENV CDPATH GLOBIGNORE LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT GCONV_PATH \
   DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG DOCKER_CERT_PATH DOCKER_TLS_VERIFY \
   DOCKER_API_VERSION BUILDKIT_HOST BUILDX_HOST PYTHONOPTIMIZE PYTHONPATH PYTHONHOME \
-  GH_TOKEN GITHUB_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_RUNNER_INPUT_TOKEN
+  GH_TOKEN GITHUB_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_RUNNER_INPUT_TOKEN \
+  PROPERTYQUARRY_RUNNER_ADMIN_TOKEN PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD
 export DOCKER_HOST=unix:///var/run/docker.sock
 umask 077
 ulimit -c 0
@@ -13,6 +14,40 @@ fail() {
   printf '%s\n' 'propertyquarry-docker-ephemeral-runner-rejected' >&2
   exit 50
 }
+
+controller=/usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2
+launcher_directory=/usr/libexec/propertyquarry-release-control
+launcher="${launcher_directory}/run-propertyquarry-ephemeral-runner-v2"
+archive_directory=/usr/lib/propertyquarry-release-runner-v2
+archive="${archive_directory}/actions-runner-linux-x64-2.335.1.tar.gz"
+session_root=/var/lib/propertyquarry-release-runner-v2/sessions
+authority_config=/etc/propertyquarry-release-single-host-v2
+authority_runtime=/run/propertyquarry-release-single-host-v2
+
+# This function must run before the first external command. The coprocess is
+# the only pre-supervisor process that receives FD 8. It waits on a non-secret
+# gate without reading the token. The orchestrator closes FD 8 immediately, so
+# every admission, filesystem, Docker, controller, and Python child launched
+# before the gate is descriptor- and marker-free.
+start_runner_token_broker() {
+  [[ -p /proc/self/fd/8 ]] || fail
+  [[ -z "${PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD:-}" ]] || fail
+  coproc RUNNER_TOKEN_BROKER {
+    broker_gate=""
+    IFS= read -r broker_gate || exit 50
+    [[ "$broker_gate" == "release-supervisor" ]] || exit 50
+    unset HOME DOCKER_HOST
+    export PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8
+    exec "$controller" runner-supervise 8<&8
+  } 8<&8
+  supervisor_pid="$RUNNER_TOKEN_BROKER_PID"
+  supervisor_output_fd="${RUNNER_TOKEN_BROKER[0]}"
+  supervisor_gate_fd="${RUNNER_TOKEN_BROKER[1]}"
+  exec 8<&-
+  [[ ! -e /proc/self/fd/8 ]] || fail
+  [[ -z "${PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD:-}" ]] || fail
+}
+# End fixed runner token broker.
 
 verify_local_docker() {
   [[ "$(command -v docker 2>/dev/null)" == "/usr/bin/docker" ]] || fail
@@ -32,18 +67,8 @@ verify_local_docker() {
 }
 
 [[ "$#" -eq 0 ]] || fail
-[[ "$(id -u):$(id -g)" == "0:0" ]] || fail
-[[ "${PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD:-}" == "8" ]] || fail
-[[ "$(stat -Lc '%F' -- /proc/self/fd/8 2>/dev/null)" == "fifo" ]] || fail
-
-controller=/usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2
-launcher_directory=/usr/libexec/propertyquarry-release-control
-launcher="${launcher_directory}/run-propertyquarry-ephemeral-runner-v2"
-archive_directory=/usr/lib/propertyquarry-release-runner-v2
-archive="${archive_directory}/actions-runner-linux-x64-2.335.1.tar.gz"
-session_root=/var/lib/propertyquarry-release-runner-v2/sessions
-authority_config=/etc/propertyquarry-release-single-host-v2
-authority_runtime=/run/propertyquarry-release-single-host-v2
+[[ "$EUID" == "0" && "${GROUPS[0]}" == "0" ]] || fail
+start_runner_token_broker
 [[ -f "$controller" && ! -L "$controller" && -x "$controller" ]] || fail
 [[ "$(stat -Lc '%a:%u:%g:%h' -- "$controller")" == "755:0:0:1" ]] || fail
 [[ -f "$launcher" && ! -L "$launcher" && -x "$launcher" ]] || fail
@@ -76,7 +101,6 @@ listener_container=""
 configure_pid=""
 listener_pid=""
 token_writer_pid=""
-supervisor_pid=""
 session=""
 terminal_status=50
 
@@ -222,14 +246,9 @@ assert item['Id']==sys.argv[3] and item['Os']=='linux' and item['Architecture']=
 assert sys.argv[2] in item.get('RepoDigests', [])
 PY
 
-coproc RUNNER_SUPERVISOR {
-  env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C LC_ALL=C TZ=UTC \
-    PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8 \
-    "$controller" runner-supervise 8<&8
-}
-supervisor_pid="$RUNNER_SUPERVISOR_PID"
-supervisor_output_fd="${RUNNER_SUPERVISOR[0]}"
-exec 8<&-
+kill -0 "$supervisor_pid" >/dev/null 2>&1 || fail
+printf '%s\n' 'release-supervisor' >&"$supervisor_gate_fd" || fail
+exec {supervisor_gate_fd}>&-
 
 IFS= read -r -t 300 registration_token <&"$supervisor_output_fd" || fail
 [[ "$registration_token" =~ ^[A-Za-z0-9._-]{20,2048}$ ]] || fail

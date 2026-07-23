@@ -15,6 +15,7 @@ from app.services.public_tour_release_policy import (
     PUBLIC_TOUR_GENERATED_VIEWER_RELEASE_CONTRACT,
     evaluate_public_tour_generated_viewer_release,
 )
+from scripts import property_reconstruction_styles as reconstruction_styles
 
 
 SLUG = "reviewed-layout-only-tour"
@@ -28,6 +29,38 @@ MODEL_MTL = "generated-reconstruction/model.mtl"
 MODEL_GLB = "generated-reconstruction/model.glb"
 SIGNED_WEBP = "generated-reconstruction/source-floorplan-signed.webp"
 LEGACY_WEBP = "generated-reconstruction/photo-legacy.webp"
+
+
+def _style_contract_fields() -> dict[str, object]:
+    selected = reconstruction_styles.reconstruction_style(
+        "urban_jungle",
+        style_id="urban_jungle",
+    )
+    scene = reconstruction_styles.build_style_scene(selected, route_stop_count=1)
+    return {
+        "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        "style_contract_version": reconstruction_styles.STYLE_SCENE_CONTRACT_VERSION,
+        "style_id": selected["id"],
+        "style_label": selected["label"],
+        "style_signature": selected["signature"],
+        "style_scene_signature": scene["scene_signature"],
+        "style_evidence_status": "ready",
+        "styled_scene_instance_count": len(scene["instances"]),
+        "style_cue_kinds": list(scene["required_cues"]),
+        "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+    }
+
+
+def _viewer_style_attributes() -> str:
+    style = _style_contract_fields()
+    return (
+        'data-pq-preview-kind="styled-3d-reconstruction" '
+        'data-pq-verified-provider-capture="false" '
+        f'data-pq-style-id="{style["style_id"]}" '
+        f'data-pq-style-signature="{style["style_signature"]}" '
+        f'data-pq-style-scene-signature="{style["style_scene_signature"]}" '
+        f'data-pq-floorplan-display-mode="{style["floorplan_display_mode"]}"'
+    )
 
 
 def _sha256(value: bytes) -> str:
@@ -57,11 +90,33 @@ def _request(
 
 
 def _asset_bytes() -> dict[str, bytes]:
+    viewer = (
+        f"""<!doctype html><html lang="en" {_viewer_style_attributes()}><head><style>canvas{{display:block}}</style></head><body><canvas aria-label="Interactive 3D layout preview"></canvas><script type="module">import './vendor/three.module.js'; import './vendor/examples/jsm/controls/OrbitControls.js';</script></body></html>"""
+    ).encode("utf-8")
+    selected_style = reconstruction_styles.reconstruction_style(
+        "urban_jungle",
+        style_id="urban_jungle",
+    )
+    style_scene = reconstruction_styles.build_style_scene(
+        selected_style,
+        route_stop_count=1,
+    )
     return {
-        VIEWER: b"""<!doctype html><html lang=\"en\" data-pq-preview-kind=\"approximate-layout\" data-pq-verified-provider-capture=\"false\"><head><style>canvas{display:block}</style></head><body><canvas aria-label=\"Interactive 3D layout preview\"></canvas><script type=\"module\">import './vendor/three.module.js'; import './vendor/examples/jsm/controls/OrbitControls.js';</script></body></html>""",
+        VIEWER: viewer,
         PROOF: json.dumps(
             {
                 "schema": "propertyquarry.generated-reconstruction.v1",
+                "provider": "propertyquarry_generated_reconstruction",
+                "requested_style": selected_style,
+                "style_scene": style_scene,
+                "viewer": {
+                    "version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+                    "style_id": selected_style["id"],
+                    "style_signature": selected_style["signature"],
+                    "style_scene_signature": style_scene["scene_signature"],
+                    "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+                    "sha256": _sha256(viewer),
+                },
                 "floorplan": {
                     "source_path": "property://ArchonMegalon/propertyquarry/reviewed/floorplan.png"
                 },
@@ -101,7 +156,7 @@ def _payload(assets: dict[str, bytes]) -> dict[str, object]:
         "slug": SLUG,
         "generated_reconstruction": {
             "provider": "propertyquarry_generated_reconstruction",
-            "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+            **_style_contract_fields(),
             "viewer_relpath": VIEWER,
             "manifest_relpath": PROOF,
             "floorplan_relpath": FLOORPLAN,
@@ -180,9 +235,40 @@ def _write_governed_layout_model_bundle(
 ) -> tuple[Path, dict[str, object], dict[str, bytes]]:
     root = tmp_path / "public-tours"
     bundle = root / SLUG
+    viewer = (
+        f"""<!doctype html><html lang="en" {_viewer_style_attributes()}><body><script type="module">import './vendor/three.module.js'; import './vendor/examples/jsm/controls/OrbitControls.js'; const modelUrl = './model.glb'; void modelUrl;</script></body></html>"""
+    ).encode("utf-8")
+    selected_style = reconstruction_styles.reconstruction_style(
+        "urban_jungle",
+        style_id="urban_jungle",
+    )
+    style_scene = reconstruction_styles.build_style_scene(
+        selected_style,
+        route_stop_count=1,
+    )
+    proof = json.dumps(
+        {
+            "provider": "propertyquarry_generated_reconstruction",
+            "requested_style": selected_style,
+            "style_scene": style_scene,
+            "viewer": {
+                "version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+                "style_id": selected_style["id"],
+                "style_signature": selected_style["signature"],
+                "style_scene_signature": style_scene["scene_signature"],
+                "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+                "sha256": _sha256(viewer),
+            },
+            "floorplan": {
+                "source_path": "property://ArchonMegalon/propertyquarry/reviewed/floorplan.png"
+            },
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     assets = {
-        VIEWER: b"""<!doctype html><html lang="en" data-pq-preview-kind="approximate-layout" data-pq-verified-provider-capture="false"><body><script type="module">import './vendor/three.module.js'; import './vendor/examples/jsm/controls/OrbitControls.js'; const modelUrl = './model.glb'; void modelUrl;</script></body></html>""",
-        PROOF: b'{"floorplan":{"source_path":"property://ArchonMegalon/propertyquarry/reviewed/floorplan.png"}}',
+        VIEWER: viewer,
+        PROOF: proof,
         FLOORPLAN: b"reviewed-layout-floorplan",
         THREE: b"export const Scene = class Scene {};",
         ORBIT: b"export class OrbitControls {};",
@@ -208,7 +294,7 @@ def _write_governed_layout_model_bundle(
         "scene_strategy": "generated_reconstruction",
         "generated_reconstruction": {
             "provider": "propertyquarry_generated_reconstruction",
-            "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+            **_style_contract_fields(),
             "viewer_relpath": VIEWER,
             "manifest_relpath": PROOF,
             "floorplan_relpath": FLOORPLAN,
@@ -462,7 +548,7 @@ def test_layout_only_routes_serve_only_verified_public_bytes(
         payload,
         VIEWER,
     )["sha256"]
-    assert viewer.headers["x-propertyquarry-preview-kind"] == "approximate-layout"
+    assert viewer.headers["x-propertyquarry-preview-kind"] == "styled-3d-reconstruction"
     assert viewer.headers["x-propertyquarry-verified-provider-capture"] == "false"
     assert "script-src 'self' 'sha256-" in viewer.headers["content-security-policy"]
 
@@ -520,6 +606,54 @@ def test_layout_only_routes_fail_closed_on_byte_drift_symlinks_and_private_proof
             _request(f"/tours/viewer/{SLUG}/{VIEWER}"),
         )
     assert provenance_error.value.status_code == 410
+
+
+def test_layout_only_routes_cross_bind_style_shell_proof_and_viewer_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, payload = _write_bundle(tmp_path, monkeypatch)
+    proof = json.loads((bundle / PROOF).read_text(encoding="utf-8"))
+    replacement_style = reconstruction_styles.reconstruction_style(
+        "warm_scandi",
+        style_id="warm_scandi",
+    )
+    replacement_scene = reconstruction_styles.build_style_scene(
+        replacement_style,
+        route_stop_count=1,
+    )
+    proof["requested_style"] = replacement_style
+    proof["style_scene"] = replacement_scene
+    proof["viewer"].update(
+        {
+            "style_id": replacement_style["id"],
+            "style_signature": replacement_style["signature"],
+            "style_scene_signature": replacement_scene["scene_signature"],
+        }
+    )
+    proof_bytes = json.dumps(
+        proof,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    (bundle / PROOF).write_bytes(proof_bytes)
+    proof_binding = _binding(payload, PROOF)
+    proof_binding["sha256"] = _sha256(proof_bytes)
+    proof_binding["size_bytes"] = len(proof_bytes)
+    (bundle / "tour.json").write_text(
+        json.dumps(payload, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    assert evaluate_public_tour_generated_viewer_release(payload)["released"] is True
+    with pytest.raises(HTTPException) as style_binding_error:
+        public_tours.public_tour_generated_reconstruction_preview_asset(
+            SLUG,
+            VIEWER,
+            _request(f"/tours/viewer/{SLUG}/{VIEWER}"),
+        )
+    assert style_binding_error.value.status_code == 410
+    assert style_binding_error.value.detail == "tour_viewer_integrity_failed"
 
 
 def test_layout_only_generic_route_cannot_bypass_release_bindings(
@@ -614,7 +748,7 @@ def test_governed_layout_model_assets_and_viewer_dependency_are_served(
         assert response.headers["x-propertyquarry-asset-sha256"] == _sha256(
             assets[relpath]
         )
-        assert response.headers["x-propertyquarry-preview-kind"] == "approximate-layout"
+        assert response.headers["x-propertyquarry-preview-kind"] == "styled-3d-reconstruction"
         assert response.headers["x-propertyquarry-verified-provider-capture"] == "false"
         viewer_dependency = (
             public_tours.public_tour_generated_reconstruction_preview_asset(
@@ -1085,9 +1219,13 @@ def test_governed_layout_model_route_rejects_traversal_and_arbitrary_model(
         r"C:private-floorplan.png",
         "property://C:/Users/operator/private-floorplan.png",
         "pcloud://C:Users/operator/private-floorplan.png",
+        "run/secrets/propertyquarry-token",
+        "proc/self/environ",
+        "etc/propertyquarry/authority.json",
+        "docker/property/state/runtime/private.env",
     ],
 )
-def test_layout_only_provenance_rejects_non_string_and_local_windows_paths(
+def test_layout_only_provenance_rejects_non_string_and_local_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     source_value: object,
@@ -1114,6 +1252,20 @@ def test_layout_only_provenance_rejects_non_string_and_local_windows_paths(
             _request(f"/tours/viewer/{SLUG}/{VIEWER}"),
         )
     assert provenance_error.value.status_code == 410
+
+
+@pytest.mark.parametrize(
+    "source_value",
+    [
+        "<provided-image>",
+        "property://ArchonMegalon/propertyquarry/reviewed/floorplan.png",
+        "pcloud://propertyquarry/reviewed/floorplan.png",
+    ],
+)
+def test_layout_only_provenance_accepts_only_governed_source_references(
+    source_value: str,
+) -> None:
+    assert public_tours._public_tour_generated_source_path_is_unsafe(source_value) is False
 
 
 def test_layout_only_terminal_release_renders_gone_and_provider_control_wins(

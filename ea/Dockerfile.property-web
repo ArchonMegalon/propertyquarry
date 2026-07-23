@@ -63,6 +63,7 @@ COPY scripts/discover_property_tour_exports.py /app/scripts/discover_property_to
 COPY scripts/materialize_property_tour_export_manifest.py /app/scripts/materialize_property_tour_export_manifest.py
 COPY scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_paths.py
 COPY scripts/generate_property_reconstruction.py /app/scripts/generate_property_reconstruction.py
+COPY scripts/property_reconstruction_styles.py /app/scripts/property_reconstruction_styles.py
 COPY scripts/import_magicfit_walkthrough.py /app/scripts/import_magicfit_walkthrough.py
 COPY scripts/verify_property_tour_controls.py /app/scripts/verify_property_tour_controls.py
 COPY scripts/property_tour_3dvista_provenance.py /app/scripts/property_tour_3dvista_provenance.py

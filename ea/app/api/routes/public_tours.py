@@ -69,6 +69,7 @@ from app.product.property_tour_hosting import (
     _hosted_property_tour_ai_panorama_contract,
     _hosted_property_tour_ai_panorama_browser_proof_current,
     _hosted_property_tour_preview_image_url,
+    _hosted_property_tour_generated_reconstruction_contract,
     _hosted_property_tour_publication_lock,
     _read_hosted_property_tour_json_file,
     hosted_property_tour_revocation_receipt,
@@ -78,6 +79,7 @@ from app.services.public_clickrank import clickrank_head_snippet, request_hostna
 from app.services.property_market_catalog import currency_code_for_country, supported_currency_codes
 from app.services.public_tour_release_policy import (
     evaluate_public_tour_generated_viewer_release,
+    public_tour_generated_viewer_proof_matches,
 )
 try:
     from scripts.property_magicfit_public_eligibility import (
@@ -3507,7 +3509,7 @@ def _generated_reconstruction_preview_contract(payload: dict[str, object]) -> di
     except (HTTPException, OSError, UnicodeError):
         return {}
     if not re.search(
-        r"\bdata-pq-preview-kind\s*=\s*(['\"])approximate-layout\1",
+        r"\bdata-pq-preview-kind\s*=\s*(['\"])styled-3d-reconstruction\1",
         viewer_html,
         flags=re.IGNORECASE,
     ):
@@ -3519,6 +3521,22 @@ def _generated_reconstruction_preview_contract(payload: dict[str, object]) -> di
     ):
         return {}
     if re.search(r"(?i)(?:https?:)?//[a-z0-9]", viewer_html):
+        return {}
+    expected_style_markers = {
+        "data-pq-style-id": str(generated_reconstruction.get("style_id") or ""),
+        "data-pq-style-signature": str(generated_reconstruction.get("style_signature") or ""),
+        "data-pq-style-scene-signature": str(generated_reconstruction.get("style_scene_signature") or ""),
+        "data-pq-floorplan-display-mode": str(generated_reconstruction.get("floorplan_display_mode") or ""),
+    }
+    if any(
+        not value
+        or not re.search(
+            rf"\b{re.escape(attribute)}\s*=\s*(['\"]){re.escape(value)}\1",
+            viewer_html,
+            flags=re.IGNORECASE,
+        )
+        for attribute, value in expected_style_markers.items()
+    ):
         return {}
 
     module_refs: list[str] = []
@@ -3746,6 +3764,11 @@ def _generated_reconstruction_public_shell_ready(payload: dict[str, object]) -> 
     if bundle_dir is None:
         return False
     bundle_root = bundle_dir.resolve()
+    if not _hosted_property_tour_generated_reconstruction_contract(
+        bundle_dir=bundle_dir,
+        payload=payload,
+    ).get("ready"):
+        return False
 
     def _bundle_file(relpath: object) -> Path | None:
         safe_relpath = _public_tour_safe_asset_relpath(relpath)
@@ -7464,43 +7487,48 @@ def _public_tour_generated_manifest_source_paths(value: object) -> list[object]:
 def _public_tour_generated_source_path_is_unsafe(value: object) -> bool:
     if not isinstance(value, str):
         return True
-    normalized = value.strip().replace("\\", "/")
-
-    def is_local_path(path: str) -> bool:
-        lowered_path = path.lower()
-        return bool(
-            not path
-            or "\x00" in path
-            or path.startswith(("/", "~"))
-            or re.match(r"^[a-zA-Z]:", path)
-            or lowered_path.startswith(
-                (
-                    "file:",
-                    "home/",
-                    "root/",
-                    "tmp/",
-                    "var/tmp/",
-                    "users/",
-                )
-            )
-        )
-
-    if is_local_path(normalized):
+    normalized = value.strip()
+    if (
+        not normalized
+        or len(normalized) > 2048
+        or "\x00" in normalized
+        or "\\" in normalized
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in normalized)
+    ):
         return True
-    lowered = normalized.lower()
-    source_path = normalized
-    if "://" in lowered:
-        scheme, source_path = normalized.split("://", 1)
-        if scheme.lower() not in {"pcloud", "property"}:
-            return True
-        if is_local_path(source_path):
-            return True
-    if any(part in {"", ".", ".."} for part in source_path.split("/")):
+    if normalized == "<provided-image>":
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(normalized)
+    except ValueError:
         return True
+    if (
+        parsed.scheme.lower() not in {"pcloud", "property"}
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", parsed.netloc)
+        or not parsed.path.startswith("/")
+        or parsed.path == "/"
+        or parsed.query
+        or parsed.fragment
+    ):
+        return True
+    decoded_path = urllib.parse.unquote(parsed.path)
+    if (
+        "\x00" in decoded_path
+        or "\\" in decoded_path
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in decoded_path)
+    ):
+        return True
+    path_parts = decoded_path.split("/")[1:]
     return bool(
-        re.search(
-            r"(?:^|[/._-])(?:pytest(?:-of)?|debug|probe)(?:[/._-]|$)",
-            lowered,
+        not path_parts
+        or any(part in {"", ".", ".."} for part in path_parts)
+        or any(
+            re.search(
+                r"(?:^|[._-])(?:pytest(?:-of)?|debug|probe)(?:[._-]|$)",
+                part,
+                flags=re.IGNORECASE,
+            )
+            for part in path_parts
         )
     )
 
@@ -7656,6 +7684,19 @@ def _public_tour_verified_generated_viewer_asset(
         _public_tour_generated_source_path_is_unsafe(path) for path in source_paths
     ):
         raise HTTPException(status_code=410, detail="tour_viewer_integrity_failed")
+    viewer_relpath = _public_tour_safe_asset_relpath(release.get("viewer_relpath"))
+    viewer_binding = (
+        dict(bindings.get(viewer_relpath) or {})
+        if isinstance(bindings, dict) and viewer_relpath
+        else {}
+    )
+    generated = loaded_payload.get("generated_reconstruction")
+    if not public_tour_generated_viewer_proof_matches(
+        generated,
+        proof,
+        viewer_sha256=viewer_binding.get("sha256"),
+    ):
+        raise HTTPException(status_code=410, detail="tour_viewer_integrity_failed")
     content = _public_tour_read_bound_file(bundle_dir, binding)
     return content, binding, release
 
@@ -7703,7 +7744,7 @@ def _public_tour_verified_generated_viewer_response(
             "Cross-Origin-Resource-Policy": "same-origin",
             "X-Frame-Options": "SAMEORIGIN",
             "X-PropertyQuarry-Asset-SHA256": str(binding.get("sha256") or ""),
-            "X-PropertyQuarry-Preview-Kind": "approximate-layout",
+            "X-PropertyQuarry-Preview-Kind": "styled-3d-reconstruction",
             "X-PropertyQuarry-Verified-Provider-Capture": "false",
             "X-PropertyQuarry-Verified-Tour-Gate": "false",
             "X-PropertyQuarry-Viewer-Revision": str(
@@ -8029,7 +8070,7 @@ def _public_tour_file_from_snapshot(
         headers["X-PropertyQuarry-Tour-Asset-Kind"] = "generated-reconstruction-viewer"
     if preview_manifest_row:
         headers["Cross-Origin-Resource-Policy"] = "same-origin"
-        headers["X-PropertyQuarry-Preview-Kind"] = "approximate-layout"
+        headers["X-PropertyQuarry-Preview-Kind"] = "styled-3d-reconstruction"
         headers["X-PropertyQuarry-Verified-Provider-Capture"] = "false"
         headers["X-PropertyQuarry-Verified-Tour-Gate"] = "false"
     expected_asset_digest = (
@@ -8319,6 +8360,11 @@ def public_tour_generated_layout_preview(slug: str, request: Request) -> HTMLRes
                     status_code=404,
                     detail="tour_generated_layout_preview_unavailable",
                 )
+            _public_tour_verified_generated_viewer_asset(
+                slug,
+                str(viewer_release.get("viewer_relpath") or ""),
+                payload=payload,
+            )
             return RedirectResponse(
                 viewer_url,
                 status_code=302,
@@ -9480,34 +9526,36 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
     route_stat_label = f"{route_stop_count} stop{'s' if route_stop_count != 1 else ''}"
     photo_stat_label = f"{photo_evidence_count} photo{'s' if photo_evidence_count != 1 else ''}"
     plan_stat_label = f"{floorplan_evidence_count} plan cue{'s' if floorplan_evidence_count != 1 else ''}"
-    hero_eyebrow = "PropertyQuarry layout preview" if layout_focus else "PropertyQuarry layout tour"
-    hero_sub = (
-        "Start in the interactive layout viewer, then compare the room route and source images from the same generated reconstruction."
-        if layout_focus
-        else "Walk the likely room order, inspect the floorplan, and compare the source images from one guided surface. This is built from the floorplan and listing photos, not from a captured provider tour."
+    generated_reconstruction = (
+        payload.get("generated_reconstruction")
+        if isinstance(payload.get("generated_reconstruction"), dict)
+        else {}
     )
-    lead_preview_badge = "Generated diorama"
-    lead_preview_title = "Start with room adjacency" if layout_focus else "Likely spatial layout"
+    selected_style_label = str(generated_reconstruction.get("style_label") or "Selected style").strip()
+    hero_eyebrow = "PropertyQuarry styled 3D reconstruction"
+    hero_sub = (
+        f"Start in the interactive {selected_style_label} scene, then compare its generated room route with the floorplan and source images. This is a planning reconstruction, not a captured or measured tour."
+    )
+    lead_preview_badge = f"{selected_style_label} · generated"
+    lead_preview_title = "Start in the styled 3D scene"
     lead_preview_copy = (
-        "Open the layout viewer first, then use the walkthrough and source deck to double-check room order, connections, and likely light."
-        if layout_focus
-        else "Built from the floorplan and listing photos so you can screen room order, adjacency, and likely light before opening the walkthrough."
+        "Open the styled reconstruction first, then use the optional plan overlay, walkthrough, and source deck to cross-check room order and adjacency."
     )
     primary_cta_href = (
         "#layout-viewer"
-        if layout_focus and layout_viewer_embed_url_raw
+        if layout_viewer_embed_url_raw
         else "#walkthrough"
     )
     primary_cta_label = (
-        "Open layout viewer"
-        if layout_focus and layout_viewer_embed_url_raw
+        "Open styled 3D reconstruction"
+        if layout_viewer_embed_url_raw
         else ("Play walkthrough" if video_url else "Start room route")
     )
-    secondary_cta_href = "#walkthrough" if layout_focus else "#reference-focus"
+    secondary_cta_href = "#walkthrough" if video_url else "#reference-focus"
     secondary_cta_label = (
         "Play room route"
-        if layout_focus and video_url
-        else ("Start room route" if layout_focus else ("Review floorplan cue" if has_floorplan_reference else "Review reference deck"))
+        if video_url
+        else ("Review floorplan reference" if has_floorplan_reference else "Review reference deck")
     )
     route_markup = "".join(
         f"""
@@ -9530,9 +9578,9 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       <section class="card layout-viewer-card" id="layout-viewer">
         <div class="layout-viewer-head">
           <div class="stack">
-            <div class="eyebrow">{"Layout-first viewer" if layout_focus else "Spatial layout viewer"}</div>
-            <h2>{"Start in the layout viewer" if layout_focus else "Walk the generated layout"}</h2>
-            <p class="layout-viewer-note">{"The layout viewer is the main entrypoint on this page. Use the walkthrough and source deck below to cross-check what the generated route is suggesting." if layout_focus else "The same disclosed reconstruction, but with an interactive room-to-room spatial pass."}</p>
+            <div class="eyebrow">{html.escape(selected_style_label)} · generated reconstruction</div>
+            <h2>Explore the styled 3D reconstruction</h2>
+            <p class="layout-viewer-note">The styled scene is the main entrypoint. The floorplan is an optional reference overlay; use the walkthrough and source deck below to cross-check the generated layout.</p>
           </div>
           <a class="mini-btn" id="layout-viewer-open" href="{layout_viewer_open_url}" target="_blank" rel="noopener noreferrer">Open full viewer</a>
         </div>
@@ -9540,14 +9588,14 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
           <div class="layout-viewer-poster" id="layout-viewer-poster">
             {f'<img class="layout-viewer-poster-media" src="{layout_viewer_poster_url}" alt="" aria-hidden="true" referrerpolicy="no-referrer">' if layout_viewer_poster_url_raw else ''}
             <div class="layout-viewer-poster-copy">
-              <div class="eyebrow">{"Layout-first entry" if layout_focus else "Interactive layout viewer"}</div>
-              <strong>{"Loading the room layout" if layout_focus else "Loading spatial layout"}</strong>
-              <p>{"The generated layout opens first here so you can judge adjacency and route order before committing to the walkthrough." if layout_focus else "Room-to-room pass from the same generated reconstruction, with the disclosed layout ready inside the viewer."}</p>
+              <div class="eyebrow">Interactive styled reconstruction</div>
+              <strong>Loading the {html.escape(selected_style_label)} scene</strong>
+              <p>The generated furnishings open first; turn on the plan overlay only when you want a source reference.</p>
             </div>
           </div>
-          <iframe id="layout-viewer-frame" src="{layout_viewer_embed_url}" title="{html.escape(title_text)} spatial layout viewer" loading="lazy" referrerpolicy="no-referrer"></iframe>
+          <iframe id="layout-viewer-frame" src="{layout_viewer_embed_url}" title="{html.escape(title_text)} styled 3D reconstruction" loading="eager" referrerpolicy="no-referrer"></iframe>
         </div>
-        <p class="layout-viewer-note">Generated from the floorplan and listing photos. Use it to judge adjacency, route order, and approximate spatial proportion.</p>
+        <p class="layout-viewer-note">Generated from the floorplan and listing photos; it is not a captured or measured tour. Use it to judge adjacency, route order, and approximate spatial proportion.</p>
       </section>'''
         if layout_viewer_embed_url_raw
         else ""
@@ -12164,6 +12212,11 @@ def public_tour_page(
                     status_code=404,
                     detail="tour_generated_layout_preview_unavailable",
                 )
+            _public_tour_verified_generated_viewer_asset(
+                slug,
+                str(viewer_release.get("viewer_relpath") or ""),
+                payload=payload,
+            )
             return RedirectResponse(
                 viewer_url,
                 status_code=302,

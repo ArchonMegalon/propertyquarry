@@ -67,6 +67,7 @@ The top-level members are `manifest.v2.json` (mode `0444`) and
 | `/usr/libexec/propertyquarry-release-control/propertyquarry-runtime-deploy-v2` | `0755` | signed-plan-bound immutable runtime deployment helper |
 | `/usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2` | `0755` | static controller |
 | `/usr/libexec/propertyquarry-release-control/run-propertyquarry-ephemeral-runner-v2` | `0555` | one-shot ephemeral runner launcher |
+| `/usr/libexec/propertyquarry-release-control/run-propertyquarry-ephemeral-runner-lifecycle-v2` | `0555` | fixed root lifecycle for one governed ephemeral runner |
 | `/var/lib/propertyquarry-release-single-host-v2/runner-launch-ticket.v2.json` | `0400` | receipt-authority-signed one-shot runner launch ticket |
 | `/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v2.json` | `0400` | receipt-authority-signed protected-environment approval intent |
 | `/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v2.json` | `0400` | receipt-authority-signed successful protected-environment prerequisite proof |
@@ -188,6 +189,43 @@ single-link regular files whose content rehashes to the bound Git blob OIDs,
 and their on-disk modes become `0644` or `0755` despite the caller's
 restrictive umask. Source directories are fsynced at `0755`; the checkout root
 and Git metadata remain private at `0700`.
+
+The installed runner lifecycle has a separate user-callable admission wrapper,
+`tools/launch-ephemeral-runner-with-docker.sh`. It accepts exactly a pinned
+scratch-helper image ID, the mode-`0400` signed package, and the independent
+mode-`0444` package anchor. The caller must be UID/GID 1000 and supply exactly
+one administration token through a UID/GID-1000, mode-`0600`, read-only FIFO
+on descriptor 8. A non-dumpable broker is the only child that inherits that
+descriptor; it does not read the token until the wrapper has verified the
+package, helper image, and complete stopped-container configuration.
+
+The stopped helper container is inspected before that gate opens. It has the
+fixed scratch-installer entrypoint and sole `launch-ephemeral-runner` argument,
+a read-only container root, explicit bridge networking, no host PID namespace,
+no direct Docker-socket mount, and all capabilities dropped except `CHOWN`,
+`DAC_OVERRIDE`, `FOWNER`, and `SYS_CHROOT`. Its only mounts are the recursively
+bound host root at `/host`, the verified package at the helper's fixed input
+path, and one mode-`0444` fixed resolver overlay at the host stub-resolver
+target. The overlay contains only Docker bridge DNS (`127.0.0.11`) so HTTPS
+resolution remains inside the explicit bridge namespace after chroot; the Go
+helper verifies its bytes, owner, mode, path, host symlink, and non-writable
+directory chain before executing the lifecycle. The broker then relays the token through a private FIFO to container
+standard input; token material is never placed in argv, environment, a regular
+file, or a Docker log.
+
+The fixed Go mode independently re-verifies the embedded package authority,
+scratch-installer self binding, exact installed generation, and every installed
+signed member. It validates `/host`, duplicates standard input only to
+descriptor 8 with close-on-exec cleared, chroots to `/host`, and re-hashes the
+installed controller plus both runner executables. It finally executes only
+the signed zero-argument lifecycle path with a fixed non-secret environment.
+That lifecycle immediately transfers descriptor 8 to a built-in-only gated
+broker, closes it in the orchestrator, and keeps the descriptor marker unset
+before any admission, filesystem, Docker, controller, or Python subprocess.
+Only after the runner image is verified does the broker export the marker and
+directly exec the fixed `runner-supervise` command, which performs the first
+token read.
+There is no shell, arbitrary executable, or generic root-command surface.
 
 The release dispatch has no manual environment-review step. Its exact order is:
 

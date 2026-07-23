@@ -3,6 +3,23 @@ from __future__ import annotations
 import re
 from typing import Any
 
+try:
+    from scripts.property_reconstruction_styles import (
+        FLOORPLAN_DISPLAY_MODE,
+        GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        STYLE_SCENE_CONTRACT_VERSION,
+        reconstruction_style,
+        validate_style_scene,
+    )
+except ModuleNotFoundError:
+    from property_reconstruction_styles import (  # type: ignore[no-redef]
+        FLOORPLAN_DISPLAY_MODE,
+        GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        STYLE_SCENE_CONTRACT_VERSION,
+        reconstruction_style,
+        validate_style_scene,
+    )
+
 
 PUBLIC_TOUR_GENERATED_VIEWER_RELEASE_CONTRACT = (
     "ea.public-tour-generated-viewer-release.v1"
@@ -40,6 +57,96 @@ def _safe_relpath(value: object) -> str:
     if any(part in {"", ".", ".."} for part in parts):
         return ""
     return "/".join(parts)
+
+
+def public_tour_generated_viewer_proof_matches(
+    generated: object,
+    proof: object,
+    *,
+    viewer_sha256: object,
+) -> bool:
+    """Cross-bind the mutable public shell to the hash-bound style receipt."""
+
+    if not isinstance(generated, dict) or not isinstance(proof, dict):
+        return False
+    expected_viewer_sha256 = _text(viewer_sha256).lower()
+    if not _SHA256_RE.fullmatch(expected_viewer_sha256):
+        return False
+    if (
+        _normalized_provider(generated.get("provider"))
+        != GENERATED_RECONSTRUCTION_PROVIDER
+        or _normalized_provider(proof.get("provider"))
+        != GENERATED_RECONSTRUCTION_PROVIDER
+    ):
+        return False
+    requested_style = (
+        dict(proof.get("requested_style") or {})
+        if isinstance(proof.get("requested_style"), dict)
+        else {}
+    )
+    try:
+        canonical_style = reconstruction_style(
+            requested_style.get("id"),
+            style_id=requested_style.get("id"),
+        )
+    except ValueError:
+        return False
+    for field in (
+        "contract_version",
+        "id",
+        "label",
+        "prompt",
+        "palette",
+        "required_cues",
+        "signature",
+    ):
+        if requested_style.get(field) != canonical_style.get(field):
+            return False
+    style_scene = (
+        dict(proof.get("style_scene") or {})
+        if isinstance(proof.get("style_scene"), dict)
+        else {}
+    )
+    style_scene_ready, _style_scene_reason = validate_style_scene(
+        style_scene,
+        expected_style=canonical_style,
+    )
+    if not style_scene_ready:
+        return False
+    expected_generated_fields = {
+        "viewer_version": GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        "style_contract_version": STYLE_SCENE_CONTRACT_VERSION,
+        "style_id": canonical_style["id"],
+        "style_label": canonical_style["label"],
+        "style_signature": canonical_style["signature"],
+        "style_scene_signature": style_scene.get("scene_signature"),
+        "style_evidence_status": "ready",
+        "styled_scene_instance_count": len(list(style_scene.get("instances") or [])),
+        "style_cue_kinds": list(style_scene.get("required_cues") or []),
+        "floorplan_display_mode": FLOORPLAN_DISPLAY_MODE,
+    }
+    if any(
+        generated.get(field) != expected
+        for field, expected in expected_generated_fields.items()
+    ):
+        return False
+    proof_viewer = (
+        dict(proof.get("viewer") or {})
+        if isinstance(proof.get("viewer"), dict)
+        else {}
+    )
+    expected_viewer_fields = {
+        "version": GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        "style_id": canonical_style["id"],
+        "style_signature": canonical_style["signature"],
+        "style_scene_signature": style_scene.get("scene_signature"),
+        "floorplan_display_mode": FLOORPLAN_DISPLAY_MODE,
+        "sha256": expected_viewer_sha256,
+    }
+    return all(
+        proof_viewer.get(field) == expected
+        for field, expected in expected_viewer_fields.items()
+    )
 
 
 def _unverified(reason: str = "generated_viewer_release_unverified") -> dict[str, Any]:
@@ -138,6 +245,25 @@ def evaluate_public_tour_generated_viewer_release(
         return {**_unverified("generated_viewer_revoked"), "terminal": True}
     if release.get("disqualified") is True:
         return {**_unverified("generated_viewer_disqualified"), "terminal": True}
+    try:
+        canonical_style = reconstruction_style(
+            generated.get("style_id"),
+            style_id=generated.get("style_id"),
+        )
+    except ValueError:
+        return _unverified("generated_viewer_style_invalid")
+    style_contract_ready = (
+        generated.get("style_contract_version") == STYLE_SCENE_CONTRACT_VERSION
+        and generated.get("style_id") == canonical_style["id"]
+        and generated.get("style_label") == canonical_style["label"]
+        and generated.get("style_signature") == canonical_style["signature"]
+        and bool(_text(generated.get("style_scene_signature")))
+        and generated.get("style_evidence_status") == "ready"
+        and type(generated.get("styled_scene_instance_count")) is int
+        and int(generated.get("styled_scene_instance_count") or 0) >= len(canonical_style["required_cues"])
+        and generated.get("style_cue_kinds") == canonical_style["required_cues"]
+        and generated.get("floorplan_display_mode") == FLOORPLAN_DISPLAY_MODE
+    )
 
     viewer_relpath = _safe_relpath(generated.get("viewer_relpath"))
     manifest_relpath = _safe_relpath(generated.get("manifest_relpath"))
@@ -294,7 +420,8 @@ def evaluate_public_tour_generated_viewer_release(
         release.get("satisfies_verified_tour_gate") is False,
         release.get("public_activation_authority") is True,
         _text(generated.get("viewer_version"))
-        == "propertyquarry_3d_tour_viewer_v3",
+        == GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        style_contract_ready,
         viewer_relpath == _safe_relpath(release.get("viewer_relpath")),
         bool(viewer_relpath and manifest_relpath and floorplan_relpath),
         len(required_paths) == len(required_assets),

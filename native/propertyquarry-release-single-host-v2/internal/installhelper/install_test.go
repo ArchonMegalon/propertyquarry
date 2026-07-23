@@ -302,6 +302,7 @@ func (fixture *installFixture) verifiedPackage(t *testing.T, generation int64, r
 	add("/usr/lib/tmpfiles.d/propertyquarry-release-single-host-v2.conf", 0o444, []byte("d /run/propertyquarry-release-single-host-v2 0750 root root -\n"))
 	add("/usr/lib/propertyquarry-release-runner-v2/runner.lock.json", 0o444, []byte("{}"))
 	add("/usr/libexec/propertyquarry-release-control/run-propertyquarry-ephemeral-runner-v2", 0o555, []byte("#!/bin/false\n"))
+	add(FixedRunnerLifecyclePath, 0o555, []byte("#!/bin/false\n"))
 	add("/var/lib/propertyquarry-release-single-host-v2/runner-launch-ticket.v2.json", 0o400, []byte("{\"fixture\":\"runner-launch-ticket\"}"))
 	add("/var/lib/propertyquarry-release-single-host-v2/runner-reservation.v2.json", 0o400, []byte("{\"fixture\":\"runner-reservation\"}"))
 	fileItems := make([]any, 0, len(files))

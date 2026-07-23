@@ -35,6 +35,7 @@ from app.api.routes.public_tour_payloads import (
 from app.product import property_tour_hosting
 from app.product import service as product_service
 from scripts import generate_property_reconstruction as reconstruction_script
+from scripts import property_reconstruction_styles
 from scripts.verify_property_tour_controls import build_property_tour_control_receipt
 
 
@@ -111,6 +112,14 @@ def _write_valid_candidate_generation(
     slug: str,
     generation: str = "candidate",
 ) -> None:
+    selected_style = property_reconstruction_styles.reconstruction_style(
+        "warm_scandi",
+        style_id="warm_scandi",
+    )
+    style_scene = property_reconstruction_styles.build_style_scene(
+        selected_style,
+        route_stop_count=1,
+    )
     reconstruction_dir = bundle_dir / "generated-reconstruction"
     reconstruction_dir.mkdir(exist_ok=True)
     for name, content in (
@@ -121,7 +130,20 @@ def _write_valid_candidate_generation(
     ):
         (reconstruction_dir / name).write_text(content, encoding="utf-8")
     (reconstruction_dir / "reconstruction.json").write_text(
-        json.dumps({"slug": slug}),
+        json.dumps(
+            {
+                "slug": slug,
+                "requested_style": selected_style,
+                "style_scene": style_scene,
+                "viewer": {
+                    "version": property_reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+                    "style_id": selected_style["id"],
+                    "style_signature": selected_style["signature"],
+                    "style_scene_signature": style_scene["scene_signature"],
+                    "floorplan_display_mode": property_reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+                },
+            }
+        ),
         encoding="utf-8",
     )
     base = "generated-reconstruction"
@@ -137,6 +159,16 @@ def _write_valid_candidate_generation(
                     "material_relpath": f"{base}/model.mtl",
                     "manifest_relpath": f"{base}/reconstruction.json",
                     "glb_model_relpath": f"{base}/model.glb",
+                    "viewer_version": property_reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+                    "style_contract_version": property_reconstruction_styles.STYLE_SCENE_CONTRACT_VERSION,
+                    "style_id": selected_style["id"],
+                    "style_label": selected_style["label"],
+                    "style_signature": selected_style["signature"],
+                    "style_scene_signature": style_scene["scene_signature"],
+                    "style_evidence_status": "ready",
+                    "styled_scene_instance_count": len(style_scene["instances"]),
+                    "style_cue_kinds": list(style_scene["required_cues"]),
+                    "floorplan_display_mode": property_reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
                 },
             }
         ),
@@ -2611,13 +2643,17 @@ def test_generated_reconstruction_viewer_honors_reduced_motion_and_webgl_fallbac
                 assert route_receipt["metrics"]["activeRouteIndex"] == 1
                 assert route_receipt["metrics"]["transitionDurationMs"] == 0
                 assert route_receipt["metrics"]["isTransitioning"] is False
-                assert route_receipt["metrics"]["wallHeightScale"] == pytest.approx(0.72)
-                assert route_receipt["metrics"]["wallOpacity"] == pytest.approx(0.52)
+                assert route_receipt["metrics"]["wallHeightScale"] == pytest.approx(0.58)
+                assert route_receipt["metrics"]["wallOpacity"] == pytest.approx(0.24)
                 assert route_receipt["metrics"]["raycastObstructionSampled"] is True
-                assert route_receipt["metrics"]["raycastWallObstructionPct"] < 45
-                assert route_receipt["metrics"]["cameraTargetDistance"] < 3.0
-                assert route_receipt["metrics"]["hiddenRoomOccluderWallCount"] >= 1
-                assert route_receipt["metrics"]["visibleHotspotCount"] == 1
+                assert route_receipt["metrics"]["raycastWallObstructionPct"] < 15
+                assert 4.0 <= route_receipt["metrics"]["cameraTargetDistance"] <= 4.8
+                assert route_receipt["metrics"]["hiddenRoomOccluderWallCount"] == 0
+                assert route_receipt["metrics"]["visibleHotspotCount"] == 0
+                assert route_receipt["metrics"]["photoPanelGroupVisible"] is False
+                assert route_receipt["metrics"]["visibleSemanticStagingObjectCount"] == 0
+                assert route_receipt["metrics"]["styleCueVisibilityReady"] is True
+                assert route_receipt["metrics"]["missingVisibleStyleCues"] == []
                 assert route_receipt["metrics"]["roomCutawayEvaluationCount"] > 0
                 assert route_receipt["metrics"]["roomCutawayCameraDelta"] == pytest.approx(0.0)
                 assert route_receipt["overviewPressed"] == "false"
@@ -2999,9 +3035,11 @@ def test_generated_reconstruction_diorama_preview_reads_as_staged_layout_composi
     hero_mean = _mean_rgb(rendered, (700, 160, 940, 320))
     right_panel_mean = _mean_rgb(rendered, (1180, 240, 1360, 380))
     route_rail_mean = _mean_rgb(rendered, (1190, 590, 1450, 900))
+    style_vignette_mean = _mean_rgb(rendered, tuple(boxes["style_vignette"]))
 
     assert sum(abs(title_mean[index] - background_mean[index]) for index in range(3)) > 18.0
-    assert sum(abs(stage_mean[index] - background_mean[index]) for index in range(3)) > 30.0
+    assert sum(abs(stage_mean[index] - background_mean[index]) for index in range(3)) > 8.0
+    assert sum(abs(style_vignette_mean[index] - background_mean[index]) for index in range(3)) > 24.0
     assert sum(abs(hero_mean[index] - stage_mean[index]) for index in range(3)) > 35.0
     assert sum(abs(right_panel_mean[index] - hero_mean[index]) for index in range(3)) > 20.0
     assert sum(abs(route_rail_mean[index] - background_mean[index]) for index in range(3)) > 24.0
@@ -3393,16 +3431,22 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     ):
         assert (output_dir / filename).is_file(), filename
     viewer_html = (output_dir / "viewer.html").read_text(encoding="utf-8")
-    assert "<title>Layout preview | PropertyQuarry</title>" in viewer_html
+    assert "<title>Styled 3D reconstruction | PropertyQuarry</title>" in viewer_html
     assert '<link rel="icon" href="data:,">' in viewer_html
-    assert "<h1>Layout preview</h1>" in viewer_html
-    assert "Layout preview" in viewer_html
-    assert "Built from the floorplan and listing photos" in viewer_html
+    assert "<h1>Styled 3D reconstruction</h1>" in viewer_html
+    assert "Styled 3D reconstruction" in viewer_html
+    assert "built from the floorplan and listing photos" in viewer_html
     assert "three.module.js" in viewer_html
     assert "OrbitControls" in viewer_html
-    assert 'data-pq-preview-kind="approximate-layout"' in viewer_html
+    assert 'data-pq-preview-kind="styled-3d-reconstruction"' in viewer_html
     assert 'data-pq-verified-provider-capture="false"' in viewer_html
-    assert "Approximate planning preview. Built from the floorplan and listing photos." in viewer_html
+    assert "Generated planning reconstruction built from the floorplan and listing photos" in viewer_html
+    assert 'data-pq-floorplan-display-mode="reference_toggle_default_off"' in viewer_html
+    assert "view-floorplan-reference" in viewer_html
+    assert "map: null" in viewer_html
+    assert "floorplanLayerState" in viewer_html
+    assert "projectedStyledCoveragePct" in viewer_html
+    assert "visibleStyledObjectCount" in viewer_html
     assert "cdn.jsdelivr.net" not in viewer_html
     assert 'src="http://' not in viewer_html
     assert 'src="https://' not in viewer_html
@@ -3477,7 +3521,16 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     assert receipt["disclosure"] == "Planning preview built from the floor plan and listing photos. Use it as a layout aid, not as a captured tour."
     for provider_name in ("Matterport", "3DVista", "Pano2VR", "krpano", "MagicFit", "verified provider"):
         assert provider_name not in receipt["disclosure"]
-    assert receipt["viewer"]["version"] == "propertyquarry_3d_tour_viewer_v3"
+    assert receipt["viewer"]["version"] == property_reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION
+    assert receipt["requested_style"]["id"] == "warm_scandi"
+    assert receipt["style_scene"]["evidence_status"] == "ready"
+    assert receipt["style_scene"]["floorplan_display_mode"] == "reference_toggle_default_off"
+    assert set(receipt["style_scene"]["required_cues"]) == {
+        "light_oak",
+        "linen",
+        "neutral_textile",
+        "clean_storage",
+    }
     vendor_receipt = dict(receipt["viewer"]["vendor"])
     assert vendor_receipt["name"] == "three"
     assert vendor_receipt["version"] == "0.167.1"
@@ -3566,7 +3619,12 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     assert generated_reconstruction["glb_export_status"] in {"generated", "failed", "skipped"}
     if generated_reconstruction["glb_export_status"] == "generated":
         assert generated_reconstruction["glb_model_relpath"] == "generated-reconstruction/model.glb"
-    assert generated_reconstruction["viewer_version"] == "propertyquarry_3d_tour_viewer_v3"
+    assert generated_reconstruction["viewer_version"] == property_reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION
+    assert generated_reconstruction["style_id"] == "warm_scandi"
+    assert generated_reconstruction["style_signature"] == receipt["requested_style"]["signature"]
+    assert generated_reconstruction["style_scene_signature"] == receipt["style_scene"]["scene_signature"]
+    assert generated_reconstruction["style_evidence_status"] == "ready"
+    assert generated_reconstruction["styled_scene_instance_count"] == len(receipt["style_scene"]["instances"])
     assert len(generated_reconstruction["walkthrough_route_labels"]) >= len(generated_reconstruction["route_labels"])
     assert generated_reconstruction["photo_reference_panel_count"] == len(receipt["photo_reference_panels"])
     assert generated_reconstruction["walkable_scene_kind"] == "generated_reconstruction_layout"
@@ -5053,6 +5111,11 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
         observed["room_count"] = room_count
         observed["route_labels"] = list(route_labels)
         observed["skip_video"] = skip_video
+        selected_style = property_reconstruction_styles.reconstruction_style(style_label)
+        style_scene = property_reconstruction_styles.build_style_scene(
+            selected_style,
+            route_stop_count=4,
+        )
         bundle_dir = public_root / slug
         generated_dir = bundle_dir / "generated-reconstruction"
         generated_dir.mkdir(parents=True, exist_ok=True)
@@ -5063,7 +5126,16 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
         ):
             source_bytes = Path(source).read_bytes()
             (generated_dir / name).write_bytes(source_bytes)
-        (generated_dir / "viewer.html").write_text("<html></html>\n", encoding="utf-8")
+        (generated_dir / "viewer.html").write_text(
+            (
+                '<html data-pq-preview-kind="styled-3d-reconstruction" '
+                f'data-pq-style-id="{selected_style["id"]}" '
+                f'data-pq-style-signature="{selected_style["signature"]}" '
+                f'data-pq-style-scene-signature="{style_scene["scene_signature"]}" '
+                'data-pq-floorplan-display-mode="reference_toggle_default_off"></html>\n'
+            ),
+            encoding="utf-8",
+        )
         (generated_dir / "model.obj").write_text("o model\n", encoding="utf-8")
         (generated_dir / "model.mtl").write_text("newmtl m\n", encoding="utf-8")
         (generated_dir / "generated-walkthrough.mp4").write_bytes(b"video")
@@ -5092,7 +5164,17 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
             "verified_provider_capture": False,
             "satisfies_verified_tour_gate": False,
             "disclosure": "Planning preview built from the floor plan and listing photos. Use it as a layout aid, not as a captured tour.",
-            "viewer": {"version": "propertyquarry_3d_tour_viewer_v3", "photo_reference_panel_count": 2},
+            "requested_style": selected_style,
+            "style_scene": style_scene,
+            "viewer": {
+                "version": property_reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+                "photo_reference_panel_count": 2,
+                "style_id": selected_style["id"],
+                "style_signature": selected_style["signature"],
+                "style_scene_signature": style_scene["scene_signature"],
+                "floorplan_display_mode": property_reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+                "sha256": reconstruction_script._sha256(generated_dir / "viewer.html"),
+            },
             "geometry": {"wall_rect_count": 4},
             "room_dimensions_m": {"width": 8.0, "depth": 6.0, "height": 2.7},
             "walkable_scene": {
@@ -5126,7 +5208,11 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
                 {"relpath": "photo-01.jpg"},
                 {"relpath": "photo-02.jpg"},
             ],
-            "model": {"glb_export": {"status": "skipped"}},
+            "model": {
+                "obj_sha256": reconstruction_script._sha256(generated_dir / "model.obj"),
+                "mtl_sha256": reconstruction_script._sha256(generated_dir / "model.mtl"),
+                "glb_export": {"status": "skipped"},
+            },
         }
         (generated_dir / "reconstruction.json").write_text(json.dumps(receipt), encoding="utf-8")
         manifest_path = bundle_dir / "tour.json"
@@ -5142,7 +5228,16 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
                 "generated-reconstruction/photo-01.jpg",
                 "generated-reconstruction/photo-02.jpg",
             ],
-            "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+            "viewer_version": property_reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+            "style_contract_version": property_reconstruction_styles.STYLE_SCENE_CONTRACT_VERSION,
+            "style_id": selected_style["id"],
+            "style_label": selected_style["label"],
+            "style_signature": selected_style["signature"],
+            "style_scene_signature": style_scene["scene_signature"],
+            "style_evidence_status": "ready",
+            "styled_scene_instance_count": len(style_scene["instances"]),
+            "style_cue_kinds": list(style_scene["required_cues"]),
+            "floorplan_display_mode": property_reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
             "walkable_scene_kind": "generated_reconstruction_layout",
             "walkable_scene": receipt["walkable_scene"],
             "route_labels": receipt["route_labels"],
@@ -5191,7 +5286,7 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
     assert payload["video_relpath"] == "generated-reconstruction/generated-walkthrough.mp4"
     assert payload["video_provider"] == "propertyquarry_generated_reconstruction"
     assert observed["slug"] == payload["slug"]
-    assert observed["style_label"] == "Ikea"
+    assert observed["style_label"] == property_reconstruction_styles.reconstruction_style("Ikea")["prompt"]
     assert observed["skip_video"] is False
     assert str(observed["floorplan_path"]).startswith(str((public_root / payload["slug"]).resolve()))
     assert len(list(observed["photo_paths"])) == 2

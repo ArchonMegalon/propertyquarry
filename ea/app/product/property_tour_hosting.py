@@ -35,6 +35,23 @@ except ModuleNotFoundError:
         magicfit_provider_declared,
     )
 
+try:
+    from scripts.property_reconstruction_styles import (
+        FLOORPLAN_DISPLAY_MODE,
+        GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        STYLE_SCENE_CONTRACT_VERSION,
+        reconstruction_style,
+        validate_style_scene,
+    )
+except ModuleNotFoundError:
+    from property_reconstruction_styles import (  # type: ignore[no-redef]
+        FLOORPLAN_DISPLAY_MODE,
+        GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        STYLE_SCENE_CONTRACT_VERSION,
+        reconstruction_style,
+        validate_style_scene,
+    )
+
 _PROPERTY_SCOUT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0 Safari/537.36"
 _PROPERTY_SCOUT_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 _PROPERTY_SCOUT_FLOORPLAN_ASSET_EXTENSIONS = (*_PROPERTY_SCOUT_IMAGE_EXTENSIONS, ".pdf")
@@ -72,7 +89,7 @@ _KRPANO_FORBIDDEN_SCENE_STRATEGIES = {"generated_listing_summary", "photo_galler
 _KRPANO_FORBIDDEN_CREATION_MODES = {"hosted_listing_fallback", "hosted_photo_gallery_tour"}
 _CUSTOMER_FACING_TOUR_PROVIDERS = ("3dvista",)
 _PROPERTY_PUBLIC_TOUR_SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-_PROPERTY_GENERATED_RECONSTRUCTION_VIEWER_VERSION = "propertyquarry_3d_tour_viewer_v3"
+_PROPERTY_GENERATED_RECONSTRUCTION_VIEWER_VERSION = GENERATED_RECONSTRUCTION_VIEWER_VERSION
 _AI_PANORAMA_CANONICAL_DISCLOSURE = (
     "AI-reconstructed from listing photos; not a captured 360 or measured survey."
 )
@@ -2928,6 +2945,59 @@ def _hosted_property_tour_generated_reconstruction_contract(
     receipt_viewer = dict(receipt.get("viewer") or {}) if isinstance(receipt.get("viewer"), dict) else {}
     if str(receipt_viewer.get("version") or "").strip() != viewer_version:
         return {"ready": False}
+    requested_style = (
+        dict(receipt.get("requested_style") or {})
+        if isinstance(receipt.get("requested_style"), dict)
+        else {}
+    )
+    try:
+        canonical_style = reconstruction_style(
+            requested_style.get("id"),
+            style_id=requested_style.get("id"),
+        )
+    except ValueError:
+        return {"ready": False}
+    if any(
+        str(requested_style.get(key) or "") != str(canonical_style.get(key) or "")
+        for key in ("id", "label", "prompt", "signature")
+    ):
+        return {"ready": False}
+    style_scene = dict(receipt.get("style_scene") or {}) if isinstance(receipt.get("style_scene"), dict) else {}
+    style_scene_ready, _style_scene_reason = validate_style_scene(
+        style_scene,
+        expected_style=canonical_style,
+    )
+    if not style_scene_ready:
+        return {"ready": False}
+    generated_style_contract = {
+        "style_contract_version": STYLE_SCENE_CONTRACT_VERSION,
+        "style_id": canonical_style["id"],
+        "style_label": canonical_style["label"],
+        "style_signature": canonical_style["signature"],
+        "style_scene_signature": style_scene.get("scene_signature"),
+        "style_evidence_status": "ready",
+        "styled_scene_instance_count": len(list(style_scene.get("instances") or [])),
+        "style_cue_kinds": list(style_scene.get("required_cues") or []),
+        "floorplan_display_mode": FLOORPLAN_DISPLAY_MODE,
+    }
+    if any(
+        generated_reconstruction.get(key) != expected
+        for key, expected in generated_style_contract.items()
+    ):
+        return {"ready": False}
+    if any(
+        receipt_viewer.get(key) != expected
+        for key, expected in {
+            "style_id": canonical_style["id"],
+            "style_signature": canonical_style["signature"],
+            "style_scene_signature": style_scene.get("scene_signature"),
+            "floorplan_display_mode": FLOORPLAN_DISPLAY_MODE,
+        }.items()
+    ):
+        return {"ready": False}
+    viewer_sha256 = str(receipt_viewer.get("sha256") or "").strip()
+    if not viewer_sha256 or _hosted_property_tour_file_sha256(viewer_path) != viewer_sha256:
+        return {"ready": False}
     model_relpath = str(generated_reconstruction.get("model_relpath") or "").strip().lstrip("/")
     material_relpath = str(generated_reconstruction.get("material_relpath") or "").strip().lstrip("/")
     model_path = _generated_reconstruction_relpath_file(bundle_dir, model_relpath)
@@ -2935,6 +3005,13 @@ def _hosted_property_tour_generated_reconstruction_contract(
     if not model_path or not material_path:
         return {"ready": False}
     model_receipt = dict(receipt.get("model") or {}) if isinstance(receipt.get("model"), dict) else {}
+    if (
+        str(model_receipt.get("obj_sha256") or "").strip()
+        != _hosted_property_tour_file_sha256(model_path)
+        or str(model_receipt.get("mtl_sha256") or "").strip()
+        != _hosted_property_tour_file_sha256(material_path)
+    ):
+        return {"ready": False}
     glb_export = dict(model_receipt.get("glb_export") or {}) if isinstance(model_receipt.get("glb_export"), dict) else {}
     glb_model_relpath = str(generated_reconstruction.get("glb_model_relpath") or "").strip().lstrip("/")
     glb_model_path: Path | None = None
@@ -2948,6 +3025,11 @@ def _hosted_property_tour_generated_reconstruction_contract(
             try:
                 if candidate_glb_path.stat().st_size > 1024:
                     glb_model_path = candidate_glb_path
+                    if (
+                        str(glb_export.get("glb_sha256") or "").strip()
+                        != _hosted_property_tour_file_sha256(candidate_glb_path)
+                    ):
+                        return {"ready": False}
                 else:
                     glb_model_relpath = ""
             except OSError:

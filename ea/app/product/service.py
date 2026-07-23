@@ -386,6 +386,19 @@ from app.services.property_market_catalog import (
 )
 from app.settings import resolve_signing_secret
 
+try:
+    from scripts.property_reconstruction_styles import (
+        GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        reconstruction_style,
+        validate_style_scene,
+    )
+except ModuleNotFoundError:
+    from property_reconstruction_styles import (  # type: ignore[no-redef]
+        GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        reconstruction_style,
+        validate_style_scene,
+    )
+
 if TYPE_CHECKING:
     from app.container import AppContainer
 
@@ -395,7 +408,27 @@ _PROPERTY_SCOUT_EXTRACT_FLOORPLAN_URLS_FROM_ARCHIVE_IMPL = _property_scout_extra
 _PROPERTY_SCOUT_EXTRACT_FLOORPLAN_URLS_IMPL = _property_scout_extract_floorplan_urls
 _PROPERTY_SCOUT_EXTRACT_GALLERY_FLOORPLAN_URLS_IMPL = _property_scout_extract_gallery_floorplan_urls
 _PROPERTY_SCOUT_EXTRACT_SOURCE_VIRTUAL_TOUR_URL_IMPL = _property_scout_extract_source_virtual_tour_url
-_PROPERTY_RECONSTRUCTION_VIEWER_VERSION = "propertyquarry_3d_tour_viewer_v3"
+_PROPERTY_RECONSTRUCTION_VIEWER_VERSION = GENERATED_RECONSTRUCTION_VIEWER_VERSION
+
+
+def _property_reconstruction_style_cache_matches(
+    generated_reconstruction: object,
+    *,
+    requested_style: Mapping[str, object],
+) -> bool:
+    if not isinstance(generated_reconstruction, Mapping):
+        return False
+    return bool(
+        str(generated_reconstruction.get("viewer_version") or "").strip()
+        == _PROPERTY_RECONSTRUCTION_VIEWER_VERSION
+        and str(generated_reconstruction.get("style_id") or "").strip()
+        == str(requested_style.get("id") or "")
+        and str(generated_reconstruction.get("style_signature") or "").strip()
+        == str(requested_style.get("signature") or "")
+        and str(generated_reconstruction.get("style_evidence_status") or "").strip()
+        == "ready"
+        and bool(str(generated_reconstruction.get("style_scene_signature") or "").strip())
+    )
 
 
 def _sync_property_listing_extractor_runtime_compat() -> None:
@@ -20520,12 +20553,18 @@ def _run_property_reconstruction_render_bridge(
         walkthrough_seconds_per_stop = float(walkthrough_seconds_per_stop_raw or "0")
     except Exception:
         walkthrough_seconds_per_stop = 0.0
+    try:
+        selected_style = reconstruction_style(style_label)
+    except ValueError as exc:
+        raise RuntimeError("property_reconstruction_style_unsupported") from exc
     payload = {
         "slug": str(slug or "").strip(),
         "skip_video": bool(skip_video),
         "floorplan_path": str(floorplan_path) if floorplan_path is not None else "",
         "photo_paths": [str(path) for path in photo_paths if isinstance(path, Path)],
         "style_label": style_label,
+        "style_id": str(selected_style.get("id") or ""),
+        "style_signature": str(selected_style.get("signature") or ""),
         "room_count": max(0, int(room_count or 0)),
         "route_labels": [str(label or "").strip() for label in route_labels if str(label or "").strip()],
         "timeout_seconds": _property_reconstruction_generation_timeout_seconds(),
@@ -20597,6 +20636,12 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
     normalized_principal = str(principal_id or "").strip()
     if not normalized_principal:
         raise RuntimeError("hosted_property_tour_principal_required")
+    try:
+        selected_reconstruction_style = reconstruction_style(
+            str(diorama_style_hint or "").strip()
+        )
+    except ValueError as exc:
+        raise RuntimeError("property_reconstruction_style_unsupported") from exc
     normalized_search_run_id = str(search_run_id or "").strip()
     normalized_floorplans = [
         _safe_live_property_tour_url(value)
@@ -20640,7 +20685,10 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
     if (
         existing_payload
         and _hosted_property_tour_generated_reconstruction_bundle_ready(tour_url)
-        and str(existing_reconstruction.get("viewer_version") or "").strip() == _PROPERTY_RECONSTRUCTION_VIEWER_VERSION
+        and _property_reconstruction_style_cache_matches(
+            existing_reconstruction,
+            requested_style=selected_reconstruction_style,
+        )
     ):
         _normalize_generated_reconstruction_bundle_permissions(bundle_dir)
         return existing_payload
@@ -20751,7 +20799,9 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
                 photo_paths.append(photo_path)
         if floorplan_path is None and not photo_paths:
             raise RuntimeError("reconstruction_source_assets_unavailable")
-        style_label = compact_text(str(diorama_style_hint or "").strip(), fallback="", limit=80)
+        style_label = str(selected_reconstruction_style.get("prompt") or "")
+        style_id = str(selected_reconstruction_style.get("id") or "")
+        style_signature = str(selected_reconstruction_style.get("signature") or "")
         if _property_reconstruction_should_use_render_bridge(skip_video=skip_video):
             _run_property_reconstruction_render_bridge(
                 slug=slug,
@@ -20779,6 +20829,14 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
                 command.extend(["--photo", str(photo_path)])
             if style_label:
                 command.extend(["--style-label", style_label])
+            command.extend(
+                [
+                    "--style-id",
+                    style_id,
+                    "--style-signature",
+                    style_signature,
+                ]
+            )
             if reconstruction_room_count > 0:
                 command.extend(["--room-count", str(int(reconstruction_room_count))])
             for route_label in normalized_reconstruction_route_labels:
@@ -20812,6 +20870,61 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
         else {}
     )
     bundle_root = bundle_dir.resolve()
+    expected_style_id = str(selected_reconstruction_style.get("id") or "")
+    expected_style_signature = str(selected_reconstruction_style.get("signature") or "")
+    if (
+        str(generated_reconstruction.get("viewer_version") or "")
+        != _PROPERTY_RECONSTRUCTION_VIEWER_VERSION
+        or str(generated_reconstruction.get("style_id") or "") != expected_style_id
+        or str(generated_reconstruction.get("style_signature") or "") != expected_style_signature
+        or str(generated_reconstruction.get("style_evidence_status") or "") != "ready"
+    ):
+        raise RuntimeError("property_reconstruction_style_contract_mismatch")
+    reconstruction_relpath = _hosted_property_tour_safe_asset_relpath(
+        str(generated_reconstruction.get("manifest_relpath") or "").strip()
+    )
+    reconstruction_path = (
+        (bundle_dir / reconstruction_relpath).resolve()
+        if reconstruction_relpath
+        else bundle_dir / "__missing_reconstruction_receipt__"
+    )
+    if (
+        not reconstruction_relpath
+        or bundle_root not in reconstruction_path.parents
+        or not reconstruction_path.is_file()
+    ):
+        raise RuntimeError("property_reconstruction_style_receipt_missing")
+    try:
+        reconstruction_receipt_raw = json.loads(reconstruction_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise RuntimeError("property_reconstruction_style_receipt_invalid") from exc
+    reconstruction_receipt = (
+        reconstruction_receipt_raw
+        if isinstance(reconstruction_receipt_raw, dict)
+        else {}
+    )
+    receipt_requested_style = (
+        reconstruction_receipt.get("requested_style")
+        if isinstance(reconstruction_receipt.get("requested_style"), dict)
+        else {}
+    )
+    receipt_style_scene = (
+        reconstruction_receipt.get("style_scene")
+        if isinstance(reconstruction_receipt.get("style_scene"), dict)
+        else {}
+    )
+    style_scene_ready, _style_scene_reason = validate_style_scene(
+        receipt_style_scene,
+        expected_style=selected_reconstruction_style,
+    )
+    if (
+        not style_scene_ready
+        or str(receipt_requested_style.get("id") or "") != expected_style_id
+        or str(receipt_requested_style.get("signature") or "") != expected_style_signature
+        or str(receipt_style_scene.get("scene_signature") or "")
+        != str(generated_reconstruction.get("style_scene_signature") or "")
+    ):
+        raise RuntimeError("property_reconstruction_style_evidence_invalid")
     walkthrough_relpath = _hosted_property_tour_safe_asset_relpath(
         str(generated_reconstruction.get("walkthrough_video_relpath") or "").strip()
     )
@@ -20921,6 +21034,12 @@ def _write_generated_reconstruction_property_tour_bundle_with_lock_held(
     normalized_principal = str(principal_id or "").strip()
     if not normalized_principal:
         raise RuntimeError("hosted_property_tour_principal_required")
+    try:
+        selected_reconstruction_style = reconstruction_style(
+            str(diorama_style_hint or "").strip()
+        )
+    except ValueError as exc:
+        raise RuntimeError("property_reconstruction_style_unsupported") from exc
     normalized_search_run_id = str(search_run_id or "").strip()
     public_dir = _public_tour_dir()
     public_dir.mkdir(parents=True, exist_ok=True)
@@ -20956,8 +21075,10 @@ def _write_generated_reconstruction_property_tour_bundle_with_lock_held(
         existing_payload
         and bundle_dir.is_dir()
         and _hosted_property_tour_generated_reconstruction_bundle_ready(tour_url)
-        and str(existing_reconstruction.get("viewer_version") or "").strip()
-        == _PROPERTY_RECONSTRUCTION_VIEWER_VERSION
+        and _property_reconstruction_style_cache_matches(
+            existing_reconstruction,
+            requested_style=selected_reconstruction_style,
+        )
     ):
         with _property_search_storage.property_account_publication_authority(
             normalized_principal,

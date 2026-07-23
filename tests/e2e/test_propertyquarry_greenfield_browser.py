@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import html
 import json
@@ -38,6 +39,10 @@ from app.property_distance_preferences import (
 from app.product import property_evidence_overlays as evidence_overlays
 from app.product.models import HandoffNote
 from app.product.service import ProductService
+from app.services.public_tour_release_policy import (
+    PUBLIC_TOUR_GENERATED_VIEWER_RELEASE_CONTRACT,
+)
+from scripts import property_reconstruction_styles as reconstruction_styles
 from scripts.property_tour_3dvista_provenance import (
     THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
     export_tree_sha256,
@@ -11336,6 +11341,30 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
         "balcony/terrace return",
         "balcony detail 2",
     ]
+    selected_style = reconstruction_styles.reconstruction_style(
+        "urban_jungle",
+        style_id="urban_jungle",
+    )
+    style_scene = reconstruction_styles.build_style_scene(
+        selected_style,
+        route_stop_count=len(route_labels),
+    )
+    style_contract_fields = {
+        "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        "style_contract_version": reconstruction_styles.STYLE_SCENE_CONTRACT_VERSION,
+        "style_id": selected_style["id"],
+        "style_label": selected_style["label"],
+        "style_signature": selected_style["signature"],
+        "style_scene_signature": style_scene["scene_signature"],
+        "style_evidence_status": "ready",
+        "styled_scene_instance_count": len(style_scene["instances"]),
+        "style_cue_kinds": list(style_scene["required_cues"]),
+        "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+    }
+    disclosure = (
+        "Generated interactive reconstruction from supplied listing material. "
+        "It is a styled layout aid, not a captured or provider-verified 3D scan."
+    )
     walkable_scene = {
         "kind": "generated_reconstruction_layout",
         "route": [
@@ -11382,8 +11411,7 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
     for filename, label, fill in photo_specs:
         _write_cube_face_png(reconstruction_dir / filename, label=label, fill=fill)
     viewer_route_labels_json = json.dumps(route_labels, ensure_ascii=False)
-    (reconstruction_dir / "viewer.html").write_text(
-        f"""<!doctype html>
+    viewer_document = f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
@@ -11493,12 +11521,16 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
   <body>
     <main
       data-pq-reconstruction-viewer
-      data-pq-preview-kind="approximate-layout"
+      data-pq-preview-kind="styled-3d-reconstruction"
       data-pq-verified-provider-capture="false"
+      data-pq-style-id="{selected_style["id"]}"
+      data-pq-style-signature="{selected_style["signature"]}"
+      data-pq-style-scene-signature="{style_scene["scene_signature"]}"
+      data-pq-floorplan-display-mode="{reconstruction_styles.FLOORPLAN_DISPLAY_MODE}"
     >
       <div class="eyebrow">PropertyQuarry layout viewer</div>
-      <h1>Generated layout viewer</h1>
-      <p>Fixture viewer for the room-route shell. It exposes the same debug hooks the public launch uses to prove route sync and readiness.</p>
+      <h1>Generated reconstruction viewer</h1>
+      <p>Styled Urban Jungle fixture for the room route viewer. It exposes the same debug hooks the public launch uses to prove route sync and readiness.</p>
       <section class="viewer-stage">
         <div class="viewer-chip-row">
           <span class="viewer-chip" id="viewer-route-position">Stop 1 / {len(route_labels)}</span>
@@ -11567,7 +11599,9 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
     </script>
   </body>
 </html>
-""",
+"""
+    (reconstruction_dir / "viewer.html").write_text(
+        viewer_document,
         encoding="utf-8",
     )
     (reconstruction_dir / "model.obj").write_text("o propertyquarry_generated_layout\nv 0 0 0\n", encoding="utf-8")
@@ -11588,16 +11622,32 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
         json.dumps(
             {
                 "provider": "propertyquarry_generated_reconstruction",
+                "schema": "propertyquarry.generated-reconstruction.v1",
                 "verified_provider_capture": False,
                 "satisfies_verified_tour_gate": False,
+                "requested_style": selected_style,
+                "style_scene": style_scene,
                 "room_dimensions_m": {"width": 8.0, "depth": 5.5, "height": 2.8},
                 "geometry": {"wall_rect_count": 8},
+                "floorplan": {
+                    "source_path": (
+                        "property://ArchonMegalon/propertyquarry/e2e/"
+                        "source-floorplan.png"
+                    ),
+                },
                 "walkable_scene": walkable_scene,
                 "route_labels": route_labels,
                 "walkthrough_route_labels": walkthrough_route_labels,
                 "viewer": {
                     "relpath": "viewer.html",
-                    "version": "propertyquarry_3d_tour_viewer_v3",
+                    "version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+                    "style_id": selected_style["id"],
+                    "style_signature": selected_style["signature"],
+                    "style_scene_signature": style_scene["scene_signature"],
+                    "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+                    "sha256": hashlib.sha256(
+                        viewer_document.encode("utf-8")
+                    ).hexdigest(),
                 },
                 "walkthrough": {
                     "status": "generated",
@@ -11615,6 +11665,53 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
         ),
         encoding="utf-8",
     )
+    asset_specs = [
+        (
+            "generated-reconstruction/viewer.html",
+            "text/html",
+            "viewer_document",
+        ),
+        (
+            "generated-reconstruction/reconstruction.json",
+            "application/json",
+            "reconstruction_manifest",
+        ),
+        (
+            "generated-reconstruction/source-floorplan.png",
+            "image/png",
+            "floorplan_texture",
+        ),
+        (
+            "generated-reconstruction/vendor/three.module.js",
+            "text/javascript",
+            "viewer_module",
+        ),
+        (
+            "generated-reconstruction/vendor/examples/jsm/controls/OrbitControls.js",
+            "text/javascript",
+            "viewer_module",
+        ),
+        *[
+            (
+                f"generated-reconstruction/{filename}",
+                "image/png",
+                "photo_texture",
+            )
+            for filename, _label, _fill in photo_specs
+        ],
+    ]
+    asset_bindings = []
+    for relpath, mime_type, role in asset_specs:
+        content = (bundle_dir / relpath).read_bytes()
+        asset_bindings.append(
+            {
+                "path": relpath,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "size_bytes": len(content),
+                "mime_type": mime_type,
+                "role": role,
+            }
+        )
     scenes = [
         {
             "scene_id": "floorplan-1",
@@ -11662,7 +11759,7 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
                 ],
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
-                    "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+                    **style_contract_fields,
                     "viewer_relpath": "generated-reconstruction/viewer.html",
                     "manifest_relpath": "generated-reconstruction/reconstruction.json",
                     "model_relpath": "generated-reconstruction/model.obj",
@@ -11677,6 +11774,7 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
                         "generated-reconstruction/photo-04.png",
                         "generated-reconstruction/photo-05.png",
                     ],
+                    "photo_reference_panel_count": len(photo_specs),
                     "route_labels": route_labels,
                     "room_stop_count": len(route_labels),
                     "walkthrough_route_labels": walkthrough_route_labels,
@@ -11685,8 +11783,38 @@ def _write_generated_reconstruction_public_launch_fixture(bundle_root: Path, *, 
                     "walkthrough_sidecar_relpath": "generated-reconstruction/generated-walkthrough.quality.json",
                     "walkthrough_coverage_proof": coverage_proof,
                     "walkable_scene": walkable_scene,
+                    "capture_mode": False,
+                    "synthetic": True,
                     "verified_provider_capture": False,
                     "satisfies_verified_tour_gate": False,
+                    "disclosure": disclosure,
+                },
+                "generated_viewer_release": {
+                    "contract": PUBLIC_TOUR_GENERATED_VIEWER_RELEASE_CONTRACT,
+                    "status": "ready",
+                    "provider": "propertyquarry_generated_reconstruction",
+                    "viewer_relpath": "generated-reconstruction/viewer.html",
+                    "asset_bindings": asset_bindings,
+                    "browser_receipt_sha256": "1" * 64,
+                    "source_provenance_receipt_sha256": "2" * 64,
+                    "publication_authority_receipt_sha256": "3" * 64,
+                    "security_review_receipt_sha256": "4" * 64,
+                    "accessibility_review_receipt_sha256": "5" * 64,
+                    "browser_interaction_verified": True,
+                    "visual_quality_review_passed": True,
+                    "security_review_passed": True,
+                    "accessibility_review_passed": True,
+                    "source_provenance_verified": True,
+                    "publication_authority_verified": True,
+                    "public_activation_authority": True,
+                    "capture_mode": False,
+                    "synthetic": True,
+                    "verified_provider_capture": False,
+                    "satisfies_verified_tour_gate": False,
+                    "release_revision": "property-layout-e2e-style-proof-v4",
+                    "disclosure": disclosure,
+                    "revoked": False,
+                    "disqualified": False,
                 },
                 "video_relpath": "generated-reconstruction/generated-walkthrough.mp4",
                 "video_sidecar_relpath": "generated-reconstruction/generated-walkthrough.quality.json",
@@ -11723,119 +11851,74 @@ def test_propertyquarry_generated_reconstruction_public_launch_renders_honest_sh
         response = page.goto(f"{base_url}/tours/{slug}", wait_until="domcontentloaded")
         assert response is not None
         assert response.status == 200
-        assert page.locator('[data-launch-mode="tour_public_launch"]').count() == 1
+        assert urllib.parse.urlparse(page.url).path.endswith(
+            f"/tours/viewer/{slug}/generated-reconstruction/viewer.html"
+        )
+        viewer_shell = page.locator("[data-pq-reconstruction-viewer]")
+        assert viewer_shell.count() == 1
+        assert viewer_shell.get_attribute("data-pq-preview-kind") == "styled-3d-reconstruction"
+        assert viewer_shell.get_attribute("data-pq-style-id") == "urban_jungle"
+        assert (
+            viewer_shell.get_attribute("data-pq-floorplan-display-mode")
+            == reconstruction_styles.FLOORPLAN_DISPLAY_MODE
+        )
         body_text = page.inner_text("body").lower()
         assert "generated reconstruction" in body_text
         assert "room route" in body_text
-        assert "reference deck" in body_text
-        assert "tour unavailable" not in body_text
-        assert page.locator("#tour-video").count() == 1
-        assert page.locator("#tour-video source").get_attribute("src").endswith(f"/tours/{slug}/walkthrough")
-        assert page.locator(".route-action").count() == len(route_labels)
-        assert page.locator("#media-grid .media-card").count() == 6
-        assert page.locator("#reference-shell").count() == 1
-        lead_preview_src = page.locator("#lead-preview-image").get_attribute("src")
-        assert lead_preview_src is not None
-        assert lead_preview_src.endswith(f"/tours/files/{slug}/diorama-preview.png")
-        layout_viewer_src = page.locator("#layout-viewer-frame").get_attribute("src")
-        assert layout_viewer_src is not None
-        parsed_layout_viewer_src = urllib.parse.urlparse(layout_viewer_src)
-        assert parsed_layout_viewer_src.path.endswith(f"/tours/files/{slug}/generated-reconstruction/viewer.html")
-        assert urllib.parse.parse_qs(parsed_layout_viewer_src.query) == {"embed": ["1"]}
-        viewer_state = _wait_for_generated_reconstruction_layout_viewer_ready(page)
-        assert viewer_state["shellReady"] is True
-        assert viewer_state["routeLabel"] == route_labels[0]
-        assert viewer_state["routePosition"] == f"Stop 1 / {len(route_labels)}"
-        assert viewer_state["focusReadout"] == route_labels[0]
-        assert viewer_state["renderReadout"] == "Ready"
-        initial_metrics = dict(viewer_state.get("metrics") or {})
+        assert "urban jungle" in body_text
+        page.wait_for_function(
+            "() => Boolean(window.__pqReconstructionDebug?.getRenderMetrics?.().ready)",
+            timeout=10_000,
+        )
+        initial_metrics = page.evaluate(
+            "() => window.__pqReconstructionDebug.getRenderMetrics()"
+        )
         assert bool(initial_metrics.get("ready"))
         assert int(initial_metrics.get("frameCount") or 0) >= 2
         assert int(initial_metrics.get("renderCalls") or 0) > 0
         assert int(initial_metrics.get("renderTriangles") or 0) > 0
-        initial_focus_target = page.locator("#reference-shell").get_attribute("data-focus-target")
         target_index = len(route_labels) - 1
         target_position = f"Stop {target_index + 1} / {len(route_labels)}"
-        target_action = page.locator(".route-action").nth(target_index)
-        target_label = target_action.get_attribute("data-route-label")
-        assert target_label == route_labels[target_index]
-        target_action.click()
-        expect(target_action).to_have_class(re.compile(r".*\bis-active\b.*"))
+        target_label = route_labels[target_index]
+        page.evaluate(
+            "(index) => window.__pqReconstructionDebug.setRouteView(index)",
+            target_index,
+        )
         page.wait_for_function(
             """([expectedLabel, expectedPosition]) => {
-                const frame = document.getElementById('layout-viewer-frame');
-                const doc = frame?.contentDocument;
-                const referenceShell = document.getElementById('reference-shell');
-                const walkthroughStopPosition = document.getElementById('walkthrough-stop-position');
-                if (!doc || !referenceShell || !walkthroughStopPosition) {
-                  return false;
-                }
-                return String(doc.getElementById('viewer-route-label')?.textContent || '').trim() === expectedLabel
-                  && String(doc.getElementById('viewer-route-position')?.textContent || '').trim() === expectedPosition
-                  && String(doc.getElementById('viewer-focus-readout')?.textContent || '').trim() === expectedLabel
-                  && String(walkthroughStopPosition.textContent || '').trim() === expectedPosition
-                  && String(referenceShell.getAttribute('data-focus-target') || '').trim() !== '';
+                return String(document.getElementById('viewer-route-label')?.textContent || '').trim() === expectedLabel
+                  && String(document.getElementById('viewer-route-position')?.textContent || '').trim() === expectedPosition
+                  && String(document.getElementById('viewer-focus-readout')?.textContent || '').trim() === expectedLabel;
             }""",
             arg=[target_label, target_position],
             timeout=10_000,
         )
-        synced_viewer_state = _generated_reconstruction_layout_viewer_state(page)
-        assert synced_viewer_state["routeLabel"] == target_label
-        assert synced_viewer_state["routePosition"] == target_position
-        assert synced_viewer_state["focusReadout"] == target_label
-        synced_focus_target = page.locator("#reference-shell").get_attribute("data-focus-target")
-        assert synced_focus_target
-        assert synced_focus_target != initial_focus_target
         preview_page = context.new_page()
         preview_page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
         preview_page.on("pageerror", lambda exc: console_errors.append(str(exc)))
         preview_response = preview_page.goto(f"{base_url}/tours/{slug}/layout-preview", wait_until="domcontentloaded")
         assert preview_response is not None
         assert preview_response.status == 200
-        assert preview_page.locator('[data-launch-mode="layout_preview"]').count() == 1
-        preview_body = preview_page.inner_text("body").lower()
-        assert "generated reconstruction" in preview_body
-        assert "room route" in preview_body
-        assert "reference deck" in preview_body
-        expect(preview_page.get_by_role("link", name="Open layout viewer")).to_be_visible()
-        preview_lead_preview_src = preview_page.locator("#lead-preview-image").get_attribute("src")
-        assert preview_lead_preview_src is not None
-        assert preview_lead_preview_src.endswith(f"/tours/files/{slug}/diorama-preview.png")
-        preview_layout_viewer_src = preview_page.locator("#layout-viewer-frame").get_attribute("src")
-        assert preview_layout_viewer_src is not None
-        parsed_preview_layout_viewer_src = urllib.parse.urlparse(preview_layout_viewer_src)
-        assert parsed_preview_layout_viewer_src.path.endswith(f"/tours/files/{slug}/generated-reconstruction/viewer.html")
-        assert urllib.parse.parse_qs(parsed_preview_layout_viewer_src.query) == {"embed": ["1"]}
-        assert preview_page.locator("#tour-video").count() == 1
-        assert preview_page.locator(".route-action").count() == len(route_labels)
-        assert preview_page.evaluate(
-            """() => {
-                const layoutViewer = document.getElementById('layout-viewer');
-                const walkthrough = document.getElementById('walkthrough');
-                if (!layoutViewer || !walkthrough) return false;
-                return Boolean(layoutViewer.compareDocumentPosition(walkthrough) & Node.DOCUMENT_POSITION_FOLLOWING);
-            }"""
+        assert urllib.parse.urlparse(preview_page.url).path.endswith(
+            f"/tours/viewer/{slug}/generated-reconstruction/viewer.html"
         )
-        preview_viewer_state = _wait_for_generated_reconstruction_layout_viewer_ready(preview_page)
-        assert preview_viewer_state["shellReady"] is True
-        assert preview_viewer_state["routeLabel"] == route_labels[0]
-        assert preview_viewer_state["routePosition"] == f"Stop 1 / {len(route_labels)}"
-        assert preview_viewer_state["focusReadout"] == route_labels[0]
-        assert preview_viewer_state["renderReadout"] == "Ready"
-        decoded_media_urls = _assert_public_tour_reference_media_decoded(page)
+        assert (
+            preview_page.locator("[data-pq-reconstruction-viewer]").get_attribute(
+                "data-pq-style-id"
+            )
+            == "urban_jungle"
+        )
+        preview_page.wait_for_function(
+            "() => Boolean(window.__pqReconstructionDebug?.getRenderMetrics?.().ready)",
+            timeout=10_000,
+        )
         unexpected_console_errors = [
             message
             for message in console_errors
             if "404 (not found)" not in message.lower() and "cross-origin-opener-policy" not in message.lower()
         ]
         assert not _unexpected_console_errors(unexpected_console_errors), unexpected_console_errors
-        unexpected_failed_requests = _unexpected_generated_photo_request_failures(
-            failed_requests,
-            base_url=base_url,
-            slug=slug,
-            decoded_urls=decoded_media_urls,
-        )
-        assert not unexpected_failed_requests, unexpected_failed_requests
+        assert not failed_requests, failed_requests
     finally:
         context.close()
 
@@ -11859,48 +11942,49 @@ def test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe(
         response = page.goto(f"{base_url}/tours/{slug}", wait_until="domcontentloaded")
         assert response is not None
         assert response.status == 200
+        assert urllib.parse.urlparse(page.url).path.endswith(
+            f"/tours/viewer/{slug}/generated-reconstruction/viewer.html"
+        )
         body_text = page.inner_text("body").lower()
         assert "generated reconstruction" in body_text
         assert "room route" in body_text
-        assert "reference deck" in body_text
-        assert page.locator("#tour-video").count() == 1
-        assert page.locator(".route-action").count() == len(route_labels)
+        assert "urban jungle" in body_text
+        viewer_shell = page.locator("[data-pq-reconstruction-viewer]")
+        assert viewer_shell.get_attribute("data-pq-style-id") == "urban_jungle"
+        page.wait_for_function(
+            "() => Boolean(window.__pqReconstructionDebug?.getRenderMetrics?.().ready)",
+            timeout=10_000,
+        )
+        page.evaluate(
+            "(index) => window.__pqReconstructionDebug.setRouteView(index)",
+            len(route_labels) - 1,
+        )
+        assert page.locator("#viewer-route-label").inner_text() == route_labels[-1]
         mobile_layout = page.evaluate(
             """() => {
-                const absoluteTop = (selector) => {
-                    const node = document.querySelector(selector);
-                    if (!node) return -1;
-                    const box = node.getBoundingClientRect();
-                    return box.top + window.scrollY;
-                };
-                const body = document.body.getBoundingClientRect();
+                const body = document.body;
+                const shell = document.querySelector('[data-pq-reconstruction-viewer]');
+                const stage = document.querySelector('.viewer-stage');
+                const shellBox = shell?.getBoundingClientRect();
+                const stageBox = stage?.getBoundingClientRect();
                 return {
                     viewportWidth: window.innerWidth,
-                    bodyWidth: body.width,
-                    routeTop: absoluteTop('.sidebar-route'),
-                    referenceTop: absoluteTop('.sidebar-reference'),
-                    deckTop: absoluteTop('.sidebar-deck'),
+                    scrollWidth: body.scrollWidth,
+                    shellWidth: shellBox?.width || -1,
+                    stageWidth: stageBox?.width || -1,
                 };
             }"""
         )
-        assert mobile_layout["bodyWidth"] <= mobile_layout["viewportWidth"] + 1, mobile_layout
-        assert mobile_layout["routeTop"] >= 0, mobile_layout
-        assert mobile_layout["referenceTop"] > mobile_layout["routeTop"], mobile_layout
-        assert mobile_layout["deckTop"] > mobile_layout["referenceTop"], mobile_layout
-        decoded_media_urls = _assert_public_tour_reference_media_decoded(page)
+        assert mobile_layout["scrollWidth"] <= mobile_layout["viewportWidth"] + 1, mobile_layout
+        assert 0 < mobile_layout["shellWidth"] <= mobile_layout["viewportWidth"], mobile_layout
+        assert 0 < mobile_layout["stageWidth"] <= mobile_layout["shellWidth"], mobile_layout
         unexpected_console_errors = [
             message
             for message in console_errors
             if "404 (not found)" not in message.lower() and "cross-origin-opener-policy" not in message.lower()
         ]
         assert not _unexpected_console_errors(unexpected_console_errors), unexpected_console_errors
-        unexpected_failed_requests = _unexpected_generated_photo_request_failures(
-            failed_requests,
-            base_url=base_url,
-            slug=slug,
-            decoded_urls=decoded_media_urls,
-        )
-        assert not unexpected_failed_requests, unexpected_failed_requests
+        assert not failed_requests, failed_requests
     finally:
         context.close()
 

@@ -60,9 +60,28 @@ except ModuleNotFoundError:
         playwright_chromium_launch_kwargs as _playwright_chromium_launch_kwargs,
     )
 
+try:
+    from scripts.property_reconstruction_styles import (
+        FLOORPLAN_DISPLAY_MODE,
+        GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        STYLE_SCENE_CONTRACT_VERSION,
+        build_style_scene,
+        reconstruction_style,
+        validate_style_scene,
+    )
+except ModuleNotFoundError:
+    from property_reconstruction_styles import (  # type: ignore[no-redef]
+        FLOORPLAN_DISPLAY_MODE,
+        GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        STYLE_SCENE_CONTRACT_VERSION,
+        build_style_scene,
+        reconstruction_style,
+        validate_style_scene,
+    )
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
-VIEWER_VERSION = "propertyquarry_3d_tour_viewer_v3"
+VIEWER_VERSION = GENERATED_RECONSTRUCTION_VIEWER_VERSION
 DISCLOSURE = "Planning preview built from supplied source material. Use it as a layout aid, not as a captured tour."
 WALKTHROUGH_VIEWPORT_SIZE = (1280, 720)
 WALKTHROUGH_CARD_SIZE = (1440, 810)
@@ -1221,6 +1240,68 @@ def _validate_candidate_generation_manifest(
         if str(receipt.get("slug") or "").strip() != slug:
             raise _PublicBundleTransactionError(
                 "candidate_reconstruction_receipt_slug_mismatch"
+            )
+        requested_style = (
+            receipt.get("requested_style")
+            if isinstance(receipt.get("requested_style"), dict)
+            else {}
+        )
+        try:
+            canonical_style = reconstruction_style(
+                requested_style.get("id"),
+                style_id=requested_style.get("id"),
+            )
+        except ValueError as exc:
+            raise _PublicBundleTransactionError(
+                "candidate_reconstruction_style_invalid"
+            ) from exc
+        if any(
+            str(requested_style.get(key) or "")
+            != str(canonical_style.get(key) or "")
+            for key in ("id", "label", "prompt", "signature")
+        ):
+            raise _PublicBundleTransactionError(
+                "candidate_reconstruction_style_identity_mismatch"
+            )
+        style_scene = (
+            receipt.get("style_scene")
+            if isinstance(receipt.get("style_scene"), dict)
+            else {}
+        )
+        style_ready, _style_reason = validate_style_scene(
+            style_scene,
+            expected_style=canonical_style,
+        )
+        if not style_ready:
+            raise _PublicBundleTransactionError(
+                "candidate_reconstruction_style_evidence_invalid"
+            )
+        expected_generated_style = {
+            "viewer_version": VIEWER_VERSION,
+            "style_contract_version": STYLE_SCENE_CONTRACT_VERSION,
+            "style_id": canonical_style["id"],
+            "style_label": canonical_style["label"],
+            "style_signature": canonical_style["signature"],
+            "style_scene_signature": style_scene.get("scene_signature"),
+            "style_evidence_status": "ready",
+            "styled_scene_instance_count": len(list(style_scene.get("instances") or [])),
+            "style_cue_kinds": list(style_scene.get("required_cues") or []),
+            "floorplan_display_mode": FLOORPLAN_DISPLAY_MODE,
+        }
+        if any(generated.get(key) != value for key, value in expected_generated_style.items()):
+            raise _PublicBundleTransactionError(
+                "candidate_manifest_style_contract_mismatch"
+            )
+        viewer = receipt.get("viewer") if isinstance(receipt.get("viewer"), dict) else {}
+        if (
+            viewer.get("version") != VIEWER_VERSION
+            or viewer.get("style_id") != canonical_style["id"]
+            or viewer.get("style_signature") != canonical_style["signature"]
+            or viewer.get("style_scene_signature") != style_scene.get("scene_signature")
+            or viewer.get("floorplan_display_mode") != FLOORPLAN_DISPLAY_MODE
+        ):
+            raise _PublicBundleTransactionError(
+                "candidate_reconstruction_viewer_style_mismatch"
             )
     finally:
         os.close(reconstruction_fd)
@@ -2608,6 +2689,153 @@ def _generated_reconstruction_diorama_palette(style_label: str) -> dict[str, tup
     }
 
 
+def _style_scene_preview_palette(
+    style_scene: dict[str, object] | None,
+    *,
+    style_label: str,
+) -> dict[str, tuple[int, int, int]]:
+    fallback = _generated_reconstruction_diorama_palette(style_label)
+    scene_palette = (
+        dict(style_scene.get("material_palette") or {})
+        if isinstance(style_scene, dict)
+        else {}
+    )
+
+    def color(key: str, default: tuple[int, int, int]) -> tuple[int, int, int]:
+        raw = str(scene_palette.get(key) or "").strip().lstrip("#")
+        if not re.fullmatch(r"[0-9a-fA-F]{6}", raw):
+            return default
+        return tuple(int(raw[index : index + 2], 16) for index in (0, 2, 4))
+
+    floor = color("floor", fallback["floorplan_wash"])
+    wall = color("wall", fallback["matte"])
+    accent = color("accent", fallback["accent"])
+    return {
+        **fallback,
+        "wash": tuple(int(round((wall[index] * 0.62) + (floor[index] * 0.38))) for index in range(3)),
+        "floorplan_wash": floor,
+        "matte": wall,
+        "accent": accent,
+        "accent_soft": tuple(min(255, int(round((channel * 0.34) + 168))) for channel in accent),
+    }
+
+
+def _draw_style_scene_preview_vignette(
+    canvas: Image.Image,
+    *,
+    style_scene: dict[str, object],
+    box: tuple[int, int, int, int],
+) -> dict[str, object]:
+    palette = dict(style_scene.get("material_palette") or {})
+
+    def color(key: str, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+        raw = str(palette.get(key) or "").strip().lstrip("#")
+        if not re.fullmatch(r"[0-9a-fA-F]{6}", raw):
+            return fallback
+        return tuple(int(raw[index : index + 2], 16) for index in (0, 2, 4))
+
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    left, top, right, bottom = box
+    surface_floor = color("floor", (220, 204, 178))
+    surface_accent = color("accent", (72, 104, 80))
+    surface_fill = tuple(
+        max(
+            0,
+            min(
+                255,
+                int(round((surface_floor[index] * 0.72) + (surface_accent[index] * 0.28))),
+            ),
+        )
+        for index in range(3)
+    )
+    draw.rounded_rectangle(
+        box,
+        radius=30,
+        fill=(*surface_fill, 244),
+        outline=(*color("edge", (128, 103, 72)), 255),
+        width=3,
+    )
+    heading_font = _preview_font(22, bold=True)
+    label_font = _preview_font(16, bold=True)
+    detail_font = _preview_font(13)
+    draw.text((left + 24, top + 20), "Styled 3D reconstruction", font=heading_font, fill=(35, 39, 35))
+    draw.text(
+        (left + 24, top + 51),
+        str(style_scene.get("style_label") or "Selected style"),
+        font=label_font,
+        fill=color("accent", (72, 104, 80)),
+    )
+    floor_polygon = (
+        (left + 30, bottom - 72),
+        (left + 112, top + 98),
+        (right - 38, top + 116),
+        (right - 22, bottom - 54),
+    )
+    floor_color = color("floor", (220, 204, 178))
+    floor_preview_color = tuple(max(0, int(round(channel * 0.82))) for channel in floor_color)
+    draw.polygon(floor_polygon, fill=(*floor_preview_color, 255))
+    draw.line((*floor_polygon, floor_polygon[0]), fill=(*color("edge", (121, 94, 62)), 255), width=3)
+
+    first_route_instances = [
+        dict(row)
+        for row in list(style_scene.get("instances") or [])
+        if isinstance(row, dict) and int(row.get("route_index") or 0) == 0
+    ]
+    anchors = (
+        (left + 94, top + 166),
+        (left + 202, top + 156),
+        (left + 116, top + 278),
+        (left + 254, top + 274),
+    )
+    rendered_cues: list[str] = []
+    for index, instance in enumerate(first_route_instances[:4]):
+        anchor_x, anchor_y = anchors[index]
+        shape = str(instance.get("shape") or "box")
+        material_color = color(str(instance.get("material") or ""), color("accent", (78, 110, 85)))
+        cue = str(instance.get("cue") or "").replace("_", " ")
+        if shape == "plant":
+            draw.rounded_rectangle((anchor_x - 18, anchor_y + 22, anchor_x + 18, anchor_y + 64), radius=8, fill=(*color("rattan", (181, 130, 75)), 255))
+            draw.line((anchor_x, anchor_y + 24, anchor_x, anchor_y - 24), fill=(*color("timber", (113, 77, 48)), 255), width=7)
+            for offset_x, offset_y in ((-25, -12), (23, -18), (-18, 8), (19, 2), (0, -36)):
+                draw.ellipse((anchor_x + offset_x - 14, anchor_y + offset_y - 9, anchor_x + offset_x + 14, anchor_y + offset_y + 9), fill=(*color("foliage", (61, 112, 73)), 255))
+        elif shape == "rattan_chair":
+            rattan = color("rattan", material_color)
+            draw.rounded_rectangle((anchor_x - 34, anchor_y - 28, anchor_x + 34, anchor_y + 5), radius=10, outline=(*rattan, 255), width=8)
+            draw.rounded_rectangle((anchor_x - 37, anchor_y + 2, anchor_x + 37, anchor_y + 30), radius=8, fill=(*rattan, 255))
+            draw.line((anchor_x - 28, anchor_y + 28, anchor_x - 34, anchor_y + 64), fill=(*rattan, 255), width=7)
+            draw.line((anchor_x + 28, anchor_y + 28, anchor_x + 34, anchor_y + 64), fill=(*rattan, 255), width=7)
+        elif shape == "rug":
+            draw.rounded_rectangle((anchor_x - 58, anchor_y - 28, anchor_x + 58, anchor_y + 32), radius=18, fill=(*material_color, 232), outline=(*color("edge", (120, 99, 72)), 255), width=3)
+        elif shape in {"table", "bench"}:
+            draw.rounded_rectangle((anchor_x - 48, anchor_y - 5, anchor_x + 48, anchor_y + 12), radius=5, fill=(*material_color, 255))
+            draw.line((anchor_x - 39, anchor_y + 10, anchor_x - 43, anchor_y + 53), fill=(*material_color, 255), width=7)
+            draw.line((anchor_x + 39, anchor_y + 10, anchor_x + 43, anchor_y + 53), fill=(*material_color, 255), width=7)
+            if shape == "bench":
+                draw.rounded_rectangle((anchor_x - 48, anchor_y - 42, anchor_x + 48, anchor_y - 7), radius=7, outline=(*material_color, 255), width=7)
+        elif shape in {"cylinder", "vessels"}:
+            for vessel_offset, scale in ((-22, 0.72), (8, 1.0), (34, 0.62)):
+                vessel_height = int(round(52 * scale))
+                draw.rounded_rectangle((anchor_x + vessel_offset - 12, anchor_y + 30 - vessel_height, anchor_x + vessel_offset + 12, anchor_y + 30), radius=9, fill=(*material_color, 255))
+        elif shape == "shelf":
+            draw.rectangle((anchor_x - 42, anchor_y - 46, anchor_x + 42, anchor_y + 48), fill=(*material_color, 255), outline=(*color("edge", (120, 99, 72)), 255), width=4)
+            for shelf_y in (anchor_y - 18, anchor_y + 12):
+                draw.line((anchor_x - 38, shelf_y, anchor_x + 38, shelf_y), fill=(255, 255, 255, 210), width=4)
+        else:
+            draw.rounded_rectangle((anchor_x - 48, anchor_y - 25, anchor_x + 48, anchor_y + 34), radius=9, fill=(*material_color, 255), outline=(*color("edge", (120, 99, 72)), 255), width=3)
+        draw.text(
+            (anchor_x - 54, min(bottom - 29, anchor_y + 68)),
+            _preview_fit_text(cue, font=detail_font, max_width=108),
+            font=detail_font,
+            fill=(49, 48, 42),
+        )
+        rendered_cues.append(str(instance.get("cue") or ""))
+    return {
+        "box": list(box),
+        "rendered_cues": rendered_cues,
+        "rendered_instance_count": len(rendered_cues),
+    }
+
+
 def _preview_font(size: int, *, bold: bool = False, serif: bool = False) -> ImageFont.ImageFont:
     family = "serif" if serif else "sans"
     normalized_size = max(10, int(size))
@@ -3229,10 +3457,25 @@ def _write_generated_reconstruction_diorama_preview(
     photo_paths: list[Path],
     walkable_scene: dict[str, object],
     style_label: str = "",
+    style_scene: dict[str, object] | None = None,
     floorplan_inferred: bool = False,
 ) -> dict[str, object]:
-    palette = _generated_reconstruction_diorama_palette(style_label)
     route_stops = [dict(stop) for stop in list(walkable_scene.get("route") or []) if isinstance(stop, dict)]
+    applied_style_scene = style_scene or build_style_scene(
+        reconstruction_style(),
+        route_stop_count=max(1, len(route_stops)),
+    )
+    style_preview_ready, style_preview_reason = validate_style_scene(applied_style_scene)
+    if not style_preview_ready:
+        return {
+            "status": "failed",
+            "reason": "diorama_preview_style_evidence_invalid",
+            "detail": style_preview_reason,
+        }
+    palette = _style_scene_preview_palette(
+        applied_style_scene,
+        style_label=style_label,
+    )
     max_route_rows = 12
     route_labels = [
         _compact_route_label(
@@ -3358,6 +3601,13 @@ def _write_generated_reconstruction_diorama_preview(
             anchor_y = min(int(anchor_y), canvas.height - panel_card.height - 24)
             canvas.alpha_composite(panel_card, (anchor_x, anchor_y))
             panel_boxes.append((anchor_x, anchor_y, anchor_x + panel_card.width, anchor_y + panel_card.height))
+
+        style_vignette = _draw_style_scene_preview_vignette(
+            canvas,
+            style_scene=applied_style_scene,
+            box=(760, 330, 1120, 790),
+        )
+        style_vignette_box = tuple(int(value) for value in list(style_vignette.get("box") or []))
 
         title_box = (70, 64, 752, 360)
         draw.rounded_rectangle(
@@ -3547,6 +3797,12 @@ def _write_generated_reconstruction_diorama_preview(
                 for index, first in enumerate(key_region_boxes)
                 for second in key_region_boxes[index + 1 :]
             ),
+            "style_vignette_fits_canvas": len(style_vignette_box) == 4
+            and _preview_rect_contains(canvas_box, style_vignette_box),
+            "style_vignette_covers_required_cues": set(
+                str(value) for value in list(style_vignette.get("rendered_cues") or [])
+            )
+            == set(str(value) for value in list(applied_style_scene.get("required_cues") or [])),
         }
         failed_layout_checks = [name for name, passed in layout_checks.items() if not passed]
         if failed_layout_checks:
@@ -3565,6 +3821,12 @@ def _write_generated_reconstruction_diorama_preview(
             "source_mode": source_mode,
             "source_photo_count": photo_count,
             "source_disclosure": source_disclosure,
+            "preview_kind": "deterministic_style_scene_vignette",
+            "style_id": str(applied_style_scene.get("style_id") or ""),
+            "style_signature": str(applied_style_scene.get("style_signature") or ""),
+            "style_scene_signature": str(applied_style_scene.get("scene_signature") or ""),
+            "style_evidence_status": "ready",
+            "rendered_style_cues": list(style_vignette.get("rendered_cues") or []),
             "layout": {
                 "status": "pass",
                 "canvas_size_px": {"width": canvas.width, "height": canvas.height},
@@ -3577,6 +3839,7 @@ def _write_generated_reconstruction_diorama_preview(
                     "route_labels": [list(box) for box in route_label_boxes],
                     "footer": list(footer_box),
                     "source_panels": [list(box) for box in panel_boxes],
+                    "style_vignette": list(style_vignette_box),
                 },
                 "displayed_route_stop_count": len(route_labels),
                 "displayed_route_labels": fitted_route_labels,
@@ -3596,8 +3859,9 @@ def _write_generated_reconstruction_telegram_preview(
     *,
     source_path: Path,
     style_label: str = "",
+    style_scene: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    palette = _generated_reconstruction_diorama_palette(style_label)
+    palette = _style_scene_preview_palette(style_scene, style_label=style_label)
     try:
         with Image.open(source_path) as image:
             base = ImageOps.exif_transpose(image).convert("RGB")
@@ -3657,6 +3921,10 @@ def _write_generated_reconstruction_telegram_preview(
             "size_bytes": output_path.stat().st_size,
             "source_sha256": _sha256(source_path),
             "composition": "telegram_share_fit_full_diorama",
+            "style_id": str((style_scene or {}).get("style_id") or ""),
+            "style_signature": str((style_scene or {}).get("style_signature") or ""),
+            "style_scene_signature": str((style_scene or {}).get("scene_signature") or ""),
+            "style_evidence_status": str((style_scene or {}).get("evidence_status") or ""),
             "layout": {
                 "status": "pass",
                 "canvas_size_px": {"width": canvas_width, "height": canvas_height},
@@ -5748,8 +6016,29 @@ def _write_obj(
     depth_m: float,
     height_m: float,
     wall_rectangles: list[dict[str, float]],
+    style_scene: dict[str, object] | None = None,
 ) -> None:
-    obj_lines = ["mtllib model.mtl", "o propertyquarry_generated_layout"]
+    applied_style_scene = style_scene or build_style_scene(
+        reconstruction_style(),
+        route_stop_count=1,
+    )
+    style_palette = dict(applied_style_scene.get("material_palette") or {})
+
+    def material_rgb(key: str, fallback: str) -> tuple[float, float, float]:
+        raw = str(style_palette.get(key) or fallback).strip().lstrip("#")
+        if not re.fullmatch(r"[0-9a-fA-F]{6}", raw):
+            raw = fallback.lstrip("#")
+        return tuple(round(int(raw[index : index + 2], 16) / 255.0, 4) for index in (0, 2, 4))
+
+    floor_rgb = material_rgb("floor", "#f0e6d6")
+    wall_rgb = material_rgb("wall", "#e6ded0")
+    obj_lines = [
+        f"# style_id {str(applied_style_scene.get('style_id') or '')}",
+        f"# style_signature {str(applied_style_scene.get('style_signature') or '')}",
+        f"# style_scene_signature {str(applied_style_scene.get('scene_signature') or '')}",
+        "mtllib model.mtl",
+        "o propertyquarry_generated_layout",
+    ]
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[str, str, tuple[int, int, int, int]]] = []
 
@@ -5840,14 +6129,17 @@ def _write_obj(
     (target_dir / "model.mtl").write_text(
         "\n".join(
             [
+                f"# style_id {str(applied_style_scene.get('style_id') or '')}",
+                f"# style_signature {str(applied_style_scene.get('style_signature') or '')}",
+                f"# style_scene_signature {str(applied_style_scene.get('scene_signature') or '')}",
                 "newmtl warm_floor",
-                "Ka 0.94 0.90 0.84",
-                "Kd 0.94 0.90 0.84",
+                f"Ka {floor_rgb[0]:.4f} {floor_rgb[1]:.4f} {floor_rgb[2]:.4f}",
+                f"Kd {floor_rgb[0]:.4f} {floor_rgb[1]:.4f} {floor_rgb[2]:.4f}",
                 "Ks 0.01 0.01 0.01",
                 "Ns 8",
                 "newmtl warm_plaster",
-                "Ka 0.78 0.74 0.69",
-                "Kd 0.90 0.87 0.81",
+                f"Ka {wall_rgb[0]:.4f} {wall_rgb[1]:.4f} {wall_rgb[2]:.4f}",
+                f"Kd {wall_rgb[0]:.4f} {wall_rgb[1]:.4f} {wall_rgb[2]:.4f}",
                 "Ks 0.04 0.04 0.04",
                 "Ns 14",
             ]
@@ -5980,7 +6272,11 @@ def _copy_viewer_vendor_assets(target_dir: Path) -> dict[str, object]:
     }
 
 
-def _write_glb(target_dir: Path) -> dict[str, object]:
+def _write_glb(
+    target_dir: Path,
+    *,
+    style_scene: dict[str, object] | None = None,
+) -> dict[str, object]:
     obj_path = target_dir / "model.obj"
     glb_path = target_dir / "model.glb"
     temporary_glb_path = target_dir / f".model.glb.{secrets.token_hex(8)}.tmp"
@@ -5988,9 +6284,22 @@ def _write_glb(target_dir: Path) -> dict[str, object]:
         glb_path.unlink(missing_ok=True)
         return {"status": "skipped", "reason": "obj_missing"}
 
+    applied_style_scene = style_scene or build_style_scene(
+        reconstruction_style(),
+        route_stop_count=1,
+    )
+    style_palette = dict(applied_style_scene.get("material_palette") or {})
+
+    def glb_color(key: str, fallback: str) -> tuple[float, float, float, float]:
+        raw = str(style_palette.get(key) or fallback).strip().lstrip("#")
+        if not re.fullmatch(r"[0-9a-fA-F]{6}", raw):
+            raw = fallback.lstrip("#")
+        rgb = tuple(round(int(raw[index : index + 2], 16) / 255.0, 6) for index in (0, 2, 4))
+        return (*rgb, 1.0)
+
     material_specs = (
-        ("warm_floor", (0.94, 0.90, 0.84, 1.0), 0.88),
-        ("warm_plaster", (0.90, 0.87, 0.81, 1.0), 0.82),
+        ("warm_floor", glb_color("floor", "#f0e6d6"), 0.88),
+        ("warm_plaster", glb_color("wall", "#e6ded0"), 0.82),
     )
     material_names = tuple(name for name, _color, _roughness in material_specs)
 
@@ -6580,7 +6889,25 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
         if isinstance(manifest.get("photo_reference_panels"), list)
         else []
     )
-    style_label = str(manifest.get("style_label") or "").strip()
+    style_scene = dict(manifest.get("style_scene") or {}) if isinstance(manifest.get("style_scene"), dict) else {}
+    requested_style = (
+        dict(manifest.get("requested_style") or {})
+        if isinstance(manifest.get("requested_style"), dict)
+        else {}
+    )
+    if not style_scene:
+        try:
+            fallback_style = reconstruction_style(manifest.get("style_label"))
+        except ValueError:
+            fallback_style = reconstruction_style()
+        style_scene = build_style_scene(
+            fallback_style,
+            route_stop_count=max(1, len(route_stops)),
+        )
+    style_label = str(style_scene.get("style_label") or manifest.get("style_label") or "").strip()
+    style_id = str(style_scene.get("style_id") or requested_style.get("id") or "").strip()
+    style_signature = str(style_scene.get("style_signature") or requested_style.get("signature") or "").strip()
+    style_scene_signature = str(style_scene.get("scene_signature") or "").strip()
     escaped_style = html.escape(style_label)
     style_copy = f'<span>{escaped_style}</span>' if escaped_style else ""
     source_description = "the floorplan and listing photos" if photos else "the floorplan"
@@ -6681,12 +7008,12 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
         else ""
     )
     return f"""<!doctype html>
-<html lang="en" data-pq-preview-kind="approximate-layout" data-pq-verified-provider-capture="false" data-viewer-status="loading">
+<html lang="en" data-pq-preview-kind="styled-3d-reconstruction" data-pq-verified-provider-capture="false" data-pq-style-id="{html.escape(style_id)}" data-pq-style-signature="{html.escape(style_signature)}" data-pq-style-scene-signature="{html.escape(style_scene_signature)}" data-pq-floorplan-display-mode="{FLOORPLAN_DISPLAY_MODE}" data-viewer-status="loading">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:,">
-  <title>Layout preview | PropertyQuarry</title>
+  <title>Styled 3D reconstruction | PropertyQuarry</title>
   <style>
     :root {{
       color-scheme: light;
@@ -7116,8 +7443,8 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
     <div class="stage-hotspots" id="stage-hotspots" aria-label="Room hotspots"></div>
     <div class="hud">
       <div class="title-card">
-        <h1>Layout preview</h1>
-        <p>Use the real floorplan layout to understand the space before deciding whether to visit.</p>
+        <h1>Styled 3D reconstruction</h1>
+        <p>Explore generated furnishings in the floorplan-derived layout before deciding whether to visit.</p>
       </div>
       <div class="hint-pill">Drag, zoom, then inspect the plan beside it.</div>
     </div>
@@ -7126,6 +7453,7 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
       <button class="viewer-chip" id="view-dollhouse" type="button" aria-pressed="false">Dollhouse</button>
       <button class="viewer-chip" id="view-inside" type="button" aria-pressed="false">Room view</button>
       <button class="viewer-chip" id="view-guided-route" type="button" aria-pressed="false">Guide me</button>
+      <button class="viewer-chip" id="view-floorplan-reference" type="button" aria-pressed="false">Plan overlay</button>
     </div>
     <div class="capture-route-card" id="capture-route-card" hidden>
       <span class="capture-route-kicker" id="capture-route-kicker">Layout flythrough</span>
@@ -7136,10 +7464,10 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
   <aside>
     <section class="panel">
       <div class="panel-head">
-        <p>Layout preview</p>
-        <span>approx.</span>
+        <p>Styled 3D reconstruction</p>
+        <span>generated</span>
       </div>
-      <p class="note">Approximate planning preview. Built from {source_description}. Use it for orientation; confirm dimensions at the viewing.</p>
+      <p class="note">Generated planning reconstruction built from {source_description}; it is not a captured or measured tour. Confirm dimensions and finishes at the viewing.</p>
       {f'<span class="style-pill">{style_copy}</span>' if style_copy else ''}
     </section>
     <section class="panel facts" aria-label="Approximate room dimensions">
@@ -7175,8 +7503,28 @@ const overviewButton = document.getElementById("view-overview");
 const dollhouseButton = document.getElementById("view-dollhouse");
 const insideButton = document.getElementById("view-inside");
 const guideButton = document.getElementById("view-guided-route");
+const floorplanReferenceButton = document.getElementById("view-floorplan-reference");
 const wallRectangles = {_html_script_safe_json(wall_rectangles)};
 const walkableScene = {_html_script_safe_json(walkable_scene)};
+const styleScene = {_html_script_safe_json(style_scene)};
+const stylePalette = styleScene && typeof styleScene.material_palette === "object" ? styleScene.material_palette : {{}};
+const styleInstances = Array.isArray(styleScene.instances) ? styleScene.instances.filter((row) => row && typeof row === "object") : [];
+const requiredStyleCues = Array.isArray(styleScene.required_cues) ? styleScene.required_cues.map((value) => String(value || "")).filter(Boolean) : [];
+const styleKey = String(styleScene.style_id || "");
+const styleEvidenceDigest = String(styleScene.scene_signature || "");
+const styleSceneContractReady =
+  String(styleScene.contract_version || "") === {_html_script_safe_json(STYLE_SCENE_CONTRACT_VERSION)}
+  && String(styleScene.evidence_status || "") === "ready"
+  && styleScene.materially_applied === true
+  && String(styleScene.floorplan_display_mode || "") === {_html_script_safe_json(FLOORPLAN_DISPLAY_MODE)}
+  && Boolean(styleKey)
+  && Boolean(String(styleScene.style_signature || ""))
+  && Boolean(styleEvidenceDigest)
+  && styleInstances.length >= requiredStyleCues.length;
+function styleColor(key, fallback) {{
+  const value = String(stylePalette[key] || fallback || "").trim();
+  return /^#[0-9a-f]{{6}}$/i.test(value) ? value : fallback;
+}}
 const routeStops = Array.isArray(walkableScene.route) ? walkableScene.route.filter((stop) => stop && typeof stop === "object") : [];
 const photoPanelSpecs = {_html_script_safe_json(photo_reference_panels)};
 const routeButtons = Array.from(document.querySelectorAll(".route-button"));
@@ -7234,13 +7582,19 @@ function showViewerFallback() {{
       guidedRouteActive: false,
       prefersReducedMotion: Boolean(prefersReducedMotion),
       frameCount: 0,
+      styleKey,
+      styleEvidenceDigest,
+      styledObjectCount: 0,
+      visibleStyledObjectCount: 0,
+      projectedStyledCoveragePct: 0,
+      floorplanLayerState: "off",
     }}),
   }};
 }}
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xe8eeeb);
-scene.fog = new THREE.Fog(0xe8eeeb, 13, 34);
+scene.background = new THREE.Color(styleColor("background", "#e8eeeb"));
+scene.fog = new THREE.Fog(styleColor("background", "#e8eeeb"), 13, 34);
 let renderFrameCount = 0;
 
 const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
@@ -7294,8 +7648,8 @@ floorTexture.needsUpdate = true;
 const floor = new THREE.Mesh(
   new THREE.PlaneGeometry(roomWidth, roomDepth),
   new THREE.MeshStandardMaterial({{
-    color: 0xf8f4eb,
-    map: floorTexture,
+    color: styleColor("floor", "#f8f4eb"),
+    map: null,
     roughness: 0.96,
     metalness: 0.0,
   }})
@@ -7303,9 +7657,25 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
+let floorplanLayerActive = false;
+function setFloorplanLayer(active) {{
+  floorplanLayerActive = Boolean(active);
+  floor.material.map = floorplanLayerActive ? floorTexture : null;
+  floor.material.color.set(styleColor("floor", "#f8f4eb"));
+  floor.material.needsUpdate = true;
+  if (floorplanReferenceButton) {{
+    floorplanReferenceButton.dataset.active = floorplanLayerActive ? "true" : "false";
+    floorplanReferenceButton.setAttribute("aria-pressed", floorplanLayerActive ? "true" : "false");
+  }}
+  return floorplanLayerActive;
+}}
+if (floorplanReferenceButton) {{
+  floorplanReferenceButton.addEventListener("click", () => setFloorplanLayer(!floorplanLayerActive));
+}}
+setFloorplanLayer(false);
 
 const wallMaterial = new THREE.MeshStandardMaterial({{
-  color: 0xf4efe4,
+  color: styleColor("wall", "#f4efe4"),
   roughness: 0.88,
   metalness: 0.02,
   side: THREE.DoubleSide,
@@ -7313,7 +7683,7 @@ const wallMaterial = new THREE.MeshStandardMaterial({{
   opacity: 1.0,
 }});
 const wallEdgeMaterial = new THREE.LineBasicMaterial({{
-  color: 0xc2ab83,
+  color: styleColor("edge", "#c2ab83"),
   transparent: true,
   opacity: 0.62,
 }});
@@ -7418,14 +7788,23 @@ if (routeLinePoints.length >= 2) {{
 
 const stagingGroup = new THREE.Group();
 scene.add(stagingGroup);
+const semanticStagingGroup = new THREE.Group();
+semanticStagingGroup.name = "generated-semantic-staging";
+stagingGroup.add(semanticStagingGroup);
+const styleStagingGroup = new THREE.Group();
+styleStagingGroup.name = "generated-style-staging";
+stagingGroup.add(styleStagingGroup);
 const stagingObjects = [];
+const semanticStagingObjects = [];
 const stagingMaterials = {{
-  textile: new THREE.MeshStandardMaterial({{ color: 0xb58f73, roughness: 0.86, metalness: 0.0 }}),
-  paleTextile: new THREE.MeshStandardMaterial({{ color: 0xe4dacd, roughness: 0.9, metalness: 0.0 }}),
-  timber: new THREE.MeshStandardMaterial({{ color: 0x9b7650, roughness: 0.72, metalness: 0.02 }}),
-  stone: new THREE.MeshStandardMaterial({{ color: 0xd7d0c3, roughness: 0.82, metalness: 0.01 }}),
-  accent: new THREE.MeshStandardMaterial({{ color: 0xa77c2b, roughness: 0.58, metalness: 0.03 }}),
-  foliage: new THREE.MeshStandardMaterial({{ color: 0x6f8561, roughness: 0.92, metalness: 0.0 }}),
+  textile: new THREE.MeshStandardMaterial({{ color: styleColor("textile", "#b58f73"), roughness: 0.86, metalness: 0.0 }}),
+  paleTextile: new THREE.MeshStandardMaterial({{ color: styleColor("paleTextile", "#e4dacd"), roughness: 0.9, metalness: 0.0 }}),
+  timber: new THREE.MeshStandardMaterial({{ color: styleColor("timber", "#9b7650"), roughness: 0.72, metalness: 0.02 }}),
+  stone: new THREE.MeshStandardMaterial({{ color: styleColor("stone", "#d7d0c3"), roughness: 0.82, metalness: 0.01 }}),
+  accent: new THREE.MeshStandardMaterial({{ color: styleColor("accent", "#a77c2b"), roughness: 0.58, metalness: 0.03 }}),
+  foliage: new THREE.MeshStandardMaterial({{ color: styleColor("foliage", "#6f8561"), roughness: 0.92, metalness: 0.0 }}),
+  rattan: new THREE.MeshStandardMaterial({{ color: styleColor("rattan", "#b78249"), roughness: 0.76, metalness: 0.0 }}),
+  metal: new THREE.MeshStandardMaterial({{ color: styleColor("metal", "#b59445"), roughness: 0.32, metalness: 0.72 }}),
 }};
 
 function stagingKind(stop) {{
@@ -7456,6 +7835,7 @@ function addStagingBox(group, name, dimensions, position, material, rotationY = 
   mesh.receiveShadow = true;
   group.add(mesh);
   stagingObjects.push(mesh);
+  semanticStagingObjects.push(mesh);
   return mesh;
 }}
 
@@ -7470,6 +7850,7 @@ function addStagingRug(group, dimensions, position, material) {{
   rug.receiveShadow = true;
   group.add(rug);
   stagingObjects.push(rug);
+  semanticStagingObjects.push(rug);
   return rug;
 }}
 
@@ -7507,11 +7888,316 @@ function addGeneratedStagingForStop(stop, index) {{
     addStagingBox(group, "generated-planter", {{ x: 0.34, y: 0.4, z: 0.34 }}, {{ x: -0.52, y: 0.2, z: -0.28 }}, stagingMaterials.accent);
     addStagingBox(group, "generated-foliage", {{ x: 0.42, y: 0.42, z: 0.42 }}, {{ x: -0.52, y: 0.56, z: -0.28 }}, stagingMaterials.foliage);
   }}
-  stagingGroup.add(group);
+  semanticStagingGroup.add(group);
+  return group;
+}}
+
+const styledSceneObjects = [];
+const observedStyleCues = new Set();
+
+function addStyleMesh(group, geometry, material, name, position = {{ x: 0, y: 0, z: 0 }}) {{
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = String(name || "generated-style-mesh");
+  mesh.position.set(Number(position.x || 0), Number(position.y || 0), Number(position.z || 0));
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+  stagingObjects.push(mesh);
+  return mesh;
+}}
+
+function styledRouteAnchor(routeIndex, focus) {{
+  const routeInstances = styleInstances.filter(
+    (candidate) => Number(candidate?.route_index ?? -1) === Number(routeIndex),
+  );
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const candidate of routeInstances) {{
+    const candidatePosition = candidate?.position && typeof candidate.position === "object"
+      ? candidate.position
+      : {{}};
+    const candidateDimensions = candidate?.dimensions && typeof candidate.dimensions === "object"
+      ? candidate.dimensions
+      : {{}};
+    const halfWidth = Math.max(0.08, Number(candidateDimensions.x || 0.4)) * 0.5;
+    const halfDepth = Math.max(0.08, Number(candidateDimensions.z || 0.4)) * 0.5;
+    const offsetX = Number(candidatePosition.x || 0);
+    const offsetZ = Number(candidatePosition.z || 0);
+    minX = Math.min(minX, offsetX - halfWidth);
+    maxX = Math.max(maxX, offsetX + halfWidth);
+    minZ = Math.min(minZ, offsetZ - halfDepth);
+    maxZ = Math.max(maxZ, offsetZ + halfDepth);
+  }}
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {{
+    minX = -0.2;
+    maxX = 0.2;
+  }}
+  if (!Number.isFinite(minZ) || !Number.isFinite(maxZ)) {{
+    minZ = -0.2;
+    maxZ = 0.2;
+  }}
+  const limitX = roomWidth * 0.40;
+  const limitZ = roomDepth * 0.40;
+  const minimumAnchorX = -limitX - minX;
+  const maximumAnchorX = limitX - maxX;
+  const minimumAnchorZ = -limitZ - minZ;
+  const maximumAnchorZ = limitZ - maxZ;
+  const requestedX = Number(focus?.x || 0);
+  const requestedZ = Number(focus?.z || 0);
+  return {{
+    x: minimumAnchorX <= maximumAnchorX
+      ? Math.max(minimumAnchorX, Math.min(maximumAnchorX, requestedX))
+      : 0,
+    z: minimumAnchorZ <= maximumAnchorZ
+      ? Math.max(minimumAnchorZ, Math.min(maximumAnchorZ, requestedZ))
+      : 0,
+  }};
+}}
+
+function addStyledSceneInstance(instance) {{
+  const routeIndex = Number(instance?.route_index ?? -1);
+  const routeStop = routeStops[routeIndex];
+  const focus = routeStop?.focus && typeof routeStop.focus === "object" ? routeStop.focus : null;
+  if (!focus) return null;
+  const dimensions = instance?.dimensions && typeof instance.dimensions === "object" ? instance.dimensions : {{}};
+  const position = instance?.position && typeof instance.position === "object" ? instance.position : {{}};
+  const width = Math.max(0.08, Number(dimensions.x || 0.4));
+  const height = Math.max(0.08, Number(dimensions.y || 0.4));
+  const depth = Math.max(0.08, Number(dimensions.z || 0.4));
+  const material = stagingMaterials[String(instance.material || "")] || stagingMaterials.accent;
+  const group = new THREE.Group();
+  group.name = `generated-style-instance-${{String(instance.id || styledSceneObjects.length + 1)}}`;
+  group.userData.styleInstanceId = String(instance.id || "");
+  group.userData.styleCue = String(instance.cue || "");
+  group.userData.styleKey = styleKey;
+  group.userData.routeIndex = routeIndex;
+  const routeAnchor = styledRouteAnchor(routeIndex, focus);
+  group.position.set(
+    routeAnchor.x + Number(position.x || 0),
+    0,
+    routeAnchor.z + Number(position.z || 0),
+  );
+  group.rotation.y = (routeIndex % 2 === 0 ? -0.16 : 0.16);
+  const shape = String(instance.shape || "box");
+  const baseName = `generated-style-${{String(instance.kind || shape)}}`;
+  if (shape === "rug") {{
+    addStyleMesh(
+      group,
+      new THREE.BoxGeometry(width, 0.045, depth),
+      material,
+      baseName,
+      {{ x: 0, y: 0.045, z: 0 }},
+    );
+    const borderThickness = Math.max(0.035, Math.min(width, depth) * 0.045);
+    for (const [borderName, borderWidth, borderDepth, borderX, borderZ] of [
+      ["north", width, borderThickness, 0, -((depth - borderThickness) * 0.5)],
+      ["south", width, borderThickness, 0, (depth - borderThickness) * 0.5],
+      ["west", borderThickness, depth, -((width - borderThickness) * 0.5), 0],
+      ["east", borderThickness, depth, (width - borderThickness) * 0.5, 0],
+    ]) {{
+      addStyleMesh(
+        group,
+        new THREE.BoxGeometry(borderWidth, 0.018, borderDepth),
+        stagingMaterials.paleTextile,
+        `${{baseName}}-linen-border-${{borderName}}`,
+        {{ x: borderX, y: 0.076, z: borderZ }},
+      );
+    }}
+  }} else if (shape === "table" || shape === "bench") {{
+    addStyleMesh(
+      group,
+      new THREE.BoxGeometry(width, Math.max(0.07, height * 0.14), depth),
+      material,
+      `${{baseName}}-surface`,
+      {{ x: 0, y: height * 0.84, z: 0 }},
+    );
+    for (const [legX, legZ] of [[-0.40, -0.36], [0.40, -0.36], [-0.40, 0.36], [0.40, 0.36]]) {{
+      addStyleMesh(
+        group,
+        new THREE.CylinderGeometry(width * 0.035, width * 0.045, height * 0.78, 12),
+        material,
+        `${{baseName}}-leg`,
+        {{ x: width * legX, y: height * 0.39, z: depth * legZ }},
+      );
+    }}
+    if (shape === "bench") {{
+      addStyleMesh(
+        group,
+        new THREE.BoxGeometry(width, height * 0.52, depth * 0.12),
+        material,
+        `${{baseName}}-back`,
+        {{ x: 0, y: height * 0.88, z: -depth * 0.44 }},
+      );
+    }}
+  }} else if (shape === "cylinder") {{
+    addStyleMesh(
+      group,
+      new THREE.CylinderGeometry(width * 0.5, width * 0.5, height, 28),
+      material,
+      baseName,
+      {{ x: 0, y: height * 0.5, z: 0 }},
+    );
+  }} else if (shape === "plant") {{
+    const plantCluster = [
+      {{ x: -width * 0.22, z: width * 0.10, scale: 0.82, phase: 0.0 }},
+      {{ x: width * 0.18, z: -width * 0.08, scale: 1.0, phase: 0.9 }},
+      {{ x: width * 0.08, z: width * 0.24, scale: 0.70, phase: 1.8 }},
+    ];
+    plantCluster.forEach((plant, plantIndex) => {{
+      const plantHeight = height * plant.scale;
+      const potRadius = width * (plantIndex === 1 ? 0.24 : 0.19);
+      addStyleMesh(
+        group,
+        new THREE.CylinderGeometry(potRadius * 0.78, potRadius, plantHeight * 0.24, 24),
+        plantIndex === 2 ? stagingMaterials.stone : stagingMaterials.rattan,
+        `${{baseName}}-planter-${{plantIndex + 1}}`,
+        {{ x: plant.x, y: plantHeight * 0.12, z: plant.z }},
+      );
+      addStyleMesh(
+        group,
+        new THREE.CylinderGeometry(width * 0.025, width * 0.035, plantHeight * 0.64, 12),
+        stagingMaterials.timber,
+        `${{baseName}}-stem-${{plantIndex + 1}}`,
+        {{ x: plant.x, y: plantHeight * 0.48, z: plant.z }},
+      );
+      for (let leafIndex = 0; leafIndex < 6; leafIndex += 1) {{
+        const angle = plant.phase + ((leafIndex / 6) * Math.PI * 2);
+        const radius = width * (leafIndex % 2 ? 0.25 : 0.16) * plant.scale;
+        const leaf = addStyleMesh(
+          group,
+          new THREE.SphereGeometry(width * 0.15 * plant.scale, 16, 10),
+          stagingMaterials.foliage,
+          `${{baseName}}-plant-${{plantIndex + 1}}-leaf-${{leafIndex + 1}}`,
+          {{
+            x: plant.x + (Math.cos(angle) * radius),
+            y: plantHeight * (0.56 + ((leafIndex % 3) * 0.11)),
+            z: plant.z + (Math.sin(angle) * radius),
+          }},
+        );
+        leaf.scale.set(1.08, 0.48, 0.72);
+        leaf.rotation.y = angle;
+      }}
+    }});
+  }} else if (shape === "rattan_chair") {{
+    addStyleMesh(group, new THREE.BoxGeometry(width, height * 0.16, depth), material, `${{baseName}}-seat`, {{ x: 0, y: height * 0.46, z: 0 }});
+    for (let slatIndex = 0; slatIndex < 6; slatIndex += 1) {{
+      addStyleMesh(
+        group,
+        new THREE.CylinderGeometry(width * 0.018, width * 0.022, height * 0.50, 10),
+        material,
+        `${{baseName}}-woven-back-slat-${{slatIndex + 1}}`,
+        {{
+          x: width * (-0.38 + (slatIndex * 0.152)),
+          y: height * 0.72,
+          z: -depth * 0.44,
+        }},
+      );
+    }}
+    addStyleMesh(group, new THREE.BoxGeometry(width, height * 0.055, depth * 0.08), material, `${{baseName}}-back-rail`, {{ x: 0, y: height * 0.94, z: -depth * 0.44 }});
+    for (const [legX, legZ] of [[-0.38, -0.34], [0.38, -0.34], [-0.38, 0.34], [0.38, 0.34]]) {{
+      addStyleMesh(
+        group,
+        new THREE.CylinderGeometry(width * 0.035, width * 0.045, height * 0.44, 12),
+        material,
+        `${{baseName}}-leg`,
+        {{ x: width * legX, y: height * 0.22, z: depth * legZ }},
+      );
+    }}
+  }} else if (shape === "shelf") {{
+    addStyleMesh(group, new THREE.BoxGeometry(width, height, depth * 0.18), material, `${{baseName}}-back`, {{ x: 0, y: height * 0.5, z: -depth * 0.40 }});
+    for (let shelfIndex = 0; shelfIndex < 4; shelfIndex += 1) {{
+      addStyleMesh(
+        group,
+        new THREE.BoxGeometry(width, height * 0.055, depth),
+        shelfIndex === 1 ? stagingMaterials.accent : material,
+        `${{baseName}}-shelf-${{shelfIndex + 1}}`,
+        {{ x: 0, y: height * (0.08 + (shelfIndex * 0.28)), z: 0 }},
+      );
+    }}
+  }} else if (shape === "vessels") {{
+    for (let vesselIndex = 0; vesselIndex < 3; vesselIndex += 1) {{
+      const vesselHeight = height * (0.52 + (vesselIndex * 0.18));
+      addStyleMesh(
+        group,
+        new THREE.CylinderGeometry(width * (0.13 + (vesselIndex * 0.025)), width * (0.19 + (vesselIndex * 0.025)), vesselHeight, 24),
+        material,
+        `${{baseName}}-${{vesselIndex + 1}}`,
+        {{ x: width * ((vesselIndex - 1) * 0.30), y: vesselHeight * 0.5, z: (vesselIndex % 2) * depth * 0.16 }},
+      );
+    }}
+  }} else {{
+    addStyleMesh(
+      group,
+      new THREE.BoxGeometry(width, height, depth),
+      material,
+      baseName,
+      {{ x: 0, y: height * 0.5, z: 0 }},
+    );
+  }}
+  styleStagingGroup.add(group);
+  styledSceneObjects.push(group);
+  observedStyleCues.add(String(instance.cue || ""));
   return group;
 }}
 
 routeStops.forEach((stop, index) => addGeneratedStagingForStop(stop, index));
+styleInstances.forEach((instance) => addStyledSceneInstance(instance));
+const styleEvidenceReady =
+  styleSceneContractReady
+  && styledSceneObjects.length === styleInstances.length
+  && requiredStyleCues.every((cue) => observedStyleCues.has(cue));
+
+function styledObjectsForRoute(routeIndex) {{
+  const boundedRouteIndex = Math.max(0, Number(routeIndex || 0));
+  return styledSceneObjects.filter(
+    (object) => Number(object.userData?.routeIndex ?? -1) === boundedRouteIndex,
+  );
+}}
+
+function styledBoundsForRoute(routeIndex) {{
+  const bounds = new THREE.Box3();
+  let hasBounds = false;
+  for (const object of styledObjectsForRoute(routeIndex)) {{
+    const objectBounds = new THREE.Box3().setFromObject(object);
+    if (objectBounds.isEmpty()) continue;
+    if (!hasBounds) {{
+      bounds.copy(objectBounds);
+      hasBounds = true;
+    }} else {{
+      bounds.union(objectBounds);
+    }}
+  }}
+  return hasBounds ? bounds : null;
+}}
+
+function objectEffectivelyVisible(object) {{
+  let current = object;
+  while (current) {{
+    if (current.visible === false) return false;
+    current = current.parent;
+  }}
+  return true;
+}}
+
+function syncGeneratedSceneModeVisibility(mode = activeViewMode, routeIndex = activeRouteIndex) {{
+  const roomMode = mode === "room";
+  const boundedRouteIndex = routeStops.length
+    ? Math.max(0, Math.min(Number(routeIndex ?? 0), routeStops.length - 1))
+    : 0;
+  semanticStagingGroup.visible = !roomMode;
+  routeMarkerGroup.visible = !roomMode;
+  styledSceneObjects.forEach((object) => {{
+    object.visible =
+      !roomMode
+      || Number(object.userData?.routeIndex ?? -1) === boundedRouteIndex;
+  }});
+  if (hotspotLayer) {{
+    hotspotLayer.style.opacity = roomMode ? "0" : (mode === "dollhouse" ? "0.78" : "1");
+    hotspotLayer.style.pointerEvents = roomMode ? "none" : "auto";
+  }}
+}}
 
 function buildPanelLabelTexture(label) {{
   const canvas = document.createElement("canvas");
@@ -7661,9 +8347,22 @@ function easeInOutCubic(value) {{
 }}
 
 function overviewCameraState() {{
+  const firstFocus = routeStops[0]?.focus && typeof routeStops[0].focus === "object"
+    ? routeStops[0].focus
+    : {{ x: 0, y: roomHeight * 0.46, z: 0 }};
+  const overviewSpan = Math.max(2.6, Math.min(5.6, Math.min(roomWidth, roomDepth) * 0.68));
+  const overviewTarget = new THREE.Vector3(
+    Number(firstFocus.x || 0),
+    Math.max(roomHeight * 0.38, Number(firstFocus.y || 0)),
+    Number(firstFocus.z || 0),
+  );
   return {{
-    position: new THREE.Vector3(roomWidth * 0.74, roomHeight * 1.22, roomDepth * 0.76),
-    target: new THREE.Vector3(0, roomHeight * 0.52, -roomDepth * 0.04),
+    position: new THREE.Vector3(
+      overviewTarget.x + (overviewSpan * 0.68),
+      Math.max(roomHeight * 1.18, 3.1),
+      overviewTarget.z + (overviewSpan * 0.72),
+    ),
+    target: overviewTarget,
     viewMode: "overview",
     routeIndex: activeRouteIndex >= 0 ? activeRouteIndex : (routeStops.length ? 0 : -1),
   }};
@@ -7771,10 +8470,60 @@ function routePhotoPanelPosition(routeIndex) {{
     : null;
 }}
 
-function roomCameraPosition(target, cameraStop, routeIndex, variant) {{
+function styledSelfOccluderCount(position, routeIndex) {{
+  const routeObjects = styledObjectsForRoute(routeIndex);
+  const routeMeshes = [];
+  for (const object of routeObjects) {{
+    object.traverse((child) => {{
+      if (child?.isMesh) routeMeshes.push(child);
+    }});
+  }}
+  if (!routeMeshes.length) return routeObjects.length;
+  const raycaster = new THREE.Raycaster();
+  let hiddenObjectCount = 0;
+  for (const object of routeObjects) {{
+    const ownMeshes = [];
+    object.traverse((child) => {{
+      if (child?.isMesh) ownMeshes.push(child);
+    }});
+    const ownMeshSet = new Set(ownMeshes);
+    const sampleMeshes = ownMeshes.length <= 8
+      ? ownMeshes
+      : ownMeshes.filter((_, index) => index % Math.ceil(ownMeshes.length / 8) === 0).slice(0, 8);
+    let hasVisibleSample = false;
+    for (const mesh of sampleMeshes) {{
+      const bounds = new THREE.Box3().setFromObject(mesh);
+      if (bounds.isEmpty()) continue;
+      const sampleTarget = bounds.getCenter(new THREE.Vector3());
+      const direction = sampleTarget.clone().sub(position);
+      const targetDistance = direction.length();
+      if (targetDistance <= 1e-5) continue;
+      raycaster.set(position, direction.normalize());
+      raycaster.near = 0.01;
+      raycaster.far = targetDistance + 0.12;
+      const firstHit = raycaster.intersectObjects(routeMeshes, false)[0];
+      if (firstHit?.object && ownMeshSet.has(firstHit.object)) {{
+        hasVisibleSample = true;
+        break;
+      }}
+    }}
+    if (!hasVisibleSample) hiddenObjectCount += 1;
+  }}
+  return hiddenObjectCount;
+}}
+
+function roomCameraPosition(target, cameraStop, routeIndex, variant, styledBounds = null) {{
   const maximumSpan = Math.max(roomWidth, roomDepth);
-  const radius = Math.max(1.7, Math.min(2.45, maximumSpan * 0.2));
-  const activePhotoPanelPosition = routePhotoPanelPosition(routeIndex);
+  const styledSize = styledBounds instanceof THREE.Box3
+    ? styledBounds.getSize(new THREE.Vector3())
+    : new THREE.Vector3(2.4, 1.2, 2.2);
+  const styledHorizontalSpan = Math.max(
+    2.2,
+    styledSize.x,
+    styledSize.z,
+    Math.hypot(styledSize.x, styledSize.z) * 0.82,
+  );
+  const radius = Math.max(3.0, Math.min(4.6, styledHorizontalSpan * 1.38));
   const preferredX = Number(cameraStop.x ?? target.x + 1) - target.x;
   const preferredZ = Number(cameraStop.z ?? target.z + 1) - target.z;
   const fallbackAngle = ((Math.max(0, Number(routeIndex || 0)) % 8) / 8) * Math.PI * 2;
@@ -7791,25 +8540,29 @@ function roomCameraPosition(target, cameraStop, routeIndex, variant) {{
     const angle = preferredAngle + variantOffset + angleOffsets[candidateIndex];
     const position = new THREE.Vector3(
       Math.max(-halfWidth + boundaryInset, Math.min(halfWidth - boundaryInset, target.x + (Math.cos(angle) * radius))),
-      Math.max(roomHeight * 0.88, target.y + 0.82),
+      Math.max(1.38, Math.min(roomHeight * 0.72, target.y + 0.96)),
       Math.max(-halfDepth + boundaryInset, Math.min(halfDepth - boundaryInset, target.z + (Math.sin(angle) * radius))),
     );
     const horizontalDistance = Math.hypot(position.x - target.x, position.z - target.z);
     const insideWall = wallRectangles.some((wall) => roomPointInsideWall(position, wall, 0.12));
+    const insideGeneratedDecor = stagingObjects.some((object) => {{
+      const decorBounds = new THREE.Box3().setFromObject(object).expandByScalar(0.28);
+      return !decorBounds.isEmpty() && decorBounds.containsPoint(position);
+    }});
     const occluderCount = roomCameraWallIndexes(position, target).length;
-    let photoPanelFramingPenalty = 0;
-    if (activePhotoPanelPosition) {{
-      const cameraToTarget = target.clone().sub(position);
-      const cameraToPanel = activePhotoPanelPosition.clone().sub(position);
-      if (cameraToTarget.lengthSq() > 1e-6 && cameraToPanel.lengthSq() > 1e-6) {{
-        const panelAlignment = cameraToTarget.normalize().dot(cameraToPanel.normalize());
-        photoPanelFramingPenalty = Math.max(0, 0.96 - panelAlignment) * 900;
-      }}
-    }}
+    const styledOccluderCount = styledObjectsForRoute(routeIndex).reduce((count, object) => {{
+      const objectBounds = new THREE.Box3().setFromObject(object);
+      if (objectBounds.isEmpty()) return count;
+      const objectTarget = objectBounds.getCenter(new THREE.Vector3());
+      return count + (roomCameraWallIndexes(position, objectTarget).length > 0 ? 1 : 0);
+    }}, 0);
+    const styledSelfOcclusionCount = styledSelfOccluderCount(position, routeIndex);
     const score =
       (insideWall ? 10000 : 0)
+      + (insideGeneratedDecor ? 9000 : 0)
       + (occluderCount * 1000)
-      + photoPanelFramingPenalty
+      + (styledOccluderCount * 1400)
+      + (styledSelfOcclusionCount * 2200)
       + (Math.max(0, radius - horizontalDistance) * 120)
       + candidateIndex;
     if (!best || score < best.score) {{
@@ -7826,17 +8579,17 @@ function routeCameraState(index = 0, variant = 0) {{
   const stop = boundedIndex >= 0 ? (routeStops[boundedIndex] || routeStops[0]) : null;
   const focus = stop?.focus && typeof stop.focus === "object" ? stop.focus : {{}};
   const cameraStop = stop?.camera && typeof stop.camera === "object" ? stop.camera : {{}};
+  const styledBounds = styledBoundsForRoute(boundedIndex);
+  const styledCenter = styledBounds
+    ? styledBounds.getCenter(new THREE.Vector3())
+    : null;
   const target = new THREE.Vector3(
-    Number(focus.x || 0),
-    Math.max(roomHeight * 0.26, Math.min(roomHeight * 0.32, Number(focus.y || roomHeight * 0.29))),
-    Number(focus.z || 0),
+    styledCenter ? styledCenter.x : Number(focus.x || 0),
+    Math.max(0.48, Math.min(0.68, styledCenter ? styledCenter.y : Number(focus.y || 0.56))),
+    styledCenter ? styledCenter.z : Number(focus.z || 0),
   );
-  const activePhotoPanelPosition = routePhotoPanelPosition(boundedIndex);
-  if (activePhotoPanelPosition) {{
-    target.lerp(activePhotoPanelPosition, 0.22);
-  }}
   const visitVariant = Math.max(0, Number(variant || 0));
-  const position = roomCameraPosition(target, cameraStop, boundedIndex, visitVariant);
+  const position = roomCameraPosition(target, cameraStop, boundedIndex, visitVariant, styledBounds);
   return {{
     position,
     target,
@@ -8236,25 +8989,23 @@ function applyViewMode(mode) {{
   const cutawayActive = isOverview || isDollhouse;
   activeViewMode = normalizedMode;
   liveViewerState.viewMode = normalizedMode;
-  wallMaterial.opacity = isDollhouse ? 0.3 : isOverview ? 0.66 : 0.52;
+  wallMaterial.opacity = isDollhouse ? 0.3 : isOverview ? 0.66 : 0.24;
   wallMaterial.depthWrite = !cutawayActive && normalizedMode !== "room";
   wallMaterial.needsUpdate = true;
-  wallEdgeMaterial.opacity = isDollhouse ? 0.88 : isOverview ? 0.54 : 0.46;
-  floor.material.color.set(isDollhouse ? 0xfcf8ef : isOverview ? 0xfbf7ef : 0xf8f4eb);
-  photoPanelGroup.visible = !isDollhouse;
-  if (hotspotLayer) {{
-    hotspotLayer.style.opacity = isDollhouse ? "0.78" : "1";
-  }}
+  wallEdgeMaterial.opacity = isDollhouse ? 0.88 : isOverview ? 0.54 : 0.22;
+  floor.material.color.set(styleColor("floor", "#cbb998"));
+  photoPanelGroup.visible = isOverview;
   controls.minPolarAngle = isDollhouse ? Math.PI * 0.02 : isOverview ? Math.PI * 0.1 : Math.PI * 0.14;
   controls.maxPolarAngle = isDollhouse ? Math.PI * 0.34 : isOverview ? Math.PI * 0.42 : Math.PI * 0.49;
   controls.minDistance = normalizedMode === "room"
     ? Math.max(0.82, Math.max(roomWidth, roomDepth) * 0.085)
     : Math.max(roomWidth, roomDepth) * 0.32;
-  setWallHeightScale(isDollhouse ? 0.42 : isOverview ? 0.62 : 0.72);
+  setWallHeightScale(isDollhouse ? 0.42 : isOverview ? 0.62 : 0.58);
   if (normalizedMode !== "room") {{
     roomOccludingWallIndexes.clear();
     roomCutawayState.initialized = false;
   }}
+  syncGeneratedSceneModeVisibility(normalizedMode, activeRouteIndex);
   applyCutawayWallVisibility(cutawayActive);
   setActiveViewChip(normalizedMode);
   syncCaptureRouteCard();
@@ -8287,6 +9038,7 @@ function setActiveRouteButton(index) {{
   }});
   activeRouteIndex = index;
   liveViewerState.activeRouteIndex = index;
+  syncGeneratedSceneModeVisibility(activeViewMode, activeRouteIndex);
   syncCaptureRouteCard({{ routeIndex: index }});
   const activeStop = index >= 0 ? routeStops[index] : null;
   const activeLabel = String(activeStop?.label || activeStop?.room || activeStop?.name || `Stop ${{index + 1}}`);
@@ -8358,7 +9110,7 @@ function syncRouteHotspots() {{
   let visibleCount = 0;
   for (const entry of routeHotspots) {{
     const routeIndex = Number(entry.button.dataset.routeIndex ?? -1);
-    if (activeViewMode === "room" && routeIndex !== activeRouteIndex) {{
+    if (activeViewMode === "room") {{
       entry.button.hidden = true;
       continue;
     }}
@@ -8478,10 +9230,7 @@ function renderCaptureFrame(payload = {{}}) {{
 
 window.addEventListener("resize", resize);
 resize();
-setOverviewView();
-if (routeStops.length) {{
-  setActiveRouteButton(0);
-}}
+setInsideView();
 syncCaptureRouteCard();
 setGuideChipState(false);
 if (typeof reducedMotionMedia.addEventListener === "function") {{
@@ -8496,6 +9245,7 @@ if (guidedQueryEnabled && routeStops.length && !captureMode && !prefersReducedMo
 }}
 
 const obstructionRaycaster = new THREE.Raycaster();
+const styleVisibilityRaycaster = new THREE.Raycaster();
 const obstructionSamplePoint = new THREE.Vector2();
 const obstructionWallMeshes = new Set(wallMeshes);
 const obstructionStagingObjects = new Set(stagingObjects);
@@ -8509,8 +9259,8 @@ function getRaycastObstructionMetrics() {{
   const sampleRows = 5;
   const sampleObjects = [
     floor,
-    ...wallMeshes.filter((mesh) => mesh.visible),
-    ...stagingObjects.filter((object) => object.visible),
+    ...wallMeshes.filter((mesh) => objectEffectivelyVisible(mesh)),
+    ...stagingObjects.filter((object) => objectEffectivelyVisible(object)),
   ];
   let wallFirstHits = 0;
   let stagingFirstHits = 0;
@@ -8536,6 +9286,41 @@ function getRaycastObstructionMetrics() {{
     wallVisualObstructionPct: Number((wallFirstHitRatio * Number(wallMaterial.opacity || 0) * 100).toFixed(2)),
     stagingFirstHitPct: Number(((stagingFirstHits / Math.max(1, sampleCount)) * 100).toFixed(2)),
   }};
+}}
+
+function styleObjectRayVisibilityPct(object) {{
+  if (!objectEffectivelyVisible(object)) return 0;
+  const ownMeshes = [];
+  object.traverse((child) => {{
+    if (child?.isMesh && objectEffectivelyVisible(child)) ownMeshes.push(child);
+  }});
+  if (!ownMeshes.length) return 0;
+  const ownMeshSet = new Set(ownMeshes);
+  const sceneMeshes = [
+    ...wallMeshes.filter((mesh) => objectEffectivelyVisible(mesh)),
+    ...stagingObjects.filter((mesh) => objectEffectivelyVisible(mesh)),
+  ];
+  const sampleMeshes = ownMeshes.length <= 14
+    ? ownMeshes
+    : ownMeshes.filter((_, index) => index % Math.ceil(ownMeshes.length / 14) === 0).slice(0, 14);
+  let visibleSamples = 0;
+  for (const mesh of sampleMeshes) {{
+    const bounds = new THREE.Box3().setFromObject(mesh);
+    if (bounds.isEmpty()) continue;
+    const sampleTarget = bounds.getCenter(new THREE.Vector3());
+    const direction = sampleTarget.clone().sub(camera.position);
+    const targetDistance = direction.length();
+    if (targetDistance <= 1e-5) continue;
+    styleVisibilityRaycaster.set(camera.position, direction.normalize());
+    styleVisibilityRaycaster.near = 0.01;
+    styleVisibilityRaycaster.far = targetDistance + 0.12;
+    const firstHit = styleVisibilityRaycaster.intersectObjects(sceneMeshes, false)[0];
+    if (firstHit?.object && ownMeshSet.has(firstHit.object)) {{
+      visibleSamples += 1;
+    }}
+  }}
+  styleVisibilityRaycaster.far = Infinity;
+  return Number(((visibleSamples / Math.max(1, sampleMeshes.length)) * 100).toFixed(2));
 }}
 
 function getRenderMetrics(options = {{}}) {{
@@ -8644,7 +9429,7 @@ function getRenderMetrics(options = {{}}) {{
     let visibleStagingObjectCount = 0;
     let projectedStagingCoverage = 0;
     for (const object of stagingObjects) {{
-      if (!object.visible) continue;
+      if (!objectEffectivelyVisible(object)) continue;
       const box = new THREE.Box3().setFromObject(object);
       if (!frustum.intersectsBox(box)) continue;
       visibleStagingObjectCount += 1;
@@ -8677,12 +9462,95 @@ function getRenderMetrics(options = {{}}) {{
       const projectedHeight = Math.max(0, (maxY - minY) / 2);
       projectedStagingCoverage += projectedWidth * projectedHeight;
     }}
+    let visibleStyledObjectCount = 0;
+    let projectedStyledCoverage = 0;
+    const visibleStyledInstanceIds = [];
+    const visibleStyleCueInstanceIds = Object.fromEntries(
+      requiredStyleCues.map((cue) => [cue, []]),
+    );
+    const projectedStyleCueCoverage = Object.fromEntries(
+      requiredStyleCues.map((cue) => [cue, 0]),
+    );
+    const visibleStyleCueRayPct = Object.fromEntries(
+      requiredStyleCues.map((cue) => [cue, 0]),
+    );
+    for (const object of styledSceneObjects) {{
+      if (!objectEffectivelyVisible(object)) continue;
+      const box = new THREE.Box3().setFromObject(object);
+      if (box.isEmpty() || !frustum.intersectsBox(box)) continue;
+      const corners = [
+        [box.min.x, box.min.y, box.min.z],
+        [box.min.x, box.min.y, box.max.z],
+        [box.min.x, box.max.y, box.min.z],
+        [box.min.x, box.max.y, box.max.z],
+        [box.max.x, box.min.y, box.min.z],
+        [box.max.x, box.min.y, box.max.z],
+        [box.max.x, box.max.y, box.min.z],
+        [box.max.x, box.max.y, box.max.z],
+      ];
+      let minX = 1;
+      let maxX = -1;
+      let minY = 1;
+      let maxY = -1;
+      let hasProjectedCorner = false;
+      for (const [x, y, z] of corners) {{
+        corner.set(x, y, z).project(camera);
+        if (!Number.isFinite(corner.x) || !Number.isFinite(corner.y)) continue;
+        minX = Math.min(minX, Math.max(-1, Math.min(1, corner.x)));
+        maxX = Math.max(maxX, Math.max(-1, Math.min(1, corner.x)));
+        minY = Math.min(minY, Math.max(-1, Math.min(1, corner.y)));
+        maxY = Math.max(maxY, Math.max(-1, Math.min(1, corner.y)));
+        hasProjectedCorner = true;
+      }}
+      if (!hasProjectedCorner) continue;
+      const objectProjectedCoverage =
+        Math.max(0, (maxX - minX) / 2)
+        * Math.max(0, (maxY - minY) / 2);
+      const rayVisibilityPct = styleObjectRayVisibilityPct(object);
+      if (objectProjectedCoverage <= 0 || rayVisibilityPct <= 0) continue;
+      const instanceId = String(object.userData?.styleInstanceId || "");
+      const cue = String(object.userData?.styleCue || "");
+      visibleStyledObjectCount += 1;
+      visibleStyledInstanceIds.push(instanceId);
+      projectedStyledCoverage += objectProjectedCoverage;
+      if (Object.prototype.hasOwnProperty.call(projectedStyleCueCoverage, cue)) {{
+        projectedStyleCueCoverage[cue] += objectProjectedCoverage;
+        visibleStyleCueInstanceIds[cue].push(instanceId);
+        visibleStyleCueRayPct[cue] = Math.max(Number(visibleStyleCueRayPct[cue] || 0), rayVisibilityPct);
+      }}
+    }}
+    const cameraInsideGeneratedDecor = stagingObjects.some((object) => {{
+      const decorBounds = new THREE.Box3().setFromObject(object).expandByScalar(0.08);
+      return !decorBounds.isEmpty() && decorBounds.containsPoint(camera.position);
+    }});
       if (Boolean(options && options.includeObstruction)) {{
         latestObstructionMetrics = getRaycastObstructionMetrics();
       }}
       const obstructionMetrics = latestObstructionMetrics;
+      const projectedStyledCoveragePct = Number((Math.min(1, projectedStyledCoverage) * 100).toFixed(2));
+      const minimumStyledCoveragePct = activeViewMode === "room" ? 5.0 : 3.0;
+      const minimumStyleCueCoveragePct = activeViewMode === "room" ? 0.35 : 0.15;
+      const projectedStyleCueCoveragePct = Object.fromEntries(
+        requiredStyleCues.map((cue) => [
+          cue,
+          Number((Math.min(1, Number(projectedStyleCueCoverage[cue] || 0)) * 100).toFixed(2)),
+        ]),
+      );
+      const missingVisibleStyleCues = requiredStyleCues.filter(
+        (cue) =>
+          !Array.isArray(visibleStyleCueInstanceIds[cue])
+          || visibleStyleCueInstanceIds[cue].length === 0
+          || Number(projectedStyleCueCoveragePct[cue] || 0) < minimumStyleCueCoveragePct
+          || Number(visibleStyleCueRayPct[cue] || 0) <= 0,
+      );
+      const styleCueVisibilityReady = missingVisibleStyleCues.length === 0;
+      const visibleStyleReady =
+        Boolean(styleEvidenceReady)
+        && visibleStyledObjectCount > 0
+        && projectedStyledCoveragePct >= minimumStyledCoveragePct
+        && (activeViewMode !== "room" || styleCueVisibilityReady);
       return {{
-        ready: true,
+        ready: visibleStyleReady,
         frameCount: Number(renderFrameCount || 0),
         wallRectCount: Number(wallRectangles.length || 0),
         wallMeshCount: Number(wallMeshes.length || 0),
@@ -8717,6 +9585,31 @@ function getRenderMetrics(options = {{}}) {{
       captureRouteLabel: String(captureRouteLabel?.textContent || "").trim(),
       stagingObjectCount: Number(stagingObjects.length || 0),
       visibleStagingObjectCount: Number(visibleStagingObjectCount || 0),
+      semanticStagingGroupVisible: Boolean(semanticStagingGroup.visible),
+      visibleSemanticStagingObjectCount: Number(
+        semanticStagingObjects.filter((object) => objectEffectivelyVisible(object)).length,
+      ),
+      routeMarkerGroupVisible: Boolean(routeMarkerGroup.visible),
+      styleKey,
+      styleSignature: String(styleScene.style_signature || ""),
+      styleEvidenceDigest,
+      styleEvidenceReady: Boolean(styleEvidenceReady),
+      styleCueKinds: Array.from(observedStyleCues).sort(),
+      styledObjectCount: Number(styledSceneObjects.length || 0),
+      styledInstanceIds: styledSceneObjects.map((object) => String(object.userData?.styleInstanceId || "")),
+      visibleStyledObjectCount: Number(visibleStyledObjectCount || 0),
+      visibleStyledInstanceIds,
+      projectedStyledCoveragePct,
+      minimumStyledCoveragePct,
+      visibleStyleCueInstanceIds,
+      projectedStyleCueCoveragePct,
+      visibleStyleCueRayPct,
+      minimumStyleCueCoveragePct,
+      missingVisibleStyleCues,
+      styleCueVisibilityReady,
+      floorplanLayerState: floorplanLayerActive ? "on" : "off",
+      floorColorHex: `#${{floor.material.color.getHexString()}}`,
+      cameraInsideGeneratedDecor,
       photoPanelCount: Number(photoPanelSpecs.length || 0),
       loadedPhotoTextureCount: Number(loadedPhotoTextureCount || 0),
       visiblePhotoPanelCount: Number(visiblePhotoPanelCount || 0),
@@ -8739,6 +9632,11 @@ function getRenderMetrics(options = {{}}) {{
         y: Number(camera.position.y.toFixed(3)),
         z: Number(camera.position.z.toFixed(3)),
       }},
+      cameraTarget: {{
+        x: Number(controls.target.x.toFixed(3)),
+        y: Number(controls.target.y.toFixed(3)),
+        z: Number(controls.target.z.toFixed(3)),
+      }},
     }};
 }}
 
@@ -8749,6 +9647,7 @@ window.__pqReconstructionDebug = {{
   setRouteView,
   startGuidedRoute,
   stopGuidedRoute,
+  setFloorplanLayer,
   renderCaptureFrame,
   getLiveState: () => ({{ ...liveViewerState }}),
   getRenderMetrics,
@@ -8766,11 +9665,13 @@ window.__pqReconstructionDebug = {{
       renderer.render(scene, camera);
       syncRouteHotspots();
       renderFrameCount += 1;
-      if (!liveViewerState.ready) {{
+      const readinessMetrics = liveViewerState.ready ? null : getRenderMetrics();
+      const visibleStyleReady = Boolean(readinessMetrics?.ready);
+      if (!liveViewerState.ready && visibleStyleReady) {{
         document.documentElement.dataset.viewerStatus = "ready";
         viewport.setAttribute("aria-busy", "false");
       }}
-      liveViewerState.ready = true;
+      liveViewerState.ready = Boolean(liveViewerState.ready || visibleStyleReady);
       liveViewerState.frameCount = Number(renderFrameCount || 0);
       liveViewerState.routeStopCount = Number(routeStops.length || 0);
       liveViewerState.renderCalls = Number(renderer.info.render.calls || 0);
@@ -8945,8 +9846,34 @@ def _write_viewer_walkthrough(
                                 frame_row = dict(frame_payload or {}) if isinstance(frame_payload, dict) else {}
                                 metrics = frame_row.get("metrics") if isinstance(frame_row.get("metrics"), dict) else {}
                                 last_metrics = dict(metrics or {}) if isinstance(metrics, dict) else {}
-                                if last_metrics.get("ready") is not True:
-                                    raise RuntimeError(str(last_metrics.get("reason") or "viewer_render_not_ready"))
+                                transition_frame_ready = bool(
+                                    progress < 0.999
+                                    and last_metrics.get("styleEvidenceReady") is True
+                                    and str(last_metrics.get("styleKey") or "").strip()
+                                    and str(last_metrics.get("styleEvidenceDigest") or "").strip()
+                                    and str(last_metrics.get("floorplanLayerState") or "") == "off"
+                                    and last_metrics.get("cameraInsideGeneratedDecor") is False
+                                    and int(last_metrics.get("renderCalls") or 0) > 0
+                                    and int(last_metrics.get("renderTriangles") or 0) > 0
+                                )
+                                if (
+                                    last_metrics.get("ready") is not True
+                                    and not transition_frame_ready
+                                ):
+                                    raise RuntimeError(
+                                        (
+                                            f"{str(last_metrics.get('reason') or 'viewer_render_not_ready')}"
+                                            f":step={str(step.get('label') or '')}"
+                                            f":progress={round(progress, 4)}"
+                                            ":missing_style_cues="
+                                            + ",".join(
+                                                str(value)
+                                                for value in list(
+                                                    last_metrics.get("missingVisibleStyleCues") or []
+                                                )
+                                            )
+                                        )
+                                    )
                                 image_data_url = str(frame_row.get("imageDataUrl") or "").strip()
                                 if not image_data_url.startswith("data:image/jpeg;base64,"):
                                     raise RuntimeError("viewer_frame_capture_unavailable")
@@ -9673,6 +10600,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-subdir", default="generated-reconstruction")
     parser.add_argument("--max-width-m", type=float, default=10.0)
     parser.add_argument("--style-label", default="", help="Human-readable staging style label for receipts and walkthrough overlays.")
+    parser.add_argument("--style-id", default="", help="Canonical PropertyQuarry furnishing style identifier.")
+    parser.add_argument("--style-signature", default="", help="Expected canonical style signature; mismatches fail closed.")
     parser.add_argument("--room-label", action="append", default=[], help="Optional explicit walkthrough stop label. Can be provided multiple times.")
     parser.add_argument("--room-count", type=int, default=0, help="Optional explicit walkthrough stop count when no labels are available.")
     parser.add_argument(
@@ -9792,14 +10721,6 @@ def _generate_reconstruction_on_anchored_surface(
         depth_m=depth_m,
     )
 
-    _write_obj(
-        output_dir,
-        width_m=width_m,
-        depth_m=depth_m,
-        height_m=height_m,
-        wall_rectangles=wall_rectangles,
-    )
-    glb_export = _write_glb(output_dir)
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise SystemExit("invalid_tour_manifest")
@@ -9855,7 +10776,36 @@ def _generate_reconstruction_on_anchored_surface(
         depth_m=depth_m,
         height_m=height_m,
     )
-    style_label = str(args.style_label or "").strip()
+    try:
+        selected_style = reconstruction_style(
+            str(args.style_label or "").strip(),
+            style_id=str(getattr(args, "style_id", "") or "").strip(),
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    expected_style_signature = str(getattr(args, "style_signature", "") or "").strip()
+    if expected_style_signature and expected_style_signature != str(selected_style.get("signature") or ""):
+        raise SystemExit("property_reconstruction_style_signature_mismatch")
+    style_label = str(selected_style.get("label") or "").strip()
+    style_scene = build_style_scene(
+        selected_style,
+        route_stop_count=len(route_labels),
+    )
+    style_scene_valid, style_scene_reason = validate_style_scene(
+        style_scene,
+        expected_style=selected_style,
+    )
+    if not style_scene_valid:
+        raise SystemExit(style_scene_reason)
+    _write_obj(
+        output_dir,
+        width_m=width_m,
+        depth_m=depth_m,
+        height_m=height_m,
+        wall_rectangles=wall_rectangles,
+        style_scene=style_scene,
+    )
+    glb_export = _write_glb(output_dir, style_scene=style_scene)
     floorplan_inferred = bool(floorplan_meta.get("inferred"))
     source_disclosure = _generated_reconstruction_disclosure(
         photo_count=len(photo_rows),
@@ -9867,6 +10817,7 @@ def _generate_reconstruction_on_anchored_surface(
         photo_paths=photo_paths,
         walkable_scene=walkable_scene,
         style_label=style_label,
+        style_scene=style_scene,
         floorplan_inferred=floorplan_inferred,
     )
     telegram_preview = (
@@ -9874,6 +10825,7 @@ def _generate_reconstruction_on_anchored_surface(
             bundle_dir / "telegram-preview.png",
             source_path=bundle_dir / "diorama-preview.png",
             style_label=style_label,
+            style_scene=style_scene,
         )
         if str(diorama_preview.get("status") or "").strip() == "generated"
         else {"status": "skipped", "reason": "diorama_preview_unavailable"}
@@ -9887,6 +10839,8 @@ def _generate_reconstruction_on_anchored_surface(
         "verified_provider_capture": False,
         "satisfies_verified_tour_gate": False,
         "style_label": style_label,
+        "requested_style": selected_style,
+        "style_scene": style_scene,
         "method": (
             "photo_inferred_schematic_with_source_photo_reference_panels"
             if floorplan_inferred
@@ -9920,6 +10874,10 @@ def _generate_reconstruction_on_anchored_surface(
             "relpath": "viewer.html",
             "version": VIEWER_VERSION,
             "photo_reference_panel_count": len(photo_reference_panels),
+            "style_id": str(selected_style.get("id") or ""),
+            "style_signature": str(selected_style.get("signature") or ""),
+            "style_scene_signature": str(style_scene.get("scene_signature") or ""),
+            "floorplan_display_mode": FLOORPLAN_DISPLAY_MODE,
         },
         "bundle_preview_assets": {
             "diorama": diorama_preview,
@@ -10002,6 +10960,15 @@ def _generate_reconstruction_on_anchored_surface(
         "verified_provider_capture": False,
         "satisfies_verified_tour_gate": False,
         "disclosure": source_disclosure,
+        "style_contract_version": STYLE_SCENE_CONTRACT_VERSION,
+        "style_id": str(selected_style.get("id") or ""),
+        "style_label": style_label,
+        "style_signature": str(selected_style.get("signature") or ""),
+        "style_scene_signature": str(style_scene.get("scene_signature") or ""),
+        "style_evidence_status": str(style_scene.get("evidence_status") or ""),
+        "styled_scene_instance_count": len(list(style_scene.get("instances") or [])),
+        "style_cue_kinds": list(style_scene.get("required_cues") or []),
+        "floorplan_display_mode": FLOORPLAN_DISPLAY_MODE,
         "route_labels": route_labels,
         "room_stop_count": len(route_labels),
         "walkthrough_route_labels": walkthrough_route_labels,

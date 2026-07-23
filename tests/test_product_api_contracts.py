@@ -53,6 +53,7 @@ from scripts.property_tour_panorama_provenance import (
     export_tree_sha256 as panorama_export_tree_sha256,
     pano2vr_export_topology,
 )
+from scripts import property_reconstruction_styles as reconstruction_styles
 from starlette.requests import Request
 from tests.product_test_helpers import build_operator_product_client, build_product_client, build_property_client, seed_product_state, start_workspace
 
@@ -69,6 +70,37 @@ def _generated_reconstruction_transaction_kwargs() -> dict[str, object]:
         "property_facts_json": {"has_floorplan": True, "floorplan_count": 1},
         "source_host": "example.test",
     }
+
+
+def _generated_reconstruction_style_fixture(
+    *,
+    route_stop_count: int,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
+    requested_style = reconstruction_styles.reconstruction_style("")
+    style_scene = reconstruction_styles.build_style_scene(
+        requested_style,
+        route_stop_count=route_stop_count,
+    )
+    generated_fields = {
+        "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        "style_contract_version": reconstruction_styles.STYLE_SCENE_CONTRACT_VERSION,
+        "style_id": requested_style["id"],
+        "style_label": requested_style["label"],
+        "style_signature": requested_style["signature"],
+        "style_scene_signature": style_scene["scene_signature"],
+        "style_evidence_status": "ready",
+        "styled_scene_instance_count": len(style_scene["instances"]),
+        "style_cue_kinds": list(style_scene["required_cues"]),
+        "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+    }
+    viewer_fields = {
+        "version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        "style_id": requested_style["id"],
+        "style_signature": requested_style["signature"],
+        "style_scene_signature": style_scene["scene_signature"],
+        "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+    }
+    return requested_style, style_scene, generated_fields, viewer_fields
 
 
 def test_willhaben_packet_subprocess_uses_current_runtime_and_ea_pythonpath(
@@ -480,6 +512,9 @@ def test_generated_reconstruction_ready_bundle_returns_without_bundle_mutation(
     tmp_path: Path,
 ) -> None:
     kwargs = _generated_reconstruction_transaction_kwargs()
+    _requested_style, _style_scene, generated_style_fields, _viewer_fields = (
+        _generated_reconstruction_style_fixture(route_stop_count=1)
+    )
     monkeypatch.setattr(product_service, "_public_tour_dir", lambda: tmp_path)
     monkeypatch.setattr(product_service, "_hosted_property_tour_public_base_url", lambda: "/tours")
     monkeypatch.setattr(
@@ -508,7 +543,7 @@ def test_generated_reconstruction_ready_bundle_returns_without_bundle_mutation(
             "scenes": [{"name": "Layout", "role": "diorama", "image_url": ""}],
             "facts": {"has_floorplan": True, "floorplan_count": 1},
             "generated_reconstruction": {
-                "viewer_version": product_service._PROPERTY_RECONSTRUCTION_VIEWER_VERSION,
+                **generated_style_fields,
             },
         },
     )
@@ -521,7 +556,7 @@ def test_generated_reconstruction_ready_bundle_returns_without_bundle_mutation(
         principal_id=str(kwargs["principal_id"]),
     )
     existing_payload["generated_reconstruction"] = {
-        "viewer_version": product_service._PROPERTY_RECONSTRUCTION_VIEWER_VERSION,
+        **generated_style_fields,
     }
     monkeypatch.setattr(
         product_service,
@@ -634,6 +669,9 @@ def test_generated_reconstruction_same_slug_publication_serializes_and_reuses_re
     tmp_path: Path,
 ) -> None:
     kwargs = _generated_reconstruction_transaction_kwargs()
+    _requested_style, _style_scene, generated_style_fields, _viewer_fields = (
+        _generated_reconstruction_style_fixture(route_stop_count=1)
+    )
     monkeypatch.setattr(product_service, "_public_tour_dir", lambda: tmp_path)
     monkeypatch.setattr(product_service, "_hosted_property_tour_public_base_url", lambda: "/tours")
     slug = product_service._make_hosted_property_tour_slug(
@@ -668,7 +706,7 @@ def test_generated_reconstruction_same_slug_publication_serializes_and_reuses_re
         return {
             **payload,
             "generated_reconstruction": {
-                "viewer_version": product_service._PROPERTY_RECONSTRUCTION_VIEWER_VERSION,
+                **generated_style_fields,
             },
         }
 
@@ -707,7 +745,7 @@ def test_generated_reconstruction_same_slug_publication_serializes_and_reuses_re
                     "scenes": [{"name": "Layout", "role": "diorama", "image_url": ""}],
                     "facts": {"has_floorplan": True},
                     "generated_reconstruction": {
-                        "viewer_version": product_service._PROPERTY_RECONSTRUCTION_VIEWER_VERSION,
+                        **generated_style_fields,
                     },
                 },
             )
@@ -9489,7 +9527,7 @@ def test_property_alert_review_handoff_reuses_generated_reconstruction_bundle(
                 "creation_mode": "generated_reconstruction_tour",
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
-                    "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+                    "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
                     "viewer_relpath": "generated-reconstruction/viewer.html",
                     "photo_relpaths": photo_relpaths,
                     "floorplan_relpath": "generated-reconstruction/source-floorplan.jpg",
@@ -16593,7 +16631,7 @@ def test_existing_hosted_property_tour_url_rejects_generated_reconstruction_as_t
                 "creation_mode": "generated_reconstruction_tour",
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
-                    "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+                    "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
                     "viewer_relpath": "generated-reconstruction/viewer.html",
                     "photo_relpaths": ["generated-reconstruction/photo-01.jpg"],
                     "floorplan_relpath": "generated-reconstruction/source-floorplan.jpg",
@@ -34902,7 +34940,7 @@ def test_hosted_property_tour_generated_reconstruction_asset_url_is_separate_fro
                 "slug": slug,
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
-                    "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+                    "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
                     "viewer_relpath": "generated-reconstruction/viewer.html",
                     "model_relpath": "generated-reconstruction/model.obj",
                     "glb_model_relpath": "generated-reconstruction/model.glb",
@@ -35106,6 +35144,11 @@ def test_hosted_property_tour_generated_reconstruction_bundle_ready_requires_vie
         output_dir.mkdir(parents=True)
         route_labels = ["entry/hall", "living room", "bedroom"]
         walkthrough_route_labels = ["entry/hall", "living room", "bedroom", "living room detail 2"]
+        requested_style, style_scene, generated_style_fields, viewer_style_fields = (
+            _generated_reconstruction_style_fixture(
+                route_stop_count=len(route_labels),
+            )
+        )
         walkable_scene = {
             "kind": "generated_reconstruction_layout",
             "route": [
@@ -35192,18 +35235,33 @@ def test_hosted_property_tour_generated_reconstruction_bundle_ready_requires_vie
             )
         if include_glb:
             (output_dir / "model.glb").write_bytes(b"glTF" + (b"\x00" * 2048))
+        viewer_sha256 = (
+            hashlib.sha256((output_dir / "viewer.html").read_bytes()).hexdigest()
+            if (output_dir / "viewer.html").is_file()
+            else ""
+        )
+        obj_sha256 = hashlib.sha256((output_dir / "model.obj").read_bytes()).hexdigest()
+        mtl_sha256 = hashlib.sha256((output_dir / "model.mtl").read_bytes()).hexdigest()
+        glb_sha256 = (
+            hashlib.sha256((output_dir / "model.glb").read_bytes()).hexdigest()
+            if (output_dir / "model.glb").is_file()
+            else ""
+        )
         (output_dir / "reconstruction.json").write_text(
             json.dumps(
                 {
                     "provider": "propertyquarry_generated_reconstruction",
                     "verified_provider_capture": False,
                     "satisfies_verified_tour_gate": False,
+                    "requested_style": requested_style,
+                    "style_scene": style_scene,
                     "room_dimensions_m": {"width": 10.0, "depth": 7.2, "height": 2.8},
                     "geometry": {"wall_rect_count": 8},
                     "walkable_scene": walkable_scene,
                     "viewer": {
                         "relpath": "viewer.html",
-                        "version": "propertyquarry_3d_tour_viewer_v3",
+                        **viewer_style_fields,
+                        "sha256": viewer_sha256,
                     },
                     "walkthrough_route_labels": walkthrough_route_labels if include_walkthrough else [],
                     "walkthrough": (
@@ -35223,14 +35281,19 @@ def test_hosted_property_tour_generated_reconstruction_bundle_ready_requires_vie
                     ),
                     "model": (
                         {
+                            "obj_sha256": obj_sha256,
+                            "mtl_sha256": mtl_sha256,
                             "glb_export": {
                                 "status": "generated",
                                 "glb_relpath": "model.glb",
+                                "glb_sha256": glb_sha256,
                                 "glb_size_bytes": 2052,
                             }
                         }
                         if include_glb
                         else {
+                            "obj_sha256": obj_sha256,
+                            "mtl_sha256": mtl_sha256,
                             "glb_export": {
                                 "status": "failed",
                                 "reason": "blender_glb_export_failed",
@@ -35247,7 +35310,7 @@ def test_hosted_property_tour_generated_reconstruction_bundle_ready_requires_vie
                     "slug": slug,
                     "generated_reconstruction": {
                         "provider": "propertyquarry_generated_reconstruction",
-                        "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+                        **generated_style_fields,
                         "viewer_relpath": "generated-reconstruction/viewer.html",
                         "manifest_relpath": "generated-reconstruction/reconstruction.json",
                         "model_relpath": "generated-reconstruction/model.obj",
@@ -35575,6 +35638,11 @@ def test_hosted_property_tour_first_party_open_url_accepts_ready_generated_recon
     }
     route_labels = ["entry/hall", "living room", "bedroom"]
     walkthrough_route_labels = ["entry/hall", "living room", "bedroom"]
+    requested_style, style_scene, generated_style_fields, viewer_style_fields = (
+        _generated_reconstruction_style_fixture(
+            route_stop_count=len(route_labels),
+        )
+    )
     (reconstruction_dir / "viewer.html").write_text("<!doctype html>viewer", encoding="utf-8")
     (reconstruction_dir / "model.obj").write_text("o propertyquarry_generated_layout\nv 0 0 0\n", encoding="utf-8")
     (reconstruction_dir / "model.mtl").write_text("newmtl walls\nKd 0.8 0.8 0.8\n", encoding="utf-8")
@@ -35608,7 +35676,7 @@ def test_hosted_property_tour_first_party_open_url_accepts_ready_generated_recon
                 "video_coverage_proof": "boundary_verified_frame_continuation",
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
-                    "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+                    **generated_style_fields,
                     "viewer_relpath": "generated-reconstruction/viewer.html",
                     "manifest_relpath": "generated-reconstruction/reconstruction.json",
                     "model_relpath": "generated-reconstruction/model.obj",
@@ -35642,13 +35710,18 @@ def test_hosted_property_tour_first_party_open_url_accepts_ready_generated_recon
                 "provider": "propertyquarry_generated_reconstruction",
                 "verified_provider_capture": False,
                 "satisfies_verified_tour_gate": False,
+                "requested_style": requested_style,
+                "style_scene": style_scene,
                 "room_dimensions_m": {"width": 8.0, "depth": 5.5, "height": 2.8},
                 "geometry": {"wall_rect_count": 8},
                 "walkable_scene": walkable_scene,
                 "route_labels": route_labels,
                 "viewer": {
                     "relpath": "viewer.html",
-                    "version": "propertyquarry_3d_tour_viewer_v3",
+                    **viewer_style_fields,
+                    "sha256": hashlib.sha256(
+                        (reconstruction_dir / "viewer.html").read_bytes()
+                    ).hexdigest(),
                 },
                 "walkthrough_route_labels": walkthrough_route_labels,
                 "walkthrough": {
@@ -35660,6 +35733,12 @@ def test_hosted_property_tour_first_party_open_url_accepts_ready_generated_recon
                     },
                 },
                 "model": {
+                    "obj_sha256": hashlib.sha256(
+                        (reconstruction_dir / "model.obj").read_bytes()
+                    ).hexdigest(),
+                    "mtl_sha256": hashlib.sha256(
+                        (reconstruction_dir / "model.mtl").read_bytes()
+                    ).hexdigest(),
                     "glb_export": {
                         "status": "generated",
                         "glb_relpath": "model.glb",

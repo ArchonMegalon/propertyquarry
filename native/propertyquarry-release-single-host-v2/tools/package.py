@@ -130,6 +130,10 @@ MANIFEST_INSTALL_PATH = (
 MANIFEST_SIGNATURE_INSTALL_PATH = (
     "/etc/propertyquarry-release-single-host-v2/package-manifest.v2.sig"
 )
+RUNNER_LIFECYCLE_INSTALL_PATH = (
+    "/usr/libexec/propertyquarry-release-control/"
+    "run-propertyquarry-ephemeral-runner-lifecycle-v2"
+)
 TEMPLATE_DIRECTORY = Path(__file__).resolve().parent.parent / "packaging" / "templates"
 MODULE_DIRECTORY = Path(__file__).resolve().parent.parent
 
@@ -374,6 +378,10 @@ PAYLOAD_LAYOUT: dict[str, tuple[str, int]] = {
     "/usr/libexec/propertyquarry-release-control/"
     "run-propertyquarry-ephemeral-runner-v2": (
         "ephemeral-runner-launcher",
+        0o555,
+    ),
+    RUNNER_LIFECYCLE_INSTALL_PATH: (
+        "ephemeral-runner-root-lifecycle",
         0o555,
     ),
     PREDEPLOY_BACKUP_HELPER_PATH: (
@@ -2516,7 +2524,9 @@ def render_templates(config: dict[str, Any]) -> dict[str, bytes]:
     return result
 
 
-def validate_runner_assets(lock_raw: bytes, launcher: bytes) -> None:
+def validate_runner_assets(
+    lock_raw: bytes, launcher: bytes, lifecycle: bytes
+) -> None:
     lock = parse_strict_json(lock_raw, "runner-lock", trailing_newline=True)
     if set(lock) != {
         "architecture",
@@ -2564,15 +2574,164 @@ def validate_runner_assets(lock_raw: bytes, launcher: bytes) -> None:
         or any(fragment not in launcher for fragment in required_fragments)
     ):
         fail("runner-launcher-binding-invalid")
+    try:
+        lifecycle.decode("ascii", "strict")
+    except UnicodeDecodeError:
+        fail("runner-lifecycle-not-ascii")
+    lifecycle_fragments = (
+        b"#!/bin/bash\n",
+        b'[[ "$#" -eq 0 ]]',
+        b'[[ "$EUID" == "0" && "${GROUPS[0]}" == "0" ]]',
+        b"start_runner_token_broker() {",
+        b"coproc RUNNER_TOKEN_BROKER {",
+        b"IFS= read -r broker_gate || exit 50",
+        b'[[ "$broker_gate" == "release-supervisor" ]] || exit 50',
+        b'PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8',
+        b"/proc/self/fd/8",
+        b'"$controller" runner-supervise 8<&8',
+        b"exec 8<&-",
+        b"start_runner_token_broker\n",
+        b"printf '%s\\n' 'release-supervisor' "
+        b'>&"$supervisor_gate_fd"',
+        b'run-propertyquarry-ephemeral-runner-v2',
+        b'runner-ticket-admit',
+        b'docker run --rm --pull never -i',
+        b'--cap-drop ALL --security-opt no-new-privileges',
+        lock["archive_sha256"].encode("ascii"),
+        str(lock["archive_bytes"]).encode("ascii"),
+    )
+    broker_start = lifecycle.find(b"start_runner_token_broker() {\n")
+    broker_end = lifecycle.find(
+        b"}\n# End fixed runner token broker.\n",
+        broker_start,
+    )
+    verify_start = lifecycle.find(b"verify_local_docker() {\n", broker_end)
+    verify_end = lifecycle.find(b'\n}\n\n[[ "$#" -eq 0 ]]', verify_start)
+    broker_call = lifecycle.find(b"\nstart_runner_token_broker\n", verify_end)
+    first_external_check = lifecycle.find(
+        b'\n[[ -f "$controller"',
+        broker_call,
+    )
+    broker_close = lifecycle.find(b"\n  exec 8<&-\n", broker_start, broker_end)
+    gate_read = lifecycle.find(
+        b"IFS= read -r broker_gate || exit 50",
+        broker_start,
+        broker_end,
+    )
+    gate_check = lifecycle.find(
+        b'[[ "$broker_gate" == "release-supervisor" ]] || exit 50',
+        broker_start,
+        broker_end,
+    )
+    marker_export = lifecycle.find(
+        b"export PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8",
+        broker_start,
+        broker_end,
+    )
+    supervisor_exec = lifecycle.find(
+        b'exec "$controller" runner-supervise 8<&8',
+        broker_start,
+        broker_end,
+    )
+    supervisor_exec_end = supervisor_exec + len(
+        b'exec "$controller" runner-supervise 8<&8'
+    )
+    image_inspect = lifecycle.find(
+        b'docker image inspect "$runner_image"',
+        first_external_check,
+    )
+    release_gate = lifecycle.find(
+        b"printf '%s\\n' 'release-supervisor' "
+        b'>&"$supervisor_gate_fd"',
+        image_inspect,
+    )
+    registration_read = lifecycle.find(
+        b"IFS= read -r -t 300 registration_token",
+        release_gate,
+    )
+    invocation_prelude = lifecycle[
+        verify_end + len(b"\n}\n") : broker_call + 1
+    ]
+    if (
+        not lifecycle.endswith(b"\n")
+        or b"\x00" in lifecycle
+        or b"\r" in lifecycle
+        or any(fragment not in lifecycle for fragment in lifecycle_fragments)
+        or min(
+            broker_start,
+            broker_end,
+            verify_start,
+            verify_end,
+            broker_call,
+            first_external_check,
+            broker_close,
+            gate_read,
+            gate_check,
+            marker_export,
+            supervisor_exec,
+            image_inspect,
+            release_gate,
+            registration_read,
+        )
+        < 0
+        or not (
+            broker_start
+            < broker_end
+            < verify_start
+            < verify_end
+            < broker_call
+            < first_external_check
+            < image_inspect
+            < release_gate
+            < registration_read
+        )
+        or not (
+            broker_start
+            < gate_read
+            < gate_check
+            < marker_export
+            < supervisor_exec
+            < broker_end
+        )
+        or lifecycle[gate_read:supervisor_exec_end]
+        != (
+            b"IFS= read -r broker_gate || exit 50\n"
+            b'    [[ "$broker_gate" == "release-supervisor" ]] || exit 50\n'
+            b"    unset HOME DOCKER_HOST\n"
+            b"    export PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8\n"
+            b'    exec "$controller" runner-supervise 8<&8'
+        )
+        or not broker_start < broker_close < broker_end
+        or invocation_prelude
+        != (
+            b'\n[[ "$#" -eq 0 ]] || fail\n'
+            b'[[ "$EUID" == "0" && "${GROUPS[0]}" == "0" ]] || fail\n'
+        )
+        or lifecycle.count(b"PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8") != 1
+        or b"$(id -u)" in lifecycle
+        or b"coproc RUNNER_SUPERVISOR" in lifecycle
+        or any(
+            forbidden in lifecycle
+            for forbidden in (b"eval ", b"bash -c", b"sh -c")
+        )
+    ):
+        fail("runner-lifecycle-binding-invalid")
 
 
-def load_runner_assets() -> tuple[bytes, bytes]:
+def load_runner_assets() -> tuple[bytes, bytes, bytes]:
     lock_raw = read_regular(MODULE_DIRECTORY / "runner.lock.json", MAX_JSON_BYTES)
     launcher = read_regular(
-        MODULE_DIRECTORY / "tools" / "run-ephemeral-runner.sh", 65_536
+        MODULE_DIRECTORY / "tools" / "run-ephemeral-runner.sh",
+        65_536,
+        expected_modes=(0o755,),
     )
-    validate_runner_assets(lock_raw, launcher)
-    return lock_raw, launcher
+    lifecycle = read_regular(
+        MODULE_DIRECTORY / "tools" / "run-ephemeral-runner-with-docker.sh",
+        131_072,
+        expected_modes=(0o755,),
+    )
+    validate_runner_assets(lock_raw, launcher, lifecycle)
+    return lock_raw, launcher, lifecycle
 
 
 def manifest_for(
@@ -3079,7 +3238,7 @@ def build_package(arguments: argparse.Namespace) -> dict[str, Any]:
     )
     validate_build_receipt(build_receipt, binary, package_key_id)
     templates = render_templates(config)
-    runner_lock_raw, runner_launcher = load_runner_assets()
+    runner_lock_raw, runner_launcher, runner_lifecycle = load_runner_assets()
     by_path = {
         "/usr/libexec/propertyquarry-release-control/"
         "propertyquarry-release-single-host-v2": binary,
@@ -3116,6 +3275,7 @@ def build_package(arguments: argparse.Namespace) -> dict[str, Any]:
         "/usr/lib/propertyquarry-release-runner-v2/runner.lock.json": runner_lock_raw,
         "/usr/libexec/propertyquarry-release-control/"
         "run-propertyquarry-ephemeral-runner-v2": runner_launcher,
+        RUNNER_LIFECYCLE_INSTALL_PATH: runner_lifecycle,
         PREDEPLOY_BACKUP_HELPER_PATH: predeploy_backup_helper,
         DATABASE_CONTROL_HELPER_PATH: database_control_helper,
         RUNTIME_DATABASE_HELPER_PATH: runtime_database_helper,
@@ -3387,6 +3547,7 @@ def verify_package(
             "payload/usr/libexec/propertyquarry-release-control/"
             "run-propertyquarry-ephemeral-runner-v2"
         ],
+        members["payload" + RUNNER_LIFECYCLE_INSTALL_PATH],
     )
     backup_helper_path = (
         "payload/usr/libexec/propertyquarry-release-control/"

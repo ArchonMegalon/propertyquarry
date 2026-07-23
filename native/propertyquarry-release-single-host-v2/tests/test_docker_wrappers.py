@@ -19,11 +19,28 @@ TOOLS = ROOT / "tools"
 INSTALL = TOOLS / "install-with-docker.sh"
 RUNNER = TOOLS / "install-runner-with-docker.sh"
 BUILD = TOOLS / "build-installer-image.sh"
+NATIVE_BUILD = TOOLS / "build.sh"
 TOUR_DISPATCH = TOOLS / "dispatch-tour-v4-with-docker.sh"
 EPHEMERAL = TOOLS / "run-ephemeral-runner.sh"
 LIFECYCLE = TOOLS / "run-ephemeral-runner-with-docker.sh"
-SCRIPTS = (INSTALL, RUNNER, BUILD, TOUR_DISPATCH, EPHEMERAL, LIFECYCLE)
-DOCKER_SCRIPTS = (INSTALL, RUNNER, BUILD, TOUR_DISPATCH, LIFECYCLE)
+RUNNER_LAUNCH = TOOLS / "launch-ephemeral-runner-with-docker.sh"
+SCRIPTS = (
+    INSTALL,
+    RUNNER,
+    BUILD,
+    TOUR_DISPATCH,
+    EPHEMERAL,
+    LIFECYCLE,
+    RUNNER_LAUNCH,
+)
+DOCKER_SCRIPTS = (
+    INSTALL,
+    RUNNER,
+    BUILD,
+    TOUR_DISPATCH,
+    LIFECYCLE,
+    RUNNER_LAUNCH,
+)
 
 
 class DockerWrapperTests(unittest.TestCase):
@@ -39,6 +56,7 @@ class DockerWrapperTests(unittest.TestCase):
             TOUR_DISPATCH: "propertyquarry-tour-v4-docker-dispatch-rejected\n",
             EPHEMERAL: "propertyquarry-ephemeral-runner-rejected\n",
             LIFECYCLE: "propertyquarry-docker-ephemeral-runner-rejected\n",
+            RUNNER_LAUNCH: "propertyquarry-docker-runner-launch-rejected\n",
         }
         for path, error in expected.items():
             with self.subTest(path=path.name):
@@ -126,9 +144,71 @@ class DockerWrapperTests(unittest.TestCase):
     def test_runner_tokens_are_fd_only_and_never_docker_arguments_or_environment(self) -> None:
         wrapper = LIFECYCLE.read_text(encoding="utf-8")
         launcher = EPHEMERAL.read_text(encoding="utf-8")
+        broker_definition = wrapper.index("start_runner_token_broker() {")
+        broker = wrapper.index("coproc RUNNER_TOKEN_BROKER {", broker_definition)
+        gate_read = wrapper.index(
+            "IFS= read -r broker_gate || exit 50",
+            broker,
+        )
+        gate_check = wrapper.index(
+            '[[ "$broker_gate" == "release-supervisor" ]] || exit 50',
+            gate_read,
+        )
+        marker = wrapper.index(
+            "export PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8",
+            gate_check,
+        )
+        supervisor = wrapper.index(
+            '"$controller" runner-supervise 8<&8',
+            marker,
+        )
+        close = wrapper.index("exec 8<&-", supervisor)
+        broker_call = wrapper.index(
+            "\nstart_runner_token_broker\n",
+            close,
+        )
+        first_external_check = wrapper.index(
+            '\n[[ -f "$controller"',
+            broker_call,
+        )
+        image_inspect = wrapper.index(
+            'docker image inspect "$runner_image"',
+            first_external_check,
+        )
+        release = wrapper.index(
+            "printf '%s\\n' 'release-supervisor' "
+            '>&"$supervisor_gate_fd"',
+            image_inspect,
+        )
+        registration_read = wrapper.index(
+            "IFS= read -r -t 300 registration_token",
+            release,
+        )
+        self.assertLess(broker_definition, broker)
+        self.assertLess(broker, gate_read)
+        self.assertLess(gate_read, gate_check)
+        self.assertLess(gate_check, marker)
+        self.assertLess(marker, supervisor)
+        self.assertLess(supervisor, close)
+        self.assertLess(close, broker_call)
+        self.assertLess(broker_call, first_external_check)
+        self.assertLess(first_external_check, image_inspect)
+        self.assertLess(image_inspect, release)
+        self.assertLess(release, registration_read)
         self.assertIn('PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8', wrapper)
         self.assertIn('"$controller" runner-supervise 8<&8', wrapper)
         self.assertIn("exec 8<&-", wrapper)
+        self.assertIn('[[ ! -e /proc/self/fd/8 ]] || fail', wrapper)
+        self.assertIn(
+            '[[ "$EUID" == "0" && "${GROUPS[0]}" == "0" ]] || fail',
+            wrapper,
+        )
+        self.assertEqual(
+            wrapper.count("PROPERTYQUARRY_RUNNER_ADMIN_TOKEN_FD=8"),
+            1,
+        )
+        self.assertNotIn("$(id -u)", wrapper)
+        self.assertNotIn("coproc RUNNER_SUPERVISOR", wrapper)
         self.assertIn('IFS= read -r -t 300 registration_token <&"$supervisor_output_fd"', wrapper)
         self.assertIn("unset registration_token", wrapper)
         self.assertIn("IFS= read -r registration_token <&8", launcher)
@@ -542,6 +622,17 @@ class DockerWrapperTests(unittest.TestCase):
         ):
             self.assertIn(token, text)
         self.assertLess(text.index('"$rootfs_verifier" verify-rootfs'), text.index("docker image tag"))
+
+    def test_native_builder_uses_task_specific_temporary_directories(self) -> None:
+        text = NATIVE_BUILD.read_text(encoding="utf-8")
+        self.assertIn('temporary_root="${TMPDIR:-/tmp}"', text)
+        for prefix in (
+            "propertyquarry-native-closure.XXXXXXXXXX",
+            "propertyquarry-native-build-one.XXXXXXXXXX",
+            "propertyquarry-native-build-two.XXXXXXXXXX",
+        ):
+            self.assertIn(prefix, text)
+        self.assertNotIn('="$(mktemp -d)"', text)
 
     def test_builder_cleanup_only_removes_tags_it_created_and_still_owns(self) -> None:
         text = BUILD.read_text(encoding="utf-8")

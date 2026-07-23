@@ -23,6 +23,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = MODULE_ROOT.parents[1]
+RUNNER_LIFECYCLE = (
+    MODULE_ROOT / "tools/run-ephemeral-runner-with-docker.sh"
+)
 # A historical, non-authoritative fixture commit containing the exact helper
 # bytes. Production runtime/workflow SHAs are JIT inputs after source merge.
 FIXTURE_HELPER_COMMIT = "f20476af1899b8c2fac71e31c328c57da6450963"
@@ -1206,6 +1209,21 @@ class PackageTests(unittest.TestCase):
         entries = {
             entry["install_path"]: entry for entry in verified.manifest["files"]
         }
+        lifecycle_entry = entries[package.RUNNER_LIFECYCLE_INSTALL_PATH]
+        self.assertEqual(lifecycle_entry["mode"], "0555")
+        self.assertEqual(
+            lifecycle_entry["purpose"],
+            "ephemeral-runner-root-lifecycle",
+        )
+        self.assertEqual(
+            lifecycle_entry["sha256"],
+            package.sha256(
+                (
+                    MODULE_ROOT
+                    / "tools/run-ephemeral-runner-with-docker.sh"
+                ).read_bytes()
+            ),
+        )
         for helper_path, helper_digest, helper_size in (
             (
                 package.PREDEPLOY_BACKUP_HELPER_PATH,
@@ -1270,6 +1288,14 @@ class PackageTests(unittest.TestCase):
                 (stage / "payload/usr/libexec/propertyquarry-release-control/run-propertyquarry-ephemeral-runner-v2").stat().st_mode
             ),
             0o555,
+        )
+        staged_lifecycle = stage / (
+            "payload" + package.RUNNER_LIFECYCLE_INSTALL_PATH
+        )
+        self.assertEqual(stat.S_IMODE(staged_lifecycle.stat().st_mode), 0o555)
+        self.assertEqual(
+            staged_lifecycle.read_bytes(),
+            RUNNER_LIFECYCLE.read_bytes(),
         )
         for helper_path in (
             package.DATABASE_CONTROL_HELPER_PATH,

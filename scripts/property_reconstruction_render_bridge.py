@@ -40,6 +40,11 @@ from app.observability import (  # noqa: E402
     outbound_observability_headers,
 )
 
+try:
+    from scripts.property_reconstruction_styles import reconstruction_style
+except ModuleNotFoundError:
+    from property_reconstruction_styles import reconstruction_style  # type: ignore[no-redef]
+
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8091
@@ -1006,8 +1011,18 @@ def _validate_generation_cost(payload: dict[str, object], *, config: BridgeConfi
         raise ValueError("route_label_too_long")
 
     style_label = str(payload.get("style_label") or "").strip()
-    if len(style_label) > 160:
+    if len(style_label) > 512:
         raise ValueError("style_label_too_long")
+    try:
+        selected_style = reconstruction_style(
+            style_label,
+            style_id=payload.get("style_id"),
+        )
+    except ValueError as exc:
+        raise ValueError("style_unsupported") from exc
+    supplied_style_signature = str(payload.get("style_signature") or "").strip()
+    if supplied_style_signature and supplied_style_signature != str(selected_style.get("signature") or ""):
+        raise ValueError("style_signature_mismatch")
     try:
         room_count = int(payload.get("room_count") or 0)
     except (TypeError, ValueError) as exc:
@@ -1136,8 +1151,20 @@ def _build_generator_command(payload: dict[str, object]) -> list[str]:
     for photo_path in photo_paths:
         command.extend(["--photo", str(_safe_shared_file(photo_path, root=root))])
     style_label = str(payload.get("style_label") or "").strip()
+    selected_style = reconstruction_style(
+        style_label,
+        style_id=payload.get("style_id"),
+    )
     if style_label:
         command.extend(["--style-label", style_label])
+    command.extend(
+        [
+            "--style-id",
+            str(selected_style.get("id") or ""),
+            "--style-signature",
+            str(selected_style.get("signature") or ""),
+        ]
+    )
     room_count = max(0, int(payload.get("room_count") or 0))
     if room_count > 0:
         command.extend(["--room-count", str(room_count)])

@@ -220,6 +220,7 @@ COPY scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_p
 COPY scripts/property_render_video_probe.py /app/scripts/property_render_video_probe.py
 COPY scripts/propertyquarry_playwright_runtime.py /app/scripts/propertyquarry_playwright_runtime.py
 COPY scripts/generate_property_reconstruction.py /app/scripts/generate_property_reconstruction.py
+COPY scripts/property_reconstruction_styles.py /app/scripts/property_reconstruction_styles.py
 COPY scripts/property_reconstruction_render_bridge.py /app/scripts/property_reconstruction_render_bridge.py
 COPY --chmod=0444 ea/app/__init__.py /app/ea/app/__init__.py
 COPY --chmod=0444 ea/app/observability.py /app/ea/app/observability.py
@@ -235,6 +236,7 @@ RUN chown -R 10001:10001 /data /home/ea && \
     chmod 0755 /data /data/public_property_tours /home/ea && \
     chmod 0444 \
         /app/scripts/generate_property_reconstruction.py \
+        /app/scripts/property_reconstruction_styles.py \
         /app/scripts/property_render_video_probe.py \
         /app/scripts/property_reconstruction_render_bridge.py \
         /app/scripts/property_tour_runtime_paths.py \
