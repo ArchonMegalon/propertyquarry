@@ -35,6 +35,8 @@ def _clear_env() -> None:
         "EA_REGISTRATION_EMAIL_FROM",
         "EA_REGISTRATION_EMAIL_FROM_FALLBACK",
         "EA_EMAIL_DEFAULT_FROM",
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID",
         "EA_ALLOW_NON_PROPERTYQUARRY_EMAIL_SENDER",
         "EA_ALLOWED_EMAIL_SENDER_DOMAINS",
         "EA_TRUST_AUTHENTICATED_PRINCIPAL_HEADER",
@@ -60,6 +62,12 @@ def _isolated_env() -> None:
         "EA_REGISTRATION_EMAIL_FROM": os.environ.get("EA_REGISTRATION_EMAIL_FROM"),
         "EA_REGISTRATION_EMAIL_FROM_FALLBACK": os.environ.get("EA_REGISTRATION_EMAIL_FROM_FALLBACK"),
         "EA_EMAIL_DEFAULT_FROM": os.environ.get("EA_EMAIL_DEFAULT_FROM"),
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN": os.environ.get(
+            "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN"
+        ),
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID": os.environ.get(
+            "PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID"
+        ),
         "EA_ALLOW_NON_PROPERTYQUARRY_EMAIL_SENDER": os.environ.get("EA_ALLOW_NON_PROPERTYQUARRY_EMAIL_SENDER"),
         "EA_ALLOWED_EMAIL_SENDER_DOMAINS": os.environ.get("EA_ALLOWED_EMAIL_SENDER_DOMAINS"),
         "EA_TRUST_AUTHENTICATED_PRINCIPAL_HEADER": os.environ.get("EA_TRUST_AUTHENTICATED_PRINCIPAL_HEADER"),
@@ -203,6 +211,45 @@ def test_prod_rejects_registration_sender_domain_allowlist() -> None:
     os.environ["EA_ALLOWED_EMAIL_SENDER_DOMAINS"] = "girschele.com"
     with pytest.raises(RuntimeError, match="PropertyQuarry email sender"):
         validate_startup_settings(get_settings())
+
+
+@pytest.mark.parametrize(
+    ("token", "account_id"),
+    (
+        ("cloudflare-token-that-is-long-enough", ""),
+        ("", "a" * 32),
+        ("short", "a" * 32),
+        ("cloudflare-token-that-is-long-enough", "not-an-account-id"),
+        ("cloudflare-token-with-newline\n", "a" * 32),
+    ),
+)
+def test_prod_rejects_incomplete_or_invalid_cloudflare_email_config(
+    token: str,
+    account_id: str,
+) -> None:
+    _clear_env()
+    os.environ["EA_RUNTIME_MODE"] = "prod"
+    os.environ["EA_API_TOKEN"] = "secret-token"
+    os.environ["EA_SIGNING_SECRET"] = "signing-secret"
+    os.environ["DATABASE_URL"] = "postgresql://example.invalid/ea"
+    os.environ["PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN"] = token
+    os.environ["PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID"] = account_id
+    with pytest.raises(RuntimeError, match="Cloudflare email configuration"):
+        validate_startup_settings(get_settings())
+
+
+def test_prod_accepts_complete_cloudflare_email_config() -> None:
+    _clear_env()
+    os.environ["EA_RUNTIME_MODE"] = "prod"
+    os.environ["EA_API_TOKEN"] = "secret-token"
+    os.environ["EA_SIGNING_SECRET"] = "signing-secret"
+    os.environ["DATABASE_URL"] = "postgresql://example.invalid/ea"
+    os.environ["PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN"] = (
+        "cloudflare-token-that-is-long-enough"
+    )
+    os.environ["PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID"] = "a" * 32
+    profile = validate_startup_settings(get_settings())
+    assert profile.mode == "prod"
 
 
 @pytest.mark.parametrize(

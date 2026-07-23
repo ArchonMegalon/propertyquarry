@@ -6,6 +6,7 @@ import re
 import secrets
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import hashlib
 import html
@@ -16,6 +17,7 @@ from app.services.property_customer_copy import normalize_property_fit_note
 
 
 EMAILIT_API_BASE = "https://api.emailit.com/v2/emails"
+CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4"
 DEFAULT_SENDER_EMAIL = "property@propertyquarry.com"
 DEFAULT_SENDER_NAME = "PropertyQuarry"
 _PLAINTEXT_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -24,6 +26,7 @@ _SENDER_ADDR_SPEC_RE = re.compile(
     r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
     r"[A-Za-z]{2,63}\Z"
 )
+_CLOUDFLARE_ACCOUNT_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
 
 
 @dataclass(frozen=True)
@@ -34,7 +37,36 @@ class RegistrationEmailReceipt:
 
 
 def email_delivery_enabled() -> bool:
-    return bool(str(os.environ.get("EMAILIT_API_KEY") or "").strip())
+    if str(os.environ.get("EMAILIT_API_KEY") or "").strip():
+        return True
+    try:
+        return _cloudflare_email_credentials() is not None
+    except RuntimeError:
+        return False
+
+
+def _cloudflare_email_credentials() -> tuple[str, str] | None:
+    raw_token = str(
+        os.environ.get("PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN") or ""
+    )
+    raw_account_id = str(
+        os.environ.get("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID") or ""
+    )
+    token = raw_token.strip()
+    account_id = raw_account_id.strip()
+    if bool(token) != bool(account_id):
+        raise RuntimeError("registration_email_cloudflare_config_incomplete")
+    if not token:
+        return None
+    if (
+        not _CLOUDFLARE_ACCOUNT_ID_RE.fullmatch(account_id)
+        or raw_token != token
+        or raw_account_id != account_id
+        or len(token) < 20
+        or any(character.isspace() or ord(character) < 33 for character in token)
+    ):
+        raise RuntimeError("registration_email_cloudflare_config_invalid")
+    return token, account_id
 
 
 def _propertyquarry_production_sender_required() -> bool:
@@ -646,6 +678,178 @@ def _property_match_html(
     )
 
 
+def _cloudflare_error_code(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return "unknown"
+    errors = payload.get("errors")
+    if not isinstance(errors, list) or not errors or not isinstance(errors[0], dict):
+        return "unknown"
+    normalized = str(errors[0].get("code") or "unknown").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", normalized):
+        return "unknown"
+    return normalized
+
+
+def _cloudflare_response_payload(
+    request: urllib.request.Request,
+    *,
+    failure_code: str,
+) -> dict[str, object]:
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(raw or "{}")
+        except Exception:
+            payload = {}
+        raise RuntimeError(
+            f"{failure_code}:{exc.code}:{_cloudflare_error_code(payload)}"
+        ) from None
+    try:
+        payload = json.loads(raw or "{}")
+    except Exception:
+        raise RuntimeError(f"{failure_code}:invalid_response") from None
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        raise RuntimeError(
+            f"{failure_code}:provider_rejected:{_cloudflare_error_code(payload)}"
+        )
+    return payload
+
+
+def _cloudflare_recipient_is_verified(
+    *,
+    token: str,
+    account_id: str,
+    recipient_email: str,
+) -> bool:
+    normalized_recipient = recipient_email.strip().lower()
+    per_page = 50
+    for page in range(1, 21):
+        query = urllib.parse.urlencode({"page": page, "per_page": per_page})
+        request = urllib.request.Request(
+            f"{CLOUDFLARE_API_BASE}/accounts/{account_id}/email/routing/addresses?{query}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+        payload = _cloudflare_response_payload(
+            request,
+            failure_code="registration_email_cloudflare_destination_check_failed",
+        )
+        rows = payload.get("result")
+        if not isinstance(rows, list):
+            raise RuntimeError(
+                "registration_email_cloudflare_destination_check_failed:invalid_result"
+            )
+        if any(
+            isinstance(row, dict)
+            and bool(row.get("verified"))
+            and str(row.get("email") or "").strip().lower() == normalized_recipient
+            for row in rows
+        ):
+            return True
+        result_info = payload.get("result_info")
+        raw_total_pages = (
+            result_info.get("total_pages") if isinstance(result_info, dict) else 0
+        )
+        try:
+            total_pages = int(raw_total_pages or 0)
+        except (TypeError, ValueError, OverflowError):
+            raise RuntimeError(
+                "registration_email_cloudflare_destination_check_failed:"
+                "invalid_pagination"
+            ) from None
+        if isinstance(raw_total_pages, bool) or total_pages < 0:
+            raise RuntimeError(
+                "registration_email_cloudflare_destination_check_failed:"
+                "invalid_pagination"
+            )
+        if (total_pages and page >= total_pages) or (not total_pages and len(rows) < per_page):
+            break
+    return False
+
+
+def _send_cloudflare_verified_email(
+    *,
+    recipient_email: str,
+    subject: str,
+    text: str,
+    html_body: str,
+    sender_email: str,
+    sender_name: str,
+    idempotency_key: str,
+) -> RegistrationEmailReceipt:
+    credentials = _cloudflare_email_credentials()
+    if credentials is None:
+        raise RuntimeError("registration_email_cloudflare_not_configured")
+    token, account_id = credentials
+    normalized_recipient = str(recipient_email or "").strip()
+    if not _SENDER_ADDR_SPEC_RE.fullmatch(normalized_recipient):
+        raise RuntimeError("registration_email_cloudflare_recipient_invalid")
+    normalized_sender = _enforce_propertyquarry_production_sender(sender_email)
+    if not _propertyquarry_sender_email_allowed(normalized_sender):
+        raise RuntimeError("registration_email_cloudflare_sender_domain_forbidden")
+    if not _cloudflare_recipient_is_verified(
+        token=token,
+        account_id=account_id,
+        recipient_email=normalized_recipient,
+    ):
+        raise RuntimeError("registration_email_cloudflare_recipient_unverified")
+
+    provider_key = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    body: dict[str, object] = {
+        "from": {"address": normalized_sender, "name": sender_name},
+        "to": [normalized_recipient],
+        "subject": str(subject or "").strip(),
+        "text": str(text or "").strip(),
+        "reply_to": normalized_sender,
+        "headers": {"X-PropertyQuarry-Idempotency-Key": provider_key},
+    }
+    normalized_html = str(html_body or "").strip()
+    if normalized_html:
+        body["html"] = normalized_html
+    request = urllib.request.Request(
+        f"{CLOUDFLARE_API_BASE}/accounts/{account_id}/email/sending/send",
+        data=json.dumps(body, separators=(",", ":")).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    payload = _cloudflare_response_payload(
+        request,
+        failure_code="registration_email_cloudflare_send_failed",
+    )
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("registration_email_cloudflare_send_failed:invalid_result")
+    normalized_target = normalized_recipient.lower()
+    delivered_or_queued = {
+        str(value or "").strip().lower()
+        for key in ("delivered", "queued")
+        for value in (result.get(key) if isinstance(result.get(key), list) else [])
+    }
+    permanent_bounces = result.get("permanent_bounces")
+    message_id = str(result.get("message_id") or "").strip()
+    if (
+        normalized_target not in delivered_or_queued
+        or (isinstance(permanent_bounces, list) and bool(permanent_bounces))
+        or not message_id
+    ):
+        raise RuntimeError("registration_email_cloudflare_send_failed:not_accepted")
+    return RegistrationEmailReceipt(
+        provider="cloudflare_email_sending",
+        message_id=message_id,
+        accepted_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 def _send_emailit_email(
     *,
     recipient_email: str,
@@ -659,8 +863,6 @@ def _send_emailit_email(
     idempotency_key: str = "",
 ) -> RegistrationEmailReceipt:
     api_key = str(os.environ.get("EMAILIT_API_KEY") or "").strip()
-    if not api_key:
-        raise RuntimeError("registration_email_api_key_missing")
     resolved_sender_email = _resolved_sender_email(sender_email)
     resolved_sender_name = _resolved_sender_name(sender_name)
     payload = {
@@ -691,6 +893,19 @@ def _send_emailit_email(
         if requested_idempotency_key
         else f"ea-mail-{hashlib.sha256(idempotency_seed.encode('utf-8')).hexdigest()[:24]}"
     )
+    if not api_key:
+        if _cloudflare_email_credentials() is None:
+            raise RuntimeError("registration_email_api_key_missing")
+        return _send_cloudflare_verified_email(
+            recipient_email=recipient_email,
+            subject=subject,
+            text=str(payload["text"]),
+            html_body=str(payload["html"]),
+            sender_email=resolved_sender_email,
+            sender_name=resolved_sender_name,
+            idempotency_key=resolved_idempotency_key,
+        )
+
     def _request_for_payload(active_payload: dict[str, object], active_idempotency_key: str):
         return urllib.request.Request(
             EMAILIT_API_BASE,
@@ -706,6 +921,8 @@ def _send_emailit_email(
     request = _request_for_payload(payload, resolved_idempotency_key)
     last_error = ""
     used_fallback_sender = False
+    cloudflare_error = ""
+    cloudflare_attempted = False
     for _ in range(7):
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
@@ -720,6 +937,21 @@ def _send_emailit_email(
             detail = exc.read().decode("utf-8", errors="replace")
             last_error = f"registration_email_send_failed:{exc.code}:{detail[:600]}"
             if exc.code == 422 and "Domain not verified" in detail and not used_fallback_sender:
+                if not cloudflare_attempted:
+                    cloudflare_attempted = True
+                    try:
+                        if _cloudflare_email_credentials() is not None:
+                            return _send_cloudflare_verified_email(
+                                recipient_email=recipient_email,
+                                subject=subject,
+                                text=str(payload["text"]),
+                                html_body=str(payload["html"]),
+                                sender_email=resolved_sender_email,
+                                sender_name=resolved_sender_name,
+                                idempotency_key=resolved_idempotency_key,
+                            )
+                    except RuntimeError as cloudflare_exc:
+                        cloudflare_error = str(cloudflare_exc)
                 fallback_email = _fallback_sender_email()
                 if (
                     fallback_email
@@ -774,6 +1006,10 @@ def _send_emailit_email(
                 time.sleep(max(1, retry_after))
                 continue
             break
+    if cloudflare_error:
+        raise RuntimeError(
+            f"{last_error or 'registration_email_send_failed'}:{cloudflare_error}"
+        )
     raise RuntimeError(last_error or "registration_email_send_failed")
 
 

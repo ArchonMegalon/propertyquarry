@@ -57,6 +57,7 @@ MANIFEST_SCHEMA = "propertyquarry.release-control.single-host-package.v2"
 BACKUP_SCHEMA = "propertyquarry.predeploy-backup-receipt.v2"
 ISOLATION_SCHEMA = "propertyquarry.runtime-isolation-receipt.v2"
 DATABASE_SCHEMA = "propertyquarry.database-control-receipt.v2"
+REGISTRATION_EMAIL_KEY_COUNT = 10
 
 INSTALL_ROOT = Path("/etc/propertyquarry-release-single-host-v2")
 AUTHORITY_PATH = INSTALL_ROOT / "authority.v2.json"
@@ -1185,7 +1186,8 @@ def _validate_purge_receipt(
         != contract.authority.get("pre_purge_root_env_digest")
         or not SHA256_RE.fullmatch(str(result.get("post_purge_root_env_digest") or ""))
         or not isinstance(result.get("rollback_artifact"), dict)
-        or result.get("rollback_artifact_expected_removed_keys") != 8
+        or result.get("rollback_artifact_expected_removed_keys")
+        != REGISTRATION_EMAIL_KEY_COUNT
         or result.get("post_purge_root_env_digest")
         != contract.runtime_inputs[0]["sha256"]
     ):
@@ -1211,7 +1213,8 @@ def _validate_purge_receipt(
         or file_digests != expected_file_digests
         or inputs.get("google_key_count") != 5
         or inputs.get("legacy_registration_email_present") is not False
-        or inputs.get("registration_email_key_count") != 8
+        or inputs.get("registration_email_key_count")
+        != REGISTRATION_EMAIL_KEY_COUNT
     ):
         raise DeployError("purge_receipt_environment_invalid")
     return digest, finished, expected_file_digests

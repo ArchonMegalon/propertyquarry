@@ -24,6 +24,8 @@ services:
       # Compose receives values by reference; no provider secret is baked into
       # the image or forwarded to background/runtime-only services.
       EMAILIT_API_KEY: "${EMAILIT_API_KEY:-}"
+      PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN: "${PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN:-}"
+      PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID: "${PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID:-}"
       EA_EMAIL_DEFAULT_FROM: "${EA_EMAIL_DEFAULT_FROM:-}"
       EA_EMAIL_DEFAULT_NAME: "${EA_EMAIL_DEFAULT_NAME:-}"
       EA_REGISTRATION_EMAIL_FROM: "${EA_REGISTRATION_EMAIL_FROM:-}"

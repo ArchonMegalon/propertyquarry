@@ -11,6 +11,12 @@ from fastapi.testclient import TestClient
 from tests.product_test_helpers import start_workspace
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cloudflare_email_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN", raising=False)
+    monkeypatch.delenv("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID", raising=False)
+
+
 def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("EA_STORAGE_BACKEND", "memory")
     monkeypatch.delenv("EA_LEDGER_BACKEND", raising=False)
@@ -2273,6 +2279,320 @@ def test_registration_email_falls_back_to_verified_sender_when_domain_is_not_ver
 
     assert call_count["value"] == 1
     assert observed_payloads[0]["from"] == "PropertyQuarry <property@propertyquarry.com>"
+
+
+def test_registration_email_uses_cloudflare_only_for_verified_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv(
+        "EA_REGISTRATION_EMAIL_FROM", "property@auth.propertyquarry.com"
+    )
+    monkeypatch.setenv("EA_REGISTRATION_EMAIL_NAME", "PropertyQuarry")
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+        "test-cloudflare-email-token-long-enough",
+    )
+    monkeypatch.setenv("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID", "a" * 32)
+
+    from app.services import registration_email as service
+
+    requests: list[object] = []
+
+    class _Response:
+        def __init__(self, payload: dict[str, object]):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    class _DomainNotVerified(service.urllib.error.HTTPError):
+        def __init__(self):
+            super().__init__(
+                url=service.EMAILIT_API_BASE,
+                code=422,
+                msg="Unprocessable Entity",
+                hdrs=None,
+                fp=None,
+            )
+
+        def read(self) -> bytes:
+            return b'{"error":"Domain not verified"}'
+
+    def _fake_urlopen(request, timeout=0):
+        requests.append(request)
+        if len(requests) == 1:
+            raise _DomainNotVerified()
+        if request.get_method() == "GET":
+            return _Response(
+                {
+                    "success": True,
+                    "result": [
+                        {
+                            "email": "owner@example.com",
+                            "verified": "2026-07-23T00:00:00Z",
+                        }
+                    ],
+                    "result_info": {"page": 1, "total_pages": 1},
+                }
+            )
+        return _Response(
+            {
+                "success": True,
+                "result": {
+                    "delivered": ["owner@example.com"],
+                    "queued": [],
+                    "permanent_bounces": [],
+                    "message_id": "cloudflare-message-1",
+                },
+            }
+        )
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", _fake_urlopen)
+    receipt = service.send_registration_email(
+        recipient_email="owner@example.com",
+        verification_code="654321",
+        magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
+        expires_at=2_000_000_000,
+    )
+
+    assert receipt.provider == "cloudflare_email_sending"
+    assert receipt.message_id == "cloudflare-message-1"
+    assert len(requests) == 3
+    assert requests[0].full_url == service.EMAILIT_API_BASE
+    assert requests[1].get_method() == "GET"
+    assert "/email/routing/addresses?" in requests[1].full_url
+    assert requests[1].headers["Authorization"] == (
+        "Bearer test-cloudflare-email-token-long-enough"
+    )
+    send_payload = json.loads(requests[2].data.decode("utf-8"))
+    assert send_payload["from"] == {
+        "address": "property@auth.propertyquarry.com",
+        "name": "PropertyQuarry",
+    }
+    assert send_payload["to"] == ["owner@example.com"]
+    assert send_payload["headers"]["X-PropertyQuarry-Idempotency-Key"] == (
+        hashlib.sha256(
+            requests[0].headers["Idempotency-key"].encode("utf-8")
+        ).hexdigest()
+    )
+    assert "654321" in send_payload["html"]
+
+
+def test_registration_email_cloudflare_fallback_rejects_unverified_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv(
+        "EA_REGISTRATION_EMAIL_FROM", "property@auth.propertyquarry.com"
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+        "test-cloudflare-email-token-long-enough",
+    )
+    monkeypatch.setenv("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID", "b" * 32)
+
+    from app.services import registration_email as service
+
+    requests: list[object] = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "success": True,
+                    "result": [
+                        {
+                            "email": "different@example.com",
+                            "verified": "2026-07-23T00:00:00Z",
+                        }
+                    ],
+                    "result_info": {"page": 1, "total_pages": 1},
+                }
+            ).encode("utf-8")
+
+    class _DomainNotVerified(service.urllib.error.HTTPError):
+        def __init__(self):
+            super().__init__(
+                url=service.EMAILIT_API_BASE,
+                code=422,
+                msg="Unprocessable Entity",
+                hdrs=None,
+                fp=None,
+            )
+
+        def read(self) -> bytes:
+            return b'{"error":"Domain not verified"}'
+
+    def _fake_urlopen(request, timeout=0):
+        requests.append(request)
+        if len(requests) == 1:
+            raise _DomainNotVerified()
+        return _Response()
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", _fake_urlopen)
+    with pytest.raises(
+        RuntimeError,
+        match="registration_email_cloudflare_recipient_unverified",
+    ):
+        service.send_registration_email(
+            recipient_email="owner@example.com",
+            verification_code="654321",
+            magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
+            expires_at=2_000_000_000,
+        )
+
+    assert len(requests) == 2
+    assert all(request.get_method() != "POST" for request in requests[1:])
+
+
+def test_registration_email_cloudflare_fallback_rejects_malformed_pagination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
+    monkeypatch.setenv(
+        "EA_REGISTRATION_EMAIL_FROM", "property@auth.propertyquarry.com"
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+        "test-cloudflare-email-token-long-enough",
+    )
+    monkeypatch.setenv("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID", "b" * 32)
+
+    from app.services import registration_email as service
+
+    requests: list[object] = []
+
+    class _Response:
+        def __init__(self, payload: dict[str, object]):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    class _DomainNotVerified(service.urllib.error.HTTPError):
+        def __init__(self):
+            super().__init__(
+                url=service.EMAILIT_API_BASE,
+                code=422,
+                msg="Unprocessable Entity",
+                hdrs=None,
+                fp=None,
+            )
+
+        def read(self) -> bytes:
+            return b'{"error":"Domain not verified"}'
+
+    def _fake_urlopen(request, timeout=0):
+        requests.append(request)
+        if len(requests) == 1:
+            raise _DomainNotVerified()
+        return _Response(
+            {
+                "success": True,
+                "result": [],
+                "result_info": {"page": 1, "total_pages": "not-a-number"},
+            }
+        )
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", _fake_urlopen)
+    with pytest.raises(RuntimeError, match="invalid_pagination"):
+        service.send_registration_email(
+            recipient_email="owner@example.com",
+            verification_code="654321",
+            magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
+            expires_at=2_000_000_000,
+        )
+
+    assert len(requests) == 2
+    assert all(request.get_method() != "POST" for request in requests[1:])
+
+
+def test_registration_email_cloudflare_can_be_the_only_configured_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EMAILIT_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "EA_REGISTRATION_EMAIL_FROM", "property@auth.propertyquarry.com"
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN",
+        "test-cloudflare-email-token-long-enough",
+    )
+    monkeypatch.setenv("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID", "c" * 32)
+
+    from app.services import registration_email as service
+
+    responses = iter(
+        (
+            {
+                "success": True,
+                "result": [
+                    {
+                        "email": "owner@example.com",
+                        "verified": "2026-07-23T00:00:00Z",
+                    }
+                ],
+                "result_info": {"page": 1, "total_pages": 1},
+            },
+            {
+                "success": True,
+                "result": {
+                    "delivered": [],
+                    "queued": ["owner@example.com"],
+                    "permanent_bounces": [],
+                    "message_id": "cloudflare-message-2",
+                },
+            },
+        )
+    )
+
+    class _Response:
+        def __init__(self, payload: dict[str, object]):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return json.dumps(self.payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        service.urllib.request,
+        "urlopen",
+        lambda request, timeout=0: _Response(next(responses)),
+    )
+
+    assert service.email_delivery_enabled() is True
+    receipt = service.send_registration_email(
+        recipient_email="owner@example.com",
+        verification_code="654321",
+        magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
+        expires_at=2_000_000_000,
+    )
+    assert receipt.provider == "cloudflare_email_sending"
+    assert receipt.message_id == "cloudflare-message-2"
 
 
 def test_registration_email_can_force_verified_sender_without_primary_attempt(

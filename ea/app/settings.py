@@ -424,12 +424,40 @@ def ensure_prod_registration_email_sender_domain(settings: Settings) -> None:
             )
 
 
+def ensure_prod_registration_email_provider_config(settings: Settings) -> None:
+    if not is_prod_mode(settings.runtime.mode):
+        return
+    raw_token = str(
+        os.environ.get("PROPERTYQUARRY_CLOUDFLARE_EMAIL_API_TOKEN") or ""
+    )
+    raw_account_id = str(
+        os.environ.get("PROPERTYQUARRY_CLOUDFLARE_EMAIL_ACCOUNT_ID") or ""
+    )
+    token = raw_token.strip()
+    account_id = raw_account_id.strip()
+    if bool(token) != bool(account_id):
+        raise RuntimeError(
+            "EA_RUNTIME_MODE=prod requires complete PropertyQuarry Cloudflare email configuration"
+        )
+    if token and (
+        not re.fullmatch(r"[0-9a-f]{32}", account_id)
+        or raw_token != token
+        or raw_account_id != account_id
+        or len(token) < 20
+        or any(character.isspace() or ord(character) < 33 for character in token)
+    ):
+        raise RuntimeError(
+            "EA_RUNTIME_MODE=prod requires valid PropertyQuarry Cloudflare email configuration"
+        )
+
+
 def validate_startup_settings(settings: Settings) -> RuntimeProfile:
     ensure_runtime_authority_valid(settings)
     ensure_prod_api_token_configured(settings)
     ensure_prod_signing_secret_configured(settings)
     ensure_prod_loopback_no_auth_disabled(settings)
     ensure_prod_registration_email_sender_domain(settings)
+    ensure_prod_registration_email_provider_config(settings)
     profile = resolve_runtime_profile(settings)
     if is_prod_mode(settings.runtime.mode):
         if profile.storage_backend != "postgres":
