@@ -128,6 +128,18 @@ def test_database_secret_is_environment_only_and_help_has_no_url_argument(monkey
     assert "--database-url" not in help_result.stdout
 
 
+def test_unexpected_connection_failure_is_redacted(monkeypatch, capsys):
+    module = _module()
+    secret = "postgresql://operator:private@db.example.invalid/property"
+    monkeypatch.setenv(module.DEFAULT_DATABASE_ENV, secret)
+    monkeypatch.setattr(module, "_connect", lambda _value: (_ for _ in ()).throw(RuntimeError(secret)))
+    assert module.main([]) == 2
+    stderr = capsys.readouterr().err
+    assert "unexpected_runtime_failure" in stderr
+    assert "RuntimeError" in stderr
+    assert secret not in stderr
+
+
 def test_compaction_bounds_depth_and_preserves_all_top_level_semantics():
     module = _module()
     source = _preferences()
@@ -137,9 +149,11 @@ def test_compaction_bounds_depth_and_preserves_all_top_level_semantics():
     assert compacted["search_agents"] == source["search_agents"]
     assert compacted["raw_preferences"] == {"old_intent": "quiet", "inner_value": 9}
     assert module.raw_preferences_depth(compacted) == 1
-    too_deep = {"value": True}
-    for _ in range(module.RAW_PREFERENCES_MAX_DEPTH + 1):
-        too_deep = {"raw_preferences": too_deep}
+    at_bound = {"value": True}
+    for _ in range(module.RAW_PREFERENCES_MAX_DEPTH):
+        at_bound = {"raw_preferences": at_bound}
+    assert module.raw_preferences_depth(at_bound) == module.RAW_PREFERENCES_MAX_DEPTH
+    too_deep = {"raw_preferences": at_bound}
     with pytest.raises(module.CompactorError, match="depth_limit"):
         module.compact_preferences(too_deep)
     no_op = _preferences(deep=False)
@@ -208,7 +222,7 @@ def test_restore_validates_backup_hash_and_refuses_later_edit(tmp_path):
     backup_dir.mkdir(mode=0o700)
     module.apply(connection, backup_dir=backup_dir, minimum_bytes=1, **_scope(module, connection))
     backup = next(backup_dir.iterdir())
-    receipt = module.restore(connection, backup_path=backup)
+    receipt = module.restore(connection, backup_path=backup, expected_file_sha256=module._sha256(backup.read_bytes()))
     assert receipt["mode"] == "restore"
     assert connection.preferences == _preferences()
     second_backup_dir = tmp_path / "safe-second"
@@ -217,9 +231,19 @@ def test_restore_validates_backup_hash_and_refuses_later_edit(tmp_path):
     second_backup = next(second_backup_dir.iterdir())
     connection.preferences["later_edit"] = True
     with pytest.raises(module.CompactorError, match="restore_compare_and_swap_mismatch"):
-        module.restore(connection, backup_path=second_backup)
+        module.restore(
+            connection,
+            backup_path=second_backup,
+            expected_file_sha256=module._sha256(second_backup.read_bytes()),
+        )
     damaged = tmp_path / "damaged.json"
     damaged.write_bytes(backup.read_bytes().replace(b"backup.v1", b"backup.x1"))
     os.chmod(damaged, 0o600)
     with pytest.raises(module.CompactorError, match="backup_"):
-        module.restore(connection, backup_path=damaged)
+        module.restore(connection, backup_path=damaged, expected_file_sha256=module._sha256(damaged.read_bytes()))
+    with pytest.raises(module.CompactorError, match="restore_backup_file_sha256_mismatch"):
+        module.restore(connection, backup_path=backup, expected_file_sha256="0" * 64)
+    alias = tmp_path / "backup-alias.json"
+    alias.symlink_to(backup)
+    with pytest.raises(module.CompactorError, match="backup_file_invalid"):
+        module.restore(connection, backup_path=alias, expected_file_sha256=module._sha256(backup.read_bytes()))

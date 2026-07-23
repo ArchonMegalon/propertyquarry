@@ -27,7 +27,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 BACKUP_SCHEMA = "propertyquarry.onboarding-preferences-compactor.backup.v1"
 RECEIPT_SCHEMA = "propertyquarry.onboarding-preferences-compactor.receipt.v1"
-RAW_PREFERENCES_MAX_DEPTH = 4
+RAW_PREFERENCES_MAX_DEPTH = 512
 RESERVED_RAW_STRUCTURAL_KEYS = frozenset(
     {"raw_preferences", "saved_shortlist_candidates", "search_agents"}
 )
@@ -337,25 +337,40 @@ def _candidate_is_eligible(candidate: Candidate, *, minimum_bytes: int) -> bool:
         return False
 
 
+def _candidate_summary(candidate: Candidate) -> dict[str, object]:
+    return {
+        "principal_sha256": candidate.principal_sha256,
+        "stored_bytes": candidate.stored_bytes,
+        "json_before_bytes": len(_canonical_json(candidate.preferences)),
+        "json_after_bytes": len(_canonical_json(candidate.compacted)),
+        "changed": candidate.changed,
+    }
+
+
 def _redacted_receipt(
-    *, mode: str, candidates: Sequence[Candidate], backups: Sequence[tuple[Candidate, Path, str, int]] = (),
+    *,
+    mode: str,
+    summaries: Sequence[Mapping[str, object]],
+    scope_principal_sha256: Sequence[str],
+    backups: Sequence[tuple[str, str, int]] = (),
 ) -> dict[str, object]:
     return {
         "schema": RECEIPT_SCHEMA,
         "mode": mode,
-        "candidate_count": len(candidates),
-        "candidate_principal_sha256": sorted(candidate.principal_sha256 for candidate in candidates),
-        "before_bytes_total": sum(candidate.stored_bytes for candidate in candidates),
-        "json_before_bytes_total": sum(len(_canonical_json(candidate.preferences)) for candidate in candidates),
-        "json_after_bytes_total": sum(len(_canonical_json(candidate.compacted)) for candidate in candidates),
-        "changed_count": sum(1 for candidate in candidates if candidate.changed),
+        "candidate_count": len(scope_principal_sha256),
+        "candidate_principal_sha256": sorted(scope_principal_sha256),
+        "processed_count": len(summaries),
+        "before_bytes_total": sum(int(item["stored_bytes"]) for item in summaries),
+        "json_before_bytes_total": sum(int(item["json_before_bytes"]) for item in summaries),
+        "json_after_bytes_total": sum(int(item["json_after_bytes"]) for item in summaries),
+        "changed_count": sum(1 for item in summaries if bool(item["changed"])),
         "backups": [
             {
-                "principal_sha256": candidate.principal_sha256,
+                "principal_sha256": principal_sha256,
                 "backup_content_sha256": digest,
                 "backup_bytes": byte_count,
             }
-            for candidate, _path, digest, byte_count in backups
+            for principal_sha256, digest, byte_count in backups
         ],
     }
 
@@ -369,8 +384,16 @@ def dry_run(
             expected_count=expected_count,
             expected_principal_digests=expected_principal_digests,
         )
-        candidates = tuple(_load_candidate(cursor, candidate.principal_id, lock=False) for candidate in metadata)
-    return _redacted_receipt(mode="dry_run", candidates=candidates)
+        summaries: list[dict[str, object]] = []
+        for candidate in metadata:
+            loaded = _load_candidate(cursor, candidate.principal_id, lock=False)
+            summaries.append(_candidate_summary(loaded))
+            del loaded
+    return _redacted_receipt(
+        mode="dry_run",
+        summaries=summaries,
+        scope_principal_sha256=[item.principal_sha256 for item in metadata],
+    )
 
 
 def _set_timeouts(cursor: Any) -> None:
@@ -419,7 +442,8 @@ def apply(
         )
     if tuple(item.principal_sha256 for item in first_scope) != tuple(item.principal_sha256 for item in candidates):
         raise CompactorError("candidate_scope_changed_before_apply")
-    backups: list[tuple[Candidate, Path, str, int]] = []
+    backups: list[tuple[str, str, int]] = []
+    summaries: list[dict[str, object]] = []
     for expected in candidates:
         original_autocommit = _begin_explicit_transaction(connection)
         try:
@@ -461,30 +485,56 @@ def apply(
                 ):
                     raise CompactorError("post_update_structural_count_mismatch")
             connection.commit()
-            backups.append((locked, backup_path, backup_digest, backup_bytes))
+            summaries.append(_candidate_summary(locked))
+            backups.append((locked.principal_sha256, backup_digest, backup_bytes))
+            del verified
+            del locked
         except Exception as error:
             connection.rollback()
             if backups:
                 raise PartialApplyError(
                     "partial_apply_stopped",
-                    _redacted_receipt(mode="partial_apply", candidates=candidates, backups=backups),
+                    _redacted_receipt(
+                        mode="partial_apply",
+                        summaries=summaries,
+                        scope_principal_sha256=[item.principal_sha256 for item in candidates],
+                        backups=backups,
+                    ),
                 ) from error
             raise
         finally:
             _finish_explicit_transaction(connection, original_autocommit)
-    return _redacted_receipt(mode="apply", candidates=candidates, backups=backups)
+    return _redacted_receipt(
+        mode="apply",
+        summaries=summaries,
+        scope_principal_sha256=[item.principal_sha256 for item in candidates],
+        backups=backups,
+    )
 
 
-def _load_backup(path: Path) -> dict[str, object]:
+def _load_backup(path: Path, *, expected_file_sha256: str) -> dict[str, object]:
+    if not _is_digest(expected_file_sha256):
+        raise CompactorError("restore_backup_file_sha256_required")
     try:
-        metadata = path.lstat()
+        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+        descriptor = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
     except OSError as error:
         raise CompactorError("backup_file_invalid") from error
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise CompactorError("backup_file_invalid")
-    if stat.S_IMODE(metadata.st_mode) != 0o600:
-        raise CompactorError("backup_file_mode_invalid")
-    raw = path.read_bytes()
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise CompactorError("backup_file_invalid")
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise CompactorError("backup_file_mode_invalid")
+        chunks: list[bytes] = []
+        while block := os.read(descriptor, 1_048_576):
+            chunks.append(block)
+        raw = b"".join(chunks)
+    finally:
+        os.close(descriptor)
+        os.close(parent_fd)
+    if _sha256(raw) != expected_file_sha256:
+        raise CompactorError("restore_backup_file_sha256_mismatch")
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -506,8 +556,8 @@ def _load_backup(path: Path) -> dict[str, object]:
     return payload
 
 
-def restore(connection: Any, *, backup_path: Path) -> dict[str, object]:
-    payload = _load_backup(backup_path)
+def restore(connection: Any, *, backup_path: Path, expected_file_sha256: str) -> dict[str, object]:
+    payload = _load_backup(backup_path, expected_file_sha256=expected_file_sha256)
     row = dict(payload["row"])
     original = dict(row["property_search_preferences_json"])
     identifier = str(row["principal_id"])
@@ -582,6 +632,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--backup-dir", type=Path)
     parser.add_argument("--restore-backup", type=Path)
+    parser.add_argument("--restore-backup-sha256")
     return parser
 
 
@@ -592,9 +643,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.restore_backup and args.apply:
             raise CompactorError("restore_and_apply_are_mutually_exclusive")
         if args.restore_backup:
+            if not args.restore_backup_sha256:
+                raise CompactorError("restore_backup_file_sha256_required")
             connection = _connect(database_url)
             try:
-                receipt = restore(connection, backup_path=args.restore_backup)
+                receipt = restore(
+                    connection,
+                    backup_path=args.restore_backup,
+                    expected_file_sha256=args.restore_backup_sha256,
+                )
             finally:
                 connection.close()
         else:
@@ -628,6 +685,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except CompactorError as error:
         print(json.dumps({"schema": RECEIPT_SCHEMA, "status": "error", "reason": str(error)}, sort_keys=True), file=sys.stderr)
+        return 2
+    except Exception as error:
+        print(
+            json.dumps(
+                {"schema": RECEIPT_SCHEMA, "status": "error", "reason": "unexpected_runtime_failure", "error_type": type(error).__name__},
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
         return 2
 
 
