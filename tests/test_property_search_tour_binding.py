@@ -18,6 +18,7 @@ from app.api.routes.public_tour_payloads import redacted_public_tour_payload
 from app.product.property_research_packet_links import property_research_candidate_ref
 from app.product.property_search_tour_binding import (
     PropertySearchTourBindingError,
+    exact_property_search_candidate_tour_binding_receipt,
     plan_property_search_candidate_tour_binding,
     property_search_run_record_sha256,
 )
@@ -37,6 +38,8 @@ PROPERTY_URL_SHA256 = "f451d904167c5b1a2b27f698ec38c18f6760fe55b79cca32c99bc986f
 TOUR_BASE_URL = "https://propertyquarry.com/tours/prater-messe-ai-360-053ad185e1c44b2e"
 TOUR_URL = f"{TOUR_BASE_URL}/control"
 TOUR_CONTROL_PATH = "/tours/prater-messe-ai-360-053ad185e1c44b2e/control"
+OTHER_TOUR_BASE_URL = "https://propertyquarry.com/tours/other-exact-generated-reconstruction"
+OTHER_TOUR_URL = f"{OTHER_TOUR_BASE_URL}/control"
 
 
 def _bundle_identity(**updates: object) -> dict[str, object]:
@@ -99,7 +102,14 @@ def _record() -> dict[str, object]:
     }
 
 
-def _ready_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+def _ready_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    reconstruction_kind: str = "ai_panorama_360",
+) -> None:
+    expected_url = (
+        TOUR_BASE_URL if reconstruction_kind == "layout_preview" else TOUR_URL
+    )
     monkeypatch.setattr(product_service, "_property_search_run_database_url", lambda: "postgresql://configured")
     monkeypatch.setattr(
         property_tour_hosting,
@@ -115,8 +125,8 @@ def _ready_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
         property_tour_hosting,
         "_hosted_property_tour_reconstruction_kind",
         lambda value, *, principal_id="": (
-            "ai_panorama_360"
-            if str(value) == TOUR_URL and str(principal_id) == PRINCIPAL_ID
+            reconstruction_kind
+            if str(value) == expected_url and str(principal_id) == PRINCIPAL_ID
             else ""
         ),
     )
@@ -124,8 +134,8 @@ def _ready_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
         property_tour_hosting,
         "_hosted_property_tour_first_party_open_url",
         lambda value, *, principal_id="": (
-            TOUR_URL
-            if str(value) == TOUR_URL and str(principal_id) == PRINCIPAL_ID
+            expected_url
+            if str(value) == expected_url and str(principal_id) == PRINCIPAL_ID
             else ""
         ),
     )
@@ -134,10 +144,31 @@ def _ready_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
         "_owned_hosted_property_tour_binding_identity",
         lambda value, *, principal_id="": (
             _bundle_identity()
-            if str(value) == TOUR_URL and str(principal_id) == PRINCIPAL_ID
+            if str(value) == expected_url and str(principal_id) == PRINCIPAL_ID
             else {}
         ),
     )
+
+
+def _bound_record(
+    *,
+    generated_reconstruction_url: str = TOUR_URL,
+    reconstruction_kind: str = "ai_panorama_360",
+    disclosure: str = "",
+) -> dict[str, object]:
+    updated, _receipt = plan_property_search_candidate_tour_binding(
+        _record(),
+        principal_id=PRINCIPAL_ID,
+        run_id=RUN_ID,
+        candidate_ref=CANDIDATE_REF,
+        expected_listing_id=LISTING_ID,
+        generated_reconstruction_url=generated_reconstruction_url,
+        bundle_identity=_bundle_identity(),
+        reconstruction_kind=reconstruction_kind,
+        disclosure=disclosure,
+        bound_at="2026-07-20T12:00:00+00:00",
+    )
+    return updated
 
 
 def test_binding_plan_updates_every_exact_candidate_occurrence_without_mutating_input() -> None:
@@ -177,6 +208,103 @@ def test_binding_plan_updates_every_exact_candidate_occurrence_without_mutating_
         assert "tour_reason_key" not in row
         assert row["tour"]["reconstruction_kind"] == "ai_panorama_360"
         assert "reason" not in row["tour"]
+
+
+def test_binding_plan_repairs_partial_binding_with_one_consistent_timestamp() -> None:
+    partial = _bound_record(disclosure="exact disclosure")
+    partial["summary"]["results"][0].pop("generated_reconstruction_url")
+
+    repaired, receipt = plan_property_search_candidate_tour_binding(
+        partial,
+        principal_id=PRINCIPAL_ID,
+        run_id=RUN_ID,
+        candidate_ref=CANDIDATE_REF,
+        expected_listing_id=LISTING_ID,
+        generated_reconstruction_url=TOUR_URL,
+        bundle_identity=_bundle_identity(),
+        disclosure="exact disclosure",
+        bound_at="2026-07-21T12:00:00+00:00",
+    )
+
+    rows = [
+        repaired["summary"]["ranked_candidates"][0],
+        repaired["summary"]["results"][0],
+        repaired["summary"]["sources"][0]["top_candidates"][0],
+    ]
+    assert receipt["changed"] is True
+    assert receipt["occurrences_updated"] == 3
+    assert {row["tour_status_updated_at"] for row in rows} == {
+        "2026-07-21T12:00:00+00:00"
+    }
+    assert (
+        exact_property_search_candidate_tour_binding_receipt(
+            repaired,
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=TOUR_URL,
+            disclosure="exact disclosure",
+        )
+        is not None
+    )
+
+
+def test_binding_plan_clears_stale_disclosure_for_exact_empty_disclosure() -> None:
+    stale = _bound_record(disclosure="stale disclosure")
+
+    repaired, receipt = plan_property_search_candidate_tour_binding(
+        stale,
+        principal_id=PRINCIPAL_ID,
+        run_id=RUN_ID,
+        candidate_ref=CANDIDATE_REF,
+        expected_listing_id=LISTING_ID,
+        generated_reconstruction_url=TOUR_URL,
+        bundle_identity=_bundle_identity(),
+        disclosure="",
+        bound_at="2026-07-21T12:00:00+00:00",
+    )
+
+    rows = [
+        repaired["summary"]["ranked_candidates"][0],
+        repaired["summary"]["results"][0],
+        repaired["summary"]["sources"][0]["top_candidates"][0],
+    ]
+    assert receipt["changed"] is True
+    assert receipt["occurrences_updated"] == 3
+    for row in rows:
+        assert "generated_reconstruction_disclosure" not in row
+        assert "disclosure" not in row["tour"]
+    assert (
+        exact_property_search_candidate_tour_binding_receipt(
+            repaired,
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=TOUR_URL,
+            disclosure="",
+        )
+        is not None
+    )
+
+
+def test_exact_saved_binding_receipt_rejects_a_nonterminal_run_directly() -> None:
+    stored = _bound_record()
+    stored["status"] = "running"
+
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_run_not_terminal",
+    ):
+        exact_property_search_candidate_tour_binding_receipt(
+            stored,
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=TOUR_URL,
+        )
 
 
 def test_binding_plan_resolves_and_stabilizes_a_derived_candidate_ref() -> None:
@@ -642,6 +770,335 @@ def test_service_binding_applies_with_fresh_fingerprint_and_is_idempotent(
     assert len(writes) == 1
 
 
+@pytest.mark.parametrize(
+    ("reconstruction_kind", "stored_url", "requested_url"),
+    (
+        ("layout_preview", TOUR_BASE_URL, TOUR_BASE_URL),
+        ("ai_panorama_360", TOUR_URL, TOUR_BASE_URL),
+    ),
+)
+@pytest.mark.parametrize("apply", (False, True))
+def test_service_exact_binding_survives_public_only_publish_without_private_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    reconstruction_kind: str,
+    stored_url: str,
+    requested_url: str,
+    apply: bool,
+) -> None:
+    _ready_bundle(monkeypatch, reconstruction_kind=reconstruction_kind)
+    stored = _bound_record(
+        generated_reconstruction_url=stored_url,
+        reconstruction_kind=reconstruction_kind,
+    )
+    owner_calls: list[str] = []
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda *, run_id, principal_id: copy.deepcopy(stored),
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_owned_hosted_property_tour_binding_identity",
+        lambda value, *, principal_id="": owner_calls.append(str(value))
+        or pytest.fail("an exact persisted binding must not need tour.private.json"),
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_compare_and_swap_property_search_run_record",
+        lambda **_kwargs: pytest.fail("an exact persisted binding must not CAS"),
+    )
+
+    receipt = product_service.bind_property_search_candidate_generated_reconstruction(
+        principal_id=PRINCIPAL_ID,
+        run_id=RUN_ID,
+        candidate_ref=CANDIDATE_REF,
+        expected_listing_id=LISTING_ID,
+        generated_reconstruction_url=requested_url,
+        reconstruction_kind=reconstruction_kind,
+        apply=apply,
+    )
+
+    assert receipt["status"] == "already_bound"
+    assert receipt["mode"] == ("apply" if apply else "dry_run")
+    assert receipt["changed"] is False
+    assert receipt["occurrences_matched"] == 3
+    assert receipt["occurrences_updated"] == 0
+    assert receipt["binding_verified_from"] == "principal_scoped_terminal_run"
+    assert owner_calls == []
+
+
+def test_service_exact_binding_still_requires_a_terminal_principal_scoped_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ready_bundle(monkeypatch)
+    stored = _bound_record()
+    stored["status"] = "running"
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda *, run_id, principal_id: copy.deepcopy(stored),
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_reconstruction_kind",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a nonterminal run must fail before hosted-bundle inspection"
+        ),
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_owned_hosted_property_tour_binding_identity",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a nonterminal run must fail before owner lookup"
+        ),
+    )
+
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_run_not_terminal",
+    ):
+        product_service.bind_property_search_candidate_generated_reconstruction(
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=TOUR_URL,
+        )
+
+
+@pytest.mark.parametrize(
+    ("public_failure", "error_code"),
+    (
+        ("kind", "property_search_tour_bundle_kind_mismatch"),
+        ("not_ready", "property_search_tour_bundle_not_ready"),
+    ),
+)
+def test_service_exact_binding_does_not_bypass_public_bundle_verification(
+    monkeypatch: pytest.MonkeyPatch,
+    public_failure: str,
+    error_code: str,
+) -> None:
+    _ready_bundle(monkeypatch)
+    stored = _bound_record()
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda *, run_id, principal_id: copy.deepcopy(stored),
+    )
+    if public_failure == "kind":
+        monkeypatch.setattr(
+            property_tour_hosting,
+            "_hosted_property_tour_reconstruction_kind",
+            lambda *_args, **_kwargs: "layout_preview",
+        )
+    else:
+        monkeypatch.setattr(
+            property_tour_hosting,
+            "_hosted_property_tour_first_party_open_url",
+            lambda *_args, **_kwargs: "",
+        )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_owned_hosted_property_tour_binding_identity",
+        lambda *_args, **_kwargs: pytest.fail(
+            "public verification failure must precede owner lookup"
+        ),
+    )
+
+    with pytest.raises(PropertySearchTourBindingError, match=error_code):
+        product_service.bind_property_search_candidate_generated_reconstruction(
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=TOUR_URL,
+        )
+
+
+def test_service_first_binding_still_requires_live_private_owner_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ready_bundle(monkeypatch)
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda *, run_id, principal_id: _record(),
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_owned_hosted_property_tour_binding_identity",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_compare_and_swap_property_search_run_record",
+        lambda **_kwargs: pytest.fail("a missing owner receipt must not CAS"),
+    )
+
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_bundle_owner_mismatch",
+    ):
+        product_service.bind_property_search_candidate_generated_reconstruction(
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=TOUR_URL,
+        )
+
+
+@pytest.mark.parametrize(
+    ("drift", "error_code", "owner_lookup_required"),
+    (
+        ("principal", "property_search_tour_principal_mismatch", False),
+        ("run", "property_search_tour_run_id_mismatch", False),
+        ("candidate", "property_search_tour_candidate_not_found", False),
+        ("listing", "property_search_tour_listing_id_mismatch", False),
+        ("url", "property_search_tour_bundle_owner_mismatch", True),
+        ("kind", "property_search_tour_bundle_owner_mismatch", True),
+        ("disclosure", "property_search_tour_bundle_owner_mismatch", True),
+    ),
+)
+def test_service_missing_private_receipt_does_not_accept_nonexact_existing_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+    error_code: str,
+    owner_lookup_required: bool,
+) -> None:
+    _ready_bundle(monkeypatch)
+    stored = _bound_record(disclosure="exact disclosure")
+    owner_calls: list[str] = []
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda *, run_id, principal_id: copy.deepcopy(stored),
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_owned_hosted_property_tour_binding_identity",
+        lambda value, **_kwargs: owner_calls.append(str(value)) or {},
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_compare_and_swap_property_search_run_record",
+        lambda **_kwargs: pytest.fail("identity drift must not CAS"),
+    )
+    kwargs: dict[str, object] = {
+        "principal_id": PRINCIPAL_ID,
+        "run_id": RUN_ID,
+        "candidate_ref": CANDIDATE_REF,
+        "expected_listing_id": LISTING_ID,
+        "generated_reconstruction_url": TOUR_URL,
+        "reconstruction_kind": "ai_panorama_360",
+        "disclosure": "exact disclosure",
+    }
+    if drift == "principal":
+        kwargs["principal_id"] = "different-principal"
+    elif drift == "run":
+        kwargs["run_id"] = "different-run"
+    elif drift == "candidate":
+        kwargs["candidate_ref"] = "different-candidate"
+    elif drift == "listing":
+        kwargs["expected_listing_id"] = "974574134"
+    elif drift == "url":
+        kwargs["generated_reconstruction_url"] = OTHER_TOUR_URL
+        monkeypatch.setattr(
+            property_tour_hosting,
+            "_is_branded_public_tour_url",
+            lambda value: str(value) == OTHER_TOUR_URL,
+        )
+        monkeypatch.setattr(
+            property_tour_hosting,
+            "_hosted_property_tour_reconstruction_kind",
+            lambda value, *, principal_id="": (
+                "ai_panorama_360"
+                if str(value) == OTHER_TOUR_URL and str(principal_id) == PRINCIPAL_ID
+                else ""
+            ),
+        )
+        monkeypatch.setattr(
+            property_tour_hosting,
+            "_hosted_property_tour_first_party_open_url",
+            lambda value, *, principal_id="": (
+                OTHER_TOUR_URL
+                if str(value) == OTHER_TOUR_URL and str(principal_id) == PRINCIPAL_ID
+                else ""
+            ),
+        )
+    elif drift == "kind":
+        kwargs["generated_reconstruction_url"] = TOUR_BASE_URL
+        kwargs["reconstruction_kind"] = "layout_preview"
+        monkeypatch.setattr(
+            property_tour_hosting,
+            "_hosted_property_tour_reconstruction_kind",
+            lambda value, *, principal_id="": (
+                "layout_preview"
+                if str(value) == TOUR_BASE_URL and str(principal_id) == PRINCIPAL_ID
+                else ""
+            ),
+        )
+        monkeypatch.setattr(
+            property_tour_hosting,
+            "_hosted_property_tour_first_party_open_url",
+            lambda value, *, principal_id="": (
+                TOUR_BASE_URL
+                if str(value) == TOUR_BASE_URL and str(principal_id) == PRINCIPAL_ID
+                else ""
+            ),
+        )
+    elif drift == "disclosure":
+        kwargs["disclosure"] = "different disclosure"
+
+    with pytest.raises(PropertySearchTourBindingError, match=error_code):
+        product_service.bind_property_search_candidate_generated_reconstruction(
+            **kwargs,
+        )
+    assert bool(owner_calls) is owner_lookup_required
+
+
+@pytest.mark.parametrize("drift", ("partial", "mixed"))
+def test_service_missing_private_receipt_rejects_partial_or_mixed_occurrence_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    _ready_bundle(monkeypatch)
+    stored = _bound_record()
+    if drift == "partial":
+        stored["summary"]["results"][0].pop("generated_reconstruction_url")
+    else:
+        stored["summary"]["sources"][0]["top_candidates"][0][
+            "generated_reconstruction_url"
+        ] = OTHER_TOUR_URL
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda *, run_id, principal_id: copy.deepcopy(stored),
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_owned_hosted_property_tour_binding_identity",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_compare_and_swap_property_search_run_record",
+        lambda **_kwargs: pytest.fail("partial or mixed binding must not CAS"),
+    )
+
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_bundle_owner_mismatch",
+    ):
+        product_service.bind_property_search_candidate_generated_reconstruction(
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=TOUR_URL,
+        )
+
+
 def test_service_binding_rechecks_locked_race_and_accepts_only_same_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -694,6 +1151,21 @@ def test_service_binding_rechecks_locked_race_and_accepts_only_same_binding(
         generated_reconstruction_url=TOUR_URL,
         bundle_identity=_bundle_identity(),
     )
+    state["record"]["status"] = "running"
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_record_changed_since_dry_run",
+    ):
+        product_service.bind_property_search_candidate_generated_reconstruction(
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=TOUR_URL,
+            expected_record_sha256=dry_run["before_sha256"],
+            apply=True,
+        )
+    state["record"]["status"] = "processed"
     result = product_service.bind_property_search_candidate_generated_reconstruction(
         principal_id=PRINCIPAL_ID,
         run_id=RUN_ID,
@@ -704,6 +1176,11 @@ def test_service_binding_rechecks_locked_race_and_accepts_only_same_binding(
         apply=True,
     )
     assert result["status"] == "already_bound"
+    assert result["mode"] == "apply"
+    assert result["changed"] is False
+    assert result["occurrences_updated"] == 0
+    assert result["changed_paths"] == []
+    assert result["binding_verified_from"] == "principal_scoped_terminal_run"
     assert state["record"]["summary"]["concurrent_note"] == "must not be overwritten"
 
 

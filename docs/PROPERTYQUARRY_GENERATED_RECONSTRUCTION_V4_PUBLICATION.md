@@ -161,11 +161,68 @@ chmod 0600 "$PQ_INSPECTION_COPY"
 
 Verify that signed wrapper with the installed receipt anchor. Then copy the
 exact `expected_old_tree_argument` into `PQ_EXPECTED_OLD_TREE`; do not infer or
-normalize it. Choose one fresh 32-lowercase-hex transaction ID and retain it for
-publish, recovery, and rollback:
+normalize it. For this replacement workflow it must be a `sha256:` digest, not
+`absent`, and the inspected live predecessor must still contain its private
+owner receipt.
+
+Before the public-only exchange, bind the exact principal-scoped terminal
+search-run candidate while that private receipt remains live. Keep the
+principal in the environment, use the exact identity values from the private
+receipt, and retain both redacted receipts:
 
 ```sh
-PQ_EXPECTED_OLD_TREE='absent'
+PQ_BIND_SCRIPT='/docker/property/scripts/bind_property_search_candidate_tour.py'
+PQ_BIND_RUN_ID='<exact-search-run-id>'
+PQ_BIND_CANDIDATE_REF='<exact-candidate-ref>'
+PQ_BIND_LISTING_ID='<exact-listing-id>'
+PQ_BIND_TOUR_URL='https://propertyquarry.com/tours/ab-1-8-modern-and-fully-furnited-loft-apartment-top-moderne-und-voll-mblierte-loft-wohnung-nas-layout-first-d07edad7af3fc379574d'
+PQ_BIND_DISCLOSURE='<exact-public-disclosure>'
+PQ_BIND_DRY_RUN="$(mktemp -p /tmp propertyquarry-tour-bind-dry-run.XXXXXX)"
+PQ_BIND_APPLY="$(mktemp -p /tmp propertyquarry-tour-bind-apply.XXXXXX)"
+chmod 0600 "$PQ_BIND_DRY_RUN" "$PQ_BIND_APPLY"
+export PROPERTYQUARRY_TOUR_BINDING_PRINCIPAL_ID='<exact-principal-id>'
+
+python3 "$PQ_BIND_SCRIPT" \
+  --run-id "$PQ_BIND_RUN_ID" \
+  --candidate-ref "$PQ_BIND_CANDIDATE_REF" \
+  --listing-id "$PQ_BIND_LISTING_ID" \
+  --tour-url "$PQ_BIND_TOUR_URL" \
+  --reconstruction-kind layout_preview \
+  --disclosure "$PQ_BIND_DISCLOSURE" \
+  > "$PQ_BIND_DRY_RUN"
+```
+
+Stop unless the dry-run says either `status=change_required` or
+`status=already_bound`. For `change_required`, copy its exact `before_sha256`
+without normalizing it and apply once:
+
+```sh
+PQ_BIND_BEFORE_SHA256='<exact-before_sha256-from-fresh-dry-run>'
+python3 "$PQ_BIND_SCRIPT" \
+  --run-id "$PQ_BIND_RUN_ID" \
+  --candidate-ref "$PQ_BIND_CANDIDATE_REF" \
+  --listing-id "$PQ_BIND_LISTING_ID" \
+  --tour-url "$PQ_BIND_TOUR_URL" \
+  --reconstruction-kind layout_preview \
+  --disclosure "$PQ_BIND_DISCLOSURE" \
+  --expected-record-sha256 "$PQ_BIND_BEFORE_SHA256" \
+  --apply \
+  > "$PQ_BIND_APPLY"
+```
+
+Stop unless apply says `status=applied`, or an exact concurrent writer made it
+return `status=already_bound` with the strict metadata below. If the dry-run
+itself says `status=already_bound`, do not perform a compare-and-swap. Every
+accepted `already_bound` receipt must say `changed=false`, all candidate
+occurrences matched, no occurrence updated, and
+`binding_verified_from=principal_scoped_terminal_run`.
+
+Only after the binding is proven may the public-only publication begin. Choose
+one fresh 32-lowercase-hex transaction ID and retain it for publish, recovery,
+and rollback:
+
+```sh
+PQ_EXPECTED_OLD_TREE='sha256:<exact-64-lowercase-hex-inspected-live-tree>'
 PQ_TOUR_TRANSACTION_ID='f7ddedd7bd1cad7a8074620860000001'
 PQ_PUBLICATION_COPY="$(mktemp -p /tmp propertyquarry-tour-v4-publication.XXXXXX)"
 chmod 0600 "$PQ_PUBLICATION_COPY"
@@ -184,8 +241,12 @@ chmod 0600 "$PQ_PUBLICATION_COPY"
 Stop unless the signed terminal payload says `status=succeeded`, binds exactly
 21 public files, says `private_source_files_published=false`, and contains the
 artifact, manifest, browser, quality, and walkthrough hashes listed above.
-Never retry with a new expected-old value or transaction ID after an ambiguous
-failure.
+Also rerun the binding command without `--apply` after publication. The
+private receipt is now intentionally absent, so the post-state check must say
+`status=already_bound`, `changed=false`, all occurrences matched, no
+occurrence updated, and
+`binding_verified_from=principal_scoped_terminal_run`. Never retry with a new
+expected-old value or transaction ID after an ambiguous publication failure.
 
 Recover the same prepared transaction with the same CAS values:
 
@@ -217,6 +278,23 @@ and an explicit CAS on the current published tree:
 There is no rollback tree for an `absent` first publication. Recovery remains
 available because the durable prepared receipt and candidate inode fully bind
 the no-replace transition.
+
+This bind-before-publish workflow does not authorize an `absent` first
+publication. With no live private owner receipt and no exact persisted binding,
+the first bind must fail closed; the public manifest, slug, URL, and public
+property digest are not ownership evidence. Stop rather than publishing an
+unbound first tree. A separately reviewed owner-proven first-publication
+procedure is required before using v4 no-replace publication for a new slug.
+
+For a replacement, a stale bind fingerprint or failed bind is resolved by
+leaving the live predecessor untouched, obtaining a fresh signed inspection,
+and repeating dry-run before apply. If publication outcome is ambiguous,
+recover the same prepared transaction first. If a signed successful
+publication later fails the binding post-state verification, use the original
+transaction's exact rollback CAS to restore the retained predecessor; then
+obtain a fresh signed inspection, repeat the owner-proven bind, and use a fresh
+authorized publication transaction. Never infer new CAS values from the live
+directory and never mix values across transactions.
 
 ## Test acceptance
 

@@ -118,6 +118,16 @@ def property_search_run_record_sha256(record: Mapping[str, object]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def property_search_tour_run_is_terminal(record: Mapping[str, object]) -> bool:
+    return _normalized_text(record.get("status")).lower() in {
+        "complete",
+        "completed",
+        "processed",
+        "succeeded",
+        "success",
+    }
+
+
 def _normalized_text(value: object) -> str:
     return str(value or "").strip()
 
@@ -358,11 +368,7 @@ def _apply_candidate_tour_fields(
     disclosure: str,
     bound_at: str,
 ) -> bool:
-    provider = (
-        "propertyquarry_ai_360"
-        if reconstruction_kind == "ai_panorama_360"
-        else "propertyquarry_generated_reconstruction"
-    )
+    provider = _tour_provider_for_reconstruction_kind(reconstruction_kind)
     desired: dict[str, object] = {
         "candidate_ref": candidate_ref,
         "generated_reconstruction_url": generated_reconstruction_url,
@@ -375,6 +381,11 @@ def _apply_candidate_tour_fields(
     if disclosure:
         desired["generated_reconstruction_disclosure"] = disclosure
     changed = any(candidate.get(key) != value for key, value in desired.items())
+    if (
+        not disclosure
+        and _normalized_text(candidate.get("generated_reconstruction_disclosure"))
+    ):
+        changed = True
     for key in ("blocked_reason", "tour_reason", "tour_reason_key"):
         if key in candidate:
             changed = True
@@ -391,20 +402,229 @@ def _apply_candidate_tour_fields(
         desired_tour["disclosure"] = disclosure
     if any(tour.get(key) != value for key, value in desired_tour.items()):
         changed = True
+    if not disclosure and _normalized_text(tour.get("disclosure")):
+        changed = True
     for key in ("blocked_reason", "reason", "reason_key"):
         if key in tour:
             changed = True
     if not changed:
         return False
     candidate.update(desired)
+    if not disclosure:
+        candidate.pop("generated_reconstruction_disclosure", None)
     for key in ("blocked_reason", "tour_reason", "tour_reason_key"):
         candidate.pop(key, None)
     tour.update(desired_tour)
+    if not disclosure:
+        tour.pop("disclosure", None)
     for key in ("blocked_reason", "reason", "reason_key"):
         tour.pop(key, None)
     candidate["tour"] = tour
     candidate["tour_status_updated_at"] = bound_at
     return True
+
+
+def _tour_provider_for_reconstruction_kind(reconstruction_kind: str) -> str:
+    return (
+        "propertyquarry_ai_360"
+        if reconstruction_kind == "ai_panorama_360"
+        else "propertyquarry_generated_reconstruction"
+    )
+
+
+def exact_property_search_candidate_tour_binding_receipt(
+    record: Mapping[str, object],
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    expected_listing_id: str,
+    generated_reconstruction_url: str,
+    reconstruction_kind: str = "ai_panorama_360",
+    disclosure: str = "",
+) -> dict[str, object] | None:
+    """Return a receipt only for one complete, internally consistent saved binding.
+
+    This is deliberately not an ownership fallback for a first or changed
+    binding. It recognizes only an exact binding already stored in the
+    principal-scoped terminal run, and it never mutates that run.
+    """
+
+    normalized_principal = _normalized_text(principal_id)
+    normalized_run_id = _normalized_text(run_id)
+    normalized_candidate_ref = _normalized_text(candidate_ref)
+    normalized_listing_id = _normalized_text(expected_listing_id)
+    normalized_url = _normalized_text(generated_reconstruction_url)
+    normalized_kind = _normalized_text(reconstruction_kind).lower()
+    normalized_disclosure = _normalized_text(disclosure)
+    if not normalized_principal:
+        raise PropertySearchTourBindingError("property_search_tour_principal_required")
+    if not normalized_run_id:
+        raise PropertySearchTourBindingError("property_search_tour_run_id_required")
+    if not normalized_candidate_ref:
+        raise PropertySearchTourBindingError("property_search_tour_candidate_ref_required")
+    if not normalized_listing_id:
+        raise PropertySearchTourBindingError("property_search_tour_listing_id_required")
+    if not normalized_url:
+        raise PropertySearchTourBindingError("property_search_tour_url_required")
+    if normalized_kind not in {"ai_panorama_360", "layout_preview"}:
+        raise PropertySearchTourBindingError(
+            "property_search_tour_reconstruction_kind_invalid"
+        )
+    if _normalized_text(record.get("run_id")) != normalized_run_id:
+        raise PropertySearchTourBindingError("property_search_tour_run_id_mismatch")
+    if _normalized_text(record.get("principal_id")) != normalized_principal:
+        raise PropertySearchTourBindingError("property_search_tour_principal_mismatch")
+    if not property_search_tour_run_is_terminal(record):
+        raise PropertySearchTourBindingError("property_search_tour_run_not_terminal")
+
+    snapshot = copy.deepcopy(dict(record))
+    occurrences = list(_candidate_occurrence_refs(snapshot))
+    matches: list[tuple[MutableMapping[str, object], dict[str, object], str]] = []
+    for candidate, defaults, path in occurrences:
+        effective = _effective_candidate(candidate, defaults)
+        if property_research_candidate_ref(effective) == normalized_candidate_ref:
+            matches.append((candidate, defaults, path))
+    if not matches:
+        raise PropertySearchTourBindingError("property_search_tour_candidate_not_found")
+
+    source_property_url = ""
+    source_property_url_sha256 = ""
+    source_provider_key = ""
+    for candidate, defaults, _path in matches:
+        effective = _effective_candidate(candidate, defaults)
+        property_urls = set(_candidate_property_urls(effective))
+        if not property_urls:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_listing_anchor_missing"
+            )
+        if len(property_urls) != 1:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_url_conflict"
+            )
+        property_url = next(iter(property_urls))
+        listing_ids = _candidate_listing_ids(effective)
+        if listing_ids:
+            if any(value != normalized_listing_id for value in listing_ids):
+                raise PropertySearchTourBindingError(
+                    "property_search_tour_listing_id_mismatch"
+                )
+        elif not _property_url_contains_listing_id(
+            property_url,
+            normalized_listing_id,
+        ):
+            raise PropertySearchTourBindingError(
+                "property_search_tour_listing_anchor_missing"
+            )
+        provider_keys = set(_candidate_provider_keys(effective))
+        if not provider_keys:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_provider_anchor_missing"
+            )
+        if len(provider_keys) != 1:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_provider_identity_conflict"
+            )
+        provider_key = next(iter(provider_keys))
+        property_url_sha256 = property_search_source_url_sha256(property_url)
+        if not source_property_url:
+            source_property_url = property_url
+            source_property_url_sha256 = property_url_sha256
+            source_provider_key = provider_key
+        elif (
+            property_url != source_property_url
+            or property_url_sha256 != source_property_url_sha256
+        ):
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_url_mismatch"
+            )
+        elif provider_key != source_provider_key:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_provider_identity_conflict"
+            )
+
+    matched_paths = {path for _candidate, _defaults, path in matches}
+    for candidate, defaults, path in occurrences:
+        if path in matched_paths:
+            continue
+        effective = _effective_candidate(candidate, defaults)
+        same_property_url = source_property_url in _candidate_property_urls(effective)
+        same_provider_and_listing = (
+            source_provider_key in _candidate_provider_keys(effective)
+            and normalized_listing_id in _candidate_listing_ids(effective)
+        )
+        if same_property_url or same_provider_and_listing:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_ref_identity_conflict"
+            )
+
+    provider = _tour_provider_for_reconstruction_kind(normalized_kind)
+    expected_candidate_fields: dict[str, object] = {
+        "candidate_ref": normalized_candidate_ref,
+        "generated_reconstruction_url": normalized_url,
+        "generated_reconstruction_kind": normalized_kind,
+        "tour_status": "ready",
+        "tour_progress_pct": 100,
+        "tour_eta_minutes": 0,
+        "tour_provider": provider,
+    }
+    expected_tour_fields: dict[str, object] = {
+        "status": "ready",
+        "progress_pct": 100,
+        "provider": provider,
+        "generated_reconstruction_url": normalized_url,
+        "reconstruction_kind": normalized_kind,
+    }
+    bound_at_values: set[str] = set()
+    for candidate, _defaults, _path in matches:
+        if any(
+            candidate.get(key) != value
+            for key, value in expected_candidate_fields.items()
+        ):
+            return None
+        if _normalized_text(
+            candidate.get("generated_reconstruction_disclosure")
+        ) != normalized_disclosure:
+            return None
+        if any(
+            key in candidate
+            for key in ("blocked_reason", "tour_reason", "tour_reason_key")
+        ):
+            return None
+        tour = candidate.get("tour")
+        if not isinstance(tour, Mapping):
+            return None
+        if any(tour.get(key) != value for key, value in expected_tour_fields.items()):
+            return None
+        if _normalized_text(tour.get("disclosure")) != normalized_disclosure:
+            return None
+        if any(key in tour for key in ("blocked_reason", "reason", "reason_key")):
+            return None
+        bound_at = _normalized_text(candidate.get("tour_status_updated_at"))
+        if not bound_at:
+            return None
+        bound_at_values.add(bound_at)
+    if len(bound_at_values) != 1:
+        return None
+
+    record_sha256 = property_search_run_record_sha256(record)
+    return {
+        "contract": "property_search_candidate_tour_binding_v1",
+        "run_id": normalized_run_id,
+        "candidate_ref": normalized_candidate_ref,
+        "expected_listing_id": normalized_listing_id,
+        "property_url_sha256": source_property_url_sha256,
+        "provider_key": source_provider_key,
+        "generated_reconstruction_url": normalized_url,
+        "reconstruction_kind": normalized_kind,
+        "before_sha256": record_sha256,
+        "after_sha256": record_sha256,
+        "changed": False,
+        "occurrences_matched": len(matches),
+        "occurrences_updated": 0,
+        "changed_paths": [],
+        "binding_verified_from": "principal_scoped_terminal_run",
+    }
 
 
 def plan_property_search_candidate_tour_binding(
@@ -496,6 +716,16 @@ def plan_property_search_candidate_tour_binding(
             bound_at=timestamp,
         ):
             changed_paths.append(path)
+    bound_at_values = {
+        _normalized_text(candidate.get("tour_status_updated_at"))
+        for candidate, _defaults, _path in matches
+    }
+    if changed_paths or len(bound_at_values) != 1 or "" in bound_at_values:
+        for candidate, _defaults, path in matches:
+            if candidate.get("tour_status_updated_at") != timestamp:
+                candidate["tour_status_updated_at"] = timestamp
+                if path not in changed_paths:
+                    changed_paths.append(path)
     changed = bool(changed_paths)
     if changed:
         updated["updated_at"] = timestamp

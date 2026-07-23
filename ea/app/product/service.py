@@ -7037,8 +7037,10 @@ def bind_property_search_candidate_generated_reconstruction(
     from app.product import property_tour_hosting as tour_hosting
     from app.product.property_search_tour_binding import (
         PropertySearchTourBindingError,
+        exact_property_search_candidate_tour_binding_receipt,
         plan_property_search_candidate_tour_binding,
         property_search_run_record_sha256,
+        property_search_tour_run_is_terminal,
     )
 
     normalized_principal = str(principal_id or "").strip()
@@ -7096,6 +7098,24 @@ def bind_property_search_candidate_generated_reconstruction(
             "",
         )
     )
+    record = _load_property_search_run_record(
+        run_id=normalized_run_id,
+        principal_id=normalized_principal,
+    )
+    if not isinstance(record, dict):
+        raise PropertySearchTourBindingError("property_search_tour_run_not_found")
+    if not property_search_tour_run_is_terminal(record):
+        raise PropertySearchTourBindingError("property_search_tour_run_not_terminal")
+    existing_receipt = exact_property_search_candidate_tour_binding_receipt(
+        record,
+        principal_id=normalized_principal,
+        run_id=normalized_run_id,
+        candidate_ref=normalized_candidate_ref,
+        expected_listing_id=normalized_listing_id,
+        generated_reconstruction_url=normalized_url,
+        reconstruction_kind=normalized_kind,
+        disclosure=disclosure,
+    )
     verified_kind = tour_hosting._hosted_property_tour_reconstruction_kind(
         normalized_url,
         principal_id=normalized_principal,
@@ -7108,26 +7128,16 @@ def bind_property_search_candidate_generated_reconstruction(
     )
     if not verified_open_url or verified_open_url != normalized_url:
         raise PropertySearchTourBindingError("property_search_tour_bundle_not_ready")
+    if existing_receipt is not None:
+        existing_receipt["mode"] = "apply" if apply else "dry_run"
+        existing_receipt["status"] = "already_bound"
+        return existing_receipt
     bundle_identity = tour_hosting._owned_hosted_property_tour_binding_identity(
         normalized_url,
         principal_id=normalized_principal,
     )
     if not bundle_identity:
         raise PropertySearchTourBindingError("property_search_tour_bundle_owner_mismatch")
-    record = _load_property_search_run_record(
-        run_id=normalized_run_id,
-        principal_id=normalized_principal,
-    )
-    if not isinstance(record, dict):
-        raise PropertySearchTourBindingError("property_search_tour_run_not_found")
-    if str(record.get("status") or "").strip().lower() not in {
-        "complete",
-        "completed",
-        "processed",
-        "succeeded",
-        "success",
-    }:
-        raise PropertySearchTourBindingError("property_search_tour_run_not_terminal")
     updated, receipt = plan_property_search_candidate_tour_binding(
         record,
         principal_id=normalized_principal,
@@ -7162,22 +7172,27 @@ def bind_property_search_candidate_generated_reconstruction(
             run_id=normalized_run_id,
             principal_id=normalized_principal,
         )
-        if isinstance(latest, dict):
-            _latest_updated, latest_receipt = plan_property_search_candidate_tour_binding(
+        if (
+            isinstance(latest, dict)
+            and property_search_tour_run_is_terminal(latest)
+        ):
+            latest_receipt = exact_property_search_candidate_tour_binding_receipt(
                 latest,
                 principal_id=normalized_principal,
                 run_id=normalized_run_id,
                 candidate_ref=normalized_candidate_ref,
                 expected_listing_id=normalized_listing_id,
                 generated_reconstruction_url=normalized_url,
-                bundle_identity=bundle_identity,
                 reconstruction_kind=normalized_kind,
                 disclosure=disclosure,
             )
-            if not latest_receipt["changed"]:
-                receipt["status"] = "already_bound"
-                receipt["persisted_sha256"] = property_search_run_record_sha256(latest)
-                return receipt
+            if latest_receipt is not None:
+                latest_receipt["mode"] = "apply"
+                latest_receipt["status"] = "already_bound"
+                latest_receipt["persisted_sha256"] = property_search_run_record_sha256(
+                    latest
+                )
+                return latest_receipt
         raise PropertySearchTourBindingError("property_search_tour_record_changed_since_dry_run")
     if cas_status != "applied":
         raise PropertySearchTourBindingError("property_search_tour_store_rejected")
