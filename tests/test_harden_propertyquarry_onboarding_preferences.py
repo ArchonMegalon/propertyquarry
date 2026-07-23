@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -113,6 +114,18 @@ def test_scope_requires_exact_count_and_full_digest_set():
         module.validate_scope([candidate], expected_count=3, expected_principal_digests=[candidate.principal_sha256])
     with pytest.raises(module.CompactorError, match="candidate_digest_set_mismatch"):
         module.validate_scope([candidate], expected_count=1, expected_principal_digests=["0" * 64])
+
+
+def test_database_secret_is_environment_only_and_help_has_no_url_argument(monkeypatch):
+    module = _module()
+    monkeypatch.delenv(module.DEFAULT_DATABASE_ENV, raising=False)
+    with pytest.raises(module.CompactorError, match="database_environment_missing"):
+        module._database_url_from_env(module.DEFAULT_DATABASE_ENV)
+    monkeypatch.setenv(module.DEFAULT_DATABASE_ENV, "postgresql://private-only")
+    assert module._database_url_from_env(module.DEFAULT_DATABASE_ENV) == "postgresql://private-only"
+    help_result = subprocess.run(["python3", str(SCRIPT), "--help"], capture_output=True, text=True, check=True)
+    assert "--database-env" in help_result.stdout
+    assert "--database-url" not in help_result.stdout
 
 
 def test_compaction_bounds_depth_and_preserves_all_top_level_semantics():

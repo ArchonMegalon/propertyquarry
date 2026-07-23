@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ RESERVED_RAW_STRUCTURAL_KEYS = frozenset(
     {"raw_preferences", "saved_shortlist_candidates", "search_agents"}
 )
 DEFAULT_MINIMUM_BYTES = 131_072
+DEFAULT_DATABASE_ENV = "PROPERTYQUARRY_COMPACTION_DATABASE_URL"
 TIMEOUT_SQL = (
     "SET LOCAL lock_timeout = '5s'",
     "SET LOCAL statement_timeout = '30s'",
@@ -555,9 +557,25 @@ def _connect(database_url: str) -> Any:
     return psycopg.connect(database_url, autocommit=False)
 
 
+def _database_url_from_env(environment_name: object) -> str:
+    """Read the connection secret only from a deliberately named environment key."""
+    name = str(environment_name or "").strip()
+    if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,127}", name):
+        raise CompactorError("database_environment_name_invalid")
+    value = str(os.environ.get(name) or "").strip()
+    if not value:
+        raise CompactorError("database_environment_missing")
+    return value
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Dry-run-safe PropertyQuarry onboarding preference compactor")
-    parser.add_argument("--database-url", required=True)
+    parser.add_argument(
+        "--database-env",
+        default=DEFAULT_DATABASE_ENV,
+        metavar="ENV_NAME",
+        help="Environment variable containing the database connection URL (default: %(default)s)",
+    )
     parser.add_argument("--minimum-bytes", type=int, default=DEFAULT_MINIMUM_BYTES)
     parser.add_argument("--expected-count", type=int)
     parser.add_argument("--principal-digest", action="append", default=[])
@@ -570,16 +588,17 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        database_url = _database_url_from_env(args.database_env)
         if args.restore_backup and args.apply:
             raise CompactorError("restore_and_apply_are_mutually_exclusive")
         if args.restore_backup:
-            connection = _connect(args.database_url)
+            connection = _connect(database_url)
             try:
                 receipt = restore(connection, backup_path=args.restore_backup)
             finally:
                 connection.close()
         else:
-            connection = _connect(args.database_url)
+            connection = _connect(database_url)
             try:
                 if args.apply:
                     if args.backup_dir is None:
