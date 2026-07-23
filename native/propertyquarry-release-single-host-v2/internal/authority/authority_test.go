@@ -39,6 +39,7 @@ func TestActivationAuthorityProbeRequiresExactRunnerScopeAndImmutableOIDC(t *tes
 	token := "github_pat_fixture_token_never_printed"
 	runnerStatus := http.StatusOK
 	immutable := true
+	subjectPrefix := ImmutableOIDCSubjectPrefix
 	seen := []string{}
 	client := httpDoerFunc(func(request *http.Request) (*http.Response, error) {
 		if request.Method != http.MethodGet || request.Header.Get("Authorization") != "Bearer "+token || request.Header.Get("Accept") != "application/vnd.github+json" || request.Header.Get("X-GitHub-Api-Version") != "2022-11-28" {
@@ -52,7 +53,7 @@ func TestActivationAuthorityProbeRequiresExactRunnerScopeAndImmutableOIDC(t *tes
 			status = runnerStatus
 			raw = []byte(`{"total_count":1,"runners":[{"id":789,"name":"pq-release-fixture"}]}`)
 		case activationOIDCURL:
-			raw = []byte(fmt.Sprintf(`{"sub_claim_prefix":"repo:ArchonMegalon/propertyquarry","use_default":true,"use_immutable_subject":%t}`, immutable))
+			raw = []byte(fmt.Sprintf(`{"sub_claim_prefix":%q,"use_default":true,"use_immutable_subject":%t}`, subjectPrefix, immutable))
 		default:
 			t.Fatalf("unexpected URL %s", request.URL)
 		}
@@ -69,6 +70,11 @@ func TestActivationAuthorityProbeRequiresExactRunnerScopeAndImmutableOIDC(t *tes
 		t.Fatal("mutable OIDC subject accepted")
 	}
 	immutable = true
+	subjectPrefix = "repo:ArchonMegalon/propertyquarry"
+	if err := probeActivationAuthority(context.Background(), client, token); err == nil {
+		t.Fatal("legacy name-only OIDC subject prefix accepted")
+	}
+	subjectPrefix = ImmutableOIDCSubjectPrefix
 	runnerStatus = http.StatusForbidden
 	if err := probeActivationAuthority(context.Background(), client, token); err == nil {
 		t.Fatal("credential without repository Administration(read) accepted")

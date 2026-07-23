@@ -27,6 +27,10 @@ API_VERSION = "2026-03-10"
 REPOSITORY = "ArchonMegalon/propertyquarry"
 REPOSITORY_ID = 1_257_593_732
 REPOSITORY_OWNER_ID = 11_421_547
+IMMUTABLE_SUBJECT_PREFIX = (
+    f"repo:ArchonMegalon@{REPOSITORY_OWNER_ID}"
+    f"/propertyquarry@{REPOSITORY_ID}"
+)
 TOKEN_FD = 8
 GATE_FD = 7
 STATUS_FD = 9
@@ -352,7 +356,7 @@ def verify_github_credential(
         not isinstance(oidc, dict)
         or oidc.get("use_default") is not True
         or oidc.get("use_immutable_subject") is not True
-        or oidc.get("sub_claim_prefix") != f"repo:{REPOSITORY}"
+        or oidc.get("sub_claim_prefix") != IMMUTABLE_SUBJECT_PREFIX
     ):
         reject()
 

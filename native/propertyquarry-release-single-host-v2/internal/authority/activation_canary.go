@@ -162,14 +162,14 @@ func probeActivationAuthority(ctx context.Context, client httpDoer, token string
 	defer zero(oidcRaw)
 	oidc, err := decodedJSONObject(oidcRaw, maximumGitHubAPIBytes)
 	if err != nil || !hasKeys(oidc, "sub_claim_prefix", "use_default", "use_immutable_subject") ||
-		oidc["use_default"] != true || oidc["use_immutable_subject"] != true || oidc["sub_claim_prefix"] != "repo:ArchonMegalon/propertyquarry" {
+		oidc["use_default"] != true || oidc["use_immutable_subject"] != true || oidc["sub_claim_prefix"] != ImmutableOIDCSubjectPrefix {
 		return fmt.Errorf("activation-canary-oidc-response-invalid")
 	}
 	return nil
 }
 
 func activationCanaryPayload(binding ActivationCanaryExpected, verifiedAt int64) map[string]any {
-	immutableSubject := "repo:ArchonMegalon@" + RepositoryOwnerID + "/propertyquarry@" + RepositoryID + ":environment:" + Environment
+	immutableSubject := ImmutableOIDCSubjectPrefix + ":environment:" + Environment
 	return map[string]any{
 		"authority_profile":                            "single-host-production-v2",
 		"challenge_sha256":                             binding.ChallengeDigest,
@@ -234,7 +234,7 @@ func VerifyActivationCanaryReceipt(raw []byte, public ed25519.PublicKey, expecte
 		payload["package_manifest_digest"] != expected.PackageManifestDigest || payload["plan_digest"] != expected.PlanDigest || payload["unit_sha256"] != expected.UnitDigest ||
 		payload["runtime_sha"] != expected.RuntimeSHA || payload["workflow_sha"] != expected.WorkflowSHA || payload["package_authority_key_id"] != expected.PackageAuthorityKeyID || payload["receipt_authority_key_id"] != expected.ReceiptAuthorityKeyID ||
 		payload["repository"] != Repository || payload["repository_id"] != RepositoryID || payload["repository_owner_id"] != RepositoryOwnerID ||
-		payload["immutable_subject"] != "repo:ArchonMegalon@"+RepositoryOwnerID+"/propertyquarry@"+RepositoryID+":environment:"+Environment ||
+		payload["immutable_subject"] != ImmutableOIDCSubjectPrefix+":environment:"+Environment ||
 		payload["github_repository_runner_admin_read_verified"] != true || payload["github_immutable_oidc_subject_verified"] != true ||
 		!digestPattern.MatchString(expected.ChallengeDigest) || !verifiedOK || !validOK || validUntil-verifiedAt != int64(activationCanaryLifetime/time.Second) || verifiedAt > nowUnix+5 || validUntil < nowUnix ||
 		expected.ChallengeCreatedAt < 1 || expected.CanaryStartedAt < expected.ChallengeCreatedAt || expected.CanaryStartedAt-expected.ChallengeCreatedAt > 30 || verifiedAt < expected.CanaryStartedAt || verifiedAt-expected.CanaryStartedAt > 60 {

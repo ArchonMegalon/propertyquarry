@@ -53,7 +53,7 @@ class CredentialStreamTests(unittest.TestCase):
             }, {"x-accepted-github-permissions": "administration=read"}
         if path.endswith("/actions/oidc/customization/sub"):
             return {
-                "sub_claim_prefix": f"repo:{broker.REPOSITORY}",
+                "sub_claim_prefix": broker.IMMUTABLE_SUBJECT_PREFIX,
                 "use_default": True,
                 "use_immutable_subject": True,
             }, {"x-accepted-github-permissions": "actions=read"}
@@ -195,6 +195,22 @@ class CredentialStreamTests(unittest.TestCase):
             broker.verify_github_credential(
                 self.token,
                 classic_scope_header,
+            )
+
+    def test_legacy_name_only_oidc_subject_prefix_fails_closed(self) -> None:
+        def legacy_subject_prefix(
+            token: bytearray, path: str
+        ) -> tuple[object, dict[str, str]]:
+            payload, headers = self._response(path)
+            if path.endswith("/actions/oidc/customization/sub"):
+                assert isinstance(payload, dict)
+                payload["sub_claim_prefix"] = f"repo:{broker.REPOSITORY}"
+            return payload, headers
+
+        with self.assertRaises(broker.CredentialRejected):
+            broker.verify_github_credential(
+                self.token,
+                legacy_subject_prefix,
             )
 
     def test_surplus_or_missing_endpoint_permission_contract_fails_closed(

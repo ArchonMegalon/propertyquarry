@@ -236,7 +236,7 @@ func verifyGitHubJWT(token []byte, keySet *oidcKeySet, config *Config, now time.
 	nbf, nbfOK := claimInt(claims["nbf"])
 	exp, expOK := claimInt(claims["exp"])
 	runAttempt, runAttemptErr := strconv.ParseInt(runAttemptText, 10, 64)
-	expectedSubject := "repo:ArchonMegalon@" + config.RepositoryOwnerID + "/propertyquarry@" + config.RepositoryID + ":environment:" + Environment
+	expectedSubject := ImmutableOIDCSubjectPrefix + ":environment:" + Environment
 	if issuer != githubOIDCIssuer || audience != Audience || subject != expectedSubject || repository != Repository || repositoryID != config.RepositoryID ||
 		ownerID != config.RepositoryOwnerID || ref != "refs/heads/main" || candidate != config.WorkflowSHA || workflowRef != WorkflowRef || workflowSHA != config.WorkflowSHA ||
 		!decimal(runID) || runAttemptErr != nil || runAttempt < 1 || runAttempt > 1<<31-1 || environment != Environment || !decimal(checkRunID) ||

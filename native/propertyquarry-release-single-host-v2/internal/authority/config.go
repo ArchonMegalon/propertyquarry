@@ -22,6 +22,7 @@ const (
 	Repository                            = "ArchonMegalon/propertyquarry"
 	RepositoryID                          = "1257593732"
 	RepositoryOwnerID                     = "11421547"
+	ImmutableOIDCSubjectPrefix            = "repo:ArchonMegalon@" + RepositoryOwnerID + "/propertyquarry@" + RepositoryID
 	WorkflowRef                           = "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"
 	ReleaseJob                            = "propertyquarry-release-v2"
 	Environment                           = "propertyquarry-production"
