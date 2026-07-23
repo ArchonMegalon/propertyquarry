@@ -32,6 +32,27 @@ def email_delivery_enabled() -> bool:
     return bool(str(os.environ.get("EMAILIT_API_KEY") or "").strip())
 
 
+def _propertyquarry_production_sender_required() -> bool:
+    return str(os.environ.get("EA_RUNTIME_MODE") or "").strip().lower() == "prod"
+
+
+def _propertyquarry_sender_email_allowed(value: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    if "<" in normalized and ">" in normalized:
+        normalized = normalized.split("<", 1)[1].split(">", 1)[0].strip()
+    if "@" not in normalized:
+        return False
+    domain = normalized.rsplit("@", 1)[1].strip().strip(".")
+    return domain == "propertyquarry.com" or domain.endswith(".propertyquarry.com")
+
+
+def _enforce_propertyquarry_production_sender(value: str) -> str:
+    normalized = str(value or "").strip()
+    if _propertyquarry_production_sender_required() and not _propertyquarry_sender_email_allowed(normalized):
+        raise RuntimeError("registration_email_sender_domain_forbidden")
+    return normalized
+
+
 def _force_fallback_sender() -> bool:
     return str(os.environ.get("EA_REGISTRATION_EMAIL_FORCE_FALLBACK") or "").strip().lower() in {
         "1",
@@ -60,7 +81,17 @@ def delivery_sender_emails() -> tuple[str, ...]:
         str(os.environ.get("EA_REGISTRATION_EMAIL_FROM") or "").strip().lower(),
         _registration_sender_email().strip().lower(),
     }
-    return tuple(sorted(value for value in values if value))
+    return tuple(
+        sorted(
+            value
+            for value in values
+            if value
+            and (
+                not _propertyquarry_production_sender_required()
+                or _propertyquarry_sender_email_allowed(value)
+            )
+        )
+    )
 
 
 def _registration_sender_name() -> str:
@@ -92,8 +123,8 @@ def _fallback_sender_name() -> str:
 def _resolved_sender_email(sender_email: str = "") -> str:
     configured = str(sender_email or "").strip()
     if configured:
-        return configured
-    return _registration_sender_email()
+        return _enforce_propertyquarry_production_sender(configured)
+    return _enforce_propertyquarry_production_sender(_registration_sender_email())
 
 
 def _resolved_sender_name(sender_name: str = "") -> str:
@@ -687,7 +718,14 @@ def _send_emailit_email(
             last_error = f"registration_email_send_failed:{exc.code}:{detail[:600]}"
             if exc.code == 422 and "Domain not verified" in detail and not used_fallback_sender:
                 fallback_email = _fallback_sender_email()
-                if fallback_email and fallback_email.lower() != resolved_sender_email.lower():
+                if (
+                    fallback_email
+                    and fallback_email.lower() != resolved_sender_email.lower()
+                    and (
+                        not _propertyquarry_production_sender_required()
+                        or _propertyquarry_sender_email_allowed(fallback_email)
+                    )
+                ):
                     fallback_name = _fallback_sender_name()
                     payload["from"] = f"{fallback_name} <{fallback_email}>"
                     payload["reply_to"] = fallback_email

@@ -2223,6 +2223,7 @@ def test_registration_email_falls_back_to_verified_sender_when_domain_is_not_ver
     monkeypatch.setenv("EA_REGISTRATION_EMAIL_NAME", "PropertyQuarry")
     monkeypatch.setenv("EA_REGISTRATION_EMAIL_FROM_FALLBACK", "concierge@chummer.run")
     monkeypatch.setenv("EA_REGISTRATION_EMAIL_NAME_FALLBACK", "PropertyQuarry")
+    monkeypatch.setenv("EA_RUNTIME_MODE", "prod")
 
     from app.services import registration_email as service
 
@@ -2262,20 +2263,16 @@ def test_registration_email_falls_back_to_verified_sender_when_domain_is_not_ver
 
     monkeypatch.setattr(service.urllib.request, "urlopen", _fake_urlopen)
 
-    receipt = service.send_registration_email(
-        recipient_email="tibor.girschele@gmail.com",
-        verification_code="654321",
-        magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
-        expires_at=2_000_000_000,
-    )
+    with pytest.raises(RuntimeError, match="registration_email_send_failed:422"):
+        service.send_registration_email(
+            recipient_email="tibor.girschele@gmail.com",
+            verification_code="654321",
+            magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
+            expires_at=2_000_000_000,
+        )
 
-    assert call_count["value"] == 2
+    assert call_count["value"] == 1
     assert observed_payloads[0]["from"] == "PropertyQuarry <property@propertyquarry.com>"
-    assert observed_payloads[1]["from"] == "PropertyQuarry <concierge@chummer.run>"
-    assert observed_payloads[1]["meta"]["sender_fallback_used"] == "true"
-    assert observed_payloads[1]["meta"]["preferred_sender_email"] == "property@propertyquarry.com"
-    assert observed_payloads[1]["meta"]["fallback_sender_email"] == "concierge@chummer.run"
-    assert receipt.message_id == "emailit-live-fallback-1"
 
 
 def test_registration_email_can_force_verified_sender_without_primary_attempt(
@@ -2287,6 +2284,7 @@ def test_registration_email_can_force_verified_sender_without_primary_attempt(
     monkeypatch.setenv("EA_REGISTRATION_EMAIL_NAME", "PropertyQuarry")
     monkeypatch.setenv("EA_REGISTRATION_EMAIL_FROM_FALLBACK", "concierge@chummer.run")
     monkeypatch.setenv("EA_REGISTRATION_EMAIL_NAME_FALLBACK", "PropertyQuarry")
+    monkeypatch.setenv("EA_RUNTIME_MODE", "prod")
 
     from app.services import registration_email as service
 
@@ -2308,16 +2306,15 @@ def test_registration_email_can_force_verified_sender_without_primary_attempt(
 
     monkeypatch.setattr(service.urllib.request, "urlopen", _fake_urlopen)
 
-    receipt = service.send_registration_email(
-        recipient_email="tibor.girschele@gmail.com",
-        verification_code="654321",
-        magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
-        expires_at=2_000_000_000,
-    )
+    with pytest.raises(RuntimeError, match="registration_email_sender_domain_forbidden"):
+        service.send_registration_email(
+            recipient_email="tibor.girschele@gmail.com",
+            verification_code="654321",
+            magic_link_url="https://propertyquarry.com/register?token=test&code=654321",
+            expires_at=2_000_000_000,
+        )
 
-    assert len(observed_payloads) == 1
-    assert observed_payloads[0]["from"] == "PropertyQuarry <concierge@chummer.run>"
-    assert receipt.message_id == "emailit-live-forced-fallback-1"
+    assert observed_payloads == []
 
 
 def test_property_search_results_email_serializes_emailit_meta(monkeypatch: pytest.MonkeyPatch) -> None:

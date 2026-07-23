@@ -409,40 +409,14 @@ def _propertyquarry_sender_domain_allowed(value: str) -> bool:
     return domain == "propertyquarry.com" or domain.endswith(".propertyquarry.com")
 
 
-def _allowed_email_sender_domains() -> tuple[str, ...]:
-    raw = str(os.environ.get("EA_ALLOWED_EMAIL_SENDER_DOMAINS") or "").strip()
-    if not raw:
-        return ()
-    values: list[str] = []
-    for item in raw.split(","):
-        normalized = str(item or "").strip().lower().strip(".")
-        if normalized and normalized not in values:
-            values.append(normalized)
-    return tuple(values)
-
-
-def _custom_sender_domain_allowed(value: str) -> bool:
-    domain = _email_sender_domain(value)
-    if not domain:
-        return False
-    for allowed in _allowed_email_sender_domains():
-        if domain == allowed or domain.endswith(f".{allowed}"):
-            return True
-    return False
-
-
 def ensure_prod_registration_email_sender_domain(settings: Settings) -> None:
     if not is_prod_mode(settings.runtime.mode):
         return
-    if _env_truthy(os.environ.get("EA_ALLOW_NON_PROPERTYQUARRY_EMAIL_SENDER")):
-        return
     for key in ("EA_REGISTRATION_EMAIL_FROM", "EA_EMAIL_DEFAULT_FROM", "EA_REGISTRATION_EMAIL_FROM_FALLBACK"):
         value = str(os.environ.get(key) or "").strip()
-        if value and not _propertyquarry_sender_domain_allowed(value) and not _custom_sender_domain_allowed(value):
+        if value and not _propertyquarry_sender_domain_allowed(value):
             raise RuntimeError(
-                "EA_RUNTIME_MODE=prod requires PropertyQuarry email sender domains "
-                "or EA_ALLOW_NON_PROPERTYQUARRY_EMAIL_SENDER=1 "
-                "or EA_ALLOWED_EMAIL_SENDER_DOMAINS"
+                "EA_RUNTIME_MODE=prod requires PropertyQuarry email sender domains"
             )
 
 

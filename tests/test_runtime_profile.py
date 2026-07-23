@@ -181,7 +181,7 @@ def test_prod_rejects_inherited_registration_sender_domains() -> None:
         validate_startup_settings(get_settings())
 
 
-def test_prod_allows_registration_sender_domain_override() -> None:
+def test_prod_rejects_registration_sender_domain_override() -> None:
     _clear_env()
     os.environ["EA_RUNTIME_MODE"] = "prod"
     os.environ["EA_API_TOKEN"] = "secret-token"
@@ -189,11 +189,11 @@ def test_prod_allows_registration_sender_domain_override() -> None:
     os.environ["DATABASE_URL"] = "postgresql://example.invalid/ea"
     os.environ["EA_REGISTRATION_EMAIL_FROM"] = "concierge@chummer.run"
     os.environ["EA_ALLOW_NON_PROPERTYQUARRY_EMAIL_SENDER"] = "1"
-    profile = validate_startup_settings(get_settings())
-    assert profile.storage_backend == "postgres"
+    with pytest.raises(RuntimeError, match="PropertyQuarry email sender"):
+        validate_startup_settings(get_settings())
 
 
-def test_prod_allows_registration_sender_domain_allowlist() -> None:
+def test_prod_rejects_registration_sender_domain_allowlist() -> None:
     _clear_env()
     os.environ["EA_RUNTIME_MODE"] = "prod"
     os.environ["EA_API_TOKEN"] = "secret-token"
@@ -201,8 +201,8 @@ def test_prod_allows_registration_sender_domain_allowlist() -> None:
     os.environ["DATABASE_URL"] = "postgresql://example.invalid/ea"
     os.environ["EA_REGISTRATION_EMAIL_FROM"] = "office@girschele.com"
     os.environ["EA_ALLOWED_EMAIL_SENDER_DOMAINS"] = "girschele.com"
-    profile = validate_startup_settings(get_settings())
-    assert profile.storage_backend == "postgres"
+    with pytest.raises(RuntimeError, match="PropertyQuarry email sender"):
+        validate_startup_settings(get_settings())
 
 
 def test_prod_runtime_profile_requires_verified_identity_principal() -> None:
