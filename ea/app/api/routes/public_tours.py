@@ -159,6 +159,12 @@ _PUBLIC_TOUR_THREE_SHA256 = "5289ca2dfde8572bd7715b9fa2ca929db12bae87e9a2cb53e43
 _PUBLIC_TOUR_THREE_MODULE_PATH = (
     f"/tours/runtime/three-{_PUBLIC_TOUR_THREE_VERSION}.module.js"
 )
+_PUBLIC_TOUR_PORTABLE_MEDIA_TYPES = {
+    ".glb": "model/gltf-binary",
+    ".mtl": "model/mtl",
+    ".obj": "model/obj",
+    ".webp": "image/webp",
+}
 _GENERATED_RECONSTRUCTION_PREVIEW_PREFIX = "generated-reconstruction/"
 _GENERATED_RECONSTRUCTION_PREVIEW_PRIVACY_CLASS = "generated_reconstruction_public"
 _GENERATED_RECONSTRUCTION_PREVIEW_ROLES = frozenset(
@@ -1000,6 +1006,13 @@ def _public_tour_manifest(payload: dict[str, object], *, only_relpath: str = "")
 
 def _public_tour_file_url(slug: str, relpath: str) -> str:
     return _payload_public_tour_file_url(slug, relpath)
+
+
+def _public_tour_media_type(relpath: str) -> str:
+    portable = _PUBLIC_TOUR_PORTABLE_MEDIA_TYPES.get(
+        PurePosixPath(str(relpath or "")).suffix.lower()
+    )
+    return portable or mimetypes.guess_type(relpath)[0] or "application/octet-stream"
 
 
 def _public_tour_safe_http_url(value: object) -> str:
@@ -7982,11 +7995,8 @@ def _public_tour_file_from_snapshot(
     media_type = str(
         verified_generated_manifest_row.get("mime_type") or ""
     ).strip().lower()
-    if not media_type:
-        media_type = (
-            mimetypes.guess_type(safe_relpath)[0]
-            or "application/octet-stream"
-        )
+    if not media_type or media_type == "application/octet-stream":
+        media_type = _public_tour_media_type(safe_relpath)
     if PurePosixPath(safe_relpath).suffix.lower() == ".pdf":
         max_bytes = max(
             int(os.getenv("PROPERTYQUARRY_PUBLIC_PDF_MAX_BYTES") or "15728640"),
@@ -8127,7 +8137,7 @@ def public_tour_pano2vr_file(slug: str, asset_path: str, request: Request):
         except Exception:
             os.close(opened.descriptor)
             raise
-        media_type = mimetypes.guess_type(safe_relpath)[0] or "application/octet-stream"
+        media_type = _public_tour_media_type(safe_relpath)
         runtime_profile = (
             "vendor_export"
             if media_type in {"text/html", "application/xhtml+xml"}
@@ -8176,7 +8186,7 @@ def public_tour_3dvista_file(slug: str, asset_path: str, request: Request):
         except Exception:
             os.close(opened.descriptor)
             raise
-        media_type = mimetypes.guess_type(safe_relpath)[0] or "application/octet-stream"
+        media_type = _public_tour_media_type(safe_relpath)
         runtime_profile = (
             "vendor_export"
             if media_type in {"text/html", "application/xhtml+xml"}

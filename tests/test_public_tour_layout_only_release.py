@@ -27,6 +27,7 @@ MODEL_OBJ = "generated-reconstruction/model.obj"
 MODEL_MTL = "generated-reconstruction/model.mtl"
 MODEL_GLB = "generated-reconstruction/model.glb"
 SIGNED_WEBP = "generated-reconstruction/source-floorplan-signed.webp"
+LEGACY_WEBP = "generated-reconstruction/photo-legacy.webp"
 
 
 def _sha256(value: bytes) -> str:
@@ -742,6 +743,63 @@ def test_governed_layout_signed_mime_is_independent_of_host_mime_database(
         "model/gltf-binary"
     )
     assert head_response.headers["content-length"] == str(len(assets[MODEL_GLB]))
+
+
+def test_legacy_generated_webp_mime_is_independent_of_host_mime_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, payload, _assets = _write_governed_layout_model_bundle(
+        tmp_path,
+        monkeypatch,
+    )
+    webp_bytes = b"RIFF\x10\x00\x00\x00WEBPVP8 legacy-layout-preview"
+    webp_path = bundle / LEGACY_WEBP
+    webp_path.parent.mkdir(parents=True, exist_ok=True)
+    webp_path.write_bytes(webp_bytes)
+    payload["generated_reconstruction"]["photo_relpaths"] = [LEGACY_WEBP]
+    (bundle / "tour.json").write_text(
+        json.dumps(payload, sort_keys=True),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        public_tours.mimetypes,
+        "guess_type",
+        lambda *_args, **_kwargs: (None, None),
+    )
+
+    response = public_tours.public_tour_file(
+        SLUG,
+        LEGACY_WEBP,
+        _request(f"/tours/files/{SLUG}/{LEGACY_WEBP}"),
+    )
+    assert isinstance(response, StreamingResponse)
+    assert response.status_code == 200
+    assert _streaming_body(response) == webp_bytes
+    assert response.headers["content-type"].split(";", 1)[0] == "image/webp"
+
+    head_response = public_tours.public_tour_file(
+        SLUG,
+        LEGACY_WEBP,
+        _request(f"/tours/files/{SLUG}/{LEGACY_WEBP}", method="HEAD"),
+    )
+    assert isinstance(head_response, Response)
+    assert head_response.status_code == 200
+    assert head_response.body == b""
+    assert head_response.headers["content-type"].split(";", 1)[0] == "image/webp"
+
+    range_response = public_tours.public_tour_file(
+        SLUG,
+        LEGACY_WEBP,
+        _request(
+            f"/tours/files/{SLUG}/{LEGACY_WEBP}",
+            headers=[(b"range", b"bytes=0-0")],
+        ),
+    )
+    assert isinstance(range_response, StreamingResponse)
+    assert range_response.status_code == 206
+    assert _streaming_body(range_response) == webp_bytes[:1]
+    assert range_response.headers["content-type"].split(";", 1)[0] == "image/webp"
 
 
 def test_governed_layout_model_assets_honor_verified_viewer_release(
