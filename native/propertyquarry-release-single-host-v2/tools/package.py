@@ -187,9 +187,9 @@ RUNTIME_DATABASE_HELPER_PATH = (
     "provision_propertyquarry_runtime_database.py"
 )
 RUNTIME_DATABASE_HELPER_SHA256 = (
-    "sha256:bd7be57c75e22e645ed6ec2acf5fc521e05f1d76ff4afa5abe233a8faa92d5e2"
+    "sha256:bc987570cfce12c734cb80b33d7e13199b346c8a8b5406f3ebce88bb15e71a63"
 )
-RUNTIME_DATABASE_HELPER_BYTES = 50_478
+RUNTIME_DATABASE_HELPER_BYTES = 50_770
 DATABASE_RECEIPT_ROOT = (
     "/var/lib/propertyquarry-release-single-host-v2/database-receipts"
 )

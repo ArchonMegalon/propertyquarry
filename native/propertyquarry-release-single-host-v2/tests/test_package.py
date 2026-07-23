@@ -25,7 +25,8 @@ MODULE_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = MODULE_ROOT.parents[1]
 # A historical, non-authoritative fixture commit containing the exact helper
 # bytes. Production runtime/workflow SHAs are JIT inputs after source merge.
-FIXTURE_HELPER_COMMIT = "f25529e9927bdc3c49e111558a274b2aef2f797b"
+FIXTURE_HELPER_COMMIT = "f20476af1899b8c2fac71e31c328c57da6450963"
+RUNTIME_DATABASE_HELPER_GIT_BLOB = "a499ddf2e9129c8da73f7b37dc03ece880ea124f"
 SPEC = importlib.util.spec_from_file_location(
     "propertyquarry_single_host_package", MODULE_ROOT / "tools" / "package.py"
 )
@@ -164,6 +165,37 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(metadata.st_nlink, 1)
                 self.assertEqual(len(raw), size)
                 self.assertEqual(package.sha256(raw), digest)
+
+    def test_runtime_database_helper_constants_match_tracked_git_blob(self) -> None:
+        relative = "scripts/provision_propertyquarry_runtime_database.py"
+        tree = subprocess.run(
+            ["git", "ls-tree", FIXTURE_HELPER_COMMIT, "--", relative],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15,
+        ).stdout.decode("ascii")
+        self.assertEqual(
+            tree,
+            (
+                "100755 blob "
+                f"{RUNTIME_DATABASE_HELPER_GIT_BLOB}\t{relative}\n"
+            ),
+        )
+        raw = subprocess.run(
+            ["git", "cat-file", "blob", RUNTIME_DATABASE_HELPER_GIT_BLOB],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15,
+        ).stdout
+        self.assertEqual(len(raw), package.RUNTIME_DATABASE_HELPER_BYTES)
+        self.assertEqual(
+            package.sha256(raw),
+            package.RUNTIME_DATABASE_HELPER_SHA256,
+        )
 
     def _fixture_files(self) -> dict[str, Path]:
         package_public_pem = self._public_pem(self.package_private)

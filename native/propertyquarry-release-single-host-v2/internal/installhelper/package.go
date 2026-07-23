@@ -52,8 +52,8 @@ const (
 	databaseControlHelperDigest                     = "sha256:9bdebcd2bae867ef9ac4e38374e964dc81752b2a572eb8a0568f3bb45d5bfe18"
 	databaseControlHelperSize                 int64 = 60449
 	runtimeDatabaseHelperPath                       = "/usr/libexec/propertyquarry-release-control/provision_propertyquarry_runtime_database.py"
-	runtimeDatabaseHelperDigest                     = "sha256:bd7be57c75e22e645ed6ec2acf5fc521e05f1d76ff4afa5abe233a8faa92d5e2"
-	runtimeDatabaseHelperSize                 int64 = 50478
+	runtimeDatabaseHelperDigest                     = "sha256:bc987570cfce12c734cb80b33d7e13199b346c8a8b5406f3ebce88bb15e71a63"
+	runtimeDatabaseHelperSize                 int64 = 50770
 	runtimeIsolationHelperPath                      = "/usr/libexec/propertyquarry-release-control/propertyquarry-runtime-isolation-v2"
 	runtimeIsolationHelperDigest                    = "sha256:a441c978b1fec877d27828f264f35a5dfa203999a8b1260b06ee12fb6f45c413"
 	runtimeIsolationHelperSize                int64 = 161070

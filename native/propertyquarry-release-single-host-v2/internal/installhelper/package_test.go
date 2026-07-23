@@ -515,7 +515,7 @@ func TestFrozenV2ManifestAndFiveHelperSurface(t *testing.T) {
 	sealed := map[string]requiredPackageFile{
 		predeployBackupHelperPath:  {mode: 0o755, purpose: "predeploy-backup-helper", size: 91482, digest: "sha256:a7a877b6aae97628892f9c603eddc8267625689676a0daf4685de65613be56d3"},
 		databaseControlHelperPath:  {mode: 0o755, purpose: "database-control-helper", size: 60449, digest: "sha256:9bdebcd2bae867ef9ac4e38374e964dc81752b2a572eb8a0568f3bb45d5bfe18"},
-		runtimeDatabaseHelperPath:  {mode: 0o755, purpose: "runtime-database-helper", size: 50478, digest: "sha256:bd7be57c75e22e645ed6ec2acf5fc521e05f1d76ff4afa5abe233a8faa92d5e2"},
+		runtimeDatabaseHelperPath:  {mode: 0o755, purpose: "runtime-database-helper", size: 50770, digest: "sha256:bc987570cfce12c734cb80b33d7e13199b346c8a8b5406f3ebce88bb15e71a63"},
 		runtimeIsolationHelperPath: {mode: 0o755, purpose: "runtime-isolation-helper", size: 161070, digest: "sha256:a441c978b1fec877d27828f264f35a5dfa203999a8b1260b06ee12fb6f45c413"},
 		runtimeDeployHelperPath:    {mode: 0o755, purpose: "runtime-deploy-helper", size: 82995, digest: "sha256:a762c418ffa83aac86b8b503dbd6e9c0ccf41cbc37cd72b21931a9781090691c"},
 	}

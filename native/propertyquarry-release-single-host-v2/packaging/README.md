@@ -436,8 +436,8 @@ runtime, pinned web image, exact signed database image, and its fixed
 candidate-specific receipt path. The
 package verifier fixes that executable to 60,449 bytes with SHA-256
 `9bdebcd2bae867ef9ac4e38374e964dc81752b2a572eb8a0568f3bb45d5bfe18` and
-its adjacent implementation to 50,478 bytes with SHA-256
-`bd7be57c75e22e645ed6ec2acf5fc521e05f1d76ff4afa5abe233a8faa92d5e2`.
+its adjacent implementation to 50,770 bytes with SHA-256
+`bc987570cfce12c734cb80b33d7e13199b346c8a8b5406f3ebce88bb15e71a63`.
 
 Every successful database gate must publish a canonical, newline-terminated
 receipt under
