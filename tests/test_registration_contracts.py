@@ -246,6 +246,30 @@ def test_register_challenge_is_opaque_and_response_never_exposes_access_token(
     assert "access_token" not in verified.text
 
 
+def test_runtime_smoke_requires_tokenless_registration_verification_response() -> None:
+    source = (
+        Path(__file__).resolve().parents[1] / "scripts/smoke_api.sh"
+    ).read_text(encoding="utf-8")
+    verify_contract = source.split(
+        'REGISTER_VERIFY_FIELDS="',
+        1,
+    )[1].split(
+        'REGISTER_ACCESS_URL="',
+        1,
+    )[0]
+
+    assert "'access_token' not in body" in verify_contract
+    assert "bool(body.get('access_token',''))" not in verify_contract
+    assert 'echo "${REGISTER_VERIFY_RESPONSE}"' not in verify_contract
+    assert "workspace access link without a duplicated top-level token" in verify_contract
+    assert "identity_only=google_start.get('identity_only') is True" in verify_contract
+    assert "auth_url.startswith('/sign-in/google?')" in verify_contract
+    assert "start_url == auth_url" in verify_contract
+    assert "not auth_url and not start_url" in verify_contract
+    assert "startswith('google_oauth_propertyquarry_')" in verify_contract
+    assert "google_channel" not in verify_contract
+
+
 def test_register_verify_retries_same_proof_after_transient_provisioning_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2196,6 +2220,7 @@ def test_register_verify_reports_google_oauth_configuration_hint_when_missing(mo
     )
     assert verified.status_code == 200
     google_start = dict(verified.json()["google_start"])
+    assert google_start["identity_only"] is True
     assert google_start["ready"] is False
     assert google_start["error"].startswith("google_oauth_propertyquarry_")
     assert google_start["start_url"] == ""
