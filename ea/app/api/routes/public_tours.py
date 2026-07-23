@@ -3578,6 +3578,134 @@ def _generated_reconstruction_preview_asset_manifest_row(
     return dict(row)
 
 
+def _generated_reconstruction_public_model_manifest_row(
+    payload: dict[str, object],
+    relpath: object,
+) -> dict[str, object]:
+    safe_relpath = _generated_reconstruction_preview_relpath(relpath)
+    generated_reconstruction = payload.get("generated_reconstruction")
+    if not safe_relpath or not isinstance(generated_reconstruction, dict):
+        return {}
+    suffix = PurePosixPath(safe_relpath).suffix.lower()
+    expected_role = (
+        "generated_reconstruction_material"
+        if suffix == ".mtl"
+        else "generated_reconstruction_model"
+        if suffix in {".obj", ".glb"}
+        else ""
+    )
+    expected_field = {
+        ".obj": "model_relpath",
+        ".mtl": "material_relpath",
+        ".glb": "glb_model_relpath",
+    }.get(suffix, "")
+    expected_mime_type = {
+        ".obj": "model/obj",
+        ".mtl": "model/mtl",
+        ".glb": "model/gltf-binary",
+    }.get(suffix, "")
+    if (
+        not expected_role
+        or not expected_field
+        or safe_relpath
+        != _public_tour_safe_asset_relpath(
+            generated_reconstruction.get(expected_field)
+        )
+    ):
+        return {}
+    walkable_scene = generated_reconstruction.get("walkable_scene")
+    if (
+        payload.get("publication_status") != "ready"
+        or str(payload.get("creation_mode") or "").strip()
+        != "generated_reconstruction_tour"
+        or str(payload.get("scene_strategy") or "").strip()
+        != "generated_reconstruction"
+        or not isinstance(walkable_scene, dict)
+        or str(walkable_scene.get("kind") or "").strip()
+        != "generated_reconstruction_layout"
+        or str(generated_reconstruction.get("walkable_scene_kind") or "").strip()
+        != "generated_reconstruction_layout"
+        or not str(generated_reconstruction.get("disclosure") or "").strip()
+        or not _generated_reconstruction_public_viewer_enabled(payload)
+    ):
+        return {}
+
+    matching_rows: list[dict[str, object]] = []
+    for raw_row in list(payload.get("public_assets") or []):
+        if not isinstance(raw_row, dict):
+            continue
+        declared_paths: set[str] = set()
+        aliases_valid = True
+        for key in ("path", "relpath", "asset_relpath"):
+            raw_value = str(raw_row.get(key) or "").strip()
+            if not raw_value:
+                continue
+            candidate = _public_tour_safe_asset_relpath(raw_value)
+            if not candidate:
+                aliases_valid = False
+                break
+            declared_paths.add(candidate)
+        if safe_relpath in declared_paths:
+            if not aliases_valid or declared_paths != {safe_relpath}:
+                return {}
+            matching_rows.append(raw_row)
+    if len(matching_rows) != 1:
+        return {}
+    binding = matching_rows[0]
+    privacy_class = str(binding.get("privacy_class") or "").strip().lower()
+    role = str(binding.get("role") or "").strip().lower().replace("-", "_")
+    mime_type = str(binding.get("mime_type") or "").strip().lower()
+    privacy_aliases = {
+        str(binding.get(key) or "").strip().lower()
+        for key in ("privacy_class", "privacy")
+        if str(binding.get(key) or "").strip()
+    }
+    role_aliases = {
+        str(binding.get(key) or "").strip().lower().replace("-", "_")
+        for key in ("role", "asset_role")
+        if str(binding.get(key) or "").strip()
+    }
+    mime_aliases = {
+        str(binding.get(key) or "").strip().lower()
+        for key in ("mime_type", "content_type")
+        if str(binding.get(key) or "").strip()
+    }
+    digest = str(binding.get("sha256") or "").strip()
+    size_bytes = binding.get("size_bytes")
+    if (
+        privacy_class != _GENERATED_RECONSTRUCTION_PREVIEW_PRIVACY_CLASS
+        or privacy_aliases != {_GENERATED_RECONSTRUCTION_PREVIEW_PRIVACY_CLASS}
+        or role != expected_role
+        or role_aliases != {expected_role}
+        or mime_type != expected_mime_type
+        or mime_aliases != {expected_mime_type}
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        or isinstance(size_bytes, bool)
+        or not isinstance(size_bytes, int)
+        or size_bytes <= 0
+        or size_bytes > 8 * 1024 * 1024
+    ):
+        return {}
+
+    manifest_row = _public_tour_manifest(
+        payload,
+        only_relpath=safe_relpath,
+    ).get(safe_relpath)
+    if (
+        not isinstance(manifest_row, dict)
+        or str(manifest_row.get("privacy_class") or "").strip().lower()
+        != privacy_class
+        or str(manifest_row.get("role") or "").strip().lower().replace("-", "_")
+        != expected_role
+        or str(manifest_row.get("mime_type") or "").strip().lower()
+        != expected_mime_type
+        or manifest_row.get("sha256") != digest
+        or manifest_row.get("size_bytes") != size_bytes
+    ):
+        return {}
+    return dict(manifest_row)
+
+
 def _public_tour_is_generated_reconstruction_only(payload: dict[str, object]) -> bool:
     generated_reconstruction = payload.get("generated_reconstruction")
     if not isinstance(generated_reconstruction, dict):
@@ -7476,6 +7604,8 @@ def _public_tour_verified_generated_viewer_asset(
         "viewer_module": {"application/javascript", "text/javascript"},
         "floorplan_texture": {"image/jpeg", "image/png", "image/webp"},
         "photo_texture": {"image/jpeg", "image/png", "image/webp"},
+        "generated_reconstruction_model": {"model/obj", "model/gltf-binary"},
+        "generated_reconstruction_material": {"model/mtl"},
     }
     if (
         not safe_relpath
@@ -7785,13 +7915,21 @@ def _public_tour_file_from_snapshot(
         and not preview_manifest_row
     ):
         raise HTTPException(status_code=404, detail="tour_file_not_found")
-    if generated_asset_kind == "model":
-        return Response(
-            "This generated model is not a public 3D tour.\n",
-            status_code=410,
-            media_type="text/plain; charset=utf-8",
-            headers=_public_tour_security_headers(cache_control="no-store"),
-        )
+    generated_model_manifest_row = (
+        _generated_reconstruction_public_model_manifest_row(payload, safe_relpath)
+        if PurePosixPath(safe_relpath).suffix.lower() in {".obj", ".mtl", ".glb"}
+        else {}
+    )
+    if PurePosixPath(safe_relpath).suffix.lower() in {".obj", ".mtl", ".glb"}:
+        if generated_asset_kind != "model" or not generated_model_manifest_row:
+            return Response(
+                "This generated model is not a public 3D tour.\n",
+                status_code=410,
+                media_type="text/plain; charset=utf-8",
+                headers=_public_tour_security_headers(cache_control="no-store"),
+            )
+        manifest_row = generated_model_manifest_row
+        preview_manifest_row = generated_model_manifest_row
     removed_cube_assets = {str(item or "").strip() for item in list(payload.get("removed_cube_assets") or [])}
     if bool(payload.get("cube_fallback_removed")) and (
         safe_name in removed_cube_assets or safe_name.lower().startswith("pq-3d-top22")
@@ -7818,6 +7956,12 @@ def _public_tour_file_from_snapshot(
         expected_identity=expected_identity,
     )
     try:
+        if (
+            generated_model_manifest_row
+            and opened.details.st_size
+            != generated_model_manifest_row.get("size_bytes")
+        ):
+            raise HTTPException(status_code=404, detail="tour_file_not_found")
         _asset_file(
             slug,
             asset_path,
@@ -7934,7 +8078,10 @@ def public_tour_generated_reconstruction_preview_asset(slug: str, asset_path: st
             payload=payload,
             request=request,
         )
-    if not safe_relpath or not _generated_reconstruction_preview_asset_manifest_row(payload, safe_relpath):
+    if not safe_relpath or not (
+        _generated_reconstruction_preview_asset_manifest_row(payload, safe_relpath)
+        or _generated_reconstruction_public_model_manifest_row(payload, safe_relpath)
+    ):
         raise HTTPException(status_code=404, detail="tour_file_not_found")
     return public_tour_file(slug, safe_relpath, request)
 

@@ -3904,10 +3904,26 @@ def _upsert_public_asset(
     role: str,
     privacy_class: str = "public",
     mime_type: str = "",
+    sha256: str = "",
+    size_bytes: int | None = None,
 ) -> None:
     normalized_relpath = _safe_relpath(relpath)
     if not normalized_relpath:
         return
+    normalized_sha256 = str(sha256 or "").strip().lower()
+    if normalized_sha256 and not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256):
+        raise RuntimeError("public_asset_sha256_invalid")
+    if size_bytes is not None and (
+        isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes <= 0
+    ):
+        raise RuntimeError("public_asset_size_invalid")
+
+    def _apply_binding(row: dict[str, object]) -> None:
+        if normalized_sha256:
+            row["sha256"] = normalized_sha256
+        if size_bytes is not None:
+            row["size_bytes"] = size_bytes
+
     public_assets = list(payload.get("public_assets") or []) if isinstance(payload.get("public_assets"), list) else []
     for row in public_assets:
         if isinstance(row, dict) and any(
@@ -3915,21 +3931,132 @@ def _upsert_public_asset(
             for key in ("path", "relpath", "asset_relpath")
         ):
             row["path"] = normalized_relpath
+            row.pop("relpath", None)
+            row.pop("asset_relpath", None)
+            row.pop("privacy", None)
+            row.pop("asset_role", None)
+            row.pop("content_type", None)
             row["privacy_class"] = privacy_class
             row["role"] = role
             if mime_type:
                 row["mime_type"] = mime_type
+            _apply_binding(row)
             payload["public_assets"] = public_assets
             return
-    public_assets.append(
-        {
-            "path": normalized_relpath,
-            "privacy_class": privacy_class,
-            "role": role,
-            **({"mime_type": mime_type} if mime_type else {}),
-        }
-    )
+    row: dict[str, object] = {
+        "path": normalized_relpath,
+        "privacy_class": privacy_class,
+        "role": role,
+        **({"mime_type": mime_type} if mime_type else {}),
+    }
+    _apply_binding(row)
+    public_assets.append(row)
     payload["public_assets"] = public_assets
+
+
+def _public_generated_model_binding(path: Path) -> tuple[str, int]:
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        details = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or details.st_nlink != 1
+            or details.st_size <= 0
+            or details.st_size > 8 * 1024 * 1024
+        ):
+            raise RuntimeError("public_generated_model_asset_unsafe")
+        digest = hashlib.sha256()
+        total_bytes = 0
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            total_bytes += len(chunk)
+        confirmed = os.fstat(descriptor)
+        if (
+            total_bytes != details.st_size
+            or (
+                confirmed.st_dev,
+                confirmed.st_ino,
+                confirmed.st_mode,
+                confirmed.st_nlink,
+                confirmed.st_size,
+                confirmed.st_mtime_ns,
+                confirmed.st_ctime_ns,
+            )
+            != (
+                details.st_dev,
+                details.st_ino,
+                details.st_mode,
+                details.st_nlink,
+                details.st_size,
+                details.st_mtime_ns,
+                details.st_ctime_ns,
+            )
+        ):
+            raise RuntimeError("public_generated_model_asset_unsafe")
+        return digest.hexdigest(), int(details.st_size)
+    except OSError as exc:
+        raise RuntimeError("public_generated_model_asset_unsafe") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _upsert_public_generated_model_assets(
+    payload: dict[str, object],
+    *,
+    output_dir: Path,
+    base_relpath: str,
+    glb_export: dict[str, object],
+) -> None:
+    normalized_base_relpath = _safe_relpath(base_relpath)
+    if not normalized_base_relpath or normalized_base_relpath != base_relpath:
+        raise RuntimeError("public_generated_model_relpath_invalid")
+    generated_model_assets: list[tuple[str, Path, str, str]] = [
+        (
+            f"{normalized_base_relpath}/model.obj",
+            output_dir / "model.obj",
+            "generated_reconstruction_model",
+            "model/obj",
+        ),
+        (
+            f"{normalized_base_relpath}/model.mtl",
+            output_dir / "model.mtl",
+            "generated_reconstruction_material",
+            "model/mtl",
+        ),
+    ]
+    if str(glb_export.get("status") or "").strip() == "generated":
+        glb_relpath = _safe_relpath(
+            str(glb_export.get("glb_relpath") or "model.glb").strip()
+        )
+        if not glb_relpath or "/" in glb_relpath:
+            raise RuntimeError("public_generated_model_relpath_invalid")
+        generated_model_assets.append(
+            (
+                f"{normalized_base_relpath}/{glb_relpath}",
+                output_dir / glb_relpath,
+                "generated_reconstruction_model",
+                "model/gltf-binary",
+            )
+        )
+    for relpath, model_path, role, mime_type in generated_model_assets:
+        model_sha256, model_size_bytes = _public_generated_model_binding(model_path)
+        _upsert_public_asset(
+            payload,
+            relpath=relpath,
+            role=role,
+            privacy_class="generated_reconstruction_public",
+            mime_type=mime_type,
+            sha256=model_sha256,
+            size_bytes=model_size_bytes,
+        )
 
 
 def _upsert_diorama_scene(payload: dict[str, object], *, relpath: str) -> None:
@@ -9835,8 +9962,6 @@ def _generate_reconstruction_on_anchored_surface(
     )
     receipt["walkthrough"] = walkthrough
     required_artifact_failures: list[str] = []
-    if glb_export.get("status") != "generated":
-        required_artifact_failures.append("glb")
     if not args.skip_video and walkthrough.get("status") != "generated":
         required_artifact_failures.append("walkthrough")
     if required_artifact_failures:
@@ -9927,6 +10052,12 @@ def _generate_reconstruction_on_anchored_surface(
     ):
         payload.pop(key, None)
     payload["generated_reconstruction"] = generated_reconstruction
+    _upsert_public_generated_model_assets(
+        payload,
+        output_dir=output_dir,
+        base_relpath=base_relpath,
+        glb_export=glb_export,
+    )
     for relpath in dict.fromkeys(
         (
             f"{base_relpath}/{str(vendor_assets.get('three_relpath') or 'vendor/three.module.js')}",

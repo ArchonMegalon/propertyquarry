@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import math
@@ -3733,9 +3734,123 @@ def test_generated_reconstruction_public_allowlist_exposes_viewer_but_not_raw_mo
     assert "generated-reconstruction/model.glb" not in allowed
     assert "generated-reconstruction/generated-walkthrough.mp4" in allowed
     assert "generated-reconstruction/reconstruction.json" not in allowed
+
+    payload["public_assets"].extend(
+        [
+            {
+                "path": "generated-reconstruction/model.obj",
+                "privacy_class": "generated_reconstruction_public",
+                "role": "generated_reconstruction_model",
+                "mime_type": "model/obj",
+                "sha256": "1" * 64,
+                "size_bytes": 101,
+            },
+            {
+                "path": "generated-reconstruction/model.mtl",
+                "privacy_class": "generated_reconstruction_public",
+                "role": "generated_reconstruction_material",
+                "mime_type": "model/mtl",
+                "sha256": "2" * 64,
+                "size_bytes": 102,
+            },
+            {
+                "path": "generated-reconstruction/model.glb",
+                "privacy_class": "generated_reconstruction_public",
+                "role": "generated_reconstruction_model",
+                "mime_type": "model/gltf-binary",
+                "sha256": "3" * 64,
+                "size_bytes": 103,
+            },
+        ]
+    )
+    explicitly_bound = public_tour_allowed_asset_paths(payload)
+    assert "generated-reconstruction/model.obj" in explicitly_bound
+    assert "generated-reconstruction/model.mtl" in explicitly_bound
+    assert "generated-reconstruction/model.glb" in explicitly_bound
     assert "generated-reconstruction/private-debug.html" not in public_tour_allowed_asset_paths(
         {"public_assets": [{"relpath": "generated-reconstruction/private-debug.html"}]}
     )
+
+
+def test_generated_reconstruction_public_model_writer_skips_unavailable_glb(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "generated-reconstruction"
+    output_dir.mkdir()
+    (output_dir / "model.obj").write_bytes(b"obj")
+    (output_dir / "model.mtl").write_bytes(b"mtl")
+    payload: dict[str, object] = {
+        "public_assets": [
+            {
+                "relpath": "generated-reconstruction/model.obj",
+                "privacy": "private",
+                "asset_role": "debug",
+                "content_type": "text/html",
+            }
+        ]
+    }
+
+    reconstruction_script._upsert_public_generated_model_assets(
+        payload,
+        output_dir=output_dir,
+        base_relpath="generated-reconstruction",
+        glb_export={"status": "failed", "reason": "test-unavailable"},
+    )
+
+    rows = {
+        row["path"]: row
+        for row in payload["public_assets"]
+        if isinstance(row, dict)
+    }
+    assert set(rows) == {
+        "generated-reconstruction/model.obj",
+        "generated-reconstruction/model.mtl",
+    }
+    assert rows["generated-reconstruction/model.obj"]["role"] == (
+        "generated_reconstruction_model"
+    )
+    assert rows["generated-reconstruction/model.obj"]["privacy_class"] == (
+        "generated_reconstruction_public"
+    )
+    assert rows["generated-reconstruction/model.obj"]["mime_type"] == "model/obj"
+    assert not {
+        "relpath",
+        "asset_relpath",
+        "privacy",
+        "asset_role",
+        "content_type",
+    }.intersection(rows["generated-reconstruction/model.obj"])
+    assert rows["generated-reconstruction/model.mtl"]["role"] == (
+        "generated_reconstruction_material"
+    )
+
+
+@pytest.mark.parametrize("unsafe_topology", ("symlink", "hardlink"))
+def test_generated_reconstruction_public_model_writer_rejects_unsafe_topology(
+    tmp_path: Path,
+    unsafe_topology: str,
+) -> None:
+    output_dir = tmp_path / "generated-reconstruction"
+    output_dir.mkdir()
+    (output_dir / "model.mtl").write_bytes(b"mtl")
+    model_path = output_dir / "model.obj"
+    target = output_dir / "model-target.obj"
+    target.write_bytes(b"obj")
+    if unsafe_topology == "symlink":
+        model_path.symlink_to(target.name)
+    else:
+        model_path.hardlink_to(target)
+
+    with pytest.raises(
+        RuntimeError,
+        match="public_generated_model_asset_unsafe",
+    ):
+        reconstruction_script._upsert_public_generated_model_assets(
+            {},
+            output_dir=output_dir,
+            base_relpath="generated-reconstruction",
+            glb_export={"status": "skipped"},
+        )
 
 
 def test_generated_reconstruction_manifest_whitelists_viewer_vendor_assets(tmp_path: Path) -> None:
@@ -3765,10 +3880,18 @@ def test_generated_reconstruction_manifest_whitelists_viewer_vendor_assets(tmp_p
     assert generated.returncode == 0, generated.stderr
     manifest = json.loads((bundle_dir / "tour.json").read_text(encoding="utf-8"))
     public_asset_paths = {row["path"] for row in manifest["public_assets"] if isinstance(row, dict)}
+    public_asset_rows = {
+        row["path"]: row
+        for row in manifest["public_assets"]
+        if isinstance(row, dict) and isinstance(row.get("path"), str)
+    }
 
     assert public_asset_paths >= {
         "diorama-preview.png",
         "telegram-preview.png",
+        "generated-reconstruction/model.obj",
+        "generated-reconstruction/model.mtl",
+        "generated-reconstruction/model.glb",
         "generated-reconstruction/vendor/three.module.js",
         "generated-reconstruction/vendor/examples/jsm/controls/OrbitControls.js",
     }
@@ -3778,6 +3901,17 @@ def test_generated_reconstruction_manifest_whitelists_viewer_vendor_assets(tmp_p
         "generated-reconstruction/vendor/examples/jsm/controls/OrbitControls.js",
     }
     assert "generated-reconstruction/vendor/LICENSE" not in public_asset_paths
+    for relpath, expected_role in (
+        ("generated-reconstruction/model.obj", "generated_reconstruction_model"),
+        ("generated-reconstruction/model.mtl", "generated_reconstruction_material"),
+        ("generated-reconstruction/model.glb", "generated_reconstruction_model"),
+    ):
+        asset_path = bundle_dir / relpath
+        row = public_asset_rows[relpath]
+        assert row["privacy_class"] == "generated_reconstruction_public"
+        assert row["role"] == expected_role
+        assert row["size_bytes"] == asset_path.stat().st_size
+        assert row["sha256"] == hashlib.sha256(asset_path.read_bytes()).hexdigest()
 
 
 def test_generated_reconstruction_vendor_copy_fails_closed_on_source_or_license_tamper(

@@ -51,6 +51,75 @@ def _unverified(reason: str = "generated_viewer_release_unverified") -> dict[str
     }
 
 
+def _explicit_public_model_binding_matches(
+    payload: dict[str, object],
+    *,
+    path: str,
+    binding: dict[str, object],
+    expected_role: str,
+    expected_mime_types: set[str],
+) -> bool:
+    public_assets = payload.get("public_assets")
+    if not isinstance(public_assets, list):
+        return False
+    matches: list[dict[str, object]] = []
+    for row in public_assets:
+        if not isinstance(row, dict):
+            continue
+        declared_paths: set[str] = set()
+        aliases_valid = True
+        for key in ("path", "relpath", "asset_relpath"):
+            raw_value = _text(row.get(key))
+            if not raw_value:
+                continue
+            candidate = _safe_relpath(raw_value)
+            if not candidate:
+                aliases_valid = False
+                break
+            declared_paths.add(candidate)
+        if path not in declared_paths:
+            continue
+        if not aliases_valid or declared_paths != {path}:
+            return False
+        matches.append(row)
+    if len(matches) != 1:
+        return False
+    row = matches[0]
+    row_sha256 = _text(row.get("sha256"))
+    row_size_bytes = row.get("size_bytes")
+    row_role = _text(row.get("role")).lower().replace("-", "_")
+    row_mime_type = _text(row.get("mime_type")).lower()
+    privacy_aliases = {
+        _text(row.get(key)).lower()
+        for key in ("privacy_class", "privacy")
+        if _text(row.get(key))
+    }
+    role_aliases = {
+        _text(row.get(key)).lower().replace("-", "_")
+        for key in ("role", "asset_role")
+        if _text(row.get(key))
+    }
+    mime_aliases = {
+        _text(row.get(key)).lower()
+        for key in ("mime_type", "content_type")
+        if _text(row.get(key))
+    }
+    return (
+        _text(row.get("privacy_class")).lower()
+        == "generated_reconstruction_public"
+        and privacy_aliases == {"generated_reconstruction_public"}
+        and row_role == expected_role
+        and role_aliases == {expected_role}
+        and row_mime_type in expected_mime_types
+        and mime_aliases == {row_mime_type}
+        and bool(_SHA256_RE.fullmatch(row_sha256))
+        and row_sha256 == binding.get("sha256")
+        and type(row_size_bytes) is int
+        and row_size_bytes == binding.get("size_bytes")
+        and row_mime_type == binding.get("mime_type")
+    )
+
+
 def evaluate_public_tour_generated_viewer_release(
     payload: dict[str, object],
 ) -> dict[str, Any]:
@@ -73,6 +142,54 @@ def evaluate_public_tour_generated_viewer_release(
     viewer_relpath = _safe_relpath(generated.get("viewer_relpath"))
     manifest_relpath = _safe_relpath(generated.get("manifest_relpath"))
     floorplan_relpath = _safe_relpath(generated.get("floorplan_relpath"))
+    raw_optional_model_assets = (
+        (
+            generated.get("model_relpath"),
+            ".obj",
+            "generated_reconstruction_model",
+            {"model/obj"},
+        ),
+        (
+            generated.get("material_relpath"),
+            ".mtl",
+            "generated_reconstruction_material",
+            {"model/mtl"},
+        ),
+        (
+            generated.get("glb_model_relpath"),
+            ".glb",
+            "generated_reconstruction_model",
+            {"model/gltf-binary"},
+        ),
+    )
+    declared_model_assets: list[tuple[str, str, set[str]]] = []
+    for raw_path, suffix, role, mime_types in raw_optional_model_assets:
+        if raw_path in (None, ""):
+            continue
+        model_relpath = _safe_relpath(raw_path)
+        if (
+            not model_relpath.startswith(_GENERATED_RECONSTRUCTION_PREFIX)
+            or not model_relpath.lower().endswith(suffix)
+        ):
+            return _unverified()
+        declared_model_assets.append((model_relpath, role, mime_types))
+    optional_model_assets: list[tuple[str, str, set[str]]] = []
+    public_assets = payload.get("public_assets")
+    public_asset_rows = public_assets if isinstance(public_assets, list) else []
+    for model_relpath, role, mime_types in declared_model_assets:
+        attempts = [
+            row
+            for row in public_asset_rows
+            if isinstance(row, dict)
+            and any(
+                _safe_relpath(row.get(key)) == model_relpath
+                for key in ("path", "relpath", "asset_relpath")
+            )
+        ]
+        if len(attempts) > 1:
+            return _unverified()
+        if attempts:
+            optional_model_assets.append((model_relpath, role, mime_types))
 
     raw_photo_relpaths = generated.get("photo_relpaths")
     panel_count = generated.get("photo_reference_panel_count")
@@ -115,6 +232,7 @@ def evaluate_public_tour_generated_viewer_release(
             (path, "photo_texture", {"image/jpeg", "image/png", "image/webp"})
             for path in photo_relpaths
         ],
+        *optional_model_assets,
     ]
     required_paths = {path for path, _role, _mime_types in required_assets if path}
 
@@ -185,6 +303,16 @@ def evaluate_public_tour_generated_viewer_release(
             bindings.get(path, {}).get("role") == role
             and bindings.get(path, {}).get("mime_type") in mime_types
             for path, role, mime_types in required_assets
+        ),
+        all(
+            _explicit_public_model_binding_matches(
+                payload,
+                path=path,
+                binding=bindings.get(path, {}),
+                expected_role=role,
+                expected_mime_types=mime_types,
+            )
+            for path, role, mime_types in optional_model_assets
         ),
         all(
             _SHA256_RE.fullmatch(_text(release.get(field)).lower())

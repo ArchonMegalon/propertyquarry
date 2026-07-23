@@ -914,7 +914,22 @@ def public_tour_asset_path_is_public(
             and normalized_role in _PUBLIC_TOUR_GENERATED_RECONSTRUCTION_VIEWER_ASSET_ROLES
         )
     if suffix in {".obj", ".mtl", ".glb"}:
-        return False
+        expected_role = (
+            "generated_reconstruction_material"
+            if suffix == ".mtl"
+            else "generated_reconstruction_model"
+        )
+        expected_mime_type = {
+            ".obj": "model/obj",
+            ".mtl": "model/mtl",
+            ".glb": "model/gltf-binary",
+        }[suffix]
+        return (
+            is_generated_reconstruction_asset
+            and normalized_role == expected_role
+            and normalized_role in _PUBLIC_TOUR_GENERATED_RECONSTRUCTION_MODEL_ROLES
+            and str(mime_type or "").strip().lower() == expected_mime_type
+        )
     if suffix in _PUBLIC_TOUR_DENIED_ASSET_EXTENSIONS:
         return False
     if suffix not in _PUBLIC_TOUR_ALLOWED_ASSET_EXTENSIONS:
@@ -927,6 +942,71 @@ def public_tour_asset_path_is_public(
             "valuation_floorplan",
         }
     return True
+
+
+def _public_tour_explicit_model_binding_is_valid(row: dict[str, object]) -> bool:
+    declared_paths: set[str] = set()
+    for key in ("path", "relpath", "asset_relpath"):
+        raw_value = str(row.get(key) or "").strip()
+        if not raw_value:
+            continue
+        candidate = public_tour_safe_asset_relpath(raw_value)
+        if not candidate:
+            return False
+        declared_paths.add(candidate)
+    if len(declared_paths) != 1:
+        return False
+    relpath = next(iter(declared_paths))
+    suffix = PurePosixPath(relpath).suffix.lower()
+    if suffix not in {".obj", ".mtl", ".glb"}:
+        return True
+    privacy_class = str(
+        row.get("privacy_class") or row.get("privacy") or ""
+    ).strip().lower()
+    role = str(row.get("role") or row.get("asset_role") or "").strip().lower()
+    role = role.replace("-", "_")
+    expected_role = (
+        "generated_reconstruction_material"
+        if suffix == ".mtl"
+        else "generated_reconstruction_model"
+    )
+    expected_mime_type = {
+        ".obj": "model/obj",
+        ".mtl": "model/mtl",
+        ".glb": "model/gltf-binary",
+    }[suffix]
+    privacy_aliases = {
+        str(row.get(key) or "").strip().lower()
+        for key in ("privacy_class", "privacy")
+        if str(row.get(key) or "").strip()
+    }
+    role_aliases = {
+        str(row.get(key) or "").strip().lower().replace("-", "_")
+        for key in ("role", "asset_role")
+        if str(row.get(key) or "").strip()
+    }
+    mime_aliases = {
+        str(row.get(key) or "").strip().lower()
+        for key in ("mime_type", "content_type")
+        if str(row.get(key) or "").strip()
+    }
+    digest = str(row.get("sha256") or "").strip()
+    size_bytes = row.get("size_bytes")
+    return (
+        privacy_class == "generated_reconstruction_public"
+        and privacy_aliases == {"generated_reconstruction_public"}
+        and role == expected_role
+        and role_aliases == {expected_role}
+        and str(row.get("mime_type") or row.get("content_type") or "")
+        .strip()
+        .lower()
+        == expected_mime_type
+        and mime_aliases == {expected_mime_type}
+        and bool(re.fullmatch(r"[0-9a-f]{64}", digest))
+        and not isinstance(size_bytes, bool)
+        and isinstance(size_bytes, int)
+        and 0 < size_bytes <= 8 * 1024 * 1024
+    )
 
 
 def public_tour_collect_asset_refs(payload: dict[str, object]) -> set[str]:
@@ -1023,6 +1103,8 @@ def public_tour_collect_asset_refs(payload: dict[str, object]) -> set[str]:
                 _add(row)
                 continue
             if not isinstance(row, dict):
+                continue
+            if not _public_tour_explicit_model_binding_is_valid(row):
                 continue
             privacy_class = str(row.get("privacy_class") or row.get("privacy") or "public").strip().lower()
             if privacy_class in {"private", "internal", "debug", "restricted"}:
@@ -1141,6 +1223,8 @@ def public_tour_asset_metadata(payload: dict[str, object]) -> dict[str, dict[str
                 _record(row)
                 continue
             if not isinstance(row, dict):
+                continue
+            if not _public_tour_explicit_model_binding_is_valid(row):
                 continue
             privacy_class = str(row.get("privacy_class") or row.get("privacy") or "public").strip().lower()
             if privacy_class in {"private", "internal", "debug", "restricted"}:
