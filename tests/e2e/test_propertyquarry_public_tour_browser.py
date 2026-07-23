@@ -77,13 +77,24 @@ def _is_expected_firefox_duplicate_entry_image_abort(
     parent_frame_url = urllib.parse.urldefrag(
         str(failure_receipt.get("parent_frame_url") or "")
     ).url
+    failure_frame_url = urllib.parse.urldefrag(
+        str(failure_receipt.get("failure_frame_url") or "")
+    ).url
     frame_is_main = failure_receipt.get("frame_is_main") is True
     parent_frame_is_main = failure_receipt.get("parent_frame_is_main") is True
+    failure_frame_is_main = failure_receipt.get("failure_frame_is_main") is True
     originated_from_public_shell = (
         frame_is_main
-        and frame_url == public_url
         and not parent_frame_url
         and not parent_frame_is_main
+        and (
+            frame_url == public_url
+            or (
+                frame_url == "about:blank"
+                and failure_frame_is_main
+                and failure_frame_url == public_url
+            )
+        )
     )
     return (
         failure_receipt.get("url") == entry_image_url
@@ -120,9 +131,22 @@ def test_firefox_duplicate_entry_image_abort_classifier_is_fail_closed() -> None
         "parent_frame_url": f"{public_url}#live-360",
         "parent_frame_is_main": True,
     }
+    transitioning_main_frame_receipt = {
+        **main_frame_receipt,
+        "frame_url": "about:blank",
+        "failure_frame_url": f"{public_url}#live-360",
+        "failure_frame_is_main": True,
+    }
 
     assert _is_expected_firefox_duplicate_entry_image_abort(
         main_frame_receipt,
+        expected_engine="firefox",
+        decoded_entry_image_count=2,
+        entry_image_url=entry_image_url,
+        public_url=public_url,
+    )
+    assert _is_expected_firefox_duplicate_entry_image_abort(
+        transitioning_main_frame_receipt,
         expected_engine="firefox",
         decoded_entry_image_count=2,
         entry_image_url=entry_image_url,
@@ -138,6 +162,26 @@ def test_firefox_duplicate_entry_image_abort_classifier_is_fail_closed() -> None
         {**main_frame_receipt, "redirected_from": True},
         {**main_frame_receipt, "redirected_to": True},
         {**main_frame_receipt, "frame_url": "about:blank"},
+        {
+            **transitioning_main_frame_receipt,
+            "failure_frame_is_main": False,
+        },
+        {
+            **transitioning_main_frame_receipt,
+            "failure_frame_url": "about:blank",
+        },
+        {
+            **transitioning_main_frame_receipt,
+            "failure_frame_url": "https://propertyquarry.com/tours/other",
+        },
+        {
+            **transitioning_main_frame_receipt,
+            "parent_frame_url": public_url,
+        },
+        {
+            **transitioning_main_frame_receipt,
+            "parent_frame_is_main": True,
+        },
         child_frame_receipt,
         {**child_frame_receipt, "parent_frame_is_main": False},
         {**child_frame_receipt, "parent_frame_url": "https://propertyquarry.com/tours/other"},
