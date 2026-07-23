@@ -19,10 +19,11 @@ TOOLS = ROOT / "tools"
 INSTALL = TOOLS / "install-with-docker.sh"
 RUNNER = TOOLS / "install-runner-with-docker.sh"
 BUILD = TOOLS / "build-installer-image.sh"
+TOUR_DISPATCH = TOOLS / "dispatch-tour-v4-with-docker.sh"
 EPHEMERAL = TOOLS / "run-ephemeral-runner.sh"
 LIFECYCLE = TOOLS / "run-ephemeral-runner-with-docker.sh"
-SCRIPTS = (INSTALL, RUNNER, BUILD, EPHEMERAL, LIFECYCLE)
-DOCKER_SCRIPTS = (INSTALL, RUNNER, BUILD, LIFECYCLE)
+SCRIPTS = (INSTALL, RUNNER, BUILD, TOUR_DISPATCH, EPHEMERAL, LIFECYCLE)
+DOCKER_SCRIPTS = (INSTALL, RUNNER, BUILD, TOUR_DISPATCH, LIFECYCLE)
 
 
 class DockerWrapperTests(unittest.TestCase):
@@ -35,6 +36,7 @@ class DockerWrapperTests(unittest.TestCase):
             INSTALL: "propertyquarry-docker-root-install-rejected\n",
             RUNNER: "propertyquarry-docker-runner-install-rejected\n",
             BUILD: "propertyquarry-installer-image-build-rejected\n",
+            TOUR_DISPATCH: "propertyquarry-tour-v4-docker-dispatch-rejected\n",
             EPHEMERAL: "propertyquarry-ephemeral-runner-rejected\n",
             LIFECYCLE: "propertyquarry-docker-ephemeral-runner-rejected\n",
         }
@@ -163,6 +165,88 @@ class DockerWrapperTests(unittest.TestCase):
             '--entrypoint /propertyquarry-release-single-host-installer-v2',
         ):
             self.assertIn(token, text)
+
+    def test_tour_dispatch_is_package_first_and_has_no_generic_root_exec(self) -> None:
+        text = TOUR_DISPATCH.read_text(encoding="utf-8")
+        build = (TOOLS / "build.sh").read_text(encoding="utf-8")
+        verify = text.index('"$image_verifier" verify-image')
+        run = text.index("docker run --rm --pull never")
+        self.assertLess(verify, run)
+        for token in (
+            "--network none",
+            "--read-only",
+            "--user 0:0",
+            "--cap-drop ALL",
+            "--cap-add CHOWN",
+            "--cap-add DAC_OVERRIDE",
+            "--cap-add FOWNER",
+            "--cap-add SYS_CHROOT",
+            "--security-opt no-new-privileges",
+            "type=bind,src=/,dst=/host,readonly=false",
+            "dst=/input/propertyquarry-release-single-host-v2.tar,readonly",
+            '"$helper_image_id" dispatch-tour-v4 "${dispatch_args[@]}"',
+            "tour-v4-authority-info",
+            "tour-inspect-v4",
+            "tour-publish-v4",
+            "tour-recover-v4",
+            "tour-rollback-v4",
+        ):
+            self.assertIn(token, text)
+        for forbidden in (
+            "--privileged",
+            "--pid host",
+            "src=/var/run/docker.sock,dst=/var/run/docker.sock",
+            "bash -c",
+            "sh -c",
+            "eval ",
+            "DOCKER_HOST=tcp:",
+        ):
+            self.assertNotIn(forbidden, text)
+        self.assertEqual(
+            build.count(
+                "-X propertyquarry.local/release-single-host-v2/internal/"
+                "authority.SourceManifestDigest=${source_digest}"
+            ),
+            2,
+        )
+        self.assertEqual(
+            build.count(
+                "-X propertyquarry.local/release-single-host-v2/internal/"
+                "authority.ScratchExecutionContract=linux-amd64-static-et-exec-v1"
+            ),
+            2,
+        )
+
+    def test_tour_dispatch_rejects_non_allowlisted_command_before_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package = root / "package.tar"
+            anchor = root / "anchor.pem"
+            package.write_bytes(b"not-reached")
+            anchor.write_bytes(b"not-reached")
+            package.chmod(0o400)
+            anchor.chmod(0o444)
+            result = subprocess.run(
+                [
+                    "bash",
+                    os.fspath(TOUR_DISPATCH),
+                    "sha256:" + ("1" * 64),
+                    os.fspath(package),
+                    os.fspath(anchor),
+                    "/bin/sh",
+                ],
+                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 50)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(
+                result.stderr,
+                "propertyquarry-tour-v4-docker-dispatch-rejected\n",
+            )
 
     def test_inspect_verifier_accepts_only_exact_scratch_defaults(self) -> None:
         text = INSTALL.read_text(encoding="utf-8")

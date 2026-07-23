@@ -26,6 +26,8 @@ internal/authority/runner_ticket.go
 internal/authority/runner_ticket_test.go
 internal/authority/runtime_contract.go
 internal/authority/runtime_inputs.go
+internal/authority/tour_publish_v4.go
+internal/authority/tour_publish_v4_test.go
 internal/installhelper/canonical.go
 internal/installhelper/credential.go
 internal/installhelper/credential_test.go
@@ -38,6 +40,8 @@ internal/installhelper/run.go
 internal/installhelper/runner.go
 internal/installhelper/systemd_canary.go
 internal/installhelper/systemd_canary_test.go
+internal/installhelper/tour_dispatch.go
+internal/installhelper/tour_dispatch_test.go
 packaging/README.md
 packaging/templates/propertyquarry-release-single-host-v2-activation-canary.service
 packaging/templates/propertyquarry-release-single-host-v2.socket
@@ -60,6 +64,7 @@ toolchain.lock.json
 tools/approve-runner-prerequisite.py
 tools/build-installer-image.sh
 tools/build.sh
+tools/dispatch-tour-v4-with-docker.sh
 tools/fetch-attestation-verifier.sh
 tools/fetch-runner-archive.sh
 tools/install-runner-with-docker.sh

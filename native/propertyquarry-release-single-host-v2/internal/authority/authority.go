@@ -65,6 +65,10 @@ func Run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		err = verifyRunnerSessionCommand(args[1:], stdout)
 	} else if len(args) >= 1 && args[0] == "runner-supervise" {
 		err = runnerSupervisorCommand(args[1:], stdout)
+	} else if len(args) >= 1 && (args[0] == "tour-v4-authority-info" ||
+		args[0] == "tour-inspect-v4" || args[0] == "tour-publish-v4" || args[0] == "tour-recover-v4" ||
+		args[0] == "tour-rollback-v4") {
+		err = tourV4Command(args[0], args[1:], stdout)
 	} else {
 		err = fmt.Errorf("mode-invalid")
 	}

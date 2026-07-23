@@ -95,7 +95,7 @@ build_once() {
     -ldflags="-buildid= -linkmode=internal -X propertyquarry.local/release-single-host-v2/internal/authority.SourceManifestDigest=${source_digest} -X propertyquarry.local/release-single-host-v2/internal/authority.ScratchExecutionContract=linux-amd64-static-et-exec-v1" \
     -o "$work/output/propertyquarry-release-single-host-v2" ./cmd/propertyquarry-release-single-host-v2
     env -i "${common_env[@]}" "$go_binary" build -mod=readonly -trimpath -buildvcs=false -buildmode=exe \
-    -ldflags="-buildid= -linkmode=internal -X propertyquarry.local/release-single-host-v2/internal/installhelper.InstallerSourceManifestDigest=${source_digest} -X propertyquarry.local/release-single-host-v2/internal/installhelper.EmbeddedPackageAuthorityDERBase64=${installer_anchor_der_base64}" \
+    -ldflags="-buildid= -linkmode=internal -X propertyquarry.local/release-single-host-v2/internal/authority.SourceManifestDigest=${source_digest} -X propertyquarry.local/release-single-host-v2/internal/authority.ScratchExecutionContract=linux-amd64-static-et-exec-v1 -X propertyquarry.local/release-single-host-v2/internal/installhelper.InstallerSourceManifestDigest=${source_digest} -X propertyquarry.local/release-single-host-v2/internal/installhelper.EmbeddedPackageAuthorityDERBase64=${installer_anchor_der_base64}" \
     -o "$work/output/propertyquarry-release-single-host-installer-v2" ./cmd/propertyquarry-release-single-host-installer-v2
   )
   python3 "${source_snapshot}/tools/verify-source-closure.py" verify \

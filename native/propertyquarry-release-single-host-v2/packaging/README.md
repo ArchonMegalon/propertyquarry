@@ -126,6 +126,21 @@ package, controller-build, installer-build, candidate, and non-authoritative
 claim bindings with `tools/verify-install-receipt.py`. The runner wrapper applies
 the equivalent signed binding checks to its runner-install receipt.
 
+`tools/dispatch-tour-v4-with-docker.sh` is the separate no-input publication
+lane for the one compiled generated-reconstruction v4 permit. It first invokes
+the same external-anchor package/image verifier, then starts the exact scratch
+image with `--network none`, a read-only container root, no host PID namespace,
+no Docker socket mount, all capabilities dropped except `CHOWN`,
+`DAC_OVERRIDE`, `FOWNER`, and `SYS_CHROOT`, and the host root at the single
+fixed `/host` mount. Both the Bash wrapper and static Go helper accept only the
+exact authority-info, inspect, publish, recover, and rollback argument layouts;
+the artifact path, manifest digest, and published-tree rollback digest are
+compiled constants. The helper re-verifies the signed package and its own
+binary binding, derives the signed authority profile, plan, and receipt key
+from verified package memory, chroots to `/host`, and calls the v4 authority
+directly. It neither execs an installed controller nor reads a GitHub
+credential, and it exposes no shell or generic root command.
+
 An upgrade first stops new socket admissions and allows existing templated
 controller instances up to 315 minutes to finish before any installed file is
 replaced; the enclosing workflow timeout is 360 minutes. The installer remains

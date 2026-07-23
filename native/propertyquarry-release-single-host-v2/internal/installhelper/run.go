@@ -54,6 +54,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		zero(receipt)
+	} else if len(args) >= 1 && args[0] == "dispatch-tour-v4" {
+		err = DispatchFixedTourV4(args[1:], stdout)
 	} else if len(args) == 1 && (args[0] == "install" || args[0] == "install-runner") {
 		var receipt []byte
 		var installErr error
