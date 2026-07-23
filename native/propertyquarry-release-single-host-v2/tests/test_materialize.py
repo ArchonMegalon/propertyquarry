@@ -368,6 +368,21 @@ class RunnerReservationBindingTests(unittest.TestCase):
             mock.patch.object(
                 materialize, "RUNNER_RELEASE_CHECKOUT_ROOT", self.checkout_root
             ),
+            mock.patch.object(
+                materialize,
+                "_verify_runtime_compose_sync",
+                return_value={
+                    "reservation_sha256": "sha256:" + "1" * 64,
+                    "schema": (
+                        "propertyquarry.release-control.single-host-runtime-"
+                        "compose-sync-verify-result.v2"
+                    ),
+                    "terminal_sha256": "sha256:" + "2" * 64,
+                    "transaction_id": "3" * 64,
+                    "version": 2,
+                    "workflow_sha": "4" * 40,
+                },
+            ),
         )
         for patcher in self.patches:
             patcher.start()

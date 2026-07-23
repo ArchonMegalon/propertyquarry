@@ -46,6 +46,7 @@ packaging/templates/propertyquarry-release-single-host-v2.tmpfiles.conf
 packaging/templates/propertyquarry-release-single-host-v2@.service
 packaging/trust/sigstore-public-good-trusted-root.jsonl
 runner.lock.json
+tests/test_compose_sync.py
 tests/test_credential_bootstrap_wrapper.py
 tests/test_docker_wrappers.py
 tests/test_fetch_attestation_verifier.py
@@ -70,6 +71,7 @@ tools/provision-github-credential-with-docker.sh
 tools/run-ephemeral-runner-with-docker.sh
 tools/run-ephemeral-runner.sh
 tools/source-files.txt
+tools/sync-runtime-compose.py
 tools/verify-install-receipt.py
 tools/verify-source-closure.py
 tools/verify-static-elf.sh

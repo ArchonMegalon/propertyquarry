@@ -4154,6 +4154,70 @@ def _load_live_modules() -> tuple[Any, Any, Any]:
     return backup, deploy, isolation
 
 
+def _load_runtime_compose_sync_module():
+    name = "propertyquarry_single_host_runtime_compose_sync_v2"
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(
+        name, TOOLS / "sync-runtime-compose.py"
+    )
+    if spec is None or spec.loader is None:
+        fail("runtime-compose-sync-module-unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(name, None)
+        fail("runtime-compose-sync-module-invalid")
+    return module
+
+
+def _verify_runtime_compose_sync(
+    *,
+    reservation_raw: bytes,
+    reservation_payload: dict[str, Any],
+    reservation_binding: dict[str, Any],
+    receipt_public: Ed25519PublicKey,
+    receipt_id: str,
+) -> dict[str, Any]:
+    module = _load_runtime_compose_sync_module()
+    try:
+        result = module.verify_for_materialization(
+            reservation_raw=reservation_raw,
+            reservation_payload=reservation_payload,
+            reservation_binding=reservation_binding,
+            receipt_public=receipt_public,
+            receipt_id=receipt_id,
+        )
+    except module.ComposeSyncFailure as error:
+        fail(str(error))
+    if (
+        not isinstance(result, dict)
+        or set(result)
+        != {
+            "reservation_sha256",
+            "schema",
+            "terminal_sha256",
+            "transaction_id",
+            "version",
+            "workflow_sha",
+        }
+        or result.get("schema")
+        != "propertyquarry.release-control.single-host-runtime-compose-sync-verify-result.v2"
+        or result.get("version") != 2
+        or result.get("reservation_sha256") != package.sha256(reservation_raw)
+        or result.get("workflow_sha") != reservation_payload.get("workflow_sha")
+        or not isinstance(result.get("terminal_sha256"), str)
+        or not package.SHA256_PATTERN.fullmatch(result["terminal_sha256"])
+        or not isinstance(result.get("transaction_id"), str)
+        or not HEX64.fullmatch(result["transaction_id"])
+    ):
+        fail("runtime-compose-sync-verification-result-invalid")
+    return result
+
+
 def _run_observation_command(argv: list[str], maximum: int = package.MAX_JSON_BYTES) -> bytes:
     try:
         completed = subprocess.run(
@@ -4488,6 +4552,13 @@ def _materialize_locked(
         workflow_sha=workflow_sha,
         current=requested_started,
     )
+    runtime_compose_sync = _verify_runtime_compose_sync(
+        reservation_raw=reservation_raw,
+        reservation_payload=reservation_payload,
+        reservation_binding=runner_binding,
+        receipt_public=receipt_public,
+        receipt_id=receipt_id,
+    )
     prerequisite_intent_raw, prerequisite_approval_raw = (
         _read_runner_prerequisite_records(reservation_raw)
     )
@@ -4595,6 +4666,17 @@ def _materialize_locked(
         prerequisite_approval_raw,
     ):
         fail("runner-prerequisite-record-changed-during-materialization")
+    if (
+        _verify_runtime_compose_sync(
+            reservation_raw=reservation_raw,
+            reservation_payload=reservation_payload,
+            reservation_binding=runner_binding,
+            receipt_public=receipt_public,
+            receipt_id=receipt_id,
+        )
+        != runtime_compose_sync
+    ):
+        fail("runtime-compose-sync-changed-during-materialization")
     bound_at = int(time.time()) if now is None else finished
     if bound_at < finished or bound_at - started > MAX_OBSERVATION_SECONDS:
         fail("runner-observation-time-invalid")
@@ -4817,6 +4899,13 @@ def _validated_materialization(
         receipt_id=receipt_id,
         workflow_sha=config["workflow_sha"],
         current=current,
+    )
+    _verify_runtime_compose_sync(
+        reservation_raw=reservation_raw,
+        reservation_payload=reservation_payload,
+        reservation_binding=reservation_binding,
+        receipt_public=receipt_public,
+        receipt_id=receipt_id,
     )
     prerequisite_intent_raw = files["runner-prerequisite-intent.v2.json"]
     prerequisite_approval_raw = files["runner-prerequisite-approval.v2.json"]
