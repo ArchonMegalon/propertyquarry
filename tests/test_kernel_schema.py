@@ -40,11 +40,18 @@ AUTH_PROVIDER_ENV_KEYS = {
     "EA_REGISTRATION_EMAIL_FROM_FALLBACK",
     "EA_REGISTRATION_EMAIL_NAME_FALLBACK",
     "EA_REGISTRATION_EMAIL_FORCE_FALLBACK",
+    "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID",
+    "PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET",
+    "PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI",
+    "PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET",
+    "PROPERTYQUARRY_IDENTITY_SESSION_SECRET",
+    "EA_PROVIDER_SECRET_KEY",
+}
+LEGACY_EA_GOOGLE_AUTH_ENV_KEYS = {
     "EA_GOOGLE_OAUTH_CLIENT_ID",
     "EA_GOOGLE_OAUTH_CLIENT_SECRET",
     "EA_GOOGLE_OAUTH_REDIRECT_URI",
     "EA_GOOGLE_OAUTH_STATE_SECRET",
-    "EA_PROVIDER_SECRET_KEY",
 }
 
 
@@ -316,6 +323,18 @@ def test_propertyquarry_schema_gate_runs_kernel_before_property_search(
         "require_property_search_schema_ready",
         lambda *_args, **_kwargs: events.append("property_search:verify"),
     )
+    monkeypatch.setattr(
+        propertyquarry_schema,
+        "migrate_propertyquarry_google_identity_schema",
+        lambda *_args, **_kwargs: (
+            events.append("google_identity:migrate") or _Result("google_identity")
+        ),
+    )
+    monkeypatch.setattr(
+        propertyquarry_schema,
+        "require_propertyquarry_google_identity_schema_ready",
+        lambda *_args, **_kwargs: events.append("google_identity:verify"),
+    )
 
     result = propertyquarry_schema.migrate_propertyquarry_schema(
         "postgresql://migration.invalid/propertyquarry",
@@ -327,8 +346,12 @@ def test_propertyquarry_schema_gate_runs_kernel_before_property_search(
         "kernel:verify",
         "property_search:migrate",
         "property_search:verify",
+        "google_identity:migrate",
+        "google_identity:verify",
     ]
     assert result["kernel"] == {"component": "kernel"}
+    assert result["property_search"] == {"component": "property_search"}
+    assert result["google_identity"] == {"component": "google_identity"}
 
 
 def test_propertyquarry_schema_gate_stops_when_kernel_verification_fails(
@@ -410,8 +433,10 @@ def test_auth_provider_environment_is_api_only_and_value_free() -> None:
     api_environment = services["propertyquarry-api"]["environment"]
 
     assert AUTH_PROVIDER_ENV_KEYS <= set(api_environment)
-    assert api_environment["EA_GOOGLE_OAUTH_REDIRECT_URI"] == (
-        "${EA_GOOGLE_OAUTH_REDIRECT_URI:-https://propertyquarry.com/google/callback}"
+    assert LEGACY_EA_GOOGLE_AUTH_ENV_KEYS.isdisjoint(api_environment)
+    assert api_environment["PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI"] == (
+        "${PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI:"
+        "-https://propertyquarry.com/google/callback}"
     )
     for key in AUTH_PROVIDER_ENV_KEYS:
         value = str(api_environment[key])
@@ -424,6 +449,7 @@ def test_auth_provider_environment_is_api_only_and_value_free() -> None:
     ):
         service_environment = services[service_name].get("environment", {})
         assert AUTH_PROVIDER_ENV_KEYS.isdisjoint(service_environment)
+        assert LEGACY_EA_GOOGLE_AUTH_ENV_KEYS.isdisjoint(service_environment)
 
 
 @pytest.fixture

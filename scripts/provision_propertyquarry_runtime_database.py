@@ -743,6 +743,12 @@ def _prepare_roles_sql(passwords: Mapping[str, str]) -> str:
         f"CREATE ROLE {role} {attributes}; END IF;"
         for role, attributes in create_rows
     )
+    attribute_sql = "\n".join(
+        f"ALTER ROLE {role} WITH {attributes};" for role, attributes in create_rows
+    )
+    runtime_membership_repair_sql = "\n".join(
+        f"REVOKE {OWNER_ROLE} FROM {role};" for role in RUNTIME_ROLES
+    )
     password_sql = "\n".join(
         f"ALTER ROLE {role} PASSWORD {_sql_literal(password)};"
         for role, password in passwords.items()
@@ -754,6 +760,8 @@ BEGIN
 {create_sql}
 END
 $propertyquarry_runtime_roles$;
+{attribute_sql}
+{runtime_membership_repair_sql}
 GRANT {OWNER_ROLE} TO {MIGRATOR_ROLE};
 GRANT {ADMISSION_CAPACITY_OWNER_ROLE} TO {OWNER_ROLE};
 {password_sql}

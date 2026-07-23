@@ -486,6 +486,33 @@ def test_runtime_sql_contract_fences_runtime_roles_and_owned_objects() -> None:
     assert configure_sql.rstrip().endswith("COMMIT;")
 
 
+def test_runtime_role_sql_repairs_legacy_owner_membership_and_inheritance() -> None:
+    passwords = {
+        role: chr(65 + index) * 48
+        for index, role in enumerate(runtime.ROLE_KEYS.values())
+    }
+
+    roles_sql = runtime._prepare_roles_sql(passwords)
+    guard_offset = roles_sql.index("unsafe propertyquarry runtime role")
+    for role in runtime.RUNTIME_ROLES:
+        normalize = (
+            f"ALTER ROLE {role} WITH LOGIN NOINHERIT NOSUPERUSER "
+            "NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;"
+        )
+        revoke_owner = f"REVOKE {runtime.OWNER_ROLE} FROM {role};"
+
+        assert roles_sql.count(normalize) == 1
+        assert roles_sql.count(revoke_owner) == 1
+        assert roles_sql.index(normalize) < roles_sql.index(revoke_owner)
+        assert roles_sql.index(revoke_owner) < guard_offset
+
+    assert "OR role_row.rolinherit OR role_row.rolsuper" in roles_sql
+    assert (
+        "SELECT 1 FROM pg_catalog.pg_auth_members AS membership\n"
+        "                WHERE membership.member = role_row.oid"
+    ) in roles_sql
+
+
 def test_v0_37_schema_relations_are_bound_to_the_runtime_acl_contract() -> None:
     migration_name = "20260305_v0_37_runtime_repository_contract.sql"
     migration = (ROOT / "ea" / "schema" / migration_name).read_text(encoding="utf-8")
