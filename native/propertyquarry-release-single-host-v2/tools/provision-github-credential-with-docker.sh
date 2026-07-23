@@ -109,10 +109,7 @@ mkfifo -m 0600 -- "$credential_fifo" || fail
 # never assigned to a shell variable, argv, environment variable, or file.
 (
   exec 8>"$credential_fifo" || exit 50
-  /usr/bin/gh auth token --hostname github.com >&8 2>/dev/null
-  result=$?
-  exec 8>&-
-  exit "$result"
+  exec /usr/bin/gh auth token --hostname github.com >&8 2>/dev/null
 ) &
 credential_producer_pid="$!"
 
