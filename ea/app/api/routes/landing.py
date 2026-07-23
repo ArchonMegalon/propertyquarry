@@ -8182,6 +8182,7 @@ def property_research_packet(
         market_preferences=run_preferences_payload,
         force_source_research_for_selected_distances=bool(recent_run_distance_overlay),
         allow_source_research=False,
+        allow_location_hint_research=False,
     )
     fact_preferences = dict(preferences)
     candidate_requirement_plan = [

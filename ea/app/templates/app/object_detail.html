@@ -2358,7 +2358,7 @@
     const normalizedKind = normalizedVisualKind(kind);
     if (state === 'ready') {
       if (normalizedKind === 'flythrough') return 'Walkthrough';
-      if (normalizedKind === 'generated_reconstruction') return 'Layout tour';
+      if (normalizedKind === 'generated_reconstruction') return 'AI-generated 3D tour';
       return '3D tour';
     }
     if (visualPendingStates.includes(state)) return normalizedKind === 'flythrough' ? 'Preparing walkthrough' : 'Preparing 3D tour';

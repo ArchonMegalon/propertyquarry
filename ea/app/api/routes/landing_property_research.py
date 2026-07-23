@@ -528,15 +528,17 @@ def _property_enriched_candidate_facts(
     market_preferences: dict[str, object] | None = None,
     force_source_research_for_selected_distances: bool = False,
     allow_source_research: bool = True,
+    allow_location_hint_research: bool = True,
 ) -> dict[str, object]:
     facts = _property_candidate_display_facts(candidate)
     title = str(candidate.get("title") or "").strip()
     summary = str(candidate.get("summary") or "").strip()
-    facts = _property_apply_location_hint_research(
-        facts=facts,
-        title=title,
-        summary=summary,
-    )
+    if allow_location_hint_research:
+        facts = _property_apply_location_hint_research(
+            facts=facts,
+            title=title,
+            summary=summary,
+        )
     if not any(
         str(facts.get(key) or "").strip()
         for key in ("description", "description_text", "object_description", "listing_description", "summary")

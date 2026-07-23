@@ -15304,6 +15304,7 @@ def test_property_research_packet_prefers_bounded_index_and_never_full_hydrates(
     original_enriched_facts = landing_routes._property_enriched_candidate_facts
 
     def _capture_enriched_facts(**kwargs):
+        assert kwargs.get("allow_location_hint_research") is False
         captured_candidate.update(dict(kwargs.get("candidate") or {}))
         return original_enriched_facts(**kwargs)
 
@@ -15311,6 +15312,13 @@ def test_property_research_packet_prefers_bounded_index_and_never_full_hydrates(
         landing_routes,
         "_property_enriched_candidate_facts",
         _capture_enriched_facts,
+    )
+    monkeypatch.setattr(
+        landing_property_research,
+        "_property_apply_location_hint_research",
+        lambda **_kwargs: pytest.fail(
+            "research detail first paint must not perform live location-hint research"
+        ),
     )
     monkeypatch.setattr(
         landing_property_research,

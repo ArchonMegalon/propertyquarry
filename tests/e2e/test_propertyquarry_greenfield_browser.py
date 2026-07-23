@@ -8270,14 +8270,19 @@ def test_propertyquarry_research_detail_promotes_ready_generated_reconstruction_
                     "property_url": "https://www.immobilienscout24.de/expose/family-tiergarten",
                     "title": "Family flat near Tiergarten",
                     "request_kind": "tour",
+                    "tour_media_mode": "generated_reconstruction",
+                    "provider_key": "generated_reconstruction",
                     "tour_url": generated_layout_url,
                     "open_tour_url": "",
                     "generated_reconstruction_url": generated_layout_url,
                     "tour_status": "ready",
                     "flythrough_url": "",
                     "flythrough_status": "",
-                    "status_label": "Open 3D tour",
-                    "status_detail": "3D tour is ready.",
+                    "status_label": "Open AI-generated 3D tour",
+                    "status_detail": (
+                        "AI-generated from the floor plan and listing photos. "
+                        "It is an interactive spatial aid, not a captured 360° tour."
+                    ),
                     "eta_label": "",
                     "progress_pct": 100,
                     "poll_after_seconds": 0,
@@ -8315,11 +8320,14 @@ def test_propertyquarry_research_detail_promotes_ready_generated_reconstruction_
         assert visual_requests[0]["request_kind"] == "tour"
         assert visual_status_polls >= 1
         expect(page.locator("[data-prd-visual-status]")).to_contain_text(
-            "Generated from the floor plan and listing photos.",
+            (
+                "AI-generated from the floor plan and listing photos. "
+                "It is an interactive spatial aid, not a captured 360° tour."
+            ),
             timeout=5000,
         )
         expect(page.get_by_role("button", name=re.compile("(Request|Retry) 3D tour", re.I))).to_have_count(0)
-        ready_button = page.get_by_role("button", name="Open layout tour").first
+        ready_button = page.get_by_role("button", name="Open AI-generated 3D tour").first
         expect(ready_button).to_be_visible()
         assert str(ready_button.get_attribute("data-pw-visual-href") or "").strip() == generated_layout_url
 
@@ -8351,7 +8359,10 @@ def test_propertyquarry_research_detail_surfaces_generated_diorama_and_layout_to
         "property_url": "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/generated-reconstruction-loft",
         "source_ref": "willhaben:generated-reconstruction-loft",
         "tour_status": "ready",
+        "tour_media_mode": "generated_reconstruction",
+        "provider_key": "generated_reconstruction",
         "tour_url": "https://propertyquarry.com/tours/generated-reconstruction-loft",
+        "generated_reconstruction_url": "https://propertyquarry.com/tours/generated-reconstruction-loft",
         "property_facts": {
             "price_eur": 1950.0,
             "area_m2": 76.0,
@@ -8451,15 +8462,25 @@ def test_propertyquarry_research_detail_surfaces_generated_diorama_and_layout_to
             "src",
             "https://cdn.example.test/generated-reconstruction-diorama.png",
         )
-        expect(page.get_by_role("link", name="Open layout tour").first).to_be_visible()
-        expect(page.locator("[data-prd-visual-card='generated_reconstruction']")).to_be_visible()
-        expect(page.locator(".prd-status-badge")).to_contain_text("Layout tour available")
+        generated_tour_card = page.locator("[data-prd-visual-card='generated_reconstruction']")
+        expect(generated_tour_card).to_be_visible()
+        expect(generated_tour_card).to_contain_text("AI-generated 3D tour")
+        expect(page.locator(".prd-status-badge")).to_contain_text("AI-generated 3D tour available")
+        expect(page.locator("[data-prd-visual-status]")).to_contain_text(
+            (
+                "AI-generated from the floor plan and listing photos. "
+                "It is an interactive spatial aid, not a captured 360° tour."
+            )
+        )
         expect(page.get_by_role("button", name=re.compile("Request 3D tour", re.I))).to_have_count(0)
         _assert_no_horizontal_overflow(page)
-        open_layout_tour = page.get_by_role("link", name="Open layout tour").first
-        expect(open_layout_tour).to_have_attribute("href", re.compile(r".*/tours/generated-reconstruction-loft$"))
+        open_generated_tour = page.get_by_role("link", name="Open AI-generated 3D tour").first
+        expect(open_generated_tour).to_have_attribute(
+            "href",
+            re.compile(r".*/tours/generated-reconstruction-loft$"),
+        )
         with page.expect_navigation(wait_until="domcontentloaded"):
-            open_layout_tour.click()
+            open_generated_tour.click()
         assert page.url.endswith("/tours/generated-reconstruction-loft")
         public_text = page.locator("body").inner_text().lower()
         assert "generated reconstruction" in public_text
@@ -9111,6 +9132,8 @@ def test_propertyquarry_handoff_generated_layout_tour_request_promotes_to_open_l
                     "property_url": "https://www.immobilienscout24.de/expose/family-tiergarten",
                     "title": "Family flat near Tiergarten",
                     "request_kind": "tour",
+                    "tour_media_mode": "generated_reconstruction",
+                    "provider_key": "generated_reconstruction",
                     "tour_url": "",
                     "open_tour_url": "",
                     "verified_tour_url": "",
@@ -9120,8 +9143,11 @@ def test_propertyquarry_handoff_generated_layout_tour_request_promotes_to_open_l
                     "tour_status": "blocked",
                     "flythrough_url": "",
                     "flythrough_status": "",
-                    "status_label": "Open layout tour",
-                    "status_detail": "Generated from the floor plan and listing photos. It is a layout aid, not a captured 3D tour.",
+                    "status_label": "Open AI-generated 3D tour",
+                    "status_detail": (
+                        "AI-generated from the floor plan and listing photos. "
+                        "It is an interactive spatial aid, not a captured 360° tour."
+                    ),
                     "eta_label": "",
                     "progress_pct": 0,
                     "poll_after_seconds": 0,
@@ -9157,11 +9183,18 @@ def test_propertyquarry_handoff_generated_layout_tour_request_promotes_to_open_l
         expect(page.locator("[data-object-visual-status]")).to_contain_text("queued after your request", timeout=5000)
 
         expect(page.locator("[data-object-visual-status]")).to_contain_text(
-            "Generated from the floor plan and listing photos.",
+            (
+                "AI-generated from the floor plan and listing photos. "
+                "It is an interactive spatial aid, not a captured 360° tour."
+            ),
             timeout=5000,
         )
         assert visual_status_polls >= 1
-        updated_button = page.get_by_role("button", name="Open layout tour").first
+        expect(page.locator("[data-object-visual-label]")).to_have_text(
+            "AI-generated 3D tour",
+            timeout=5000,
+        )
+        updated_button = page.get_by_role("button", name="Open AI-generated 3D tour").first
         expect(updated_button).to_be_visible()
         updated_href = str(updated_button.get_attribute("data-obj-visual-href") or "").strip()
         assert updated_href == generated_layout_url
@@ -12308,14 +12341,19 @@ def test_propertyquarry_results_surface_promotes_ready_generated_layout_tour_inl
                     "property_url": "https://www.immobilienscout24.de/expose/family-tiergarten",
                     "title": "Family flat near Tiergarten",
                     "request_kind": "tour",
+                    "tour_media_mode": "generated_reconstruction",
+                    "provider_key": "generated_reconstruction",
                     "tour_url": generated_layout_url,
                     "open_tour_url": "",
                     "generated_reconstruction_url": generated_layout_url,
                     "tour_status": "ready",
                     "flythrough_url": "",
                     "flythrough_status": "",
-                    "status_label": "Open 3D tour",
-                    "status_detail": "3D tour is ready.",
+                    "status_label": "Open AI-generated 3D tour",
+                    "status_detail": (
+                        "AI-generated from the floor plan and listing photos. "
+                        "It is an interactive spatial aid, not a captured 360° tour."
+                    ),
                     "eta_label": "",
                     "progress_pct": 100,
                     "poll_after_seconds": 0,
@@ -12350,7 +12388,10 @@ def test_propertyquarry_results_surface_promotes_ready_generated_layout_tour_inl
 
         status_node = selected_panel.locator("[data-pw-visual-request-status]").first
         expect(status_node).to_contain_text(
-            "Generated from the floor plan and listing photos.",
+            (
+                "AI-generated from the floor plan and listing photos. "
+                "It is an interactive spatial aid, not a captured 360° tour."
+            ),
             timeout=5000,
         )
         assert len(visual_requests) == 1
@@ -12363,7 +12404,7 @@ def test_propertyquarry_results_surface_promotes_ready_generated_layout_tour_inl
         assert "urban jungle" in str(payload["diorama_style_hint"] or "").lower()
         assert visual_status_polls >= 1
         selected_panel.locator("[data-pw-actions] details summary").first.click()
-        ready_button = selected_panel.get_by_role("button", name="Open layout tour").first
+        ready_button = selected_panel.get_by_role("button", name="Open AI-generated 3D tour").first
         expect(ready_button).to_be_visible()
         assert str(ready_button.get_attribute("data-pw-visual-ready-url") or "").strip() == generated_layout_url
 
