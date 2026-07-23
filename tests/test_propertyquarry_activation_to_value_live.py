@@ -406,7 +406,7 @@ def test_activation_workflow_is_contract_only_by_default_and_live_only_by_explic
     assert "name: propertyquarry-production" in release_v2_job
     assert (
         "/usr/libexec/propertyquarry-release-control/"
-        "propertyquarry-release-supervisor-v2"
+        "propertyquarry-release-single-host-v2"
     ) in release_v2_job
     assert "release-run" in release_v2_job
     assert "actions/checkout@" not in release_v2_job

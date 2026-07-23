@@ -1,0 +1,3 @@
+# Numeric identities are copied from the independently signed authority profile.
+g propertyquarry-release-v2 @ALLOWED_RUNNER_GID@ -
+u propertyquarry-runner-v2 @ALLOWED_RUNNER_UID@:@ALLOWED_RUNNER_GID@ "PropertyQuarry ephemeral release runner" /nonexistent /usr/sbin/nologin

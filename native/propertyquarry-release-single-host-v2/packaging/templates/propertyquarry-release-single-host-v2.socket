@@ -1,0 +1,18 @@
+[Unit]
+Description=PropertyQuarry single-host v2 release authority socket
+Documentation=https://propertyquarry.com/
+
+[Socket]
+ListenStream=/run/propertyquarry-release-single-host-v2/request.sock
+SocketUser=root
+SocketGroup=propertyquarry-release-v2
+SocketMode=0660
+DirectoryMode=0750
+RemoveOnStop=yes
+Accept=yes
+MaxConnections=8
+MaxConnectionsPerSource=2
+FlushPending=yes
+
+[Install]
+WantedBy=sockets.target

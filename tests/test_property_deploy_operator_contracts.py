@@ -32,6 +32,10 @@ RELEASE_JOB_CONDITION = (
     "&& github.ref == 'refs/heads/main' && inputs.run_launch_authority == true "
     "&& inputs.run_activation_journey != true "
     "&& needs['propertyquarry-protected-dispatch-inputs'].result == 'success' "
+    "&& needs['propertyquarry-protected-dispatch-inputs'].outputs.release_runner_label "
+    "== inputs.release_runner_label "
+    "&& needs['propertyquarry-protected-dispatch-inputs'].outputs."
+    "release_runner_ticket_sha256 == inputs.release_runner_ticket_sha256 "
     "&& needs['propertyquarry-ordinary-ci-success'].result == 'success' "
     "&& needs['propertyquarry-flagship-security'].result == 'success' "
     "&& needs['propertyquarry-security-bootstrap-attestation'].result == 'success' "
@@ -44,6 +48,14 @@ RELEASE_JOB_ENV = {
     "LD_LIBRARY_PATH": "",
     "LD_AUDIT": "",
     "GCONV_PATH": "",
+    "PROPERTYQUARRY_RELEASE_RUNNER_LABEL": (
+        "${{ needs['propertyquarry-protected-dispatch-inputs'].outputs."
+        "release_runner_label }}"
+    ),
+    "PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256": (
+        "${{ needs['propertyquarry-protected-dispatch-inputs'].outputs."
+        "release_runner_ticket_sha256 }}"
+    ),
     "PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256": (
         "${{ needs['propertyquarry-security-bootstrap-attestation'].outputs."
         "attestation_sha256 }}"
@@ -107,6 +119,8 @@ def _expected_release_client_run(operation: str) -> str:
         '[[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]',
         '[[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]',
         '[[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]',
+        '[[ "${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" =~ ^pqrelease-[0-9a-f]{32}$ ]]',
+        '[[ "${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]',
         'exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"',
         "unset ACTIONS_ID_TOKEN_REQUEST_TOKEN",
         "exec /usr/bin/env -i \\",
@@ -124,6 +138,8 @@ def _expected_release_client_run(operation: str) -> str:
         '  GITHUB_RUN_ID="${GITHUB_RUN_ID}" \\',
         '  GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \\',
         '  GITHUB_JOB="${GITHUB_JOB}" \\',
+        '  PROPERTYQUARRY_RELEASE_RUNNER_LABEL="${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" \\',
+        '  PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256="${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" \\',
         '  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" \\',
         '  PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \\',
         '  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \\',
@@ -173,8 +189,8 @@ def _assert_exact_v2_release_job(workflow: str) -> dict[str, object]:
     assert release_job["environment"] == {"name": "propertyquarry-production"}
     assert release_job["permissions"] == {"contents": "none", "id-token": "write"}
     assert release_job["runs-on"] == [
-        "self-hosted",
         "propertyquarry-release-controller-v2",
+        "${{ needs['propertyquarry-protected-dispatch-inputs'].outputs.release_runner_label }}",
     ]
     assert release_job["env"] == RELEASE_JOB_ENV
     steps = release_job["steps"]
@@ -1013,7 +1029,12 @@ def test_smoke_runtime_uses_only_the_fixed_v2_supervisor_for_release() -> None:
     assert "cancel-in-progress: false" in release_job
     assert "environment:\n      name: propertyquarry-production" in release_job
     assert "permissions:\n      contents: none\n      id-token: write" in release_job
-    assert "runs-on: [self-hosted, propertyquarry-release-controller-v2]" in release_job
+    assert "runs-on:" in release_job
+    assert "      - propertyquarry-release-controller-v2" in release_job
+    assert (
+        "      - ${{ needs['propertyquarry-protected-dispatch-inputs'].outputs."
+        "release_runner_label }}" in release_job
+    )
     assert (
         "shell: /bin/bash --noprofile --norc -p -euo pipefail {0}"
         in release_job
@@ -1123,6 +1144,10 @@ def test_smoke_runtime_binds_flagship_security_to_one_time_protected_runner() ->
     assert dispatch_input_job["permissions"] == {"contents": "none"}
     assert dispatch_input_job["runs-on"] == "ubuntu-latest"
     assert dispatch_input_job["outputs"] == {
+        "release_runner_label": "${{ steps.validate.outputs.release_runner_label }}",
+        "release_runner_ticket_sha256": (
+            "${{ steps.validate.outputs.release_runner_ticket_sha256 }}"
+        ),
         "security_runner_label": "${{ steps.validate.outputs.security_runner_label }}",
         "security_runner_token_expires_at": (
             "${{ steps.validate.outputs.security_runner_token_expires_at }}"

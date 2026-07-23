@@ -1,0 +1,3 @@
+FROM scratch
+COPY --chmod=0555 propertyquarry-release-single-host-installer-v2 /propertyquarry-release-single-host-installer-v2
+ENTRYPOINT ["/propertyquarry-release-single-host-installer-v2"]

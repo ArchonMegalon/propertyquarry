@@ -15,6 +15,14 @@ on:
         description: Exact expiration returned with the one-time runner registration token
         required: true
         type: string
+      release_runner_label:
+        description: Governed one-time pqrelease-<32 lowercase hex> label emitted by runner-ticket-prepare
+        required: true
+        type: string
+      release_runner_ticket_sha256:
+        description: SHA-256 receipt identity emitted with the private runner reservation
+        required: true
+        type: string
       run_activation_journey:
         description: Run the protected deployed activation-to-value journey after environment approval
         required: false
@@ -65,11 +73,15 @@ jobs:
       contents: none
     runs-on: ubuntu-latest
     outputs:
+      release_runner_label: ${{ steps.validate.outputs.release_runner_label }}
+      release_runner_ticket_sha256: ${{ steps.validate.outputs.release_runner_ticket_sha256 }}
       security_runner_label: ${{ steps.validate.outputs.security_runner_label }}
       security_runner_token_expires_at: ${{ steps.validate.outputs.security_runner_token_expires_at }}
     env:
       PROPERTYQUARRY_DISPATCH_REPOSITORY: ${{ github.repository }}
       PROPERTYQUARRY_DISPATCH_REF: ${{ github.ref }}
+      PROPERTYQUARRY_RELEASE_RUNNER_LABEL: ${{ inputs.release_runner_label }}
+      PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256: ${{ inputs.release_runner_ticket_sha256 }}
       PROPERTYQUARRY_SECURITY_RUNNER_LABEL: ${{ inputs.security_runner_label }}
       PROPERTYQUARRY_SECURITY_RUNNER_TOKEN_EXPIRES_AT: ${{ inputs.security_runner_token_expires_at }}
       PROPERTYQUARRY_APPROVED_SECURITY_RUNNER_LABEL: ${{ vars.PROPERTYQUARRY_SECURITY_RUNNER_LABEL }}
@@ -85,6 +97,10 @@ jobs:
           from datetime import datetime, timezone
 
           label = os.environ["PROPERTYQUARRY_SECURITY_RUNNER_LABEL"]
+          release_label = os.environ["PROPERTYQUARRY_RELEASE_RUNNER_LABEL"]
+          release_ticket_sha256 = os.environ[
+              "PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256"
+          ]
           token_expires_at = os.environ[
               "PROPERTYQUARRY_SECURITY_RUNNER_TOKEN_EXPIRES_AT"
           ]
@@ -97,6 +113,10 @@ jobs:
           launch_value = os.environ["PROPERTYQUARRY_RUN_LAUNCH"].lower()
           failures = []
           canonical_token_expires_at = ""
+          if re.fullmatch(r"pqrelease-[0-9a-f]{32}", release_label) is None:
+              failures.append("release_runner_label_must_be_governed_pqrelease_32_lowercase_hex")
+          if re.fullmatch(r"sha256:[0-9a-f]{64}", release_ticket_sha256) is None:
+              failures.append("release_runner_ticket_sha256_is_malformed")
           if re.fullmatch(r"pqsec-[0-9a-f]{32}", label) is None:
               failures.append("security_runner_label_must_be_one_time_pqsec_32_lowercase_hex")
           if re.fullmatch(r"pqsec-[0-9a-f]{32}", approved_label) is None:
@@ -143,6 +163,12 @@ jobs:
               output.write(f"{key}={value}\n")
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              write_output(output, "release_runner_label", release_label)
+              write_output(
+                  output,
+                  "release_runner_ticket_sha256",
+                  release_ticket_sha256,
+              )
               write_output(output, "security_runner_label", approved_label)
               write_output(
                   output,
@@ -1268,7 +1294,7 @@ jobs:
       - propertyquarry-flagship-security
       - propertyquarry-security-bootstrap-attestation
       - propertyquarry-continuous-ux
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/propertyquarry' && github.ref == 'refs/heads/main' && inputs.run_launch_authority == true && inputs.run_activation_journey != true && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-ordinary-ci-success'].result == 'success' && needs['propertyquarry-flagship-security'].result == 'success' && needs['propertyquarry-security-bootstrap-attestation'].result == 'success' && needs['propertyquarry-continuous-ux'].result == 'success' }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.repository == 'ArchonMegalon/propertyquarry' && github.ref == 'refs/heads/main' && inputs.run_launch_authority == true && inputs.run_activation_journey != true && needs['propertyquarry-protected-dispatch-inputs'].result == 'success' && needs['propertyquarry-protected-dispatch-inputs'].outputs.release_runner_label == inputs.release_runner_label && needs['propertyquarry-protected-dispatch-inputs'].outputs.release_runner_ticket_sha256 == inputs.release_runner_ticket_sha256 && needs['propertyquarry-ordinary-ci-success'].result == 'success' && needs['propertyquarry-flagship-security'].result == 'success' && needs['propertyquarry-security-bootstrap-attestation'].result == 'success' && needs['propertyquarry-continuous-ux'].result == 'success' }}
     timeout-minutes: 360
     concurrency:
       group: propertyquarry-release-lifecycle-v2
@@ -1278,7 +1304,9 @@ jobs:
     permissions:
       contents: none
       id-token: write
-    runs-on: [self-hosted, propertyquarry-release-controller-v2]
+    runs-on:
+      - propertyquarry-release-controller-v2
+      - ${{ needs['propertyquarry-protected-dispatch-inputs'].outputs.release_runner_label }}
     env:
       BASH_ENV: /dev/null
       ENV: /dev/null
@@ -1286,6 +1314,8 @@ jobs:
       LD_LIBRARY_PATH: ""
       LD_AUDIT: ""
       GCONV_PATH: ""
+      PROPERTYQUARRY_RELEASE_RUNNER_LABEL: ${{ needs['propertyquarry-protected-dispatch-inputs'].outputs.release_runner_label }}
+      PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256: ${{ needs['propertyquarry-protected-dispatch-inputs'].outputs.release_runner_ticket_sha256 }}
       PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256: ${{ needs['propertyquarry-security-bootstrap-attestation'].outputs.attestation_sha256 }}
       PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID: ${{ needs['propertyquarry-security-bootstrap-attestation'].outputs.bootstrap_run_id }}
       PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST: ${{ needs['propertyquarry-security-bootstrap-attestation'].outputs.bootstrap_artifact_digest }}
@@ -1296,6 +1326,8 @@ jobs:
           [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" =~ ^pqrelease-[0-9a-f]{32}$ ]]
+          [[ "${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
           exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"
           unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
           exec /usr/bin/env -i \
@@ -1313,6 +1345,8 @@ jobs:
             GITHUB_RUN_ID="${GITHUB_RUN_ID}" \
             GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
             GITHUB_JOB="${GITHUB_JOB}" \
+            PROPERTYQUARRY_RELEASE_RUNNER_LABEL="${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" \
+            PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256="${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \
@@ -1324,6 +1358,8 @@ jobs:
           [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" =~ ^pqrelease-[0-9a-f]{32}$ ]]
+          [[ "${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
           exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"
           unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
           exec /usr/bin/env -i \
@@ -1341,6 +1377,8 @@ jobs:
             GITHUB_RUN_ID="${GITHUB_RUN_ID}" \
             GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
             GITHUB_JOB="${GITHUB_JOB}" \
+            PROPERTYQUARRY_RELEASE_RUNNER_LABEL="${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" \
+            PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256="${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \

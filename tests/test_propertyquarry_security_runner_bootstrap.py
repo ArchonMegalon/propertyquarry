@@ -401,6 +401,10 @@ def test_hosted_preflight_is_the_only_self_hosted_runner_label_authority() -> No
 
     assert preflight["environment"] == {"name": "propertyquarry-production"}
     assert preflight["outputs"] == {
+        "release_runner_label": "${{ steps.validate.outputs.release_runner_label }}",
+        "release_runner_ticket_sha256": (
+            "${{ steps.validate.outputs.release_runner_ticket_sha256 }}"
+        ),
         "security_runner_label": "${{ steps.validate.outputs.security_runner_label }}",
         "security_runner_token_expires_at": (
             "${{ steps.validate.outputs.security_runner_token_expires_at }}"
