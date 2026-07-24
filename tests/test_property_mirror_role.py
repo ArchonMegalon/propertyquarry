@@ -139,6 +139,223 @@ def test_exact_canonical_and_mirror_commit_passes(tmp_path: Path) -> None:
     assert receipt["network_freshness_proven"] is False
 
 
+def test_pull_request_candidate_can_be_exact_descendant_of_exact_main(
+    tmp_path: Path,
+) -> None:
+    repo, main_sha = _fixture_repo(tmp_path)
+    (repo / "README.md").write_text(
+        "reviewed pull request candidate\n",
+        encoding="utf-8",
+    )
+    candidate_sha = _commit(repo, "pull request candidate")
+
+    result, receipt = _run_gate(
+        repo,
+        tmp_path,
+        "--mirror-candidate-ref",
+        candidate_sha,
+        "--expected-candidate-sha",
+        candidate_sha,
+        "--candidate-validation-mode",
+        "pull-request-descendant",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "exact expected commit" in result.stdout
+    assert receipt["passed"] is True
+    assert receipt["observation_mode"] == "pull_request_candidate"
+    assert receipt["canonical"]["sha"] == main_sha
+    assert receipt["mirror"]["sha"] == main_sha
+    assert receipt["mirror_candidate"]["sha"] == candidate_sha
+    assert receipt["main_topology"]["classification"] == "exact"
+    assert receipt["topology"]["classification"] == "mirror_ahead"
+    assert receipt["topology"]["mirror_ahead_by"] == 1
+    assert receipt["policy"]["candidate_validation_mode"] == (
+        "pull-request-descendant"
+    )
+    assert receipt["policy"]["require_exact_commit_identity"] is False
+    assert receipt["policy"][
+        "require_canonical_mirror_exact_commit_identity"
+    ] is True
+    assert receipt["policy"]["require_candidate_exact_canonical_identity"] is False
+    assert receipt["policy"]["require_candidate_descends_from_canonical"] is True
+    assert receipt["policy"]["require_candidate_exact_expected_sha"] is True
+
+
+def test_descendant_candidate_requires_explicit_pull_request_mode(
+    tmp_path: Path,
+) -> None:
+    repo, _ = _fixture_repo(tmp_path)
+    (repo / "README.md").write_text("unscoped candidate\n", encoding="utf-8")
+    candidate_sha = _commit(repo, "unscoped candidate")
+
+    result, receipt = _run_gate(
+        repo,
+        tmp_path,
+        "--mirror-candidate-ref",
+        candidate_sha,
+        "--expected-candidate-sha",
+        candidate_sha,
+    )
+
+    assert result.returncode == 2
+    assert receipt["observation_mode"] == "mirror_sync_pr_candidate"
+    assert receipt["topology"]["classification"] == "mirror_ahead"
+    assert "topology_not_exact:mirror_ahead" in receipt["failures"]
+
+
+def test_pull_request_candidate_rejects_non_descendant_commit(
+    tmp_path: Path,
+) -> None:
+    repo, main_sha = _fixture_repo(tmp_path)
+    tree = _git(repo, "rev-parse", f"{main_sha}^{{tree}}")
+    unrelated_sha = _git(
+        repo,
+        "commit-tree",
+        tree,
+        input_text="unrelated candidate\n",
+    )
+
+    result, receipt = _run_gate(
+        repo,
+        tmp_path,
+        "--mirror-candidate-ref",
+        unrelated_sha,
+        "--expected-candidate-sha",
+        unrelated_sha,
+        "--candidate-validation-mode",
+        "pull-request-descendant",
+    )
+
+    assert result.returncode == 2
+    assert receipt["main_topology"]["classification"] == "exact"
+    assert receipt["topology"]["classification"] == "history_incomplete"
+    assert "pull_request_candidate_not_descendant:history_incomplete" in receipt[
+        "failures"
+    ]
+
+
+def test_pull_request_candidate_rejects_ancestor_of_current_main(
+    tmp_path: Path,
+) -> None:
+    repo, initial_sha = _fixture_repo(tmp_path)
+    (repo / "README.md").write_text("current main\n", encoding="utf-8")
+    main_sha = _commit(repo, "advance main")
+    _set_refs(repo, main_sha, main_sha)
+
+    result, receipt = _run_gate(
+        repo,
+        tmp_path,
+        "--mirror-candidate-ref",
+        initial_sha,
+        "--expected-candidate-sha",
+        initial_sha,
+        "--candidate-validation-mode",
+        "pull-request-descendant",
+    )
+
+    assert result.returncode == 2
+    assert receipt["main_topology"]["classification"] == "exact"
+    assert receipt["topology"]["classification"] == "mirror_lagging"
+    assert "pull_request_candidate_not_descendant:mirror_lagging" in receipt[
+        "failures"
+    ]
+
+
+def test_pull_request_candidate_requires_exact_main_identity(
+    tmp_path: Path,
+) -> None:
+    repo, initial_sha = _fixture_repo(tmp_path)
+    (repo / "README.md").write_text("canonical advanced\n", encoding="utf-8")
+    canonical_sha = _commit(repo, "canonical advance")
+    _set_refs(repo, canonical_sha, initial_sha)
+
+    result, receipt = _run_gate(
+        repo,
+        tmp_path,
+        "--mirror-candidate-ref",
+        canonical_sha,
+        "--expected-candidate-sha",
+        canonical_sha,
+        "--candidate-validation-mode",
+        "pull-request-descendant",
+    )
+
+    assert result.returncode == 2
+    assert receipt["topology"]["classification"] == "exact"
+    assert receipt["main_topology"]["classification"] == "mirror_lagging"
+    assert "pull_request_main_topology_not_exact:mirror_lagging" in receipt[
+        "failures"
+    ]
+
+
+def test_pull_request_candidate_requires_exact_expected_sha(
+    tmp_path: Path,
+) -> None:
+    repo, main_sha = _fixture_repo(tmp_path)
+    (repo / "README.md").write_text(
+        "candidate with wrong expectation\n",
+        encoding="utf-8",
+    )
+    candidate_sha = _commit(repo, "candidate with wrong expectation")
+
+    result, receipt = _run_gate(
+        repo,
+        tmp_path,
+        "--mirror-candidate-ref",
+        candidate_sha,
+        "--expected-candidate-sha",
+        main_sha,
+        "--candidate-validation-mode",
+        "pull-request-descendant",
+    )
+
+    assert result.returncode == 2
+    assert "mirror_candidate_expected_sha_mismatch" in receipt["failures"]
+
+
+def test_pull_request_candidate_requires_valid_release_manifest_role(
+    tmp_path: Path,
+) -> None:
+    repo, _ = _fixture_repo(tmp_path)
+    manifest = repo / "docs" / "PROPERTYQUARRY_RELEASE_MANIFEST.md"
+    manifest.write_text(
+        _manifest(repository="ArchonMegalon/property"),
+        encoding="utf-8",
+    )
+    candidate_sha = _commit(repo, "candidate with invalid release role")
+
+    result, receipt = _run_gate(
+        repo,
+        tmp_path,
+        "--mirror-candidate-ref",
+        candidate_sha,
+        "--expected-candidate-sha",
+        candidate_sha,
+        "--candidate-validation-mode",
+        "pull-request-descendant",
+    )
+
+    assert result.returncode == 2
+    assert receipt["main_topology"]["classification"] == "exact"
+    assert receipt["mirror_candidate"]["release_manifest_role_valid"] is False
+    assert "mirror_candidate_release_manifest_invalid" in receipt["failures"]
+
+
+def test_pull_request_mode_requires_candidate_ref(tmp_path: Path) -> None:
+    repo, _ = _fixture_repo(tmp_path)
+
+    result, receipt = _run_gate(
+        repo,
+        tmp_path,
+        "--candidate-validation-mode",
+        "pull-request-descendant",
+    )
+
+    assert result.returncode == 2
+    assert "pull_request_candidate_ref_required" in receipt["failures"]
+
+
 def test_mirror_lag_is_reported_and_blocks(tmp_path: Path) -> None:
     repo, initial_sha = _fixture_repo(tmp_path)
     (repo / "README.md").write_text("canonical advanced\n", encoding="utf-8")
@@ -461,7 +678,23 @@ def test_workflow_and_release_bundle_fail_closed_on_mirror_role() -> None:
     assert "PROPERTYQUARRY_PR_HEAD_SHA" in gate_run
     assert "--mirror-candidate-ref" in gate_run
     assert "--expected-candidate-sha" in gate_run
-    assert "mirror sync PRs must originate in ArchonMegalon/propertyquarry" in gate_run
+    assert "--candidate-validation-mode pull-request-descendant" in gate_run
+    pull_request_case = gate_run.index(
+        "pull_request:ArchonMegalon/propertyquarry)"
+    )
+    candidate_mode = gate_run.index(
+        "--candidate-validation-mode pull-request-descendant"
+    )
+    push_case = gate_run.index(
+        "push:ArchonMegalon/propertyquarry|workflow_dispatch:"
+        "ArchonMegalon/propertyquarry)"
+    )
+    assert pull_request_case < candidate_mode < push_case
+    assert 'if [[ "${PROPERTYQUARRY_PR_BASE_REF}" != "main" ]]' in gate_run
+    assert (
+        "PropertyQuarry PR candidates must originate in "
+        "ArchonMegalon/propertyquarry"
+    ) in gate_run
     assert "scripts/check_property_mirror_role.py" in gate_run
     assert "--require-single-worktree" in gate_run
     assert '${RUNNER_TEMP}/propertyquarry_mirror_role/receipt.json' in gate_run
@@ -475,6 +708,7 @@ def test_workflow_and_release_bundle_fail_closed_on_mirror_role() -> None:
     assert "scripts/check_property_mirror_role.py" in release_gate
     assert "--require-head-at-canonical" in release_gate
     assert "--require-clean-worktree" in release_gate
+    assert "--candidate-validation-mode" not in release_gate
     isolation = (ROOT / "docs" / "REPO_ISOLATION.md").read_text(encoding="utf-8")
     assert "`ArchonMegalon/propertyquarry` is the sole canonical" in isolation
     assert "network_freshness_proven: false" in isolation

@@ -255,20 +255,21 @@ jobs:
           case "${PROPERTYQUARRY_WORKFLOW_EVENT}:${PROPERTYQUARRY_WORKFLOW_REPOSITORY}" in
             pull_request:ArchonMegalon/propertyquarry)
               if [[ "${PROPERTYQUARRY_PR_BASE_REF}" != "main" ]]; then
-                echo "mirror sync PRs must target propertyquarry main" >&2
+                echo "PropertyQuarry PR candidates must target canonical main" >&2
                 exit 1
               fi
               if [[ "${PROPERTYQUARRY_PR_HEAD_REPOSITORY}" != "ArchonMegalon/propertyquarry" ]]; then
-                echo "mirror sync PRs must originate in ArchonMegalon/propertyquarry" >&2
+                echo "PropertyQuarry PR candidates must originate in ArchonMegalon/propertyquarry" >&2
                 exit 1
               fi
               if [[ ! "${PROPERTYQUARRY_PR_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-                echo "mirror sync PR head SHA is missing or malformed" >&2
+                echo "PropertyQuarry PR candidate SHA is missing or malformed" >&2
                 exit 1
               fi
               candidate_args+=(
                 --mirror-candidate-ref "${PROPERTYQUARRY_PR_HEAD_SHA}"
                 --expected-candidate-sha "${PROPERTYQUARRY_PR_HEAD_SHA}"
+                --candidate-validation-mode pull-request-descendant
               )
               ;;
             push:ArchonMegalon/propertyquarry|workflow_dispatch:ArchonMegalon/propertyquarry)

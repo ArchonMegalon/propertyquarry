@@ -39,6 +39,12 @@ DEFAULT_CANONICAL_REF = "refs/remotes/origin/main"
 DEFAULT_MIRROR_REF = "refs/remotes/propertyquarry/main"
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 MAX_RECEIPT_PATHS = 256
+CANDIDATE_VALIDATION_MIRROR_SYNC_EXACT = "mirror-sync-exact"
+CANDIDATE_VALIDATION_PULL_REQUEST_DESCENDANT = "pull-request-descendant"
+CANDIDATE_VALIDATION_MODES = (
+    CANDIDATE_VALIDATION_MIRROR_SYNC_EXACT,
+    CANDIDATE_VALIDATION_PULL_REQUEST_DESCENDANT,
+)
 
 CRITICAL_EXACT_PATHS = {
     ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
@@ -298,12 +304,21 @@ def audit_repository(
     expected_canonical_sha: str = "",
     expected_mirror_sha: str = "",
     expected_candidate_sha: str = "",
+    candidate_validation_mode: str = CANDIDATE_VALIDATION_MIRROR_SYNC_EXACT,
     require_single_worktree: bool = False,
     require_head_at_canonical: bool = False,
     require_clean_worktree: bool = False,
 ) -> dict[str, object]:
     repo_root = repo_root.resolve()
     failures: list[str] = []
+    pull_request_descendant_mode = (
+        candidate_validation_mode
+        == CANDIDATE_VALIDATION_PULL_REQUEST_DESCENDANT
+    )
+    if candidate_validation_mode not in CANDIDATE_VALIDATION_MODES:
+        failures.append("candidate_validation_mode_invalid")
+    if pull_request_descendant_mode and not mirror_candidate_ref:
+        failures.append("pull_request_candidate_ref_required")
     rewrite_count = _url_rewrite_count(repo_root)
     canonical_remote = _remote_url_policy(
         repo_root, CANONICAL_REMOTE, CANONICAL_URL
@@ -339,15 +354,31 @@ def audit_repository(
     main_topology = _topology(repo_root, canonical_sha, mirror_sha)
     comparison_sha = candidate_sha or mirror_sha
     topology = _topology(repo_root, canonical_sha, comparison_sha)
-    if not topology["exact_commit"]:
-        failures.append(f"topology_not_exact:{topology['classification']}")
-    if mirror_candidate_ref and main_topology["classification"] not in {
-        "exact",
-        "mirror_lagging",
-    }:
-        failures.append(
-            f"mirror_candidate_main_not_fast_forwardable:{main_topology['classification']}"
-        )
+    if mirror_candidate_ref and pull_request_descendant_mode:
+        # PR CI proves two independent identities: canonical and mirror main
+        # remain exact, while the event-bound candidate must descend from that
+        # exact main. This mode is explicit and is never inferred from topology.
+        if not main_topology["exact_commit"]:
+            failures.append(
+                "pull_request_main_topology_not_exact:"
+                f"{main_topology['classification']}"
+            )
+        if not _is_ancestor(repo_root, canonical_sha, candidate_sha):
+            failures.append(
+                "pull_request_candidate_not_descendant:"
+                f"{topology['classification']}"
+            )
+    else:
+        if not topology["exact_commit"]:
+            failures.append(f"topology_not_exact:{topology['classification']}")
+        if mirror_candidate_ref and main_topology["classification"] not in {
+            "exact",
+            "mirror_lagging",
+        }:
+            failures.append(
+                "mirror_candidate_main_not_fast_forwardable:"
+                f"{main_topology['classification']}"
+            )
 
     canonical_manifest_issues = _manifest_role_issues(repo_root, canonical_sha)
     mirror_manifest_issues = _manifest_role_issues(repo_root, mirror_sha)
@@ -356,7 +387,9 @@ def audit_repository(
     )
     if canonical_manifest_issues:
         failures.append("canonical_release_manifest_invalid")
-    if mirror_manifest_issues and not mirror_candidate_ref:
+    if mirror_manifest_issues and (
+        not mirror_candidate_ref or pull_request_descendant_mode
+    ):
         failures.append("mirror_release_manifest_invalid")
     if candidate_manifest_issues:
         failures.append("mirror_candidate_release_manifest_invalid")
@@ -407,7 +440,9 @@ def audit_repository(
             else None
         ),
         "observation_mode": (
-            "mirror_sync_pr_candidate"
+            "pull_request_candidate"
+            if mirror_candidate_ref and pull_request_descendant_mode
+            else "mirror_sync_pr_candidate"
             if mirror_candidate_ref
             else "exact_main"
         ),
@@ -428,7 +463,18 @@ def audit_repository(
             "expected_canonical_sha": expected_canonical_sha,
             "expected_mirror_sha": expected_mirror_sha,
             "expected_candidate_sha": expected_candidate_sha,
-            "require_exact_commit_identity": True,
+            "candidate_validation_mode": candidate_validation_mode,
+            "require_exact_commit_identity": not pull_request_descendant_mode,
+            "require_canonical_mirror_exact_commit_identity": (
+                not mirror_candidate_ref or pull_request_descendant_mode
+            ),
+            "require_candidate_exact_canonical_identity": (
+                bool(mirror_candidate_ref) and not pull_request_descendant_mode
+            ),
+            "require_candidate_descends_from_canonical": (
+                bool(mirror_candidate_ref) and pull_request_descendant_mode
+            ),
+            "require_candidate_exact_expected_sha": bool(mirror_candidate_ref),
             "require_single_worktree": require_single_worktree,
             "require_head_at_canonical": require_head_at_canonical,
             "require_clean_worktree": require_clean_worktree,
@@ -466,7 +512,8 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Fail closed unless PropertyQuarry's public mirror exactly matches its "
             "canonical main commit, or an explicit mirror-sync PR candidate proves "
-            "the exact safe fast-forward commit."
+            "the exact safe fast-forward commit, or an explicitly scoped pull "
+            "request candidate proves its exact event SHA descends from exact main."
         )
     )
     parser.add_argument("--repo-root", type=Path, default=ROOT)
@@ -476,6 +523,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-canonical-sha", default="")
     parser.add_argument("--expected-mirror-sha", default="")
     parser.add_argument("--expected-candidate-sha", default="")
+    parser.add_argument(
+        "--candidate-validation-mode",
+        choices=CANDIDATE_VALIDATION_MODES,
+        default=CANDIDATE_VALIDATION_MIRROR_SYNC_EXACT,
+    )
     parser.add_argument("--require-single-worktree", action="store_true")
     parser.add_argument("--require-head-at-canonical", action="store_true")
     parser.add_argument("--require-clean-worktree", action="store_true")
@@ -502,6 +554,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_canonical_sha=args.expected_canonical_sha,
             expected_mirror_sha=args.expected_mirror_sha,
             expected_candidate_sha=args.expected_candidate_sha,
+            candidate_validation_mode=args.candidate_validation_mode,
             require_single_worktree=args.require_single_worktree,
             require_head_at_canonical=args.require_head_at_canonical,
             require_clean_worktree=args.require_clean_worktree,
@@ -537,7 +590,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         for failure in receipt["failures"]:
             print(f"- {failure}", file=sys.stderr)
         return 2
-    if receipt.get("observation_mode") == "mirror_sync_pr_candidate":
+    if receipt.get("observation_mode") == "pull_request_candidate":
+        print(
+            "ok: pull request candidate is the exact expected commit and "
+            "descends from exact canonical/mirror main"
+        )
+    elif receipt.get("observation_mode") == "mirror_sync_pr_candidate":
         print("ok: mirror-sync PR candidate is the exact canonical fast-forward commit")
     else:
         print("ok: property canonical and propertyquarry mirror are the same commit")
