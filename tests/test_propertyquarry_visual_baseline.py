@@ -20,8 +20,14 @@ def _source_binding_receipt(
     release_sha: str = RELEASE_SHA,
     workflow_head_sha: str = RELEASE_SHA,
     binding_parent_sha: str | None = None,
+    merge_parent_shas: list[str] | None = None,
 ) -> dict[str, object]:
     same_commit = release_sha == workflow_head_sha
+    parent_sha = (
+        "b" * 40
+        if same_commit
+        else binding_parent_sha or release_sha
+    )
     return {
         "schema": visual.SOURCE_BINDING_SCHEMA,
         "generated_at": "2026-07-16T22:00:00+00:00",
@@ -31,11 +37,19 @@ def _source_binding_receipt(
         "failures": [],
         "manifest_runtime_commit": release_sha,
         "head_commit": workflow_head_sha,
-        "parent_commit": (
-            "b" * 40
-            if same_commit
-            else binding_parent_sha or release_sha
+        "parent_commit": parent_sha,
+        "merge_commit_required": False,
+        "merge_base_parent_commit": "",
+        "merge_parent_commits": (
+            list(merge_parent_shas)
+            if merge_parent_shas is not None
+            else [parent_sha]
         ),
+        "head_tree": "e" * 40,
+        "reviewed_envelope_commit": "",
+        "reviewed_envelope_parent_commits": [],
+        "reviewed_envelope_tree": "",
+        "merge_tree_matches_reviewed_envelope": False,
         "manifest_descendant_paths": (
             [] if same_commit else list(visual.RELEASE_METADATA_DESCENDANT_PATHS)
         ),
@@ -573,6 +587,7 @@ def test_verify_requires_exact_source_to_metadata_envelope_binding(tmp_path: Pat
 def test_verify_accepts_merge_aware_metadata_binding_parent(tmp_path: Path) -> None:
     workflow_head_sha = "c" * 40
     feature_parent_sha = "d" * 40
+    base_parent_sha = "f" * 40
     manifest_path, actual_dir, diff_dir, receipt_path = _write_case_matrix(
         tmp_path,
         baseline_payloads={"bound": _png(6, 4)},
@@ -581,6 +596,7 @@ def test_verify_accepts_merge_aware_metadata_binding_parent(tmp_path: Path) -> N
         release_sha=RELEASE_SHA,
         workflow_head_sha=workflow_head_sha,
         binding_parent_sha=feature_parent_sha,
+        merge_parent_shas=[base_parent_sha, feature_parent_sha],
     )
 
     receipt, exit_code = _verify(
@@ -613,6 +629,84 @@ def test_verify_accepts_merge_aware_metadata_binding_parent(tmp_path: Path) -> N
         check for check in receipt["checks"] if check["name"] == "source_checkout_bound"
     )
     assert "source_binding_metadata_envelope_invalid" in source_check["errors"]
+
+
+@pytest.mark.parametrize(
+    ("field", "tampered_value"),
+    [
+        ("merge_commit_required", True),
+        ("merge_base_parent_commit", "c" * 40),
+        ("reviewed_envelope_commit", "d" * 40),
+        ("reviewed_envelope_parent_commits", ["a" * 40]),
+        ("reviewed_envelope_tree", "e" * 40),
+        ("merge_tree_matches_reviewed_envelope", True),
+    ],
+)
+def test_verify_rejects_protected_source_binding_topology(
+    tmp_path: Path,
+    field: str,
+    tampered_value: object,
+) -> None:
+    manifest_path, actual_dir, diff_dir, receipt_path = _write_case_matrix(
+        tmp_path,
+        baseline_payloads={"bound": _png(6, 4)},
+    )
+    binding = _source_binding_receipt()
+    binding[field] = tampered_value
+
+    receipt, exit_code = _verify(
+        manifest_path=manifest_path,
+        actual_dir=actual_dir,
+        diff_dir=diff_dir,
+        receipt_path=receipt_path,
+        source_binding_receipt=binding,
+    )
+
+    assert exit_code == 1
+    source_check = next(
+        check for check in receipt["checks"] if check["name"] == "source_checkout_bound"
+    )
+    assert "source_binding_protected_topology_forbidden" in source_check["errors"]
+
+
+@pytest.mark.parametrize(
+    ("field", "tampered_value"),
+    [
+        ("merge_parent_commits", []),
+        ("merge_parent_commits", ["b" * 40, "b" * 40]),
+        ("merge_parent_commits", ["c" * 40]),
+        ("merge_parent_commits", ["not-a-commit"]),
+        ("merge_parent_commits", ["b" * 40, RELEASE_SHA]),
+        ("merge_parent_commits", ["b" * 40, "c" * 40, "d" * 40]),
+        ("head_tree", ""),
+        ("head_tree", False),
+    ],
+)
+def test_verify_rejects_invalid_default_source_binding_topology(
+    tmp_path: Path,
+    field: str,
+    tampered_value: object,
+) -> None:
+    manifest_path, actual_dir, diff_dir, receipt_path = _write_case_matrix(
+        tmp_path,
+        baseline_payloads={"bound": _png(6, 4)},
+    )
+    binding = _source_binding_receipt()
+    binding[field] = tampered_value
+
+    receipt, exit_code = _verify(
+        manifest_path=manifest_path,
+        actual_dir=actual_dir,
+        diff_dir=diff_dir,
+        receipt_path=receipt_path,
+        source_binding_receipt=binding,
+    )
+
+    assert exit_code == 1
+    source_check = next(
+        check for check in receipt["checks"] if check["name"] == "source_checkout_bound"
+    )
+    assert "source_binding_topology_invalid" in source_check["errors"]
 
 
 def test_verify_rejects_diff_baseline_path_collision_without_mutation(
