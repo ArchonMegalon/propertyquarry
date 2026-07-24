@@ -144,6 +144,137 @@ def _fail(code: str) -> None:
     raise AiPanoramaIntakeError(code)
 
 
+def _revalidate_ai_panorama_install_admission(
+    admission: object,
+    *,
+    require_consumed: bool,
+) -> object:
+    """Re-enter the controller verifier; an in-memory object is not authority."""
+
+    try:
+        from app.product.property_tour_ai_panorama_admission import (
+            revalidate_ai_panorama_install_admission,
+        )
+    except (ImportError, AttributeError) as exc:
+        raise AiPanoramaIntakeError(
+            "ai_panorama_controller_admission_unavailable"
+        ) from exc
+    try:
+        return revalidate_ai_panorama_install_admission(
+            admission,
+            require_consumed=require_consumed,
+        )
+    except Exception as exc:
+        # The permit can contain private owner and source identity. Collapse all
+        # verifier failures at this boundary rather than serializing them.
+        raise AiPanoramaIntakeError(
+            "ai_panorama_controller_admission_invalid"
+        ) from exc
+
+
+def _controller_publication_admission(
+    request: Mapping[str, object],
+    admission: object,
+    *,
+    require_consumed: bool,
+) -> tuple[dict[str, object], dict[str, str], Path, Path]:
+    """Return request/path values only after external authority revalidation.
+
+    The verifier rechecks both the raw Ed25519 permit and the durable,
+    controller-owned nonce ledger.  Paths below come only from that verified
+    admission, never from environment variables or the operator request.
+    """
+
+    if admission is None:
+        _fail("ai_panorama_apply_authority_required")
+    verified = _revalidate_ai_panorama_install_admission(
+        admission,
+        require_consumed=require_consumed,
+    )
+    request_bindings = (
+        ("principal_id", "authenticated_principal_id"),
+        ("search_run_id", "search_run_id"),
+        ("candidate_ref", "candidate_ref"),
+        ("external_id", "external_id"),
+        ("listing_url", "listing_url"),
+        ("source_ref", "source_ref"),
+        ("provider_key", "provider_key"),
+        ("expected_slug", "expected_slug"),
+        ("expected_source_tree_sha256", "expected_source_tree_sha256"),
+        ("expected_tour_sha256", "expected_tour_sha256"),
+        ("expected_core_manifest_sha256", "expected_core_manifest_sha256"),
+        (
+            "expected_materialization_receipt_sha256",
+            "expected_materialization_receipt_sha256",
+        ),
+        (
+            "expected_candidate_marker_sha256",
+            "expected_candidate_marker_sha256",
+        ),
+        (
+            "expected_publication_record_sha256",
+            "expected_publication_record_sha256",
+        ),
+    )
+    effective = dict(request)
+    for request_key, admission_key in request_bindings:
+        expected = str(getattr(verified, admission_key, "") or "").strip()
+        actual = str(request.get(request_key) or "").strip()
+        if request_key.startswith("expected_") and request_key.endswith("_sha256"):
+            expected = expected.lower()
+            actual = actual.lower()
+        if not expected or not actual or not hmac.compare_digest(actual, expected):
+            _fail("ai_panorama_apply_authority_binding_mismatch")
+
+    source_bundle = _request_path(
+        getattr(verified, "source_bundle", None),
+        code="ai_panorama_controller_source_path_invalid",
+    )
+    receipt_path = _request_path(
+        getattr(verified, "materialization_receipt_path", None),
+        code="ai_panorama_controller_receipt_path_invalid",
+    )
+    incoming_root = _request_path(
+        getattr(verified, "incoming_root", None),
+        code="ai_panorama_controller_incoming_root_invalid",
+    )
+    public_tour_dir = _request_path(
+        getattr(verified, "public_tour_dir", None),
+        code="ai_panorama_controller_public_root_invalid",
+    )
+    for request_key, expected_path in (
+        ("source_bundle", source_bundle),
+        ("materialization_receipt_path", receipt_path),
+        ("public_tour_dir", public_tour_dir),
+    ):
+        supplied = str(request.get(request_key) or "").strip()
+        if supplied and not hmac.compare_digest(supplied, str(expected_path)):
+            _fail("ai_panorama_apply_authority_path_mismatch")
+        effective[request_key] = str(expected_path)
+
+    permit_sha256 = _require_digest(
+        getattr(verified, "permit_sha256", None),
+        code="ai_panorama_controller_permit_sha256_invalid",
+        required=True,
+    )
+    identity = {
+        "controller_permit_verified": "true",
+        "controller_permit_sha256": permit_sha256,
+        "authenticated_principal_verified": "true",
+        "controller_nonce_consumed": (
+            "true"
+            if bool(getattr(verified, "nonce_consumed", False))
+            else "false"
+        ),
+        "expected_publication_record_sha256": str(
+            getattr(verified, "expected_publication_record_sha256", "") or ""
+        ).strip().lower(),
+    }
+    if require_consumed and identity["controller_nonce_consumed"] != "true":
+        _fail("ai_panorama_controller_nonce_not_consumed")
+    return effective, identity, incoming_root, public_tour_dir
+
+
 def _require_digest(value: object, *, code: str, required: bool) -> str:
     if value is None:
         if not required:
@@ -364,9 +495,17 @@ def _directory_identity(path: Path, *, code: str) -> tuple[int, int]:
     return int(details.st_dev), int(details.st_ino)
 
 
-def _confined_source_bundle(path: Path) -> Path:
+def _confined_source_bundle(
+    path: Path,
+    *,
+    admitted_incoming_root: Path | None = None,
+) -> Path:
     incoming_root = _request_path(
-        _configured_incoming_tour_dir(),
+        (
+            admitted_incoming_root
+            if admitted_incoming_root is not None
+            else _configured_incoming_tour_dir()
+        ),
         code="ai_panorama_incoming_root_invalid",
     )
     _directory_identity(incoming_root, code="ai_panorama_incoming_root_invalid")
@@ -1052,6 +1191,21 @@ def _validate_source_identity(
         raise AiPanoramaIntakeError(f"ai_panorama_strict_contract:{reason}")
     if str(contract.get("property_url_sha256") or "").strip().lower() != property_url_sha256:
         _fail("ai_panorama_strict_property_binding_mismatch")
+    core_manifest_sha256 = _require_digest(
+        contract.get("core_manifest_sha256"),
+        code="ai_panorama_core_manifest_sha256_invalid",
+        required=True,
+    )
+    expected_core_manifest_sha256 = _require_digest(
+        request.get("expected_core_manifest_sha256"),
+        code="ai_panorama_expected_core_manifest_sha256_invalid",
+        required=False,
+    )
+    if expected_core_manifest_sha256 and not hmac.compare_digest(
+        expected_core_manifest_sha256,
+        core_manifest_sha256,
+    ):
+        _fail("ai_panorama_core_manifest_sha256_mismatch")
 
     declared = _declared_public_files(source_bundle, payload)
     actual = {row.relpath for row in snapshot.files}
@@ -1086,7 +1240,7 @@ def _validate_source_identity(
         "provider_key": provider_key,
         "listing_url": canonical_listing_url,
         "property_url_sha256": property_url_sha256,
-        "core_manifest_sha256": str(contract.get("core_manifest_sha256") or ""),
+        "core_manifest_sha256": core_manifest_sha256,
     }
     identity.update(
         _validate_materialization_lineage(
@@ -1106,6 +1260,7 @@ def _validate_v2_publication_authority(
     identity: Mapping[str, str],
     connection: object | None = None,
     for_update: bool = False,
+    expected_record_sha256: str = "",
 ) -> dict[str, str]:
     if request.get("contract") != AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2:
         return {}
@@ -1142,11 +1297,24 @@ def _validate_v2_publication_authority(
         raise AiPanoramaIntakeError(
             f"ai_panorama_publication_authority:{exc.code}"
         ) from exc
+    record_sha256 = _require_digest(
+        authority.get("record_sha256"),
+        code="ai_panorama_publication_record_sha256_invalid",
+        required=True,
+    )
+    expected_record_sha256 = _require_digest(
+        expected_record_sha256,
+        code="ai_panorama_expected_publication_record_sha256_invalid",
+        required=False,
+    )
+    if expected_record_sha256 and not hmac.compare_digest(
+        expected_record_sha256,
+        record_sha256,
+    ):
+        _fail("ai_panorama_publication_record_drift")
     return {
         "publication_authorization_verified": "true",
-        "publication_authorization_record_sha256": str(
-            authority.get("record_sha256") or ""
-        ),
+        "publication_authorization_record_sha256": record_sha256,
         "principal_binding_verified": "true",
         "run_binding_verified": "true",
         "candidate_binding_verified": "true",
@@ -1384,6 +1552,15 @@ def _receipt(
         "publication_authorization_verified": (
             identity.get("publication_authorization_verified") == "true"
         ),
+        "controller_permit_verified": (
+            identity.get("controller_permit_verified") == "true"
+        ),
+        "authenticated_principal_verified": (
+            identity.get("authenticated_principal_verified") == "true"
+        ),
+        "controller_nonce_consumed": (
+            identity.get("controller_nonce_consumed") == "true"
+        ),
         "install_request_contract": identity["install_request_contract"],
         "materialization_lineage_verified": bool(
             identity.get("materialization_receipt_sha256")
@@ -1392,9 +1569,17 @@ def _receipt(
         "release_eligible": (
             identity.get("release_eligible") == "true"
             and identity.get("publication_authorization_verified") == "true"
+            and identity.get("controller_permit_verified") == "true"
+            and identity.get("authenticated_principal_verified") == "true"
+            and (
+                not applied
+                or identity.get("controller_nonce_consumed") == "true"
+            )
         ),
         "private_values_redacted": True,
     }
+    if identity.get("controller_permit_sha256"):
+        receipt["controller_permit_sha256"] = identity["controller_permit_sha256"]
     if identity.get("publication_authorization_record_sha256"):
         receipt["publication_authorization_record_sha256"] = identity[
             "publication_authorization_record_sha256"
@@ -1413,6 +1598,7 @@ def install_sealed_ai_panorama_bundle(
     request: Mapping[str, object],
     *,
     apply: bool = False,
+    publication_admission: object = None,
 ) -> dict[str, object]:
     """Validate or atomically install a first-party AI panorama bundle.
 
@@ -1428,16 +1614,39 @@ def install_sealed_ai_panorama_bundle(
         _fail("ai_panorama_request_contract_invalid")
     if apply and request.get("contract") != AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2:
         _fail("ai_panorama_v1_apply_forbidden")
+    controller_identity: dict[str, str] = {}
+    admitted_incoming_root: Path | None = None
+    admitted_public_tour_dir: Path | None = None
+    if apply or publication_admission is not None:
+        if request.get("contract") != AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2:
+            _fail("ai_panorama_controller_admission_contract_invalid")
+        (
+            effective_request,
+            controller_identity,
+            admitted_incoming_root,
+            admitted_public_tour_dir,
+        ) = _controller_publication_admission(
+            request,
+            publication_admission,
+            require_consumed=apply,
+        )
+        request = effective_request
     source_bundle = _confined_source_bundle(
         _request_path(
             request.get("source_bundle"), code="ai_panorama_source_path_invalid"
-        )
+        ),
+        admitted_incoming_root=admitted_incoming_root,
     )
     requested_public_tour_dir = _request_path(
         request.get("public_tour_dir"), code="ai_panorama_public_dir_invalid"
     )
     public_tour_dir = _request_path(
-        _public_tour_dir(), code="ai_panorama_configured_public_dir_invalid"
+        (
+            admitted_public_tour_dir
+            if admitted_public_tour_dir is not None
+            else _public_tour_dir()
+        ),
+        code="ai_panorama_configured_public_dir_invalid",
     )
     requested_identity = _directory_identity(
         requested_public_tour_dir,
@@ -1458,6 +1667,7 @@ def install_sealed_ai_panorama_bundle(
         payload=source_payload,
         apply=apply,
     )
+    identity.update(controller_identity)
     slug = str(request.get("expected_slug") or "").strip()
     target = public_tour_dir / slug
 
@@ -1466,6 +1676,9 @@ def install_sealed_ai_panorama_bundle(
             _validate_v2_publication_authority(
                 request=request,
                 identity=identity,
+                expected_record_sha256=identity.get(
+                    "expected_publication_record_sha256", ""
+                ),
             )
         )
         already_installed = _validate_existing_target(
@@ -1502,6 +1715,9 @@ def install_sealed_ai_panorama_bundle(
                         identity=identity,
                         connection=connection,
                         for_update=True,
+                        expected_record_sha256=identity.get(
+                            "expected_publication_record_sha256", ""
+                        ),
                     )
                 )
             return _receipt(
@@ -1524,6 +1740,9 @@ def install_sealed_ai_panorama_bundle(
                         identity=identity,
                         connection=connection,
                         for_update=True,
+                        expected_record_sha256=identity.get(
+                            "expected_publication_record_sha256", ""
+                        ),
                     )
                 )
                 stage = public_tour_dir / f".{slug}.ai-intake-{uuid4().hex}"

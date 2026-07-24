@@ -5,12 +5,18 @@ import hashlib
 import json
 import os
 import shutil
+import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
 from app.product import property_tour_ai_panorama_intake as intake
-from app.product.property_search_tour_binding import property_search_source_url_sha256
+from app.product.property_search_tour_binding import (
+    property_search_run_record_sha256,
+    property_search_source_url_sha256,
+)
+from scripts import install_ai_panorama_tour_bundle as installer_script
 
 
 LISTING_URL = "https://www.willhaben.at/iad/immobilien/d/1807240910/"
@@ -61,6 +67,23 @@ def _strict_contract_stub(monkeypatch: pytest.MonkeyPatch) -> None:
         intake,
         "load_property_search_run_record_for_publication",
         lambda **_kwargs: _authorization_record(),
+    )
+    monkeypatch.setattr(
+        intake,
+        "_revalidate_ai_panorama_install_admission",
+        lambda admission, *, require_consumed: (
+            admission
+            if isinstance(admission, SimpleNamespace)
+            and (
+                not require_consumed
+                or admission.nonce_consumed is True
+            )
+            else (_ for _ in ()).throw(
+                intake.AiPanoramaIntakeError(
+                    "ai_panorama_controller_admission_invalid"
+                )
+            )
+        ),
     )
 
 
@@ -243,6 +266,60 @@ def _v2_lineage_request(
     return request, receipt_path, marker_path
 
 
+def _controller_admission(
+    request: dict[str, object],
+    **overrides: object,
+) -> object:
+    source_bundle = Path(str(request.get("source_bundle") or ""))
+    source_manifest = json.loads(
+        (source_bundle / "tour.json").read_text(encoding="utf-8")
+    )
+    request.setdefault(
+        "expected_core_manifest_sha256",
+        intake._semantic_manifest_sha256(source_manifest),
+    )
+    request.setdefault(
+        "expected_publication_record_sha256",
+        property_search_run_record_sha256(_authorization_record()),
+    )
+    values: dict[str, object] = {
+        "authenticated_principal_id": request.get("principal_id"),
+        "search_run_id": request.get("search_run_id"),
+        "candidate_ref": request.get("candidate_ref"),
+        "external_id": request.get("external_id"),
+        "listing_url": request.get("listing_url"),
+        "source_ref": request.get("source_ref"),
+        "provider_key": request.get("provider_key"),
+        "expected_slug": request.get("expected_slug"),
+        "expected_source_tree_sha256": request.get("expected_source_tree_sha256"),
+        "expected_tour_sha256": request.get("expected_tour_sha256"),
+        "expected_core_manifest_sha256": request.get(
+            "expected_core_manifest_sha256"
+        ),
+        "expected_materialization_receipt_sha256": request.get(
+            "expected_materialization_receipt_sha256"
+        ),
+        "expected_candidate_marker_sha256": request.get(
+            "expected_candidate_marker_sha256"
+        ),
+        "expected_publication_record_sha256": request.get(
+            "expected_publication_record_sha256"
+        ),
+        "source_bundle": source_bundle,
+        "materialization_receipt_path": Path(
+            str(request.get("materialization_receipt_path") or "")
+        ),
+        "incoming_root": Path(
+            str(os.environ["PROPERTYQUARRY_TOUR_EXPORT_INCOMING_DIR"])
+        ),
+        "public_tour_dir": Path(str(request.get("public_tour_dir") or "")),
+        "permit_sha256": "d" * 64,
+        "nonce_consumed": True,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def test_private_request_loader_requires_owner_only_regular_file(tmp_path: Path) -> None:
     request_path = tmp_path / "request.json"
     request_path.write_text(
@@ -371,7 +448,9 @@ def test_v2_requires_complete_materialization_lineage(
         )
 
 
-def test_v2_exact_materialization_lineage_is_release_eligible(tmp_path: Path) -> None:
+def test_v2_exact_materialization_lineage_is_not_release_eligible_without_admission(
+    tmp_path: Path,
+) -> None:
     bundle = _make_bundle(
         tmp_path / "source",
         directory_name=SLUG,
@@ -387,7 +466,8 @@ def test_v2_exact_materialization_lineage_is_release_eligible(tmp_path: Path) ->
         intake.AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2
     )
     assert receipt["materialization_lineage_verified"] is True
-    assert receipt["release_eligible"] is True
+    assert receipt["release_eligible"] is False
+    assert receipt["controller_permit_verified"] is False
     assert receipt["publication_authorization_verified"] is True
     assert receipt["principal_binding_verified"] is True
     assert receipt["run_binding_verified"] is True
@@ -404,6 +484,33 @@ def test_v2_exact_materialization_lineage_is_release_eligible(tmp_path: Path) ->
     assert receipt["candidate_marker_sha256"] == hashlib.sha256(
         marker_path.read_bytes()
     ).hexdigest()
+
+
+def test_v2_protected_dry_run_can_report_release_eligible(
+    tmp_path: Path,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    source_identity = intake.snapshot_ai_panorama_installer_source_bundle(bundle)
+    request.update(
+        {
+            "expected_source_tree_sha256": source_identity.tree_sha256,
+            "expected_tour_sha256": source_identity.tour_sha256,
+        }
+    )
+    admission = _controller_admission(request, nonce_consumed=False)
+
+    receipt = intake.install_sealed_ai_panorama_bundle(
+        request,
+        publication_admission=admission,
+    )
+
+    assert receipt["status"] == "validated"
+    assert receipt["release_eligible"] is True
+    assert receipt["controller_permit_verified"] is True
+    assert receipt["controller_nonce_consumed"] is False
     assert not (public_dir / SLUG).exists()
 
 
@@ -530,7 +637,11 @@ def test_v2_apply_revalidates_authority_with_locked_publication_connection(
     monkeypatch.setattr(intake, "property_account_publication_authority", _authority)
     monkeypatch.setattr(intake, "load_property_search_run_record_for_publication", _load)
 
-    receipt = intake.install_sealed_ai_panorama_bundle(request, apply=True)
+    receipt = intake.install_sealed_ai_panorama_bundle(
+        request,
+        apply=True,
+        publication_admission=_controller_admission(request),
+    )
 
     assert receipt["status"] == "installed"
     assert calls == [
@@ -541,6 +652,60 @@ def test_v2_apply_revalidates_authority_with_locked_publication_connection(
             "for_update": True,
         }
     ]
+
+
+def test_v2_apply_rejects_publication_record_drift_under_row_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
+    admission = _controller_admission(request)
+    locked_connection = object()
+    calls: list[dict[str, object]] = []
+
+    @contextlib.contextmanager
+    def _authority(_principal_id: object, *, run_id: object = ""):
+        yield locked_connection
+
+    changed_record = _authorization_record()
+    changed_record["summary"]["review_state"] = "changed-after-permit"
+
+    def _load(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return changed_record
+
+    monkeypatch.setattr(intake, "property_account_publication_authority", _authority)
+    monkeypatch.setattr(intake, "load_property_search_run_record_for_publication", _load)
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_publication_record_drift",
+    ):
+        intake.install_sealed_ai_panorama_bundle(
+            request,
+            apply=True,
+            publication_admission=admission,
+        )
+
+    assert calls == [
+        {
+            "run_id": RUN_ID,
+            "principal_id": PRINCIPAL,
+            "connection": locked_connection,
+            "for_update": True,
+        }
+    ]
+    assert not (public_dir / SLUG).exists()
 
 
 def test_v2_release_eligible_lineage_applies_with_exact_cas_hashes(
@@ -561,12 +726,19 @@ def test_v2_release_eligible_lineage_applies_with_exact_cas_hashes(
         }
     )
 
-    receipt = intake.install_sealed_ai_panorama_bundle(request, apply=True)
+    receipt = intake.install_sealed_ai_panorama_bundle(
+        request,
+        apply=True,
+        publication_admission=_controller_admission(request),
+    )
 
     assert receipt["status"] == "installed"
     assert receipt["applied"] is True
     assert receipt["materialization_lineage_verified"] is True
     assert receipt["release_eligible"] is True
+    assert receipt["controller_permit_verified"] is True
+    assert receipt["authenticated_principal_verified"] is True
+    assert receipt["controller_permit_sha256"] == "d" * 64
     assert (public_dir / SLUG / "tour.json").is_file()
 
 
@@ -864,23 +1036,139 @@ def test_v2_rejects_lineage_inode_or_candidate_swaps_during_validation(
         intake.install_sealed_ai_panorama_bundle(request)
 
 
-def test_apply_requires_both_exact_source_hashes(tmp_path: Path) -> None:
+def test_apply_requires_controller_authority_and_both_exact_source_hashes(
+    tmp_path: Path,
+) -> None:
     bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
     public_dir = tmp_path / "public"
     public_dir.mkdir()
     request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
-    with pytest.raises(intake.AiPanoramaIntakeError, match="expected_source_tree_sha256_invalid"):
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_apply_authority_required",
+    ):
         intake.install_sealed_ai_panorama_bundle(request, apply=True)
 
     plan = intake.install_sealed_ai_panorama_bundle(request)
     request["expected_source_tree_sha256"] = plan["source_tree_sha256"]
     request["expected_tour_sha256"] = "0" * 64
     with pytest.raises(intake.AiPanoramaIntakeError, match="source_tour_sha256_mismatch"):
-        intake.install_sealed_ai_panorama_bundle(request, apply=True)
+        intake.install_sealed_ai_panorama_bundle(
+            request,
+            apply=True,
+            publication_admission=_controller_admission(request),
+        )
     assert not (public_dir / SLUG).exists()
 
 
-def test_apply_writes_owned_pair_atomically_and_is_idempotent(tmp_path: Path) -> None:
+def test_apply_rejects_spoofed_real_owner_before_database_or_filesystem_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
+    authority = _controller_admission(request)
+    spoofed = dict(request, principal_id="other-real-owner@example.invalid")
+    monkeypatch.setattr(
+        intake,
+        "load_property_search_run_record_for_publication",
+        lambda **_kwargs: pytest.fail(
+            "controller principal mismatch must fail before database lookup"
+        ),
+    )
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_apply_authority_binding_mismatch",
+    ):
+        intake.install_sealed_ai_panorama_bundle(
+            spoofed,
+            apply=True,
+            publication_admission=authority,
+        )
+    assert not (public_dir / SLUG).exists()
+
+
+def test_apply_revalidates_external_permit_and_ledger_before_any_path_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = {
+        "contract": intake.AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2,
+        "source_bundle": str(tmp_path / "caller-selected-source"),
+        "public_tour_dir": str(tmp_path / "caller-selected-public"),
+    }
+    monkeypatch.setattr(
+        intake,
+        "_revalidate_ai_panorama_install_admission",
+        lambda _admission, *, require_consumed: (_ for _ in ()).throw(
+            intake.AiPanoramaIntakeError(
+                "ai_panorama_controller_admission_invalid"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        intake,
+        "_confined_source_bundle",
+        lambda *_args, **_kwargs: pytest.fail(
+            "artifact path must not be read before controller revalidation"
+        ),
+    )
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_controller_admission_invalid",
+    ):
+        intake.install_sealed_ai_panorama_bundle(
+            request,
+            apply=True,
+            publication_admission=object(),
+        )
+
+
+def test_operator_cli_cannot_apply_without_controller_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    request_path = tmp_path / "request.json"
+    request_path.write_text(
+        json.dumps({"contract": intake.AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2}),
+        encoding="utf-8",
+    )
+    request_path.chmod(0o600)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "install_ai_panorama_tour_bundle.py",
+            "--request",
+            str(request_path),
+            "--apply",
+        ],
+    )
+
+    exit_code = installer_script.main()
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert payload["status"] == "failed"
+    assert payload["mode"] == "apply"
+    assert payload["error"] == "ai_panorama_apply_authority_required"
+
+
+def test_apply_writes_owned_pair_atomically_and_new_admission_is_idempotent(
+    tmp_path: Path,
+) -> None:
     bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
     public_dir = tmp_path / "public"
     public_dir.mkdir()
@@ -893,8 +1181,18 @@ def test_apply_writes_owned_pair_atomically_and_is_idempotent(tmp_path: Path) ->
         }
     )
 
-    first = intake.install_sealed_ai_panorama_bundle(request, apply=True)
-    second = intake.install_sealed_ai_panorama_bundle(request, apply=True)
+    first_admission = _controller_admission(request)
+    second_admission = _controller_admission(request, permit_sha256="e" * 64)
+    first = intake.install_sealed_ai_panorama_bundle(
+        request,
+        apply=True,
+        publication_admission=first_admission,
+    )
+    second = intake.install_sealed_ai_panorama_bundle(
+        request,
+        apply=True,
+        publication_admission=second_admission,
+    )
 
     target = public_dir / SLUG
     private_path = target / "tour.private.json"
@@ -945,11 +1243,23 @@ def test_existing_target_rejects_wrong_owner_and_replacement(tmp_path: Path) -> 
             "expected_tour_sha256": plan["source_tour_sha256"],
         }
     )
-    intake.install_sealed_ai_panorama_bundle(request, apply=True)
+    authority = _controller_admission(request)
+    intake.install_sealed_ai_panorama_bundle(
+        request,
+        apply=True,
+        publication_admission=authority,
+    )
 
     wrong_owner = dict(request, principal_id="other-principal")
-    with pytest.raises(intake.AiPanoramaIntakeError, match="target_owner_mismatch"):
-        intake.install_sealed_ai_panorama_bundle(wrong_owner, apply=True)
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="apply_authority_binding_mismatch",
+    ):
+        intake.install_sealed_ai_panorama_bundle(
+            wrong_owner,
+            apply=True,
+            publication_admission=authority,
+        )
 
     replacement_bundle = _make_bundle(
         tmp_path / "replacement",
@@ -967,7 +1277,11 @@ def test_existing_target_rejects_wrong_owner_and_replacement(tmp_path: Path) -> 
         }
     )
     with pytest.raises(intake.AiPanoramaIntakeError, match="target_replace_forbidden"):
-        intake.install_sealed_ai_panorama_bundle(replacement_request, apply=True)
+        intake.install_sealed_ai_panorama_bundle(
+            replacement_request,
+            apply=True,
+            publication_admission=_controller_admission(replacement_request),
+        )
 
 
 def test_rejects_symlinks_extra_files_and_provider_mislabel(tmp_path: Path) -> None:
