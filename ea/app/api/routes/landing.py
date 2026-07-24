@@ -230,7 +230,7 @@ _PROPERTY_BILLING_DIRECT_VERIFICATION_CACHE: dict[str, object] = {
     "expires_at": 0.0,
     "future": None,
 }
-_PROPERTYQUARRY_EXAMPLE_SHORTLIST_DIORAMA_VERSION = "20260707d1"
+_PROPERTYQUARRY_EXAMPLE_SHORTLIST_DIORAMA_VERSION = "20260724d2"
 _PROPERTY_CURATED_DIORAMA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "data" / "property_diorama_previews.json"
 _PROPERTY_CURATED_DIORAMA_STATIC_ROOT = Path(__file__).resolve().parents[2] / "static"
 _PROPERTY_ORIGINAL_TOUR_HANDOFF_PURPOSE = "property-original-tour-handoff-v1"
@@ -1875,7 +1875,7 @@ def _propertyquarry_example_scope_preview(
         "image_url": resolved_image,
         "preview_image_url": resolved_image,
         "thumb_image_url": resolved_image,
-        "alt": f"{title} diorama preview",
+        "alt": f"Illustrative diorama of {title}",
         "kind": "diorama",
         "candidate_key": str(candidate_key or "").strip(),
     }
@@ -1924,7 +1924,7 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "scope_preview": _propertyquarry_example_scope_preview(
                 "danube-flats-demo",
                 title="Danube Flats demo",
-                fallback_image_path="/static/property/home/example-shortlist-home-1.png",
+                fallback_image_path="/static/property/home/example-shortlist-diorama-1.webp",
                 image_url=example_media_targets.get("preview_image_url", ""),
             ),
         },
@@ -1943,7 +1943,7 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "scope_preview": _propertyquarry_example_scope_preview(
                 "quiet-layout-near-transit",
                 title="Quiet layout near transit",
-                fallback_image_path="/static/property/home/example-shortlist-home-2.png",
+                fallback_image_path="/static/property/home/example-shortlist-diorama-2.webp",
             ),
         },
         {
@@ -1961,7 +1961,7 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "scope_preview": _propertyquarry_example_scope_preview(
                 "strong-price-open-risk",
                 title="Strong price, open questions",
-                fallback_image_path="/static/property/home/example-shortlist-home-3.png",
+                fallback_image_path="/static/property/home/example-shortlist-diorama-3.webp",
             ),
         },
     ]
@@ -2005,15 +2005,17 @@ def _propertyquarry_fast_ranked_run_sample_payload() -> dict[str, object]:
     ranked_candidates: list[dict[str, object]] = []
     for index, row in enumerate(_propertyquarry_example_shortlist_rows(), start=1):
         scope_preview = dict(row.get("scope_preview") or {}) if isinstance(row.get("scope_preview"), dict) else {}
+        candidate_title = str(row.get("title") or f"Sample home {index}").strip() or f"Sample home {index}"
         preview_url = (
             str(scope_preview.get("preview_image_url") or "").strip()
             or str(scope_preview.get("image_url") or "").strip()
             or str(scope_preview.get("thumb_image_url") or "").strip()
         )
+        diorama_alt = str(scope_preview.get("alt") or "").strip() or f"Illustrative diorama of {candidate_title}"
         candidate: dict[str, object] = {
             "candidate_ref": str(row.get("candidate_key") or f"sample-home-{index}").strip() or f"sample-home-{index}",
             "rank": index,
-            "title": str(row.get("title") or f"Sample home {index}").strip() or f"Sample home {index}",
+            "title": candidate_title,
             "summary": str(row.get("detail") or "Open the property to review the details.").strip(),
             "fit_summary": str(row.get("detail") or "Open the property to review the details.").strip(),
             "fit_score": int(row.get("score") or 0),
@@ -2023,6 +2025,13 @@ def _propertyquarry_fast_ranked_run_sample_payload() -> dict[str, object]:
             "location_label": str(row.get("area_label") or "").strip(),
             "price_display": str(row.get("price_label") or "").strip(),
             "diorama_preview_url": preview_url,
+            "diorama_alt": diorama_alt,
+            "diorama_representation": "illustrative",
+            "diorama_scene": {
+                "image_url": preview_url,
+                "alt": diorama_alt,
+                "representation": "illustrative",
+            },
             "preview_image_url": preview_url,
             "source_label": "Sample home",
             "property_facts": {

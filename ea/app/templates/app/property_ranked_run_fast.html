@@ -170,6 +170,27 @@
   .pq-fast-diorama-room.room-terrace {
     inset: 62% 11% 10% 51%;
   }
+  .pq-fast-thumb[data-visual-kind="diorama"] .pq-fast-diorama-room {
+    display: none;
+  }
+  .pq-fast-diorama-badge {
+    position: absolute;
+    top: 7px;
+    left: 7px;
+    z-index: 2;
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    border-radius: 999px;
+    padding: 3px 6px;
+    background: rgba(28, 35, 31, 0.74);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 780;
+    letter-spacing: 0.03em;
+    line-height: 1;
+    text-transform: uppercase;
+    box-shadow: 0 2px 8px rgba(18, 24, 21, 0.16);
+    pointer-events: none;
+  }
   .pq-fast-diorama-label {
     position: absolute;
     inset: auto 0 10px 0;
@@ -351,16 +372,19 @@
 	    {% set open_href = candidate.get('packet_url') or candidate.get('review_url') or candidate.get('detail_href') or '' %}
 	    {% set thumb_href = candidate.get('diorama_preview_url') or diorama.get('image_url') or diorama.get('preview_image_url') or '' %}
 	    {% set title_text = candidate.get('title') or ('Home ' ~ loop.index) %}
+	    {% set diorama_alt = candidate.get('diorama_alt') or diorama.get('alt') or title_text %}
+	    {% set diorama_representation = candidate.get('diorama_representation') or diorama.get('representation') or '' %}
     <article class="pq-fast-row">
       {% if open_href %}
       <a class="pq-fast-thumb pq-fast-diorama{% if not thumb_href %} no-thumb{% endif %}" href="{{ open_href }}" aria-label="Open property: {{ title_text }}" data-visual-kind="{{ 'diorama' if (candidate.get('diorama_preview_url') or diorama.get('image_url') or diorama.get('preview_image_url')) else ('preview' if thumb_href else 'placeholder') }}">
       {% else %}
       <div class="pq-fast-thumb pq-fast-diorama{% if not thumb_href %} no-thumb{% endif %}" data-visual-kind="{{ 'diorama' if (candidate.get('diorama_preview_url') or diorama.get('image_url') or diorama.get('preview_image_url')) else ('preview' if thumb_href else 'placeholder') }}">
       {% endif %}
-        {% if thumb_href %}<img src="{{ thumb_href }}" alt="{{ title_text }}" loading="lazy" decoding="async">{% endif %}
+        {% if thumb_href %}<img src="{{ thumb_href }}" alt="{{ diorama_alt }}" loading="lazy" decoding="async">{% endif %}
         <span class="pq-fast-diorama-room room-main" aria-hidden="true"></span>
         <span class="pq-fast-diorama-room room-side" aria-hidden="true"></span>
         <span class="pq-fast-diorama-room room-terrace" aria-hidden="true"></span>
+        {% if thumb_href and diorama_representation == 'illustrative' %}<span class="pq-fast-diorama-badge" aria-hidden="true">Illustrative</span>{% endif %}
         {% if not thumb_href %}<span class="pq-fast-diorama-label">Property</span>{% endif %}
       {% if open_href %}</a>{% else %}</div>{% endif %}
       <div>
@@ -861,6 +885,9 @@
       const dioramaHref = candidateDioramaHref(candidate);
       const thumbHref = dioramaHref;
       const thumbVisualKind = dioramaHref ? 'diorama' : 'placeholder';
+      const diorama = candidate && typeof candidate.diorama_scene === 'object' && candidate.diorama_scene ? candidate.diorama_scene : {};
+      const dioramaAlt = text(candidate.diorama_alt || diorama.alt, titleText);
+      const dioramaRepresentation = text(candidate.diorama_representation || diorama.representation).toLowerCase();
       const openHref = propertyHref;
       const media = document.createElement(openHref ? 'a' : 'div');
       media.className = `pq-fast-thumb pq-fast-diorama${thumbHref ? '' : ' no-thumb'}`;
@@ -872,11 +899,12 @@
       if (thumbHref) {
         const image = document.createElement('img');
         image.src = thumbHref;
-        image.alt = titleText;
+        image.alt = dioramaAlt;
         image.loading = 'lazy';
         image.decoding = 'async';
         image.addEventListener('error', () => {
           image.remove();
+          media.querySelectorAll('.pq-fast-diorama-badge').forEach((badge) => badge.remove());
           media.classList.add('no-thumb');
           media.setAttribute('data-visual-kind', 'placeholder');
           appendDioramaPlaceholderLabel(media);
@@ -889,6 +917,13 @@
         room.setAttribute('aria-hidden', 'true');
         media.appendChild(room);
       });
+      if (thumbHref && dioramaRepresentation === 'illustrative') {
+        const badge = document.createElement('span');
+        badge.className = 'pq-fast-diorama-badge';
+        badge.setAttribute('aria-hidden', 'true');
+        badge.textContent = 'Illustrative';
+        media.appendChild(badge);
+      }
       if (!thumbHref) appendDioramaPlaceholderLabel(media);
       article.appendChild(media);
 

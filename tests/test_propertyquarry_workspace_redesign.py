@@ -5489,9 +5489,14 @@ def test_propertyquarry_fast_ranked_run_renders_sample_homes_for_anonymous_visit
     candidates = payload["summary"]["ranked_candidates"]
     assert candidates
     assert candidates[0]["packet_url"].startswith("/app/example/shortlist?candidate=")
-    assert candidates[0]["diorama_preview_url"].startswith("/static/property/home/example-shortlist-home-1.png?v=")
-    assert candidates[1]["diorama_preview_url"].startswith("/static/property/home/example-shortlist-home-2.png?v=")
-    assert candidates[2]["diorama_preview_url"].startswith("/static/property/home/example-shortlist-home-3.png?v=")
+    assert candidates[0]["diorama_preview_url"].startswith("/static/property/home/example-shortlist-diorama-1.webp?v=")
+    assert candidates[1]["diorama_preview_url"].startswith("/static/property/home/example-shortlist-diorama-2.webp?v=")
+    assert candidates[2]["diorama_preview_url"].startswith("/static/property/home/example-shortlist-diorama-3.webp?v=")
+    assert candidates[0]["diorama_alt"] == "Illustrative diorama of Danube Flats demo"
+    assert candidates[0]["diorama_representation"] == "illustrative"
+    assert candidates[0]["diorama_scene"]["representation"] == "illustrative"
+    assert 'alt="Illustrative diorama of Danube Flats demo"' in response.text
+    assert '<span class="pq-fast-diorama-badge" aria-hidden="true">Illustrative</span>' in response.text
 
 
 def test_propertyquarry_fast_ranked_run_opaque_public_url_still_renders_sample_homes_for_anonymous_visitors() -> None:
@@ -5505,7 +5510,7 @@ def test_propertyquarry_fast_ranked_run_opaque_public_url_still_renders_sample_h
     assert 'data-auth-handoff-url="/app/api/property/landing-handoff"' in response.text
     assert 'data-status-url=""' in response.text
     assert "Sample homes" in response.text
-    assert "/static/property/home/example-shortlist-home-1.png" in response.text
+    assert "/static/property/home/example-shortlist-diorama-1.webp" in response.text
 
     payload_match = re.search(
         r'<script type="application/json" data-pq-fast-initial-payload>(.*?)</script>',
@@ -5516,7 +5521,8 @@ def test_propertyquarry_fast_ranked_run_opaque_public_url_still_renders_sample_h
     payload = json.loads(html.unescape(payload_match.group(1)))
     candidates = payload["summary"]["ranked_candidates"]
     assert candidates[0]["packet_url"].startswith("/app/example/shortlist?candidate=")
-    assert candidates[0]["diorama_preview_url"].startswith("/static/property/home/example-shortlist-home-1.png?v=")
+    assert candidates[0]["diorama_preview_url"].startswith("/static/property/home/example-shortlist-diorama-1.webp?v=")
+    assert candidates[0]["diorama_alt"] == "Illustrative diorama of Danube Flats demo"
 
 
 def test_propertyquarry_prepare_run_payload_synthesizes_first_party_packet_for_listing_only_candidate() -> None:
@@ -5697,7 +5703,7 @@ def test_propertyquarry_fast_ranked_run_stays_public_without_auth_headers_when_a
     assert response.status_code == 200
     assert "Sample homes" in response.text
     assert 'data-status-url=""' in response.text
-    assert "/static/property/home/example-shortlist-home-1.png" in response.text
+    assert "/static/property/home/example-shortlist-diorama-1.webp" in response.text
     assert "Sign in to continue your property search." not in response.text
 
 
@@ -6948,9 +6954,9 @@ def test_propertyquarry_home_example_shortlist_labels_are_clickable(monkeypatch)
     assert "Open property" in public_home.text
     assert "/app/example/shortlist?candidate=quiet-layout-near-transit#quiet-layout-near-transit" in public_home.text
     assert "Danube Flats demo" in public_home.text
-    assert "/static/property/home/example-shortlist-home-1.png" in public_home.text
-    assert "/static/property/home/example-shortlist-home-2.png" in public_home.text
-    assert "/static/property/home/example-shortlist-home-3.png" in public_home.text
+    assert "/static/property/home/example-shortlist-diorama-1.webp" in public_home.text
+    assert "/static/property/home/example-shortlist-diorama-2.webp" in public_home.text
+    assert "/static/property/home/example-shortlist-diorama-3.webp" in public_home.text
     assert "Search result, presentation, 3D tour, walkthrough." not in public_home.text
     assert "Parking evidence missing" not in public_home.text
     assert "/app/shortlist?example=1#tour-preview" not in public_home.text
@@ -7116,7 +7122,7 @@ def test_propertyquarry_example_shortlist_page_opens_sample_without_internal_lan
     assert "Quiet layout near transit" in response.text
     assert "Good fit. Parking still unclear." in response.text
     assert "Open property" in response.text
-    assert "/static/property/home/example-shortlist-home-2.png" in response.text
+    assert "/static/property/home/example-shortlist-diorama-2.webp" in response.text
     assert "/sign-in?return_to=%2Fapp%2Fsearch" in response.text
     assert "Parking evidence missing" not in response.text
     assert "proof" not in response.text.lower()
@@ -7495,8 +7501,11 @@ def test_propertyquarry_example_shortlist_rows_keep_static_diorama_preview_when_
 
     assert rows[0]["tour_href"] == "/tours/demo-home-tour/control/3dvista"
     assert rows[0]["walkthrough_href"] == "/tours/demo-home-tour?pane=flythrough-pane&autoplay=1"
-    assert rows[0]["scope_preview"]["image_url"].startswith("/static/property/home/example-shortlist-home-1.png?v=")
-    assert rows[0]["scope_preview"]["preview_image_url"].startswith("/static/property/home/example-shortlist-home-1.png?v=")
+    assert rows[0]["scope_preview"]["image_url"].startswith("/static/property/home/example-shortlist-diorama-1.webp?v=")
+    assert rows[0]["scope_preview"]["preview_image_url"].startswith(
+        "/static/property/home/example-shortlist-diorama-1.webp?v="
+    )
+    assert rows[0]["scope_preview"]["alt"] == "Illustrative diorama of Danube Flats demo"
 
 
 def test_propertyquarry_example_media_targets_prefer_3dvista_and_hide_unaccepted_magicfit_video(
