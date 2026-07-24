@@ -289,8 +289,72 @@ func validateAiPanoramaPermitInventory(root string, journal *Journal) error {
 
 func recoverAiPanoramaPermitPersistence(
 	root string,
+	journal *Journal,
+	last *JournalEvent,
 	base map[string]any,
 ) error {
+	if _, exists := base["ai_panorama_context_archive"]; exists {
+		if journal == nil || last == nil {
+			return fmt.Errorf("ai-panorama-context-archive-recovery-input-invalid")
+		}
+		archive, err := parseAiPanoramaContextArchive(base)
+		if err != nil {
+			return err
+		}
+		defer archive.release()
+		var intent *JournalEvent
+		var completion *JournalEvent
+		for index := range journal.events {
+			event := &journal.events[index]
+			if event.EventType == aiPanoramaPermitPersistenceIntentEvent &&
+				canonicalValuesEqual(
+					event.Payload["ai_panorama_context_archive"],
+					archive.journalValue(),
+				) {
+				if intent != nil {
+					return fmt.Errorf("ai-panorama-context-archive-intent-ambiguous")
+				}
+				intent = event
+			}
+			if event.EventType == aiPanoramaContextArchiveCompletedEvent &&
+				canonicalValuesEqual(
+					event.Payload["ai_panorama_context_archive"],
+					archive.journalValue(),
+				) {
+				if completion != nil {
+					return fmt.Errorf("ai-panorama-context-archive-completion-ambiguous")
+				}
+				completion = event
+			}
+		}
+		if intent == nil || !digestPattern.MatchString(intent.ReceiptDigest) {
+			return fmt.Errorf("ai-panorama-context-archive-intent-missing")
+		}
+		observation, err := ensureAiPanoramaContextArchive(root, archive)
+		if err != nil {
+			return err
+		}
+		if completion == nil {
+			base["ai_panorama_context_archive_intent_receipt_digest"] =
+				intent.ReceiptDigest
+			base["ai_panorama_context_archive_observation"] = observation
+			if err := aiPanoramaContextArchiveCompletion(
+				root, journal, base, archive, intent.ReceiptDigest,
+			); err != nil {
+				return err
+			}
+			completion = &journal.events[len(journal.events)-1]
+		}
+		if err := validateAiPanoramaContextArchiveCompletion(
+			root, completion.Payload, archive, intent.ReceiptDigest,
+		); err != nil {
+			return err
+		}
+		base["ai_panorama_context_archive_intent_receipt_digest"] =
+			completion.Payload["ai_panorama_context_archive_intent_receipt_digest"]
+		base["ai_panorama_context_archive_observation"] =
+			completion.Payload["ai_panorama_context_archive_observation"]
+	}
 	encoded, exists := base["ai_panorama_permit_canonical_bytes_base64"]
 	if !exists {
 		return nil
@@ -487,7 +551,9 @@ func recoverAiPanoramaPreMutationAttempt(
 			)
 		}
 	}
-	if err := recoverAiPanoramaPermitPersistence(root, base); err != nil {
+	if err := recoverAiPanoramaPermitPersistence(
+		root, journal, last, base,
+	); err != nil {
 		return aiPanoramaRecordRecoveryRequired(
 			journal, base, "pre-mutation-permit-recovery-failed",
 		)
@@ -546,7 +612,8 @@ func recoverAiPanoramaCleanedTerminal(
 		return fmt.Errorf("ai-panorama-cleaned-terminal-binding-invalid")
 	}
 	if err := validateAiPanoramaDormantProjectionInventory(root); err != nil ||
-		validateAiPanoramaPermitInventory(root, journal) != nil {
+		validateAiPanoramaPermitInventory(root, journal) != nil ||
+		validateAiPanoramaContextArchiveInventory(root, journal) != nil {
 		return fmt.Errorf("ai-panorama-cleaned-terminal-inventory-invalid")
 	}
 	runtimeValue, runtimeOK := last.Payload["ai_panorama_runtime_observation"].(map[string]any)

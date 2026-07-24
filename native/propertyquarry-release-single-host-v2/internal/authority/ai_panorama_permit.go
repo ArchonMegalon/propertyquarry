@@ -37,6 +37,7 @@ type aiPanoramaPurposeKey struct {
 	KeyID          string
 	Epoch          int64
 	Public         ed25519.PublicKey
+	Raw            []byte
 	PublicSHA256   string
 	KeyringSHA256  string
 	ActivationTime time.Time
@@ -49,6 +50,7 @@ func (key *aiPanoramaPurposeKey) release() {
 		return
 	}
 	zero(key.Public)
+	zero(key.Raw)
 	*key = aiPanoramaPurposeKey{}
 }
 
@@ -209,6 +211,7 @@ func loadAiPanoramaPurposeKey(root string, private ed25519.PrivateKey, issuedAt,
 			}
 			selected = &aiPanoramaPurposeKey{
 				KeyID: keyID, Epoch: epoch, Public: append(ed25519.PublicKey(nil), decoded...),
+				Raw:          append([]byte(nil), raw...),
 				PublicSHA256: publicSHA256, KeyringSHA256: aiPanoramaRawSHA256(raw),
 				ActivationTime: activation, AcceptUntil: acceptUntil, RevokedAt: revokedAt,
 			}

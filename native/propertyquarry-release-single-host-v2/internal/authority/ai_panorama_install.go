@@ -74,6 +74,7 @@ const (
 	aiPanoramaDiscoveryEntrypoint    = "/usr/local/libexec/propertyquarry-prater-ai-panorama-record-discovery-v1.py"
 	aiPanoramaPreflightEntrypoint    = "/usr/local/libexec/propertyquarry-prater-ai-panorama-preflight-v1.py"
 	aiPanoramaControllerEntrypoint   = "/usr/local/libexec/propertyquarry-prater-ai-panorama-controller-v1.py"
+	aiPanoramaRecoveryEntrypoint     = "/usr/local/libexec/propertyquarry-prater-ai-panorama-recovery-v1.py"
 	aiPanoramaBootstrapEntrypoint    = "/usr/local/libexec/propertyquarry-prater-governed-volume-bootstrap-v1.py"
 	aiPanoramaCloseoutEntrypoint     = "/usr/local/libexec/propertyquarry-prater-ai-panorama-closeout-v1.py"
 	aiPanoramaDatabaseService        = "propertyquarry-db"
@@ -92,6 +93,7 @@ const (
 	aiPanoramaPreflightPhaseTimeout  = 4 * time.Minute
 	aiPanoramaApplyPhaseTimeout      = 9 * time.Minute
 	aiPanoramaCloseoutPhaseTimeout   = 4 * time.Minute
+	aiPanoramaRecoveryPhaseTimeout   = 8 * time.Minute
 )
 
 type aiPanoramaDockerCommand func(context.Context, string, ...string) ([]byte, error)
@@ -2594,7 +2596,8 @@ func aiPanoramaContainerName(config *Config, phase string) (string, error) {
 
 func aiPanoramaPhaseValid(phase string) bool {
 	return phase == "bootstrap" || phase == "discover" ||
-		phase == "preflight" || phase == "apply" || phase == "closeout"
+		phase == "preflight" || phase == "apply" || phase == "closeout" ||
+		phase == "recovery"
 }
 
 func aiPanoramaOperationForPhase(phase string) string {
@@ -2642,6 +2645,8 @@ func aiPanoramaContainerArguments(
 		if network != nil || databaseSecretSource != "" || sealed != nil {
 			return nil, fmt.Errorf("ai-panorama-container-isolated-contract-invalid")
 		}
+	case "recovery":
+		return nil, fmt.Errorf("ai-panorama-container-recovery-archive-required")
 	}
 	name, err := aiPanoramaContainerName(config, phase)
 	if err != nil {
@@ -2731,6 +2736,72 @@ func aiPanoramaContainerArguments(
 	arguments = append(arguments,
 		"--entrypoint", aiPanoramaControllerPython,
 		config.WebImage, "-I", "-B", entrypoint,
+	)
+	return arguments, nil
+}
+
+func aiPanoramaHistoricalRecoveryContainerArguments(
+	config *Config,
+	runtime *aiPanoramaRuntimeObservation,
+	sealed *aiPanoramaSealedArtifactObservation,
+	network *aiPanoramaNetworkObservation,
+	databaseSecretSource string,
+	archive *aiPanoramaContextArchive,
+) ([]string, error) {
+	if config == nil || runtime == nil || sealed == nil || network == nil ||
+		network.Name == "" || network.ID == "" ||
+		!filepath.IsAbs(databaseSecretSource) ||
+		filepath.Clean(databaseSecretSource) != databaseSecretSource ||
+		archive == nil || len(archive.Files) != 4 {
+		return nil, fmt.Errorf("ai-panorama-recovery-container-contract-invalid")
+	}
+	name, err := aiPanoramaContainerName(config, "recovery")
+	if err != nil {
+		return nil, err
+	}
+	arguments := []string{
+		"run", "--rm", "--pull", "never", "--name", name,
+		"--log-driver", "none",
+		"--read-only", "--user", "0:0",
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges:true",
+		"--pids-limit", "64", "--memory", "512m", "--memory-swap", "512m",
+		"--cpus", "1.0", "--stop-timeout", "30", "--no-healthcheck",
+		"--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=67108864,mode=1777",
+		"--label", aiPanoramaNetworkLabel + "=v1",
+		"--label", "propertyquarry.release-control.config-digest=" + config.Digest,
+		"--label", "propertyquarry.release-control.deployment-id=" + config.DeploymentID,
+		"--label", "propertyquarry.release-control.operation=" + aiPanoramaInstallOperation,
+		"--label", "propertyquarry.release-control.phase=recovery",
+		"--env", "HOME=/nonexistent",
+		"--env", "LANG=C.UTF-8",
+		"--env", "PYTHONDONTWRITEBYTECODE=1",
+		"--env", "PYTHONUNBUFFERED=1",
+		"--network", network.Name,
+		"--mount", aiPanoramaBindMount(aiPanoramaControlRoot, aiPanoramaControlRoot, false),
+		"--mount", aiPanoramaBindMount(aiPanoramaSealedArtifactRoot, aiPanoramaSealedArtifactRoot, true),
+	}
+	for index := range archive.Files {
+		file := &archive.Files[index]
+		if filepath.Dir(file.Path) != archive.Path ||
+			!filepath.IsAbs(file.Path) || !filepath.IsAbs(file.MountTarget) {
+			return nil, fmt.Errorf("ai-panorama-recovery-container-archive-invalid")
+		}
+		arguments = append(
+			arguments, "--mount",
+			aiPanoramaBindMount(file.Path, file.MountTarget, true),
+		)
+	}
+	arguments = append(
+		arguments,
+		"--mount", aiPanoramaBindMount(
+			databaseSecretSource, aiPanoramaDatabaseSecretMount, true,
+		),
+		"--mount", aiPanoramaVolumeMount(
+			aiPanoramaPublicVolumeName, aiPanoramaPublicMountTarget, true,
+		),
+		"--entrypoint", aiPanoramaControllerPython,
+		config.WebImage, "-I", "-B", aiPanoramaRecoveryEntrypoint,
 	)
 	return arguments, nil
 }
@@ -2868,6 +2939,7 @@ type aiPanoramaRecoveryMount struct {
 func aiPanoramaRecoveryMountContract(
 	runtime *aiPanoramaRuntimeObservation,
 	phase string,
+	archives ...*aiPanoramaContextArchive,
 ) ([]aiPanoramaRecoveryMount, error) {
 	if runtime == nil || runtime.PublicVolumeMountpoint == "" {
 		return nil, fmt.Errorf("ai-panorama-recovery-mount-input-invalid")
@@ -2917,6 +2989,28 @@ func aiPanoramaRecoveryMountContract(
 			bind(aiPanoramaCloseoutRequestPath, false),
 			volume(true),
 		}, nil
+	case "recovery":
+		if len(archives) != 1 || archives[0] == nil ||
+			len(archives[0].Files) != 4 {
+			return nil, fmt.Errorf("ai-panorama-recovery-mount-archive-invalid")
+		}
+		result := []aiPanoramaRecoveryMount{
+			bind(aiPanoramaControlRoot, true),
+			bind(aiPanoramaSealedArtifactRoot, false),
+		}
+		for index := range archives[0].Files {
+			file := &archives[0].Files[index]
+			result = append(result, aiPanoramaRecoveryMount{
+				Type: "bind", Source: file.Path,
+				Destination: file.MountTarget, ReadWrite: false,
+			})
+		}
+		result = append(
+			result,
+			bind(aiPanoramaDatabaseSecretMount, false),
+			volume(false),
+		)
+		return result, nil
 	default:
 		return nil, fmt.Errorf("ai-panorama-recovery-mount-phase-invalid")
 	}
@@ -2979,6 +3073,7 @@ func validateAiPanoramaRecoveryContainerObject(
 	phase string,
 	expectedNetworkMode string,
 	expectedName string,
+	archives ...*aiPanoramaContextArchive,
 ) bool {
 	if value == nil || config == nil || runtime == nil {
 		return false
@@ -3022,11 +3117,13 @@ func validateAiPanoramaRecoveryContainerObject(
 	case "closeout":
 		expectedEntrypoint = aiPanoramaCloseoutEntrypoint
 		expectedCapabilities = []string{"DAC_OVERRIDE"}
+	case "recovery":
+		expectedEntrypoint = aiPanoramaRecoveryEntrypoint
 	default:
 		return false
 	}
 	sort.Strings(expectedCapabilities)
-	mounts, mountErr := aiPanoramaRecoveryMountContract(runtime, phase)
+	mounts, mountErr := aiPanoramaRecoveryMountContract(runtime, phase, archives...)
 	if !configOK || !hostOK || !labelsOK || !logOK || !restartOK ||
 		!tmpfsOK || !argsOK || !capAddOK || !capDropOK || !securityOK ||
 		!pidsOK || pids != 64 || !memoryOK || memory != 536870912 ||
@@ -3084,10 +3181,12 @@ func cleanupAiPanoramaRecoveryPhaseContainer(
 	runtime *aiPanoramaRuntimeObservation,
 	phase string,
 	expectedNetworkMode string,
+	archives ...*aiPanoramaContextArchive,
 ) error {
 	if ctx == nil || config == nil || runtime == nil ||
 		(phase != "discover" && phase != "preflight" &&
-			phase != "apply" && phase != "closeout") {
+			phase != "apply" && phase != "closeout" &&
+			phase != "recovery") {
 		return fmt.Errorf("ai-panorama-recovery-container-input-invalid")
 	}
 	exists, err := aiPanoramaPhaseContainerExists(ctx, config, phase)
@@ -3109,7 +3208,7 @@ func cleanupAiPanoramaRecoveryPhaseContainer(
 	value, decodeErr := aiPanoramaDockerObject(raw)
 	zero(raw)
 	if decodeErr != nil || !validateAiPanoramaRecoveryContainerObject(
-		value, config, runtime, phase, expectedNetworkMode, name,
+		value, config, runtime, phase, expectedNetworkMode, name, archives...,
 	) {
 		return fmt.Errorf("ai-panorama-recovery-container-binding-invalid")
 	}
@@ -3146,6 +3245,8 @@ func runAiPanoramaContainerRaw(
 		timeout = aiPanoramaApplyPhaseTimeout
 	case "closeout":
 		timeout = aiPanoramaCloseoutPhaseTimeout
+	case "recovery":
+		timeout = aiPanoramaRecoveryPhaseTimeout
 	default:
 		return nil, fmt.Errorf("ai-panorama-phase-timeout-invalid")
 	}
@@ -3171,6 +3272,47 @@ func runAiPanoramaContainerRaw(
 		zero(raw)
 		if cleanupErr != nil {
 			return nil, fmt.Errorf("ai-panorama-phase-container-cleanup-unverified")
+		}
+		return nil, commandErr
+	}
+	return raw, nil
+}
+
+func runAiPanoramaHistoricalRecoveryContainerRaw(
+	parent context.Context,
+	config *Config,
+	runtime *aiPanoramaRuntimeObservation,
+	sealed *aiPanoramaSealedArtifactObservation,
+	network *aiPanoramaNetworkObservation,
+	databaseSecretSource string,
+	archive *aiPanoramaContextArchive,
+) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, aiPanoramaRecoveryPhaseTimeout)
+	defer cancel()
+	exists, err := aiPanoramaPhaseContainerExists(ctx, config, "recovery")
+	if err != nil || exists {
+		return nil, fmt.Errorf("ai-panorama-recovery-container-preexisting")
+	}
+	arguments, err := aiPanoramaHistoricalRecoveryContainerArguments(
+		config, runtime, sealed, network, databaseSecretSource, archive,
+	)
+	if err != nil {
+		return nil, err
+	}
+	raw, commandErr := executeAiPanoramaDocker(
+		ctx, DockerExecutablePath, arguments...,
+	)
+	cleanupContext, cleanupCancel := context.WithTimeout(
+		context.WithoutCancel(parent), aiPanoramaCleanupTimeout,
+	)
+	defer cleanupCancel()
+	cleanupErr := cleanupAiPanoramaRecoveryPhaseContainer(
+		cleanupContext, config, runtime, "recovery", network.Name, archive,
+	)
+	if commandErr != nil || cleanupErr != nil {
+		zero(raw)
+		if cleanupErr != nil {
+			return nil, fmt.Errorf("ai-panorama-recovery-container-cleanup-unverified")
 		}
 		return nil, commandErr
 	}

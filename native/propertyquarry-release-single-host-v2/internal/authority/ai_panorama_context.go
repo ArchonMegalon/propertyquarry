@@ -39,6 +39,8 @@ type aiPanoramaSigningContext struct {
 	PublicTourRootInode        uint64
 	ExecutionLeaseSeconds      int64
 	TrustAssertionSHA256       string
+	ComposePlanCanonicalRaw    []byte
+	VolumeProfileCanonicalRaw  []byte
 	TrustAssertionCanonicalRaw []byte
 }
 
@@ -46,6 +48,8 @@ func (value *aiPanoramaSigningContext) release() {
 	if value == nil {
 		return
 	}
+	zero(value.ComposePlanCanonicalRaw)
+	zero(value.VolumeProfileCanonicalRaw)
 	zero(value.TrustAssertionCanonicalRaw)
 	*value = aiPanoramaSigningContext{}
 }
@@ -169,7 +173,11 @@ func loadAiPanoramaSigningContext(
 	if err != nil {
 		return nil, err
 	}
-	context := &aiPanoramaSigningContext{TrustAssertionCanonicalRaw: trustRaw}
+	context := &aiPanoramaSigningContext{
+		ComposePlanCanonicalRaw:    append([]byte(nil), composeRaw...),
+		VolumeProfileCanonicalRaw:  append([]byte(nil), profileRaw...),
+		TrustAssertionCanonicalRaw: trustRaw,
+	}
 	if !hasKeys(trust,
 		"schema", "version", "authority", "status", "subject", "actor_principal_id",
 		"repository", "git_ref", "git_head_sha", "workflow_ref", "job", "environment",

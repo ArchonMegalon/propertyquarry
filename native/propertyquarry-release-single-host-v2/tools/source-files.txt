@@ -9,6 +9,8 @@ internal/authority/ai_panorama_attempt.go
 internal/authority/ai_panorama_attempt_test.go
 internal/authority/ai_panorama_closeout.go
 internal/authority/ai_panorama_context.go
+internal/authority/ai_panorama_context_archive.go
+internal/authority/ai_panorama_context_archive_test.go
 internal/authority/ai_panorama_database.go
 internal/authority/ai_panorama_discovery.go
 internal/authority/ai_panorama_execute.go
@@ -16,6 +18,8 @@ internal/authority/ai_panorama_genesis.go
 internal/authority/ai_panorama_install.go
 internal/authority/ai_panorama_install_test.go
 internal/authority/ai_panorama_permit.go
+internal/authority/ai_panorama_recovery.go
+internal/authority/ai_panorama_recovery_test.go
 internal/authority/ai_panorama_terminal.go
 internal/authority/ai_panorama_v2_test.go
 internal/authority/ai_panorama_volume.go

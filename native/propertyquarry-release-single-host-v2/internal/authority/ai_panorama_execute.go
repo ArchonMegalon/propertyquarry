@@ -224,6 +224,9 @@ func executeAiPanoramaInstallV2(
 	if err := validateAiPanoramaPermitInventory(root, journal); err != nil {
 		return nil, err
 	}
+	if err := validateAiPanoramaContextArchiveInventory(root, journal); err != nil {
+		return nil, err
+	}
 	if err := validateAiPanoramaDormantProjectionInventory(root); err != nil {
 		return nil, err
 	}
@@ -370,10 +373,41 @@ func executeAiPanoramaInstallV2(
 	base["ai_panorama_permit"] = aiPanoramaPermitEvidence(permit)
 	base["ai_panorama_permit_canonical_bytes_base64"] =
 		base64.RawStdEncoding.EncodeToString(permitRaw)
+	contextArchive, err := newAiPanoramaContextArchive(
+		signing, purposeKey, permit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer contextArchive.release()
+	base["ai_panorama_context_archive"] = contextArchive.journalValue()
 	permitIntent := cloneFields(base)
 	permitIntent["disposition"] = "permit-persistence-intent"
-	if err := appendAiPanoramaJournalEvent(
-		journal, aiPanoramaPermitPersistenceIntentEvent, permitIntent,
+	eventCount := len(journal.events)
+	wire, err := journal.Append(
+		aiPanoramaPermitPersistenceIntentEvent, permitIntent,
+	)
+	zero(wire)
+	if err != nil {
+		return nil, err
+	}
+	if len(journal.events) != eventCount+1 {
+		return nil, fmt.Errorf("ai-panorama-context-archive-intent-unavailable")
+	}
+	permitIntentEvent := &journal.events[len(journal.events)-1]
+	if permitIntentEvent.EventType != aiPanoramaPermitPersistenceIntentEvent ||
+		!digestPattern.MatchString(permitIntentEvent.ReceiptDigest) {
+		return nil, fmt.Errorf("ai-panorama-context-archive-intent-unavailable")
+	}
+	archiveObservation, err := ensureAiPanoramaContextArchive(root, contextArchive)
+	if err != nil {
+		return nil, err
+	}
+	base["ai_panorama_context_archive_intent_receipt_digest"] =
+		permitIntentEvent.ReceiptDigest
+	base["ai_panorama_context_archive_observation"] = archiveObservation
+	if err := aiPanoramaContextArchiveCompletion(
+		root, journal, base, contextArchive, permitIntentEvent.ReceiptDigest,
 	); err != nil {
 		return nil, err
 	}
@@ -681,6 +715,7 @@ func recoverIncompleteAiPanoramaInstallV2(
 		last.EventType == aiPanoramaDiscoveryValidatedEvent ||
 		last.EventType == aiPanoramaContextProjectionIntentEvent ||
 		last.EventType == aiPanoramaPermitPersistenceIntentEvent ||
+		last.EventType == aiPanoramaContextArchiveCompletedEvent ||
 		last.EventType == aiPanoramaReleaseProjectionIntentEvent ||
 		last.EventType == aiPanoramaInstallAdmittedEvent ||
 		last.EventType == aiPanoramaInstallPreflightStartedEvent ||
@@ -694,8 +729,10 @@ func recoverIncompleteAiPanoramaInstallV2(
 			parent, root, journal, config, last,
 		)
 	}
-	return aiPanoramaRecordRecoveryRequired(
-		journal, aiPanoramaRecoveryFields(last.Payload),
-		"classifier-unavailable-recovery-required",
+	if last.EventType == aiPanoramaInstallRecoveryRequiredEvent {
+		return fmt.Errorf("ai-panorama-recovery-retry-not-authorized")
+	}
+	return recoverAiPanoramaMutationAttempt(
+		parent, root, journal, config, last,
 	)
 }
