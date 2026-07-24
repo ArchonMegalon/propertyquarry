@@ -101,14 +101,181 @@ func TestAiPanoramaContainerArgumentsHaveNoCallerOrPublicEgressSurface(t *testin
 		t.Fatal(err)
 	}
 	applyJoined := strings.Join(apply, "\x1f")
+	lockMount := aiPanoramaBindMount(
+		aiPanoramaPublicationLockRoot,
+		aiPanoramaPublicationLockTarget,
+		false,
+	)
 	if !strings.Contains(applyJoined, aiPanoramaBindMount(aiPanoramaControlRoot, aiPanoramaControlRoot, false)) ||
+		strings.Count(applyJoined, lockMount) != 1 ||
 		!strings.Contains(applyJoined, aiPanoramaVolumeMount(aiPanoramaPublicVolumeName, aiPanoramaPublicMountTarget, false)) ||
 		!strings.Contains(applyJoined, "--cap-add\x1fCHOWN\x1f--cap-add\x1fDAC_OVERRIDE\x1f--cap-add\x1fFOWNER") {
 		t.Fatal("apply phase lacks separately fenced RW mounts")
 	}
+	if strings.Contains(joined, aiPanoramaPublicationLockRoot) ||
+		strings.Contains(joined, aiPanoramaPublicationLockTarget) {
+		t.Fatal("read-only preflight received the apply-only publication lock")
+	}
 	if strings.Contains(applyJoined, aiPanoramaLegacyPublicVolumeName) ||
 		strings.Contains(applyJoined, aiPanoramaLegacyVolumeComposeKey) {
 		t.Fatal("legacy dynamic public-tour volume entered governed operation")
+	}
+}
+
+func TestAiPanoramaApplyCleanupRejectsPublicationLockRootDriftAfterAutoRemove(
+	t *testing.T,
+) {
+	config := aiPanoramaTestConfig()
+	runtime := &aiPanoramaRuntimeObservation{
+		ImageID:                   "sha256:" + strings.Repeat("9", 64),
+		PublicationLockRootDevice: 71,
+		PublicationLockRootInode:  73,
+		PublicVolumeDevice:        79,
+		PublicVolumeInode:         83,
+		DatabaseContainerID:       strings.Repeat("b", 64),
+		DatabaseContainerName:     "propertyquarry-db-1",
+	}
+	sealed := &aiPanoramaSealedArtifactObservation{
+		TreeSHA256: aiPanoramaExpectedSourceTree,
+		TourSHA256: aiPanoramaExpectedTourDigest,
+	}
+	network := &aiPanoramaNetworkObservation{
+		Name:       "pq-ai-panorama-prater-" + config.DeploymentID[:16],
+		ID:         strings.Repeat("a", 64),
+		DBAttached: true,
+	}
+	previousDocker := executeAiPanoramaDocker
+	previousPublicationLockObserver :=
+		observeAiPanoramaPublicationLockRootForValidation
+	t.Cleanup(func() {
+		executeAiPanoramaDocker = previousDocker
+		observeAiPanoramaPublicationLockRootForValidation =
+			previousPublicationLockObserver
+	})
+	observations := 0
+	observeAiPanoramaPublicationLockRootForValidation = func() (
+		uint64,
+		uint64,
+		error,
+	) {
+		observations++
+		if observations == 1 {
+			return runtime.PublicationLockRootDevice,
+				runtime.PublicationLockRootInode, nil
+		}
+		return runtime.PublicationLockRootDevice,
+			runtime.PublicationLockRootInode + 1, nil
+	}
+	containerLists := 0
+	containerRuns := 0
+	networkInspects := 0
+	executeAiPanoramaDocker = func(
+		ctx context.Context,
+		_ string,
+		arguments ...string,
+	) ([]byte, error) {
+		if ctx == nil || ctx.Err() != nil {
+			return nil, fmt.Errorf("test context invalid")
+		}
+		if len(arguments) >= 2 &&
+			arguments[0] == "container" && arguments[1] == "ls" {
+			containerLists++
+			return []byte{}, nil
+		}
+		if len(arguments) > 0 && arguments[0] == "run" {
+			containerRuns++
+			return []byte(`{"status":"applied"}` + "\n"), nil
+		}
+		if len(arguments) >= 2 &&
+			arguments[0] == "network" && arguments[1] == "inspect" {
+			networkInspects++
+			raw, err := canonicalJSON(map[string]any{
+				"Id":       network.ID,
+				"Name":     network.Name,
+				"Driver":   "bridge",
+				"Internal": true,
+				"Labels":   aiPanoramaNetworkLabels(config),
+				"Containers": map[string]any{
+					runtime.DatabaseContainerID: map[string]any{
+						"Name": runtime.DatabaseContainerName,
+					},
+				},
+			})
+			return raw, err
+		}
+		return nil, fmt.Errorf("unexpected docker invocation")
+	}
+	raw, err := runAiPanoramaContainerRaw(
+		context.Background(),
+		config,
+		runtime,
+		sealed,
+		network,
+		"apply",
+		aiPanoramaDatabaseSecretMount,
+	)
+	if err == nil || err.Error() !=
+		"ai-panorama-phase-container-cleanup-unverified" {
+		t.Fatalf("publication-lock drift was not rejected: %v", err)
+	}
+	if raw != nil || observations != 3 ||
+		containerLists != 3 || containerRuns != 1 ||
+		networkInspects != 1 {
+		t.Fatalf(
+			"unexpected apply drift trace: raw=%q observations=%d lists=%d runs=%d network_inspects=%d",
+			raw, observations, containerLists, containerRuns, networkInspects,
+		)
+	}
+}
+
+func TestAiPanoramaApplyCleanupReturnsPublicationLockDriftWhenAlreadyAbsent(
+	t *testing.T,
+) {
+	config := aiPanoramaTestConfig()
+	runtime := &aiPanoramaRuntimeObservation{
+		PublicationLockRootDevice: 71,
+		PublicationLockRootInode:  73,
+	}
+	previousDocker := executeAiPanoramaDocker
+	previousPublicationLockObserver :=
+		observeAiPanoramaPublicationLockRootForValidation
+	t.Cleanup(func() {
+		executeAiPanoramaDocker = previousDocker
+		observeAiPanoramaPublicationLockRootForValidation =
+			previousPublicationLockObserver
+	})
+	observeAiPanoramaPublicationLockRootForValidation = func() (
+		uint64,
+		uint64,
+		error,
+	) {
+		return runtime.PublicationLockRootDevice,
+			runtime.PublicationLockRootInode + 1, nil
+	}
+	containerLists := 0
+	executeAiPanoramaDocker = func(
+		ctx context.Context,
+		_ string,
+		arguments ...string,
+	) ([]byte, error) {
+		if ctx == nil || ctx.Err() != nil ||
+			len(arguments) < 2 ||
+			arguments[0] != "container" ||
+			arguments[1] != "ls" {
+			return nil, fmt.Errorf("unexpected docker invocation")
+		}
+		containerLists++
+		return []byte{}, nil
+	}
+	err := cleanupAiPanoramaPhaseContainer(
+		context.Background(), config, runtime, nil, "apply",
+	)
+	if err == nil || err.Error() !=
+		"ai-panorama-publication-lock-root-binding-invalid" {
+		t.Fatalf("absent apply did not return publication-lock drift: %v", err)
+	}
+	if containerLists != 2 {
+		t.Fatalf("absent apply list count = %d", containerLists)
 	}
 }
 

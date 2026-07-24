@@ -62,6 +62,8 @@ const (
 	aiPanoramaExpectedMarkerDigest   = "bf436b0645e44b203fe9b0c2f01c88d1ddce25aa7b1a45d04fa27b805eaf73fd"
 	aiPanoramaExpectedReceiptDigest  = "accba9c5b5575020d9cd6fcc299ed9653f6d8f094d58598e7bfc13db0061daba"
 	aiPanoramaControlRoot            = "/var/lib/propertyquarry/release-control/ai-panorama-install"
+	aiPanoramaPublicationLockRoot    = "/var/lib/propertyquarry-release-single-host-v2/ai-panorama-publication-locks"
+	aiPanoramaPublicationLockTarget  = "/data/.propertyquarry-tour-publication-locks"
 	aiPanoramaRuntimeRoot            = "/run/propertyquarry-release-control/ai-panorama-install"
 	aiPanoramaVolumeProfilePath      = aiPanoramaRuntimeRoot + "/public-tour-volume-profile.v2.json"
 	aiPanoramaTrustAssertionPath     = aiPanoramaRuntimeRoot + "/ai-panorama-install-trust-assertion.v1.json"
@@ -109,11 +111,17 @@ var aiPanoramaSealedArtifactPostRenameHook func() error
 // recovery implementation below.
 var recoverAiPanoramaSealedArtifactIntentForRecovery = recoverAiPanoramaSealedArtifactIntent
 
+// Test-only publication-lock observation seam. Production always uses the
+// exact root metadata observer below.
+var observeAiPanoramaPublicationLockRootForValidation = observeAiPanoramaPublicationLockRoot
+
 type aiPanoramaRuntimeObservation struct {
 	DockerRoot                      string
 	ImageID                         string
 	ControlRootDevice               uint64
 	ControlRootInode                uint64
+	PublicationLockRootDevice       uint64
+	PublicationLockRootInode        uint64
 	PublicVolumeMountpoint          string
 	PublicVolumeDevice              uint64
 	PublicVolumeInode               uint64
@@ -1960,6 +1968,37 @@ func aiPanoramaDockerString(ctx context.Context, arguments ...string) (string, e
 	return value, nil
 }
 
+func observeAiPanoramaPublicationLockRoot() (uint64, uint64, error) {
+	info, err := os.Lstat(aiPanoramaPublicationLockRoot)
+	if err != nil {
+		return 0, 0,
+			fmt.Errorf("ai-panorama-publication-lock-root-metadata-invalid")
+	}
+	metadata, ok := infoSys(info)
+	if !ok || !info.IsDir() || info.Mode().Perm() != 0o700 ||
+		info.Mode()&os.ModeSymlink != 0 || metadata.Uid != 0 ||
+		metadata.Gid != 0 || metadata.Nlink < 2 || metadata.Ino == 0 {
+		return 0, 0,
+			fmt.Errorf("ai-panorama-publication-lock-root-metadata-invalid")
+	}
+	return uint64(metadata.Dev), metadata.Ino, nil
+}
+
+func validateAiPanoramaPublicationLockRoot(
+	runtime *aiPanoramaRuntimeObservation,
+) error {
+	if runtime == nil || runtime.PublicationLockRootInode == 0 {
+		return fmt.Errorf("ai-panorama-publication-lock-root-binding-invalid")
+	}
+	device, inode, err := observeAiPanoramaPublicationLockRootForValidation()
+	if err != nil ||
+		device != runtime.PublicationLockRootDevice ||
+		inode != runtime.PublicationLockRootInode {
+		return fmt.Errorf("ai-panorama-publication-lock-root-binding-invalid")
+	}
+	return nil
+}
+
 func observeAiPanoramaRuntime(ctx context.Context, root string, config *Config) (*aiPanoramaRuntimeObservation, error) {
 	if ctx == nil || config == nil || root != "/" {
 		return nil, fmt.Errorf("ai-panorama-runtime-observation-input-invalid")
@@ -2053,6 +2092,11 @@ func observeAiPanoramaRuntime(ctx context.Context, root string, config *Config) 
 		controlMetadata.Gid != 0 || controlMetadata.Nlink < 2 {
 		return nil, fmt.Errorf("ai-panorama-control-root-metadata-invalid")
 	}
+	publicationLockDevice, publicationLockInode, err :=
+		observeAiPanoramaPublicationLockRoot()
+	if err != nil {
+		return nil, err
+	}
 
 	if config.DatabaseSubstrate == nil {
 		return nil, fmt.Errorf("ai-panorama-database-container-binding-invalid")
@@ -2089,7 +2133,9 @@ func observeAiPanoramaRuntime(ctx context.Context, root string, config *Config) 
 	return &aiPanoramaRuntimeObservation{
 		DockerRoot: dockerRoot, ImageID: imageID,
 		ControlRootDevice: uint64(controlMetadata.Dev), ControlRootInode: controlMetadata.Ino,
-		PublicVolumeMountpoint: mountpoint, PublicVolumeDevice: uint64(volumeMetadata.Dev),
+		PublicationLockRootDevice: publicationLockDevice,
+		PublicationLockRootInode:  publicationLockInode,
+		PublicVolumeMountpoint:    mountpoint, PublicVolumeDevice: uint64(volumeMetadata.Dev),
 		PublicVolumeInode: volumeMetadata.Ino, PublicVolumeUID: volumeMetadata.Uid,
 		PublicVolumeGID: volumeMetadata.Gid, PublicVolumeMode: uint32(volumeInfo.Mode().Perm()),
 		PublicVolumeNeedsInitialization: volumeMetadata.Uid == 0,
@@ -2260,6 +2306,8 @@ func aiPanoramaRuntimeObservationValue(observation *aiPanoramaRuntimeObservation
 		"docker_root":                        observation.DockerRoot,
 		"control_root_device":                json.Number(strconv.FormatUint(observation.ControlRootDevice, 10)),
 		"control_root_inode":                 json.Number(strconv.FormatUint(observation.ControlRootInode, 10)),
+		"publication_lock_root_device":       json.Number(strconv.FormatUint(observation.PublicationLockRootDevice, 10)),
+		"publication_lock_root_inode":        json.Number(strconv.FormatUint(observation.PublicationLockRootInode, 10)),
 		"public_volume_device":               json.Number(strconv.FormatUint(observation.PublicVolumeDevice, 10)),
 		"public_volume_gid":                  json.Number(strconv.FormatUint(uint64(observation.PublicVolumeGID), 10)),
 		"public_volume_inode":                json.Number(strconv.FormatUint(observation.PublicVolumeInode, 10)),
@@ -2286,7 +2334,9 @@ func parseAiPanoramaRuntimeObservationValue(
 		"api_runtime_container_id", "api_runtime_container_name",
 		"api_runtime_image_id", "database_container_id",
 		"database_container_name", "database_image_id", "docker_root",
-		"control_root_device", "control_root_inode", "public_volume_device",
+		"control_root_device", "control_root_inode",
+		"publication_lock_root_device", "publication_lock_root_inode",
+		"public_volume_device",
 		"public_volume_gid", "public_volume_inode", "public_volume_mode",
 		"public_volume_mountpoint", "public_volume_name", "public_volume_uid",
 		"public_volume_needs_initialization", "render_container_id",
@@ -2320,6 +2370,10 @@ func parseAiPanoramaRuntimeObservationValue(
 		exactInt(value["control_root_device"], 0, 1<<62)
 	controlInode, controlInodeOK :=
 		exactInt(value["control_root_inode"], 0, 1<<62)
+	publicationLockDevice, publicationLockDeviceOK :=
+		exactInt(value["publication_lock_root_device"], 0, 1<<62)
+	publicationLockInode, publicationLockInodeOK :=
+		exactInt(value["publication_lock_root_inode"], 1, 1<<62)
 	volumeDevice, volumeDeviceOK :=
 		exactInt(value["public_volume_device"], 1, 1<<62)
 	volumeInode, volumeInodeOK :=
@@ -2342,6 +2396,7 @@ func parseAiPanoramaRuntimeObservationValue(
 		!schedulerIDOK || !schedulerNameOK || !schedulerImageOK ||
 		!webImageOK || !digestPattern.MatchString(webImageID) ||
 		!controlDeviceOK || !controlInodeOK ||
+		!publicationLockDeviceOK || !publicationLockInodeOK ||
 		!volumeDeviceOK || !volumeInodeOK ||
 		!volumeUIDOK || !volumeGIDOK || !volumeModeOK || !needsOK ||
 		value["public_volume_name"] != aiPanoramaPublicVolumeName {
@@ -2365,6 +2420,8 @@ func parseAiPanoramaRuntimeObservationValue(
 		DockerRoot: dockerRoot, ImageID: webImageID,
 		ControlRootDevice:               uint64(controlDevice),
 		ControlRootInode:                uint64(controlInode),
+		PublicationLockRootDevice:       uint64(publicationLockDevice),
+		PublicationLockRootInode:        uint64(publicationLockInode),
 		PublicVolumeMountpoint:          mountpoint,
 		PublicVolumeDevice:              uint64(volumeDevice),
 		PublicVolumeInode:               uint64(volumeInode),
@@ -2794,6 +2851,11 @@ func aiPanoramaContainerArguments(
 			"--mount", aiPanoramaBindMount(aiPanoramaTrustAssertionPath, aiPanoramaTrustAssertionPath, true),
 			"--mount", aiPanoramaBindMount(aiPanoramaPurposeKeyringPath, aiPanoramaPurposeKeyringPath, true),
 			"--mount", aiPanoramaBindMount(databaseSecretSource, aiPanoramaDatabaseSecretMount, true),
+			"--mount", aiPanoramaBindMount(
+				aiPanoramaPublicationLockRoot,
+				aiPanoramaPublicationLockTarget,
+				false,
+			),
 			"--mount", aiPanoramaVolumeMount(aiPanoramaPublicVolumeName, aiPanoramaPublicMountTarget, false),
 		)
 	case "closeout":
@@ -2930,6 +2992,13 @@ func cleanupAiPanoramaPhaseContainer(
 	if err != nil {
 		return err
 	}
+	var publicationLockBindingErr error
+	if phase == "apply" &&
+		validateAiPanoramaPublicationLockRoot(runtime) != nil {
+		publicationLockBindingErr = fmt.Errorf(
+			"ai-panorama-publication-lock-root-binding-invalid",
+		)
+	}
 	if exists {
 		name, _ := aiPanoramaContainerName(config, phase)
 		raw, err := executeAiPanoramaDocker(
@@ -2967,6 +3036,15 @@ func cleanupAiPanoramaPhaseContainer(
 		if err != nil || observation.ID != network.ID || !observation.DBAttached {
 			return fmt.Errorf("ai-panorama-phase-network-membership-unverified")
 		}
+	}
+	if phase == "apply" &&
+		validateAiPanoramaPublicationLockRoot(runtime) != nil {
+		publicationLockBindingErr = fmt.Errorf(
+			"ai-panorama-publication-lock-root-binding-invalid",
+		)
+	}
+	if publicationLockBindingErr != nil {
+		return publicationLockBindingErr
 	}
 	return nil
 }
@@ -3018,11 +3096,18 @@ func aiPanoramaRecoveryMountContract(
 	if runtime == nil || runtime.PublicVolumeMountpoint == "" {
 		return nil, fmt.Errorf("ai-panorama-recovery-mount-input-invalid")
 	}
-	bind := func(source string, readWrite bool) aiPanoramaRecoveryMount {
+	bindAt := func(
+		source string,
+		destination string,
+		readWrite bool,
+	) aiPanoramaRecoveryMount {
 		return aiPanoramaRecoveryMount{
-			Type: "bind", Source: source, Destination: source,
+			Type: "bind", Source: source, Destination: destination,
 			ReadWrite: readWrite,
 		}
+	}
+	bind := func(source string, readWrite bool) aiPanoramaRecoveryMount {
+		return bindAt(source, source, readWrite)
 	}
 	volume := func(readWrite bool) aiPanoramaRecoveryMount {
 		return aiPanoramaRecoveryMount{
@@ -3056,6 +3141,11 @@ func aiPanoramaRecoveryMountContract(
 			bind(aiPanoramaTrustAssertionPath, false),
 			bind(aiPanoramaPurposeKeyringPath, false),
 			bind(aiPanoramaDatabaseSecretMount, false),
+			bindAt(
+				aiPanoramaPublicationLockRoot,
+				aiPanoramaPublicationLockTarget,
+				true,
+			),
 			volume(true),
 		}, nil
 	case "closeout":
@@ -3264,8 +3354,18 @@ func cleanupAiPanoramaRecoveryPhaseContainer(
 		return fmt.Errorf("ai-panorama-recovery-container-input-invalid")
 	}
 	exists, err := aiPanoramaPhaseContainerExists(ctx, config, phase)
-	if err != nil || !exists {
+	if err != nil {
 		return err
+	}
+	var publicationLockBindingErr error
+	if phase == "apply" &&
+		validateAiPanoramaPublicationLockRoot(runtime) != nil {
+		publicationLockBindingErr = fmt.Errorf(
+			"ai-panorama-publication-lock-root-binding-invalid",
+		)
+	}
+	if !exists {
+		return publicationLockBindingErr
 	}
 	name, err := aiPanoramaContainerName(config, phase)
 	if err != nil {
@@ -3294,6 +3394,15 @@ func cleanupAiPanoramaRecoveryPhaseContainer(
 	exists, err = aiPanoramaPhaseContainerExists(ctx, config, phase)
 	if err != nil || exists {
 		return fmt.Errorf("ai-panorama-recovery-container-remove-unverified")
+	}
+	if phase == "apply" &&
+		validateAiPanoramaPublicationLockRoot(runtime) != nil {
+		publicationLockBindingErr = fmt.Errorf(
+			"ai-panorama-publication-lock-root-binding-invalid",
+		)
+	}
+	if publicationLockBindingErr != nil {
+		return publicationLockBindingErr
 	}
 	return nil
 }
@@ -3335,6 +3444,11 @@ func runAiPanoramaContainerRaw(
 	)
 	if err != nil {
 		return nil, err
+	}
+	if phase == "apply" &&
+		validateAiPanoramaPublicationLockRoot(runtime) != nil {
+		return nil,
+			fmt.Errorf("ai-panorama-publication-lock-root-binding-invalid")
 	}
 	raw, commandErr := executeAiPanoramaDocker(ctx, DockerExecutablePath, arguments...)
 	cleanupContext, cleanupCancel := context.WithTimeout(

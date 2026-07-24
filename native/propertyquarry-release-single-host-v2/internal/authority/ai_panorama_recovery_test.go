@@ -119,6 +119,59 @@ func TestAiPanoramaHistoricalRecoveryContainerMountsOnlyExactLeaves(t *testing.T
 	}
 }
 
+func TestAiPanoramaRecoveryMountContractBindsPublicationLockOnlyForApply(
+	t *testing.T,
+) {
+	_, archive := aiPanoramaTestContextArchive(t)
+	runtime := aiPanoramaRecoveryTestRuntime()
+	apply, err := aiPanoramaRecoveryMountContract(runtime, "apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockMounts := 0
+	for _, mount := range apply {
+		if mount.Source != aiPanoramaPublicationLockRoot &&
+			mount.Destination != aiPanoramaPublicationLockTarget {
+			continue
+		}
+		lockMounts++
+		if mount.Type != "bind" ||
+			mount.Source != aiPanoramaPublicationLockRoot ||
+			mount.Destination != aiPanoramaPublicationLockTarget ||
+			!mount.ReadWrite || mount.Name != "" {
+			t.Fatalf("publication lock mount is not exact: %#v", mount)
+		}
+	}
+	if lockMounts != 1 {
+		t.Fatalf("apply publication lock mount count = %d", lockMounts)
+	}
+	for _, fixture := range []struct {
+		phase    string
+		archives []*aiPanoramaContextArchive
+	}{
+		{phase: "discover"},
+		{phase: "preflight"},
+		{phase: "closeout"},
+		{phase: "recovery", archives: []*aiPanoramaContextArchive{archive}},
+	} {
+		mounts, err := aiPanoramaRecoveryMountContract(
+			runtime, fixture.phase, fixture.archives...,
+		)
+		if err != nil {
+			t.Fatalf("%s mount contract: %v", fixture.phase, err)
+		}
+		for _, mount := range mounts {
+			if mount.Source == aiPanoramaPublicationLockRoot ||
+				mount.Destination == aiPanoramaPublicationLockTarget {
+				t.Fatalf(
+					"%s unexpectedly received publication lock mount: %#v",
+					fixture.phase, mount,
+				)
+			}
+		}
+	}
+}
+
 func TestAiPanoramaRecoveryClassificationTerminalBindsControlRoot(t *testing.T) {
 	root := t.TempDir()
 	for _, relative := range []string{

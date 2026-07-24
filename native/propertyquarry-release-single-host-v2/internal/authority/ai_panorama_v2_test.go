@@ -282,9 +282,36 @@ func TestAiPanoramaGovernedVolumeVirginInitializationIsOneWay(t *testing.T) {
 	if !aiPanoramaRuntimeIdentityStable(before, &after) {
 		t.Fatal("exact bootstrap identity transition rejected")
 	}
-	after.PublicVolumeInode++
-	if aiPanoramaRuntimeIdentityStable(before, &after) {
-		t.Fatal("bootstrap inode substitution accepted")
+	for _, fixture := range []struct {
+		name   string
+		mutate func(*aiPanoramaRuntimeObservation)
+	}{
+		{
+			name: "public-volume-inode",
+			mutate: func(value *aiPanoramaRuntimeObservation) {
+				value.PublicVolumeInode++
+			},
+		},
+		{
+			name: "publication-lock-device",
+			mutate: func(value *aiPanoramaRuntimeObservation) {
+				value.PublicationLockRootDevice++
+			},
+		},
+		{
+			name: "publication-lock-inode",
+			mutate: func(value *aiPanoramaRuntimeObservation) {
+				value.PublicationLockRootInode++
+			},
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			changed := after
+			fixture.mutate(&changed)
+			if aiPanoramaRuntimeIdentityStable(before, &changed) {
+				t.Fatal("bootstrap identity substitution accepted")
+			}
+		})
 	}
 }
 
@@ -447,6 +474,24 @@ func TestAiPanoramaInterruptedBootstrapRecoveryStateMachine(t *testing.T) {
 			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
 				copy := *before
 				copy.PublicVolumeInode++
+				return &copy
+			},
+			wantRecovery: true,
+		},
+		{
+			name: "changed-publication-lock-device-is-ambiguous",
+			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
+				copy := *before
+				copy.PublicationLockRootDevice++
+				return &copy
+			},
+			wantRecovery: true,
+		},
+		{
+			name: "changed-publication-lock-inode-is-ambiguous",
+			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
+				copy := *before
+				copy.PublicationLockRootInode++
 				return &copy
 			},
 			wantRecovery: true,

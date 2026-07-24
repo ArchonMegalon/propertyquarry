@@ -17,25 +17,27 @@ import (
 
 func aiPanoramaRecoveryTestRuntime() *aiPanoramaRuntimeObservation {
 	return &aiPanoramaRuntimeObservation{
-		DockerRoot:              "/var/lib/docker",
-		ImageID:                 "sha256:" + strings.Repeat("a", 64),
-		ControlRootDevice:       71,
-		ControlRootInode:        73,
-		PublicVolumeMountpoint:  "/var/lib/docker/volumes/" + aiPanoramaPublicVolumeName + "/_data",
-		PublicVolumeDevice:      79,
-		PublicVolumeInode:       83,
-		PublicVolumeUID:         10001,
-		PublicVolumeGID:         10001,
-		PublicVolumeMode:        0o755,
-		DatabaseContainerID:     strings.Repeat("1", 64),
-		DatabaseContainerName:   "propertyquarry-db-1",
-		DatabaseImageID:         "sha256:" + strings.Repeat("b", 64),
-		APIRuntimeContainerID:   strings.Repeat("2", 64),
-		APIRuntimeContainerName: "propertyquarry-api-1",
-		APIRuntimeImageID:       "sha256:" + strings.Repeat("a", 64),
-		SchedulerContainerID:    strings.Repeat("3", 64),
-		SchedulerContainerName:  "propertyquarry-scheduler-1",
-		SchedulerImageID:        "sha256:" + strings.Repeat("a", 64),
+		DockerRoot:                "/var/lib/docker",
+		ImageID:                   "sha256:" + strings.Repeat("a", 64),
+		ControlRootDevice:         71,
+		ControlRootInode:          73,
+		PublicationLockRootDevice: 77,
+		PublicationLockRootInode:  79,
+		PublicVolumeMountpoint:    "/var/lib/docker/volumes/" + aiPanoramaPublicVolumeName + "/_data",
+		PublicVolumeDevice:        83,
+		PublicVolumeInode:         89,
+		PublicVolumeUID:           10001,
+		PublicVolumeGID:           10001,
+		PublicVolumeMode:          0o755,
+		DatabaseContainerID:       strings.Repeat("1", 64),
+		DatabaseContainerName:     "propertyquarry-db-1",
+		DatabaseImageID:           "sha256:" + strings.Repeat("b", 64),
+		APIRuntimeContainerID:     strings.Repeat("2", 64),
+		APIRuntimeContainerName:   "propertyquarry-api-1",
+		APIRuntimeImageID:         "sha256:" + strings.Repeat("a", 64),
+		SchedulerContainerID:      strings.Repeat("3", 64),
+		SchedulerContainerName:    "propertyquarry-scheduler-1",
+		SchedulerImageID:          "sha256:" + strings.Repeat("a", 64),
 	}
 }
 
@@ -117,6 +119,7 @@ func aiPanoramaRecoveryTestContainer(
 
 func aiPanoramaRecoveryTestDocker(
 	t *testing.T,
+	runtime *aiPanoramaRuntimeObservation,
 	container map[string]any,
 	phaseName string,
 	networkName string,
@@ -126,7 +129,21 @@ func aiPanoramaRecoveryTestDocker(
 	exists := true
 	removals := 0
 	previous := executeAiPanoramaDocker
-	t.Cleanup(func() { executeAiPanoramaDocker = previous })
+	previousPublicationLockObserver :=
+		observeAiPanoramaPublicationLockRootForValidation
+	t.Cleanup(func() {
+		executeAiPanoramaDocker = previous
+		observeAiPanoramaPublicationLockRootForValidation =
+			previousPublicationLockObserver
+	})
+	observeAiPanoramaPublicationLockRootForValidation = func() (
+		uint64,
+		uint64,
+		error,
+	) {
+		return runtime.PublicationLockRootDevice,
+			runtime.PublicationLockRootInode, nil
+	}
 	executeAiPanoramaDocker = func(
 		ctx context.Context,
 		_ string,
@@ -296,7 +313,7 @@ func TestAiPanoramaCloseoutPreObservationRemovesExactApplyOrphan(
 		t, config, runtime, "apply", network,
 	)
 	exists, removals := aiPanoramaRecoveryTestDocker(
-		t, container, name, network, false,
+		t, runtime, container, name, network, false,
 	)
 	root := t.TempDir()
 	if err := os.MkdirAll(
@@ -359,7 +376,7 @@ func TestAiPanoramaCloseoutPreObservationRemovesExactPreflightOrphan(
 		t, config, runtime, "preflight", "none",
 	)
 	exists, removals := aiPanoramaRecoveryTestDocker(
-		t, container, name, "", false,
+		t, runtime, container, name, "", false,
 	)
 	root := t.TempDir()
 	if err := os.MkdirAll(
@@ -435,7 +452,7 @@ func TestAiPanoramaCloseoutPreObservationUsesImmediatePredecessorConfig(
 		t, &predecessor, runtime, "apply", network,
 	)
 	exists, removals := aiPanoramaRecoveryTestDocker(
-		t, container, name, network, false,
+		t, runtime, container, name, network, false,
 	)
 	root := t.TempDir()
 	if err := os.MkdirAll(
@@ -509,7 +526,7 @@ func TestAiPanoramaCloseoutPreObservationRejectsTooOldConfig(
 		t, &old, runtime, "apply", network,
 	)
 	exists, removals := aiPanoramaRecoveryTestDocker(
-		t, container, name, network, false,
+		t, runtime, container, name, network, false,
 	)
 	receipt := "sha256:" + strings.Repeat("4", 64)
 	request := &workflowRequest{
@@ -564,7 +581,7 @@ func TestAiPanoramaCloseoutPreObservationRemovesExactCloseoutOrphan(
 		t, config, runtime, "closeout", "none",
 	)
 	exists, removals := aiPanoramaRecoveryTestDocker(
-		t, container, name, "", false,
+		t, runtime, container, name, "", false,
 	)
 	raw, err := aiPanoramaRevocationWire(
 		strings.Repeat("6", 32),
@@ -618,23 +635,35 @@ func TestAiPanoramaCloseoutPreObservationRemovesExactCloseoutOrphan(
 func TestAiPanoramaRecoveryOrphanMismatchIsNotRemoved(t *testing.T) {
 	for _, fixture := range []struct {
 		name   string
-		mutate func(map[string]any)
+		mutate func(*testing.T, map[string]any)
 	}{
-		{"name", func(value map[string]any) {
+		{"name", func(_ *testing.T, value map[string]any) {
 			value["Name"] = "/wrong"
 		}},
-		{"image", func(value map[string]any) {
+		{"image", func(_ *testing.T, value map[string]any) {
 			value["Image"] = "sha256:" + strings.Repeat("f", 64)
 		}},
-		{"network", func(value map[string]any) {
+		{"network", func(_ *testing.T, value map[string]any) {
 			value["HostConfig"].(map[string]any)["NetworkMode"] = "wrong"
 		}},
-		{"label", func(value map[string]any) {
+		{"label", func(_ *testing.T, value map[string]any) {
 			value["Config"].(map[string]any)["Labels"].(map[string]any)["propertyquarry.release-control.phase"] = "wrong"
 		}},
-		{"mount", func(value map[string]any) {
+		{"publication-lock-mount", func(t *testing.T, value map[string]any) {
+			t.Helper()
 			mounts := value["Mounts"].([]any)
-			mounts[len(mounts)-1].(map[string]any)["RW"] = false
+			found := 0
+			for _, raw := range mounts {
+				mount := raw.(map[string]any)
+				if mount["Source"] == aiPanoramaPublicationLockRoot &&
+					mount["Destination"] == aiPanoramaPublicationLockTarget {
+					found++
+					mount["RW"] = false
+				}
+			}
+			if found != 1 {
+				t.Fatalf("publication lock mount count = %d", found)
+			}
 		}},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
@@ -651,9 +680,9 @@ func TestAiPanoramaRecoveryOrphanMismatchIsNotRemoved(t *testing.T) {
 			container := aiPanoramaRecoveryTestContainer(
 				t, config, runtime, "apply", network,
 			)
-			fixture.mutate(container)
+			fixture.mutate(t, container)
 			exists, removals := aiPanoramaRecoveryTestDocker(
-				t, container, name, network, false,
+				t, runtime, container, name, network, false,
 			)
 			if err := cleanupAiPanoramaRecoveryPhaseContainer(
 				context.Background(), config, runtime, "apply", network,
@@ -667,6 +696,95 @@ func TestAiPanoramaRecoveryOrphanMismatchIsNotRemoved(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestAiPanoramaRecoveryCleanupRemovesExactApplyBeforeReportingLockDrift(
+	t *testing.T,
+) {
+	config := aiPanoramaTestConfig()
+	runtime := aiPanoramaRecoveryTestRuntime()
+	network, err := aiPanoramaNetworkName(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := aiPanoramaContainerName(config, "apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := aiPanoramaRecoveryTestContainer(
+		t, config, runtime, "apply", network,
+	)
+	exists, removals := aiPanoramaRecoveryTestDocker(
+		t, runtime, container, name, network, false,
+	)
+	observations := 0
+	observeAiPanoramaPublicationLockRootForValidation = func() (
+		uint64,
+		uint64,
+		error,
+	) {
+		observations++
+		return runtime.PublicationLockRootDevice,
+			runtime.PublicationLockRootInode + 1, nil
+	}
+	err = cleanupAiPanoramaRecoveryPhaseContainer(
+		context.Background(), config, runtime, "apply", network,
+	)
+	if err == nil || err.Error() !=
+		"ai-panorama-publication-lock-root-binding-invalid" {
+		t.Fatalf("apply drift did not fail closed after cleanup: %v", err)
+	}
+	if *exists || *removals != 1 || observations != 2 {
+		t.Fatalf(
+			"exact drifted apply trace invalid: exists=%t removals=%d observations=%d",
+			*exists, *removals, observations,
+		)
+	}
+}
+
+func TestAiPanoramaRecoveryCleanupReportsLockDriftWhenApplyIsAbsent(
+	t *testing.T,
+) {
+	config := aiPanoramaTestConfig()
+	runtime := aiPanoramaRecoveryTestRuntime()
+	network, err := aiPanoramaNetworkName(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := aiPanoramaContainerName(config, "apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := aiPanoramaRecoveryTestContainer(
+		t, config, runtime, "apply", network,
+	)
+	exists, removals := aiPanoramaRecoveryTestDocker(
+		t, runtime, container, name, network, false,
+	)
+	*exists = false
+	observations := 0
+	observeAiPanoramaPublicationLockRootForValidation = func() (
+		uint64,
+		uint64,
+		error,
+	) {
+		observations++
+		return runtime.PublicationLockRootDevice + 1,
+			runtime.PublicationLockRootInode, nil
+	}
+	err = cleanupAiPanoramaRecoveryPhaseContainer(
+		context.Background(), config, runtime, "apply", network,
+	)
+	if err == nil || err.Error() !=
+		"ai-panorama-publication-lock-root-binding-invalid" {
+		t.Fatalf("absent recovery apply did not report lock drift: %v", err)
+	}
+	if *exists || *removals != 0 || observations != 1 {
+		t.Fatalf(
+			"absent recovery apply trace invalid: exists=%t removals=%d observations=%d",
+			*exists, *removals, observations,
+		)
 	}
 }
 

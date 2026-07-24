@@ -87,6 +87,10 @@ func aiPanoramaRuntimeIdentityStable(
 		before.ImageID == after.ImageID &&
 		before.ControlRootDevice == after.ControlRootDevice &&
 		before.ControlRootInode == after.ControlRootInode &&
+		before.PublicationLockRootDevice ==
+			after.PublicationLockRootDevice &&
+		before.PublicationLockRootInode ==
+			after.PublicationLockRootInode &&
 		before.PublicVolumeMountpoint == after.PublicVolumeMountpoint &&
 		before.PublicVolumeDevice == after.PublicVolumeDevice &&
 		before.PublicVolumeInode == after.PublicVolumeInode &&
@@ -161,11 +165,11 @@ func recoverAiPanoramaInterruptedBootstrap(
 		return fmt.Errorf("ai-panorama-bootstrap-recovery-input-invalid")
 	}
 	recoveryBase := aiPanoramaRecoveryFields(last.Payload)
-	before, ok := last.Payload["ai_panorama_bootstrap_before"].(map[string]any)
-	mountpoint, mountOK := exactString(before["public_volume_mountpoint"])
-	device, deviceOK := exactInt(before["public_volume_device"], 1, 1<<62)
-	inode, inodeOK := exactInt(before["public_volume_inode"], 1, 1<<62)
-	if !ok || !mountOK || !deviceOK || !inodeOK {
+	beforeValue, ok :=
+		last.Payload["ai_panorama_bootstrap_before"].(map[string]any)
+	before, parseErr :=
+		parseAiPanoramaRuntimeObservationValue(beforeValue)
+	if !ok || parseErr != nil {
 		return aiPanoramaRecordRecoveryRequired(
 			journal, recoveryBase, "bootstrap-recovery-intent-invalid",
 		)
@@ -173,9 +177,14 @@ func recoverAiPanoramaInterruptedBootstrap(
 	runtime, err := observeAiPanoramaInterruptedBootstrapRuntime(
 		parent, root, config,
 	)
-	if err != nil || runtime.PublicVolumeMountpoint != mountpoint ||
-		runtime.PublicVolumeDevice != uint64(device) ||
-		runtime.PublicVolumeInode != uint64(inode) ||
+	if err != nil ||
+		runtime.PublicVolumeMountpoint != before.PublicVolumeMountpoint ||
+		runtime.PublicVolumeDevice != before.PublicVolumeDevice ||
+		runtime.PublicVolumeInode != before.PublicVolumeInode ||
+		runtime.PublicationLockRootDevice !=
+			before.PublicationLockRootDevice ||
+		runtime.PublicationLockRootInode !=
+			before.PublicationLockRootInode ||
 		runtime.PublicVolumeMode != 0o755 {
 		return aiPanoramaRecordRecoveryRequired(
 			journal, recoveryBase, "bootstrap-recovery-identity-ambiguous",
