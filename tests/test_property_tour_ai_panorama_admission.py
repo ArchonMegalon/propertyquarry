@@ -1329,6 +1329,12 @@ def test_independent_golden_signature_vector() -> None:
     )
     vector = json.loads(fixture_path.read_text(encoding="utf-8"))
     envelope = vector["envelope"]
+    assert (
+        envelope["permit"]["workflow_ref"]
+        == admission.CANONICAL_WORKFLOW_REF
+        == "ArchonMegalon/propertyquarry/.github/workflows/"
+        "smoke-runtime.yml@refs/heads/main"
+    )
     preimage = admission._signature_preimage(envelope)
     assert hashlib.sha256(preimage).hexdigest() == vector["preimage_sha256"]
     public_key = base64.urlsafe_b64decode(

@@ -47,18 +47,18 @@
       "volume_profile_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "web_image": "ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
       "web_image_id": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-      "workflow_ref": "ArchonMegalon/propertyquarry/.github/workflows/propertyquarry-release-v2.yml@refs/heads/main"
+      "workflow_ref": "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"
     },
     "schema": "propertyquarry.ai-panorama-install-permit.v2",
     "signature": {
       "algorithm": "Ed25519",
       "encoding": "base64url",
       "key_id": "release-control-golden-key",
-      "value": "4yGfrdLjyr3odOAxuvvW358DJi2RhSptjraq3Br_T9uxVyeTizg2jUTXycThXJFwMKysz4z7lvVnRKo8E9JsAg"
+      "value": "4CxKpP0bMqoBGI6vHR5ZIKgztVBDkUGb85isPcXQLy4_zYKFQ4uKce-4iVaLFZ7hKuU8UC-pzJIEaXN2oJdiBg"
     },
     "version": 2
   },
-  "preimage_sha256": "ac469a698a6ad32e76e7116ab6a9b1e7e1c6bbc627f3f42c9fbbfb71585867f3",
+  "preimage_sha256": "7a8fed06bef4f14e13cfdc4e30d99c1a88888de2832893ecefe32c1658273d63",
   "public_key_base64url": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
   "seed_sha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
 }

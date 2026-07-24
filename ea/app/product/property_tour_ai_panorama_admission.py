@@ -70,7 +70,7 @@ CANONICAL_REPOSITORY = "ArchonMegalon/propertyquarry"
 CANONICAL_GIT_REF = "refs/heads/main"
 CANONICAL_WORKFLOW_REF = (
     "ArchonMegalon/propertyquarry/.github/workflows/"
-    "propertyquarry-release-v2.yml@refs/heads/main"
+    "smoke-runtime.yml@refs/heads/main"
 )
 CANONICAL_JOB = "propertyquarry-release-v2"
 CANONICAL_ENVIRONMENT = "propertyquarry-production"
