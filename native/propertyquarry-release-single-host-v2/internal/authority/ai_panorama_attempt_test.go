@@ -1021,6 +1021,139 @@ func TestAiPanoramaProjectionPublicationRecoversPartialTempUnderUmask(
 	}
 }
 
+func TestAiPanoramaProjectionTemporaryChmodCannotFollowPathSwap(t *testing.T) {
+	root := t.TempDir()
+	parent := rooted(root, aiPanoramaRuntimeRoot)
+	if err := os.MkdirAll(parent, 0o700); err != nil ||
+		os.Chmod(parent, 0o700) != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("{\"fixture\":\"descriptor-relative\"}\n")
+	projection := &aiPanoramaProjection{
+		Kind: "compose-plan", Path: aiPanoramaComposePlanPath, Mode: 0o400,
+		SHA256: aiPanoramaRawSHA256(raw), Raw: raw,
+	}
+	temporary := filepath.Join(
+		parent, aiPanoramaProjectionTemporaryName(projection),
+	)
+	displaced := temporary + ".displaced"
+	if err := os.WriteFile(temporary, raw[:9], 0o000); err != nil ||
+		os.Chmod(temporary, 0o000) != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		aiPanoramaProjectionBeforeTemporaryChmodHook = nil
+		_ = os.Chmod(temporary, 0o600)
+		_ = os.Chmod(displaced, 0o600)
+	})
+	aiPanoramaProjectionBeforeTemporaryChmodHook = func() {
+		if err := os.Rename(temporary, displaced); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(temporary, []byte("replacement"), 0o000); err != nil ||
+			os.Chmod(temporary, 0o000) != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := persistAiPanoramaProjectionFile(root, projection); err == nil {
+		t.Fatal("temporary path swap was accepted")
+	}
+	replacementInfo, replacementErr := os.Lstat(temporary)
+	displacedInfo, displacedErr := os.Lstat(displaced)
+	if replacementErr != nil || displacedErr != nil ||
+		replacementInfo.Mode().Perm() != 0o000 ||
+		displacedInfo.Mode().Perm() != 0o400 {
+		t.Fatal("descriptor-relative chmod touched or deleted the replacement")
+	}
+}
+
+func TestAiPanoramaProjectionUnlinkCannotFollowPathSwap(t *testing.T) {
+	root := t.TempDir()
+	parent := rooted(root, aiPanoramaRuntimeRoot)
+	if err := os.MkdirAll(parent, 0o700); err != nil ||
+		os.Chmod(parent, 0o700) != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("{\"fixture\":\"unlinkat-binding\"}\n")
+	projection := &aiPanoramaProjection{
+		Kind: "compose-plan", Path: aiPanoramaComposePlanPath, Mode: 0o400,
+		SHA256: aiPanoramaRawSHA256(raw), Raw: raw,
+	}
+	if err := persistAiPanoramaProjectionFile(root, projection); err != nil {
+		t.Fatal(err)
+	}
+	target := rooted(root, projection.Path)
+	displaced := target + ".displaced"
+	t.Cleanup(func() {
+		aiPanoramaProjectionBeforeUnlinkHook = nil
+		_ = os.Chmod(target, 0o600)
+		_ = os.Chmod(displaced, 0o600)
+	})
+	aiPanoramaProjectionBeforeUnlinkHook = func(kind string) {
+		if kind != "target" {
+			return
+		}
+		if err := os.Rename(target, displaced); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, raw, 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := removeAiPanoramaProjection(root, projection); err == nil {
+		t.Fatal("target path swap was accepted")
+	}
+	replacement, replacementErr := os.ReadFile(target)
+	original, originalErr := os.ReadFile(displaced)
+	if replacementErr != nil || originalErr != nil ||
+		!bytes.Equal(replacement, raw) || !bytes.Equal(original, raw) {
+		t.Fatal("path-swapped target was unlinked")
+	}
+}
+
+func TestAiPanoramaProjectionCleanupRejectsNonRegularAndHardlinkedLeaves(t *testing.T) {
+	for _, fixture := range []string{"symlink", "fifo", "hardlink"} {
+		t.Run(fixture, func(t *testing.T) {
+			root := t.TempDir()
+			parent := rooted(root, aiPanoramaRuntimeRoot)
+			if err := os.MkdirAll(parent, 0o700); err != nil ||
+				os.Chmod(parent, 0o700) != nil {
+				t.Fatal(err)
+			}
+			raw := []byte("{\"fixture\":\"hostile-leaf\"}\n")
+			projection := &aiPanoramaProjection{
+				Kind: "compose-plan", Path: aiPanoramaComposePlanPath, Mode: 0o400,
+				SHA256: aiPanoramaRawSHA256(raw), Raw: raw,
+			}
+			target := rooted(root, projection.Path)
+			switch fixture {
+			case "symlink":
+				backing := filepath.Join(parent, "backing")
+				if err := os.WriteFile(backing, raw, 0o400); err != nil ||
+					os.Symlink(backing, target) != nil {
+					t.Fatal(err)
+				}
+			case "fifo":
+				if err := syscall.Mkfifo(target, 0o400); err != nil {
+					t.Fatal(err)
+				}
+			case "hardlink":
+				backing := filepath.Join(parent, "backing")
+				if err := os.WriteFile(backing, raw, 0o400); err != nil ||
+					os.Link(backing, target) != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := removeAiPanoramaProjection(root, projection); err == nil {
+				t.Fatal("hostile projection leaf accepted")
+			}
+			if _, err := os.Lstat(target); err != nil {
+				t.Fatal("hostile projection leaf was deleted")
+			}
+		})
+	}
+}
+
 func aiPanoramaTestDatabaseSecretWire(t *testing.T) []byte {
 	t.Helper()
 	raw, err := canonicalJSON(map[string]any{

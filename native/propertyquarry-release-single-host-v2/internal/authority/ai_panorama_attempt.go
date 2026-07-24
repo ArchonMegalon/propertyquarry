@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unsafe"
 )
 
 const (
@@ -41,6 +42,12 @@ type aiPanoramaProjection struct {
 	SHA256 string
 	Raw    []byte
 }
+
+// Test-only crash/race boundaries. Production leaves both nil.
+var (
+	aiPanoramaProjectionBeforeTemporaryChmodHook func()
+	aiPanoramaProjectionBeforeUnlinkHook         func(string)
+)
 
 func (value *aiPanoramaProjection) release() {
 	if value == nil {
@@ -899,22 +906,30 @@ func persistAiPanoramaFixedProjection(
 }
 
 func persistAiPanoramaProjectionFile(root string, projection *aiPanoramaProjection) error {
+	if root == "" {
+		root = "/"
+	}
+	if projection == nil || !filepath.IsAbs(projection.Path) ||
+		filepath.Clean(projection.Path) != projection.Path ||
+		len(projection.Raw) < 2 ||
+		aiPanoramaRawSHA256(projection.Raw) != projection.SHA256 {
+		return fmt.Errorf("ai-panorama-projection-input-invalid")
+	}
 	ownerUID, ownerGID := secureOwner(root)
 	parentPath := filepath.Dir(projection.Path)
 	parent := rooted(root, parentPath)
-	info, err := os.Lstat(parent)
-	metadata, metadataOK := infoSys(info)
-	if err != nil || !metadataOK || !info.IsDir() ||
-		info.Mode()&os.ModeSymlink != 0 ||
-		info.Mode().Perm() != 0o700 ||
-		metadata.Uid != ownerUID || metadata.Gid != ownerGID || metadata.Nlink < 2 {
-		return fmt.Errorf("ai-panorama-projection-parent-invalid")
+	directory, _, metadata, err := openAiPanoramaProjectionParent(
+		root, parent, ownerUID, ownerGID,
+	)
+	if err != nil {
+		return err
 	}
-	target := rooted(root, projection.Path)
+	defer directory.Close()
+	targetName := filepath.Base(projection.Path)
 	temporaryName := aiPanoramaProjectionTemporaryName(projection)
-	temporary := filepath.Join(parent, temporaryName)
-	if existing, readErr := readSecureFile(
-		target, uint32(projection.Mode), ownerUID, ownerGID,
+	if existing, _, readErr := readAiPanoramaProjectionAt(
+		directory, targetName, projection.Mode, ownerUID, ownerGID,
+		uint64(metadata.Dev),
 		aiPanoramaMaximumContextFile,
 	); readErr == nil {
 		defer zero(existing)
@@ -922,32 +937,34 @@ func persistAiPanoramaProjectionFile(root string, projection *aiPanoramaProjecti
 			return fmt.Errorf("ai-panorama-projection-conflict")
 		}
 		if err := cleanupAiPanoramaProjectionTemporary(
-			temporary, parent, projection, ownerUID, ownerGID,
+			directory, temporaryName, projection, ownerUID, ownerGID,
 			uint64(metadata.Dev),
 		); err != nil {
 			return err
 		}
-		if err := fsyncAiPanoramaDirectory(parent); err != nil {
+		if err := directory.Sync(); err != nil {
 			return fmt.Errorf("ai-panorama-projection-durability-unknown")
 		}
 		return nil
-	} else if _, statErr := os.Lstat(target); !os.IsNotExist(statErr) {
+	} else if !os.IsNotExist(readErr) {
 		return fmt.Errorf("ai-panorama-projection-conflict")
 	}
 	if err := cleanupAiPanoramaProjectionTemporary(
-		temporary, parent, projection, ownerUID, ownerGID,
+		directory, temporaryName, projection, ownerUID, ownerGID,
 		uint64(metadata.Dev),
 	); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(
-		temporary,
-		os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_CLOEXEC|syscall.O_NOFOLLOW,
-		projection.Mode,
+	fd, err := syscall.Openat(
+		int(directory.Fd()), temporaryName,
+		syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|
+			syscall.O_CLOEXEC|syscall.O_NOFOLLOW,
+		uint32(projection.Mode),
 	)
 	if err != nil {
 		return fmt.Errorf("ai-panorama-projection-create-failed")
 	}
+	file := os.NewFile(uintptr(fd), temporaryName)
 	if err := file.Chmod(projection.Mode); err != nil ||
 		writeAll(file, projection.Raw) != nil || file.Sync() != nil {
 		_ = file.Close()
@@ -955,7 +972,12 @@ func persistAiPanoramaProjectionFile(root string, projection *aiPanoramaProjecti
 	}
 	writtenInfo, statErr := file.Stat()
 	writtenMetadata, metadataOK := infoSys(writtenInfo)
-	pathInfo, pathErr := os.Lstat(temporary)
+	pathFile, pathErr := openAiPanoramaProjectionAt(directory, temporaryName)
+	var pathInfo os.FileInfo
+	if pathErr == nil {
+		pathInfo, pathErr = pathFile.Stat()
+		_ = pathFile.Close()
+	}
 	if statErr != nil || !metadataOK || pathErr != nil ||
 		!writtenInfo.Mode().IsRegular() ||
 		writtenInfo.Mode().Perm() != projection.Mode ||
@@ -967,28 +989,20 @@ func persistAiPanoramaProjectionFile(root string, projection *aiPanoramaProjecti
 		_ = file.Close()
 		return fmt.Errorf("ai-panorama-projection-publish-invalid")
 	}
-	if err := fsyncAiPanoramaDirectory(parent); err != nil {
+	if err := directory.Sync(); err != nil {
 		return fmt.Errorf("ai-panorama-projection-durability-unknown")
 	}
-	directory, err := os.OpenFile(
-		parent,
-		os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW,
-		0,
-	)
-	if err != nil {
-		return fmt.Errorf("ai-panorama-projection-parent-invalid")
-	}
-	defer directory.Close()
 	if err := renameAtNoReplace(
-		int(directory.Fd()), temporaryName, filepath.Base(projection.Path),
+		int(directory.Fd()), temporaryName, targetName,
 	); err != nil {
 		return fmt.Errorf("ai-panorama-projection-publish-failed")
 	}
 	if err := directory.Sync(); err != nil {
 		return fmt.Errorf("ai-panorama-projection-durability-unknown")
 	}
-	persisted, readErr := readSecureFile(
-		target, uint32(projection.Mode), ownerUID, ownerGID,
+	persisted, _, readErr := readAiPanoramaProjectionAt(
+		directory, targetName, projection.Mode, ownerUID, ownerGID,
+		uint64(metadata.Dev),
 		aiPanoramaMaximumContextFile,
 	)
 	valid := readErr == nil && bytes.Equal(persisted, projection.Raw) &&
@@ -1000,67 +1014,231 @@ func persistAiPanoramaProjectionFile(root string, projection *aiPanoramaProjecti
 	return nil
 }
 
-func cleanupAiPanoramaProjectionTemporary(
-	temporary string,
+func openAiPanoramaProjectionParent(
+	root string,
 	parent string,
+	ownerUID uint32,
+	ownerGID uint32,
+) (*os.File, os.FileInfo, *syscall.Stat_t, error) {
+	if !filepath.IsAbs(parent) || filepath.Clean(parent) != parent ||
+		validateSecureParentChain(
+			root, filepath.Join(parent, ".projection-parent-check"), ownerUID,
+		) != nil {
+		return nil, nil, nil, fmt.Errorf("ai-panorama-projection-parent-invalid")
+	}
+	directory, err := os.OpenFile(
+		parent,
+		os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW,
+		0,
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("ai-panorama-projection-parent-invalid")
+	}
+	info, statErr := directory.Stat()
+	metadata, metadataOK := infoSys(info)
+	pathInfo, pathErr := os.Lstat(parent)
+	if statErr != nil || !metadataOK || pathErr != nil ||
+		!info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
+		info.Mode().Perm() != 0o700 ||
+		metadata.Uid != ownerUID || metadata.Gid != ownerGID ||
+		metadata.Nlink < 2 || !os.SameFile(info, pathInfo) {
+		directory.Close()
+		return nil, nil, nil, fmt.Errorf("ai-panorama-projection-parent-invalid")
+	}
+	return directory, info, metadata, nil
+}
+
+func openAiPanoramaProjectionAt(
+	parent *os.File,
+	name string,
+) (*os.File, error) {
+	if parent == nil || !tourV4SafeEntryName(name) {
+		return nil, fmt.Errorf("ai-panorama-projection-name-invalid")
+	}
+	fd, err := syscall.Openat(
+		int(parent.Fd()), name,
+		syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC|
+			syscall.O_NOFOLLOW, 0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), name), nil
+}
+
+func openAiPanoramaProjectionPathAt(
+	parent *os.File,
+	name string,
+) (*os.File, error) {
+	if parent == nil || !tourV4SafeEntryName(name) {
+		return nil, fmt.Errorf("ai-panorama-projection-name-invalid")
+	}
+	const linuxOPath = 0x200000
+	fd, err := syscall.Openat(
+		int(parent.Fd()), name,
+		linuxOPath|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), name), nil
+}
+
+func chmodAiPanoramaProjectionPathFD(
+	file *os.File,
+	mode os.FileMode,
+) error {
+	if file == nil {
+		return fmt.Errorf("ai-panorama-projection-chmod-input-invalid")
+	}
+	const (
+		linuxAMD64Fchmodat2 = 452
+		linuxATEmptyPath    = 0x1000
+	)
+	empty := [1]byte{0}
+	_, _, errno := syscall.Syscall6(
+		linuxAMD64Fchmodat2,
+		file.Fd(),
+		uintptr(unsafe.Pointer(&empty[0])),
+		uintptr(mode.Perm()),
+		linuxATEmptyPath,
+		0,
+		0,
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func readAiPanoramaProjectionAt(
+	parent *os.File,
+	name string,
+	mode os.FileMode,
+	ownerUID uint32,
+	ownerGID uint32,
+	parentDevice uint64,
+	maximum int,
+) ([]byte, os.FileInfo, error) {
+	file, err := openAiPanoramaProjectionAt(parent, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+	before, statErr := file.Stat()
+	metadata, metadataOK := infoSys(before)
+	if statErr != nil || !metadataOK || !before.Mode().IsRegular() ||
+		before.Mode().Perm() != mode || metadata.Uid != ownerUID ||
+		metadata.Gid != ownerGID || metadata.Nlink != 1 ||
+		uint64(metadata.Dev) != parentDevice ||
+		before.Size() < 1 || before.Size() > int64(maximum) {
+		return nil, nil, fmt.Errorf("ai-panorama-projection-metadata-invalid")
+	}
+	raw := make([]byte, before.Size())
+	if _, err := io.ReadFull(file, raw); err != nil {
+		zero(raw)
+		return nil, nil, fmt.Errorf("ai-panorama-projection-read-failed")
+	}
+	extra := []byte{0}
+	count, readErr := file.Read(extra)
+	zero(extra)
+	after, afterErr := file.Stat()
+	pathFile, pathErr := openAiPanoramaProjectionAt(parent, name)
+	var pathInfo os.FileInfo
+	if pathErr == nil {
+		pathInfo, pathErr = pathFile.Stat()
+		_ = pathFile.Close()
+	}
+	if count != 0 || (readErr != nil && readErr != io.EOF) ||
+		afterErr != nil || !tourV4SameFingerprint(before, after) ||
+		pathErr != nil || !os.SameFile(before, pathInfo) {
+		zero(raw)
+		return nil, nil, fmt.Errorf("ai-panorama-projection-changed")
+	}
+	return raw, before, nil
+}
+
+func cleanupAiPanoramaProjectionTemporary(
+	parent *os.File,
+	temporaryName string,
 	projection *aiPanoramaProjection,
 	ownerUID uint32,
 	ownerGID uint32,
 	parentDevice uint64,
 ) error {
-	pathInfo, pathErr := os.Lstat(temporary)
-	if os.IsNotExist(pathErr) {
+	if parent == nil || projection == nil ||
+		!tourV4SafeEntryName(temporaryName) {
+		return fmt.Errorf("ai-panorama-projection-temporary-input-invalid")
+	}
+	pathDescriptor, err := openAiPanoramaProjectionPathAt(parent, temporaryName)
+	if os.IsNotExist(err) {
 		return nil
 	}
-	pathMetadata, pathMetadataOK := infoSys(pathInfo)
-	pathModeValid := pathInfo != nil &&
-		pathInfo.Mode().Perm()&^projection.Mode == 0
-	if pathErr != nil || !pathMetadataOK || !pathInfo.Mode().IsRegular() ||
-		!pathModeValid || pathMetadata.Uid != ownerUID ||
-		pathMetadata.Gid != ownerGID || pathMetadata.Nlink != 1 ||
-		uint64(pathMetadata.Dev) != parentDevice ||
-		pathInfo.Size() < 0 || pathInfo.Size() > int64(len(projection.Raw)) {
-		return fmt.Errorf("ai-panorama-projection-temporary-invalid")
-	}
-	if pathInfo.Mode().Perm() != projection.Mode {
-		if err := os.Chmod(temporary, projection.Mode); err != nil {
-			return fmt.Errorf("ai-panorama-projection-temporary-invalid")
-		}
-		afterChmod, err := os.Lstat(temporary)
-		if err != nil || !os.SameFile(pathInfo, afterChmod) ||
-			afterChmod.Mode().Perm() != projection.Mode {
-			return fmt.Errorf("ai-panorama-projection-temporary-invalid")
-		}
-	}
-	file, err := os.OpenFile(
-		temporary, os.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0,
-	)
 	if err != nil {
 		return fmt.Errorf("ai-panorama-projection-temporary-invalid")
 	}
-	info, statErr := file.Stat()
-	metadata, metadataOK := infoSys(info)
-	modeValid := info != nil && (info.Mode().Perm() == projection.Mode ||
-		(info.Mode().Perm()&^projection.Mode == 0))
-	if statErr != nil || !metadataOK || !info.Mode().IsRegular() ||
-		!modeValid ||
-		metadata.Uid != ownerUID || metadata.Gid != ownerGID ||
-		metadata.Nlink != 1 || uint64(metadata.Dev) != parentDevice ||
-		info.Size() < 0 || info.Size() > int64(len(projection.Raw)) {
-		file.Close()
+	defer pathDescriptor.Close()
+	before, statErr := pathDescriptor.Stat()
+	metadata, metadataOK := infoSys(before)
+	modeValid := before != nil &&
+		before.Mode().Perm()&^projection.Mode == 0
+	if statErr != nil || !metadataOK || !before.Mode().IsRegular() ||
+		!modeValid || metadata.Uid != ownerUID ||
+		metadata.Gid != ownerGID || metadata.Nlink != 1 ||
+		uint64(metadata.Dev) != parentDevice ||
+		before.Size() < 0 || before.Size() > int64(len(projection.Raw)) {
 		return fmt.Errorf("ai-panorama-projection-temporary-invalid")
 	}
-	observed := make([]byte, info.Size())
+	if before.Mode().Perm() != projection.Mode {
+		if aiPanoramaProjectionBeforeTemporaryChmodHook != nil {
+			aiPanoramaProjectionBeforeTemporaryChmodHook()
+		}
+		if err := chmodAiPanoramaProjectionPathFD(
+			pathDescriptor, projection.Mode,
+		); err != nil {
+			return fmt.Errorf("ai-panorama-projection-temporary-invalid")
+		}
+		afterChmod, err := pathDescriptor.Stat()
+		if err != nil || !os.SameFile(before, afterChmod) ||
+			afterChmod.Mode().Perm() != projection.Mode {
+			return fmt.Errorf("ai-panorama-projection-temporary-invalid")
+		}
+		before = afterChmod
+	}
+	file, err := openAiPanoramaProjectionAt(parent, temporaryName)
+	if err != nil {
+		return fmt.Errorf("ai-panorama-projection-temporary-changed")
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(before, opened) {
+		return fmt.Errorf("ai-panorama-projection-temporary-changed")
+	}
+	observed := make([]byte, before.Size())
 	_, readErr := io.ReadFull(file, observed)
-	closeErr := file.Close()
-	valid := readErr == nil && closeErr == nil &&
+	after, afterErr := file.Stat()
+	valid := readErr == nil && afterErr == nil &&
+		tourV4SameFingerprint(before, after) &&
 		bytes.Equal(observed, projection.Raw[:len(observed)])
 	zero(observed)
 	if !valid {
 		return fmt.Errorf("ai-panorama-projection-temporary-invalid")
 	}
-	if err := os.Remove(temporary); err != nil ||
-		fsyncAiPanoramaDirectory(parent) != nil {
+	if aiPanoramaProjectionBeforeUnlinkHook != nil {
+		aiPanoramaProjectionBeforeUnlinkHook("temporary")
+	}
+	pathFile, err := openAiPanoramaProjectionAt(parent, temporaryName)
+	if err != nil {
+		return fmt.Errorf("ai-panorama-projection-temporary-changed")
+	}
+	pathInfo, statErr := pathFile.Stat()
+	_ = pathFile.Close()
+	if statErr != nil || !os.SameFile(before, pathInfo) {
+		return fmt.Errorf("ai-panorama-projection-temporary-changed")
+	}
+	if err := syscall.Unlinkat(
+		int(parent.Fd()), temporaryName,
+	); err != nil || parent.Sync() != nil {
 		return fmt.Errorf("ai-panorama-projection-temporary-cleanup-failed")
 	}
 	return nil
@@ -1074,28 +1252,23 @@ func removeAiPanoramaProjection(root string, projection *aiPanoramaProjection) e
 		return fmt.Errorf("ai-panorama-projection-cleanup-input-invalid")
 	}
 	parent := rooted(root, filepath.Dir(projection.Path))
-	parentInfo, parentErr := os.Lstat(parent)
-	parentMetadata, parentOK := infoSys(parentInfo)
 	ownerUID, ownerGID := secureOwner(root)
-	if parentErr != nil || !parentOK || !parentInfo.IsDir() ||
-		parentInfo.Mode().Perm() != 0o700 ||
-		parentInfo.Mode()&os.ModeSymlink != 0 ||
-		parentMetadata.Uid != ownerUID || parentMetadata.Gid != ownerGID {
+	directory, _, parentMetadata, err := openAiPanoramaProjectionParent(
+		root, parent, ownerUID, ownerGID,
+	)
+	if err != nil {
 		return fmt.Errorf("ai-panorama-projection-cleanup-parent-invalid")
 	}
-	temporary := filepath.Join(
-		parent, aiPanoramaProjectionTemporaryName(projection),
-	)
+	defer directory.Close()
 	if err := cleanupAiPanoramaProjectionTemporary(
-		temporary, parent, projection, ownerUID, ownerGID,
+		directory, aiPanoramaProjectionTemporaryName(projection),
+		projection, ownerUID, ownerGID,
 		uint64(parentMetadata.Dev),
 	); err != nil {
 		return err
 	}
-	target := rooted(root, projection.Path)
-	file, err := os.OpenFile(
-		target, os.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0,
-	)
+	targetName := filepath.Base(projection.Path)
+	file, err := openAiPanoramaProjectionAt(directory, targetName)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -1116,17 +1289,29 @@ func removeAiPanoramaProjection(root string, projection *aiPanoramaProjection) e
 		zero(observed)
 		return fmt.Errorf("ai-panorama-projection-cleanup-read-failed")
 	}
-	pathInfo, pathErr := os.Lstat(target)
-	valid := pathErr == nil && os.SameFile(before, pathInfo) &&
+	after, afterErr := file.Stat()
+	valid := afterErr == nil && tourV4SameFingerprint(before, after) &&
 		bytes.Equal(observed, projection.Raw)
 	zero(observed)
 	if !valid {
 		return fmt.Errorf("ai-panorama-projection-cleanup-binding-invalid")
 	}
-	if err := os.Remove(target); err != nil {
+	if aiPanoramaProjectionBeforeUnlinkHook != nil {
+		aiPanoramaProjectionBeforeUnlinkHook("target")
+	}
+	pathFile, pathErr := openAiPanoramaProjectionAt(directory, targetName)
+	if pathErr != nil {
+		return fmt.Errorf("ai-panorama-projection-cleanup-binding-invalid")
+	}
+	pathInfo, pathStatErr := pathFile.Stat()
+	_ = pathFile.Close()
+	if pathStatErr != nil || !os.SameFile(before, pathInfo) {
+		return fmt.Errorf("ai-panorama-projection-cleanup-binding-invalid")
+	}
+	if err := syscall.Unlinkat(int(directory.Fd()), targetName); err != nil {
 		return fmt.Errorf("ai-panorama-projection-cleanup-unlink-failed")
 	}
-	if err := fsyncAiPanoramaDirectory(parent); err != nil {
+	if err := directory.Sync(); err != nil {
 		return fmt.Errorf("ai-panorama-projection-cleanup-durability-unknown")
 	}
 	return nil
