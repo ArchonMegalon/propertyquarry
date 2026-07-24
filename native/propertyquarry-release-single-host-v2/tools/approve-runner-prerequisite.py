@@ -676,11 +676,14 @@ def _terminal_release_job_evidence(
         }
     job = matches[0]
     job_id = _numeric(job.get("id"))
+    completed_at = job.get("completed_at")
+    started_at = job.get("started_at")
     labels = [
-        "self-hosted",
         "propertyquarry-release-controller-v2",
         intent["runner_label"],
     ]
+    legacy_labels = ["self-hosted", *labels]
+    observed_labels = job.get("labels")
     if (
         job_id is None
         or job.get("status") != "completed"
@@ -688,33 +691,40 @@ def _terminal_release_job_evidence(
         or job.get("head_sha") != intent["workflow_sha"]
         or job.get("run_url")
         != f"https://api.github.com/repos/{REPOSITORY}/actions/runs/{intent['run_id']}"
-        or job.get("labels") != labels
+        or observed_labels not in (labels, legacy_labels)
         or job.get("run_attempt") != intent["run_attempt"]
         or job.get("runner_id") not in {None, 0}
         or job.get("runner_name") not in {None, ""}
         or job.get("runner_group_id") not in {None, 0}
         or job.get("runner_group_name") not in {None, ""}
         or job.get("steps") != []
-        or job.get("started_at") is not None
-        or not isinstance(job.get("completed_at"), str)
+        or not isinstance(completed_at, str)
+        or (
+            started_at is not None
+            and started_at != completed_at
+        )
     ):
         fail("runner-retirement-release-job-executed")
     _timestamp(
-        job["completed_at"], "runner-retirement-release-job-time-invalid"
+        completed_at, "runner-retirement-release-job-time-invalid"
     )
+    if started_at is not None:
+        _timestamp(
+            started_at, "runner-retirement-release-job-time-invalid"
+        )
     return {
-        "release_job_completed_at": job["completed_at"],
+        "release_job_completed_at": completed_at,
         "release_job_conclusion": job["conclusion"],
         "release_job_disposition": "inert-terminal",
         "release_job_id": job_id,
-        "release_job_labels": labels,
+        "release_job_labels": observed_labels,
         "release_job_present": True,
         "release_job_run_attempt": intent["run_attempt"],
         "release_job_runner_group_id": job.get("runner_group_id"),
         "release_job_runner_group_name": job.get("runner_group_name"),
         "release_job_runner_id": job.get("runner_id"),
         "release_job_runner_name": job.get("runner_name"),
-        "release_job_started_at": None,
+        "release_job_started_at": started_at,
         "release_job_steps_count": 0,
     }
 

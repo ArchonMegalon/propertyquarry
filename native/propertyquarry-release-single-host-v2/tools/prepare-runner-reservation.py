@@ -1592,16 +1592,18 @@ def _validate_retirement_terminal(
         ):
             fail("runner-reservation-retirement-terminal-invalid")
     else:
+        release_started_at = payload.get("release_job_started_at")
+        release_completed_at = payload.get("release_job_completed_at")
+        release_labels = [
+            "propertyquarry-release-controller-v2",
+            intent["runner_label"],
+        ]
         if (
             payload.get("release_job_present") is not True
             or type(payload.get("release_job_id")) is not str
             or NUMERIC_ID_PATTERN.fullmatch(payload["release_job_id"]) is None
             or payload.get("release_job_labels")
-            != [
-                "self-hosted",
-                "propertyquarry-release-controller-v2",
-                intent["runner_label"],
-            ]
+            not in (release_labels, ["self-hosted", *release_labels])
             or payload.get("release_job_run_attempt")
             != intent["run_attempt"]
             or payload.get("release_job_runner_id") not in {None, 0}
@@ -1609,8 +1611,11 @@ def _validate_retirement_terminal(
             or payload.get("release_job_runner_group_id") not in {None, 0}
             or payload.get("release_job_runner_group_name")
             not in {None, ""}
-            or payload.get("release_job_started_at") is not None
-            or type(payload.get("release_job_completed_at")) is not str
+            or type(release_completed_at) is not str
+            or (
+                release_started_at is not None
+                and release_started_at != release_completed_at
+            )
             or payload.get("release_job_conclusion")
             not in {"cancelled", "skipped"}
             or payload.get("release_job_steps_count") != 0

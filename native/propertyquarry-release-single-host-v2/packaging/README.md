@@ -283,7 +283,13 @@ The release dispatch has no manual environment-review step. Its exact order is:
    double-stable terminal adoption. It binds any existing post-attempt record,
    the complete environment-review set, empty pending deployments, and an
    absent or provably inert release job. A successful prerequisite is recorded
-   as observed but is never reinterpreted as an approval receipt. Then
+   as observed but is never reinterpreted as an approval receipt. GitHub may
+   stamp a cancelled, never-assigned job's `started_at` equal to its
+   `completed_at`; that exact terminal stamp is inert only when the runner,
+   runner group, and steps are all absent and both governed custom labels are
+   exact. Frozen history may additionally carry the formerly explicit
+   `self-hosted` label. A different start timestamp, missing custom label, or
+   any execution evidence still fails closed. Then
    `prepare-runner-reservation.py abandon-terminal` signs the abandonment and
    atomically retains the reservation as an `.abandoned.v2` terminal. These
    safe retirement steps may run after reservation expiry; neither command

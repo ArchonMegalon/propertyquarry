@@ -53,6 +53,7 @@ class FakeGitHub:
         self.pending_reads_after_approval = 0
         self.duplicate_reviews = False
         self.release_job_mode = "absent"
+        self.release_job_labels_override: list[str] | None = None
         self.manual_environment_approval = False
         self.current_run_attempt = 1
         self.job_name_override: str | None = None
@@ -120,19 +121,35 @@ class FakeGitHub:
                     "status": "queued",
                 }
             )
-        elif self.release_job_mode in {"inert", "executed"}:
+        elif self.release_job_mode in {
+            "inert",
+            "inert-stamped",
+            "inert-started",
+            "executed",
+        }:
             executed = self.release_job_mode == "executed"
+            if self.release_job_mode == "inert-stamped":
+                started_at = "2030-03-17T18:00:00Z"
+            elif self.release_job_mode == "inert-started":
+                started_at = "2030-03-17T17:59:00Z"
+            else:
+                started_at = (
+                    "2030-03-17T17:59:00Z" if executed else None
+                )
             jobs.append(
                 {
                     "completed_at": "2030-03-17T18:00:00Z",
                     "conclusion": "cancelled",
                     "head_sha": self.payload["workflow_sha"],
                     "id": run_id + 2000,
-                    "labels": [
-                        "self-hosted",
-                        "propertyquarry-release-controller-v2",
-                        self.payload["runner_label"],
-                    ],
+                    "labels": (
+                        self.release_job_labels_override
+                        if self.release_job_labels_override is not None
+                        else [
+                            "propertyquarry-release-controller-v2",
+                            self.payload["runner_label"],
+                        ]
+                    ),
                     "name": approval.RELEASE_JOB,
                     "run_attempt": 1,
                     "run_url": (
@@ -143,7 +160,7 @@ class FakeGitHub:
                     "runner_group_name": None,
                     "runner_id": 77 if executed else None,
                     "runner_name": "release-host" if executed else None,
-                    "started_at": "2030-03-17T17:59:00Z" if executed else None,
+                    "started_at": started_at,
                     "status": "completed",
                     "steps": [{"name": "ran"}] if executed else [],
                 }
@@ -1176,6 +1193,72 @@ class RunnerPrerequisiteTests(unittest.TestCase):
         ):
             self.retire(approved)
         self.assertEqual(len(approved.calls), calls_before)
+
+    def test_retirement_accepts_only_inert_terminal_timestamp_stamp(
+        self,
+    ) -> None:
+        stamped = self.fake()
+        self.discover_intent(stamped)
+        stamped.terminal = True
+        stamped.release_job_mode = "inert-stamped"
+        retired = self.retire(stamped)
+        self.assertEqual(
+            retired["disposition"], "terminal-adopted-get-only"
+        )
+        retirement = approval._verify_wire(
+            approval._retirement_terminal_path(
+                self.reservation_raw
+            ).read_bytes(),
+            public=self.private.public_key(),
+            key_id=self.key_id,
+            schema=approval.RETIREMENT_TERMINAL_SCHEMA,
+            domain=approval.RETIREMENT_TERMINAL_SIGNATURE_DOMAIN,
+        )
+        self.assertEqual(
+            retirement["release_job_started_at"],
+            retirement["release_job_completed_at"],
+        )
+        approval.reservation._validate_retirement_terminal(
+            retirement,
+            intent_raw=approval._read_record(
+                approval._record_paths(self.reservation_raw)[0]
+            ),
+            intent=approval._verify_wire(
+                approval._record_paths(self.reservation_raw)[0].read_bytes(),
+                public=self.private.public_key(),
+                key_id=self.key_id,
+                schema=approval.INTENT_SCHEMA,
+                domain=approval.INTENT_SIGNATURE_DOMAIN,
+            ),
+            post_attempt_raw=None,
+        )
+
+        self.tearDown()
+        self.setUp()
+        started = self.fake()
+        self.discover_intent(started)
+        started.terminal = True
+        started.release_job_mode = "inert-started"
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(started)
+
+        self.tearDown()
+        self.setUp()
+        wrong_labels = self.fake()
+        self.discover_intent(wrong_labels)
+        wrong_labels.terminal = True
+        wrong_labels.release_job_mode = "inert-stamped"
+        wrong_labels.release_job_labels_override = [
+            "propertyquarry-release-controller-v2"
+        ]
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(wrong_labels)
 
     def test_retirement_requires_double_stable_terminal_observation(
         self,
