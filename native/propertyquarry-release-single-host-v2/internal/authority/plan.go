@@ -375,7 +375,12 @@ func parsePlan(value map[string]any, raw []byte, config *Config) (*Plan, error) 
 	}
 	if stepTimeoutTotal(release)+stepTimeoutTotal(verify) != maximumReleaseVerifyStepSeconds || stepTimeoutTotal(rollback) != maximumRollbackStepSeconds ||
 		time.Duration(maximumReleaseVerifyStepSeconds)*time.Second >= releaseExecutionTimeout ||
-		releaseExecutionTimeout+rollbackExecutionTimeout >= serverProtocolTimeout || serverProtocolTimeout >= clientProtocolTimeout {
+		releaseExecutionTimeout+rollbackExecutionTimeout >=
+			releaseServerProtocolTimeout ||
+		releaseServerProtocolTimeout >= releaseClientProtocolTimeout ||
+		preflightClientProtocolTimeout+releaseClientProtocolTimeout+
+			aiInstallClientProtocolTimeout >
+			releaseWorkflowJobTimeout-releaseWorkflowSafetyMargin {
 		return nil, fmt.Errorf("plan-lifecycle-timeout-envelope-invalid")
 	}
 	return &Plan{Raw: append([]byte(nil), raw...), Digest: digest(raw), Executables: executables,

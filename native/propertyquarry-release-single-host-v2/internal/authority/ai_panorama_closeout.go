@@ -1081,7 +1081,7 @@ func continueAiPanoramaCloseout(
 		closeoutConfig := *config
 		closeoutConfig.WebImage = installed.WebImage
 		cleanupContext, cancel := context.WithTimeout(
-			context.WithoutCancel(parent), 2*time.Minute,
+			context.WithoutCancel(parent), aiPanoramaCleanupTimeout,
 		)
 		if err := cleanupAiPanoramaPhaseContainer(
 			cleanupContext, &closeoutConfig, runtime, nil, "closeout",
@@ -1261,7 +1261,7 @@ func cleanupAiPanoramaCloseoutOrphansBeforeObservation(
 		return fmt.Errorf("ai-panorama-closeout-orphan-cleanup-input-invalid")
 	}
 	cleanupContext, cancel := context.WithTimeout(
-		context.WithoutCancel(parent), 2*time.Minute,
+		context.WithoutCancel(parent), aiPanoramaCleanupTimeout,
 	)
 	defer cancel()
 	if installed.Emergency {

@@ -86,6 +86,12 @@ const (
 	aiPanoramaMaximumDirectories     = 256
 	aiPanoramaMaximumTreeBytes       = int64(128 * 1024 * 1024)
 	aiPanoramaMaximumFileBytes       = int64(64 * 1024 * 1024)
+	aiPanoramaCleanupTimeout         = time.Minute
+	aiPanoramaBootstrapPhaseTimeout  = 3 * time.Minute
+	aiPanoramaDiscoveryPhaseTimeout  = 4 * time.Minute
+	aiPanoramaPreflightPhaseTimeout  = 4 * time.Minute
+	aiPanoramaApplyPhaseTimeout      = 9 * time.Minute
+	aiPanoramaCloseoutPhaseTimeout   = 4 * time.Minute
 )
 
 type aiPanoramaDockerCommand func(context.Context, string, ...string) ([]byte, error)
@@ -3128,9 +3134,20 @@ func runAiPanoramaContainerRaw(
 	phase string,
 	databaseSecretSource string,
 ) ([]byte, error) {
-	timeout := 10 * time.Minute
-	if phase == "apply" {
-		timeout = 20 * time.Minute
+	timeout := time.Duration(0)
+	switch phase {
+	case "bootstrap":
+		timeout = aiPanoramaBootstrapPhaseTimeout
+	case "discover":
+		timeout = aiPanoramaDiscoveryPhaseTimeout
+	case "preflight":
+		timeout = aiPanoramaPreflightPhaseTimeout
+	case "apply":
+		timeout = aiPanoramaApplyPhaseTimeout
+	case "closeout":
+		timeout = aiPanoramaCloseoutPhaseTimeout
+	default:
+		return nil, fmt.Errorf("ai-panorama-phase-timeout-invalid")
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
@@ -3145,7 +3162,9 @@ func runAiPanoramaContainerRaw(
 		return nil, err
 	}
 	raw, commandErr := executeAiPanoramaDocker(ctx, DockerExecutablePath, arguments...)
-	cleanupContext, cleanupCancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
+	cleanupContext, cleanupCancel := context.WithTimeout(
+		context.WithoutCancel(parent), aiPanoramaCleanupTimeout,
+	)
 	defer cleanupCancel()
 	cleanupErr := cleanupAiPanoramaPhaseContainer(cleanupContext, config, runtime, network, phase)
 	if commandErr != nil || cleanupErr != nil {

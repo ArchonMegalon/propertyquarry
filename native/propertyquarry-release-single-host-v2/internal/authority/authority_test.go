@@ -635,9 +635,60 @@ func TestStrictCanonicalJSONRejectsDuplicatesAndNoncanonicalBytes(t *testing.T) 
 
 func TestLifecycleTimeoutEnvelopeAndPeerDisconnectCancellation(t *testing.T) {
 	if maximumReleaseVerifyStepSeconds != 17_100 || maximumRollbackStepSeconds != 600 ||
+		releaseWorkflowJobTimeout != 360*time.Minute ||
+		releaseWorkflowSafetyMargin != 10*time.Minute ||
+		preflightExecutionTimeout != 11*time.Minute+30*time.Second ||
+		preflightServerProtocolTimeout != 12*time.Minute ||
+		preflightClientProtocolTimeout != 13*time.Minute ||
 		releaseExecutionTimeout != 290*time.Minute || rollbackExecutionTimeout != 10*time.Minute ||
-		serverProtocolTimeout != 305*time.Minute || clientProtocolTimeout != 310*time.Minute {
+		releaseServerProtocolTimeout != 300*time.Minute+30*time.Second ||
+		releaseClientProtocolTimeout != 301*time.Minute ||
+		aiInstallExecutionTimeout != 32*time.Minute ||
+		aiInstallServerProtocolTimeout != 34*time.Minute+30*time.Second ||
+		aiInstallClientProtocolTimeout != 36*time.Minute ||
+		aiCloseoutExecutionTimeout != 15*time.Minute ||
+		aiCloseoutServerProtocolTimeout != 17*time.Minute ||
+		aiCloseoutClientProtocolTimeout != 18*time.Minute ||
+		validateWorkflowTimeoutEnvelope() != nil {
 		t.Fatal("release lifecycle timeout envelope drifted")
+	}
+	expected := map[string]workflowOperationTimeouts{
+		"release-preflight": {
+			Execution: preflightExecutionTimeout,
+			Server:    preflightServerProtocolTimeout,
+			Client:    preflightClientProtocolTimeout,
+		},
+		"release-run": {
+			Execution: releaseExecutionTimeout,
+			Server:    releaseServerProtocolTimeout,
+			Client:    releaseClientProtocolTimeout,
+		},
+		aiPanoramaInstallOperation: {
+			Execution: aiInstallExecutionTimeout,
+			Server:    aiInstallServerProtocolTimeout,
+			Client:    aiInstallClientProtocolTimeout,
+		},
+		aiPanoramaCloseoutOperation: {
+			Execution: aiCloseoutExecutionTimeout,
+			Server:    aiCloseoutServerProtocolTimeout,
+			Client:    aiCloseoutClientProtocolTimeout,
+		},
+	}
+	for operation, want := range expected {
+		got, err := timeoutsForWorkflowOperation(operation)
+		if err != nil || got != want {
+			t.Fatalf(
+				"unexpected %s timeout: %#v %v", operation, got, err,
+			)
+		}
+	}
+	if _, err := timeoutsForWorkflowOperation("unknown"); err == nil {
+		t.Fatal("unknown workflow operation received a timeout")
+	}
+	if preflightClientProtocolTimeout+releaseClientProtocolTimeout+
+		aiInstallClientProtocolTimeout !=
+		releaseWorkflowJobTimeout-releaseWorkflowSafetyMargin {
+		t.Fatal("ordered workflow timeout budget is not exact")
 	}
 	socketPath := filepath.Join(t.TempDir(), "peer.sock")
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})

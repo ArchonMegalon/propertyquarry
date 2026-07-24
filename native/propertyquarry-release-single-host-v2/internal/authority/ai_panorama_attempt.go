@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
 const (
@@ -402,7 +401,7 @@ func cleanupAiPanoramaInterruptedAttempt(
 		return fmt.Errorf("ai-panorama-interrupted-cleanup-input-invalid")
 	}
 	cleanupContext, cancel := context.WithTimeout(
-		context.WithoutCancel(parent), 2*time.Minute,
+		context.WithoutCancel(parent), aiPanoramaCleanupTimeout,
 	)
 	defer cancel()
 	applyExists, err := aiPanoramaPhaseContainerExists(

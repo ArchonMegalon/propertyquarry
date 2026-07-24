@@ -94,6 +94,17 @@ mounts and capabilities. The controller independently verifies the image,
 container consumers, volume identity, closed volume inventory, canonical
 stdout projection, public manifest, and database-bound terminal receipt.
 
+The protected workflow's ordered client envelopes are 13 minutes for release
+preflight, 301 minutes for the atomic release (including its bounded rollback),
+and 36 minutes for panorama installation. Their exact 350-minute total leaves a
+10-minute safety margin inside GitHub's fixed 360-minute job ceiling. Panorama
+execution itself is capped at 32 minutes; its bootstrap, discovery, preflight,
+and apply one-shots are capped at 3, 4, 4, and 9 minutes respectively, and each
+cancel-independent cleanup is capped at one minute. Server deadlines include
+the complete cleanup envelope and precede client deadlines, so a client timeout
+cannot leave a panorama container or database-only bridge mutating after the
+workflow has lost its authenticated connection.
+
 Before the four AI state files are created, the signed main controller journal
 durably commits their generated instance IDs, exact final and staging names,
 canonical bytes and digests, modes, ownership, and control-root device/inode

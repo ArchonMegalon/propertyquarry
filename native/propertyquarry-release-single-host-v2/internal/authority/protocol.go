@@ -22,15 +22,98 @@ const (
 	requestSchema        = "propertyquarry.release-control.single-host-request.v2"
 	maximumRequestBytes  = 65536
 	maximumResponseBytes = maximumJournalBytes
-	// The signed release+verify step ceilings total 285 minutes. The release
-	// context adds five minutes for authentication, receipt verification, and
-	// durable journaling; a cancelled release then gets a separate, bounded
-	// ten-minute rollback window. Every outer timeout is intentionally larger.
-	releaseExecutionTimeout  = 290 * time.Minute
-	rollbackExecutionTimeout = 10 * time.Minute
-	serverProtocolTimeout    = 305 * time.Minute
-	clientProtocolTimeout    = 310 * time.Minute
+	// The protected GitHub job has a hard six-hour ceiling. The three ordered
+	// client calls consume at most 350 minutes in total, preserving ten minutes
+	// for runner setup, shell handoff, and fail-closed receipt cleanup.
+	releaseWorkflowJobTimeout       = 360 * time.Minute
+	releaseWorkflowSafetyMargin     = 10 * time.Minute
+	preflightExecutionTimeout       = 11*time.Minute + 30*time.Second
+	preflightServerProtocolTimeout  = 12 * time.Minute
+	preflightClientProtocolTimeout  = 13 * time.Minute
+	releaseExecutionTimeout         = 290 * time.Minute
+	rollbackExecutionTimeout        = 10 * time.Minute
+	releaseServerProtocolTimeout    = 300*time.Minute + 30*time.Second
+	releaseClientProtocolTimeout    = 301 * time.Minute
+	aiInstallExecutionTimeout       = 32 * time.Minute
+	aiInstallServerProtocolTimeout  = 34*time.Minute + 30*time.Second
+	aiInstallClientProtocolTimeout  = 36 * time.Minute
+	aiCloseoutExecutionTimeout      = 15 * time.Minute
+	aiCloseoutServerProtocolTimeout = 17 * time.Minute
+	aiCloseoutClientProtocolTimeout = 18 * time.Minute
 )
+
+type workflowOperationTimeouts struct {
+	Execution time.Duration
+	Server    time.Duration
+	Client    time.Duration
+}
+
+func validateWorkflowTimeoutEnvelope() error {
+	installPhaseEnvelope :=
+		aiPanoramaBootstrapPhaseTimeout +
+			aiPanoramaDiscoveryPhaseTimeout +
+			aiPanoramaPreflightPhaseTimeout +
+			aiPanoramaApplyPhaseTimeout +
+			6*aiPanoramaCleanupTimeout
+	if preflightExecutionTimeout <= 11*time.Minute ||
+		releaseExecutionTimeout <=
+			time.Duration(maximumReleaseVerifyStepSeconds)*time.Second ||
+		releaseExecutionTimeout+rollbackExecutionTimeout >=
+			releaseServerProtocolTimeout ||
+		aiInstallExecutionTimeout <= installPhaseEnvelope+5*time.Minute ||
+		aiInstallExecutionTimeout+2*aiPanoramaCleanupTimeout >=
+			aiInstallServerProtocolTimeout ||
+		preflightClientProtocolTimeout+releaseClientProtocolTimeout+
+			aiInstallClientProtocolTimeout >
+			releaseWorkflowJobTimeout-releaseWorkflowSafetyMargin {
+		return fmt.Errorf("workflow-timeout-envelope-invalid")
+	}
+	return nil
+}
+
+func timeoutsForWorkflowOperation(
+	operation string,
+) (workflowOperationTimeouts, error) {
+	if err := validateWorkflowTimeoutEnvelope(); err != nil {
+		return workflowOperationTimeouts{}, err
+	}
+	var result workflowOperationTimeouts
+	switch operation {
+	case "release-preflight":
+		result = workflowOperationTimeouts{
+			Execution: preflightExecutionTimeout,
+			Server:    preflightServerProtocolTimeout,
+			Client:    preflightClientProtocolTimeout,
+		}
+	case "release-run":
+		result = workflowOperationTimeouts{
+			Execution: releaseExecutionTimeout,
+			Server:    releaseServerProtocolTimeout,
+			Client:    releaseClientProtocolTimeout,
+		}
+	case aiPanoramaInstallOperation:
+		result = workflowOperationTimeouts{
+			Execution: aiInstallExecutionTimeout,
+			Server:    aiInstallServerProtocolTimeout,
+			Client:    aiInstallClientProtocolTimeout,
+		}
+	case aiPanoramaCloseoutOperation:
+		result = workflowOperationTimeouts{
+			Execution: aiCloseoutExecutionTimeout,
+			Server:    aiCloseoutServerProtocolTimeout,
+			Client:    aiCloseoutClientProtocolTimeout,
+		}
+	default:
+		return workflowOperationTimeouts{},
+			fmt.Errorf("workflow-operation-timeout-invalid")
+	}
+	if result.Execution <= 0 || result.Execution >= result.Server ||
+		result.Server >= result.Client {
+		return workflowOperationTimeouts{},
+			fmt.Errorf("workflow-operation-timeout-envelope-invalid")
+	}
+	return result, nil
+}
 
 type workflowRequest struct {
 	Operation                       string
@@ -75,6 +158,10 @@ func (request *workflowRequest) release() {
 func clientRequest(operation string, stdout io.Writer) error {
 	if !validWorkflowOperation(operation) {
 		return fmt.Errorf("client-operation-invalid")
+	}
+	timeouts, err := timeoutsForWorkflowOperation(operation)
+	if err != nil {
+		return err
 	}
 	if os.Geteuid() == 0 {
 		return fmt.Errorf("client-root-forbidden")
@@ -136,7 +223,7 @@ func clientRequest(operation string, stdout io.Writer) error {
 	if !ok {
 		return fmt.Errorf("authority-socket-invalid")
 	}
-	if err := unix.SetDeadline(time.Now().Add(clientProtocolTimeout)); err != nil {
+	if err := unix.SetDeadline(time.Now().Add(timeouts.Client)); err != nil {
 		return err
 	}
 	peer, err := unixPeer(unix)
@@ -272,7 +359,9 @@ func serverConnection(stdin *os.File, stdout io.Writer, root string) error {
 	if !ok {
 		return fmt.Errorf("server-socket-type-invalid")
 	}
-	if err := unix.SetDeadline(time.Now().Add(serverProtocolTimeout)); err != nil {
+	if err := unix.SetDeadline(
+		time.Now().Add(releaseServerProtocolTimeout),
+	); err != nil {
 		return err
 	}
 	config, key, err := LoadConfig(root)
@@ -295,7 +384,16 @@ func serverConnection(stdin *os.File, stdout io.Writer, root string) error {
 		return err
 	}
 	defer request.release()
-	baseContext, baseCancel := context.WithTimeout(context.Background(), releaseExecutionTimeout)
+	timeouts, err := timeoutsForWorkflowOperation(request.Operation)
+	if err != nil {
+		return err
+	}
+	if err := unix.SetDeadline(time.Now().Add(timeouts.Server)); err != nil {
+		return err
+	}
+	baseContext, baseCancel := context.WithTimeout(
+		context.Background(), timeouts.Execution,
+	)
 	defer baseCancel()
 	requestContext, requestCancel, requestComplete := peerBoundContext(baseContext, unix)
 	defer requestCancel()

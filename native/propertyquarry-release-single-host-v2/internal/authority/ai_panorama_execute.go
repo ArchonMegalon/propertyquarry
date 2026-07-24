@@ -99,7 +99,9 @@ func runAiPanoramaDatabaseContainerPhase(
 	raw, phaseErr := runAiPanoramaContainerRaw(
 		parent, config, runtime, sealed, network, phase, secretPath,
 	)
-	cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
+	cleanupContext, cancel := context.WithTimeout(
+		context.WithoutCancel(parent), aiPanoramaCleanupTimeout,
+	)
 	defer cancel()
 	networkCleanupErr := cleanupAiPanoramaNetwork(cleanupContext, config, runtime)
 	secretCleanupErr := destroyAiPanoramaDatabaseSecret(root)
