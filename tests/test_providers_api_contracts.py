@@ -17,6 +17,10 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
+from tests.product_test_helpers import (
+    generated_reconstruction_style_fixture as _generated_reconstruction_style_fixture,
+)
+
 
 @pytest.fixture(scope="module", autouse=True)
 def _isolate_provider_contract_persistence(
@@ -7758,6 +7762,11 @@ def test_generated_reconstruction_bundle_does_not_publish_fake_tour_viewer(
     (reconstruction_dir / "photo-01.jpg").write_bytes(b"photo-one-jpeg")
     (reconstruction_dir / "photo-02.jpg").write_bytes(b"photo-two-jpeg")
     route_labels = ["living room", "bedroom"]
+    requested_style, style_scene, generated_style_fields, viewer_style_fields = (
+        _generated_reconstruction_style_fixture(
+            route_stop_count=len(route_labels),
+        )
+    )
     walkable_scene = {
         "kind": "generated_reconstruction_layout",
         "rooms": [
@@ -7812,12 +7821,31 @@ def test_generated_reconstruction_bundle_does_not_publish_fake_tour_viewer(
         json.dumps(
             {
                 "provider": "propertyquarry_generated_reconstruction",
+                "verified_provider_capture": False,
+                "satisfies_verified_tour_gate": False,
+                "requested_style": requested_style,
+                "style_scene": style_scene,
                 "geometry": {"wall_rect_count": 4},
                 "room_dimensions_m": {"width": 5.0, "depth": 4.0, "height": 2.7},
                 "walkable_scene": walkable_scene,
                 "route_labels": route_labels,
+                "viewer": {
+                    "relpath": "viewer.html",
+                    **viewer_style_fields,
+                    "sha256": hashlib.sha256(
+                        (reconstruction_dir / "viewer.html").read_bytes()
+                    ).hexdigest(),
+                },
                 "walkthrough_route_labels": route_labels,
                 "walkthrough": {"status": "generated", "coverage_proof": coverage_proof},
+                "model": {
+                    "obj_sha256": hashlib.sha256(
+                        (reconstruction_dir / "model.obj").read_bytes()
+                    ).hexdigest(),
+                    "mtl_sha256": hashlib.sha256(
+                        (reconstruction_dir / "model.mtl").read_bytes()
+                    ).hexdigest(),
+                },
             },
             ensure_ascii=False,
         ),
@@ -7842,9 +7870,14 @@ def test_generated_reconstruction_bundle_does_not_publish_fake_tour_viewer(
                     "map_lat": 48.2491,
                     "map_lng": 16.3567,
                 },
+                "video_relpath": "generated-reconstruction/generated-walkthrough.mp4",
+                "video_sidecar_relpath": "generated-reconstruction/generated-walkthrough.quality.json",
+                "video_provider": "propertyquarry_generated_reconstruction",
+                "video_provider_key": "propertyquarry_generated_reconstruction",
+                "video_coverage_proof": "boundary_verified_frame_continuation",
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
-                    "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+                    **generated_style_fields,
                     "viewer_relpath": "generated-reconstruction/viewer.html",
                     "model_relpath": "generated-reconstruction/model.obj",
                     "material_relpath": "generated-reconstruction/model.mtl",
@@ -7863,6 +7896,7 @@ def test_generated_reconstruction_bundle_does_not_publish_fake_tour_viewer(
                     "walkable_scene": walkable_scene,
                     "walkthrough_coverage_proof": coverage_proof,
                     "verified_provider_capture": False,
+                    "satisfies_verified_tour_gate": False,
                 },
             },
             ensure_ascii=False,
@@ -7933,7 +7967,7 @@ def test_generated_reconstruction_bundle_does_not_publish_fake_tour_viewer(
 
     viewer_shell = client.get(f"/tours/{slug}")
     assert viewer_shell.status_code == 200
-    assert "PropertyQuarry layout tour" in viewer_shell.text
+    assert "PropertyQuarry styled 3D reconstruction" in viewer_shell.text
     assert "Generated reconstruction" in viewer_shell.text
     assert "Room route" in viewer_shell.text
     for private_marker in (
@@ -8008,6 +8042,14 @@ def _write_shell_ready_generated_reconstruction_fixture(bundle_dir: Path) -> dic
     reconstruction_dir = bundle_dir / "generated-reconstruction"
     reconstruction_dir.mkdir(parents=True)
     (reconstruction_dir / "viewer.html").write_text("<!doctype html><html><body>viewer</body></html>", encoding="utf-8")
+    (reconstruction_dir / "model.obj").write_text(
+        "o propertyquarry_generated_layout\nv 0 0 0\n",
+        encoding="utf-8",
+    )
+    (reconstruction_dir / "model.mtl").write_text(
+        "newmtl walls\nKd 0.8 0.8 0.8\n",
+        encoding="utf-8",
+    )
     (reconstruction_dir / "generated-walkthrough.mp4").write_bytes(b"fake-mp4")
     (reconstruction_dir / "generated-walkthrough.quality.json").write_text(
         json.dumps(
@@ -8026,6 +8068,11 @@ def _write_shell_ready_generated_reconstruction_fixture(bundle_dir: Path) -> dic
     (reconstruction_dir / "photo-01.jpg").write_bytes(b"photo-1")
     (reconstruction_dir / "photo-02.jpg").write_bytes(b"photo-2")
     route_labels = ["entry/hall", "living room", "bedroom"]
+    requested_style, style_scene, generated_style_fields, viewer_style_fields = (
+        _generated_reconstruction_style_fixture(
+            route_stop_count=len(route_labels),
+        )
+    )
     walkable_scene = {
         "kind": "generated_reconstruction_layout",
         "rooms": [
@@ -8060,10 +8107,35 @@ def _write_shell_ready_generated_reconstruction_fixture(bundle_dir: Path) -> dic
         json.dumps(
             {
                 "provider": "propertyquarry_generated_reconstruction",
+                "verified_provider_capture": False,
+                "satisfies_verified_tour_gate": False,
+                "requested_style": requested_style,
+                "style_scene": style_scene,
                 "geometry": {"wall_rect_count": 4},
                 "room_dimensions_m": {"width": 6.0, "depth": 5.0, "height": 2.7},
                 "walkable_scene": walkable_scene,
+                "route_labels": route_labels,
+                "viewer": {
+                    "relpath": "viewer.html",
+                    **viewer_style_fields,
+                    "sha256": hashlib.sha256(
+                        (reconstruction_dir / "viewer.html").read_bytes()
+                    ).hexdigest(),
+                },
+                "walkthrough_route_labels": route_labels,
                 "walkthrough": {"status": "generated", "coverage_proof": coverage_proof},
+                "model": {
+                    "obj_sha256": hashlib.sha256(
+                        (reconstruction_dir / "model.obj").read_bytes()
+                    ).hexdigest(),
+                    "mtl_sha256": hashlib.sha256(
+                        (reconstruction_dir / "model.mtl").read_bytes()
+                    ).hexdigest(),
+                    "glb_export": {
+                        "status": "failed",
+                        "reason": "test_fixture_no_glb",
+                    },
+                },
             },
             ensure_ascii=False,
         ),
@@ -8071,9 +8143,13 @@ def _write_shell_ready_generated_reconstruction_fixture(bundle_dir: Path) -> dic
     )
     return {
         "provider": "propertyquarry_generated_reconstruction",
-        "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+        **generated_style_fields,
         "viewer_relpath": "generated-reconstruction/viewer.html",
         "manifest_relpath": "generated-reconstruction/reconstruction.json",
+        "model_relpath": "generated-reconstruction/model.obj",
+        "material_relpath": "generated-reconstruction/model.mtl",
+        "glb_model_relpath": "",
+        "glb_export_status": "failed",
         "walkthrough_video_relpath": "generated-reconstruction/generated-walkthrough.mp4",
         "walkthrough_sidecar_relpath": "generated-reconstruction/generated-walkthrough.quality.json",
         "floorplan_relpath": "generated-reconstruction/source-floorplan.jpg",
@@ -8088,6 +8164,7 @@ def _write_shell_ready_generated_reconstruction_fixture(bundle_dir: Path) -> dic
         "walkable_scene": walkable_scene,
         "walkthrough_coverage_proof": coverage_proof,
         "verified_provider_capture": False,
+        "satisfies_verified_tour_gate": False,
     }
 
 
@@ -8105,6 +8182,11 @@ def test_public_tour_page_rejects_generated_reconstruction_launch_shell(
             {
                 "slug": slug,
                 "display_title": "Generated reconstruction launch",
+                "video_relpath": "generated-reconstruction/generated-walkthrough.mp4",
+                "video_sidecar_relpath": "generated-reconstruction/generated-walkthrough.quality.json",
+                "video_provider": "propertyquarry_generated_reconstruction",
+                "video_provider_key": "propertyquarry_generated_reconstruction",
+                "video_coverage_proof": "boundary_verified_frame_continuation",
                 "generated_reconstruction": generated_reconstruction,
             },
             ensure_ascii=False,
@@ -8117,12 +8199,12 @@ def test_public_tour_page_rejects_generated_reconstruction_launch_shell(
     response = client.get(f"/tours/{slug}", follow_redirects=False)
 
     assert response.status_code == 200
-    assert "PropertyQuarry layout tour" in response.text
+    assert "PropertyQuarry styled 3D reconstruction" in response.text
     assert "Generated reconstruction" in response.text
     assert f"/tours/files/{slug}/generated-reconstruction/viewer.html" not in response.text
     layout_preview = client.get(f"/tours/{slug}/layout-preview", follow_redirects=False)
     assert layout_preview.status_code == 200
-    assert "PropertyQuarry layout preview" in layout_preview.text
+    assert "PropertyQuarry styled 3D reconstruction" in layout_preview.text
 
 
 def test_public_tour_page_rejects_generated_reconstruction_walkthrough_on_autoplay(
@@ -8139,6 +8221,11 @@ def test_public_tour_page_rejects_generated_reconstruction_walkthrough_on_autopl
             {
                 "slug": slug,
                 "display_title": "Generated reconstruction walkthrough launch",
+                "video_relpath": "generated-reconstruction/generated-walkthrough.mp4",
+                "video_sidecar_relpath": "generated-reconstruction/generated-walkthrough.quality.json",
+                "video_provider": "propertyquarry_generated_reconstruction",
+                "video_provider_key": "propertyquarry_generated_reconstruction",
+                "video_coverage_proof": "boundary_verified_frame_continuation",
                 "generated_reconstruction": generated_reconstruction,
             },
             ensure_ascii=False,
@@ -8152,7 +8239,7 @@ def test_public_tour_page_rejects_generated_reconstruction_walkthrough_on_autopl
 
     assert response.status_code == 200
     assert "<video id=\"tour-video\"" in response.text
-    assert "PropertyQuarry layout tour" in response.text
+    assert "PropertyQuarry styled 3D reconstruction" in response.text
     assert 'id="walkthrough-progress-track"' in response.text
     assert 'id="walkthrough-progress-fill"' in response.text
     assert 'id="route-prev"' in response.text

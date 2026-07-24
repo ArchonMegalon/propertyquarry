@@ -8,6 +8,39 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 
+def generated_reconstruction_style_fixture(
+    *,
+    route_stop_count: int,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
+    from scripts import property_reconstruction_styles as reconstruction_styles
+
+    requested_style = reconstruction_styles.reconstruction_style("")
+    style_scene = reconstruction_styles.build_style_scene(
+        requested_style,
+        route_stop_count=route_stop_count,
+    )
+    generated_fields = {
+        "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        "style_contract_version": reconstruction_styles.STYLE_SCENE_CONTRACT_VERSION,
+        "style_id": requested_style["id"],
+        "style_label": requested_style["label"],
+        "style_signature": requested_style["signature"],
+        "style_scene_signature": style_scene["scene_signature"],
+        "style_evidence_status": "ready",
+        "styled_scene_instance_count": len(style_scene["instances"]),
+        "style_cue_kinds": list(style_scene["required_cues"]),
+        "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+    }
+    viewer_fields = {
+        "version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
+        "style_id": requested_style["id"],
+        "style_signature": requested_style["signature"],
+        "style_scene_signature": style_scene["scene_signature"],
+        "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
+    }
+    return requested_style, style_scene, generated_fields, viewer_fields
+
+
 def _build_client(
     *,
     principal_id: str,

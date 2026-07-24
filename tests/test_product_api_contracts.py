@@ -55,7 +55,14 @@ from scripts.property_tour_panorama_provenance import (
 )
 from scripts import property_reconstruction_styles as reconstruction_styles
 from starlette.requests import Request
-from tests.product_test_helpers import build_operator_product_client, build_product_client, build_property_client, seed_product_state, start_workspace
+from tests.product_test_helpers import (
+    build_operator_product_client,
+    build_product_client,
+    build_property_client,
+    generated_reconstruction_style_fixture as _generated_reconstruction_style_fixture,
+    seed_product_state,
+    start_workspace,
+)
 
 
 def _generated_reconstruction_transaction_kwargs() -> dict[str, object]:
@@ -70,37 +77,6 @@ def _generated_reconstruction_transaction_kwargs() -> dict[str, object]:
         "property_facts_json": {"has_floorplan": True, "floorplan_count": 1},
         "source_host": "example.test",
     }
-
-
-def _generated_reconstruction_style_fixture(
-    *,
-    route_stop_count: int,
-) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
-    requested_style = reconstruction_styles.reconstruction_style("")
-    style_scene = reconstruction_styles.build_style_scene(
-        requested_style,
-        route_stop_count=route_stop_count,
-    )
-    generated_fields = {
-        "viewer_version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
-        "style_contract_version": reconstruction_styles.STYLE_SCENE_CONTRACT_VERSION,
-        "style_id": requested_style["id"],
-        "style_label": requested_style["label"],
-        "style_signature": requested_style["signature"],
-        "style_scene_signature": style_scene["scene_signature"],
-        "style_evidence_status": "ready",
-        "styled_scene_instance_count": len(style_scene["instances"]),
-        "style_cue_kinds": list(style_scene["required_cues"]),
-        "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
-    }
-    viewer_fields = {
-        "version": reconstruction_styles.GENERATED_RECONSTRUCTION_VIEWER_VERSION,
-        "style_id": requested_style["id"],
-        "style_signature": requested_style["signature"],
-        "style_scene_signature": style_scene["scene_signature"],
-        "floorplan_display_mode": reconstruction_styles.FLOORPLAN_DISPLAY_MODE,
-    }
-    return requested_style, style_scene, generated_fields, viewer_fields
 
 
 def test_willhaben_packet_subprocess_uses_current_runtime_and_ea_pythonpath(
@@ -35772,6 +35748,11 @@ def test_public_tour_generated_layout_preview_route_surfaces_diorama_hero_for_re
     reconstruction_dir.mkdir(parents=True)
     route_labels = ["entry/hall", "living room", "bedroom"]
     walkthrough_route_labels = ["entry/hall", "living room", "bedroom", "living room detail 2"]
+    requested_style, style_scene, generated_style_fields, viewer_style_fields = (
+        _generated_reconstruction_style_fixture(
+            route_stop_count=len(route_labels),
+        )
+    )
     walkable_scene = {
         "kind": "generated_reconstruction_layout",
         "route": [
@@ -35832,8 +35813,12 @@ def test_public_tour_generated_layout_preview_route_surfaces_diorama_hero_for_re
     }
     viewer_html = (
         "<!doctype html><html><body "
-        'data-pq-preview-kind="approximate-layout" '
-        'data-pq-verified-provider-capture="false">'
+        'data-pq-preview-kind="styled-3d-reconstruction" '
+        'data-pq-verified-provider-capture="false" '
+        f'data-pq-style-id="{requested_style["id"]}" '
+        f'data-pq-style-signature="{requested_style["signature"]}" '
+        f'data-pq-style-scene-signature="{style_scene["scene_signature"]}" '
+        f'data-pq-floorplan-display-mode="{reconstruction_styles.FLOORPLAN_DISPLAY_MODE}">'
         '<script type="module">'
         'import * as THREE from "./vendor/three.module.js";'
         'import { OrbitControls } from "./vendor/examples/jsm/controls/OrbitControls.js";'
@@ -35878,13 +35863,18 @@ def test_public_tour_generated_layout_preview_route_surfaces_diorama_hero_for_re
                 "provider": "propertyquarry_generated_reconstruction",
                 "verified_provider_capture": False,
                 "satisfies_verified_tour_gate": False,
+                "requested_style": requested_style,
+                "style_scene": style_scene,
                 "room_dimensions_m": {"width": 8.0, "depth": 5.5, "height": 2.8},
                 "geometry": {"wall_rect_count": 8},
                 "walkable_scene": walkable_scene,
                 "route_labels": route_labels,
                 "viewer": {
                     "relpath": "viewer.html",
-                    "version": "propertyquarry_3d_tour_viewer_v3",
+                    **viewer_style_fields,
+                    "sha256": hashlib.sha256(
+                        (reconstruction_dir / "viewer.html").read_bytes()
+                    ).hexdigest(),
                 },
                 "walkthrough_route_labels": walkthrough_route_labels,
                 "walkthrough": {
@@ -35896,11 +35886,20 @@ def test_public_tour_generated_layout_preview_route_surfaces_diorama_hero_for_re
                     },
                 },
                 "model": {
+                    "obj_sha256": hashlib.sha256(
+                        (reconstruction_dir / "model.obj").read_bytes()
+                    ).hexdigest(),
+                    "mtl_sha256": hashlib.sha256(
+                        (reconstruction_dir / "model.mtl").read_bytes()
+                    ).hexdigest(),
                     "glb_export": {
                         "status": "generated",
                         "glb_relpath": "model.glb",
+                        "glb_sha256": hashlib.sha256(
+                            (reconstruction_dir / "model.glb").read_bytes()
+                        ).hexdigest(),
                         "glb_size_bytes": 2052,
-                    }
+                    },
                 },
             }
         ),
@@ -35915,7 +35914,7 @@ def test_public_tour_generated_layout_preview_route_surfaces_diorama_hero_for_re
                 "preview_relpath": "diorama-preview.png",
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
-                    "viewer_version": "propertyquarry_3d_tour_viewer_v3",
+                    **generated_style_fields,
                     "viewer_relpath": "generated-reconstruction/viewer.html",
                     "manifest_relpath": "generated-reconstruction/reconstruction.json",
                     "model_relpath": "generated-reconstruction/model.obj",
@@ -35981,8 +35980,10 @@ def test_public_tour_generated_layout_preview_route_surfaces_diorama_hero_for_re
     assert viewer.headers["x-frame-options"] == "SAMEORIGIN"
     assert viewer.headers["x-propertyquarry-tour-asset-kind"] == "generated-reconstruction-viewer"
     assert "frame-ancestors 'self'" in viewer.headers["content-security-policy"]
-    assert "Generated diorama" in launch.text
-    assert "Generated diorama" in preview.text
+    assert "PropertyQuarry styled 3D reconstruction" in launch.text
+    assert "PropertyQuarry styled 3D reconstruction" in preview.text
+    assert f"Start in the interactive {requested_style['label']} scene" in launch.text
+    assert f"Start in the interactive {requested_style['label']} scene" in preview.text
     assert 'id="lead-preview-image"' in launch.text
     assert 'id="lead-preview-image"' in preview.text
     assert 'id="layout-viewer-frame"' in launch.text
