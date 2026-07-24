@@ -73,7 +73,7 @@ func (request *workflowRequest) release() {
 }
 
 func clientRequest(operation string, stdout io.Writer) error {
-	if operation != "release-preflight" && operation != "release-run" {
+	if !validWorkflowOperation(operation) {
 		return fmt.Errorf("client-operation-invalid")
 	}
 	if os.Geteuid() == 0 {
@@ -228,6 +228,25 @@ func validateClientResponsePayload(payload map[string]any, public ed25519.Public
 			payload["release_effects_authorized"] != true || payload["release_effects_performed"] != true || payload["rollback_performed"] != false {
 			return fmt.Errorf("client-release-not-successful")
 		}
+	case aiPanoramaInstallOperation:
+		if eventType != aiPanoramaInstallSucceededEvent || disposition != "succeeded" ||
+			payload["ready"] != false || payload["production_ready"] != true ||
+			payload["release_effects_authorized"] != true || payload["release_effects_performed"] != true ||
+			payload["rollback_performed"] != false ||
+			payload["ai_panorama_install_verified"] != true ||
+			payload["ai_panorama_slug"] != aiPanoramaPraterSlug ||
+			payload["ai_panorama_control_url"] != aiPanoramaPraterControlURL {
+			return fmt.Errorf("client-ai-panorama-install-not-successful")
+		}
+	case aiPanoramaCloseoutOperation:
+		if eventType != aiPanoramaCloseoutSucceededEvent || disposition != "revoked" ||
+			payload["ready"] != false || payload["production_ready"] != false ||
+			payload["release_effects_authorized"] != true ||
+			payload["rollback_performed"] != false ||
+			payload["ai_panorama_revocation_verified"] != true ||
+			payload["ai_panorama_slug"] != aiPanoramaPraterSlug {
+			return fmt.Errorf("client-ai-panorama-closeout-not-successful")
+		}
 	default:
 		return fmt.Errorf("client-response-operation-invalid")
 	}
@@ -327,7 +346,7 @@ func parseWorkflowRequest(raw []byte, config *Config) (*workflowRequest, error) 
 	tokenText, tokenOK := exactString(value["actions_request_token"])
 	identity, identityOK := value["diagnostic_identity"].(map[string]any)
 	bootstrap, bootstrapOK := value["security_bootstrap_attestation"].(map[string]any)
-	if !opOK || (operation != "release-preflight" && operation != "release-run") || !requestOK || !idPattern.MatchString(requestID) || !urlOK || !tokenOK || !identityOK ||
+	if !opOK || !validWorkflowOperation(operation) || !requestOK || !idPattern.MatchString(requestID) || !urlOK || !tokenOK || !identityOK ||
 		!hasKeys(identity, "candidate_sha", "environment", "job", "ref", "repository", "run_attempt", "run_id", "runner_label", "runner_ticket_sha256", "workflow_ref", "workflow_sha") || !bootstrapOK ||
 		!hasKeys(bootstrap, "artifact_digest", "attestation_sha256", "run_id") {
 		return nil, fmt.Errorf("request-binding-invalid")
@@ -456,7 +475,7 @@ func randomRequestID(operation string) (string, error) {
 }
 
 func requestIDForRun(operation, runID string, runAttempt int64) (string, error) {
-	if (operation != "release-preflight" && operation != "release-run") || !decimal(runID) || runAttempt < 1 || runAttempt > 1<<31-1 {
+	if !validWorkflowOperation(operation) || !decimal(runID) || runAttempt < 1 || runAttempt > 1<<31-1 {
 		return "", fmt.Errorf("client-request-id-invalid")
 	}
 	requestID := operation + "-" + runID + "-" + strconv.FormatInt(runAttempt, 10)
@@ -464,6 +483,11 @@ func requestIDForRun(operation, runID string, runAttempt int64) (string, error) 
 		return "", fmt.Errorf("client-request-id-invalid")
 	}
 	return requestID, nil
+}
+
+func validWorkflowOperation(operation string) bool {
+	return operation == "release-preflight" || operation == "release-run" ||
+		operation == aiPanoramaInstallOperation || operation == aiPanoramaCloseoutOperation
 }
 
 var randReader io.Reader = rand.Reader

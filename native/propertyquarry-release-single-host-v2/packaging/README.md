@@ -74,6 +74,46 @@ The top-level members are `manifest.v2.json` (mode `0444`) and
 | `/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v3.json` | `0400` | receipt-authority-signed successful protected-environment prerequisite proof |
 | `/var/lib/propertyquarry-release-single-host-v2/runner-reservation.v2.json` | `0400` | receipt-authority-signed runner reservation and source-checkout binding |
 
+## Governed Prater panorama operations
+
+The controller accepts the closed operations `ai-panorama-install` and
+`ai-panorama-closeout` for the fixed
+`prater-messe-maisonette-ai-360-053ad185e1c44b2e` publication. They use only
+the Compose volume `propertyquarry_governed_public_tours` (Docker name
+`property_propertyquarry_governed_public_tours`) at
+`/data/governed_public_property_tours`; the legacy dynamic public-tour volume
+is rejected.
+
+Installation runs fixed, rootless-application-image one-shots for volume
+bootstrap, private record discovery, preflight, and apply. The bootstrap and
+preflight have no network. Discovery and apply use a temporary internal
+database-only bridge and the fixed scheduler database credential projection.
+Every one-shot has a read-only root filesystem, no Docker log driver, an exact
+image digest, a deterministic name and labels, and the minimum phase-specific
+mounts and capabilities. The controller independently verifies the image,
+container consumers, volume identity, closed volume inventory, canonical
+stdout projection, public manifest, and database-bound terminal receipt.
+
+Before the four AI state files are created, the signed main controller journal
+durably commits their generated instance IDs, exact final and staging names,
+canonical bytes and digests, modes, ownership, and control-root device/inode
+identity. Each leaf is written and fsynced under its intent-derived staging
+name, securely reread, hard-linked without replacement to the fixed final
+name, directory-fsynced, then unlinked and directory-fsynced again. Recovery
+may complete only missing intent-bound bytes or a verified staging/link
+boundary. Once the signed completion exists, a missing, replaced, relinked, or
+partial state leaf is terminal tamper and is never regenerated.
+
+Closeout is a database-independent privacy kill switch bound to the prior
+signed install success, installed manifest, exact governed volume identity,
+and fresh closeout OIDC authority. It remains usable when the API, scheduler,
+render service, current database environment, or original release run is
+absent. A no-network one-shot receives only the governed volume and the fixed
+mode-`0400` canonical revocation request, writes the byte-identical
+root-owned mode-`0444` marker, and returns the same canonical bytes. Recovery
+binds that marker to the signed closeout journal and never deletes or replaces
+an authenticated revocation.
+
 The 226 MB GitHub runner archive is intentionally not in this package. Its
 official version, byte count, URL, and SHA-256 are pinned by `runner.lock.json`;
 the root helper must independently verify any installed archive.
