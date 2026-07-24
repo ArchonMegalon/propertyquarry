@@ -66,6 +66,7 @@ jobs:
           PYTHONPATH=ea python scripts/check_property_repo_isolation.py
 
   propertyquarry-protected-dispatch-inputs:
+    name: "propertyquarry-protected-dispatch-inputs | ${{ inputs.release_runner_label }} | ${{ inputs.release_runner_ticket_sha256 }}"
     if: ${{ github.event_name == 'workflow_dispatch' }}
     environment:
       name: propertyquarry-production

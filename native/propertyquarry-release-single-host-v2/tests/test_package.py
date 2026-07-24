@@ -429,6 +429,10 @@ class PackageTests(unittest.TestCase):
             }
         )
         prerequisite_job_id = "789"
+        prerequisite_job_name = package._runner_prerequisite_job_name(
+            runner_label=runner_label,
+            reservation_sha256=package.sha256(reservation_raw),
+        )
         prerequisite_intent_payload = {
             "authority_profile": package.PROFILE,
             "comment": "PropertyQuarry governed prerequisite approval "
@@ -440,7 +444,8 @@ class PackageTests(unittest.TestCase):
             "initial_pending_deployments_sha256": "sha256:" + "2" * 64,
             "initial_runs_index_sha256": "sha256:" + "3" * 64,
             "prerequisite_job_id": prerequisite_job_id,
-            "prerequisite_job_name": package.RUNNER_PREREQUISITE_JOB,
+            "prerequisite_job_key": package.RUNNER_PREREQUISITE_JOB_KEY,
+            "prerequisite_job_name": prerequisite_job_name,
             "receipt_authority_key_id": receipt_key_id,
             "release_job": package.RELEASE_JOB,
             "repository": package.REPOSITORY,
@@ -451,8 +456,8 @@ class PackageTests(unittest.TestCase):
             "run_attempt": 1,
             "run_id": "123",
             "runner_label": runner_label,
-            "schema": package.RUNNER_PREREQUISITE_INTENT_SCHEMA,
-            "version": 2,
+            "schema": package.RUNNER_PREREQUISITE_INTENT_SCHEMA_V3,
+            "version": 3,
             "workflow_path": ".github/workflows/smoke-runtime.yml",
             "workflow_ref": package.WORKFLOW_REF,
             "workflow_sha": workflow_sha,
@@ -462,7 +467,7 @@ class PackageTests(unittest.TestCase):
         )
         prerequisite_intent_signature = self.receipt_private.sign(
             package.framed(
-                package.RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN,
+                package.RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN_V3,
                 prerequisite_intent_canonical,
             )
         )
@@ -471,6 +476,76 @@ class PackageTests(unittest.TestCase):
                 "payload": prerequisite_intent_payload,
                 "signature": base64.urlsafe_b64encode(
                     prerequisite_intent_signature
+                )
+                .rstrip(b"=")
+                .decode("ascii"),
+                "signature_key_id": receipt_key_id,
+            }
+        )
+        prerequisite_request_raw = package.canonical_json(
+            {
+                "comment": prerequisite_intent_payload["comment"],
+                "environment_ids": [
+                    int(prerequisite_intent_payload["environment_id"])
+                ],
+                "state": "approved",
+            }
+        )
+        prerequisite_post_attempt_payload = {
+            "attempted_at_epoch": started - 20,
+            "authority_profile": package.PROFILE,
+            "comment": prerequisite_intent_payload["comment"],
+            "environment_id": prerequisite_intent_payload["environment_id"],
+            "environment_name": package.ENVIRONMENT,
+            "github_api_path": (
+                f"/repos/{package.REPOSITORY}/actions/runs/"
+                f"{prerequisite_intent_payload['run_id']}/pending_deployments"
+            ),
+            "http_method": "POST",
+            "intent_sha256": package.sha256(prerequisite_intent_raw),
+            "pre_post_jobs_sha256": "sha256:" + "8" * 64,
+            "pre_post_pending_deployments_count": 1,
+            "pre_post_pending_deployments_sha256": "sha256:" + "9" * 64,
+            "pre_post_release_job_present": False,
+            "pre_post_review_history_sha256": "sha256:" + "a" * 64,
+            "pre_post_review_match_count": 0,
+            "pre_post_review_scope": "any-approved-target-environment",
+            "pre_post_run_sha256": "sha256:" + "b" * 64,
+            "prerequisite_job_id": prerequisite_job_id,
+            "prerequisite_job_key": package.RUNNER_PREREQUISITE_JOB_KEY,
+            "prerequisite_job_name": prerequisite_job_name,
+            "receipt_authority_key_id": receipt_key_id,
+            "repository": package.REPOSITORY,
+            "repository_id": package.REPOSITORY_ID,
+            "repository_owner_id": package.REPOSITORY_OWNER_ID,
+            "request_sha256": package.sha256(prerequisite_request_raw),
+            "reservation_expires_at_epoch": reservation_payload[
+                "expires_at_epoch"
+            ],
+            "reservation_sha256": package.sha256(reservation_raw),
+            "run_attempt": 1,
+            "run_id": "123",
+            "runner_label": runner_label,
+            "schema": package.RUNNER_PREREQUISITE_POST_ATTEMPT_SCHEMA_V3,
+            "version": 3,
+            "workflow_path": ".github/workflows/smoke-runtime.yml",
+            "workflow_ref": package.WORKFLOW_REF,
+            "workflow_sha": workflow_sha,
+        }
+        prerequisite_post_attempt_canonical = package.canonical_json(
+            prerequisite_post_attempt_payload
+        )
+        prerequisite_post_attempt_signature = self.receipt_private.sign(
+            package.framed(
+                package.RUNNER_PREREQUISITE_POST_ATTEMPT_SIGNATURE_DOMAIN_V3,
+                prerequisite_post_attempt_canonical,
+            )
+        )
+        prerequisite_post_attempt_raw = package.canonical_json(
+            {
+                "payload": prerequisite_post_attempt_payload,
+                "signature": base64.urlsafe_b64encode(
+                    prerequisite_post_attempt_signature
                 )
                 .rstrip(b"=")
                 .decode("ascii"),
@@ -488,7 +563,8 @@ class PackageTests(unittest.TestCase):
             "post_pending_deployments_sha256": "sha256:" + "6" * 64,
             "prerequisite_conclusion": "success",
             "prerequisite_job_id": prerequisite_job_id,
-            "prerequisite_job_name": package.RUNNER_PREREQUISITE_JOB,
+            "prerequisite_job_key": package.RUNNER_PREREQUISITE_JOB_KEY,
+            "prerequisite_job_name": prerequisite_job_name,
             "receipt_authority_key_id": receipt_key_id,
             "release_job": package.RELEASE_JOB,
             "repository": package.REPOSITORY,
@@ -500,8 +576,8 @@ class PackageTests(unittest.TestCase):
             "run_attempt": 1,
             "run_id": "123",
             "runner_label": runner_label,
-            "schema": package.RUNNER_PREREQUISITE_APPROVAL_SCHEMA,
-            "version": 2,
+            "schema": package.RUNNER_PREREQUISITE_APPROVAL_SCHEMA_V3,
+            "version": 3,
             "workflow_path": ".github/workflows/smoke-runtime.yml",
             "workflow_ref": package.WORKFLOW_REF,
             "workflow_sha": workflow_sha,
@@ -511,7 +587,7 @@ class PackageTests(unittest.TestCase):
         )
         prerequisite_approval_signature = self.receipt_private.sign(
             package.framed(
-                package.RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN,
+                package.RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN_V3,
                 prerequisite_approval_canonical,
             )
         )
@@ -1037,11 +1113,15 @@ class PackageTests(unittest.TestCase):
                 "runner-launch-ticket.v2.json", runner_launch_ticket_raw
             ),
             "runner_prerequisite_intent": self._write(
-                "runner-prerequisite-intent.v2.json",
+                "runner-prerequisite-intent.v3.json",
                 prerequisite_intent_raw,
             ),
+            "runner_prerequisite_post_attempt": self._write(
+                "runner-prerequisite-post-attempt.v3.json",
+                prerequisite_post_attempt_raw,
+            ),
             "runner_prerequisite_approval": self._write(
-                "runner-prerequisite-approval.v2.json",
+                "runner-prerequisite-approval.v3.json",
                 prerequisite_approval_raw,
             ),
             "package_public": self._write(
@@ -1090,6 +1170,9 @@ class PackageTests(unittest.TestCase):
                 runner_launch_ticket=str(self.paths["runner_launch_ticket"]),
                 runner_prerequisite_intent=str(
                     self.paths["runner_prerequisite_intent"]
+                ),
+                runner_prerequisite_post_attempt=str(
+                    self.paths["runner_prerequisite_post_attempt"]
                 ),
                 runner_prerequisite_approval=str(
                     self.paths["runner_prerequisite_approval"]
@@ -1204,7 +1287,8 @@ class PackageTests(unittest.TestCase):
         package_paths = [entry["package_path"] for entry in verified.manifest["files"]]
         self.assertEqual(package_paths, sorted(package_paths))
         self.assertEqual(
-            set(package_paths), {"payload" + path for path in package.PAYLOAD_LAYOUT}
+            set(package_paths),
+            {"payload" + path for path in package.PAYLOAD_LAYOUT_V3},
         )
         entries = {
             entry["install_path"]: entry for entry in verified.manifest["files"]
@@ -1364,11 +1448,15 @@ class PackageTests(unittest.TestCase):
         )
         intent_member = (
             "payload/var/lib/propertyquarry-release-single-host-v2/"
-            "runner-prerequisite-intent.v2.json"
+            "runner-prerequisite-intent.v3.json"
         )
         approval_member = (
             "payload/var/lib/propertyquarry-release-single-host-v2/"
-            "runner-prerequisite-approval.v2.json"
+            "runner-prerequisite-approval.v3.json"
+        )
+        post_attempt_member = (
+            "payload/var/lib/propertyquarry-release-single-host-v2/"
+            "runner-prerequisite-post-attempt.v3.json"
         )
         self.assertEqual(
             verified.members[intent_member],
@@ -1377,6 +1465,10 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(
             verified.members[approval_member],
             self.paths["runner_prerequisite_approval"].read_bytes(),
+        )
+        self.assertEqual(
+            verified.members[post_attempt_member],
+            self.paths["runner_prerequisite_post_attempt"].read_bytes(),
         )
         self.assertEqual(verified.modes[intent_member], 0o400)
         self.assertEqual(verified.modes[approval_member], 0o400)
@@ -1391,8 +1483,9 @@ class PackageTests(unittest.TestCase):
         receipt_public, _, receipt_key_id = package.load_public_key(
             self.paths["receipt_public"].read_bytes(), "test-receipt-public"
         )
-        binding = package.validate_runner_prerequisite_material(
+        binding = package.validate_runner_prerequisite_material_v3(
             intent_raw=verified.members[intent_member],
+            post_attempt_raw=verified.members[post_attempt_member],
             approval_raw=verified.members[approval_member],
             reservation_raw=self.paths["runner_reservation"].read_bytes(),
             config=self.config_value,
@@ -1403,12 +1496,105 @@ class PackageTests(unittest.TestCase):
             binding["runner_prerequisite_job_id"],
             self.config_value["runner_prerequisite_job_id"],
         )
+        self._assert_rejected(
+            lambda: package.validate_runner_prerequisite_material_v3(
+                intent_raw=verified.members[intent_member],
+                post_attempt_raw=b"",
+                approval_raw=verified.members[approval_member],
+                reservation_raw=self.paths["runner_reservation"].read_bytes(),
+                config=self.config_value,
+                receipt_public=receipt_public,
+                receipt_key_id=receipt_key_id,
+            ),
+            "runner-prerequisite-post-attempt",
+        )
+
+        intent_wire = package.parse_strict_json(
+            verified.members[intent_member], "test-prerequisite-intent"
+        )
+        intent_v2_payload = dict(intent_wire["payload"])
+        intent_v2_payload.pop("prerequisite_job_key")
+        intent_v2_payload["prerequisite_job_name"] = (
+            package.RUNNER_PREREQUISITE_JOB
+        )
+        intent_v2_payload["schema"] = (
+            package.RUNNER_PREREQUISITE_INTENT_SCHEMA
+        )
+        intent_v2_payload["version"] = 2
+        intent_v2_canonical = package.canonical_json(intent_v2_payload)
+        intent_v2_signature = self.receipt_private.sign(
+            package.framed(
+                package.RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN,
+                intent_v2_canonical,
+            )
+        )
+        intent_v2_raw = package.canonical_json(
+            {
+                "payload": intent_v2_payload,
+                "signature": base64.urlsafe_b64encode(intent_v2_signature)
+                .rstrip(b"=")
+                .decode("ascii"),
+                "signature_key_id": receipt_key_id,
+            }
+        )
+        approval_wire = package.parse_strict_json(
+            verified.members[approval_member], "test-prerequisite-approval"
+        )
+        approval_v2_payload = dict(approval_wire["payload"])
+        approval_v2_payload.pop("prerequisite_job_key")
+        approval_v2_payload["intent_sha256"] = package.sha256(intent_v2_raw)
+        approval_v2_payload["prerequisite_job_name"] = (
+            package.RUNNER_PREREQUISITE_JOB
+        )
+        approval_v2_payload["schema"] = (
+            package.RUNNER_PREREQUISITE_APPROVAL_SCHEMA
+        )
+        approval_v2_payload["version"] = 2
+        approval_v2_canonical = package.canonical_json(approval_v2_payload)
+        approval_v2_signature = self.receipt_private.sign(
+            package.framed(
+                package.RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN,
+                approval_v2_canonical,
+            )
+        )
+        approval_v2_raw = package.canonical_json(
+            {
+                "payload": approval_v2_payload,
+                "signature": base64.urlsafe_b64encode(approval_v2_signature)
+                .rstrip(b"=")
+                .decode("ascii"),
+                "signature_key_id": receipt_key_id,
+            }
+        )
+        config_v2 = dict(self.config_value)
+        config_v2["runner_prerequisite_intent_sha256"] = package.sha256(
+            intent_v2_raw
+        )
+        config_v2["runner_prerequisite_approval_sha256"] = package.sha256(
+            approval_v2_raw
+        )
+        config_v2[
+            "runner_prerequisite_approval_payload_sha256"
+        ] = package.sha256(approval_v2_canonical)
+        historical = package.validate_runner_prerequisite_material(
+            intent_raw=intent_v2_raw,
+            approval_raw=approval_v2_raw,
+            reservation_raw=self.paths["runner_reservation"].read_bytes(),
+            config=config_v2,
+            receipt_public=receipt_public,
+            receipt_key_id=receipt_key_id,
+        )
+        self.assertEqual(
+            historical["runner_prerequisite_job_id"],
+            self.config_value["runner_prerequisite_job_id"],
+        )
 
         tampered = bytearray(verified.members[approval_member])
         tampered[-2] ^= 1
         self._assert_rejected(
-            lambda: package.validate_runner_prerequisite_material(
+            lambda: package.validate_runner_prerequisite_material_v3(
                 intent_raw=verified.members[intent_member],
+                post_attempt_raw=verified.members[post_attempt_member],
                 approval_raw=bytes(tampered),
                 reservation_raw=self.paths["runner_reservation"].read_bytes(),
                 config=self.config_value,
@@ -1425,7 +1611,7 @@ class PackageTests(unittest.TestCase):
         rebound_canonical = package.canonical_json(rebound_payload)
         rebound_signature = self.receipt_private.sign(
             package.framed(
-                package.RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN,
+                package.RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN_V3,
                 rebound_canonical,
             )
         )
@@ -1446,8 +1632,9 @@ class PackageTests(unittest.TestCase):
             "runner_prerequisite_approval_payload_sha256"
         ] = package.sha256(rebound_canonical)
         self._assert_rejected(
-            lambda: package.validate_runner_prerequisite_material(
+            lambda: package.validate_runner_prerequisite_material_v3(
                 intent_raw=verified.members[intent_member],
+                post_attempt_raw=verified.members[post_attempt_member],
                 approval_raw=rebound_raw,
                 reservation_raw=self.paths["runner_reservation"].read_bytes(),
                 config=rebound_config,
@@ -1474,6 +1661,57 @@ class PackageTests(unittest.TestCase):
                 equal_jobs_config, equal_jobs_plan
             ),
             "config-runner-binding-invalid",
+        )
+
+    def test_manifest_layout_accepts_exact_v2_or_v3_and_rejects_mixed(
+        self,
+    ) -> None:
+        archive = self._build("layout-versions.tar")
+        verified = package.verify_package(
+            str(archive), str(self.paths["package_public"])
+        )
+        _public, _raw, package_key_id = package.load_public_key(
+            self.paths["package_public"].read_bytes(), "test-package-public"
+        )
+        manifest_v2 = package.parse_strict_json(
+            package.canonical_json(verified.manifest), "test-v2-manifest"
+        )
+        post_path = (
+            "/var/lib/propertyquarry-release-single-host-v2/"
+            "runner-prerequisite-post-attempt.v3.json"
+        )
+        manifest_v2["files"] = [
+            entry for entry in manifest_v2["files"]
+            if entry["install_path"] != post_path
+        ]
+        for entry in manifest_v2["files"]:
+            if entry["install_path"].endswith(
+                "runner-prerequisite-intent.v3.json"
+            ):
+                entry["install_path"] = entry["install_path"].replace(
+                    "intent.v3.json", "intent.v2.json"
+                )
+                entry["package_path"] = "payload" + entry["install_path"]
+            elif entry["install_path"].endswith(
+                "runner-prerequisite-approval.v3.json"
+            ):
+                entry["install_path"] = entry["install_path"].replace(
+                    "approval.v3.json", "approval.v2.json"
+                )
+                entry["package_path"] = "payload" + entry["install_path"]
+        manifest_v2["files"].sort(key=lambda entry: entry["package_path"])
+        package._validate_manifest(manifest_v2, package_key_id)
+
+        mixed = package.parse_strict_json(
+            package.canonical_json(verified.manifest), "test-mixed-manifest"
+        )
+        mixed["files"] = [
+            entry for entry in mixed["files"]
+            if entry["install_path"] != post_path
+        ]
+        self._assert_rejected(
+            lambda: package._validate_manifest(mixed, package_key_id),
+            "manifest-file-set-invalid",
         )
 
     def test_canonical_json_matches_controller_string_contract(self) -> None:

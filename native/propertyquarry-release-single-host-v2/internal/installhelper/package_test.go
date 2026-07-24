@@ -277,6 +277,38 @@ func TestRequiredPayloadPurposeIsExact(t *testing.T) {
 	}
 }
 
+func TestRequiredPayloadLayoutsAcceptExactV2OrV3AndRejectMixed(t *testing.T) {
+	files := make(map[string]*FileRecord, len(requiredPackageFilesV3))
+	for path, required := range requiredPackageFilesV3 {
+		size := required.size
+		if size == 0 {
+			size = 1
+		}
+		files[path] = &FileRecord{InstallPath: path, Purpose: required.purpose, Mode: required.mode, Size: size, Digest: required.digest, Data: []byte{'x'}}
+	}
+	if err := validateRequiredFiles(files); err != nil {
+		t.Fatalf("exact v3 payload layout rejected: %v", err)
+	}
+	delete(files, "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-post-attempt.v3.json")
+	if err := validateRequiredFiles(files); err == nil {
+		t.Fatal("v3 payload layout without post-attempt accepted")
+	}
+	files["/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-post-attempt.v3.json"] = &FileRecord{
+		InstallPath: "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-post-attempt.v3.json",
+		Purpose:     "ephemeral-runner-prerequisite-approval-post-attempt",
+		Mode:        0o400,
+		Size:        1,
+		Data:        []byte{'x'},
+	}
+	intent := files["/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v3.json"]
+	delete(files, "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v3.json")
+	intent.InstallPath = "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v2.json"
+	files[intent.InstallPath] = intent
+	if err := validateRequiredFiles(files); err == nil {
+		t.Fatal("mixed v2/v3 payload layout accepted")
+	}
+}
+
 func signedRunnerFixture(t *testing.T, private ed25519.PrivateKey, keyID, domain string, payload map[string]any) []byte {
 	t.Helper()
 	canonical, err := canonicalJSON(payload)
@@ -506,11 +538,113 @@ func TestRunnerPrerequisiteMaterialBindsExactRawWrappersAndSemantics(t *testing.
 	}
 	zero(reboundPayloadRaw)
 	zero(reboundRaw)
+
+	intentV3 := make(map[string]any, len(intentPayload)+1)
+	for key, value := range intentPayload {
+		intentV3[key] = value
+	}
+	dynamicJobName := runnerPrerequisiteJobName(label, digest(reservationRaw))
+	intentV3["prerequisite_job_key"] = runnerPrerequisiteJobKey
+	intentV3["prerequisite_job_name"] = dynamicJobName
+	intentV3["schema"] = runnerPrerequisiteIntentSchemaV3
+	intentV3["version"] = json.Number("3")
+	intentRawV3 := signedRunnerFixture(t, receiptPrivate, receiptKeyID, runnerPrerequisiteIntentSignatureDomainV3, intentV3)
+	requestRaw, err := canonicalJSON(map[string]any{
+		"comment":         intentV3["comment"],
+		"environment_ids": []any{json.Number("42")},
+		"state":           "approved",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	postAttemptV3 := map[string]any{
+		"attempted_at_epoch":                  json.Number(strconv.FormatInt(started-20, 10)),
+		"authority_profile":                   "single-host-production-v2",
+		"comment":                             intentV3["comment"],
+		"environment_id":                      "42",
+		"environment_name":                    authority.Environment,
+		"github_api_path":                     "/repos/ArchonMegalon/propertyquarry/actions/runs/123/pending_deployments",
+		"http_method":                         "POST",
+		"intent_sha256":                       digest(intentRawV3),
+		"pre_post_jobs_sha256":                "sha256:" + strings.Repeat("a", 64),
+		"pre_post_pending_deployments_count":  json.Number("1"),
+		"pre_post_pending_deployments_sha256": "sha256:" + strings.Repeat("b", 64),
+		"pre_post_release_job_present":        false,
+		"pre_post_review_history_sha256":      "sha256:" + strings.Repeat("c", 64),
+		"pre_post_review_match_count":         json.Number("0"),
+		"pre_post_review_scope":               "any-approved-target-environment",
+		"pre_post_run_sha256":                 "sha256:" + strings.Repeat("d", 64),
+		"prerequisite_job_id":                 "789",
+		"prerequisite_job_key":                runnerPrerequisiteJobKey,
+		"prerequisite_job_name":               dynamicJobName,
+		"receipt_authority_key_id":            receiptKeyID,
+		"repository":                          authority.Repository,
+		"repository_id":                       authority.RepositoryID,
+		"repository_owner_id":                 authority.RepositoryOwnerID,
+		"request_sha256":                      digest(requestRaw),
+		"reservation_expires_at_epoch":        json.Number(strconv.FormatInt(expires, 10)),
+		"reservation_sha256":                  digest(reservationRaw),
+		"run_attempt":                         json.Number("1"),
+		"run_id":                              "123",
+		"runner_label":                        label,
+		"schema":                              runnerPrerequisitePostAttemptSchemaV3,
+		"version":                             json.Number("3"),
+		"workflow_path":                       ".github/workflows/smoke-runtime.yml",
+		"workflow_ref":                        authority.WorkflowRef,
+		"workflow_sha":                        workflowSHA,
+	}
+	zero(requestRaw)
+	postAttemptRawV3 := signedRunnerFixture(t, receiptPrivate, receiptKeyID, runnerPrerequisitePostAttemptSignatureDomainV3, postAttemptV3)
+	approvalV3 := make(map[string]any, len(approvalPayload)+1)
+	for key, value := range approvalPayload {
+		approvalV3[key] = value
+	}
+	approvalV3["intent_sha256"] = digest(intentRawV3)
+	approvalV3["prerequisite_job_key"] = runnerPrerequisiteJobKey
+	approvalV3["prerequisite_job_name"] = dynamicJobName
+	approvalV3["schema"] = runnerPrerequisiteApprovalSchemaV3
+	approvalV3["version"] = json.Number("3")
+	approvalPayloadRawV3, err := canonicalJSON(approvalV3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvalRawV3 := signedRunnerFixture(t, receiptPrivate, receiptKeyID, runnerPrerequisiteApprovalSignatureDomainV3, approvalV3)
+	configV3 := *config
+	configV3.RunnerPrerequisiteIntentDigest = digest(intentRawV3)
+	configV3.RunnerPrerequisiteApprovalDigest = digest(approvalRawV3)
+	configV3.RunnerPrerequisiteApprovalPayloadDigest = digest(approvalPayloadRawV3)
+	if _, err := validateRunnerPrerequisiteMaterialV3(intentRawV3, postAttemptRawV3, approvalRawV3, reservationRaw, &configV3, receiptKeyID, receiptPublic); err != nil {
+		t.Fatalf("exact v3 prerequisite material rejected: %v", err)
+	}
+	if _, err := validateRunnerPrerequisiteMaterialV3(intentRawV3, nil, approvalRawV3, reservationRaw, &configV3, receiptKeyID, receiptPublic); err == nil {
+		t.Fatal("v3 approval without signed post-attempt accepted")
+	}
+	approvalV3["prerequisite_job_name"] = runnerPrerequisiteJobKey
+	staticApprovalPayload, err := canonicalJSON(approvalV3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staticApprovalRaw := signedRunnerFixture(t, receiptPrivate, receiptKeyID, runnerPrerequisiteApprovalSignatureDomainV3, approvalV3)
+	staticConfig := configV3
+	staticConfig.RunnerPrerequisiteApprovalDigest = digest(staticApprovalRaw)
+	staticConfig.RunnerPrerequisiteApprovalPayloadDigest = digest(staticApprovalPayload)
+	if _, err := validateRunnerPrerequisiteMaterialV3(intentRawV3, postAttemptRawV3, staticApprovalRaw, reservationRaw, &staticConfig, receiptKeyID, receiptPublic); err == nil {
+		t.Fatal("correctly resigned static v3 prerequisite display name accepted")
+	}
+	zero(intentRawV3)
+	zero(postAttemptRawV3)
+	zero(approvalPayloadRawV3)
+	zero(approvalRawV3)
+	zero(staticApprovalPayload)
+	zero(staticApprovalRaw)
 }
 
 func TestFrozenV2ManifestAndFiveHelperSurface(t *testing.T) {
 	if len(requiredPackageFiles) != 27 {
 		t.Fatalf("required package file count = %d, want 27", len(requiredPackageFiles))
+	}
+	if len(requiredPackageFilesV3) != 28 {
+		t.Fatalf("v3 required package file count = %d, want 28", len(requiredPackageFilesV3))
 	}
 	sealed := map[string]requiredPackageFile{
 		predeployBackupHelperPath:  {mode: 0o755, purpose: "predeploy-backup-helper", size: 91482, digest: "sha256:a7a877b6aae97628892f9c603eddc8267625689676a0daf4685de65613be56d3"},

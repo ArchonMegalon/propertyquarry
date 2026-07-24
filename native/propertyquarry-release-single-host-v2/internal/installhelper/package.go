@@ -26,44 +26,51 @@ import (
 )
 
 const (
-	packageManifestSchema                           = "propertyquarry.release-control.single-host-package.v2"
-	packageSignatureDomain                          = "propertyquarry.release-control.single-host-package-manifest-signature.v2\x00"
-	configSignatureDomain                           = "propertyquarry.release-control.single-host-profile-signature.v2\x00"
-	materializationReceiptSchema                    = "propertyquarry.release-control.single-host-production-materialization.v2"
-	materializationSignatureDomain                  = "propertyquarry.release-control.single-host-production-materialization.v2\x00"
-	runnerReservationSchema                         = "propertyquarry.release-control.single-host-runner-reservation.v2"
-	runnerReservationSignatureDomain                = "propertyquarry.release-control.single-host-runner-reservation-signature.v2\x00"
-	runnerLaunchTicketSchema                        = "propertyquarry.release-control.single-host-runner-launch-ticket.v2"
-	runnerLaunchTicketSignatureDomain               = "propertyquarry.release-control.single-host-runner-launch-ticket-signature.v2\x00"
-	runnerPrerequisiteIntentSchema                  = "propertyquarry.release-control.single-host-runner-prerequisite-intent.v2"
-	runnerPrerequisiteIntentSignatureDomain         = "propertyquarry.release-control.single-host-runner-prerequisite-intent-signature.v2\x00"
-	runnerPrerequisiteApprovalSchema                = "propertyquarry.release-control.single-host-runner-prerequisite-approval.v2"
-	runnerPrerequisiteApprovalSignatureDomain       = "propertyquarry.release-control.single-host-runner-prerequisite-approval-signature.v2\x00"
-	runnerPrerequisiteJob                           = "propertyquarry-protected-dispatch-inputs"
-	runnerLabelDerivationDomain                     = "propertyquarry.release-control.single-host-runner-label.v2\x00"
-	maximumArchiveBytes                             = 320 * 1024 * 1024
-	maximumMemberBytes                              = 256 * 1024 * 1024
-	maximumManifestBytes                            = 1 * 1024 * 1024
-	buildReceiptSchema                              = "propertyquarry.release-control.single-host-native-build-receipt.v2"
-	predeployBackupHelperPath                       = "/usr/libexec/propertyquarry-release-control/propertyquarry-predeploy-backup-v2"
-	predeployBackupHelperDigest                     = "sha256:a7a877b6aae97628892f9c603eddc8267625689676a0daf4685de65613be56d3"
-	predeployBackupHelperSize                 int64 = 91482
-	databaseControlHelperPath                       = "/usr/libexec/propertyquarry-release-control/propertyquarry-database-control-v2"
-	databaseControlHelperDigest                     = "sha256:9bdebcd2bae867ef9ac4e38374e964dc81752b2a572eb8a0568f3bb45d5bfe18"
-	databaseControlHelperSize                 int64 = 60449
-	runtimeDatabaseHelperPath                       = "/usr/libexec/propertyquarry-release-control/provision_propertyquarry_runtime_database.py"
-	runtimeDatabaseHelperDigest                     = "sha256:bc987570cfce12c734cb80b33d7e13199b346c8a8b5406f3ebce88bb15e71a63"
-	runtimeDatabaseHelperSize                 int64 = 50770
-	runtimeIsolationHelperPath                      = "/usr/libexec/propertyquarry-release-control/propertyquarry-runtime-isolation-v2"
-	runtimeIsolationHelperDigest                    = "sha256:a441c978b1fec877d27828f264f35a5dfa203999a8b1260b06ee12fb6f45c413"
-	runtimeIsolationHelperSize                int64 = 161070
-	runtimeDeployHelperPath                         = "/usr/libexec/propertyquarry-release-control/propertyquarry-runtime-deploy-v2"
-	runtimeDeployHelperDigest                       = "sha256:a762c418ffa83aac86b8b503dbd6e9c0ccf41cbc37cd72b21931a9781090691c"
-	runtimeDeployHelperSize                   int64 = 82995
-	apiHostIP                                       = "127.0.0.1"
-	apiHostPort                               int64 = 8097
-	apiContainerPort                          int64 = 8090
-	databaseImage                                   = "postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229"
+	packageManifestSchema                                = "propertyquarry.release-control.single-host-package.v2"
+	packageSignatureDomain                               = "propertyquarry.release-control.single-host-package-manifest-signature.v2\x00"
+	configSignatureDomain                                = "propertyquarry.release-control.single-host-profile-signature.v2\x00"
+	materializationReceiptSchema                         = "propertyquarry.release-control.single-host-production-materialization.v2"
+	materializationSignatureDomain                       = "propertyquarry.release-control.single-host-production-materialization.v2\x00"
+	runnerReservationSchema                              = "propertyquarry.release-control.single-host-runner-reservation.v2"
+	runnerReservationSignatureDomain                     = "propertyquarry.release-control.single-host-runner-reservation-signature.v2\x00"
+	runnerLaunchTicketSchema                             = "propertyquarry.release-control.single-host-runner-launch-ticket.v2"
+	runnerLaunchTicketSignatureDomain                    = "propertyquarry.release-control.single-host-runner-launch-ticket-signature.v2\x00"
+	runnerPrerequisiteIntentSchema                       = "propertyquarry.release-control.single-host-runner-prerequisite-intent.v2"
+	runnerPrerequisiteIntentSignatureDomain              = "propertyquarry.release-control.single-host-runner-prerequisite-intent-signature.v2\x00"
+	runnerPrerequisiteApprovalSchema                     = "propertyquarry.release-control.single-host-runner-prerequisite-approval.v2"
+	runnerPrerequisiteApprovalSignatureDomain            = "propertyquarry.release-control.single-host-runner-prerequisite-approval-signature.v2\x00"
+	runnerPrerequisiteIntentSchemaV3                     = "propertyquarry.release-control.single-host-runner-prerequisite-intent.v3"
+	runnerPrerequisiteIntentSignatureDomainV3            = "propertyquarry.release-control.single-host-runner-prerequisite-intent-signature.v3\x00"
+	runnerPrerequisiteApprovalSchemaV3                   = "propertyquarry.release-control.single-host-runner-prerequisite-approval.v3"
+	runnerPrerequisiteApprovalSignatureDomainV3          = "propertyquarry.release-control.single-host-runner-prerequisite-approval-signature.v3\x00"
+	runnerPrerequisitePostAttemptSchemaV3                = "propertyquarry.release-control.single-host-runner-prerequisite-post-attempt.v3"
+	runnerPrerequisitePostAttemptSignatureDomainV3       = "propertyquarry.release-control.single-host-runner-prerequisite-post-attempt-signature.v3\x00"
+	runnerPrerequisiteJob                                = "propertyquarry-protected-dispatch-inputs"
+	runnerPrerequisiteJobKey                             = "propertyquarry-protected-dispatch-inputs"
+	runnerLabelDerivationDomain                          = "propertyquarry.release-control.single-host-runner-label.v2\x00"
+	maximumArchiveBytes                                  = 320 * 1024 * 1024
+	maximumMemberBytes                                   = 256 * 1024 * 1024
+	maximumManifestBytes                                 = 1 * 1024 * 1024
+	buildReceiptSchema                                   = "propertyquarry.release-control.single-host-native-build-receipt.v2"
+	predeployBackupHelperPath                            = "/usr/libexec/propertyquarry-release-control/propertyquarry-predeploy-backup-v2"
+	predeployBackupHelperDigest                          = "sha256:a7a877b6aae97628892f9c603eddc8267625689676a0daf4685de65613be56d3"
+	predeployBackupHelperSize                      int64 = 91482
+	databaseControlHelperPath                            = "/usr/libexec/propertyquarry-release-control/propertyquarry-database-control-v2"
+	databaseControlHelperDigest                          = "sha256:9bdebcd2bae867ef9ac4e38374e964dc81752b2a572eb8a0568f3bb45d5bfe18"
+	databaseControlHelperSize                      int64 = 60449
+	runtimeDatabaseHelperPath                            = "/usr/libexec/propertyquarry-release-control/provision_propertyquarry_runtime_database.py"
+	runtimeDatabaseHelperDigest                          = "sha256:bc987570cfce12c734cb80b33d7e13199b346c8a8b5406f3ebce88bb15e71a63"
+	runtimeDatabaseHelperSize                      int64 = 50770
+	runtimeIsolationHelperPath                           = "/usr/libexec/propertyquarry-release-control/propertyquarry-runtime-isolation-v2"
+	runtimeIsolationHelperDigest                         = "sha256:a441c978b1fec877d27828f264f35a5dfa203999a8b1260b06ee12fb6f45c413"
+	runtimeIsolationHelperSize                     int64 = 161070
+	runtimeDeployHelperPath                              = "/usr/libexec/propertyquarry-release-control/propertyquarry-runtime-deploy-v2"
+	runtimeDeployHelperDigest                            = "sha256:a762c418ffa83aac86b8b503dbd6e9c0ccf41cbc37cd72b21931a9781090691c"
+	runtimeDeployHelperSize                        int64 = 82995
+	apiHostIP                                            = "127.0.0.1"
+	apiHostPort                                    int64 = 8097
+	apiContainerPort                               int64 = 8090
+	databaseImage                                        = "postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229"
 )
 
 var (
@@ -134,6 +141,7 @@ type VerifiedPackage struct {
 	RunnerPrerequisiteApprovalDigest        string
 	RunnerPrerequisiteApprovalPayloadDigest string
 	RunnerPrerequisiteJobID                 string
+	RunnerPrerequisiteVersion               int
 	Files                                   map[string]*FileRecord
 }
 
@@ -477,7 +485,7 @@ func parseAndBindManifest(value map[string]any, raw, signature []byte, archiveDi
 		return nil, fmt.Errorf("package-manifest-binding-invalid")
 	}
 	items, ok := value["files"].([]any)
-	if !ok || len(items) != len(payload) || len(items) != len(requiredPackageFiles) {
+	if !ok || len(items) != len(payload) || len(items) != len(requiredPackageFiles) && len(items) != len(requiredPackageFilesV3) {
 		return nil, fmt.Errorf("package-file-list-invalid")
 	}
 	files := make(map[string]*FileRecord, len(items))
@@ -507,6 +515,10 @@ func parseAndBindManifest(value map[string]any, raw, signature []byte, archiveDi
 	if err := validateRequiredFiles(files); err != nil {
 		return nil, err
 	}
+	runnerPrerequisiteVersion := 2
+	if _, ok := files["/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v3.json"]; ok {
+		runnerPrerequisiteVersion = 3
+	}
 	verified := &VerifiedPackage{
 		ManifestRaw: append([]byte(nil), raw...), ManifestSignature: append([]byte(nil), signature...), ArchiveDigest: archiveDigest,
 		PackageAuthorityKeyID: packageKeyID, ReceiptAuthorityKeyID: receiptKeyID, ConfigDigest: configDigest, PlanDigest: planDigest,
@@ -523,6 +535,7 @@ func parseAndBindManifest(value map[string]any, raw, signature []byte, archiveDi
 		RunnerPrerequisiteApprovalDigest:        runnerPrerequisiteApprovalDigest,
 		RunnerPrerequisiteApprovalPayloadDigest: runnerPrerequisiteApprovalPayloadDigest,
 		RunnerPrerequisiteJobID:                 runnerPrerequisiteJobID,
+		RunnerPrerequisiteVersion:               runnerPrerequisiteVersion,
 	}
 	if err := verifyPayloadBindings(verified, packageKey); err != nil {
 		verified.Release()
@@ -580,11 +593,28 @@ var requiredPackageFiles = map[string]requiredPackageFile{
 	runtimeDeployHelperPath:    {mode: 0o755, purpose: "runtime-deploy-helper", size: runtimeDeployHelperSize, digest: runtimeDeployHelperDigest},
 }
 
+var requiredPackageFilesV3 = func() map[string]requiredPackageFile {
+	files := make(map[string]requiredPackageFile, len(requiredPackageFiles))
+	for path, required := range requiredPackageFiles {
+		files[path] = required
+	}
+	delete(files, "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v2.json")
+	delete(files, "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v2.json")
+	files["/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v3.json"] = requiredPackageFile{mode: 0o400, purpose: "ephemeral-runner-prerequisite-approval-intent"}
+	files["/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v3.json"] = requiredPackageFile{mode: 0o400, purpose: "ephemeral-runner-prerequisite-approval-proof"}
+	files["/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-post-attempt.v3.json"] = requiredPackageFile{mode: 0o400, purpose: "ephemeral-runner-prerequisite-approval-post-attempt"}
+	return files
+}()
+
 func validateRequiredFiles(files map[string]*FileRecord) error {
-	if len(files) != len(requiredPackageFiles) {
+	requiredFiles := requiredPackageFiles
+	if _, ok := files["/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v3.json"]; ok {
+		requiredFiles = requiredPackageFilesV3
+	}
+	if len(files) != len(requiredFiles) {
 		return fmt.Errorf("package-required-file-count-invalid")
 	}
-	for path, required := range requiredPackageFiles {
+	for path, required := range requiredFiles {
 		file, ok := files[path]
 		if !ok || file.Mode != required.mode || file.Purpose != required.purpose ||
 			(required.size != 0 && file.Size != required.size) || (required.digest != "" && file.Digest != required.digest) {
@@ -719,6 +749,172 @@ func validateRunnerPrerequisiteMaterial(intentRaw, approvalRaw, reservationRaw [
 		approval["workflow_ref"] != authority.WorkflowRef || approval["workflow_sha"] != config.WorkflowSHA || approval["release_job"] != authority.ReleaseJob ||
 		approval["reservation_expires_at_epoch"] != intent["reservation_expires_at_epoch"] || !dispositionOK ||
 		(disposition != "approved" && disposition != "post-approved-recovered") || !approvedOK || approved < discovered || approved > expires || approved > config.TransactionStartedAtEpoch ||
+		payloadErr != nil || digest(approvalRaw) != config.RunnerPrerequisiteApprovalDigest || digest(approvalPayloadRaw) != config.RunnerPrerequisiteApprovalPayloadDigest {
+		return empty, fmt.Errorf("package-runner-prerequisite-approval-binding-invalid")
+	}
+	if disposition == "approved" {
+		response, ok := exactString(approval["approval_response_sha256"])
+		if !ok || !digestPattern.MatchString(response) {
+			return empty, fmt.Errorf("package-runner-prerequisite-approval-response-invalid")
+		}
+	} else if approval["approval_response_sha256"] != nil {
+		return empty, fmt.Errorf("package-runner-prerequisite-approval-response-invalid")
+	}
+	for _, key := range []string{"completed_jobs_sha256", "post_pending_deployments_sha256", "review_history_sha256"} {
+		text, ok := exactString(approval[key])
+		if !ok || !digestPattern.MatchString(text) {
+			return empty, fmt.Errorf("package-runner-prerequisite-approval-evidence-invalid")
+		}
+	}
+	return runnerPrerequisiteBinding{
+		intentDigest: digest(intentRaw), approvalDigest: digest(approvalRaw),
+		approvalPayloadDigest: digest(approvalPayloadRaw), jobID: intentJobID,
+	}, nil
+}
+
+func runnerPrerequisiteJobName(runnerLabel, reservationDigest string) string {
+	return runnerPrerequisiteJobKey + " | " + runnerLabel + " | " + reservationDigest
+}
+
+func validateRunnerPrerequisiteMaterialV3(intentRaw, postAttemptRaw, approvalRaw, reservationRaw []byte, config *authority.Config, receiptKeyID string, receiptPublic ed25519.PublicKey) (runnerPrerequisiteBinding, error) {
+	var empty runnerPrerequisiteBinding
+	if config == nil || config.RunnerJobID == config.RunnerPrerequisiteJobID {
+		return empty, fmt.Errorf("package-runner-prerequisite-input-invalid")
+	}
+	reservation, err := validateSignedRunnerWire(reservationRaw, receiptPublic, receiptKeyID, runnerReservationSignatureDomain)
+	if err != nil {
+		return empty, err
+	}
+	intent, err := validateSignedRunnerWire(intentRaw, receiptPublic, receiptKeyID, runnerPrerequisiteIntentSignatureDomainV3)
+	if err != nil {
+		return empty, err
+	}
+	if !hasKeys(intent,
+		"authority_profile", "comment", "discovered_at_epoch", "environment_id", "environment_name",
+		"initial_jobs_sha256", "initial_pending_deployments_sha256", "initial_runs_index_sha256",
+		"prerequisite_job_id", "prerequisite_job_key", "prerequisite_job_name", "receipt_authority_key_id", "release_job",
+		"repository", "repository_id", "repository_owner_id", "reservation_expires_at_epoch",
+		"reservation_sha256", "run_attempt", "run_id", "runner_label", "schema", "version",
+		"workflow_path", "workflow_ref", "workflow_sha",
+	) {
+		return empty, fmt.Errorf("package-runner-prerequisite-intent-shape-invalid")
+	}
+	discovered, discoveredOK := exactInt(intent["discovered_at_epoch"], 1, 1<<62)
+	created, createdOK := exactInt(reservation["created_at_epoch"], 1, 1<<62)
+	expires, expiresOK := exactInt(reservation["expires_at_epoch"], 1, 1<<62)
+	intentEnvironmentID, intentEnvironmentOK := exactString(intent["environment_id"])
+	intentJobID, intentJobOK := exactString(intent["prerequisite_job_id"])
+	intentRunID, intentRunOK := exactString(intent["run_id"])
+	intentAttempt, intentAttemptOK := exactInt(intent["run_attempt"], 1, 1<<31-1)
+	intentVersion, intentVersionOK := exactInt(intent["version"], 3, 3)
+	reservationDigest := digest(reservationRaw)
+	expectedJobName := runnerPrerequisiteJobName(config.RunnerLabel, reservationDigest)
+	if intent["schema"] != runnerPrerequisiteIntentSchemaV3 || !intentVersionOK || intentVersion != 3 ||
+		intent["authority_profile"] != "single-host-production-v2" || intent["repository"] != authority.Repository ||
+		intent["repository_id"] != authority.RepositoryID || intent["repository_owner_id"] != authority.RepositoryOwnerID ||
+		intent["workflow_path"] != ".github/workflows/smoke-runtime.yml" || intent["workflow_ref"] != authority.WorkflowRef ||
+		intent["workflow_sha"] != config.WorkflowSHA || intent["receipt_authority_key_id"] != receiptKeyID ||
+		intent["reservation_sha256"] != reservationDigest || intent["reservation_sha256"] != config.RunnerReservationDigest ||
+		!expiresOK || intent["reservation_expires_at_epoch"] != json.Number(strconv.FormatInt(expires, 10)) ||
+		intent["runner_label"] != config.RunnerLabel || intent["runner_label"] != reservation["runner_label"] ||
+		intent["environment_name"] != authority.Environment || !intentEnvironmentOK || !numericIDPattern.MatchString(intentEnvironmentID) ||
+		intent["prerequisite_job_key"] != runnerPrerequisiteJobKey || intent["prerequisite_job_name"] != expectedJobName ||
+		!intentJobOK || !numericIDPattern.MatchString(intentJobID) || intentJobID != config.RunnerPrerequisiteJobID ||
+		intent["release_job"] != authority.ReleaseJob || !intentRunOK || !numericIDPattern.MatchString(intentRunID) || intentRunID != config.RunnerRunID ||
+		!intentAttemptOK || intentAttempt != config.RunnerRunAttempt || !discoveredOK || !createdOK || discovered < created || discovered > expires ||
+		intent["comment"] != "PropertyQuarry governed prerequisite approval "+reservationDigest ||
+		intent["initial_jobs_sha256"] == nil || intent["initial_pending_deployments_sha256"] == nil || intent["initial_runs_index_sha256"] == nil ||
+		digest(intentRaw) != config.RunnerPrerequisiteIntentDigest {
+		return empty, fmt.Errorf("package-runner-prerequisite-intent-binding-invalid")
+	}
+	for _, key := range []string{"initial_jobs_sha256", "initial_pending_deployments_sha256", "initial_runs_index_sha256"} {
+		text, ok := exactString(intent[key])
+		if !ok || !digestPattern.MatchString(text) {
+			return empty, fmt.Errorf("package-runner-prerequisite-intent-evidence-invalid")
+		}
+	}
+
+	postAttempt, err := validateSignedRunnerWire(postAttemptRaw, receiptPublic, receiptKeyID, runnerPrerequisitePostAttemptSignatureDomainV3)
+	if err != nil {
+		return empty, err
+	}
+	if !hasKeys(postAttempt,
+		"attempted_at_epoch", "authority_profile", "comment", "environment_id", "environment_name", "github_api_path",
+		"http_method", "intent_sha256", "pre_post_jobs_sha256", "pre_post_pending_deployments_count",
+		"pre_post_pending_deployments_sha256", "pre_post_release_job_present", "pre_post_review_history_sha256",
+		"pre_post_review_match_count", "pre_post_review_scope", "pre_post_run_sha256", "prerequisite_job_id",
+		"prerequisite_job_key", "prerequisite_job_name", "receipt_authority_key_id", "repository", "repository_id",
+		"repository_owner_id", "request_sha256", "reservation_expires_at_epoch", "reservation_sha256", "run_attempt",
+		"run_id", "runner_label", "schema", "version", "workflow_path", "workflow_ref", "workflow_sha",
+	) {
+		return empty, fmt.Errorf("package-runner-prerequisite-post-attempt-shape-invalid")
+	}
+	attempted, attemptedOK := exactInt(postAttempt["attempted_at_epoch"], 1, 1<<62)
+	postVersion, postVersionOK := exactInt(postAttempt["version"], 3, 3)
+	pendingCount, pendingCountOK := exactInt(postAttempt["pre_post_pending_deployments_count"], 1, 1)
+	reviewCount, reviewCountOK := exactInt(postAttempt["pre_post_review_match_count"], 0, 0)
+	requestRaw, requestErr := canonicalJSON(map[string]any{
+		"comment":         intent["comment"],
+		"environment_ids": []any{json.Number(intentEnvironmentID)},
+		"state":           "approved",
+	})
+	defer zero(requestRaw)
+	if postAttempt["schema"] != runnerPrerequisitePostAttemptSchemaV3 || !postVersionOK || postVersion != 3 ||
+		postAttempt["authority_profile"] != "single-host-production-v2" || postAttempt["intent_sha256"] != digest(intentRaw) ||
+		postAttempt["reservation_sha256"] != reservationDigest || postAttempt["reservation_expires_at_epoch"] != intent["reservation_expires_at_epoch"] ||
+		postAttempt["runner_label"] != intent["runner_label"] || postAttempt["run_id"] != intent["run_id"] ||
+		postAttempt["run_attempt"] != intent["run_attempt"] || postAttempt["prerequisite_job_id"] != intent["prerequisite_job_id"] ||
+		postAttempt["prerequisite_job_key"] != intent["prerequisite_job_key"] || postAttempt["prerequisite_job_name"] != intent["prerequisite_job_name"] ||
+		postAttempt["environment_id"] != intent["environment_id"] || postAttempt["environment_name"] != authority.Environment ||
+		postAttempt["receipt_authority_key_id"] != receiptKeyID || postAttempt["repository"] != authority.Repository ||
+		postAttempt["repository_id"] != authority.RepositoryID || postAttempt["repository_owner_id"] != authority.RepositoryOwnerID ||
+		postAttempt["workflow_path"] != ".github/workflows/smoke-runtime.yml" || postAttempt["workflow_ref"] != authority.WorkflowRef ||
+		postAttempt["workflow_sha"] != config.WorkflowSHA || postAttempt["http_method"] != "POST" ||
+		postAttempt["github_api_path"] != "/repos/ArchonMegalon/propertyquarry/actions/runs/"+intentRunID+"/pending_deployments" ||
+		postAttempt["comment"] != intent["comment"] || requestErr != nil || postAttempt["request_sha256"] != digest(requestRaw) ||
+		postAttempt["pre_post_release_job_present"] != false || !pendingCountOK || pendingCount != 1 ||
+		!reviewCountOK || reviewCount != 0 || postAttempt["pre_post_review_scope"] != "any-approved-target-environment" ||
+		!attemptedOK || attempted < discovered || attempted > expires {
+		return empty, fmt.Errorf("package-runner-prerequisite-post-attempt-binding-invalid")
+	}
+	for _, key := range []string{"pre_post_jobs_sha256", "pre_post_pending_deployments_sha256", "pre_post_review_history_sha256", "pre_post_run_sha256"} {
+		text, ok := exactString(postAttempt[key])
+		if !ok || !digestPattern.MatchString(text) {
+			return empty, fmt.Errorf("package-runner-prerequisite-post-attempt-evidence-invalid")
+		}
+	}
+
+	approval, err := validateSignedRunnerWire(approvalRaw, receiptPublic, receiptKeyID, runnerPrerequisiteApprovalSignatureDomainV3)
+	if err != nil {
+		return empty, err
+	}
+	if !hasKeys(approval,
+		"approval_api_disposition", "approval_response_sha256", "approved_at_epoch", "completed_jobs_sha256",
+		"environment_id", "environment_name", "intent_sha256", "post_pending_deployments_sha256",
+		"prerequisite_conclusion", "prerequisite_job_id", "prerequisite_job_key", "prerequisite_job_name", "receipt_authority_key_id",
+		"release_job", "repository", "repository_id", "repository_owner_id", "reservation_expires_at_epoch",
+		"reservation_sha256", "review_history_sha256", "run_attempt", "run_id", "runner_label", "schema", "version",
+		"workflow_path", "workflow_ref", "workflow_sha",
+	) {
+		return empty, fmt.Errorf("package-runner-prerequisite-approval-shape-invalid")
+	}
+	approved, approvedOK := exactInt(approval["approved_at_epoch"], 1, 1<<62)
+	approvalVersion, approvalVersionOK := exactInt(approval["version"], 3, 3)
+	disposition, dispositionOK := exactString(approval["approval_api_disposition"])
+	approvalPayloadRaw, payloadErr := canonicalJSON(approval)
+	defer zero(approvalPayloadRaw)
+	if approval["schema"] != runnerPrerequisiteApprovalSchemaV3 || !approvalVersionOK || approvalVersion != 3 ||
+		approval["intent_sha256"] != digest(intentRaw) || approval["reservation_sha256"] != intent["reservation_sha256"] ||
+		approval["runner_label"] != intent["runner_label"] || approval["run_id"] != intent["run_id"] || approval["run_attempt"] != intent["run_attempt"] ||
+		approval["prerequisite_job_id"] != intent["prerequisite_job_id"] || approval["prerequisite_job_key"] != intent["prerequisite_job_key"] ||
+		approval["prerequisite_job_name"] != intent["prerequisite_job_name"] || approval["prerequisite_job_name"] != expectedJobName ||
+		approval["prerequisite_conclusion"] != "success" || approval["environment_id"] != intent["environment_id"] ||
+		approval["environment_name"] != authority.Environment || approval["receipt_authority_key_id"] != receiptKeyID ||
+		approval["repository"] != authority.Repository || approval["repository_id"] != authority.RepositoryID ||
+		approval["repository_owner_id"] != authority.RepositoryOwnerID || approval["workflow_path"] != ".github/workflows/smoke-runtime.yml" ||
+		approval["workflow_ref"] != authority.WorkflowRef || approval["workflow_sha"] != config.WorkflowSHA || approval["release_job"] != authority.ReleaseJob ||
+		approval["reservation_expires_at_epoch"] != intent["reservation_expires_at_epoch"] || !dispositionOK ||
+		(disposition != "approved" && disposition != "post-approved-recovered") || !approvedOK || approved != attempted || approved < discovered || approved > expires || approved > config.TransactionStartedAtEpoch ||
 		payloadErr != nil || digest(approvalRaw) != config.RunnerPrerequisiteApprovalDigest || digest(approvalPayloadRaw) != config.RunnerPrerequisiteApprovalPayloadDigest {
 		return empty, fmt.Errorf("package-runner-prerequisite-approval-binding-invalid")
 	}
@@ -931,14 +1127,35 @@ func verifyPayloadBindings(verified *VerifiedPackage, packageKey ed25519.PublicK
 	if err != nil || receiptKeyID != verified.ReceiptAuthorityKeyID {
 		return fmt.Errorf("package-receipt-anchor-invalid")
 	}
-	prerequisiteBinding, err := validateRunnerPrerequisiteMaterial(
-		get("/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v2.json"),
-		get("/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v2.json"),
-		get("/var/lib/propertyquarry-release-single-host-v2/runner-reservation.v2.json"),
-		config,
-		verified.ReceiptAuthorityKeyID,
-		receiptAnchor,
+	prerequisiteIntentPath := fmt.Sprintf(
+		"/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v%d.json",
+		verified.RunnerPrerequisiteVersion,
 	)
+	prerequisiteApprovalPath := fmt.Sprintf(
+		"/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v%d.json",
+		verified.RunnerPrerequisiteVersion,
+	)
+	var prerequisiteBinding runnerPrerequisiteBinding
+	if verified.RunnerPrerequisiteVersion == 3 {
+		prerequisiteBinding, err = validateRunnerPrerequisiteMaterialV3(
+			get(prerequisiteIntentPath),
+			get("/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-post-attempt.v3.json"),
+			get(prerequisiteApprovalPath),
+			get("/var/lib/propertyquarry-release-single-host-v2/runner-reservation.v2.json"),
+			config,
+			verified.ReceiptAuthorityKeyID,
+			receiptAnchor,
+		)
+	} else {
+		prerequisiteBinding, err = validateRunnerPrerequisiteMaterial(
+			get(prerequisiteIntentPath),
+			get(prerequisiteApprovalPath),
+			get("/var/lib/propertyquarry-release-single-host-v2/runner-reservation.v2.json"),
+			config,
+			verified.ReceiptAuthorityKeyID,
+			receiptAnchor,
+		)
+	}
 	if err != nil {
 		return err
 	}

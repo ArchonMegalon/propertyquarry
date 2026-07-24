@@ -78,6 +78,24 @@ RUNNER_PREREQUISITE_APPROVAL_SCHEMA = (
 RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN = (
     b"propertyquarry.release-control.single-host-runner-prerequisite-approval-signature.v2\0"
 )
+RUNNER_PREREQUISITE_INTENT_SCHEMA_V3 = (
+    "propertyquarry.release-control.single-host-runner-prerequisite-intent.v3"
+)
+RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN_V3 = (
+    b"propertyquarry.release-control.single-host-runner-prerequisite-intent-signature.v3\0"
+)
+RUNNER_PREREQUISITE_APPROVAL_SCHEMA_V3 = (
+    "propertyquarry.release-control.single-host-runner-prerequisite-approval.v3"
+)
+RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN_V3 = (
+    b"propertyquarry.release-control.single-host-runner-prerequisite-approval-signature.v3\0"
+)
+RUNNER_PREREQUISITE_POST_ATTEMPT_SCHEMA_V3 = (
+    "propertyquarry.release-control.single-host-runner-prerequisite-post-attempt.v3"
+)
+RUNNER_PREREQUISITE_POST_ATTEMPT_SIGNATURE_DOMAIN_V3 = (
+    b"propertyquarry.release-control.single-host-runner-prerequisite-post-attempt-signature.v3\0"
+)
 RUNNER_LABEL_DERIVATION_DOMAIN = (
     b"propertyquarry.release-control.single-host-runner-label.v2\0"
 )
@@ -98,6 +116,7 @@ WORKFLOW_REF = (
 )
 RELEASE_JOB = "propertyquarry-release-v2"
 RUNNER_PREREQUISITE_JOB = "propertyquarry-protected-dispatch-inputs"
+RUNNER_PREREQUISITE_JOB_KEY = "propertyquarry-protected-dispatch-inputs"
 ENVIRONMENT = "propertyquarry-production"
 PROJECT_NAME = "property"
 PUBLIC_ORIGIN = "https://propertyquarry.com"
@@ -393,6 +412,28 @@ PAYLOAD_LAYOUT: dict[str, tuple[str, int]] = {
     RUNTIME_ISOLATION_HELPER_PATH: ("runtime-isolation-helper", 0o755),
     RUNTIME_DEPLOY_HELPER_PATH: ("runtime-deploy-helper", 0o755),
 }
+PAYLOAD_LAYOUT_V3 = dict(PAYLOAD_LAYOUT)
+del PAYLOAD_LAYOUT_V3[
+    "/var/lib/propertyquarry-release-single-host-v2/"
+    "runner-prerequisite-intent.v2.json"
+]
+del PAYLOAD_LAYOUT_V3[
+    "/var/lib/propertyquarry-release-single-host-v2/"
+    "runner-prerequisite-approval.v2.json"
+]
+PAYLOAD_LAYOUT_V3[
+    "/var/lib/propertyquarry-release-single-host-v2/"
+    "runner-prerequisite-intent.v3.json"
+] = ("ephemeral-runner-prerequisite-approval-intent", 0o400)
+PAYLOAD_LAYOUT_V3[
+    "/var/lib/propertyquarry-release-single-host-v2/"
+    "runner-prerequisite-approval.v3.json"
+] = ("ephemeral-runner-prerequisite-approval-proof", 0o400)
+PAYLOAD_LAYOUT_V3[
+    "/var/lib/propertyquarry-release-single-host-v2/"
+    "runner-prerequisite-post-attempt.v3.json"
+] = ("ephemeral-runner-prerequisite-approval-post-attempt", 0o400)
+PAYLOAD_LAYOUT_ALL = {**PAYLOAD_LAYOUT, **PAYLOAD_LAYOUT_V3}
 
 
 def fail(code: str) -> None:
@@ -2025,6 +2066,36 @@ def _verified_runner_wire(
     return wrapper["payload"]
 
 
+def _verified_runner_wire_v3(
+    raw: bytes,
+    *,
+    public: Ed25519PublicKey,
+    key_id: str,
+    domain: bytes,
+    label: str,
+) -> dict[str, Any]:
+    payload = _verified_runner_wire(
+        raw,
+        public=public,
+        key_id=key_id,
+        domain=domain,
+        label=label,
+    )
+    wrapper = parse_strict_json(raw, label)
+    if canonical_json(wrapper) != raw:
+        fail(f"{label}-encoding-invalid")
+    return payload
+
+
+def _runner_prerequisite_job_name(
+    *, runner_label: str, reservation_sha256: str
+) -> str:
+    return (
+        f"{RUNNER_PREREQUISITE_JOB_KEY} | {runner_label} | "
+        f"{reservation_sha256}"
+    )
+
+
 def validate_runner_prerequisite_material(
     *,
     intent_raw: bytes,
@@ -2180,6 +2251,278 @@ def validate_runner_prerequisite_material(
         )
         or type(approved) is not int
         or isinstance(approved, bool)
+        or not discovered <= approved <= reservation_expires
+        or approved > config["transaction_started_at_epoch"]
+        or sha256(approval_raw) != config["runner_prerequisite_approval_sha256"]
+        or approval_payload_digest
+        != config["runner_prerequisite_approval_payload_sha256"]
+    ):
+        fail("runner-prerequisite-approval-binding-invalid")
+    return {
+        "runner_prerequisite_approval_payload_sha256": approval_payload_digest,
+        "runner_prerequisite_approval_sha256": sha256(approval_raw),
+        "runner_prerequisite_intent_sha256": sha256(intent_raw),
+        "runner_prerequisite_job_id": approval["prerequisite_job_id"],
+    }
+
+
+def validate_runner_prerequisite_material_v3(
+    *,
+    intent_raw: bytes,
+    post_attempt_raw: bytes,
+    approval_raw: bytes,
+    reservation_raw: bytes,
+    config: dict[str, Any],
+    receipt_public: Ed25519PublicKey,
+    receipt_key_id: str,
+) -> dict[str, Any]:
+    """Authenticate the v3 dynamic protected-environment prerequisite chain."""
+    reservation = _verified_runner_wire(
+        reservation_raw,
+        public=receipt_public,
+        key_id=receipt_key_id,
+        domain=RUNNER_RESERVATION_SIGNATURE_DOMAIN,
+        label="runner-prerequisite-reservation",
+    )
+    intent = _verified_runner_wire_v3(
+        intent_raw,
+        public=receipt_public,
+        key_id=receipt_key_id,
+        domain=RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN_V3,
+        label="runner-prerequisite-intent",
+    )
+    intent_keys = {
+        "authority_profile", "comment", "discovered_at_epoch", "environment_id",
+        "environment_name", "initial_jobs_sha256",
+        "initial_pending_deployments_sha256", "initial_runs_index_sha256",
+        "prerequisite_job_id", "prerequisite_job_key",
+        "prerequisite_job_name", "receipt_authority_key_id", "release_job",
+        "repository", "repository_id", "repository_owner_id",
+        "reservation_expires_at_epoch", "reservation_sha256", "run_attempt",
+        "run_id", "runner_label", "schema", "version", "workflow_path",
+        "workflow_ref", "workflow_sha",
+    }
+    discovered = intent.get("discovered_at_epoch")
+    reservation_created = reservation.get("created_at_epoch")
+    reservation_expires = reservation.get("expires_at_epoch")
+    reservation_sha256 = sha256(reservation_raw)
+    expected_job_name = _runner_prerequisite_job_name(
+        runner_label=config["runner_label"],
+        reservation_sha256=reservation_sha256,
+    )
+    if (
+        set(intent) != intent_keys
+        or intent.get("schema") != RUNNER_PREREQUISITE_INTENT_SCHEMA_V3
+        or intent.get("version") != 3
+        or intent.get("authority_profile") != PROFILE
+        or intent.get("repository") != REPOSITORY
+        or intent.get("repository_id") != REPOSITORY_ID
+        or intent.get("repository_owner_id") != REPOSITORY_OWNER_ID
+        or intent.get("workflow_path") != ".github/workflows/smoke-runtime.yml"
+        or intent.get("workflow_ref") != WORKFLOW_REF
+        or intent.get("workflow_sha") != config["workflow_sha"]
+        or intent.get("receipt_authority_key_id") != receipt_key_id
+        or intent.get("reservation_sha256") != reservation_sha256
+        or intent.get("reservation_sha256") != config["runner_reservation_sha256"]
+        or intent.get("reservation_expires_at_epoch") != reservation_expires
+        or intent.get("runner_label") != config["runner_label"]
+        or intent.get("runner_label") != reservation.get("runner_label")
+        or intent.get("environment_name") != ENVIRONMENT
+        or type(intent.get("environment_id")) is not str
+        or NUMERIC_ID_PATTERN.fullmatch(intent["environment_id"]) is None
+        or intent.get("prerequisite_job_key") != RUNNER_PREREQUISITE_JOB_KEY
+        or intent.get("prerequisite_job_name") != expected_job_name
+        or intent.get("prerequisite_job_id") != config["runner_prerequisite_job_id"]
+        or type(intent.get("prerequisite_job_id")) is not str
+        or NUMERIC_ID_PATTERN.fullmatch(intent["prerequisite_job_id"]) is None
+        or intent.get("release_job") != RELEASE_JOB
+        or intent.get("run_id") != config["runner_run_id"]
+        or type(intent.get("run_id")) is not str
+        or NUMERIC_ID_PATTERN.fullmatch(intent["run_id"]) is None
+        or intent.get("run_attempt") != config["runner_run_attempt"]
+        or type(intent.get("run_attempt")) is not int
+        or isinstance(intent.get("run_attempt"), bool)
+        or type(discovered) is not int
+        or isinstance(discovered, bool)
+        or type(reservation_created) is not int
+        or isinstance(reservation_created, bool)
+        or type(reservation_expires) is not int
+        or isinstance(reservation_expires, bool)
+        or not reservation_created <= discovered <= reservation_expires
+        or intent.get("comment")
+        != "PropertyQuarry governed prerequisite approval " + reservation_sha256
+        or any(
+            type(intent.get(field)) is not str
+            or SHA256_PATTERN.fullmatch(intent[field]) is None
+            for field in (
+                "initial_jobs_sha256",
+                "initial_pending_deployments_sha256",
+                "initial_runs_index_sha256",
+            )
+        )
+        or sha256(intent_raw) != config["runner_prerequisite_intent_sha256"]
+    ):
+        fail("runner-prerequisite-intent-binding-invalid")
+
+    post_attempt = _verified_runner_wire_v3(
+        post_attempt_raw,
+        public=receipt_public,
+        key_id=receipt_key_id,
+        domain=RUNNER_PREREQUISITE_POST_ATTEMPT_SIGNATURE_DOMAIN_V3,
+        label="runner-prerequisite-post-attempt",
+    )
+    post_attempt_keys = {
+        "attempted_at_epoch", "authority_profile", "comment",
+        "environment_id", "environment_name", "github_api_path", "http_method",
+        "intent_sha256", "pre_post_jobs_sha256",
+        "pre_post_pending_deployments_count",
+        "pre_post_pending_deployments_sha256",
+        "pre_post_release_job_present", "pre_post_review_history_sha256",
+        "pre_post_review_match_count", "pre_post_review_scope",
+        "pre_post_run_sha256", "prerequisite_job_id",
+        "prerequisite_job_key", "prerequisite_job_name",
+        "receipt_authority_key_id", "repository", "repository_id",
+        "repository_owner_id", "request_sha256",
+        "reservation_expires_at_epoch", "reservation_sha256", "run_attempt",
+        "run_id", "runner_label", "schema", "version", "workflow_path",
+        "workflow_ref", "workflow_sha",
+    }
+    attempted = post_attempt.get("attempted_at_epoch")
+    request_raw = canonical_json(
+        {
+            "comment": intent["comment"],
+            "environment_ids": [int(intent["environment_id"])],
+            "state": "approved",
+        }
+    )
+    if (
+        set(post_attempt) != post_attempt_keys
+        or post_attempt.get("schema")
+        != RUNNER_PREREQUISITE_POST_ATTEMPT_SCHEMA_V3
+        or post_attempt.get("version") != 3
+        or post_attempt.get("authority_profile") != PROFILE
+        or post_attempt.get("intent_sha256") != sha256(intent_raw)
+        or post_attempt.get("reservation_sha256") != reservation_sha256
+        or post_attempt.get("reservation_expires_at_epoch")
+        != intent["reservation_expires_at_epoch"]
+        or post_attempt.get("runner_label") != intent["runner_label"]
+        or post_attempt.get("run_id") != intent["run_id"]
+        or post_attempt.get("run_attempt") != intent["run_attempt"]
+        or post_attempt.get("prerequisite_job_id")
+        != intent["prerequisite_job_id"]
+        or post_attempt.get("prerequisite_job_key")
+        != intent["prerequisite_job_key"]
+        or post_attempt.get("prerequisite_job_name")
+        != intent["prerequisite_job_name"]
+        or post_attempt.get("environment_id") != intent["environment_id"]
+        or post_attempt.get("environment_name") != ENVIRONMENT
+        or post_attempt.get("receipt_authority_key_id") != receipt_key_id
+        or post_attempt.get("repository") != REPOSITORY
+        or post_attempt.get("repository_id") != REPOSITORY_ID
+        or post_attempt.get("repository_owner_id") != REPOSITORY_OWNER_ID
+        or post_attempt.get("workflow_path") != ".github/workflows/smoke-runtime.yml"
+        or post_attempt.get("workflow_ref") != WORKFLOW_REF
+        or post_attempt.get("workflow_sha") != config["workflow_sha"]
+        or post_attempt.get("http_method") != "POST"
+        or post_attempt.get("github_api_path")
+        != (
+            f"/repos/{REPOSITORY}/actions/runs/{intent['run_id']}/"
+            "pending_deployments"
+        )
+        or post_attempt.get("comment") != intent["comment"]
+        or post_attempt.get("request_sha256") != sha256(request_raw)
+        or post_attempt.get("pre_post_release_job_present") is not False
+        or post_attempt.get("pre_post_pending_deployments_count") != 1
+        or post_attempt.get("pre_post_review_match_count") != 0
+        or post_attempt.get("pre_post_review_scope")
+        != "any-approved-target-environment"
+        or any(
+            type(post_attempt.get(field)) is not str
+            or SHA256_PATTERN.fullmatch(post_attempt[field]) is None
+            for field in (
+                "pre_post_jobs_sha256",
+                "pre_post_pending_deployments_sha256",
+                "pre_post_review_history_sha256",
+                "pre_post_run_sha256",
+            )
+        )
+        or type(attempted) is not int
+        or isinstance(attempted, bool)
+        or not discovered <= attempted <= reservation_expires
+    ):
+        fail("runner-prerequisite-post-attempt-binding-invalid")
+
+    approval = _verified_runner_wire_v3(
+        approval_raw,
+        public=receipt_public,
+        key_id=receipt_key_id,
+        domain=RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN_V3,
+        label="runner-prerequisite-approval",
+    )
+    approval_keys = {
+        "approval_api_disposition", "approval_response_sha256",
+        "approved_at_epoch", "completed_jobs_sha256", "environment_id",
+        "environment_name", "intent_sha256", "post_pending_deployments_sha256",
+        "prerequisite_conclusion", "prerequisite_job_id",
+        "prerequisite_job_key", "prerequisite_job_name",
+        "receipt_authority_key_id", "release_job", "repository",
+        "repository_id", "repository_owner_id", "reservation_expires_at_epoch",
+        "reservation_sha256", "review_history_sha256", "run_attempt", "run_id",
+        "runner_label", "schema", "version", "workflow_path", "workflow_ref",
+        "workflow_sha",
+    }
+    approved = approval.get("approved_at_epoch")
+    disposition = approval.get("approval_api_disposition")
+    response_digest = approval.get("approval_response_sha256")
+    approval_payload_digest = sha256(canonical_json(approval))
+    if (
+        set(approval) != approval_keys
+        or approval.get("schema") != RUNNER_PREREQUISITE_APPROVAL_SCHEMA_V3
+        or approval.get("version") != 3
+        or approval.get("intent_sha256") != sha256(intent_raw)
+        or approval.get("reservation_sha256") != intent["reservation_sha256"]
+        or approval.get("runner_label") != intent["runner_label"]
+        or approval.get("run_id") != intent["run_id"]
+        or approval.get("run_attempt") != intent["run_attempt"]
+        or approval.get("prerequisite_job_id") != intent["prerequisite_job_id"]
+        or approval.get("prerequisite_job_key")
+        != intent["prerequisite_job_key"]
+        or approval.get("prerequisite_job_name")
+        != intent["prerequisite_job_name"]
+        or approval.get("prerequisite_job_name") != expected_job_name
+        or approval.get("prerequisite_conclusion") != "success"
+        or approval.get("environment_id") != intent["environment_id"]
+        or approval.get("environment_name") != ENVIRONMENT
+        or approval.get("receipt_authority_key_id") != receipt_key_id
+        or approval.get("repository") != REPOSITORY
+        or approval.get("repository_id") != REPOSITORY_ID
+        or approval.get("repository_owner_id") != REPOSITORY_OWNER_ID
+        or approval.get("workflow_path") != ".github/workflows/smoke-runtime.yml"
+        or approval.get("workflow_ref") != WORKFLOW_REF
+        or approval.get("workflow_sha") != config["workflow_sha"]
+        or approval.get("release_job") != RELEASE_JOB
+        or approval.get("reservation_expires_at_epoch") != reservation_expires
+        or disposition not in {"approved", "post-approved-recovered"}
+        or (
+            disposition == "approved"
+            and (
+                type(response_digest) is not str
+                or SHA256_PATTERN.fullmatch(response_digest) is None
+            )
+        )
+        or (disposition == "post-approved-recovered" and response_digest is not None)
+        or any(
+            type(approval.get(field)) is not str
+            or SHA256_PATTERN.fullmatch(approval[field]) is None
+            for field in (
+                "completed_jobs_sha256",
+                "post_pending_deployments_sha256",
+                "review_history_sha256",
+            )
+        )
+        or type(approved) is not int
+        or isinstance(approved, bool)
+        or approved != attempted
         or not discovered <= approved <= reservation_expires
         or approved > config["transaction_started_at_epoch"]
         or sha256(approval_raw) != config["runner_prerequisite_approval_sha256"]
@@ -2999,7 +3342,10 @@ def _validate_manifest(
     ):
         fail("manifest-transaction-start-invalid")
     files = manifest["files"]
-    if not isinstance(files, list) or len(files) != len(PAYLOAD_LAYOUT):
+    if (
+        not isinstance(files, list)
+        or len(files) not in {len(PAYLOAD_LAYOUT), len(PAYLOAD_LAYOUT_V3)}
+    ):
         fail("manifest-files-invalid")
     expected_order = []
     entries: dict[str, dict[str, Any]] = {}
@@ -3014,9 +3360,12 @@ def _validate_manifest(
         }:
             fail("manifest-file-shape-invalid")
         install_path = entry.get("install_path")
-        if not isinstance(install_path, str) or install_path not in PAYLOAD_LAYOUT:
+        if (
+            not isinstance(install_path, str)
+            or install_path not in PAYLOAD_LAYOUT_ALL
+        ):
             fail("manifest-install-path-invalid")
-        purpose, mode = PAYLOAD_LAYOUT[install_path]
+        purpose, mode = PAYLOAD_LAYOUT_ALL[install_path]
         package_path = "payload" + install_path
         if (
             entry["purpose"] != purpose
@@ -3034,7 +3383,10 @@ def _validate_manifest(
             fail("manifest-file-binding-invalid")
         entries[package_path] = entry
         expected_order.append(package_path)
-    if set(entries) != {"payload" + path for path in PAYLOAD_LAYOUT}:
+    installed_paths = {
+        package_path.removeprefix("payload") for package_path in entries
+    }
+    if installed_paths not in (set(PAYLOAD_LAYOUT), set(PAYLOAD_LAYOUT_V3)):
         fail("manifest-file-set-invalid")
     if expected_order != sorted(expected_order):
         fail("manifest-file-order-invalid")
@@ -3145,6 +3497,9 @@ def build_package(arguments: argparse.Namespace) -> dict[str, Any]:
     runner_prerequisite_intent_raw = read_regular(
         arguments.runner_prerequisite_intent, MAX_JSON_BYTES
     )
+    runner_prerequisite_post_attempt_raw = read_regular(
+        arguments.runner_prerequisite_post_attempt, MAX_JSON_BYTES
+    )
     runner_prerequisite_approval_raw = read_regular(
         arguments.runner_prerequisite_approval, MAX_JSON_BYTES
     )
@@ -3197,8 +3552,9 @@ def build_package(arguments: argparse.Namespace) -> dict[str, Any]:
         receipt_public=receipt_public,
         receipt_key_id=receipt_key_id,
     )
-    prerequisite_material = validate_runner_prerequisite_material(
+    prerequisite_material = validate_runner_prerequisite_material_v3(
         intent_raw=runner_prerequisite_intent_raw,
+        post_attempt_raw=runner_prerequisite_post_attempt_raw,
         approval_raw=runner_prerequisite_approval_raw,
         reservation_raw=runner_reservation_raw,
         config=config,
@@ -3254,8 +3610,9 @@ def build_package(arguments: argparse.Namespace) -> dict[str, Any]:
         "/etc/propertyquarry-release-single-host-v2/receipt-authority-v2.pem": receipt_public_raw,
         "/var/lib/propertyquarry-release-single-host-v2/runner-launch-ticket.v2.json": runner_launch_ticket_raw,
         "/var/lib/propertyquarry-release-single-host-v2/runner-reservation.v2.json": runner_reservation_raw,
-        "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v2.json": runner_prerequisite_intent_raw,
-        "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v2.json": runner_prerequisite_approval_raw,
+        "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v3.json": runner_prerequisite_intent_raw,
+        "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-post-attempt.v3.json": runner_prerequisite_post_attempt_raw,
+        "/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v3.json": runner_prerequisite_approval_raw,
         "/usr/lib/systemd/system/propertyquarry-release-single-host-v2.socket": templates[
             "socket"
         ],
@@ -3282,11 +3639,16 @@ def build_package(arguments: argparse.Namespace) -> dict[str, Any]:
         RUNTIME_ISOLATION_HELPER_PATH: runtime_isolation_helper,
         RUNTIME_DEPLOY_HELPER_PATH: runtime_deploy_helper,
     }
-    if set(by_path) != set(PAYLOAD_LAYOUT):
+    if set(by_path) != set(PAYLOAD_LAYOUT_V3):
         fail("internal-payload-layout-invalid")
     payloads = [
-        Payload(path, PAYLOAD_LAYOUT[path][0], PAYLOAD_LAYOUT[path][1], by_path[path])
-        for path in PAYLOAD_LAYOUT
+        Payload(
+            path,
+            PAYLOAD_LAYOUT_V3[path][0],
+            PAYLOAD_LAYOUT_V3[path][1],
+            by_path[path],
+        )
+        for path in PAYLOAD_LAYOUT_V3
     ]
     manifest = manifest_for(
         payloads,
@@ -3457,13 +3819,26 @@ def verify_package(
     runner_launch_ticket_path = (
         "payload/var/lib/propertyquarry-release-single-host-v2/runner-launch-ticket.v2.json"
     )
+    prerequisite_version = (
+        3
+        if (
+            "payload/var/lib/propertyquarry-release-single-host-v2/"
+            "runner-prerequisite-intent.v3.json"
+        )
+        in entries
+        else 2
+    )
     runner_prerequisite_intent_path = (
         "payload/var/lib/propertyquarry-release-single-host-v2/"
-        "runner-prerequisite-intent.v2.json"
+        f"runner-prerequisite-intent.v{prerequisite_version}.json"
     )
     runner_prerequisite_approval_path = (
         "payload/var/lib/propertyquarry-release-single-host-v2/"
-        "runner-prerequisite-approval.v2.json"
+        f"runner-prerequisite-approval.v{prerequisite_version}.json"
+    )
+    runner_prerequisite_post_attempt_path = (
+        "payload/var/lib/propertyquarry-release-single-host-v2/"
+        "runner-prerequisite-post-attempt.v3.json"
     )
     binary_path = (
         "payload/usr/libexec/propertyquarry-release-control/"
@@ -3490,14 +3865,24 @@ def verify_package(
         receipt_public=receipt_public,
         receipt_key_id=receipt_key_id,
     )
-    prerequisite_material = validate_runner_prerequisite_material(
-        intent_raw=members[runner_prerequisite_intent_path],
-        approval_raw=members[runner_prerequisite_approval_path],
-        reservation_raw=members[runner_reservation_path],
-        config=config,
-        receipt_public=receipt_public,
-        receipt_key_id=receipt_key_id,
+    prerequisite_validator = (
+        validate_runner_prerequisite_material_v3
+        if prerequisite_version == 3
+        else validate_runner_prerequisite_material
     )
+    prerequisite_arguments: dict[str, Any] = {
+        "intent_raw": members[runner_prerequisite_intent_path],
+        "approval_raw": members[runner_prerequisite_approval_path],
+        "reservation_raw": members[runner_reservation_path],
+        "config": config,
+        "receipt_public": receipt_public,
+        "receipt_key_id": receipt_key_id,
+    }
+    if prerequisite_version == 3:
+        prerequisite_arguments["post_attempt_raw"] = members[
+            runner_prerequisite_post_attempt_path
+        ]
+    prerequisite_material = prerequisite_validator(**prerequisite_arguments)
     runner_material.update(prerequisite_material)
     validate_materialization_receipt(
         members[materialization_receipt_path],
@@ -3790,6 +4175,7 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--runner-reservation", required=True)
     build.add_argument("--runner-launch-ticket", required=True)
     build.add_argument("--runner-prerequisite-intent", required=True)
+    build.add_argument("--runner-prerequisite-post-attempt", required=True)
     build.add_argument("--runner-prerequisite-approval", required=True)
     build.add_argument("--package-authority-public-key", required=True)
     build.add_argument("--package-authority-private-key", required=True)

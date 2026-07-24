@@ -38,20 +38,41 @@ _RESERVATION_SPEC.loader.exec_module(reservation)
 APPROVAL_ROOT = (
     reservation.RESERVATION_PARENT / "single-host-v2-runner-prerequisite-approvals"
 )
-INTENT_SCHEMA = (
+LEGACY_INTENT_SCHEMA = (
     "propertyquarry.release-control.single-host-runner-prerequisite-intent.v2"
 )
+INTENT_SCHEMA = (
+    "propertyquarry.release-control.single-host-runner-prerequisite-intent.v3"
+)
 APPROVAL_SCHEMA = (
-    "propertyquarry.release-control.single-host-runner-prerequisite-approval.v2"
+    "propertyquarry.release-control.single-host-runner-prerequisite-approval.v3"
+)
+POST_ATTEMPT_SCHEMA = (
+    "propertyquarry.release-control.single-host-runner-prerequisite-post-attempt.v3"
+)
+RETIREMENT_TERMINAL_SCHEMA = (
+    "propertyquarry.release-control.single-host-runner-retirement-terminal.v2"
 )
 RESULT_SCHEMA = (
-    "propertyquarry.release-control.single-host-runner-prerequisite-result.v2"
+    "propertyquarry.release-control.single-host-runner-prerequisite-result.v3"
 )
-INTENT_SIGNATURE_DOMAIN = (
+RETIREMENT_RESULT_SCHEMA = (
+    "propertyquarry.release-control.single-host-runner-retirement-result.v2"
+)
+LEGACY_INTENT_SIGNATURE_DOMAIN = (
     b"propertyquarry.release-control.single-host-runner-prerequisite-intent-signature.v2\0"
 )
+INTENT_SIGNATURE_DOMAIN = (
+    b"propertyquarry.release-control.single-host-runner-prerequisite-intent-signature.v3\0"
+)
 APPROVAL_SIGNATURE_DOMAIN = (
-    b"propertyquarry.release-control.single-host-runner-prerequisite-approval-signature.v2\0"
+    b"propertyquarry.release-control.single-host-runner-prerequisite-approval-signature.v3\0"
+)
+POST_ATTEMPT_SIGNATURE_DOMAIN = (
+    b"propertyquarry.release-control.single-host-runner-prerequisite-post-attempt-signature.v3\0"
+)
+RETIREMENT_TERMINAL_SIGNATURE_DOMAIN = (
+    b"propertyquarry.release-control.single-host-runner-retirement-terminal-signature.v2\0"
 )
 GITHUB_API_HOST = "api.github.com"
 GITHUB_API_VERSION = "2022-11-28"
@@ -65,16 +86,17 @@ WORKFLOW_REF = (
     "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"
 )
 ENVIRONMENT = "propertyquarry-production"
-PREREQUISITE_JOB = "propertyquarry-protected-dispatch-inputs"
+PREREQUISITE_JOB_KEY = "propertyquarry-protected-dispatch-inputs"
 RELEASE_JOB = "propertyquarry-release-v2"
 MAXIMUM_RESPONSE_BYTES = 4 * 1024 * 1024
 MAXIMUM_TOKEN_BYTES = 2048
 MAXIMUM_COMPLETION_WAIT_SECONDS = 900
+MAXIMUM_RECONCILIATION_POLLS = 451
 NUMERIC_ID = re.compile(r"^[1-9][0-9]{0,19}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 STAGE_NAME = re.compile(r"^\.runner-prerequisite-[0-9a-f]{64}\.tmp$")
 RECORD_NAME = re.compile(
-    r"^[0-9a-f]{64}\.(?:intent|approved)\.v2\.json$"
+    r"^[0-9a-f]{64}\.(?:(?:intent|approved)\.v2|(?:intent|approved|post-attempt)\.v3|retire-terminal\.v2)\.json$"
 )
 
 
@@ -115,6 +137,7 @@ def _wire(payload: dict[str, Any], private, key_id: str, domain: bytes) -> bytes
 def _verify_wire(
     raw: bytes, *, public, key_id: str, schema: str, domain: bytes
 ) -> dict[str, Any]:
+    expected_version = 3 if schema.endswith(".v3") else 2
     try:
         wrapper = reservation.materialize.package.parse_strict_json(
             raw, "runner-prerequisite-wire"
@@ -148,7 +171,8 @@ def _verify_wire(
         or signature_text
         != base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
         or payload.get("schema") != schema
-        or payload.get("version") != 2
+        or payload.get("version") != expected_version
+        or _canonical(wrapper) != raw
     ):
         fail("runner-prerequisite-wire-binding-invalid")
     return payload
@@ -206,9 +230,27 @@ def _ensure_approval_root() -> None:
 def _record_paths(reservation_raw: bytes) -> tuple[Path, Path]:
     identity = _digest(reservation_raw).removeprefix("sha256:")
     return (
+        APPROVAL_ROOT / f"{identity}.intent.v3.json",
+        APPROVAL_ROOT / f"{identity}.approved.v3.json",
+    )
+
+
+def _legacy_record_paths(reservation_raw: bytes) -> tuple[Path, Path]:
+    identity = _digest(reservation_raw).removeprefix("sha256:")
+    return (
         APPROVAL_ROOT / f"{identity}.intent.v2.json",
         APPROVAL_ROOT / f"{identity}.approved.v2.json",
     )
+
+
+def _post_attempt_path(reservation_raw: bytes) -> Path:
+    identity = _digest(reservation_raw).removeprefix("sha256:")
+    return APPROVAL_ROOT / f"{identity}.post-attempt.v3.json"
+
+
+def _retirement_terminal_path(reservation_raw: bytes) -> Path:
+    identity = _digest(reservation_raw).removeprefix("sha256:")
+    return APPROVAL_ROOT / f"{identity}.retire-terminal.v2.json"
 
 
 def _read_record(path: Path) -> bytes:
@@ -334,23 +376,26 @@ def _read_admin_token() -> bytearray:
     if not stat.S_ISFIFO(metadata.st_mode):
         fail("runner-prerequisite-token-fd-invalid")
     raw = bytearray()
-    while len(raw) <= MAXIMUM_TOKEN_BYTES:
-        chunk = os.read(8, MAXIMUM_TOKEN_BYTES + 1 - len(raw))
-        if not chunk:
-            break
-        raw.extend(chunk)
-    if raw.endswith(b"\n"):
-        raw.pop()
-    if (
-        not 20 <= len(raw) <= MAXIMUM_TOKEN_BYTES
-        or b"\n" in raw
-        or b"\r" in raw
-        or re.fullmatch(rb"[A-Za-z0-9_]+", raw) is None
-    ):
+    try:
+        while len(raw) <= MAXIMUM_TOKEN_BYTES:
+            chunk = os.read(8, MAXIMUM_TOKEN_BYTES + 1 - len(raw))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        if raw.endswith(b"\n"):
+            raw.pop()
+        if (
+            not 20 <= len(raw) <= MAXIMUM_TOKEN_BYTES
+            or b"\n" in raw
+            or b"\r" in raw
+            or re.fullmatch(rb"[A-Za-z0-9_]+", raw) is None
+        ):
+            fail("runner-prerequisite-token-invalid")
+        return raw
+    except BaseException:
         for index in range(len(raw)):
             raw[index] = 0
-        fail("runner-prerequisite-token-invalid")
-    return raw
+        raise
 
 
 def _production_requester(token: bytearray) -> Requester:
@@ -387,12 +432,12 @@ def _production_requester(token: bytearray) -> Requester:
                 .strip()
                 .lower()
             )
-            if (
+            response_shape_invalid = (
                 response.status != 200
                 or response.reason != "OK"
+                or observed_type != "application/json"
                 or response.getheader("Location") is not None
                 or response.getheader("Content-Encoding") is not None
-                or observed_type != "application/json"
                 or len(lengths) > 1
                 or (
                     lengths
@@ -401,11 +446,13 @@ def _production_requester(token: bytearray) -> Requester:
                         or int(lengths[0]) > MAXIMUM_RESPONSE_BYTES
                     )
                 )
-            ):
+            )
+            if response_shape_invalid:
                 fail("runner-prerequisite-github-response-rejected")
             raw = response.read(MAXIMUM_RESPONSE_BYTES + 1)
             if (
                 not 1 <= len(raw) <= MAXIMUM_RESPONSE_BYTES
+                or response.getheader("Location") is not None
                 or (lengths and len(raw) != int(lengths[0]))
             ):
                 fail("runner-prerequisite-github-response-invalid")
@@ -433,14 +480,35 @@ def _json_request(
     return value, raw
 
 
+def _prerequisite_job_name(
+    *, runner_label: str, reservation_sha256: str
+) -> str:
+    return (
+        f"{PREREQUISITE_JOB_KEY} | {runner_label} | "
+        f"{reservation_sha256}"
+    )
+
+
 def _validate_run(
-    run: dict[str, Any], payload: dict[str, Any], *, expected_run_id: str | None = None
+    run: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    expected_run_id: str | None = None,
+    terminal: bool = False,
 ) -> tuple[str, int]:
     run_id = _numeric(run.get("id"))
     attempt = run.get("run_attempt")
     repository_value = run.get("repository")
     head_repository = run.get("head_repository")
     created = _timestamp(run.get("created_at"), "runner-prerequisite-run-time-invalid")
+    created_lower = payload.get("created_at_epoch")
+    if type(created_lower) is not int:
+        created_lower = 1
+    created_upper = payload.get("expires_at_epoch")
+    if type(created_upper) is not int:
+        created_upper = payload.get("reservation_expires_at_epoch")
+    if type(created_upper) is not int:
+        fail("runner-prerequisite-run-time-invalid")
     if (
         run_id is None
         or (expected_run_id is not None and run_id != expected_run_id)
@@ -450,9 +518,21 @@ def _validate_run(
         or run.get("head_branch") != "main"
         or run.get("head_sha") != payload["workflow_sha"]
         or run.get("path") != WORKFLOW_PATH
-        or run.get("status")
-        not in {"queued", "in_progress", "waiting", "pending", "requested"}
-        or run.get("conclusion") is not None
+        or (
+            not terminal
+            and (
+                run.get("status")
+                not in {"queued", "in_progress", "waiting", "pending", "requested"}
+                or run.get("conclusion") is not None
+            )
+        )
+        or (
+            terminal
+            and (
+                run.get("status") != "completed"
+                or run.get("conclusion") not in {"cancelled", "failure"}
+            )
+        )
         or not isinstance(repository_value, dict)
         or _numeric(repository_value.get("id")) != REPOSITORY_ID
         or repository_value.get("full_name") != REPOSITORY
@@ -460,11 +540,40 @@ def _validate_run(
         or _numeric(repository_value["owner"].get("id")) != REPOSITORY_OWNER_ID
         or not isinstance(head_repository, dict)
         or _numeric(head_repository.get("id")) != REPOSITORY_ID
-        or created < payload["created_at_epoch"] - 60
-        or created > payload["expires_at_epoch"]
+        or created < created_lower - 60
+        or created > created_upper
+        or (
+            "discovered_at_epoch" in payload
+            and type(payload.get("discovered_at_epoch")) is int
+            and created > payload["discovered_at_epoch"]
+        )
     ):
         fail("runner-prerequisite-run-binding-invalid")
     return run_id, attempt
+
+
+def _run_for_id(
+    requester: Requester,
+    intent: dict[str, Any],
+    *,
+    terminal: bool,
+) -> tuple[dict[str, Any], bytes]:
+    value, raw = _json_request(
+        requester,
+        "GET",
+        f"/{REPOSITORY_API}/actions/runs/{intent['run_id']}",
+    )
+    if not isinstance(value, dict):
+        fail("runner-prerequisite-run-invalid")
+    run_id, attempt = _validate_run(
+        value,
+        intent,
+        expected_run_id=intent["run_id"],
+        terminal=terminal,
+    )
+    if run_id != intent["run_id"] or attempt != intent["run_attempt"]:
+        fail("runner-prerequisite-run-binding-invalid")
+    return value, raw
 
 
 def _jobs_for_run(
@@ -487,11 +596,16 @@ def _jobs_for_run(
 
 
 def _prerequisite_job(
-    jobs: list[dict[str, Any]], *, run_id: str, workflow_sha: str, waiting: bool
+    jobs: list[dict[str, Any]],
+    *,
+    expected_name: str,
+    run_id: str,
+    workflow_sha: str,
+    waiting: bool,
 ) -> tuple[str, dict[str, Any]]:
     if any(job.get("name") == RELEASE_JOB for job in jobs) and waiting:
         fail("runner-prerequisite-release-job-already-present")
-    matches = [job for job in jobs if job.get("name") == PREREQUISITE_JOB]
+    matches = [job for job in jobs if job.get("name") == expected_name]
     if len(matches) != 1:
         fail("runner-prerequisite-job-selection-invalid")
     job = matches[0]
@@ -511,6 +625,98 @@ def _prerequisite_job(
     ):
         fail("runner-prerequisite-job-binding-invalid")
     return job_id, job
+
+
+def _bound_prerequisite_job(
+    jobs: list[dict[str, Any]], intent: dict[str, Any]
+) -> dict[str, Any]:
+    matches = [
+        job
+        for job in jobs
+        if job.get("name") == intent["prerequisite_job_name"]
+    ]
+    if len(matches) != 1:
+        fail("runner-prerequisite-completion-job-invalid")
+    job = matches[0]
+    if (
+        _numeric(job.get("id")) != intent["prerequisite_job_id"]
+        or job.get("head_sha") != intent["workflow_sha"]
+        or job.get("labels") != ["ubuntu-latest"]
+        or job.get("run_url")
+        != (
+            f"https://api.github.com/repos/{REPOSITORY}/actions/runs/"
+            f"{intent['run_id']}"
+        )
+    ):
+        fail("runner-prerequisite-completion-job-invalid")
+    return job
+
+
+def _terminal_release_job_evidence(
+    jobs: list[dict[str, Any]], intent: dict[str, Any]
+) -> dict[str, Any]:
+    matches = [job for job in jobs if job.get("name") == RELEASE_JOB]
+    if len(matches) > 1:
+        fail("runner-retirement-release-job-ambiguous")
+    if not matches:
+        return {
+            "release_job_completed_at": None,
+            "release_job_conclusion": None,
+            "release_job_disposition": "absent",
+            "release_job_id": None,
+            "release_job_labels": [],
+            "release_job_present": False,
+            "release_job_run_attempt": None,
+            "release_job_runner_group_id": None,
+            "release_job_runner_group_name": None,
+            "release_job_runner_id": None,
+            "release_job_runner_name": None,
+            "release_job_started_at": None,
+            "release_job_steps_count": 0,
+        }
+    job = matches[0]
+    job_id = _numeric(job.get("id"))
+    labels = [
+        "self-hosted",
+        "propertyquarry-release-controller-v2",
+        intent["runner_label"],
+    ]
+    if (
+        job_id is None
+        or job.get("status") != "completed"
+        or job.get("conclusion") not in {"cancelled", "skipped"}
+        or job.get("head_sha") != intent["workflow_sha"]
+        or job.get("run_url")
+        != f"https://api.github.com/repos/{REPOSITORY}/actions/runs/{intent['run_id']}"
+        or job.get("labels") != labels
+        or job.get("run_attempt") != intent["run_attempt"]
+        or job.get("runner_id") not in {None, 0}
+        or job.get("runner_name") not in {None, ""}
+        or job.get("runner_group_id") not in {None, 0}
+        or job.get("runner_group_name") not in {None, ""}
+        or job.get("steps") != []
+        or job.get("started_at") is not None
+        or not isinstance(job.get("completed_at"), str)
+    ):
+        fail("runner-retirement-release-job-executed")
+    _timestamp(
+        job["completed_at"], "runner-retirement-release-job-time-invalid"
+    )
+    return {
+        "release_job_completed_at": job["completed_at"],
+        "release_job_conclusion": job["conclusion"],
+        "release_job_disposition": "inert-terminal",
+        "release_job_id": job_id,
+        "release_job_labels": labels,
+        "release_job_present": True,
+        "release_job_run_attempt": intent["run_attempt"],
+        "release_job_runner_group_id": job.get("runner_group_id"),
+        "release_job_runner_group_name": job.get("runner_group_name"),
+        "release_job_runner_id": job.get("runner_id"),
+        "release_job_runner_name": job.get("runner_name"),
+        "release_job_started_at": None,
+        "release_job_steps_count": 0,
+    }
 
 
 def _pending_for_run(
@@ -550,13 +756,17 @@ def _discover_intent(
     value, runs_raw = _json_request(
         requester,
         "GET",
-        f"/{REPOSITORY_API}/actions/workflows/smoke-runtime.yml/runs?event=workflow_dispatch&branch=main&per_page=100",
+        (
+            f"/{REPOSITORY_API}/actions/workflows/smoke-runtime.yml/runs"
+            f"?event=workflow_dispatch&branch=main"
+            f"&head_sha={payload['workflow_sha']}&per_page=100"
+        ),
     )
     runs = value.get("workflow_runs") if isinstance(value, dict) else None
     if (
         not isinstance(runs, list)
         or type(value.get("total_count")) is not int
-        or value["total_count"] < len(runs)
+        or value["total_count"] != len(runs)
         or not 1 <= len(runs) <= 100
     ):
         fail("runner-prerequisite-run-index-invalid")
@@ -568,7 +778,14 @@ def _discover_intent(
             run_id, attempt = _validate_run(raw_run, payload)
             jobs, jobs_raw = _jobs_for_run(requester, run_id, attempt)
             job_id, _job = _prerequisite_job(
-                jobs, run_id=run_id, workflow_sha=payload["workflow_sha"], waiting=True
+                jobs,
+                expected_name=_prerequisite_job_name(
+                    runner_label=payload["runner_label"],
+                    reservation_sha256=_digest(reservation_raw),
+                ),
+                run_id=run_id,
+                workflow_sha=payload["workflow_sha"],
+                waiting=True,
             )
             pending, pending_raw = _pending_for_run(requester, run_id)
             if len(pending) != 1:
@@ -591,7 +808,11 @@ def _discover_intent(
                 "initial_pending_deployments_sha256": _digest(pending_raw),
                 "initial_runs_index_sha256": _digest(runs_raw),
                 "prerequisite_job_id": job_id,
-                "prerequisite_job_name": PREREQUISITE_JOB,
+                "prerequisite_job_key": PREREQUISITE_JOB_KEY,
+                "prerequisite_job_name": _prerequisite_job_name(
+                    runner_label=payload["runner_label"],
+                    reservation_sha256=_digest(reservation_raw),
+                ),
                 "receipt_authority_key_id": receipt_id,
                 "release_job": RELEASE_JOB,
                 "repository": REPOSITORY,
@@ -603,7 +824,7 @@ def _discover_intent(
                 "run_id": run_id,
                 "runner_label": payload["runner_label"],
                 "schema": INTENT_SCHEMA,
-                "version": 2,
+                "version": 3,
                 "workflow_path": WORKFLOW_PATH,
                 "workflow_ref": WORKFLOW_REF,
                 "workflow_sha": payload["workflow_sha"],
@@ -615,79 +836,47 @@ def _discover_intent(
 
 
 def _validate_intent(
-    payload: dict[str, Any], reservation_raw: bytes, reservation_payload: dict[str, Any], receipt_id: str
+    payload: dict[str, Any],
+    reservation_raw: bytes,
+    reservation_payload: dict[str, Any],
+    receipt_id: str,
 ) -> None:
-    expected_keys = {
-        "authority_profile",
-        "comment",
-        "discovered_at_epoch",
-        "environment_id",
-        "environment_name",
-        "initial_jobs_sha256",
-        "initial_pending_deployments_sha256",
-        "initial_runs_index_sha256",
-        "prerequisite_job_id",
-        "prerequisite_job_name",
-        "receipt_authority_key_id",
-        "release_job",
-        "repository",
-        "repository_id",
-        "repository_owner_id",
-        "reservation_expires_at_epoch",
-        "reservation_sha256",
-        "run_attempt",
-        "run_id",
-        "runner_label",
-        "schema",
-        "version",
-        "workflow_path",
-        "workflow_ref",
-        "workflow_sha",
-    }
-    if (
-        set(payload) != expected_keys
-        or payload.get("schema") != INTENT_SCHEMA
-        or payload.get("version") != 2
-        or payload.get("authority_profile") != "single-host-production-v2"
-        or payload.get("repository") != REPOSITORY
-        or payload.get("repository_id") != REPOSITORY_ID
-        or payload.get("repository_owner_id") != REPOSITORY_OWNER_ID
-        or payload.get("workflow_path") != WORKFLOW_PATH
-        or payload.get("workflow_ref") != WORKFLOW_REF
-        or payload.get("workflow_sha") != reservation_payload["workflow_sha"]
-        or payload.get("receipt_authority_key_id") != receipt_id
-        or payload.get("reservation_sha256") != _digest(reservation_raw)
-        or payload.get("reservation_expires_at_epoch")
-        != reservation_payload["expires_at_epoch"]
-        or payload.get("runner_label") != reservation_payload["runner_label"]
-        or payload.get("environment_name") != ENVIRONMENT
-        or _numeric(payload.get("environment_id")) is None
-        or payload.get("prerequisite_job_name") != PREREQUISITE_JOB
-        or _numeric(payload.get("prerequisite_job_id")) is None
-        or payload.get("release_job") != RELEASE_JOB
-        or _numeric(payload.get("run_id")) is None
-        or type(payload.get("run_attempt")) is not int
-        or not 1 <= payload["run_attempt"] < 1 << 31
-        or type(payload.get("discovered_at_epoch")) is not int
-        or not reservation_payload["created_at_epoch"] <= payload["discovered_at_epoch"] <= reservation_payload["expires_at_epoch"]
-        or payload.get("comment")
-        != "PropertyQuarry governed prerequisite approval " + _digest(reservation_raw)
-        or any(
-            not isinstance(payload.get(field), str)
-            or DIGEST.fullmatch(payload[field]) is None
-            for field in (
-                "initial_jobs_sha256",
-                "initial_pending_deployments_sha256",
-                "initial_runs_index_sha256",
-            )
+    try:
+        reservation._validate_prerequisite_intent_v3(
+            payload,
+            reservation_raw=reservation_raw,
+            reservation_payload=reservation_payload,
+            receipt_id=receipt_id,
         )
-    ):
+    except reservation.ReservationFailure:
         fail("runner-prerequisite-intent-binding-invalid")
 
 
-def _review_history(
+def _approval_request(intent: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "comment": intent["comment"],
+        "environment_ids": [int(intent["environment_id"])],
+        "state": "approved",
+    }
+
+
+def _validate_post_attempt(
+    payload: dict[str, Any],
+    *,
+    intent_raw: bytes,
+    intent: dict[str, Any],
+) -> None:
+    try:
+        reservation._validate_prerequisite_post_attempt(
+            payload, intent_raw=intent_raw, intent=intent
+        )
+    except reservation.ReservationFailure:
+        fail("runner-prerequisite-post-attempt-binding-invalid")
+
+
+def _review_history_observation(
     requester: Requester, intent: dict[str, Any]
-) -> tuple[bytes, dict[str, Any]]:
+) -> tuple[bytes, list[dict[str, Any]], list[dict[str, Any]]]:
     value, raw = _json_request(
         requester,
         "GET",
@@ -695,11 +884,31 @@ def _review_history(
     )
     if not isinstance(value, list):
         fail("runner-prerequisite-review-history-invalid")
-    matches: list[dict[str, Any]] = []
+    exact_matches: list[dict[str, Any]] = []
+    environment_approvals: list[dict[str, Any]] = []
     for review in value:
         if not isinstance(review, dict):
             fail("runner-prerequisite-review-history-invalid")
         environments = review.get("environments")
+        if review.get("state") == "approved":
+            if not isinstance(environments, list):
+                fail("runner-prerequisite-review-history-invalid")
+            targets = 0
+            for environment in environments:
+                if not isinstance(environment, dict):
+                    fail("runner-prerequisite-review-history-invalid")
+                environment_id = _numeric(environment.get("id"))
+                environment_name = environment.get("name")
+                id_matches = environment_id == intent["environment_id"]
+                name_matches = environment_name == ENVIRONMENT
+                if id_matches != name_matches:
+                    fail("runner-prerequisite-review-environment-rebound")
+                if id_matches:
+                    targets += 1
+            if targets > 1:
+                fail("runner-prerequisite-review-environment-duplicated")
+            if targets == 1:
+                environment_approvals.append(review)
         if (
             review.get("state") == "approved"
             and review.get("comment") == intent["comment"]
@@ -709,41 +918,151 @@ def _review_history(
             and _numeric(environments[0].get("id")) == intent["environment_id"]
             and environments[0].get("name") == ENVIRONMENT
         ):
-            matches.append(review)
-    if len(matches) != 1:
-        fail("runner-prerequisite-review-unconfirmed")
-    return raw, matches[0]
+            exact_matches.append(review)
+    return raw, exact_matches, environment_approvals
 
 
-def _wait_prerequisite_success(
+def _review_history_matches(
+    requester: Requester, intent: dict[str, Any]
+) -> tuple[bytes, list[dict[str, Any]]]:
+    raw, exact_matches, environment_approvals = (
+        _review_history_observation(requester, intent)
+    )
+    if len(exact_matches) > 1:
+        fail("runner-prerequisite-review-duplicated")
+    if len(environment_approvals) != len(exact_matches):
+        fail("runner-prerequisite-review-conflict")
+    return raw, exact_matches
+
+
+def _approval_pre_attempt_observation(
+    requester: Requester,
+    intent: dict[str, Any],
+    reservation_raw: bytes,
+    *,
+    receipt_public,
+    receipt_id: str,
+) -> tuple[
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    list[dict[str, Any]],
+]:
+    _run, run_raw = _run_for_id(requester, intent, terminal=False)
+    jobs, jobs_raw = _jobs_for_run(
+        requester, intent["run_id"], intent["run_attempt"]
+    )
+    pending, pending_raw = _pending_for_run(requester, intent["run_id"])
+    if len(pending) == 1:
+        environment_id, environment_name = _pending_environment(pending[0])
+        if (
+            environment_id != intent["environment_id"]
+            or environment_name != intent["environment_name"]
+        ):
+            fail("runner-prerequisite-pending-rebound")
+    elif pending != []:
+        fail("runner-prerequisite-pending-invalid")
+    review_raw, exact_reviews, environment_approvals = (
+        _review_history_observation(requester, intent)
+    )
+    if len(exact_reviews) > 1:
+        fail("runner-prerequisite-review-duplicated")
+    if len(environment_approvals) != len(exact_reviews):
+        fail("runner-prerequisite-review-conflict")
+    if exact_reviews:
+        job = _bound_prerequisite_job(jobs, intent)
+        if not (
+            (
+                job.get("status")
+                in {
+                    "queued",
+                    "in_progress",
+                    "waiting",
+                    "pending",
+                    "requested",
+                }
+                and job.get("conclusion") is None
+            )
+            or (
+                job.get("status") == "completed"
+                and job.get("conclusion") == "success"
+            )
+        ):
+            fail("runner-prerequisite-job-binding-invalid")
+    else:
+        job_id, _job = _prerequisite_job(
+            jobs,
+            expected_name=intent["prerequisite_job_name"],
+            run_id=intent["run_id"],
+            workflow_sha=intent["workflow_sha"],
+            waiting=True,
+        )
+        if job_id != intent["prerequisite_job_id"]:
+            fail("runner-prerequisite-job-rebound")
+        if (
+            len(pending) != 1
+            or _digest(pending_raw)
+            != intent["initial_pending_deployments_sha256"]
+        ):
+            fail("runner-prerequisite-pending-rebound")
+    _require_no_materialization(
+        reservation_raw,
+        receipt_public=receipt_public,
+        receipt_id=receipt_id,
+    )
+    return run_raw, jobs_raw, pending_raw, review_raw, exact_reviews
+
+
+def _reconcile_prerequisite_approval(
     requester: Requester,
     intent: dict[str, Any],
     *,
     current_time: Callable[[], int],
     sleeper: Callable[[float], None],
-) -> tuple[bytes, dict[str, Any]]:
-    deadline = min(
-        intent["reservation_expires_at_epoch"],
-        current_time() + MAXIMUM_COMPLETION_WAIT_SECONDS,
-    )
-    while current_time() <= deadline:
-        jobs, raw = _jobs_for_run(
+) -> tuple[bytes, bytes, bytes]:
+    deadline = current_time() + MAXIMUM_COMPLETION_WAIT_SECONDS
+    polls = 0
+    while (
+        polls < MAXIMUM_RECONCILIATION_POLLS
+        and current_time() <= deadline
+    ):
+        polls += 1
+        _run, _run_raw = _run_for_id(
+            requester, intent, terminal=False
+        )
+        pending, pending_raw = _pending_for_run(requester, intent["run_id"])
+        if len(pending) == 1:
+            environment_id, environment_name = _pending_environment(pending[0])
+            if (
+                environment_id != intent["environment_id"]
+                or environment_name != intent["environment_name"]
+            ):
+                fail("runner-prerequisite-pending-rebound")
+        elif pending != []:
+            fail("runner-prerequisite-pending-invalid")
+        review_raw, reviews = _review_history_matches(requester, intent)
+        jobs, jobs_raw = _jobs_for_run(
             requester, intent["run_id"], intent["run_attempt"]
         )
-        matches = [job for job in jobs if job.get("name") == PREREQUISITE_JOB]
-        if len(matches) != 1 or _numeric(matches[0].get("id")) != intent["prerequisite_job_id"]:
-            fail("runner-prerequisite-completion-job-invalid")
-        if matches[0].get("status") == "completed":
+        job = _bound_prerequisite_job(jobs, intent)
+        if job.get("status") == "completed":
             job_id, job = _prerequisite_job(
                 jobs,
+                expected_name=intent["prerequisite_job_name"],
                 run_id=intent["run_id"],
                 workflow_sha=intent["workflow_sha"],
                 waiting=False,
             )
             if job_id != intent["prerequisite_job_id"]:
                 fail("runner-prerequisite-completion-job-invalid")
-            return raw, job
-        if matches[0].get("status") not in {"queued", "in_progress", "waiting", "pending"} or matches[0].get("conclusion") is not None:
+            if reviews and pending == []:
+                return pending_raw, review_raw, jobs_raw
+        elif (
+            job.get("status")
+            not in {"queued", "in_progress", "waiting", "pending", "requested"}
+            or job.get("conclusion") is not None
+        ):
             fail("runner-prerequisite-completion-failed")
         sleeper(2.0)
     fail("runner-prerequisite-completion-timeout")
@@ -752,86 +1071,146 @@ def _wait_prerequisite_success(
 def _validate_approval(
     payload: dict[str, Any], *, intent_raw: bytes, intent: dict[str, Any]
 ) -> None:
-    expected_keys = {
-        "approval_api_disposition",
-        "approval_response_sha256",
-        "approved_at_epoch",
-        "completed_jobs_sha256",
-        "environment_id",
-        "environment_name",
-        "intent_sha256",
-        "post_pending_deployments_sha256",
-        "prerequisite_conclusion",
-        "prerequisite_job_id",
-        "prerequisite_job_name",
-        "receipt_authority_key_id",
-        "release_job",
-        "repository",
-        "repository_id",
-        "repository_owner_id",
-        "reservation_expires_at_epoch",
-        "reservation_sha256",
-        "review_history_sha256",
-        "run_attempt",
-        "run_id",
-        "runner_label",
-        "schema",
-        "version",
-        "workflow_path",
-        "workflow_ref",
-        "workflow_sha",
-    }
-    if (
-        set(payload) != expected_keys
-        or payload.get("schema") != APPROVAL_SCHEMA
-        or payload.get("version") != 2
-        or payload.get("intent_sha256") != _digest(intent_raw)
-        or payload.get("reservation_sha256") != intent["reservation_sha256"]
-        or payload.get("runner_label") != intent["runner_label"]
-        or payload.get("run_id") != intent["run_id"]
-        or payload.get("run_attempt") != intent["run_attempt"]
-        or payload.get("prerequisite_job_id") != intent["prerequisite_job_id"]
-        or payload.get("prerequisite_job_name") != PREREQUISITE_JOB
-        or payload.get("prerequisite_conclusion") != "success"
-        or payload.get("environment_id") != intent["environment_id"]
-        or payload.get("environment_name") != ENVIRONMENT
-        or payload.get("receipt_authority_key_id")
-        != intent["receipt_authority_key_id"]
-        or payload.get("repository") != REPOSITORY
-        or payload.get("repository_id") != REPOSITORY_ID
-        or payload.get("repository_owner_id") != REPOSITORY_OWNER_ID
-        or payload.get("workflow_path") != WORKFLOW_PATH
-        or payload.get("workflow_ref") != WORKFLOW_REF
-        or payload.get("workflow_sha") != intent["workflow_sha"]
-        or payload.get("release_job") != RELEASE_JOB
-        or payload.get("reservation_expires_at_epoch")
-        != intent["reservation_expires_at_epoch"]
-        or payload.get("approval_api_disposition")
-        not in {"approved", "post-approved-recovered"}
-        or (
-            payload.get("approval_api_disposition") == "approved"
-            and (
-                not isinstance(payload.get("approval_response_sha256"), str)
-                or DIGEST.fullmatch(payload["approval_response_sha256"]) is None
-            )
+    try:
+        reservation._validate_prerequisite_approval_v3(
+            payload, intent_raw=intent_raw, intent=intent
         )
-        or (
-            payload.get("approval_api_disposition") == "post-approved-recovered"
-            and payload.get("approval_response_sha256") is not None
-        )
-        or any(
-            not isinstance(payload.get(field), str)
-            or DIGEST.fullmatch(payload[field]) is None
-            for field in (
-                "completed_jobs_sha256",
-                "post_pending_deployments_sha256",
-                "review_history_sha256",
-            )
-        )
-        or type(payload.get("approved_at_epoch")) is not int
-        or not intent["discovered_at_epoch"] <= payload["approved_at_epoch"] <= intent["reservation_expires_at_epoch"]
-    ):
+    except reservation.ReservationFailure:
         fail("runner-prerequisite-approval-binding-invalid")
+
+
+def _require_no_materialization(
+    reservation_raw: bytes,
+    *,
+    receipt_public,
+    receipt_id: str,
+) -> None:
+    terminal_root = reservation.RESERVATION_TERMINAL_ROOT
+    if not terminal_root.exists():
+        return
+    reservation._exact_metadata(terminal_root, kind="directory", mode=0o700)
+    identity = _digest(reservation_raw).removeprefix("sha256:")
+    for kind in ("claim", "bound"):
+        for suffix in (f".{kind}.v2", f".{kind}.v2.pending"):
+            path = terminal_root / (identity + suffix)
+            if not path.exists():
+                continue
+            try:
+                raw = reservation.materialize._read_runner_terminal_file(path)
+                if kind == "claim":
+                    payload = (
+                        reservation.materialize._validate_runner_materialization_claim(
+                            raw,
+                            receipt_public=receipt_public,
+                            receipt_id=receipt_id,
+                        )
+                    )
+                else:
+                    payload = reservation.materialize._validate_runner_materialization_binding(
+                        raw,
+                        receipt_public=receipt_public,
+                        receipt_id=receipt_id,
+                    )
+            except reservation.materialize.MaterializeFailure:
+                fail("runner-governed-materialization-record-invalid")
+            if payload.get("reservation_sha256") != _digest(reservation_raw):
+                fail("runner-governed-materialization-record-invalid")
+            fail("runner-governed-materialization-present")
+
+
+def _validate_retirement_terminal(
+    payload: dict[str, Any],
+    *,
+    intent_raw: bytes,
+    intent: dict[str, Any],
+    post_attempt_raw: bytes | None,
+) -> None:
+    try:
+        reservation._validate_retirement_terminal(
+            payload,
+            intent_raw=intent_raw,
+            intent=intent,
+            post_attempt_raw=post_attempt_raw,
+        )
+    except reservation.ReservationFailure:
+        fail("runner-retirement-terminal-binding-invalid")
+
+
+def _retirement_observation(
+    requester: Requester,
+    intent: dict[str, Any],
+) -> dict[str, Any]:
+    run, run_raw = _run_for_id(requester, intent, terminal=True)
+    jobs, jobs_raw = _jobs_for_run(
+        requester, intent["run_id"], intent["run_attempt"]
+    )
+    prerequisite = _bound_prerequisite_job(jobs, intent)
+    if (
+        prerequisite.get("status") != "completed"
+        or prerequisite.get("conclusion")
+        not in {"cancelled", "failure", "success"}
+    ):
+        fail("runner-retirement-prerequisite-state-invalid")
+    release = _terminal_release_job_evidence(jobs, intent)
+    pending, pending_raw = _pending_for_run(requester, intent["run_id"])
+    if pending != []:
+        fail("runner-retirement-pending-present")
+    review_raw, exact_reviews, environment_approvals = (
+        _review_history_observation(requester, intent)
+    )
+    if len(environment_approvals) > 100:
+        fail("runner-retirement-review-history-oversized")
+    exact_set_raw = _canonical(exact_reviews)
+    environment_set_raw = _canonical(environment_approvals)
+
+    # Re-read every mutable observation, with run and jobs last, before
+    # signing the GET-only adoption evidence.
+    verified_pending, verified_pending_raw = _pending_for_run(
+        requester, intent["run_id"]
+    )
+    (
+        verified_review_raw,
+        verified_exact_reviews,
+        verified_environment_approvals,
+    ) = _review_history_observation(requester, intent)
+    verified_run, verified_run_raw = _run_for_id(
+        requester, intent, terminal=True
+    )
+    verified_jobs, verified_jobs_raw = _jobs_for_run(
+        requester, intent["run_id"], intent["run_attempt"]
+    )
+    verified_prerequisite = _bound_prerequisite_job(
+        verified_jobs, intent
+    )
+    verified_release = _terminal_release_job_evidence(
+        verified_jobs, intent
+    )
+    if (
+        verified_pending != []
+        or pending_raw != verified_pending_raw
+        or review_raw != verified_review_raw
+        or exact_reviews != verified_exact_reviews
+        or environment_approvals != verified_environment_approvals
+        or run_raw != verified_run_raw
+        or jobs_raw != verified_jobs_raw
+        or run != verified_run
+        or prerequisite != verified_prerequisite
+        or release != verified_release
+    ):
+        fail("runner-retirement-observation-drift")
+    return {
+        "exact_review_count": len(exact_reviews),
+        "exact_review_set_sha256": _digest(exact_set_raw),
+        "jobs_raw": verified_jobs_raw,
+        "pending_raw": verified_pending_raw,
+        "prerequisite_conclusion": prerequisite["conclusion"],
+        "release": release,
+        "review_count": len(environment_approvals),
+        "review_raw": verified_review_raw,
+        "review_set_sha256": _digest(environment_set_raw),
+        "run_conclusion": run["conclusion"],
+        "run_raw": verified_run_raw,
+    }
 
 
 def _result(payload: dict[str, Any], approval_raw: bytes, disposition: str) -> dict[str, Any]:
@@ -844,6 +1223,22 @@ def _result(payload: dict[str, Any], approval_raw: bytes, disposition: str) -> d
         "run_id": payload["run_id"],
         "runner_label": payload["runner_label"],
         "schema": RESULT_SCHEMA,
+        "version": 3,
+    }
+
+
+def _retirement_result(
+    payload: dict[str, Any], terminal_raw: bytes, disposition: str
+) -> dict[str, Any]:
+    return {
+        "disposition": disposition,
+        "reservation_sha256": payload["reservation_sha256"],
+        "retirement_terminal_sha256": _digest(terminal_raw),
+        "run_attempt": payload["run_attempt"],
+        "run_conclusion": payload["run_conclusion"],
+        "run_id": payload["run_id"],
+        "runner_label": payload["runner_label"],
+        "schema": RETIREMENT_RESULT_SCHEMA,
         "version": 2,
     }
 
@@ -856,13 +1251,23 @@ def approve(
     sleeper: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     current = int(time.time()) if now is None else now
-    if type(current) is not int or current < 1 or os.geteuid() != 1000 or os.getegid() != 1000:
+    if (
+        type(current) is not int
+        or current < 1
+        or os.geteuid() != 1000
+        or os.getegid() != 1000
+    ):
         fail("runner-prerequisite-process-invalid")
     clock = current_time or (lambda: int(time.time()))
     token: bytearray | None = None
-    if requester is None:
-        token = _read_admin_token()
-        requester = _production_requester(token)
+
+    def require_requester() -> Requester:
+        nonlocal requester, token
+        if requester is None:
+            token = _read_admin_token()
+            requester = _production_requester(token)
+        return requester
+
     receipt_private, receipt_id = reservation._load_receipt_authority()
     receipt_public = receipt_private.public_key()
     lock = reservation._acquire_lock()
@@ -876,10 +1281,27 @@ def approve(
             receipt_public=receipt_public,
             receipt_id=receipt_id,
         )
-        if current < reservation_payload["created_at_epoch"] or current > reservation_payload["expires_at_epoch"]:
+        if current < reservation_payload["created_at_epoch"]:
             fail("runner-prerequisite-reservation-time-invalid")
         _ensure_approval_root()
         intent_path, approval_path = _record_paths(reservation_raw)
+        try:
+            governed_state = reservation._active_governed_state(
+                reservation_raw,
+                reservation_payload,
+                receipt_public=receipt_public,
+                receipt_id=receipt_id,
+            )
+        except reservation.ReservationFailure:
+            fail("runner-prerequisite-governed-state-invalid")
+        if governed_state in {
+            "legacy-v2-discovered",
+            "legacy-v2-approved",
+        }:
+            fail("runner-prerequisite-legacy-v2-nondispatchable")
+        if governed_state == "retirement-terminal":
+            fail("runner-prerequisite-retirement-terminal-present")
+        attempt_path = _post_attempt_path(reservation_raw)
         if approval_path.exists():
             if not intent_path.exists():
                 fail("runner-prerequisite-approved-without-intent")
@@ -901,6 +1323,26 @@ def approve(
                 domain=APPROVAL_SIGNATURE_DOMAIN,
             )
             _validate_approval(approval, intent_raw=intent_raw, intent=intent)
+            if not attempt_path.exists():
+                fail("runner-prerequisite-approved-without-post-attempt")
+            attempt_raw = _read_record(attempt_path)
+            attempt = _verify_wire(
+                attempt_raw,
+                public=receipt_public,
+                key_id=receipt_id,
+                schema=POST_ATTEMPT_SCHEMA,
+                domain=POST_ATTEMPT_SIGNATURE_DOMAIN,
+            )
+            _validate_post_attempt(
+                attempt,
+                intent_raw=intent_raw,
+                intent=intent,
+            )
+            if (
+                approval["approved_at_epoch"]
+                != attempt["attempted_at_epoch"]
+            ):
+                fail("runner-prerequisite-approval-attempt-time-mismatch")
             return _result(approval, approval_raw, "already-approved")
 
         if intent_path.exists():
@@ -914,8 +1356,14 @@ def approve(
             )
             _validate_intent(intent, reservation_raw, reservation_payload, receipt_id)
         else:
+            if current > reservation_payload["expires_at_epoch"]:
+                fail("runner-prerequisite-reservation-time-invalid")
             intent = _discover_intent(
-                requester, reservation_raw, reservation_payload, receipt_id, current
+                require_requester(),
+                reservation_raw,
+                reservation_payload,
+                receipt_id,
+                current,
             )
             intent_raw = _wire(
                 intent, receipt_private, receipt_id, INTENT_SIGNATURE_DOMAIN
@@ -923,44 +1371,164 @@ def approve(
             _publish_record(intent_path, intent_raw)
             _checkpoint("after-runner-prerequisite-intent")
 
-        pending, pending_raw = _pending_for_run(requester, intent["run_id"])
+        requester = require_requester()
+        review_before_raw, reviews_before = _review_history_matches(
+            requester, intent
+        )
+        if reviews_before and not attempt_path.exists():
+            fail("runner-prerequisite-unarmed-review-present")
         approval_response_digest: str | None = None
         api_disposition = "post-approved-recovered"
-        if len(pending) == 1:
-            environment_id, environment_name = _pending_environment(pending[0])
-            if (
-                environment_id != intent["environment_id"]
-                or environment_name != intent["environment_name"]
-                or _digest(pending_raw)
-                != intent["initial_pending_deployments_sha256"]
-            ):
-                fail("runner-prerequisite-pending-rebound")
-            response, response_raw = _json_request(
-                requester,
-                "POST",
-                f"/{REPOSITORY_API}/actions/runs/{intent['run_id']}/pending_deployments",
-                {
-                    "comment": intent["comment"],
-                    "environment_ids": [int(intent["environment_id"])],
-                    "state": "approved",
-                },
+        attempt: dict[str, Any] | None = None
+        if reviews_before and attempt_path.exists():
+            attempt_raw = _read_record(attempt_path)
+            attempt = _verify_wire(
+                attempt_raw,
+                public=receipt_public,
+                key_id=receipt_id,
+                schema=POST_ATTEMPT_SCHEMA,
+                domain=POST_ATTEMPT_SIGNATURE_DOMAIN,
             )
-            if not isinstance(response, list) or len(response) < 1:
-                fail("runner-prerequisite-approval-response-invalid")
-            approval_response_digest = _digest(response_raw)
-            api_disposition = "approved"
-            _checkpoint("after-runner-prerequisite-approval-post")
-        elif len(pending) != 0:
-            fail("runner-prerequisite-pending-invalid")
-
-        post_pending, post_pending_raw = _pending_for_run(requester, intent["run_id"])
-        if post_pending != []:
-            fail("runner-prerequisite-approval-unconfirmed")
-        review_raw, _review = _review_history(requester, intent)
-        completed_jobs_raw, _job = _wait_prerequisite_success(
-            requester, intent, current_time=clock, sleeper=sleeper
+            _validate_post_attempt(
+                attempt,
+                intent_raw=intent_raw,
+                intent=intent,
+            )
+        if not reviews_before:
+            post_now = False
+            if attempt_path.exists():
+                attempt_raw = _read_record(attempt_path)
+                attempt = _verify_wire(
+                    attempt_raw,
+                    public=receipt_public,
+                    key_id=receipt_id,
+                    schema=POST_ATTEMPT_SCHEMA,
+                    domain=POST_ATTEMPT_SIGNATURE_DOMAIN,
+                )
+                _validate_post_attempt(
+                    attempt,
+                    intent_raw=intent_raw,
+                    intent=intent,
+                )
+            else:
+                if current > intent["reservation_expires_at_epoch"]:
+                    fail("runner-prerequisite-reservation-time-invalid")
+                _checkpoint("before-runner-prerequisite-post-attempt-gate")
+                (
+                    pre_post_run_raw,
+                    pre_post_jobs_raw,
+                    pending_raw,
+                    pre_post_review_raw,
+                    pre_post_exact_reviews,
+                ) = _approval_pre_attempt_observation(
+                    requester,
+                    intent,
+                    reservation_raw,
+                    receipt_public=receipt_public,
+                    receipt_id=receipt_id,
+                )
+                if pre_post_exact_reviews:
+                    fail("runner-prerequisite-unarmed-review-present")
+                attempted_at = clock()
+                if attempted_at > intent["reservation_expires_at_epoch"]:
+                    fail("runner-prerequisite-reservation-time-invalid")
+                attempt = {
+                    "attempted_at_epoch": attempted_at,
+                    "authority_profile": "single-host-production-v2",
+                    "comment": intent["comment"],
+                    "environment_id": intent["environment_id"],
+                    "environment_name": intent["environment_name"],
+                    "github_api_path": (
+                        f"/{REPOSITORY_API}/actions/runs/{intent['run_id']}/"
+                        "pending_deployments"
+                    ),
+                    "http_method": "POST",
+                    "intent_sha256": _digest(intent_raw),
+                    "pre_post_jobs_sha256": _digest(pre_post_jobs_raw),
+                    "pre_post_pending_deployments_count": 1,
+                    "pre_post_pending_deployments_sha256": _digest(
+                        pending_raw
+                    ),
+                    "pre_post_release_job_present": False,
+                    "pre_post_review_history_sha256": _digest(
+                        pre_post_review_raw
+                    ),
+                    "pre_post_review_match_count": 0,
+                    "pre_post_review_scope": (
+                        "any-approved-target-environment"
+                    ),
+                    "pre_post_run_sha256": _digest(pre_post_run_raw),
+                    "prerequisite_job_id": intent["prerequisite_job_id"],
+                    "prerequisite_job_key": intent[
+                        "prerequisite_job_key"
+                    ],
+                    "prerequisite_job_name": intent[
+                        "prerequisite_job_name"
+                    ],
+                    "receipt_authority_key_id": receipt_id,
+                    "repository": REPOSITORY,
+                    "repository_id": REPOSITORY_ID,
+                    "repository_owner_id": REPOSITORY_OWNER_ID,
+                    "request_sha256": _digest(
+                        _canonical(_approval_request(intent))
+                    ),
+                    "reservation_expires_at_epoch": intent[
+                        "reservation_expires_at_epoch"
+                    ],
+                    "reservation_sha256": intent["reservation_sha256"],
+                    "run_attempt": intent["run_attempt"],
+                    "run_id": intent["run_id"],
+                    "runner_label": intent["runner_label"],
+                    "schema": POST_ATTEMPT_SCHEMA,
+                    "version": 3,
+                    "workflow_path": WORKFLOW_PATH,
+                    "workflow_ref": WORKFLOW_REF,
+                    "workflow_sha": intent["workflow_sha"],
+                }
+                _validate_post_attempt(
+                    attempt,
+                    intent_raw=intent_raw,
+                    intent=intent,
+                )
+                attempt_raw = _wire(
+                    attempt,
+                    receipt_private,
+                    receipt_id,
+                    POST_ATTEMPT_SIGNATURE_DOMAIN,
+                )
+                _publish_record(attempt_path, attempt_raw)
+                _checkpoint("after-runner-prerequisite-post-attempt")
+                post_now = True
+            if post_now:
+                # GitHub exposes this POST only at run scope: there is no
+                # attempt selector or ETag precondition. The release protocol
+                # therefore requires quiescent, trusted Actions write/rerun
+                # authority from this final observation through this POST.
+                # Reconciliation still fails closed if the attempt drifts.
+                response, response_raw = _json_request(
+                    requester,
+                    "POST",
+                    (
+                        f"/{REPOSITORY_API}/actions/runs/{intent['run_id']}/"
+                        "pending_deployments"
+                    ),
+                    _approval_request(intent),
+                )
+                if not isinstance(response, list) or len(response) < 1:
+                    fail("runner-prerequisite-approval-response-invalid")
+                approval_response_digest = _digest(response_raw)
+                api_disposition = "approved"
+                _checkpoint("after-runner-prerequisite-approval-post")
+        post_pending_raw, review_raw, completed_jobs_raw = (
+            _reconcile_prerequisite_approval(
+                requester, intent, current_time=clock, sleeper=sleeper
+            )
         )
-        approved_at = clock()
+        approved_at = (
+            attempt["attempted_at_epoch"]
+            if attempt is not None
+            else min(clock(), intent["reservation_expires_at_epoch"])
+        )
         approval = {
             "approval_api_disposition": api_disposition,
             "approval_response_sha256": approval_response_digest,
@@ -972,7 +1540,8 @@ def approve(
             "post_pending_deployments_sha256": _digest(post_pending_raw),
             "prerequisite_conclusion": "success",
             "prerequisite_job_id": intent["prerequisite_job_id"],
-            "prerequisite_job_name": PREREQUISITE_JOB,
+            "prerequisite_job_key": intent["prerequisite_job_key"],
+            "prerequisite_job_name": intent["prerequisite_job_name"],
             "receipt_authority_key_id": receipt_id,
             "release_job": RELEASE_JOB,
             "repository": REPOSITORY,
@@ -985,7 +1554,7 @@ def approve(
             "run_id": intent["run_id"],
             "runner_label": intent["runner_label"],
             "schema": APPROVAL_SCHEMA,
-            "version": 2,
+            "version": 3,
             "workflow_path": WORKFLOW_PATH,
             "workflow_ref": WORKFLOW_REF,
             "workflow_sha": intent["workflow_sha"],
@@ -1004,16 +1573,239 @@ def approve(
                 token[index] = 0
 
 
+def retire_terminal(
+    *,
+    now: int | None = None,
+    requester: Requester | None = None,
+    current_time: Callable[[], int] | None = None,
+) -> dict[str, Any]:
+    current = int(time.time()) if now is None else now
+    if (
+        type(current) is not int
+        or current < 1
+        or os.geteuid() != 1000
+        or os.getegid() != 1000
+    ):
+        fail("runner-retirement-process-invalid")
+    clock = current_time or (lambda: int(time.time()))
+    token: bytearray | None = None
+    receipt_private, receipt_id = reservation._load_receipt_authority()
+    receipt_public = receipt_private.public_key()
+    lock = reservation._acquire_lock()
+    try:
+        if not reservation.RESERVATION_ROOT.exists():
+            fail("runner-retirement-active-reservation-missing")
+        reservation_raw = reservation._read_wire()
+        reservation_payload = reservation._validate_wire(
+            reservation_raw,
+            workflow_sha=None,
+            receipt_public=receipt_public,
+            receipt_id=receipt_id,
+        )
+        if current < reservation_payload["created_at_epoch"]:
+            fail("runner-retirement-reservation-time-invalid")
+        _ensure_approval_root()
+        intent_path, approval_path = _record_paths(reservation_raw)
+        legacy_intent_path, legacy_approval_path = _legacy_record_paths(
+            reservation_raw
+        )
+        if intent_path.exists() and legacy_intent_path.exists():
+            fail("runner-retirement-prerequisite-generation-conflict")
+        if not intent_path.exists() and not legacy_intent_path.exists():
+            fail("runner-retirement-prerequisite-intent-missing")
+        intent_legacy = legacy_intent_path.exists()
+        if intent_legacy:
+            intent_path = legacy_intent_path
+        intent_raw = _read_record(intent_path)
+        intent = _verify_wire(
+            intent_raw,
+            public=receipt_public,
+            key_id=receipt_id,
+            schema=(
+                LEGACY_INTENT_SCHEMA if intent_legacy else INTENT_SCHEMA
+            ),
+            domain=(
+                LEGACY_INTENT_SIGNATURE_DOMAIN
+                if intent_legacy
+                else INTENT_SIGNATURE_DOMAIN
+            ),
+        )
+        try:
+            validator = (
+                reservation._validate_prerequisite_intent
+                if intent_legacy
+                else reservation._validate_prerequisite_intent_v3
+            )
+            validator(
+                intent,
+                reservation_raw=reservation_raw,
+                reservation_payload=reservation_payload,
+                receipt_id=receipt_id,
+            )
+        except reservation.ReservationFailure:
+            fail("runner-retirement-prerequisite-intent-invalid")
+        if approval_path.exists() or legacy_approval_path.exists():
+            fail("runner-retirement-prerequisite-approval-present")
+        _require_no_materialization(
+            reservation_raw,
+            receipt_public=receipt_public,
+            receipt_id=receipt_id,
+        )
+        post_attempt_path = _post_attempt_path(reservation_raw)
+        post_attempt_raw: bytes | None = None
+        if post_attempt_path.exists():
+            if intent_legacy:
+                fail("runner-retirement-post-attempt-generation-mismatch")
+            post_attempt_raw = _read_record(post_attempt_path)
+            post_attempt = _verify_wire(
+                post_attempt_raw,
+                public=receipt_public,
+                key_id=receipt_id,
+                schema=POST_ATTEMPT_SCHEMA,
+                domain=POST_ATTEMPT_SIGNATURE_DOMAIN,
+            )
+            try:
+                reservation._validate_prerequisite_post_attempt(
+                    post_attempt,
+                    intent_raw=intent_raw,
+                    intent=intent,
+                )
+            except reservation.ReservationFailure:
+                fail("runner-retirement-post-attempt-invalid")
+        terminal_path = _retirement_terminal_path(reservation_raw)
+        if terminal_path.exists():
+            terminal_raw = _read_record(terminal_path)
+            terminal = _verify_wire(
+                terminal_raw,
+                public=receipt_public,
+                key_id=receipt_id,
+                schema=RETIREMENT_TERMINAL_SCHEMA,
+                domain=RETIREMENT_TERMINAL_SIGNATURE_DOMAIN,
+            )
+            _validate_retirement_terminal(
+                terminal,
+                intent_raw=intent_raw,
+                intent=intent,
+                post_attempt_raw=post_attempt_raw,
+            )
+            return _retirement_result(
+                terminal, terminal_raw, "already-terminal-adopted"
+            )
+        if requester is None:
+            token = _read_admin_token()
+            requester = _production_requester(token)
+        observation = _retirement_observation(requester, intent)
+        _require_no_materialization(
+            reservation_raw,
+            receipt_public=receipt_public,
+            receipt_id=receipt_id,
+        )
+        adopted_at = clock()
+        terminal = {
+            "adopted_at_epoch": adopted_at,
+            "adoption_disposition": "get-only-terminal-adoption",
+            "approval_post_attempt_present": post_attempt_raw is not None,
+            "approval_post_attempt_sha256": (
+                _digest(post_attempt_raw)
+                if post_attempt_raw is not None
+                else None
+            ),
+            "authority_profile": "single-host-production-v2",
+            "environment_id": intent["environment_id"],
+            "environment_name": intent["environment_name"],
+            "final_exact_review_match_count": observation[
+                "exact_review_count"
+            ],
+            "final_exact_review_set_sha256": observation[
+                "exact_review_set_sha256"
+            ],
+            "final_jobs_sha256": _digest(observation["jobs_raw"]),
+            "final_pending_deployments_count": 0,
+            "final_pending_deployments_sha256": _digest(
+                observation["pending_raw"]
+            ),
+            "final_review_history_sha256": _digest(
+                observation["review_raw"]
+            ),
+            "final_review_match_count": observation["review_count"],
+            "final_review_scope": (
+                "any-approved-target-environment-complete-set"
+            ),
+            "final_review_set_sha256": observation[
+                "review_set_sha256"
+            ],
+            "final_run_sha256": _digest(observation["run_raw"]),
+            "prerequisite_conclusion": observation[
+                "prerequisite_conclusion"
+            ],
+            "prerequisite_intent_sha256": _digest(intent_raw),
+            "prerequisite_job_id": intent["prerequisite_job_id"],
+            "prerequisite_job_key": PREREQUISITE_JOB_KEY,
+            "prerequisite_job_name": intent["prerequisite_job_name"],
+            "receipt_authority_key_id": receipt_id,
+            "release_job": RELEASE_JOB,
+            **observation["release"],
+            "repository": REPOSITORY,
+            "repository_id": REPOSITORY_ID,
+            "repository_owner_id": REPOSITORY_OWNER_ID,
+            "reservation_expires_at_epoch": intent[
+                "reservation_expires_at_epoch"
+            ],
+            "reservation_sha256": intent["reservation_sha256"],
+            "run_attempt": intent["run_attempt"],
+            "run_conclusion": observation["run_conclusion"],
+            "run_id": intent["run_id"],
+            "runner_label": intent["runner_label"],
+            "schema": RETIREMENT_TERMINAL_SCHEMA,
+            "terminal_jobs_verification_sha256": _digest(
+                observation["jobs_raw"]
+            ),
+            "terminal_run_verification_sha256": _digest(
+                observation["run_raw"]
+            ),
+            "version": 2,
+            "workflow_path": WORKFLOW_PATH,
+            "workflow_ref": WORKFLOW_REF,
+            "workflow_sha": intent["workflow_sha"],
+        }
+        _validate_retirement_terminal(
+            terminal,
+            intent_raw=intent_raw,
+            intent=intent,
+            post_attempt_raw=post_attempt_raw,
+        )
+        terminal_raw = _wire(
+            terminal,
+            receipt_private,
+            receipt_id,
+            RETIREMENT_TERMINAL_SIGNATURE_DOMAIN,
+        )
+        _checkpoint("before-runner-retirement-terminal-publish")
+        _publish_record(terminal_path, terminal_raw)
+        return _retirement_result(
+            terminal, terminal_raw, "terminal-adopted-get-only"
+        )
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        os.close(lock)
+        if token is not None:
+            for index in range(len(token)):
+                token[index] = 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("command", choices=("approve",))
+    result.add_argument("command", choices=("approve", "retire-terminal"))
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
-        result = approve() if arguments.command == "approve" else None
+        if arguments.command == "approve":
+            result = approve()
+        else:
+            result = retire_terminal()
         if result is None:  # pragma: no cover
             fail("runner-prerequisite-command-invalid")
         sys.stdout.buffer.write(_canonical(result) + b"\n")

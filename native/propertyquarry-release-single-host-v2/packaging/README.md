@@ -69,8 +69,9 @@ The top-level members are `manifest.v2.json` (mode `0444`) and
 | `/usr/libexec/propertyquarry-release-control/run-propertyquarry-ephemeral-runner-v2` | `0555` | one-shot ephemeral runner launcher |
 | `/usr/libexec/propertyquarry-release-control/run-propertyquarry-ephemeral-runner-lifecycle-v2` | `0555` | fixed root lifecycle for one governed ephemeral runner |
 | `/var/lib/propertyquarry-release-single-host-v2/runner-launch-ticket.v2.json` | `0400` | receipt-authority-signed one-shot runner launch ticket |
-| `/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v2.json` | `0400` | receipt-authority-signed protected-environment approval intent |
-| `/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v2.json` | `0400` | receipt-authority-signed successful protected-environment prerequisite proof |
+| `/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-intent.v3.json` | `0400` | receipt-authority-signed protected-environment approval intent |
+| `/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-post-attempt.v3.json` | `0400` | receipt-authority-signed approval precommit |
+| `/var/lib/propertyquarry-release-single-host-v2/runner-prerequisite-approval.v3.json` | `0400` | receipt-authority-signed successful protected-environment prerequisite proof |
 | `/var/lib/propertyquarry-release-single-host-v2/runner-reservation.v2.json` | `0400` | receipt-authority-signed runner reservation and source-checkout binding |
 
 The 226 MB GitHub runner archive is intentionally not in this package. Its
@@ -253,9 +254,47 @@ The release dispatch has no manual environment-review step. Its exact order is:
 
    `PROPERTYQUARRY_ADMIN_TOKEN_SOURCE_FD` names an already-open private source
    descriptor; it is not the token and must not be logged. The reviewer signs
-   and fsyncs its intent before the approval POST, proves the matching review
-   history and successful `propertyquarry-protected-dispatch-inputs` job, and
-   publishes the signed approval record before returning success.
+   and fsyncs its intent before the approval POST. The protected job's
+   evaluated GitHub name is exactly
+   `propertyquarry-protected-dispatch-inputs | <runner_label> | <dispatch_ticket_sha256>`;
+   discovery and the final pre-POST observation require that exact name. The
+   run-index request is also filtered by the reservation's signed workflow SHA;
+   a truncated page of more than 100 matching runs still fails closed. The
+   reviewer then fsyncs a signed post-attempt record binding the current
+   run/attempt, jobs, pending deployment, complete target-environment review
+   history, and absence of materialization before POSTing at most once. A retry
+   with that record is GET-only. An exact-comment review observed before this
+   signed precommit is untrusted and fails closed; it cannot create an approval
+   receipt or authorize materialization.
+
+   GitHub's pending-deployment approval endpoint is run-scoped and offers
+   neither an attempt selector nor an ETag precondition. Actions write/rerun
+   authority must therefore remain trusted and quiescent between the final
+   observation and POST; reconciliation fails closed if the attempt drifts.
+   This is an explicit operator invariant, not an atomic GitHub guarantee.
+   The mutable token buffer is wiped on every exit, but the HTTPS library
+   briefly requires an immutable Authorization header string. The controller
+   therefore assumes a dedicated short-lived process whose memory is trusted;
+   the operator must prevent dumps or inspection while it runs.
+
+   If an audited external operator or GitHub terminates the exact run with
+   cancellation/failure before a signed approval or any materialization,
+   `approve-runner-prerequisite.py retire-terminal` performs a GET-only,
+   double-stable terminal adoption. It binds any existing post-attempt record,
+   the complete environment-review set, empty pending deployments, and an
+   absent or provably inert release job. A successful prerequisite is recorded
+   as observed but is never reinterpreted as an approval receipt. Then
+   `prepare-runner-reservation.py abandon-terminal` signs the abandonment and
+   atomically retains the reservation as an `.abandoned.v2` terminal. These
+   safe retirement steps may run after reservation expiry; neither command
+   sends a cancellation request. Trusted Actions write/rerun authority must
+   remain quiescent from the terminal observations through terminal signing
+   and abandonment; the double-stable GETs detect observed drift but cannot
+   make GitHub and the local terminal transition atomic.
+
+   Frozen v2 prerequisite records remain verifiable for historical packages
+   and GET-only terminal retirement, but cannot authorize a new approval,
+   materialization, or package build.
 4. Run `python3 tools/materialize.py materialize --output <new-private-path>
    --final-artifact <final-artifact> --preflight-artifact <preflight-artifact>
    --attestation-verifier-root <verified-root>`. Materialization accepts only
@@ -308,8 +347,9 @@ tools/package.py build \
   --materialization-receipt-signature /absolute/signing/materialization-receipt.v2.sig \
   --runner-reservation /absolute/signing/runner-reservation.v2.json \
   --runner-launch-ticket /absolute/signing/runner-launch-ticket.v2.json \
-  --runner-prerequisite-intent /absolute/signing/runner-prerequisite-intent.v2.json \
-  --runner-prerequisite-approval /absolute/signing/runner-prerequisite-approval.v2.json \
+  --runner-prerequisite-intent /absolute/signing/runner-prerequisite-intent.v3.json \
+  --runner-prerequisite-post-attempt /absolute/signing/runner-prerequisite-post-attempt.v3.json \
+  --runner-prerequisite-approval /absolute/signing/runner-prerequisite-approval.v3.json \
   --package-authority-public-key /absolute/signing/package-authority-v2.pem \
   --package-authority-private-key /absolute/signing/package-authority-v2.key \
   --receipt-authority-public-key /absolute/signing/receipt-authority-v2.pem \

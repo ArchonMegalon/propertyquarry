@@ -408,7 +408,11 @@ class RunnerReservationBindingTests(unittest.TestCase):
         }
 
     def _write_prerequisite_records(
-        self, reservation_raw: bytes, reservation_payload: dict[str, object]
+        self,
+        reservation_raw: bytes,
+        reservation_payload: dict[str, object],
+        *,
+        version: int = 3,
     ) -> dict[str, object]:
         self.approvals.mkdir(mode=0o700, exist_ok=True)
         reservation_sha256 = materialize.package.sha256(reservation_raw)
@@ -423,7 +427,14 @@ class RunnerReservationBindingTests(unittest.TestCase):
             "initial_pending_deployments_sha256": "sha256:" + "2" * 64,
             "initial_runs_index_sha256": "sha256:" + "3" * 64,
             "prerequisite_job_id": "455",
-            "prerequisite_job_name": materialize.RUNNER_PREREQUISITE_JOB,
+            "prerequisite_job_name": (
+                materialize._runner_prerequisite_job_name(
+                    runner_label=reservation_payload["runner_label"],
+                    reservation_sha256=reservation_sha256,
+                )
+                if version == 3
+                else materialize.RUNNER_PREREQUISITE_JOB
+            ),
             "receipt_authority_key_id": self.receipt_id,
             "release_job": materialize.package.RELEASE_JOB,
             "repository": materialize.package.REPOSITORY,
@@ -434,18 +445,92 @@ class RunnerReservationBindingTests(unittest.TestCase):
             "run_attempt": 1,
             "run_id": "123",
             "runner_label": reservation_payload["runner_label"],
-            "schema": materialize.RUNNER_PREREQUISITE_INTENT_SCHEMA,
-            "version": 2,
+            "schema": (
+                materialize.RUNNER_PREREQUISITE_INTENT_SCHEMA_V3
+                if version == 3
+                else materialize.RUNNER_PREREQUISITE_INTENT_SCHEMA
+            ),
+            "version": version,
             "workflow_path": materialize.SMOKE_WORKFLOW_PATH,
             "workflow_ref": materialize.package.WORKFLOW_REF,
             "workflow_sha": reservation_payload["workflow_sha"],
         }
+        if version == 3:
+            intent["prerequisite_job_key"] = (
+                materialize.RUNNER_PREREQUISITE_JOB_KEY
+            )
         intent_raw = materialize._signed_runner_record(
             intent,
             private=self.receipt_private,
             key_id=self.receipt_id,
-            domain=materialize.RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN,
+            domain=(
+                materialize.RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN_V3
+                if version == 3
+                else materialize.RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN
+            ),
         )
+        post_attempt = None
+        post_attempt_raw = None
+        if version == 3:
+            request_raw = materialize.package.canonical_json(
+                {
+                    "comment": intent["comment"],
+                    "environment_ids": [int(intent["environment_id"])],
+                    "state": "approved",
+                }
+            )
+            post_attempt = {
+                "attempted_at_epoch": 1_900_000_000,
+                "authority_profile": materialize.package.PROFILE,
+                "comment": intent["comment"],
+                "environment_id": intent["environment_id"],
+                "environment_name": intent["environment_name"],
+                "github_api_path": (
+                    f"/{materialize.GITHUB_REPOSITORY_API}/actions/runs/"
+                    f"{intent['run_id']}/pending_deployments"
+                ),
+                "http_method": "POST",
+                "intent_sha256": materialize.package.sha256(intent_raw),
+                "pre_post_jobs_sha256": "sha256:" + "8" * 64,
+                "pre_post_pending_deployments_count": 1,
+                "pre_post_pending_deployments_sha256": "sha256:" + "9" * 64,
+                "pre_post_release_job_present": False,
+                "pre_post_review_history_sha256": "sha256:" + "a" * 64,
+                "pre_post_review_match_count": 0,
+                "pre_post_review_scope": "any-approved-target-environment",
+                "pre_post_run_sha256": "sha256:" + "b" * 64,
+                "prerequisite_job_id": intent["prerequisite_job_id"],
+                "prerequisite_job_key": intent["prerequisite_job_key"],
+                "prerequisite_job_name": intent["prerequisite_job_name"],
+                "receipt_authority_key_id": self.receipt_id,
+                "repository": intent["repository"],
+                "repository_id": intent["repository_id"],
+                "repository_owner_id": intent["repository_owner_id"],
+                "request_sha256": materialize.package.sha256(request_raw),
+                "reservation_expires_at_epoch": intent[
+                    "reservation_expires_at_epoch"
+                ],
+                "reservation_sha256": reservation_sha256,
+                "run_attempt": intent["run_attempt"],
+                "run_id": intent["run_id"],
+                "runner_label": intent["runner_label"],
+                "schema": (
+                    materialize.RUNNER_PREREQUISITE_POST_ATTEMPT_SCHEMA_V3
+                ),
+                "version": 3,
+                "workflow_path": intent["workflow_path"],
+                "workflow_ref": intent["workflow_ref"],
+                "workflow_sha": intent["workflow_sha"],
+            }
+            post_attempt_raw = materialize._signed_runner_record(
+                post_attempt,
+                private=self.receipt_private,
+                key_id=self.receipt_id,
+                domain=(
+                    materialize
+                    .RUNNER_PREREQUISITE_POST_ATTEMPT_SIGNATURE_DOMAIN_V3
+                ),
+            )
         approval = {
             "approval_api_disposition": "approved",
             "approval_response_sha256": "sha256:" + "4" * 64,
@@ -469,34 +554,62 @@ class RunnerReservationBindingTests(unittest.TestCase):
             "run_attempt": intent["run_attempt"],
             "run_id": intent["run_id"],
             "runner_label": intent["runner_label"],
-            "schema": materialize.RUNNER_PREREQUISITE_APPROVAL_SCHEMA,
-            "version": 2,
+            "schema": (
+                materialize.RUNNER_PREREQUISITE_APPROVAL_SCHEMA_V3
+                if version == 3
+                else materialize.RUNNER_PREREQUISITE_APPROVAL_SCHEMA
+            ),
+            "version": version,
             "workflow_path": intent["workflow_path"],
             "workflow_ref": intent["workflow_ref"],
             "workflow_sha": intent["workflow_sha"],
         }
+        if version == 3:
+            approval["prerequisite_job_key"] = intent[
+                "prerequisite_job_key"
+            ]
         approval_raw = materialize._signed_runner_record(
             approval,
             private=self.receipt_private,
             key_id=self.receipt_id,
-            domain=materialize.RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN,
+            domain=(
+                materialize.RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN_V3
+                if version == 3
+                else materialize.RUNNER_PREREQUISITE_APPROVAL_SIGNATURE_DOMAIN
+            ),
         )
-        intent_path, approval_path = materialize._runner_prerequisite_paths(
-            reservation_raw
+        path_resolver = (
+            materialize._runner_prerequisite_paths_v3
+            if version == 3
+            else materialize._runner_prerequisite_paths
         )
+        paths = path_resolver(reservation_raw)
+        intent_path = paths[0]
+        approval_path = paths[-1]
         intent_path.write_bytes(intent_raw)
+        if version == 3:
+            paths[1].write_bytes(post_attempt_raw)
+            os.chmod(paths[1], 0o600)
         approval_path.write_bytes(approval_raw)
         os.chmod(intent_path, 0o600)
         os.chmod(approval_path, 0o600)
-        return materialize._validate_runner_prerequisite_records(
-            intent_raw=intent_raw,
-            approval_raw=approval_raw,
-            reservation_raw=reservation_raw,
-            reservation_payload=reservation_payload,
-            receipt_public=self.receipt_private.public_key(),
-            receipt_id=self.receipt_id,
-            current=1_900_000_000,
+        validator = (
+            materialize._validate_runner_prerequisite_records_v3
+            if version == 3
+            else materialize._validate_runner_prerequisite_records
         )
+        arguments = {
+            "intent_raw": intent_raw,
+            "approval_raw": approval_raw,
+            "reservation_raw": reservation_raw,
+            "reservation_payload": reservation_payload,
+            "receipt_public": self.receipt_private.public_key(),
+            "receipt_id": self.receipt_id,
+            "current": 1_900_000_000,
+        }
+        if version == 3:
+            arguments["post_attempt_raw"] = post_attempt_raw
+        return validator(**arguments)
 
     @staticmethod
     def _evidence() -> dict[str, str]:
@@ -689,8 +802,8 @@ class RunnerReservationBindingTests(unittest.TestCase):
         binding = self._write_prerequisite_records(
             reservation_raw, reservation_payload
         )
-        intent_raw, approval_raw = materialize._read_runner_prerequisite_records(
-            reservation_raw
+        intent_raw, post_attempt_raw, approval_raw = (
+            materialize._read_runner_prerequisite_records_v3(reservation_raw)
         )
         self.assertEqual(
             binding["runner_prerequisite_approval_sha256"],
@@ -702,8 +815,9 @@ class RunnerReservationBindingTests(unittest.TestCase):
             materialize.MaterializeFailure,
             "runner-prerequisite-approval-(?:wire|signature|encoding)-invalid",
         ):
-            materialize._validate_runner_prerequisite_records(
+            materialize._validate_runner_prerequisite_records_v3(
                 intent_raw=intent_raw,
+                post_attempt_raw=post_attempt_raw,
                 approval_raw=bytes(tampered),
                 reservation_raw=reservation_raw,
                 reservation_payload=reservation_payload,
@@ -715,8 +829,9 @@ class RunnerReservationBindingTests(unittest.TestCase):
             materialize.MaterializeFailure,
             "runner-prerequisite-(?:intent|approval)-binding-invalid",
         ):
-            materialize._validate_runner_prerequisite_records(
+            materialize._validate_runner_prerequisite_records_v3(
                 intent_raw=intent_raw,
+                post_attempt_raw=post_attempt_raw,
                 approval_raw=approval_raw,
                 reservation_raw=b'{"signed":"different-reservation"}',
                 reservation_payload=reservation_payload,
@@ -724,6 +839,81 @@ class RunnerReservationBindingTests(unittest.TestCase):
                 receipt_id=self.receipt_id,
                 current=1_900_000_000,
             )
+
+    def test_v3_prerequisite_requires_post_attempt_and_v2_remains_historical(
+        self,
+    ) -> None:
+        reservation_payload = {
+            "created_at_epoch": 1_900_000_000,
+            "expires_at_epoch": 1_900_021_600,
+            "runner_label": "pqrelease-" + "a" * 32,
+            "workflow_sha": "b" * 40,
+        }
+        reservation_v3 = b'{"signed":"reservation-v3-post-attempt"}'
+        self._write_prerequisite_records(reservation_v3, reservation_payload)
+        intent_path, post_attempt_path, approval_path = (
+            materialize._runner_prerequisite_paths_v3(reservation_v3)
+        )
+        post_attempt_raw = post_attempt_path.read_bytes()
+        post_attempt_path.unlink()
+        with self.assertRaisesRegex(
+            materialize.MaterializeFailure,
+            "runner-prerequisite-record-missing",
+        ):
+            materialize._read_runner_prerequisite_records_v3(reservation_v3)
+        post_attempt_path.write_bytes(post_attempt_raw)
+        os.chmod(post_attempt_path, 0o600)
+
+        intent_raw = intent_path.read_bytes()
+        approval_raw = approval_path.read_bytes()
+        intent_wire = materialize.package.parse_strict_json(
+            intent_raw, "test-v3-intent"
+        )
+        missing_key = dict(intent_wire["payload"])
+        missing_key.pop("prerequisite_job_key")
+        missing_key_raw = materialize._signed_runner_record(
+            missing_key,
+            private=self.receipt_private,
+            key_id=self.receipt_id,
+            domain=(
+                materialize.RUNNER_PREREQUISITE_INTENT_SIGNATURE_DOMAIN_V3
+            ),
+        )
+        with self.assertRaisesRegex(
+            materialize.MaterializeFailure,
+            "runner-prerequisite-intent-binding-invalid",
+        ):
+            materialize._validate_runner_prerequisite_records_v3(
+                intent_raw=missing_key_raw,
+                post_attempt_raw=post_attempt_raw,
+                approval_raw=approval_raw,
+                reservation_raw=reservation_v3,
+                reservation_payload=reservation_payload,
+                receipt_public=self.receipt_private.public_key(),
+                receipt_id=self.receipt_id,
+                current=1_900_000_000,
+            )
+
+        reservation_v2 = b'{"signed":"reservation-v2-historical"}'
+        binding = self._write_prerequisite_records(
+            reservation_v2, reservation_payload, version=2
+        )
+        intent_v2, approval_v2 = (
+            materialize._read_runner_prerequisite_records(reservation_v2)
+        )
+        self.assertEqual(
+            binding["runner_prerequisite_intent_sha256"],
+            materialize.package.sha256(intent_v2),
+        )
+        self.assertEqual(
+            binding["runner_prerequisite_approval_sha256"],
+            materialize.package.sha256(approval_v2),
+        )
+        with self.assertRaisesRegex(
+            materialize.MaterializeFailure,
+            "runner-prerequisite-record-missing",
+        ):
+            materialize._read_runner_prerequisite_records_v3(reservation_v2)
 
     def test_runner_observation_cannot_overwrite_prerequisite_run_or_job(self) -> None:
         prerequisite = {
@@ -941,7 +1131,7 @@ class RunnerReservationBindingTests(unittest.TestCase):
                 )
 
             files = materialize._read_exact_private_directory(
-                os.fspath(output_a), materialize.MATERIAL_FILES
+                os.fspath(output_a), materialize.MATERIAL_FILES_V3
             )
             config = materialize.package.parse_strict_json(
                 files["authority.v2.json"], "test-config"
