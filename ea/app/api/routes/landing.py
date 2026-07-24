@@ -160,7 +160,10 @@ from app.services import propertyquarry_google_identity
 from app.services import public_analytics_consent as analytics_consent
 from app.services.google_oauth import complete_google_oauth_callback
 from app.services.property_billing import payfunnels_configured, property_commercial_snapshot
-from app.services.property_curated_diorama import build_curated_diorama_preview_index
+from app.services.property_curated_diorama import (
+    build_curated_diorama_entry_index,
+    build_curated_diorama_preview_index,
+)
 from app.services.property_market_catalog import (
     country_label as property_country_label,
     country_options as property_country_options,
@@ -1479,10 +1482,17 @@ def _propertyquarry_prepare_run_payload(
                 if packet_href:
                     normalized_candidate["packet_url"] = packet_href
                     normalized_candidate.setdefault("detail_href", packet_href)
-            if isinstance(normalized_candidate, dict) and not str(normalized_candidate.get("diorama_preview_url") or "").strip():
-                derived_diorama_preview_url = _property_candidate_diorama_preview_image(normalized_candidate)
-                if derived_diorama_preview_url:
-                    normalized_candidate["diorama_preview_url"] = derived_diorama_preview_url
+            if isinstance(normalized_candidate, dict):
+                curated_diorama_entry = _property_curated_diorama_preview_entry(normalized_candidate)
+                if curated_diorama_entry:
+                    _property_apply_curated_diorama_preview(
+                        normalized_candidate,
+                        entry=curated_diorama_entry,
+                    )
+                elif not str(normalized_candidate.get("diorama_preview_url") or "").strip():
+                    derived_diorama_preview_url = _property_candidate_diorama_preview_image(normalized_candidate)
+                    if derived_diorama_preview_url:
+                        normalized_candidate["diorama_preview_url"] = derived_diorama_preview_url
             rows.append(normalized_candidate)
         return rows
 
@@ -2163,8 +2173,19 @@ def _property_curated_diorama_preview_index() -> dict[str, str]:
     )
 
 
-def _property_curated_diorama_preview_image(candidate: dict[str, object]) -> str:
-    index = _property_curated_diorama_preview_index()
+@lru_cache(maxsize=1)
+def _property_curated_diorama_entry_index() -> dict[str, dict[str, object]]:
+    try:
+        payload = json.loads(_PROPERTY_CURATED_DIORAMA_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return build_curated_diorama_entry_index(
+        payload,
+        static_root=_PROPERTY_CURATED_DIORAMA_STATIC_ROOT,
+    )
+
+
+def _property_curated_diorama_lookup_keys(candidate: dict[str, object]) -> tuple[str, ...]:
     candidate_ref = str(candidate.get("candidate_ref") or _property_candidate_ref(candidate) or "").strip().lower()
     listing_id = str(candidate.get("listing_id") or "").strip().lower()
     property_url = str(
@@ -2177,10 +2198,68 @@ def _property_curated_diorama_preview_image(candidate: dict[str, object]) -> str
         listing_match = re.search(r"-(\d{6,})(?:/)?(?:[?#].*)?$", property_url)
         if listing_match:
             listing_id = listing_match.group(1)
-    for lookup_key in (f"candidate:{candidate_ref}", f"listing:{listing_id}"):
-        if lookup_key.rsplit(":", 1)[-1] and lookup_key in index:
+    return tuple(
+        lookup_key
+        for lookup_key in (f"candidate:{candidate_ref}", f"listing:{listing_id}")
+        if lookup_key.rsplit(":", 1)[-1]
+    )
+
+
+def _property_curated_diorama_preview_entry(candidate: dict[str, object]) -> dict[str, object]:
+    index = _property_curated_diorama_entry_index()
+    for lookup_key in _property_curated_diorama_lookup_keys(candidate):
+        if lookup_key in index:
+            return dict(index[lookup_key])
+    return {}
+
+
+def _property_curated_diorama_preview_image(candidate: dict[str, object]) -> str:
+    index = _property_curated_diorama_preview_index()
+    for lookup_key in _property_curated_diorama_lookup_keys(candidate):
+        if lookup_key in index:
             return index[lookup_key]
     return ""
+
+
+def _property_apply_curated_diorama_preview(
+    candidate: dict[str, object],
+    *,
+    entry: dict[str, object],
+) -> None:
+    asset_url = str(entry.get("asset_url") or "").strip()
+    if not asset_url:
+        return
+    title = _property_result_title_display(
+        candidate.get("title")
+        or candidate.get("property_url")
+        or "this property"
+    )
+    representation = str(entry.get("representation") or "").strip().lower()
+    alt = str(entry.get("alt") or "").strip()
+    if not alt:
+        alt = f"Illustrative hand-drawn diorama of {title}"
+    source_basis = str(entry.get("source_basis") or "").strip()
+    truth_boundary = str(entry.get("truth_boundary") or "").strip()
+    preview_kind = str(entry.get("preview_kind") or "").strip()
+    scene = (
+        dict(candidate.get("diorama_scene") or {})
+        if isinstance(candidate.get("diorama_scene"), dict)
+        else {}
+    )
+    scene.update(
+        {
+            "image_url": asset_url,
+            "alt": alt,
+            "representation": representation,
+            "source_basis": source_basis,
+            "truth_boundary": truth_boundary,
+            "preview_kind": preview_kind,
+        }
+    )
+    candidate["diorama_preview_url"] = asset_url
+    candidate["diorama_alt"] = alt
+    candidate["diorama_representation"] = representation
+    candidate["diorama_scene"] = scene
 
 
 def _property_candidate_diorama_preview_image(candidate: dict[str, object]) -> str:

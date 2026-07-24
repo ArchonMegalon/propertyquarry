@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -9,9 +10,11 @@ import pytest
 
 from app.api.routes import landing as landing_routes
 from app.services.property_curated_diorama import (
+    build_curated_diorama_entry_index,
     build_curated_diorama_preview_index,
     curated_diorama_governance_subject_sha256,
 )
+from tests.product_test_helpers import build_property_client
 
 
 def _approved_review(status: str, *, subject_sha256: str) -> dict[str, str]:
@@ -62,6 +65,75 @@ def test_curated_diorama_v2_requires_complete_approved_governance(tmp_path: Path
         "candidate:candidate-a": "/static/property/research/approved.png",
         "listing:123456": "/static/property/research/approved.png",
     }
+
+
+def test_curated_drawn_diorama_preserves_illustrative_truth_metadata(
+    tmp_path: Path,
+) -> None:
+    static_root = tmp_path / "static"
+    asset = static_root / "property" / "research" / "approved.webp"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"approved-drawn-illustration")
+    payload = _manifest_for(
+        asset,
+        asset_url="/static/property/research/approved.webp",
+    )
+    entry = payload["entries"][0]
+    entry.update(
+        {
+            "preview_kind": "illustrative_drawn_diorama",
+            "representation": "illustrative",
+            "source_basis": "listing_metadata_only",
+            "truth_boundary": (
+                "Illustrative concept only, not listing evidence or measured geometry."
+            ),
+            "alt": "Illustrative hand-drawn property diorama",
+        }
+    )
+
+    index = build_curated_diorama_entry_index(payload, static_root=static_root)
+
+    assert index["candidate:candidate-a"] == index["listing:123456"]
+    assert index["candidate:candidate-a"]["representation"] == "illustrative"
+    assert (
+        index["candidate:candidate-a"]["truth_boundary"]
+        == "Illustrative concept only, not listing evidence or measured geometry."
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("representation", ""),
+        ("representation", "reconstruction"),
+        ("source_basis", ""),
+        ("truth_boundary", ""),
+    ],
+)
+def test_curated_drawn_diorama_rejects_missing_truth_boundary(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    static_root = tmp_path / "static"
+    asset = static_root / "property" / "research" / "approved.webp"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"approved-drawn-illustration")
+    payload = _manifest_for(
+        asset,
+        asset_url="/static/property/research/approved.webp",
+    )
+    payload["entries"][0].update(
+        {
+            "preview_kind": "illustrative_drawn_diorama",
+            "representation": "illustrative",
+            "source_basis": "listing_reference_image",
+            "truth_boundary": "Illustrative orientation; geometry is not measured.",
+        }
+    )
+    payload["entries"][0][field] = value
+
+    assert build_curated_diorama_entry_index(payload, static_root=static_root) == {}
 
 
 @pytest.mark.parametrize(
@@ -183,10 +255,156 @@ def test_landing_curated_diorama_loader_rejects_legacy_or_unapproved_manifest(
     monkeypatch.setattr(landing_routes, "_PROPERTY_CURATED_DIORAMA_MANIFEST_PATH", manifest_path)
     monkeypatch.setattr(landing_routes, "_PROPERTY_CURATED_DIORAMA_STATIC_ROOT", static_root)
     landing_routes._property_curated_diorama_preview_index.cache_clear()
+    landing_routes._property_curated_diorama_entry_index.cache_clear()
     try:
         assert landing_routes._property_curated_diorama_preview_index() == {}
+        assert landing_routes._property_curated_diorama_entry_index() == {}
     finally:
         landing_routes._property_curated_diorama_preview_index.cache_clear()
+        landing_routes._property_curated_diorama_entry_index.cache_clear()
+
+
+def test_landing_curated_drawn_diorama_overrides_stale_runtime_preview(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    static_root = tmp_path / "static"
+    asset = static_root / "property" / "research" / "approved.webp"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"approved-drawn-illustration")
+    payload = _manifest_for(
+        asset,
+        asset_url="/static/property/research/approved.webp",
+    )
+    payload["entries"][0].update(
+        {
+            "preview_kind": "illustrative_drawn_diorama",
+            "representation": "illustrative",
+            "source_basis": "listing_reference_image",
+            "truth_boundary": (
+                "Hand-drawn orientation only; listing media remains the evidence."
+            ),
+        }
+    )
+    manifest_path = tmp_path / "property_diorama_previews.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        landing_routes,
+        "_PROPERTY_CURATED_DIORAMA_MANIFEST_PATH",
+        manifest_path,
+    )
+    monkeypatch.setattr(
+        landing_routes,
+        "_PROPERTY_CURATED_DIORAMA_STATIC_ROOT",
+        static_root,
+    )
+    landing_routes._property_curated_diorama_preview_index.cache_clear()
+    landing_routes._property_curated_diorama_entry_index.cache_clear()
+    candidate: dict[str, object] = {
+        "candidate_ref": "candidate-a",
+        "title": "A city home",
+        "diorama_preview_url": "/static/property/research/stale-missing.png",
+    }
+    try:
+        entry = landing_routes._property_curated_diorama_preview_entry(candidate)
+        landing_routes._property_apply_curated_diorama_preview(
+            candidate,
+            entry=entry,
+        )
+    finally:
+        landing_routes._property_curated_diorama_preview_index.cache_clear()
+        landing_routes._property_curated_diorama_entry_index.cache_clear()
+
+    assert candidate["diorama_preview_url"] == "/static/property/research/approved.webp"
+    assert candidate["diorama_representation"] == "illustrative"
+    assert candidate["diorama_alt"] == "Illustrative hand-drawn diorama of A city home"
+    assert candidate["diorama_scene"] == {
+        "image_url": "/static/property/research/approved.webp",
+        "alt": "Illustrative hand-drawn diorama of A city home",
+        "representation": "illustrative",
+        "source_basis": "listing_reference_image",
+        "truth_boundary": (
+            "Hand-drawn orientation only; listing media remains the evidence."
+        ),
+        "preview_kind": "illustrative_drawn_diorama",
+    }
+
+
+def test_exact_shortlist_run_renders_all_drawn_diorama_thumbnails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (
+            repo_root
+            / "ea"
+            / "app"
+            / "data"
+            / "property_diorama_previews.json"
+        ).read_text(encoding="utf-8")
+    )
+    run_id = "9dd6a4993d7245a0acf48aeb50c44a9b"
+    candidates: list[dict[str, object]] = []
+    for entry in list(manifest.get("entries") or []):
+        candidate_ref = str(entry["candidate_refs"][0])
+        listing_ids = list(entry.get("listing_ids") or [])
+        candidates.append(
+            {
+                "candidate_ref": candidate_ref,
+                "listing_id": str(listing_ids[0]) if listing_ids else "",
+                "title": f"Shortlist home {entry['rank']}",
+                "property_url": f"https://listings.invalid/{candidate_ref}",
+                "source_label": "Shortlist source",
+            }
+        )
+    candidates[0]["diorama_preview_url"] = (
+        "/static/property/research/stale-runtime-preview.png"
+    )
+    run_payload = {
+        "run_id": run_id,
+        "status": "processed",
+        "summary": {
+            "run_id": run_id,
+            "ranked_candidates": candidates,
+        },
+    }
+
+    class _RunProduct:
+        def get_property_search_run_status(self, **_kwargs: object) -> dict[str, object]:
+            return run_payload
+
+    monkeypatch.setattr(
+        landing_routes,
+        "build_product_service",
+        lambda _container: _RunProduct(),
+    )
+    monkeypatch.setattr(
+        landing_routes,
+        "_propertyquarry_shortlist_run_is_recent",
+        lambda **_kwargs: True,
+    )
+    landing_routes._property_curated_diorama_preview_index.cache_clear()
+    landing_routes._property_curated_diorama_entry_index.cache_clear()
+    client = build_property_client(principal_id="pq-drawn-diorama-run")
+
+    response = client.get(
+        f"/app/shortlist/run/{run_id}",
+        headers={"host": "propertyquarry.com"},
+    )
+
+    assert response.status_code == 200
+    asset_urls = re.findall(
+        r'<img src="(/static/property/research/[^"]+-drawn-diorama\.webp)"',
+        response.text,
+    )
+    assert len(asset_urls) == 40
+    assert len(set(asset_urls)) == 40
+    assert "stale-runtime-preview" not in response.text
+    assert response.text.count(">Illustrative</span>") == 40
+    assert (
+        response.text.count('alt="Illustrative hand-drawn property diorama"')
+        == 40
+    )
 
 
 def test_tracked_curated_diorama_assets_are_not_orphaned() -> None:
@@ -211,3 +429,28 @@ def test_tracked_curated_diorama_assets_are_not_orphaned() -> None:
         for asset_url in index.values()
     }
     assert tracked_assets == approved_assets
+
+
+def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    manifest_path = (
+        repo_root / "ea" / "app" / "data" / "property_diorama_previews.json"
+    )
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entries = list(payload.get("entries") or [])
+
+    assert payload["contract_name"] == "propertyquarry.curated_diorama_previews.v2"
+    assert payload["run_binding"] == {
+        "run_id": "9dd6a4993d7245a0acf48aeb50c44a9b",
+        "candidate_count": 40,
+    }
+    assert len(entries) == 40
+    assert {entry["rank"] for entry in entries} == set(range(1, 41))
+    assert all(
+        entry["preview_kind"] == "illustrative_drawn_diorama"
+        and entry["representation"] == "illustrative"
+        and "not listing evidence" in entry["truth_boundary"]
+        and entry["source_basis"]
+        in {"listing_reference_image", "listing_metadata_only"}
+        for entry in entries
+    )

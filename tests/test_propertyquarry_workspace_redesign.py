@@ -7260,7 +7260,8 @@ def test_propertyquarry_root_ignores_unreadable_optional_example_media(
     assert repeated_response.status_code == 200
     assert attempts == 1
     assert "Example shortlist" in response.text
-    assert "/static/property/home/example-shortlist-home-1.png" in response.text
+    assert "/static/property/home/example-shortlist-diorama-1.webp" in response.text
+    assert "Illustrative" in response.text
 
 
 def test_propertyquarry_example_shortlist_rows_reuse_cached_media_target_scan(
