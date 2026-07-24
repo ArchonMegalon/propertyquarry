@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -142,13 +143,21 @@ def _expected_release_client_run(operation: str) -> str:
             '${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.receipt.v2.json"'
         ),
         'oidc_writer=""',
+        'oidc_writer_pending="0"',
         "cleanup_release_client_step() {",
         "  status=$?",
         "  trap - EXIT HUP INT TERM",
         "  set +e",
-        '  if [[ "${oidc_writer:-}" =~ ^[1-9][0-9]*$ ]]; then',
-        '    builtin kill -- "${oidc_writer}" 2>/dev/null',
-        '    wait "${oidc_writer}" 2>/dev/null',
+        '  writer_pid="${oidc_writer:-}"',
+        (
+            '  if [[ "${oidc_writer_pending:-0}" == "1" '
+            '&& ! "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then'
+        ),
+        '    writer_pid="${!:-}"',
+        "  fi",
+        '  if [[ "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then',
+        '    builtin kill -- "${writer_pid}" 2>/dev/null',
+        '    wait "${writer_pid}" 2>/dev/null',
         "  fi",
         "  exec 9<&-",
         '  if [[ -p "${oidc_fifo}" || -L "${oidc_fifo}" ]]; then',
@@ -168,10 +177,12 @@ def _expected_release_client_run(operation: str) -> str:
         '/usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"',
         '[[ -p "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]',
         '[[ "$(/usr/bin/stat -Lc \'%a\' -- "${oidc_fifo}")" == "600" ]]',
+        'oidc_writer_pending="1"',
         "(",
         "  builtin printf '%s\\n' \"${ACTIONS_ID_TOKEN_REQUEST_TOKEN}\" >\"${oidc_fifo}\"",
         ") &",
         "oidc_writer=$!",
+        'oidc_writer_pending="0"',
         'exec 9<"${oidc_fifo}"',
         'wait "${oidc_writer}"',
         'oidc_writer=""',
@@ -1504,6 +1515,67 @@ def test_release_client_signal_cleanup_reaps_blocked_fifo_writer(
     assert result.stdout == ""
     assert "private-test-oidc-bearer" not in result.stderr
     assert list(runner_temp.iterdir()) == []
+
+
+def test_release_client_signal_before_writer_pid_assignment_reaps_pending_writer(
+    tmp_path: Path,
+) -> None:
+    document = _strict_workflow_document(_read(".github/workflows/smoke-runtime.yml"))
+    jobs = document["jobs"]
+    assert type(jobs) is dict
+    release_job = jobs["propertyquarry-release-v2"]
+    assert type(release_job) is dict
+    steps = release_job["steps"]
+    assert type(steps) is list
+    step = steps[-1]
+    assert type(step) is dict
+    run = step["run"]
+    assert type(run) is str
+    writer_pid_receipt = tmp_path / "writer.pid"
+    interrupted_run = run.replace(
+        "oidc_writer=$!\n",
+        (
+            "builtin printf '%s\\n' \"$!\" >"
+            f"{shlex.quote(str(writer_pid_receipt))}\n"
+            'builtin kill -TERM "${BASHPID}"\n'
+            "oidc_writer=$!\n"
+        ),
+        1,
+    )
+    assert interrupted_run != run
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir(mode=0o700)
+    script = tmp_path / "release-step-before-pid-assignment.sh"
+    script.write_text(interrupted_run, encoding="utf-8")
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-p",
+            "-euo",
+            "pipefail",
+            str(script),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_release_step_test_environment(runner_temp, run_attempt="4"),
+        timeout=10,
+    )
+    assert result.returncode == 143
+    assert result.stdout == ""
+    assert "private-test-oidc-bearer" not in result.stderr
+    assert list(runner_temp.iterdir()) == []
+    writer_pid = int(writer_pid_receipt.read_text(encoding="utf-8").strip())
+    try:
+        os.kill(writer_pid, 0)
+    except ProcessLookupError:
+        writer_alive = False
+    else:
+        writer_alive = True
+        os.kill(writer_pid, signal.SIGKILL)
+    assert writer_alive is False
 
 
 def test_smoke_runtime_binds_flagship_security_to_one_time_protected_runner() -> None:

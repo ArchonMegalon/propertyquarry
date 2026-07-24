@@ -1338,13 +1338,18 @@ jobs:
           oidc_fifo="${RUNNER_TEMP}/propertyquarry-release-preflight-oidc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.fifo"
           receipt="${RUNNER_TEMP}/propertyquarry-release-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.receipt.v2.json"
           oidc_writer=""
+          oidc_writer_pending="0"
           cleanup_release_client_step() {
             status=$?
             trap - EXIT HUP INT TERM
             set +e
-            if [[ "${oidc_writer:-}" =~ ^[1-9][0-9]*$ ]]; then
-              builtin kill -- "${oidc_writer}" 2>/dev/null
-              wait "${oidc_writer}" 2>/dev/null
+            writer_pid="${oidc_writer:-}"
+            if [[ "${oidc_writer_pending:-0}" == "1" && ! "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+              writer_pid="${!:-}"
+            fi
+            if [[ "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+              builtin kill -- "${writer_pid}" 2>/dev/null
+              wait "${writer_pid}" 2>/dev/null
             fi
             exec 9<&-
             if [[ -p "${oidc_fifo}" || -L "${oidc_fifo}" ]]; then
@@ -1364,10 +1369,12 @@ jobs:
           /usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"
           [[ -p "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
           [[ "$(/usr/bin/stat -Lc '%a' -- "${oidc_fifo}")" == "600" ]]
+          oidc_writer_pending="1"
           (
             builtin printf '%s\n' "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >"${oidc_fifo}"
           ) &
           oidc_writer=$!
+          oidc_writer_pending="0"
           exec 9<"${oidc_fifo}"
           wait "${oidc_writer}"
           oidc_writer=""
@@ -1420,13 +1427,18 @@ jobs:
           oidc_fifo="${RUNNER_TEMP}/propertyquarry-release-run-oidc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.fifo"
           receipt="${RUNNER_TEMP}/propertyquarry-release-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.receipt.v2.json"
           oidc_writer=""
+          oidc_writer_pending="0"
           cleanup_release_client_step() {
             status=$?
             trap - EXIT HUP INT TERM
             set +e
-            if [[ "${oidc_writer:-}" =~ ^[1-9][0-9]*$ ]]; then
-              builtin kill -- "${oidc_writer}" 2>/dev/null
-              wait "${oidc_writer}" 2>/dev/null
+            writer_pid="${oidc_writer:-}"
+            if [[ "${oidc_writer_pending:-0}" == "1" && ! "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+              writer_pid="${!:-}"
+            fi
+            if [[ "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+              builtin kill -- "${writer_pid}" 2>/dev/null
+              wait "${writer_pid}" 2>/dev/null
             fi
             exec 9<&-
             if [[ -p "${oidc_fifo}" || -L "${oidc_fifo}" ]]; then
@@ -1446,10 +1458,12 @@ jobs:
           /usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"
           [[ -p "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
           [[ "$(/usr/bin/stat -Lc '%a' -- "${oidc_fifo}")" == "600" ]]
+          oidc_writer_pending="1"
           (
             builtin printf '%s\n' "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >"${oidc_fifo}"
           ) &
           oidc_writer=$!
+          oidc_writer_pending="0"
           exec 9<"${oidc_fifo}"
           wait "${oidc_writer}"
           oidc_writer=""
@@ -1502,13 +1516,18 @@ jobs:
           oidc_fifo="${RUNNER_TEMP}/propertyquarry-ai-panorama-install-oidc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.fifo"
           receipt="${RUNNER_TEMP}/propertyquarry-ai-panorama-install-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.receipt.v2.json"
           oidc_writer=""
+          oidc_writer_pending="0"
           cleanup_release_client_step() {
             status=$?
             trap - EXIT HUP INT TERM
             set +e
-            if [[ "${oidc_writer:-}" =~ ^[1-9][0-9]*$ ]]; then
-              builtin kill -- "${oidc_writer}" 2>/dev/null
-              wait "${oidc_writer}" 2>/dev/null
+            writer_pid="${oidc_writer:-}"
+            if [[ "${oidc_writer_pending:-0}" == "1" && ! "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+              writer_pid="${!:-}"
+            fi
+            if [[ "${writer_pid}" =~ ^[1-9][0-9]*$ ]]; then
+              builtin kill -- "${writer_pid}" 2>/dev/null
+              wait "${writer_pid}" 2>/dev/null
             fi
             exec 9<&-
             if [[ -p "${oidc_fifo}" || -L "${oidc_fifo}" ]]; then
@@ -1528,10 +1547,12 @@ jobs:
           /usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"
           [[ -p "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
           [[ "$(/usr/bin/stat -Lc '%a' -- "${oidc_fifo}")" == "600" ]]
+          oidc_writer_pending="1"
           (
             builtin printf '%s\n' "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >"${oidc_fifo}"
           ) &
           oidc_writer=$!
+          oidc_writer_pending="0"
           exec 9<"${oidc_fifo}"
           wait "${oidc_writer}"
           oidc_writer=""
