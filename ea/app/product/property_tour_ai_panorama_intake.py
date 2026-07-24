@@ -1426,6 +1426,8 @@ def install_sealed_ai_panorama_bundle(
         AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2,
     }:
         _fail("ai_panorama_request_contract_invalid")
+    if apply and request.get("contract") != AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2:
+        _fail("ai_panorama_v1_apply_forbidden")
     source_bundle = _confined_source_bundle(
         _request_path(
             request.get("source_bundle"), code="ai_panorama_source_path_invalid"

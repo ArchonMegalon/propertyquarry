@@ -331,6 +331,20 @@ def test_v1_optional_hash_whitespace_remains_backward_compatible(
     assert receipt["release_eligible"] is False
 
 
+def test_v1_is_strictly_dry_run_only(tmp_path: Path) -> None:
+    bundle = _make_bundle(tmp_path / "source")
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request = _hash_bound_request(bundle, public_dir)
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_v1_apply_forbidden",
+    ):
+        intake.install_sealed_ai_panorama_bundle(request, apply=True)
+    assert not (public_dir / SLUG).exists()
+
+
 @pytest.mark.parametrize("lineage_fields", (0, 1))
 def test_v2_requires_complete_materialization_lineage(
     tmp_path: Path,
@@ -851,10 +865,10 @@ def test_v2_rejects_lineage_inode_or_candidate_swaps_during_validation(
 
 
 def test_apply_requires_both_exact_source_hashes(tmp_path: Path) -> None:
-    bundle = _make_bundle(tmp_path / "source")
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
     public_dir = tmp_path / "public"
     public_dir.mkdir()
-    request = _request(bundle, public_dir)
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
     with pytest.raises(intake.AiPanoramaIntakeError, match="expected_source_tree_sha256_invalid"):
         intake.install_sealed_ai_panorama_bundle(request, apply=True)
 
@@ -867,10 +881,17 @@ def test_apply_requires_both_exact_source_hashes(tmp_path: Path) -> None:
 
 
 def test_apply_writes_owned_pair_atomically_and_is_idempotent(tmp_path: Path) -> None:
-    bundle = _make_bundle(tmp_path / "source")
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
     public_dir = tmp_path / "public"
     public_dir.mkdir()
-    request = _hash_bound_request(bundle, public_dir)
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
 
     first = intake.install_sealed_ai_panorama_bundle(request, apply=True)
     second = intake.install_sealed_ai_panorama_bundle(request, apply=True)
@@ -913,19 +934,31 @@ def stat_mode(path: Path) -> int:
 
 
 def test_existing_target_rejects_wrong_owner_and_replacement(tmp_path: Path) -> None:
-    bundle = _make_bundle(tmp_path / "source")
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
     public_dir = tmp_path / "public"
     public_dir.mkdir()
-    request = _hash_bound_request(bundle, public_dir)
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
     intake.install_sealed_ai_panorama_bundle(request, apply=True)
 
     wrong_owner = dict(request, principal_id="other-principal")
     with pytest.raises(intake.AiPanoramaIntakeError, match="target_owner_mismatch"):
         intake.install_sealed_ai_panorama_bundle(wrong_owner, apply=True)
 
-    replacement_bundle = _make_bundle(tmp_path / "replacement")
+    replacement_bundle = _make_bundle(
+        tmp_path / "replacement",
+        directory_name=SLUG,
+    )
     (replacement_bundle / "panoramas/living-room.jpg").write_bytes(b"different-panorama")
-    replacement_request = _request(replacement_bundle, public_dir)
+    replacement_request, _replacement_receipt, _replacement_marker = (
+        _v2_lineage_request(replacement_bundle, public_dir)
+    )
     snapshot = intake._scan_source_bundle(replacement_bundle)
     replacement_request.update(
         {

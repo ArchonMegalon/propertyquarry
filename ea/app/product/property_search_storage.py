@@ -2035,13 +2035,22 @@ def load_property_search_run_record_for_publication(
     connection: object | None = None,
     for_update: bool = False,
 ) -> dict[str, object] | None:
-    """Load one principal-owned run, optionally locking it for publication."""
+    """Load one principal-owned run, optionally locking it for publication.
+
+    A row lock is durable only when ``connection`` is the caller's active
+    transaction and remains open through the publication effect.  Callers must
+    not rely on ``for_update=True`` with an internally opened connection.
+    """
 
     normalized_run_id = str(run_id or "").strip()
     normalized_principal_id = str(principal_id or "").strip()
     if not normalized_run_id or not normalized_principal_id:
         return None
     if connection is None:
+        if for_update:
+            raise ValueError(
+                "property_search_publication_lock_connection_required"
+            )
         if not _property_search_run_database_url():
             return None
         _require_property_search_run_schema()
