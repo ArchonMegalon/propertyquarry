@@ -12,12 +12,17 @@ from pathlib import Path, PurePosixPath
 from typing import Mapping
 from uuid import uuid4
 
-from app.product.property_search_storage import property_account_publication_authority
+from app.product.property_search_storage import (
+    load_property_search_run_record_for_publication,
+    property_account_publication_authority,
+)
 from app.product.property_search_tour_binding import (
+    PropertySearchTourBindingError,
     _normalized_provider_key,
     _property_url_contains_listing_id,
     _provider_key_from_url,
     _source_ref_identity,
+    authorize_property_search_candidate_tour_install,
     canonical_property_source_url,
     property_search_source_url_sha256,
 )
@@ -1095,6 +1100,62 @@ def _validate_source_identity(
     return identity
 
 
+def _validate_v2_publication_authority(
+    *,
+    request: Mapping[str, object],
+    identity: Mapping[str, str],
+    connection: object | None = None,
+    for_update: bool = False,
+) -> dict[str, str]:
+    if request.get("contract") != AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2:
+        return {}
+    record = load_property_search_run_record_for_publication(
+        run_id=identity["search_run_id"],
+        principal_id=identity["principal_id"],
+        connection=connection,
+        for_update=for_update,
+    )
+    if not isinstance(record, Mapping):
+        _fail("ai_panorama_publication_run_not_found")
+    bundle_identity: dict[str, object] = {
+        "owner_verified": True,
+        "search_run_id": identity["search_run_id"],
+        "candidate_ref": identity["candidate_ref"],
+        "listing_url": identity["listing_url"],
+        "property_url": identity["listing_url"],
+        "property_url_sha256": identity["property_url_sha256"],
+        "provider_key": identity["provider_key"],
+        "source_ref": identity["source_ref"],
+        "external_id": identity["external_id"],
+    }
+    try:
+        authority = authorize_property_search_candidate_tour_install(
+            record,
+            principal_id=identity["principal_id"],
+            run_id=identity["search_run_id"],
+            candidate_ref=identity["candidate_ref"],
+            expected_listing_id=identity["external_id"],
+            expected_source_ref=identity["source_ref"],
+            bundle_identity=bundle_identity,
+        )
+    except PropertySearchTourBindingError as exc:
+        raise AiPanoramaIntakeError(
+            f"ai_panorama_publication_authority:{exc.code}"
+        ) from exc
+    return {
+        "publication_authorization_verified": "true",
+        "publication_authorization_record_sha256": str(
+            authority.get("record_sha256") or ""
+        ),
+        "principal_binding_verified": "true",
+        "run_binding_verified": "true",
+        "candidate_binding_verified": "true",
+        "listing_identity_verified": "true",
+        "source_identity_verified": "true",
+        "run_terminal_verified": "true",
+    }
+
+
 def _copy_snapshot(source: Path, stage: Path, snapshot: _SourceSnapshot) -> None:
     for row in snapshot.files:
         destination = stage / row.relpath
@@ -1314,18 +1375,30 @@ def _receipt(
         "source_tour_sha256": snapshot.tour_sha256,
         "source_file_count": len(snapshot.files),
         "source_total_bytes": snapshot.total_bytes,
-        "principal_binding_verified": True,
-        "run_binding_verified": True,
-        "candidate_binding_verified": True,
-        "listing_identity_verified": True,
+        "principal_binding_verified": identity.get("principal_binding_verified") == "true",
+        "run_binding_verified": identity.get("run_binding_verified") == "true",
+        "candidate_binding_verified": identity.get("candidate_binding_verified") == "true",
+        "listing_identity_verified": identity.get("listing_identity_verified") == "true",
+        "source_identity_verified": identity.get("source_identity_verified") == "true",
+        "run_terminal_verified": identity.get("run_terminal_verified") == "true",
+        "publication_authorization_verified": (
+            identity.get("publication_authorization_verified") == "true"
+        ),
         "install_request_contract": identity["install_request_contract"],
         "materialization_lineage_verified": bool(
             identity.get("materialization_receipt_sha256")
             and identity.get("candidate_marker_sha256")
         ),
-        "release_eligible": identity.get("release_eligible") == "true",
+        "release_eligible": (
+            identity.get("release_eligible") == "true"
+            and identity.get("publication_authorization_verified") == "true"
+        ),
         "private_values_redacted": True,
     }
+    if identity.get("publication_authorization_record_sha256"):
+        receipt["publication_authorization_record_sha256"] = identity[
+            "publication_authorization_record_sha256"
+        ]
     if identity.get("materialization_receipt_sha256"):
         receipt["materialization_receipt_sha256"] = identity[
             "materialization_receipt_sha256"
@@ -1387,6 +1460,12 @@ def install_sealed_ai_panorama_bundle(
     target = public_tour_dir / slug
 
     if not apply:
+        identity.update(
+            _validate_v2_publication_authority(
+                request=request,
+                identity=identity,
+            )
+        )
         already_installed = _validate_existing_target(
             target=target,
             source_payload=source_payload,
@@ -1414,8 +1493,15 @@ def install_sealed_ai_panorama_bundle(
         ):
             with property_account_publication_authority(
                 identity["principal_id"], run_id=identity["search_run_id"]
-            ):
-                pass
+            ) as connection:
+                identity.update(
+                    _validate_v2_publication_authority(
+                        request=request,
+                        identity=identity,
+                        connection=connection,
+                        for_update=True,
+                    )
+                )
             return _receipt(
                 status="already_installed",
                 applied=True,
@@ -1429,7 +1515,15 @@ def install_sealed_ai_panorama_bundle(
         try:
             with property_account_publication_authority(
                 identity["principal_id"], run_id=identity["search_run_id"]
-            ):
+            ) as connection:
+                identity.update(
+                    _validate_v2_publication_authority(
+                        request=request,
+                        identity=identity,
+                        connection=connection,
+                        for_update=True,
+                    )
+                )
                 stage = public_tour_dir / f".{slug}.ai-intake-{uuid4().hex}"
                 os.mkdir(stage, 0o755)
                 _copy_snapshot(source_bundle, stage, snapshot)

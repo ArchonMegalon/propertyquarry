@@ -156,6 +156,20 @@ def _candidate_listing_ids(candidate: Mapping[str, object]) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _candidate_source_refs(candidate: Mapping[str, object]) -> tuple[str, ...]:
+    values: list[str] = []
+    payloads: list[Mapping[str, object]] = [candidate]
+    for key in ("property_facts", "facts", "preview"):
+        nested = candidate.get(key)
+        if isinstance(nested, Mapping):
+            payloads.append(nested)
+    for payload in payloads:
+        value = _normalized_text(payload.get("source_ref"))
+        if value and value not in values:
+            values.append(value)
+    return tuple(values)
+
+
 def _property_url_contains_listing_id(property_url: str, listing_id: str) -> bool:
     parsed = urllib.parse.urlsplit(property_url)
     searchable = f"{parsed.path}?{parsed.query}"
@@ -624,6 +638,111 @@ def exact_property_search_candidate_tour_binding_receipt(
         "occurrences_updated": 0,
         "changed_paths": [],
         "binding_verified_from": "principal_scoped_terminal_run",
+    }
+
+
+def authorize_property_search_candidate_tour_install(
+    record: Mapping[str, object],
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    expected_listing_id: str,
+    expected_source_ref: str,
+    bundle_identity: Mapping[str, object],
+) -> dict[str, object]:
+    """Verify a sealed install against one principal-scoped terminal run.
+
+    This is intentionally read-only.  It proves that the request principal
+    owns the durable run and that every occurrence of the requested candidate
+    carries the same listing URL, provider, listing ID, and exact source
+    reference as the sealed bundle.
+    """
+
+    normalized_principal = _normalized_text(principal_id)
+    normalized_run_id = _normalized_text(run_id)
+    normalized_candidate_ref = _normalized_text(candidate_ref)
+    normalized_listing_id = _normalized_text(expected_listing_id)
+    normalized_source_ref = _normalized_text(expected_source_ref)
+    if not normalized_principal:
+        raise PropertySearchTourBindingError("property_search_tour_principal_required")
+    if not normalized_run_id:
+        raise PropertySearchTourBindingError("property_search_tour_run_id_required")
+    if not normalized_candidate_ref:
+        raise PropertySearchTourBindingError("property_search_tour_candidate_ref_required")
+    if not normalized_listing_id:
+        raise PropertySearchTourBindingError("property_search_tour_listing_id_required")
+    if not normalized_source_ref:
+        raise PropertySearchTourBindingError("property_search_tour_source_ref_required")
+    if _normalized_text(record.get("run_id")) != normalized_run_id:
+        raise PropertySearchTourBindingError("property_search_tour_run_id_mismatch")
+    if _normalized_text(record.get("principal_id")) != normalized_principal:
+        raise PropertySearchTourBindingError("property_search_tour_principal_mismatch")
+    if not property_search_tour_run_is_terminal(record):
+        raise PropertySearchTourBindingError("property_search_tour_run_not_terminal")
+
+    expected_identity = _validated_bundle_identity(
+        bundle_identity,
+        run_id=normalized_run_id,
+        candidate_ref=normalized_candidate_ref,
+        expected_listing_id=normalized_listing_id,
+    )
+    occurrences = list(_candidate_occurrence_refs(record))
+    matches: list[tuple[MutableMapping[str, object], dict[str, object], str]] = []
+    for candidate, defaults, path in occurrences:
+        effective = _effective_candidate(candidate, defaults)
+        if property_research_candidate_ref(effective) == normalized_candidate_ref:
+            matches.append((candidate, defaults, path))
+    if not matches:
+        raise PropertySearchTourBindingError("property_search_tour_candidate_not_found")
+    _validate_matching_candidate_identity(
+        matches,
+        expected_listing_id=normalized_listing_id,
+        expected_property_url=expected_identity["property_url"],
+        expected_property_url_sha256=expected_identity["property_url_sha256"],
+        expected_provider_key=expected_identity["provider_key"],
+    )
+    for candidate, defaults, _path in matches:
+        source_refs = _candidate_source_refs(_effective_candidate(candidate, defaults))
+        if not source_refs:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_source_ref_missing"
+            )
+        if any(value != normalized_source_ref for value in source_refs):
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_source_ref_mismatch"
+            )
+
+    matched_paths = {path for _candidate, _defaults, path in matches}
+    for candidate, defaults, path in occurrences:
+        if path in matched_paths:
+            continue
+        effective = _effective_candidate(candidate, defaults)
+        same_property_url = (
+            expected_identity["property_url"] in _candidate_property_urls(effective)
+        )
+        same_provider_and_listing = (
+            expected_identity["provider_key"] in _candidate_provider_keys(effective)
+            and normalized_listing_id in _candidate_listing_ids(effective)
+        )
+        if same_property_url or same_provider_and_listing:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_ref_identity_conflict"
+            )
+
+    return {
+        "contract": "property_search_candidate_tour_install_authority_v1",
+        "record_sha256": property_search_run_record_sha256(record),
+        "property_url_sha256": expected_identity["property_url_sha256"],
+        "provider_key": expected_identity["provider_key"],
+        "occurrences_matched": len(matches),
+        "principal_binding_verified": True,
+        "run_binding_verified": True,
+        "candidate_binding_verified": True,
+        "listing_identity_verified": True,
+        "source_identity_verified": True,
+        "run_terminal_verified": True,
+        "private_values_redacted": True,
     }
 
 

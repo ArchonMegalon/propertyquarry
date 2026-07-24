@@ -2028,27 +2028,55 @@ def _mark_property_search_run_delivery_checked(record: dict[str, object]) -> boo
                 return cur.fetchone() is not None
 
 
-def _load_property_search_run_record(*, run_id: str, principal_id: str) -> dict[str, object] | None:
-    if not _property_search_run_database_url():
-        return None
-    _require_property_search_run_schema()
+def load_property_search_run_record_for_publication(
+    *,
+    run_id: str,
+    principal_id: str,
+    connection: object | None = None,
+    for_update: bool = False,
+) -> dict[str, object] | None:
+    """Load one principal-owned run, optionally locking it for publication."""
+
     normalized_run_id = str(run_id or "").strip()
     normalized_principal_id = str(principal_id or "").strip()
     if not normalized_run_id or not normalized_principal_id:
         return None
-    with _property_search_run_connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT payload_json FROM property_search_runs WHERE run_id = %s AND principal_id = %s",
-                (normalized_run_id, normalized_principal_id),
+    if connection is None:
+        if not _property_search_run_database_url():
+            return None
+        _require_property_search_run_schema()
+        with _property_search_run_connect() as conn:
+            return load_property_search_run_record_for_publication(
+                run_id=normalized_run_id,
+                principal_id=normalized_principal_id,
+                connection=conn,
+                for_update=for_update,
             )
-            row = cur.fetchone()
+    cursor_factory = getattr(connection, "cursor", None)
+    if not callable(cursor_factory):
+        return None
+    with cursor_factory() as cur:
+        query = (
+            "SELECT payload_json FROM property_search_runs "
+            "WHERE run_id = %s AND principal_id = %s"
+        )
+        if for_update:
+            query += " FOR UPDATE"
+        cur.execute(query, (normalized_run_id, normalized_principal_id))
+        row = cur.fetchone()
     if not row:
         return None
     return (
         _property_search_run_canonicalize_record(dict(row[0] or {}))
         if isinstance(row[0], dict)
         else None
+    )
+
+
+def _load_property_search_run_record(*, run_id: str, principal_id: str) -> dict[str, object] | None:
+    return load_property_search_run_record_for_publication(
+        run_id=run_id,
+        principal_id=principal_id,
     )
 
 

@@ -18,6 +18,7 @@ from app.api.routes.public_tour_payloads import redacted_public_tour_payload
 from app.product.property_research_packet_links import property_research_candidate_ref
 from app.product.property_search_tour_binding import (
     PropertySearchTourBindingError,
+    authorize_property_search_candidate_tour_install,
     exact_property_search_candidate_tour_binding_receipt,
     plan_property_search_candidate_tour_binding,
     property_search_run_record_sha256,
@@ -169,6 +170,82 @@ def _bound_record(
         bound_at="2026-07-20T12:00:00+00:00",
     )
     return updated
+
+
+def test_publication_loader_filters_owner_and_locks_the_exact_run() -> None:
+    calls: list[tuple[str, tuple[object, ...]]] = []
+
+    class _Cursor:
+        def __enter__(self) -> "_Cursor":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, query: str, parameters: tuple[object, ...]) -> None:
+            calls.append((query, parameters))
+
+        def fetchone(self) -> tuple[dict[str, object]]:
+            return (_record(),)
+
+    class _Connection:
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+    loaded = property_search_storage.load_property_search_run_record_for_publication(
+        run_id=RUN_ID,
+        principal_id=PRINCIPAL_ID,
+        connection=_Connection(),
+        for_update=True,
+    )
+
+    assert loaded is not None
+    assert loaded["run_id"] == RUN_ID
+    assert loaded["principal_id"] == PRINCIPAL_ID
+    assert calls == [
+        (
+            "SELECT payload_json FROM property_search_runs "
+            "WHERE run_id = %s AND principal_id = %s FOR UPDATE",
+            (RUN_ID, PRINCIPAL_ID),
+        )
+    ]
+
+
+def test_install_authority_is_read_only_and_binds_exact_source_ref() -> None:
+    record = _record()
+    before = copy.deepcopy(record)
+
+    receipt = authorize_property_search_candidate_tour_install(
+        record,
+        principal_id=PRINCIPAL_ID,
+        run_id=RUN_ID,
+        candidate_ref=CANDIDATE_REF,
+        expected_listing_id=LISTING_ID,
+        expected_source_ref=f"property-scout:{LISTING_ID}",
+        bundle_identity=_bundle_identity(),
+    )
+
+    assert record == before
+    assert receipt["principal_binding_verified"] is True
+    assert receipt["candidate_binding_verified"] is True
+    assert receipt["source_identity_verified"] is True
+    assert receipt["occurrences_matched"] == 3
+
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_candidate_source_ref_mismatch",
+    ):
+        authorize_property_search_candidate_tour_install(
+            record,
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            expected_source_ref=f"property-search:{LISTING_ID}",
+            bundle_identity=_bundle_identity(
+                source_ref=f"property-search:{LISTING_ID}",
+            ),
+        )
 
 
 def test_binding_plan_updates_every_exact_candidate_occurrence_without_mutating_input() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -21,6 +22,26 @@ SOURCE_REF = "property-scout:1807240910"
 EXTERNAL_ID = "1807240910"
 
 
+def _authorization_record(**updates: object) -> dict[str, object]:
+    candidate = {
+        "candidate_ref": CANDIDATE_REF,
+        "property_url": LISTING_URL,
+        "listing_id": EXTERNAL_ID,
+        "external_id": EXTERNAL_ID,
+        "source_ref": SOURCE_REF,
+        "platform": "willhaben",
+        "source_label": "Willhaben",
+    }
+    record: dict[str, object] = {
+        "run_id": RUN_ID,
+        "principal_id": PRINCIPAL,
+        "status": "processed",
+        "summary": {"ranked_candidates": [candidate]},
+    }
+    record.update(updates)
+    return record
+
+
 @pytest.fixture(autouse=True)
 def _strict_contract_stub(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EA_PUBLIC_TOUR_DIR", raising=False)
@@ -36,6 +57,11 @@ def _strict_contract_stub(monkeypatch: pytest.MonkeyPatch) -> None:
         }
 
     monkeypatch.setattr(intake, "_hosted_property_tour_ai_panorama_contract", _contract)
+    monkeypatch.setattr(
+        intake,
+        "load_property_search_run_record_for_publication",
+        lambda **_kwargs: _authorization_record(),
+    )
 
 
 def _write(path: Path, value: bytes) -> None:
@@ -348,6 +374,14 @@ def test_v2_exact_materialization_lineage_is_release_eligible(tmp_path: Path) ->
     )
     assert receipt["materialization_lineage_verified"] is True
     assert receipt["release_eligible"] is True
+    assert receipt["publication_authorization_verified"] is True
+    assert receipt["principal_binding_verified"] is True
+    assert receipt["run_binding_verified"] is True
+    assert receipt["candidate_binding_verified"] is True
+    assert receipt["listing_identity_verified"] is True
+    assert receipt["source_identity_verified"] is True
+    assert receipt["run_terminal_verified"] is True
+    assert len(str(receipt["publication_authorization_record_sha256"])) == 64
     assert receipt["source_tree_sha256"] == identity.tree_sha256
     assert receipt["source_tour_sha256"] == identity.tour_sha256
     assert receipt["materialization_receipt_sha256"] == hashlib.sha256(
@@ -357,6 +391,142 @@ def test_v2_exact_materialization_lineage_is_release_eligible(tmp_path: Path) ->
         marker_path.read_bytes()
     ).hexdigest()
     assert not (public_dir / SLUG).exists()
+
+
+@pytest.mark.parametrize(
+    ("record_update", "candidate_update", "reason"),
+    (
+        (
+            {"principal_id": "other-principal"},
+            {},
+            "property_search_tour_principal_mismatch",
+        ),
+        (
+            {"run_id": "other-run"},
+            {},
+            "property_search_tour_run_id_mismatch",
+        ),
+        (
+            {"status": "running"},
+            {},
+            "property_search_tour_run_not_terminal",
+        ),
+        (
+            {},
+            {"candidate_ref": "other-candidate"},
+            "property_search_tour_candidate_not_found",
+        ),
+        (
+            {},
+            {"listing_id": "9999999999"},
+            "property_search_tour_listing_id_mismatch",
+        ),
+        (
+            {},
+            {"property_url": "https://www.willhaben.at/iad/immobilien/d/9999999999/"},
+            "property_search_tour_candidate_url_mismatch",
+        ),
+        (
+            {},
+            {"source_ref": "property-scout:9999999999"},
+            "property_search_tour_listing_id_mismatch",
+        ),
+        (
+            {},
+            {"source_ref": f"property-search:{EXTERNAL_ID}"},
+            "property_search_tour_candidate_source_ref_mismatch",
+        ),
+    ),
+)
+def test_v2_rejects_unowned_or_identity_drifted_research_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record_update: dict[str, object],
+    candidate_update: dict[str, object],
+    reason: str,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    record = _authorization_record(**record_update)
+    candidate = record["summary"]["ranked_candidates"][0]
+    candidate.update(candidate_update)
+    monkeypatch.setattr(
+        intake,
+        "load_property_search_run_record_for_publication",
+        lambda **_kwargs: record,
+    )
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match=f"ai_panorama_publication_authority:{reason}",
+    ):
+        intake.install_sealed_ai_panorama_bundle(request)
+    assert not (public_dir / SLUG).exists()
+
+
+def test_v2_requires_principal_owned_durable_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    monkeypatch.setattr(
+        intake,
+        "load_property_search_run_record_for_publication",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_publication_run_not_found",
+    ):
+        intake.install_sealed_ai_panorama_bundle(request)
+
+
+def test_v2_apply_revalidates_authority_with_locked_publication_connection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
+    locked_connection = object()
+    calls: list[dict[str, object]] = []
+
+    @contextlib.contextmanager
+    def _authority(_principal_id: object, *, run_id: object = ""):
+        yield locked_connection
+
+    def _load(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return _authorization_record()
+
+    monkeypatch.setattr(intake, "property_account_publication_authority", _authority)
+    monkeypatch.setattr(intake, "load_property_search_run_record_for_publication", _load)
+
+    receipt = intake.install_sealed_ai_panorama_bundle(request, apply=True)
+
+    assert receipt["status"] == "installed"
+    assert calls == [
+        {
+            "run_id": RUN_ID,
+            "principal_id": PRINCIPAL,
+            "connection": locked_connection,
+            "for_update": True,
+        }
+    ]
 
 
 def test_v2_release_eligible_lineage_applies_with_exact_cas_hashes(
