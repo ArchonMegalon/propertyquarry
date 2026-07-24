@@ -2,16 +2,37 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
 import re
 import urllib.parse
 from collections.abc import Iterator, Mapping, MutableMapping
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.product.property_research_packet_links import (
     _RUN_CANDIDATE_KEYS,
     _SOURCE_CANDIDATE_KEYS,
     property_research_candidate_ref,
+)
+from app.product.property_tour_governed_reservations import (
+    GOVERNED_PRATER_CANDIDATE_MARKER_SHA256,
+    GOVERNED_PRATER_CANDIDATE_REF,
+    GOVERNED_PRATER_CONTROL_URL,
+    GOVERNED_PRATER_CORE_MANIFEST_SHA256,
+    GOVERNED_PRATER_EXTERNAL_ID,
+    GOVERNED_PRATER_LISTING_URL,
+    GOVERNED_PRATER_MATERIALIZATION_RECEIPT_SHA256,
+    GOVERNED_PRATER_PROVIDER_KEY,
+    GOVERNED_PRATER_SEARCH_RUN_ID,
+    GOVERNED_PRATER_SLUG,
+    GOVERNED_PRATER_SOURCE_REF,
+    GOVERNED_PRATER_SOURCE_TREE_SHA256,
+    GOVERNED_PRATER_TOUR_SHA256,
+    GOVERNED_PUBLIC_TOUR_MOUNT_TARGET,
+    GOVERNED_PUBLIC_TOUR_VOLUME_NAME,
+    governed_prater_control_url_reserved,
+    governed_prater_url_namespace_reserved,
 )
 
 
@@ -153,6 +174,20 @@ def _candidate_listing_ids(candidate: Mapping[str, object]) -> tuple[str, ...]:
         _provider, source_listing_id = _source_ref_identity(payload.get("source_ref"))
         if source_listing_id and source_listing_id not in values:
             values.append(source_listing_id)
+    return tuple(values)
+
+
+def _candidate_source_refs(candidate: Mapping[str, object]) -> tuple[str, ...]:
+    values: list[str] = []
+    payloads: list[Mapping[str, object]] = [candidate]
+    for key in ("property_facts", "facts", "preview"):
+        nested = candidate.get(key)
+        if isinstance(nested, Mapping):
+            payloads.append(nested)
+    for payload in payloads:
+        value = _normalized_text(payload.get("source_ref"))
+        if value and value not in values:
+            values.append(value)
     return tuple(values)
 
 
@@ -627,7 +662,112 @@ def exact_property_search_candidate_tour_binding_receipt(
     }
 
 
-def plan_property_search_candidate_tour_binding(
+def authorize_property_search_candidate_tour_install(
+    record: Mapping[str, object],
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    expected_listing_id: str,
+    expected_source_ref: str,
+    bundle_identity: Mapping[str, object],
+) -> dict[str, object]:
+    """Verify a sealed install against one principal-scoped terminal run.
+
+    This is intentionally read-only.  It proves that the request principal
+    owns the durable run and that every occurrence of the requested candidate
+    carries the same listing URL, provider, listing ID, and exact source
+    reference as the sealed bundle.
+    """
+
+    normalized_principal = _normalized_text(principal_id)
+    normalized_run_id = _normalized_text(run_id)
+    normalized_candidate_ref = _normalized_text(candidate_ref)
+    normalized_listing_id = _normalized_text(expected_listing_id)
+    normalized_source_ref = _normalized_text(expected_source_ref)
+    if not normalized_principal:
+        raise PropertySearchTourBindingError("property_search_tour_principal_required")
+    if not normalized_run_id:
+        raise PropertySearchTourBindingError("property_search_tour_run_id_required")
+    if not normalized_candidate_ref:
+        raise PropertySearchTourBindingError("property_search_tour_candidate_ref_required")
+    if not normalized_listing_id:
+        raise PropertySearchTourBindingError("property_search_tour_listing_id_required")
+    if not normalized_source_ref:
+        raise PropertySearchTourBindingError("property_search_tour_source_ref_required")
+    if _normalized_text(record.get("run_id")) != normalized_run_id:
+        raise PropertySearchTourBindingError("property_search_tour_run_id_mismatch")
+    if _normalized_text(record.get("principal_id")) != normalized_principal:
+        raise PropertySearchTourBindingError("property_search_tour_principal_mismatch")
+    if not property_search_tour_run_is_terminal(record):
+        raise PropertySearchTourBindingError("property_search_tour_run_not_terminal")
+
+    expected_identity = _validated_bundle_identity(
+        bundle_identity,
+        run_id=normalized_run_id,
+        candidate_ref=normalized_candidate_ref,
+        expected_listing_id=normalized_listing_id,
+    )
+    occurrences = list(_candidate_occurrence_refs(record))
+    matches: list[tuple[MutableMapping[str, object], dict[str, object], str]] = []
+    for candidate, defaults, path in occurrences:
+        effective = _effective_candidate(candidate, defaults)
+        if property_research_candidate_ref(effective) == normalized_candidate_ref:
+            matches.append((candidate, defaults, path))
+    if not matches:
+        raise PropertySearchTourBindingError("property_search_tour_candidate_not_found")
+    _validate_matching_candidate_identity(
+        matches,
+        expected_listing_id=normalized_listing_id,
+        expected_property_url=expected_identity["property_url"],
+        expected_property_url_sha256=expected_identity["property_url_sha256"],
+        expected_provider_key=expected_identity["provider_key"],
+    )
+    for candidate, defaults, _path in matches:
+        source_refs = _candidate_source_refs(_effective_candidate(candidate, defaults))
+        if not source_refs:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_source_ref_missing"
+            )
+        if any(value != normalized_source_ref for value in source_refs):
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_source_ref_mismatch"
+            )
+
+    matched_paths = {path for _candidate, _defaults, path in matches}
+    for candidate, defaults, path in occurrences:
+        if path in matched_paths:
+            continue
+        effective = _effective_candidate(candidate, defaults)
+        same_property_url = (
+            expected_identity["property_url"] in _candidate_property_urls(effective)
+        )
+        same_provider_and_listing = (
+            expected_identity["provider_key"] in _candidate_provider_keys(effective)
+            and normalized_listing_id in _candidate_listing_ids(effective)
+        )
+        if same_property_url or same_provider_and_listing:
+            raise PropertySearchTourBindingError(
+                "property_search_tour_candidate_ref_identity_conflict"
+            )
+
+    return {
+        "contract": "property_search_candidate_tour_install_authority_v1",
+        "record_sha256": property_search_run_record_sha256(record),
+        "property_url_sha256": expected_identity["property_url_sha256"],
+        "provider_key": expected_identity["provider_key"],
+        "occurrences_matched": len(matches),
+        "principal_binding_verified": True,
+        "run_binding_verified": True,
+        "candidate_binding_verified": True,
+        "listing_identity_verified": True,
+        "source_identity_verified": True,
+        "run_terminal_verified": True,
+        "private_values_redacted": True,
+    }
+
+
+def _plan_property_search_candidate_tour_binding(
     record: Mapping[str, object],
     *,
     principal_id: str,
@@ -747,3 +887,142 @@ def plan_property_search_candidate_tour_binding(
         "changed_paths": changed_paths,
     }
     return updated, receipt
+
+
+def plan_property_search_candidate_tour_binding(
+    record: Mapping[str, object],
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    expected_listing_id: str,
+    generated_reconstruction_url: str,
+    bundle_identity: Mapping[str, object],
+    reconstruction_kind: str = "ai_panorama_360",
+    disclosure: str = "",
+    bound_at: str = "",
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Plan an ordinary binding while keeping governed identities reserved."""
+
+    normalized_url = _normalized_text(generated_reconstruction_url)
+    if governed_prater_url_namespace_reserved(normalized_url):
+        raise PropertySearchTourBindingError(
+            "property_search_tour_governed_url_reserved"
+        )
+    return _plan_property_search_candidate_tour_binding(
+        record,
+        principal_id=principal_id,
+        run_id=run_id,
+        candidate_ref=candidate_ref,
+        expected_listing_id=expected_listing_id,
+        generated_reconstruction_url=normalized_url,
+        bundle_identity=bundle_identity,
+        reconstruction_kind=reconstruction_kind,
+        disclosure=disclosure,
+        bound_at=bound_at,
+    )
+
+
+def plan_governed_prater_candidate_tour_binding(
+    record: Mapping[str, object],
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    expected_listing_id: str,
+    generated_reconstruction_url: str,
+    bundle_identity: Mapping[str, object],
+    publication_admission: object,
+    reconstruction_kind: str = "ai_panorama_360",
+    disclosure: str = "",
+    bound_at: str = "",
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Plan the reserved binding only under a freshly revalidated permit."""
+
+    normalized_url = _normalized_text(generated_reconstruction_url)
+    if not governed_prater_control_url_reserved(normalized_url):
+        raise PropertySearchTourBindingError(
+            "property_search_tour_governed_url_invalid"
+        )
+    try:
+        from app.product.property_tour_ai_panorama_admission import (
+            revalidate_ai_panorama_install_admission,
+        )
+
+        verified = revalidate_ai_panorama_install_admission(
+            publication_admission,
+            require_consumed=True,
+        )
+    except Exception as exc:
+        raise PropertySearchTourBindingError(
+            "property_search_tour_governed_authority_invalid"
+        ) from exc
+    exact_fields = (
+        ("search_run_id", GOVERNED_PRATER_SEARCH_RUN_ID),
+        ("candidate_ref", GOVERNED_PRATER_CANDIDATE_REF),
+        ("external_id", GOVERNED_PRATER_EXTERNAL_ID),
+        ("listing_url", GOVERNED_PRATER_LISTING_URL),
+        ("source_ref", GOVERNED_PRATER_SOURCE_REF),
+        ("provider_key", GOVERNED_PRATER_PROVIDER_KEY),
+        ("expected_slug", GOVERNED_PRATER_SLUG),
+        ("public_control_url", GOVERNED_PRATER_CONTROL_URL),
+        ("expected_source_tree_sha256", GOVERNED_PRATER_SOURCE_TREE_SHA256),
+        ("expected_tour_sha256", GOVERNED_PRATER_TOUR_SHA256),
+        (
+            "expected_core_manifest_sha256",
+            GOVERNED_PRATER_CORE_MANIFEST_SHA256,
+        ),
+        (
+            "expected_materialization_receipt_sha256",
+            GOVERNED_PRATER_MATERIALIZATION_RECEIPT_SHA256,
+        ),
+        (
+            "expected_candidate_marker_sha256",
+            GOVERNED_PRATER_CANDIDATE_MARKER_SHA256,
+        ),
+        ("public_tour_volume_name", GOVERNED_PUBLIC_TOUR_VOLUME_NAME),
+        ("public_tour_mount_target", GOVERNED_PUBLIC_TOUR_MOUNT_TARGET),
+    )
+    if (
+        any(
+            not hmac.compare_digest(
+                str(getattr(verified, field, "") or "").strip(),
+                expected,
+            )
+            for field, expected in exact_fields
+        )
+        or Path(getattr(verified, "public_tour_dir", ""))
+        != Path(GOVERNED_PUBLIC_TOUR_MOUNT_TARGET)
+        or getattr(verified, "nonce_consumed", None) is not True
+        or not hmac.compare_digest(
+            _normalized_text(principal_id),
+            str(getattr(verified, "authenticated_principal_id", "") or "").strip(),
+        )
+        or not hmac.compare_digest(
+            _normalized_text(run_id),
+            GOVERNED_PRATER_SEARCH_RUN_ID,
+        )
+        or not hmac.compare_digest(
+            _normalized_text(candidate_ref),
+            GOVERNED_PRATER_CANDIDATE_REF,
+        )
+        or not hmac.compare_digest(
+            _normalized_text(expected_listing_id),
+            GOVERNED_PRATER_EXTERNAL_ID,
+        )
+    ):
+        raise PropertySearchTourBindingError(
+            "property_search_tour_governed_authority_invalid"
+        )
+    return _plan_property_search_candidate_tour_binding(
+        record,
+        principal_id=principal_id,
+        run_id=run_id,
+        candidate_ref=candidate_ref,
+        expected_listing_id=expected_listing_id,
+        generated_reconstruction_url=normalized_url,
+        bundle_identity=bundle_identity,
+        reconstruction_kind=reconstruction_kind,
+        disclosure=disclosure,
+        bound_at=bound_at,
+    )

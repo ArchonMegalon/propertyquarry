@@ -1,6 +1,7 @@
 package authority
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -100,8 +102,11 @@ func processWorkflowRequestContext(parent context.Context, root string, config *
 	if err := enforceAntiDowngrade(journal, config); err != nil {
 		return nil, err
 	}
-	if err := recoverIncomplete(parent, root, journal, plan, config); err != nil {
-		return nil, err
+	closeoutRecoveryDeferred := request.Operation == aiPanoramaCloseoutOperation
+	if !closeoutRecoveryDeferred {
+		if err := recoverIncomplete(parent, root, journal, plan, config); err != nil {
+			return nil, err
+		}
 	}
 	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
@@ -118,6 +123,13 @@ func processWorkflowRequestContext(parent context.Context, root string, config *
 	}
 	request.RunnerLaunchTicketDigest = runnerBinding.LaunchTicketDigest
 	request.RunnerNonce = runnerBinding.RunnerNonce
+	if closeoutRecoveryDeferred {
+		if err := recoverIncompleteBeforeAiPanoramaCloseout(
+			parent, root, journal, plan, config,
+		); err != nil {
+			return nil, err
+		}
+	}
 	var latestMatchingRequest *JournalEvent
 	for index := len(journal.events) - 1; index >= 0; index-- {
 		event := &journal.events[index]
@@ -146,6 +158,10 @@ func processWorkflowRequestContext(parent context.Context, root string, config *
 		return executePreflight(parent, root, journal, plan, config, request, identity)
 	case "release-run":
 		return executeRelease(parent, root, journal, plan, config, request, identity)
+	case aiPanoramaInstallOperation:
+		return executeAiPanoramaInstallV2(parent, root, journal, config, request, identity, key)
+	case aiPanoramaCloseoutOperation:
+		return executeAiPanoramaCloseout(parent, root, journal, config, request, identity)
 	default:
 		return nil, fmt.Errorf("workflow-operation-invalid")
 	}
@@ -677,10 +693,140 @@ func recoverIncomplete(parent context.Context, root string, journal *Journal, pl
 	if config == nil {
 		return fmt.Errorf("recovery-config-missing")
 	}
-	if len(journal.events) == 0 {
+	for attempts := 0; attempts <= len(journal.events); attempts++ {
+		unresolved := unresolvedWorkflowOperations(journal)
+		if len(unresolved) == 0 {
+			return nil
+		}
+		before := len(journal.events)
+		if err := recoverIncompleteOperation(
+			parent, root, journal, plan, config, unresolved[0],
+		); err != nil {
+			return err
+		}
+		if len(journal.events) <= before {
+			return fmt.Errorf("recovery-made-no-progress")
+		}
+	}
+	return fmt.Errorf("recovery-operation-limit-exceeded")
+}
+
+func recoverIncompleteBeforeAiPanoramaCloseout(
+	parent context.Context,
+	root string,
+	journal *Journal,
+	plan *Plan,
+	config *Config,
+) error {
+	if config == nil {
+		return fmt.Errorf("recovery-config-missing")
+	}
+	for attempts := 0; attempts <= len(journal.events); attempts++ {
+		unresolved := unresolvedWorkflowOperations(journal)
+		var recoverable *JournalEvent
+		for _, event := range unresolved {
+			if event.Operation != aiPanoramaInstallOperation {
+				recoverable = event
+				break
+			}
+		}
+		if recoverable == nil {
+			return nil
+		}
+		before := len(journal.events)
+		if err := recoverIncompleteOperation(
+			parent, root, journal, plan, config, recoverable,
+		); err != nil {
+			return err
+		}
+		if len(journal.events) <= before {
+			return fmt.Errorf("recovery-made-no-progress")
+		}
+	}
+	return fmt.Errorf("recovery-operation-limit-exceeded")
+}
+
+func unresolvedWorkflowOperations(journal *Journal) []*JournalEvent {
+	if journal == nil {
 		return nil
 	}
-	last := &journal.events[len(journal.events)-1]
+	type unresolvedState struct {
+		index int
+		event *JournalEvent
+	}
+	states := make(map[string]unresolvedState)
+	for index := range journal.events {
+		event := &journal.events[index]
+		if event.Operation != "release-run" &&
+			event.Operation != aiPanoramaInstallOperation &&
+			event.Operation != aiPanoramaCloseoutOperation {
+			continue
+		}
+		key := event.Operation + "\x00" + event.RequestID + "\x00" +
+			event.RunID + "\x00" + strconv.FormatInt(event.RunAttempt, 10)
+		if terminalEvent(event.EventType) {
+			delete(states, key)
+			continue
+		}
+		states[key] = unresolvedState{index: index, event: event}
+	}
+	values := make([]unresolvedState, 0, len(states))
+	for _, state := range states {
+		values = append(values, state)
+	}
+	sort.Slice(values, func(left, right int) bool {
+		return values[left].index < values[right].index
+	})
+	result := make([]*JournalEvent, 0, len(values))
+	for _, state := range values {
+		result = append(result, state.event)
+	}
+	return result
+}
+
+func exactUniqueUnresolvedWorkflowEvent(
+	journal *Journal,
+	event *JournalEvent,
+	operation string,
+) bool {
+	if journal == nil || event == nil || event.Operation != operation ||
+		event.Sequence < 1 || !digestPattern.MatchString(event.ReceiptDigest) {
+		return false
+	}
+	var matched *JournalEvent
+	for _, candidate := range unresolvedWorkflowOperations(journal) {
+		if candidate.Operation != operation {
+			continue
+		}
+		if matched != nil {
+			return false
+		}
+		matched = candidate
+	}
+	return matched != nil && matched == event &&
+		matched.Sequence == event.Sequence &&
+		matched.ReceiptDigest == event.ReceiptDigest &&
+		bytes.Equal(matched.Canonical, event.Canonical) &&
+		bytes.Equal(matched.Wire, event.Wire)
+}
+
+func recoverIncompleteOperation(
+	parent context.Context,
+	root string,
+	journal *Journal,
+	plan *Plan,
+	config *Config,
+	last *JournalEvent,
+) error {
+	if last == nil {
+		return fmt.Errorf("recovery-event-missing")
+	}
+	if last.Operation == aiPanoramaInstallOperation && !terminalEvent(last.EventType) {
+		return recoverIncompleteAiPanoramaInstallV2(parent, root, journal, config, last)
+	}
+	if last.Operation == aiPanoramaCloseoutOperation && !terminalEvent(last.EventType) {
+		return recoverIncompleteAiPanoramaCloseout(parent, root, journal, config, last)
+	}
 	if last.Operation != "release-run" || terminalEvent(last.EventType) || last.EventType == "preflight-ready" || last.EventType == "preflight-not-ready" {
 		return nil
 	}
@@ -805,7 +951,11 @@ func cloneFields(source map[string]any) map[string]any {
 }
 
 func terminalEvent(value string) bool {
-	return value == "run-succeeded" || value == "run-rolled-back" || value == "run-rollback-failed" || value == "run-failed-no-effects"
+	return value == "run-succeeded" || value == "run-rolled-back" || value == "run-rollback-failed" || value == "run-failed-no-effects" ||
+		value == aiPanoramaInstallSucceededEvent || value == aiPanoramaInstallRolledBackEvent ||
+		value == aiPanoramaInstallFailedNoEffectsEvent ||
+		value == aiPanoramaInstallPreparationResolvedEvent ||
+		value == aiPanoramaCloseoutSucceededEvent || value == aiPanoramaCloseoutFailedEvent
 }
 
 func stringValue(value any) string { text, _ := exactString(value); return text }

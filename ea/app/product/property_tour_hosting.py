@@ -23,6 +23,9 @@ import fcntl
 
 from app.product.projections import compact_text
 from app.product.property_search_storage import property_account_publication_authority
+from app.product.property_tour_governed_reservations import (
+    governed_prater_slug_reserved,
+)
 
 try:
     from scripts.property_magicfit_public_eligibility import (
@@ -93,6 +96,13 @@ _PROPERTY_GENERATED_RECONSTRUCTION_VIEWER_VERSION = GENERATED_RECONSTRUCTION_VIE
 _AI_PANORAMA_CANONICAL_DISCLOSURE = (
     "AI-reconstructed from listing photos; not a captured 360 or measured survey."
 )
+
+
+def _assert_governed_property_tour_slug_not_reserved(slug: object) -> None:
+    if governed_prater_slug_reserved(slug):
+        raise RuntimeError("hosted_property_tour_governed_slug_reserved")
+
+
 _AI_PANORAMA_THREE_MODULE_PATH = "/tours/runtime/three-0.167.1.module.js"
 _AI_PANORAMA_THREE_MODULE_SHA256 = (
     "5289ca2dfde8572bd7715b9fa2ca929db12bae87e9a2cb53e431662df7039506"
@@ -925,6 +935,8 @@ def _write_hosted_property_tour_payload_with_slug_lock_held(
     bundle_dir: Path,
     payload: dict[str, object],
 ) -> None:
+    _assert_governed_property_tour_slug_not_reserved(bundle_dir.name)
+    _assert_governed_property_tour_slug_not_reserved(payload.get("slug"))
     incoming_owner = str(payload.get("principal_id") or "").strip()
     search_run_id = str(payload.get("search_run_id") or "").strip()
     existing_any = False
@@ -1002,6 +1014,8 @@ def _write_hosted_property_tour_payload(
     bundle_dir: Path,
     payload: dict[str, object],
 ) -> None:
+    _assert_governed_property_tour_slug_not_reserved(bundle_dir.name)
+    _assert_governed_property_tour_slug_not_reserved(payload.get("slug"))
     with _hosted_property_tour_publication_lock(
         public_dir=bundle_dir.parent,
         slug=bundle_dir.name,
@@ -1184,6 +1198,12 @@ def persist_hosted_property_tour_browser_render_proof(
 ) -> dict[str, object]:
     normalized_slug = str(slug or "").strip()
     normalized_provider = str(provider or "").strip().lower()
+    if governed_prater_slug_reserved(normalized_slug):
+        return {
+            "status": "governed_tour_reserved",
+            "slug": normalized_slug,
+            "provider": normalized_provider,
+        }
     if not normalized_slug or "/" in normalized_slug or ".." in normalized_slug:
         return {"status": "invalid_slug", "slug": normalized_slug, "provider": normalized_provider}
     if normalized_provider != "3dvista":
@@ -1508,6 +1528,8 @@ def _revoke_hosted_property_tour_bundle_with_lock_held(
 
 def revoke_hosted_property_tour_bundle(*, slug: str, principal_id: str = "", actor: str = "") -> dict[str, object]:
     normalized_slug = str(slug or "").strip()
+    if governed_prater_slug_reserved(normalized_slug):
+        return {"status": "governed_tour_reserved", "slug": normalized_slug}
     if not normalized_slug or "/" in normalized_slug or ".." in normalized_slug:
         return {"status": "not_found", "slug": normalized_slug}
     requested_principal = str(principal_id or "").strip()
@@ -3753,7 +3775,9 @@ def _hosted_property_tour_slug(
     suffix = f"-{variant}-{digest}"
     base_limit = min(96, 128 - len(suffix))
     bounded_base = base[:base_limit].strip("-") or "property-tour"[:base_limit]
-    return f"{bounded_base}{suffix}"
+    slug = f"{bounded_base}{suffix}"
+    _assert_governed_property_tour_slug_not_reserved(slug)
+    return slug
 
 
 def _assert_hosted_property_tour_bundle_write_owner(bundle_dir: Path, *, principal_id: str) -> None:

@@ -1,21 +1,2628 @@
 {
-  "contract_name": "propertyquarry.curated_diorama_previews.v1",
-  "generated_at": "2026-07-11T03:55:00Z",
+  "contract_name": "propertyquarry.curated_diorama_previews.v2",
+  "generated_at": "2026-07-24T13:29:17Z",
+  "run_binding": {
+    "run_id": "9dd6a4993d7245a0acf48aeb50c44a9b",
+    "candidate_count": 40
+  },
   "entries": [
     {
+      "rank": 1,
       "candidate_refs": [
-        "d907fa5b6b5d7308"
+        "f8d586c7162dcca4"
       ],
       "listing_ids": [
-        "846238136"
+        "1499809916"
       ],
-      "preview_kind": "rendered_diorama",
-      "asset_url": "/static/property/research/d907fa5b6b5d7308-diorama.png",
-      "asset_sha256": "bd0fce33199f7d8a2b19e8b72d455389e9d368f06a0c4d8880a218e7e2a89e8c",
-      "source_basis": "listing_floorplan_and_listing_photo",
-      "source_floorplan_sha256": "1d96616f192b0d7eefeac8099569b37176ff2a714c03b21a1913bbb6d7282153",
-      "source_photo_sha256": "8a1e2e68358df67d40b1ba9e24a08a9d5d614d1f1c8702a49d60d7f1f242c321",
-      "truth_boundary": "Generated spatial preview for orientation; listing photos and the original plan remain the source evidence."
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/f8d586c7162dcca4-drawn-diorama.webp",
+      "asset_sha256": "306727a4be94a8c8f37fc24fa79ee0b0db1a7e30b933138a2266cc447708e96c",
+      "generation_asset_sha256": "020c031dfcfd33640300d9aac92111b13c0378f74e2a0dda0f61ee7d653514b1",
+      "source_asset_sha256s": [
+        "3f3ba1fdd21f3de145f08719cdc40bd48ef27005dceabcf802a7b4da372c7d9e"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7a4282e395f3dbda0f16adcc735a4f0a7d91aa273714b790713f866e11d857f7",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7a4282e395f3dbda0f16adcc735a4f0a7d91aa273714b790713f866e11d857f7",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7a4282e395f3dbda0f16adcc735a4f0a7d91aa273714b790713f866e11d857f7",
+          "evidence_sha256": "920f77e639a1e384ecdde26c687db5b74c2ece7394334ce92983feeac7683eb9",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "f8d586c7162dcca4",
+            "asset_sha256": "306727a4be94a8c8f37fc24fa79ee0b0db1a7e30b933138a2266cc447708e96c",
+            "generation_asset_sha256": "020c031dfcfd33640300d9aac92111b13c0378f74e2a0dda0f61ee7d653514b1",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "3f3ba1fdd21f3de145f08719cdc40bd48ef27005dceabcf802a7b4da372c7d9e"
+          }
+        }
+      }
+    },
+    {
+      "rank": 2,
+      "candidate_refs": [
+        "f7ddedd7bd1cad7a"
+      ],
+      "listing_ids": [
+        "807462086"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/f7ddedd7bd1cad7a-drawn-diorama.webp",
+      "asset_sha256": "9493371a2c20688977f9f89c27c2695dc4d5177982c8aac273fdef357e3a2901",
+      "generation_asset_sha256": "cde4c5b775000f311d7e493e0ed0cdc50217d6dae6236e52c32475d4a0924732",
+      "source_asset_sha256s": [
+        "3715f96339d542488a83d3889013d841bc9e079f5756676b8cd51dd361852278"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "07bfc70f33e1910dd922dead4dff5b255611c612e9e6b80d148e26054b50afec",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "07bfc70f33e1910dd922dead4dff5b255611c612e9e6b80d148e26054b50afec",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "07bfc70f33e1910dd922dead4dff5b255611c612e9e6b80d148e26054b50afec",
+          "evidence_sha256": "1746fbbda992645252015822d6eca6d623c6d084d52e0d8f46e15f2ee29714cc",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "f7ddedd7bd1cad7a",
+            "asset_sha256": "9493371a2c20688977f9f89c27c2695dc4d5177982c8aac273fdef357e3a2901",
+            "generation_asset_sha256": "cde4c5b775000f311d7e493e0ed0cdc50217d6dae6236e52c32475d4a0924732",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "3715f96339d542488a83d3889013d841bc9e079f5756676b8cd51dd361852278"
+          }
+        }
+      }
+    },
+    {
+      "rank": 3,
+      "candidate_refs": [
+        "51c30b267b9ab3b5"
+      ],
+      "listing_ids": [
+        "2053513018"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/51c30b267b9ab3b5-drawn-diorama.webp",
+      "asset_sha256": "1c48432676f035eebaac24f754c9ee5f16a381baaf94eb88043eecd08855fbca",
+      "generation_asset_sha256": "c1e258169b16d12fea48dd1d14e0ab4a56fb088b86a3e78ec9d09d60d08de987",
+      "source_asset_sha256s": [
+        "c71655528617499c3498410fd932aada22dffc326c06b3ebe7ebc3bfa6b25e63"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5a334025f586c04e07f13136670982fd9aa555c0577c686aca03e305434659a7",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5a334025f586c04e07f13136670982fd9aa555c0577c686aca03e305434659a7",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5a334025f586c04e07f13136670982fd9aa555c0577c686aca03e305434659a7",
+          "evidence_sha256": "6dce5396d2f38f36bad4dd61d1ed0b5bd3a50fc43568e3f4cee9b59ba03eab34",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "51c30b267b9ab3b5",
+            "asset_sha256": "1c48432676f035eebaac24f754c9ee5f16a381baaf94eb88043eecd08855fbca",
+            "generation_asset_sha256": "c1e258169b16d12fea48dd1d14e0ab4a56fb088b86a3e78ec9d09d60d08de987",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "c71655528617499c3498410fd932aada22dffc326c06b3ebe7ebc3bfa6b25e63"
+          }
+        }
+      }
+    },
+    {
+      "rank": 4,
+      "candidate_refs": [
+        "ac6db4d34757a7a5"
+      ],
+      "listing_ids": [
+        "1739164131"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/ac6db4d34757a7a5-drawn-diorama.webp",
+      "asset_sha256": "8730747c827ddfe3d74ad021dd1927eaa82da238a2a8e50cf2ae5de7552a1e96",
+      "generation_asset_sha256": "7291f98f68a48ed4cd60855647ba363272de50b92b07e0da267940d54afaf175",
+      "source_asset_sha256s": [
+        "8a51086030589e1c463e7aa3c6e32ff105d75998e603c90a03da278606f584c3"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "a0290f8f889313e17e5687ac7b8985a5ff04a1a2a665ffe6357c6fb6e54faa07",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "a0290f8f889313e17e5687ac7b8985a5ff04a1a2a665ffe6357c6fb6e54faa07",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "a0290f8f889313e17e5687ac7b8985a5ff04a1a2a665ffe6357c6fb6e54faa07",
+          "evidence_sha256": "78a1cc83c69a739b08471d9e51f9b0e4e9ebcd34c835b924905699eedd61259e",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "ac6db4d34757a7a5",
+            "asset_sha256": "8730747c827ddfe3d74ad021dd1927eaa82da238a2a8e50cf2ae5de7552a1e96",
+            "generation_asset_sha256": "7291f98f68a48ed4cd60855647ba363272de50b92b07e0da267940d54afaf175",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "8a51086030589e1c463e7aa3c6e32ff105d75998e603c90a03da278606f584c3"
+          }
+        }
+      }
+    },
+    {
+      "rank": 5,
+      "candidate_refs": [
+        "cb82acedbee1a327"
+      ],
+      "listing_ids": [
+        "897326815"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/cb82acedbee1a327-drawn-diorama.webp",
+      "asset_sha256": "dd1b7955625ac45701efb203820f934d22012cdb2256282154da30b9e1de8b13",
+      "generation_asset_sha256": "3c6fa5a6cb0fc633b3e0d636858125b6fc49999ceb51c8c6bdc767ad05ef5833",
+      "source_asset_sha256s": [
+        "5ae2ea0f4e3fc981e0a06a535a9c0eaebf03c175e5d37510a5be5d94a37863c5"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c0209636055de1d3909e57fd8e8401a868c6e5cec18c8d70ba6874247d0e5b7e",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c0209636055de1d3909e57fd8e8401a868c6e5cec18c8d70ba6874247d0e5b7e",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c0209636055de1d3909e57fd8e8401a868c6e5cec18c8d70ba6874247d0e5b7e",
+          "evidence_sha256": "95eaece7f6bbf7486784dae8a0ab18ebeb46a2afe0fc1d625abc472e5a825497",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "cb82acedbee1a327",
+            "asset_sha256": "dd1b7955625ac45701efb203820f934d22012cdb2256282154da30b9e1de8b13",
+            "generation_asset_sha256": "3c6fa5a6cb0fc633b3e0d636858125b6fc49999ceb51c8c6bdc767ad05ef5833",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "5ae2ea0f4e3fc981e0a06a535a9c0eaebf03c175e5d37510a5be5d94a37863c5"
+          }
+        }
+      }
+    },
+    {
+      "rank": 6,
+      "candidate_refs": [
+        "1e18507c58db5cb9"
+      ],
+      "listing_ids": [
+        "1058493553"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/1e18507c58db5cb9-drawn-diorama.webp",
+      "asset_sha256": "533fa388e688d3b4cb9e98f544aa1c7fc6e96baff6c623fe6df6c80f8a57c2a5",
+      "generation_asset_sha256": "9c6d2d444fe316fc47dec8c14bd2c512e6314652b5c1a0ef4b461fa9816b6a9d",
+      "source_asset_sha256s": [
+        "0c3998b8c11f28ada44838556a7ed71b761375378804ad1b0f10b77fc1b62590"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c2e28cd7c1ab1f54f4233e757f07f9a576f178938caf111567ef9f45e0c05096",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c2e28cd7c1ab1f54f4233e757f07f9a576f178938caf111567ef9f45e0c05096",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c2e28cd7c1ab1f54f4233e757f07f9a576f178938caf111567ef9f45e0c05096",
+          "evidence_sha256": "3b6f4b72e59445efa8a52fba983a56f000879cd366ed33a48c8957897544dfc9",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "1e18507c58db5cb9",
+            "asset_sha256": "533fa388e688d3b4cb9e98f544aa1c7fc6e96baff6c623fe6df6c80f8a57c2a5",
+            "generation_asset_sha256": "9c6d2d444fe316fc47dec8c14bd2c512e6314652b5c1a0ef4b461fa9816b6a9d",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "0c3998b8c11f28ada44838556a7ed71b761375378804ad1b0f10b77fc1b62590"
+          }
+        }
+      }
+    },
+    {
+      "rank": 7,
+      "candidate_refs": [
+        "bfdf8dadaaee3436"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/bfdf8dadaaee3436-drawn-diorama.webp",
+      "asset_sha256": "817a89c36b774bda4e35259adc9333aaab83414df40e7530a48d8d08ccbe6053",
+      "generation_asset_sha256": "1c372ec5ef47e218b76c2a99a60c45d17b20aaa23ec68609a06121b615b078e7",
+      "source_asset_sha256s": [
+        "36d5179b88f849e6fb787ad6a3c8f7268d3509e458d9a5160c5b7a72537d71d5"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e0fd5a27c52960cc4debd996d74b6fb5b7b6f8ad8f083ce35c71d9c685563591",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e0fd5a27c52960cc4debd996d74b6fb5b7b6f8ad8f083ce35c71d9c685563591",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e0fd5a27c52960cc4debd996d74b6fb5b7b6f8ad8f083ce35c71d9c685563591",
+          "evidence_sha256": "1503a9ddb2356b8c95c67a42e654af53d31d6f7c44baa82f10f95f93de3281aa",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "bfdf8dadaaee3436",
+            "asset_sha256": "817a89c36b774bda4e35259adc9333aaab83414df40e7530a48d8d08ccbe6053",
+            "generation_asset_sha256": "1c372ec5ef47e218b76c2a99a60c45d17b20aaa23ec68609a06121b615b078e7",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "36d5179b88f849e6fb787ad6a3c8f7268d3509e458d9a5160c5b7a72537d71d5"
+          }
+        }
+      }
+    },
+    {
+      "rank": 8,
+      "candidate_refs": [
+        "da4e5cc6771dbb87"
+      ],
+      "listing_ids": [
+        "1159455394"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/da4e5cc6771dbb87-drawn-diorama.webp",
+      "asset_sha256": "49fef9dd0f2b3590e7ca9eebc57ed7398a34fdd1e660c0d4952e090ff98477c4",
+      "generation_asset_sha256": "e814f5e7f55a461f93ac45ec3ddcba70d2c17494fb0f8d053272d96b0e97a7a9",
+      "source_asset_sha256s": [
+        "93bba0d4f1a7860b855abed43e7c3de6b2abd5b744bbd25d0ec99d8563a3be73"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "41f739f94767b571c1f33fd0a5fcfbf6177478926ad03c88ca017e01703c9de6",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "41f739f94767b571c1f33fd0a5fcfbf6177478926ad03c88ca017e01703c9de6",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "41f739f94767b571c1f33fd0a5fcfbf6177478926ad03c88ca017e01703c9de6",
+          "evidence_sha256": "3dfff0b6af25970714771f74727dffc4d42f3c6a5d8e9c83e20627915f2bf49d",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "da4e5cc6771dbb87",
+            "asset_sha256": "49fef9dd0f2b3590e7ca9eebc57ed7398a34fdd1e660c0d4952e090ff98477c4",
+            "generation_asset_sha256": "e814f5e7f55a461f93ac45ec3ddcba70d2c17494fb0f8d053272d96b0e97a7a9",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "93bba0d4f1a7860b855abed43e7c3de6b2abd5b744bbd25d0ec99d8563a3be73"
+          }
+        }
+      }
+    },
+    {
+      "rank": 9,
+      "candidate_refs": [
+        "99d91a8f138bcdb9"
+      ],
+      "listing_ids": [
+        "1560497456"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/99d91a8f138bcdb9-drawn-diorama.webp",
+      "asset_sha256": "1d2cb6531aa27f529f4b69b07770c08261e4070cbe5ccdd441280a8573185cd0",
+      "generation_asset_sha256": "28182d3767919d8d384d24ddf841eadc9b5875d7db5cbaf020b4ffe9b0759082",
+      "source_asset_sha256s": [
+        "d3ca52bbc211737b5f631d0a38a8f2ff508115fad859205a9afa552f051a4a96"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "6c9f07167770000a77acf779e9151ba2f659e0dd1c5282d5fe8b4a944e8b5e5a",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "6c9f07167770000a77acf779e9151ba2f659e0dd1c5282d5fe8b4a944e8b5e5a",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "6c9f07167770000a77acf779e9151ba2f659e0dd1c5282d5fe8b4a944e8b5e5a",
+          "evidence_sha256": "2aeaa0891415960fc88c0a2152e5593cb9140b10bfaa5c97715c881eb039f8b7",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "99d91a8f138bcdb9",
+            "asset_sha256": "1d2cb6531aa27f529f4b69b07770c08261e4070cbe5ccdd441280a8573185cd0",
+            "generation_asset_sha256": "28182d3767919d8d384d24ddf841eadc9b5875d7db5cbaf020b4ffe9b0759082",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "d3ca52bbc211737b5f631d0a38a8f2ff508115fad859205a9afa552f051a4a96"
+          }
+        }
+      }
+    },
+    {
+      "rank": 10,
+      "candidate_refs": [
+        "38ed8f96e2b915cb"
+      ],
+      "listing_ids": [
+        "880634509"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/38ed8f96e2b915cb-drawn-diorama.webp",
+      "asset_sha256": "37a374f3170936fcfaf0982d285a85e1ca5575fe065c80629bb1ea8cf54e2a7c",
+      "generation_asset_sha256": "a0d35552518568209a03a46abd7090f39efe7f498d475a2c98401e40575c1499",
+      "source_asset_sha256s": [
+        "f4c5b5b736d47e82aaca9024ded464350e228486ab663080c3296430660f936b"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "8f1c1bcd28585d59ee5a95d981c184b1f72a7608a6a045ff214f16ca20e02e53",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "8f1c1bcd28585d59ee5a95d981c184b1f72a7608a6a045ff214f16ca20e02e53",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "8f1c1bcd28585d59ee5a95d981c184b1f72a7608a6a045ff214f16ca20e02e53",
+          "evidence_sha256": "fb7828105e02cd61ecef5d02e25a6a06128e0e55a6590fecb300057cc23674f0",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "38ed8f96e2b915cb",
+            "asset_sha256": "37a374f3170936fcfaf0982d285a85e1ca5575fe065c80629bb1ea8cf54e2a7c",
+            "generation_asset_sha256": "a0d35552518568209a03a46abd7090f39efe7f498d475a2c98401e40575c1499",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "f4c5b5b736d47e82aaca9024ded464350e228486ab663080c3296430660f936b"
+          }
+        }
+      }
+    },
+    {
+      "rank": 11,
+      "candidate_refs": [
+        "36028692b90fd41a"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/36028692b90fd41a-drawn-diorama.webp",
+      "asset_sha256": "a0f7e5fc9bf6e47e08a80a587f87758d7f97169fa02c95bfbb27bfe2663aaf6d",
+      "generation_asset_sha256": "bc8ad8cd180170a01fda5a76b36537710f08c3fd1411173b3a6eb53ac070e07c",
+      "source_asset_sha256s": [
+        "75cc8c14b37391db81f7816b6041a81b6bb664c776a5469ee3e798b5f70c5d38"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "9ac0a0ea32fe7f12915c51b38f19d9d8f676d3e956d4a86c62fc59502a1d596e",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "9ac0a0ea32fe7f12915c51b38f19d9d8f676d3e956d4a86c62fc59502a1d596e",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "9ac0a0ea32fe7f12915c51b38f19d9d8f676d3e956d4a86c62fc59502a1d596e",
+          "evidence_sha256": "bce8aa873f5db5c33c87a5c54f1ba3cf53f6a655b47d335059af6945b1a8212d",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "36028692b90fd41a",
+            "asset_sha256": "a0f7e5fc9bf6e47e08a80a587f87758d7f97169fa02c95bfbb27bfe2663aaf6d",
+            "generation_asset_sha256": "bc8ad8cd180170a01fda5a76b36537710f08c3fd1411173b3a6eb53ac070e07c",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "75cc8c14b37391db81f7816b6041a81b6bb664c776a5469ee3e798b5f70c5d38"
+          }
+        }
+      }
+    },
+    {
+      "rank": 12,
+      "candidate_refs": [
+        "f56c72683ac76597"
+      ],
+      "listing_ids": [
+        "1742986531"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/f56c72683ac76597-drawn-diorama.webp",
+      "asset_sha256": "e0ace15aa845f1c79a9d0f027c3146e91b8096c6aa1ca6ae84e9f996575d663f",
+      "generation_asset_sha256": "ae33049ff1326682484dc0214c9bbe8310128c14223d86869e630ec2cc4936a5",
+      "source_asset_sha256s": [
+        "022ec7ce678deb8271a89852ef420d738c7a914003918215ccbf464c15a9144b"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "a20311491c67e9a5f8fddffa680449f0a3f75218b3ccecc3d3a20bac6c457cc3",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "a20311491c67e9a5f8fddffa680449f0a3f75218b3ccecc3d3a20bac6c457cc3",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "a20311491c67e9a5f8fddffa680449f0a3f75218b3ccecc3d3a20bac6c457cc3",
+          "evidence_sha256": "e36f20e306e945082c547d2084949946fccffca33163b425c99c990807815ead",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "f56c72683ac76597",
+            "asset_sha256": "e0ace15aa845f1c79a9d0f027c3146e91b8096c6aa1ca6ae84e9f996575d663f",
+            "generation_asset_sha256": "ae33049ff1326682484dc0214c9bbe8310128c14223d86869e630ec2cc4936a5",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "022ec7ce678deb8271a89852ef420d738c7a914003918215ccbf464c15a9144b"
+          }
+        }
+      }
+    },
+    {
+      "rank": 13,
+      "candidate_refs": [
+        "c02571783bc5bd65"
+      ],
+      "listing_ids": [
+        "1922999529"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/c02571783bc5bd65-drawn-diorama.webp",
+      "asset_sha256": "15c8b55ea21b4de7b05f27dcb50d7f3729e760b2b58bf563db82445a487da591",
+      "generation_asset_sha256": "e02940e1f4eae6626d75ae6e712ed32e7a272bef28fffeaf4c01c2ef1b80c495",
+      "source_asset_sha256s": [
+        "d33c86da696eee5c57f9acf0fbdd35f742ff36cbd2a06d5d99d09b0b53101b1f"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7e4ecade171bd6fc2ed132ad7a63f213a752e108f6a55af35c9d221766c9b6ea",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7e4ecade171bd6fc2ed132ad7a63f213a752e108f6a55af35c9d221766c9b6ea",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7e4ecade171bd6fc2ed132ad7a63f213a752e108f6a55af35c9d221766c9b6ea",
+          "evidence_sha256": "725163bc7c34df2abd3ec1f30f585d67e8e233dc73d9cd7ba85d54d5ea79b490",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "c02571783bc5bd65",
+            "asset_sha256": "15c8b55ea21b4de7b05f27dcb50d7f3729e760b2b58bf563db82445a487da591",
+            "generation_asset_sha256": "e02940e1f4eae6626d75ae6e712ed32e7a272bef28fffeaf4c01c2ef1b80c495",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "d33c86da696eee5c57f9acf0fbdd35f742ff36cbd2a06d5d99d09b0b53101b1f"
+          }
+        }
+      }
+    },
+    {
+      "rank": 14,
+      "candidate_refs": [
+        "4141259d57d6da5b"
+      ],
+      "listing_ids": [
+        "1349369552"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/4141259d57d6da5b-drawn-diorama.webp",
+      "asset_sha256": "097b2ef51756c0a60f6fc42a0c998d89e25e190556702dd9d02ac56d46b900c2",
+      "generation_asset_sha256": "1bd80dc9e44a523a0768e16e4df653df4f616b79de9566f582f38f147afb0799",
+      "source_asset_sha256s": [
+        "fdd73b2da67d95384b85d8e58dd1b571fc20f7ff0dc3d53e5f368120af76f5d7"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "8661f2df662d920af4ab364fc4f1d0d3a6d709cb87be6e9f34783153fd306221",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "8661f2df662d920af4ab364fc4f1d0d3a6d709cb87be6e9f34783153fd306221",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "8661f2df662d920af4ab364fc4f1d0d3a6d709cb87be6e9f34783153fd306221",
+          "evidence_sha256": "ce5b095e2d21a7f0b844e72999cb9cb515613d744d20d1f8fd4c48df63071a4d",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "4141259d57d6da5b",
+            "asset_sha256": "097b2ef51756c0a60f6fc42a0c998d89e25e190556702dd9d02ac56d46b900c2",
+            "generation_asset_sha256": "1bd80dc9e44a523a0768e16e4df653df4f616b79de9566f582f38f147afb0799",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "fdd73b2da67d95384b85d8e58dd1b571fc20f7ff0dc3d53e5f368120af76f5d7"
+          }
+        }
+      }
+    },
+    {
+      "rank": 15,
+      "candidate_refs": [
+        "1547d0662d453a54"
+      ],
+      "listing_ids": [
+        "1781257001"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/1547d0662d453a54-drawn-diorama.webp",
+      "asset_sha256": "33239cb4c665bcce6ebd19e2b0c63397ee9f0edce73d603ae27250348890cdcb",
+      "generation_asset_sha256": "60afe2d415efee2432b7e66a41d51ad3994b63ab09bc3bff1b35a06ea2a6bfc5",
+      "source_asset_sha256s": [
+        "f1347146e42bb82ef8c4d7a453fa3c239ab8421d7635be436bdcfe18c9c0c175"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "d5df9db5263cebda29202d914ff30ba1d67c3bacc6eb0899e6c0b089f8e623e0",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "d5df9db5263cebda29202d914ff30ba1d67c3bacc6eb0899e6c0b089f8e623e0",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "d5df9db5263cebda29202d914ff30ba1d67c3bacc6eb0899e6c0b089f8e623e0",
+          "evidence_sha256": "8296aa366d5fd1a7f330f775059d6901f142c04e36c14f42cca98d0f388de9fd",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "1547d0662d453a54",
+            "asset_sha256": "33239cb4c665bcce6ebd19e2b0c63397ee9f0edce73d603ae27250348890cdcb",
+            "generation_asset_sha256": "60afe2d415efee2432b7e66a41d51ad3994b63ab09bc3bff1b35a06ea2a6bfc5",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "f1347146e42bb82ef8c4d7a453fa3c239ab8421d7635be436bdcfe18c9c0c175"
+          }
+        }
+      }
+    },
+    {
+      "rank": 16,
+      "candidate_refs": [
+        "03ad56a90b805049"
+      ],
+      "listing_ids": [
+        "2062969655"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/03ad56a90b805049-drawn-diorama.webp",
+      "asset_sha256": "883edb654c1cd48f8b1419589c712ee995f04d3711f8239de3dd3a62d2d61672",
+      "generation_asset_sha256": "197f108d7181b5769bc84ee63260765b2c371da711f405fa33c189686b2d9ce4",
+      "source_asset_sha256s": [
+        "0662c55b6ac8630e691a080fe657d8f42372270183d840e22aacb64eea6e6bea"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "be27f5b741fa8fa542f3e45d2ba83921e34f96a8a29dc08141be227adb32b91f",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "be27f5b741fa8fa542f3e45d2ba83921e34f96a8a29dc08141be227adb32b91f",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "be27f5b741fa8fa542f3e45d2ba83921e34f96a8a29dc08141be227adb32b91f",
+          "evidence_sha256": "7e07953cc5f0bcabe1c96e5dbc71a0ebae1cb2f3393ac90c9d3e0e29697be565",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "03ad56a90b805049",
+            "asset_sha256": "883edb654c1cd48f8b1419589c712ee995f04d3711f8239de3dd3a62d2d61672",
+            "generation_asset_sha256": "197f108d7181b5769bc84ee63260765b2c371da711f405fa33c189686b2d9ce4",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "0662c55b6ac8630e691a080fe657d8f42372270183d840e22aacb64eea6e6bea"
+          }
+        }
+      }
+    },
+    {
+      "rank": 17,
+      "candidate_refs": [
+        "e6ba1dbb14995e48"
+      ],
+      "listing_ids": [
+        "983005838"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/e6ba1dbb14995e48-drawn-diorama.webp",
+      "asset_sha256": "5cf2fecae1c65405a6ebd03d4e74af49b4836dc7d87a9570a9b606a1c527a5bd",
+      "generation_asset_sha256": "8248f8ce3d34da2e3e92df4bd1274a41d5bacb10b6e3b0debf8c3ec3560ded3d",
+      "source_asset_sha256s": [
+        "0d66d7daf855272abe6f93b10157d31770f7e4210ff84e54eeabddb5ef046655"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e371c7c5850d2f3d4b364d56870df8ae99b3fae6f28a8544139e942631f3be9c",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e371c7c5850d2f3d4b364d56870df8ae99b3fae6f28a8544139e942631f3be9c",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e371c7c5850d2f3d4b364d56870df8ae99b3fae6f28a8544139e942631f3be9c",
+          "evidence_sha256": "a2eebfc87f187833738fdff522bdb4d78eddd1aef7f626ef2cbefa1967baeb60",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "e6ba1dbb14995e48",
+            "asset_sha256": "5cf2fecae1c65405a6ebd03d4e74af49b4836dc7d87a9570a9b606a1c527a5bd",
+            "generation_asset_sha256": "8248f8ce3d34da2e3e92df4bd1274a41d5bacb10b6e3b0debf8c3ec3560ded3d",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "0d66d7daf855272abe6f93b10157d31770f7e4210ff84e54eeabddb5ef046655"
+          }
+        }
+      }
+    },
+    {
+      "rank": 18,
+      "candidate_refs": [
+        "b94faf2dd3a8c5a1"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/b94faf2dd3a8c5a1-drawn-diorama.webp",
+      "asset_sha256": "e1aa7affa0ed4dff47d3b03081f98887eb8b2c2bf81626d5fb4bc308b9b9dae1",
+      "generation_asset_sha256": "591a2d78c00f04bf4795698d130500f3888a6c10b57b4ca1f7cd8152ab0b5bca",
+      "source_asset_sha256s": [
+        "af1f9b7678168744809e3f547c16ad248b74606169302844c53b76f2d8ce200f"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "607a542cdf6bb638b3f88ef5e77d7e92b5eac32b1865e8423b997ff674f6e9dc",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "607a542cdf6bb638b3f88ef5e77d7e92b5eac32b1865e8423b997ff674f6e9dc",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "607a542cdf6bb638b3f88ef5e77d7e92b5eac32b1865e8423b997ff674f6e9dc",
+          "evidence_sha256": "7468514c49bd952ff5ca04eb7fa88a3957836d6e28b74aecab29a30ef0e384c6",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "b94faf2dd3a8c5a1",
+            "asset_sha256": "e1aa7affa0ed4dff47d3b03081f98887eb8b2c2bf81626d5fb4bc308b9b9dae1",
+            "generation_asset_sha256": "591a2d78c00f04bf4795698d130500f3888a6c10b57b4ca1f7cd8152ab0b5bca",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "af1f9b7678168744809e3f547c16ad248b74606169302844c53b76f2d8ce200f"
+          }
+        }
+      }
+    },
+    {
+      "rank": 19,
+      "candidate_refs": [
+        "7f53e7ac434be8af"
+      ],
+      "listing_ids": [
+        "838262025"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/7f53e7ac434be8af-drawn-diorama.webp",
+      "asset_sha256": "bb5b0e5d7bd9745459d9ea7285a8c9c9aa43a2b90c69a0ea636a8fd260c2ea24",
+      "generation_asset_sha256": "8c169b51a1609ca9a22a832921a61b566b44a102e20c6c118b915c3dd77592ee",
+      "source_asset_sha256s": [
+        "152c50236d3a35f3d39ed6061e7c0abcb63dd80693b61227190548a0a8d30c74"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e3ffc9f79e3492c9fd44c24d04d5ace23a3932ea7b79eba4e38acf5d38415197",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e3ffc9f79e3492c9fd44c24d04d5ace23a3932ea7b79eba4e38acf5d38415197",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e3ffc9f79e3492c9fd44c24d04d5ace23a3932ea7b79eba4e38acf5d38415197",
+          "evidence_sha256": "7663602a58e37897f646deb57df6c3870ba4522a2250578186c17e0c82d93e93",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "7f53e7ac434be8af",
+            "asset_sha256": "bb5b0e5d7bd9745459d9ea7285a8c9c9aa43a2b90c69a0ea636a8fd260c2ea24",
+            "generation_asset_sha256": "8c169b51a1609ca9a22a832921a61b566b44a102e20c6c118b915c3dd77592ee",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "152c50236d3a35f3d39ed6061e7c0abcb63dd80693b61227190548a0a8d30c74"
+          }
+        }
+      }
+    },
+    {
+      "rank": 20,
+      "candidate_refs": [
+        "8c3b582c8e28e9b4"
+      ],
+      "listing_ids": [
+        "986329628"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/8c3b582c8e28e9b4-drawn-diorama.webp",
+      "asset_sha256": "a5591e9bef8208cf53671a0440acd764ec6c042eb1dbcee427cc8505dd39a962",
+      "generation_asset_sha256": "e24d68461ba5c14a8a92d867ccee3a65b51f4e0471c7defea061bc873b8ababc",
+      "source_asset_sha256s": [
+        "62d034a4af35050195bf694f1796b6aa1a559dd0bda6e5bdb5428325794adc1f"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "ed5751031211cbb9f1cc4d63098ebd270b6b1893a81a87f8df54d951fdba204d",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "ed5751031211cbb9f1cc4d63098ebd270b6b1893a81a87f8df54d951fdba204d",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "ed5751031211cbb9f1cc4d63098ebd270b6b1893a81a87f8df54d951fdba204d",
+          "evidence_sha256": "342ea8593371e91424807b309f95ed44409fa42c3513be84dc84676e5f94e943",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "8c3b582c8e28e9b4",
+            "asset_sha256": "a5591e9bef8208cf53671a0440acd764ec6c042eb1dbcee427cc8505dd39a962",
+            "generation_asset_sha256": "e24d68461ba5c14a8a92d867ccee3a65b51f4e0471c7defea061bc873b8ababc",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "62d034a4af35050195bf694f1796b6aa1a559dd0bda6e5bdb5428325794adc1f"
+          }
+        }
+      }
+    },
+    {
+      "rank": 21,
+      "candidate_refs": [
+        "0bdef04af0b2a89d"
+      ],
+      "listing_ids": [
+        "1129536951"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/0bdef04af0b2a89d-drawn-diorama.webp",
+      "asset_sha256": "03c5b60449c2dbab199feb0979e4b51efcea7197b0d90db437280d723ad75321",
+      "generation_asset_sha256": "54bb6c5d66d0dde0ed86eb406bbac3d83231f5a06e94cb82075818fecfd3af69",
+      "source_asset_sha256s": [
+        "1ff6bbdbdfd43daab9a9bdca73576469791d26856a484d2424c67a12afbec647"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "eb3b9535e25fcb2163b94c10940f64a2c5bebcf5076ded02eeebbec3d242e36a",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "eb3b9535e25fcb2163b94c10940f64a2c5bebcf5076ded02eeebbec3d242e36a",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "eb3b9535e25fcb2163b94c10940f64a2c5bebcf5076ded02eeebbec3d242e36a",
+          "evidence_sha256": "f2757a7309cc4d308ee00c96179d0265a1ce353c73f63dbc7be418b0d05cf065",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "0bdef04af0b2a89d",
+            "asset_sha256": "03c5b60449c2dbab199feb0979e4b51efcea7197b0d90db437280d723ad75321",
+            "generation_asset_sha256": "54bb6c5d66d0dde0ed86eb406bbac3d83231f5a06e94cb82075818fecfd3af69",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "1ff6bbdbdfd43daab9a9bdca73576469791d26856a484d2424c67a12afbec647"
+          }
+        }
+      }
+    },
+    {
+      "rank": 22,
+      "candidate_refs": [
+        "3bfe8f3b078de200"
+      ],
+      "listing_ids": [
+        "1483257878"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/3bfe8f3b078de200-drawn-diorama.webp",
+      "asset_sha256": "fd14dee9b441de0d943acec7919d7ded1ca27df8ce600038d974a50446360daf",
+      "generation_asset_sha256": "a9958f723e1c4c7028216d969d309b7186ba0154e2f96e82910247d571986bf1",
+      "source_asset_sha256s": [
+        "6b1426519d4277c6589a312dcd62a716a0122e518d000d31ae084df5ebfbb053"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c024ebd6b43abc7196f91143d89c86945fece329c2c5fd526dbcfc9802cbbc75",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c024ebd6b43abc7196f91143d89c86945fece329c2c5fd526dbcfc9802cbbc75",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "c024ebd6b43abc7196f91143d89c86945fece329c2c5fd526dbcfc9802cbbc75",
+          "evidence_sha256": "14530d868a746be5332960ac7a6a89b22e7788c5257a6e390063c79bd168b7c0",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "3bfe8f3b078de200",
+            "asset_sha256": "fd14dee9b441de0d943acec7919d7ded1ca27df8ce600038d974a50446360daf",
+            "generation_asset_sha256": "a9958f723e1c4c7028216d969d309b7186ba0154e2f96e82910247d571986bf1",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "6b1426519d4277c6589a312dcd62a716a0122e518d000d31ae084df5ebfbb053"
+          }
+        }
+      }
+    },
+    {
+      "rank": 23,
+      "candidate_refs": [
+        "dd1a1f9b5976df00"
+      ],
+      "listing_ids": [
+        "1650100339"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/dd1a1f9b5976df00-drawn-diorama.webp",
+      "asset_sha256": "2f97a5115ee169398d9673cc8cb121bac345c0fb2fbe35a636c4d61e620f56d0",
+      "generation_asset_sha256": "13925c87abca4e32261a2081a594311730c8105cabefe490918057dd004fd66c",
+      "source_asset_sha256s": [
+        "db73bca7141e5022ce8e87bb3f490cfc05a6312d9f2af96295f1db049e66786f"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "2876fae2b2a37428e7ac9c7677082738df3e2497e024c603ba02e4e9292bc0eb",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "2876fae2b2a37428e7ac9c7677082738df3e2497e024c603ba02e4e9292bc0eb",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "2876fae2b2a37428e7ac9c7677082738df3e2497e024c603ba02e4e9292bc0eb",
+          "evidence_sha256": "051e0f149f85fadba94efb09f21403bdd37ebf79ed6b36df6e8d2a277c967483",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "dd1a1f9b5976df00",
+            "asset_sha256": "2f97a5115ee169398d9673cc8cb121bac345c0fb2fbe35a636c4d61e620f56d0",
+            "generation_asset_sha256": "13925c87abca4e32261a2081a594311730c8105cabefe490918057dd004fd66c",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "db73bca7141e5022ce8e87bb3f490cfc05a6312d9f2af96295f1db049e66786f"
+          }
+        }
+      }
+    },
+    {
+      "rank": 24,
+      "candidate_refs": [
+        "b48330764e72b576"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/b48330764e72b576-drawn-diorama.webp",
+      "asset_sha256": "2c673f2e7b59affe0fd567d538662c94df35c7e64c00d21181ae0f132c38d9bc",
+      "generation_asset_sha256": "d38d39ab467a401a37eade32d274e1ae510a549ba9ce0932ef9098c391fe42e0",
+      "source_asset_sha256s": [
+        "fb9a72a0d14e570661312903961fbdf6a82591609fbdfa4dcec4094f6e79a6e8"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "42e4d848542016ad4aec4d95e34efdb469eeeeb93a6bed7e233e2aadffc1e5e2",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "42e4d848542016ad4aec4d95e34efdb469eeeeb93a6bed7e233e2aadffc1e5e2",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "42e4d848542016ad4aec4d95e34efdb469eeeeb93a6bed7e233e2aadffc1e5e2",
+          "evidence_sha256": "240f3fb65173c2114fe3a2a3fb3812e57b04589ab2fb01c3176b89b683d92f16",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "b48330764e72b576",
+            "asset_sha256": "2c673f2e7b59affe0fd567d538662c94df35c7e64c00d21181ae0f132c38d9bc",
+            "generation_asset_sha256": "d38d39ab467a401a37eade32d274e1ae510a549ba9ce0932ef9098c391fe42e0",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "fb9a72a0d14e570661312903961fbdf6a82591609fbdfa4dcec4094f6e79a6e8"
+          }
+        }
+      }
+    },
+    {
+      "rank": 25,
+      "candidate_refs": [
+        "dd6c6464f5598c55"
+      ],
+      "listing_ids": [
+        "1699756395"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/dd6c6464f5598c55-drawn-diorama.webp",
+      "asset_sha256": "2e88df862cb39c652c208f1c1c68373a234efa33b19459f107e994adf37bdbae",
+      "generation_asset_sha256": "7f1c5cc50fe47f94aab5d5b5c03f59ea5642cdd7a54c91c006498ffd6c94f59c",
+      "source_asset_sha256s": [
+        "470c30d649d5ea7f678b6d77573889f641396a5422f802a7231e910c6a12426b"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e272e9d11490a6cd043f8b68c6d256f7e8380db3bb66686d0166c56412a39c15",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e272e9d11490a6cd043f8b68c6d256f7e8380db3bb66686d0166c56412a39c15",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e272e9d11490a6cd043f8b68c6d256f7e8380db3bb66686d0166c56412a39c15",
+          "evidence_sha256": "ddbaa21701a17a9ddf4bfd64dbdb3bd73e062a82c6e90d162e14c21be3eb3b96",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "dd6c6464f5598c55",
+            "asset_sha256": "2e88df862cb39c652c208f1c1c68373a234efa33b19459f107e994adf37bdbae",
+            "generation_asset_sha256": "7f1c5cc50fe47f94aab5d5b5c03f59ea5642cdd7a54c91c006498ffd6c94f59c",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "470c30d649d5ea7f678b6d77573889f641396a5422f802a7231e910c6a12426b"
+          }
+        }
+      }
+    },
+    {
+      "rank": 26,
+      "candidate_refs": [
+        "7338876581417228"
+      ],
+      "listing_ids": [
+        "1664141658"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/7338876581417228-drawn-diorama.webp",
+      "asset_sha256": "626ff6bf1c9c069180b99834b904e7886de58822d18526f1ee2d1fe77f6a1a15",
+      "generation_asset_sha256": "93f14d34159e89943a93ee108a8c83f85df41afa85195caab70e0540787218d9",
+      "source_asset_sha256s": [
+        "ca568c825fedbc40b243adfed08b4eefc98dd1ecb2b705c79028114d9f52af70"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "d675903950e75a4ab56639e78f130876fe5f3f04e85deda05e2f69ef9d031656",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "d675903950e75a4ab56639e78f130876fe5f3f04e85deda05e2f69ef9d031656",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "d675903950e75a4ab56639e78f130876fe5f3f04e85deda05e2f69ef9d031656",
+          "evidence_sha256": "4c84f5113068e43d841ff3410e1e6aa58bb32aad89066c7207f31d15891de722",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "7338876581417228",
+            "asset_sha256": "626ff6bf1c9c069180b99834b904e7886de58822d18526f1ee2d1fe77f6a1a15",
+            "generation_asset_sha256": "93f14d34159e89943a93ee108a8c83f85df41afa85195caab70e0540787218d9",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "ca568c825fedbc40b243adfed08b4eefc98dd1ecb2b705c79028114d9f52af70"
+          }
+        }
+      }
+    },
+    {
+      "rank": 27,
+      "candidate_refs": [
+        "8737854a7672375e"
+      ],
+      "listing_ids": [
+        "1627625431"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/8737854a7672375e-drawn-diorama.webp",
+      "asset_sha256": "d2315d4e253d22263ca0f060faea8dde10254a9ff7e4162f407f0c0425d8e232",
+      "generation_asset_sha256": "7ccc9de6ebbc51ec3a463413f0c0539da326925d0f2fd6d24a742cfeef3be929",
+      "source_asset_sha256s": [
+        "5e5e584a252d27acf5d4167b2970d8ebd6a18d78454153b12f180b88bfeca017"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "cd222e02627e92a7e1bd99125ca47b1270c6d23538aa8be907012ec8b0c52852",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "cd222e02627e92a7e1bd99125ca47b1270c6d23538aa8be907012ec8b0c52852",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "cd222e02627e92a7e1bd99125ca47b1270c6d23538aa8be907012ec8b0c52852",
+          "evidence_sha256": "9854ac500d48de9914f734765696713019dc028910d67d37b44e907077aba84f",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "8737854a7672375e",
+            "asset_sha256": "d2315d4e253d22263ca0f060faea8dde10254a9ff7e4162f407f0c0425d8e232",
+            "generation_asset_sha256": "7ccc9de6ebbc51ec3a463413f0c0539da326925d0f2fd6d24a742cfeef3be929",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "5e5e584a252d27acf5d4167b2970d8ebd6a18d78454153b12f180b88bfeca017"
+          }
+        }
+      }
+    },
+    {
+      "rank": 28,
+      "candidate_refs": [
+        "c61c2c95b46f0403"
+      ],
+      "listing_ids": [
+        "1286454387"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/c61c2c95b46f0403-drawn-diorama.webp",
+      "asset_sha256": "163e4ea62a264e42e7b81e2f6605daa0c8e091c3068294e195d964a6485b392a",
+      "generation_asset_sha256": "6a9ce2bc0f64807803dbf85fa704d763447b301e025bb11b18fea2a6cc53eee7",
+      "source_asset_sha256s": [
+        "618015966127a527920bd41d3541b16533bc3bff044479edd356c1b0a5b0a725"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "b5e1a687ae4028d5554db29302f08da79eac4b537391c04db0d896c69c28c816",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "b5e1a687ae4028d5554db29302f08da79eac4b537391c04db0d896c69c28c816",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "b5e1a687ae4028d5554db29302f08da79eac4b537391c04db0d896c69c28c816",
+          "evidence_sha256": "e0c4eeee8043d7626e8021c12480a4e6285d6f63833d7f6e1b291cca35af3943",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "c61c2c95b46f0403",
+            "asset_sha256": "163e4ea62a264e42e7b81e2f6605daa0c8e091c3068294e195d964a6485b392a",
+            "generation_asset_sha256": "6a9ce2bc0f64807803dbf85fa704d763447b301e025bb11b18fea2a6cc53eee7",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "618015966127a527920bd41d3541b16533bc3bff044479edd356c1b0a5b0a725"
+          }
+        }
+      }
+    },
+    {
+      "rank": 29,
+      "candidate_refs": [
+        "392cf830484581de"
+      ],
+      "listing_ids": [
+        "803051319"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/392cf830484581de-drawn-diorama.webp",
+      "asset_sha256": "0c1e089d4fe56893c460138b434d1c179bb6ae10542017e4e7d979b5a3c29a6f",
+      "generation_asset_sha256": "aa359784e541c9eb50ed299e333e1302e6e3a2b4eaf3357b6cc502e64c4b7539",
+      "source_asset_sha256s": [
+        "322b841a2f5411bf5bf448c6570f739e92f2b4fef5ae3566b0478767ebe61782"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "689d17c613d41d2b4cc09c5def5ff9fe22414220ab10386689c0b32bd566e7f2",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "689d17c613d41d2b4cc09c5def5ff9fe22414220ab10386689c0b32bd566e7f2",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "689d17c613d41d2b4cc09c5def5ff9fe22414220ab10386689c0b32bd566e7f2",
+          "evidence_sha256": "71b9fbeb2a0dfc2a040e72957fa7081b8169e30a3755570f771ba2004c63b029",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "392cf830484581de",
+            "asset_sha256": "0c1e089d4fe56893c460138b434d1c179bb6ae10542017e4e7d979b5a3c29a6f",
+            "generation_asset_sha256": "aa359784e541c9eb50ed299e333e1302e6e3a2b4eaf3357b6cc502e64c4b7539",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "322b841a2f5411bf5bf448c6570f739e92f2b4fef5ae3566b0478767ebe61782"
+          }
+        }
+      }
+    },
+    {
+      "rank": 30,
+      "candidate_refs": [
+        "99f2f05aa98e1eba"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/99f2f05aa98e1eba-drawn-diorama.webp",
+      "asset_sha256": "fcabc4f5938fa9a061904c70fdfefb9b057c70b8a0c912d950c19f53c9f770df",
+      "generation_asset_sha256": "2167d2f4d33f5a442389ebe56da83170a1c841ae404f59414bb747d56d9202d3",
+      "source_asset_sha256s": [
+        "de058d0ebb4ec43d6698daf9670f5c8ceb4a3063ec8744e7d3e068ab9789a8df"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e22730c3d5e9410fb0ef9e34ef061b1070e1218e3f3443ed7d0eaabde8967d34",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e22730c3d5e9410fb0ef9e34ef061b1070e1218e3f3443ed7d0eaabde8967d34",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "e22730c3d5e9410fb0ef9e34ef061b1070e1218e3f3443ed7d0eaabde8967d34",
+          "evidence_sha256": "3e63f0880707bcd4378a3275f8e0865c29291feb91b9bcf5a32a2ec755465838",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "99f2f05aa98e1eba",
+            "asset_sha256": "fcabc4f5938fa9a061904c70fdfefb9b057c70b8a0c912d950c19f53c9f770df",
+            "generation_asset_sha256": "2167d2f4d33f5a442389ebe56da83170a1c841ae404f59414bb747d56d9202d3",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "de058d0ebb4ec43d6698daf9670f5c8ceb4a3063ec8744e7d3e068ab9789a8df"
+          }
+        }
+      }
+    },
+    {
+      "rank": 31,
+      "candidate_refs": [
+        "b9f69893de2f0e9d"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/b9f69893de2f0e9d-drawn-diorama.webp",
+      "asset_sha256": "7ddaf26e5f49982485c58779202085dbb879e27f31d917d754bb6838b3186faa",
+      "generation_asset_sha256": "26d032a50db9bfd4df78ecd79b3f144228ab78da2eddab4e88fbcfc57251f448",
+      "source_asset_sha256s": [
+        "e935c37535bd16de14737ef99917c00f680d847433de4344e25abaf07f3105e6"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5955671c1d527ad6bb32281b141450b1bdcd30170ce9b601fb61b6d934e4d849",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5955671c1d527ad6bb32281b141450b1bdcd30170ce9b601fb61b6d934e4d849",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5955671c1d527ad6bb32281b141450b1bdcd30170ce9b601fb61b6d934e4d849",
+          "evidence_sha256": "42dbd59fac7d7c20c37b8f364815f6db26c83c2cec0bee4bed0ded7d4ea72845",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "b9f69893de2f0e9d",
+            "asset_sha256": "7ddaf26e5f49982485c58779202085dbb879e27f31d917d754bb6838b3186faa",
+            "generation_asset_sha256": "26d032a50db9bfd4df78ecd79b3f144228ab78da2eddab4e88fbcfc57251f448",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "e935c37535bd16de14737ef99917c00f680d847433de4344e25abaf07f3105e6"
+          }
+        }
+      }
+    },
+    {
+      "rank": 32,
+      "candidate_refs": [
+        "1b60cfc123da4134"
+      ],
+      "listing_ids": [
+        "2042505599"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/1b60cfc123da4134-drawn-diorama.webp",
+      "asset_sha256": "b1e5f39eb94edfd6d8598294c0ee9f1a3f5da0692d87011a8f938e51b871adce",
+      "generation_asset_sha256": "4542f5699d259d2feba574101bc7b1c70dd4f8d27a47843bbddf01c42350204c",
+      "source_asset_sha256s": [
+        "0d8a3693d93374fad9aa00e841ac7d38ec15249c45563e7ed2f6d50dfa489b60"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "56e7bd5be1168159f3e7d5f91d5dcb311fc24eaceb072addd03f9c270802ae05",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "56e7bd5be1168159f3e7d5f91d5dcb311fc24eaceb072addd03f9c270802ae05",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "56e7bd5be1168159f3e7d5f91d5dcb311fc24eaceb072addd03f9c270802ae05",
+          "evidence_sha256": "c5d1ffcc1e63860445cbb872f4a77fffef0f62b9725efc9be21a06ce90999b9c",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "1b60cfc123da4134",
+            "asset_sha256": "b1e5f39eb94edfd6d8598294c0ee9f1a3f5da0692d87011a8f938e51b871adce",
+            "generation_asset_sha256": "4542f5699d259d2feba574101bc7b1c70dd4f8d27a47843bbddf01c42350204c",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "0d8a3693d93374fad9aa00e841ac7d38ec15249c45563e7ed2f6d50dfa489b60"
+          }
+        }
+      }
+    },
+    {
+      "rank": 33,
+      "candidate_refs": [
+        "8908d0b49d2cffe0"
+      ],
+      "listing_ids": [
+        "1814093241"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/8908d0b49d2cffe0-drawn-diorama.webp",
+      "asset_sha256": "dfa7e22b76ffd8f1f399c6648b4b2954dcd2064adb69e731232b438616ba5e85",
+      "generation_asset_sha256": "d15b6bfee810387d9f2e6b433a5d2e3cbcd790db6259e284af3213d67c5d5ffb",
+      "source_asset_sha256s": [
+        "a1845fa84214a4eaf914942331516db09de7ac3568686c643fd6d99405fdc23a"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "15654e71228ff8be484bd95c93772388a54f3ff0b1601c597fac0f1c64e7a71b",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "15654e71228ff8be484bd95c93772388a54f3ff0b1601c597fac0f1c64e7a71b",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "15654e71228ff8be484bd95c93772388a54f3ff0b1601c597fac0f1c64e7a71b",
+          "evidence_sha256": "6821256747bec54f64bbc53de39da10dc7b0b92b48912e61547faea698b2905c",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "8908d0b49d2cffe0",
+            "asset_sha256": "dfa7e22b76ffd8f1f399c6648b4b2954dcd2064adb69e731232b438616ba5e85",
+            "generation_asset_sha256": "d15b6bfee810387d9f2e6b433a5d2e3cbcd790db6259e284af3213d67c5d5ffb",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "a1845fa84214a4eaf914942331516db09de7ac3568686c643fd6d99405fdc23a"
+          }
+        }
+      }
+    },
+    {
+      "rank": 34,
+      "candidate_refs": [
+        "90c957530987e8bf"
+      ],
+      "listing_ids": [
+        "1830682937"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/90c957530987e8bf-drawn-diorama.webp",
+      "asset_sha256": "da760e196808b890b8fa80f61bc04902e586432386508ea133f44d8e493e7ce8",
+      "generation_asset_sha256": "c06a8ee5111495a45d50ec0e259bebf9dbdc06e8043ec0885720d178200d647f",
+      "source_asset_sha256s": [
+        "a60a9a08da9621937cecaa329a1961d97a63130cc5712b9651fd9c583aca77af"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "1bfd8c2b9e0d86ef54df11c2ff57223ccd85c0e7721e492995272f81c29ba6d2",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "1bfd8c2b9e0d86ef54df11c2ff57223ccd85c0e7721e492995272f81c29ba6d2",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "1bfd8c2b9e0d86ef54df11c2ff57223ccd85c0e7721e492995272f81c29ba6d2",
+          "evidence_sha256": "c7b0c02bff1f904119ac551ced26c0b06b2034360d7d6e8b008d9510d787f601",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "90c957530987e8bf",
+            "asset_sha256": "da760e196808b890b8fa80f61bc04902e586432386508ea133f44d8e493e7ce8",
+            "generation_asset_sha256": "c06a8ee5111495a45d50ec0e259bebf9dbdc06e8043ec0885720d178200d647f",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "a60a9a08da9621937cecaa329a1961d97a63130cc5712b9651fd9c583aca77af"
+          }
+        }
+      }
+    },
+    {
+      "rank": 35,
+      "candidate_refs": [
+        "9ddf760c3a1d9947"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/9ddf760c3a1d9947-drawn-diorama.webp",
+      "asset_sha256": "17def9e7172a5e9b3b13f26ee93847a156eefc2364feba7773dc95ca9d560b8b",
+      "generation_asset_sha256": "cc720625e52e16576c03d4a8428a5d0792bf0785c7e4e3675936de5f755019c9",
+      "source_asset_sha256s": [
+        "70ec36795c1c38ab0c0ee43f92e7257579bf51e1b036845895f0035880a6cf8a"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "433df2bae1adaabc61c6b3ab97fafbc77f637413478ee8aefa8329ec20d0b983",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "433df2bae1adaabc61c6b3ab97fafbc77f637413478ee8aefa8329ec20d0b983",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "433df2bae1adaabc61c6b3ab97fafbc77f637413478ee8aefa8329ec20d0b983",
+          "evidence_sha256": "feb188c91e1328655f20675b633f410953c9184e2bb3c955431b2bb45770f3fb",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "9ddf760c3a1d9947",
+            "asset_sha256": "17def9e7172a5e9b3b13f26ee93847a156eefc2364feba7773dc95ca9d560b8b",
+            "generation_asset_sha256": "cc720625e52e16576c03d4a8428a5d0792bf0785c7e4e3675936de5f755019c9",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "70ec36795c1c38ab0c0ee43f92e7257579bf51e1b036845895f0035880a6cf8a"
+          }
+        }
+      }
+    },
+    {
+      "rank": 36,
+      "candidate_refs": [
+        "473e8bd4abff5867"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/473e8bd4abff5867-drawn-diorama.webp",
+      "asset_sha256": "ad3015d64171e29b253378ec7a7a55cf624947833adc2cc30c83740698c05bf0",
+      "generation_asset_sha256": "b98e40314182b427bc71e8ff012c2f3d35d3a8f0ea1d53dac32b593aaccba0bf",
+      "source_asset_sha256s": [
+        "99d09d250808970506f77439e7c97b1f628324324f147777bf9ee6159ae5a928"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7925100c3518768c910d304e50afeac0eb9f9e9fb1278e2a51c06c632751fa81",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7925100c3518768c910d304e50afeac0eb9f9e9fb1278e2a51c06c632751fa81",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "7925100c3518768c910d304e50afeac0eb9f9e9fb1278e2a51c06c632751fa81",
+          "evidence_sha256": "cdc730bd8bfcdc9d725c569ac5429c426ee095e3493a5852b578e50640d39ed4",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "473e8bd4abff5867",
+            "asset_sha256": "ad3015d64171e29b253378ec7a7a55cf624947833adc2cc30c83740698c05bf0",
+            "generation_asset_sha256": "b98e40314182b427bc71e8ff012c2f3d35d3a8f0ea1d53dac32b593aaccba0bf",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "99d09d250808970506f77439e7c97b1f628324324f147777bf9ee6159ae5a928"
+          }
+        }
+      }
+    },
+    {
+      "rank": 37,
+      "candidate_refs": [
+        "5f1495576b755f9b"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/5f1495576b755f9b-drawn-diorama.webp",
+      "asset_sha256": "2250156669b98d8803c376bac61ce07dd487fbc7620ae14f4a64c81daa5fceed",
+      "generation_asset_sha256": "948b5dc9fbe26de56f68dae785fb11ee33c1eb177ab33ad98bbea9a4c7272d3b",
+      "source_asset_sha256s": [
+        "6848994e16430b837d1d241746a2108d2596d59c871e6fecefd88ac7e2587a8c"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "03fcdefe20906ecc83a593b8e3ab106e6c2ac26ebe91850dcc7d6e5ecb893ae4",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "03fcdefe20906ecc83a593b8e3ab106e6c2ac26ebe91850dcc7d6e5ecb893ae4",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "03fcdefe20906ecc83a593b8e3ab106e6c2ac26ebe91850dcc7d6e5ecb893ae4",
+          "evidence_sha256": "4cbfbfbd656049dd18f5aeedaaeda3da9a3b1f40e48f403c0b87aa9b556ae999",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "5f1495576b755f9b",
+            "asset_sha256": "2250156669b98d8803c376bac61ce07dd487fbc7620ae14f4a64c81daa5fceed",
+            "generation_asset_sha256": "948b5dc9fbe26de56f68dae785fb11ee33c1eb177ab33ad98bbea9a4c7272d3b",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "6848994e16430b837d1d241746a2108d2596d59c871e6fecefd88ac7e2587a8c"
+          }
+        }
+      }
+    },
+    {
+      "rank": 38,
+      "candidate_refs": [
+        "b7afc05099fde607"
+      ],
+      "listing_ids": [
+        "996483379"
+      ],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/b7afc05099fde607-drawn-diorama.webp",
+      "asset_sha256": "ea9a022fe4115b6965ad94eb901112ca507251e9b395aceea0d3faafb603ac9f",
+      "generation_asset_sha256": "bf1e97df46a02661d15d4221de263776ecc20313b4ffbb8ebeeda7e7b036939b",
+      "source_asset_sha256s": [
+        "16ee93b9d0721ac5fa612106152df9eede06855503ba4af8d3c453b246272d23"
+      ],
+      "source_basis": "listing_reference_image",
+      "truth_boundary": "Hand-drawn illustrative orientation based on one listing reference; the diorama is not listing evidence or measured geometry, and listing media remains the source evidence.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5a92d1a80cc8fcfe7dfef1205bb1acd603fe808b7b6ce56049945b18a61e7e8e",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5a92d1a80cc8fcfe7dfef1205bb1acd603fe808b7b6ce56049945b18a61e7e8e",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "5a92d1a80cc8fcfe7dfef1205bb1acd603fe808b7b6ce56049945b18a61e7e8e",
+          "evidence_sha256": "53f02ecc9f74f6ad7535f4c041ccf592365c5aaf8256521c82daef1d913d8149",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "b7afc05099fde607",
+            "asset_sha256": "ea9a022fe4115b6965ad94eb901112ca507251e9b395aceea0d3faafb603ac9f",
+            "generation_asset_sha256": "bf1e97df46a02661d15d4221de263776ecc20313b4ffbb8ebeeda7e7b036939b",
+            "source_basis": "listing_reference_image",
+            "source_sha256": "16ee93b9d0721ac5fa612106152df9eede06855503ba4af8d3c453b246272d23"
+          }
+        }
+      }
+    },
+    {
+      "rank": 39,
+      "candidate_refs": [
+        "afaeec7f7c91d05e"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/afaeec7f7c91d05e-drawn-diorama.webp",
+      "asset_sha256": "1fb3b9e49f4629d04cbed3e93ed15703b2718aa38494ac99420bbf4ce1bdb5d6",
+      "generation_asset_sha256": "c8cb8fae153e3dd549443092f7d0fc53188de3f550812c7999d8ef1269620bf8",
+      "source_asset_sha256s": [
+        "245cd2e6a66c4f2b6360d2f265813767eb8f5b789e91427771539fa9d35b3baa"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "02132de086abb2a292f470951b0b7a32ad41451d962757f1c4a442a7fa179f9e",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "02132de086abb2a292f470951b0b7a32ad41451d962757f1c4a442a7fa179f9e",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "02132de086abb2a292f470951b0b7a32ad41451d962757f1c4a442a7fa179f9e",
+          "evidence_sha256": "4a6fc429880dad377ccaca1d1ccfa16a0c61f98d087661c5da8d01056d0c5141",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "afaeec7f7c91d05e",
+            "asset_sha256": "1fb3b9e49f4629d04cbed3e93ed15703b2718aa38494ac99420bbf4ce1bdb5d6",
+            "generation_asset_sha256": "c8cb8fae153e3dd549443092f7d0fc53188de3f550812c7999d8ef1269620bf8",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "245cd2e6a66c4f2b6360d2f265813767eb8f5b789e91427771539fa9d35b3baa"
+          }
+        }
+      }
+    },
+    {
+      "rank": 40,
+      "candidate_refs": [
+        "7d44e3183ca5489b"
+      ],
+      "listing_ids": [],
+      "preview_kind": "illustrative_drawn_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/7d44e3183ca5489b-drawn-diorama.webp",
+      "asset_sha256": "1500c4c55bf18478da5024353d6d2b285b3efcb5c221a76633ca2ac45b38dc51",
+      "generation_asset_sha256": "da85a86858850cd8ab4daa70ce606d0cf102d3ea134cc034f211b390f6abbd14",
+      "source_asset_sha256s": [
+        "2b3ed37bf81ae2647e16c511a9a4946ac16aa12b011c98567d2848ecfd94b7fb"
+      ],
+      "source_basis": "listing_metadata_only",
+      "truth_boundary": "Source imagery was unavailable or unsuitable; this is an illustrative concept only, not listing evidence or measured geometry.",
+      "alt": "Illustrative hand-drawn property diorama",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "07b2d8527f5ba41dd25aab034a775dbb408ac194d8661e651df4b3bb001400d6",
+          "evidence_sha256": "02326383015e05c248fe9a468bd5afa611e2f4145c399f5a3c5023c2ee46ddfd",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "8412f54f7aec1b7f195ef50f8504f3376c2b42164b6d8336a51362557ea52203",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "source_handling": "private references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Contact-sheet review found no visible people, contact details, addresses, names, or listing logos in the release assets.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "07b2d8527f5ba41dd25aab034a775dbb408ac194d8661e651df4b3bb001400d6",
+          "evidence_sha256": "601d48528229535b65a735da1a0d2769c86e029eb07c2021d437ae97e0f08c16",
+          "evidence": {
+            "review_type": "privacy",
+            "contact_sheet_sha256": "0114f39dd59ebc148ca8cd1b048ea7d5e06e7277ec7eb74af2926ad73b7b009f",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, source basis, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-24T13:29:17Z",
+          "subject_sha256": "07b2d8527f5ba41dd25aab034a775dbb408ac194d8661e651df4b3bb001400d6",
+          "evidence_sha256": "d461040cc2fbc0fc4723250ee9c153b1d308bc52c96345cecd71c7db6760da0b",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "7d44e3183ca5489b",
+            "asset_sha256": "1500c4c55bf18478da5024353d6d2b285b3efcb5c221a76633ca2ac45b38dc51",
+            "generation_asset_sha256": "da85a86858850cd8ab4daa70ce606d0cf102d3ea134cc034f211b390f6abbd14",
+            "source_basis": "listing_metadata_only",
+            "source_sha256": "2b3ed37bf81ae2647e16c511a9a4946ac16aa12b011c98567d2848ecfd94b7fb"
+          }
+        }
+      }
     }
   ]
 }

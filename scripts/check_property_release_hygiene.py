@@ -94,6 +94,7 @@ BEARER_LITERAL_RE = re.compile(
     flags=re.IGNORECASE,
 )
 MANIFEST_RUNTIME_COMMIT_RE = re.compile(r"^\|\s*Runtime commit SHA\s*\|\s*`?([0-9a-f]{7,40})`?\s*\|", flags=re.MULTILINE)
+FULL_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 RELEASE_METADATA_DESCENDANT_PATHS = {
     ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
@@ -144,6 +145,20 @@ def git_commit_parent_shas(commit_sha: str) -> list[str]:
 def git_head_parent_sha() -> str:
     parent_shas = git_commit_parent_shas(git_head_sha())
     return parent_shas[0] if parent_shas else ""
+
+
+def git_commit_tree_sha(commit_sha: str) -> str:
+    if not FULL_COMMIT_SHA_RE.fullmatch(commit_sha):
+        return ""
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", f"{commit_sha}^{{tree}}"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    value = result.stdout.strip() if result.returncode == 0 else ""
+    return value if FULL_COMMIT_SHA_RE.fullmatch(value) else ""
 
 
 def git_commit_is_ancestor(commit_sha: str, head_sha: str) -> bool:
@@ -229,14 +244,80 @@ def _metadata_only(paths: list[str]) -> bool:
     return all(path in RELEASE_METADATA_DESCENDANT_PATHS for path in paths)
 
 
+def _protected_merge_binding(
+    manifest_sha: str,
+    head_sha: str,
+    parent_shas: list[str],
+) -> tuple[bool, list[str], str, dict[str, object]]:
+    topology: dict[str, object] = {
+        "merge_base_parent_commit": "",
+        "merge_parent_commits": list(parent_shas),
+        "head_tree": git_commit_tree_sha(head_sha),
+        "reviewed_envelope_commit": "",
+        "reviewed_envelope_parent_commits": [],
+        "reviewed_envelope_tree": "",
+        "merge_tree_matches_reviewed_envelope": False,
+    }
+    if (
+        not FULL_COMMIT_SHA_RE.fullmatch(manifest_sha)
+        or not FULL_COMMIT_SHA_RE.fullmatch(head_sha)
+        or len(parent_shas) != 2
+        or any(FULL_COMMIT_SHA_RE.fullmatch(value) is None for value in parent_shas)
+        or len(set(parent_shas)) != 2
+        or head_sha in parent_shas
+    ):
+        return False, [], "", topology
+
+    base_parent_sha, envelope_sha = parent_shas
+    envelope_parent_shas = git_commit_parent_shas(envelope_sha)
+    envelope_tree = git_commit_tree_sha(envelope_sha)
+    topology.update(
+        {
+            "merge_base_parent_commit": base_parent_sha,
+            "reviewed_envelope_commit": envelope_sha,
+            "reviewed_envelope_parent_commits": envelope_parent_shas,
+            "reviewed_envelope_tree": envelope_tree,
+            "merge_tree_matches_reviewed_envelope": bool(
+                topology["head_tree"]
+                and envelope_tree
+                and topology["head_tree"] == envelope_tree
+            ),
+        }
+    )
+
+    envelope_paths = tree_paths_between(manifest_sha, envelope_sha)
+    merge_paths = tree_paths_between(envelope_sha, head_sha)
+    observed_paths = sorted(set(envelope_paths or []) | set(merge_paths or []))
+    binding_ok = (
+        envelope_parent_shas == [manifest_sha]
+        and git_commit_is_ancestor(base_parent_sha, envelope_sha)
+        and not git_commit_is_ancestor(manifest_sha, base_parent_sha)
+        and envelope_paths == sorted(RELEASE_METADATA_DESCENDANT_PATHS)
+        and merge_paths == []
+        and topology["merge_tree_matches_reviewed_envelope"] is True
+    )
+    return binding_ok, observed_paths, envelope_sha if binding_ok else "", topology
+
+
 def _manifest_release_binding(
     manifest_sha: str,
     head_sha: str,
     parent_shas: str | list[str],
+    *,
+    require_merge_commit: bool = False,
 ) -> tuple[bool, list[str], str]:
     normalized_parent_shas = (
         [parent_shas] if isinstance(parent_shas, str) else list(parent_shas)
     )
+    if require_merge_commit:
+        binding_ok, descendant_paths, binding_parent, _topology = (
+            _protected_merge_binding(
+                manifest_sha,
+                head_sha,
+                normalized_parent_shas,
+            )
+        )
+        return binding_ok, descendant_paths, binding_parent
     if _revisions_match(manifest_sha, head_sha):
         return True, [], normalized_parent_shas[0] if normalized_parent_shas else ""
     if not git_commit_is_ancestor(manifest_sha, head_sha):
@@ -285,11 +366,14 @@ def manifest_release_binding(
     manifest_sha: str,
     head_sha: str,
     parent_shas: str | list[str],
+    *,
+    require_merge_commit: bool = False,
 ) -> tuple[bool, list[str]]:
     binding_ok, descendant_paths, _binding_parent = _manifest_release_binding(
         manifest_sha,
         head_sha,
         parent_shas,
+        require_merge_commit=require_merge_commit,
     )
     return binding_ok, descendant_paths
 
@@ -340,37 +424,70 @@ def _is_release_source_path(rel_path: str) -> bool:
     return "/" not in normalized and Path(normalized).suffix.lower() in RELEASE_SOURCE_SUFFIXES
 
 
-def build_release_hygiene_receipt() -> dict[str, object]:
+def build_release_hygiene_receipt(
+    *,
+    require_merge_commit: bool = False,
+) -> dict[str, object]:
     failures: list[str] = []
     manifest_sha = release_manifest_runtime_sha()
     head_sha = git_head_sha()
     parent_shas = git_commit_parent_shas(head_sha)
     parent_sha = parent_shas[0] if parent_shas else ""
+    topology: dict[str, object] = {
+        "merge_base_parent_commit": "",
+        "merge_parent_commits": list(parent_shas),
+        "head_tree": git_commit_tree_sha(head_sha),
+        "reviewed_envelope_commit": "",
+        "reviewed_envelope_parent_commits": [],
+        "reviewed_envelope_tree": "",
+        "merge_tree_matches_reviewed_envelope": False,
+    }
     manifest_binding_ok = False
     manifest_descendant_paths: list[str] = []
     if not manifest_sha:
         failures.append("release manifest runtime commit missing: docs/PROPERTYQUARRY_RELEASE_MANIFEST.md")
     else:
-        (
-            manifest_binding_ok,
-            manifest_descendant_paths,
-            binding_parent_sha,
-        ) = _manifest_release_binding(
-            manifest_sha,
-            head_sha,
-            parent_shas,
-        )
+        if require_merge_commit:
+            (
+                manifest_binding_ok,
+                manifest_descendant_paths,
+                binding_parent_sha,
+                topology,
+            ) = _protected_merge_binding(
+                manifest_sha,
+                head_sha,
+                parent_shas,
+            )
+        else:
+            (
+                manifest_binding_ok,
+                manifest_descendant_paths,
+                binding_parent_sha,
+            ) = _manifest_release_binding(
+                manifest_sha,
+                head_sha,
+                parent_shas,
+            )
         if binding_parent_sha:
             parent_sha = binding_parent_sha
     if manifest_sha and not manifest_binding_ok:
         disallowed_descendants = [
             path for path in manifest_descendant_paths if path not in RELEASE_METADATA_DESCENDANT_PATHS
         ]
-        failures.append(
-            "release manifest runtime commit is not HEAD, its parent, or a metadata-only ancestor: "
-            f"manifest={manifest_sha} head={head_sha} parents={parent_shas} "
-            f"disallowed_descendants={disallowed_descendants}"
-        )
+        if require_merge_commit:
+            failures.append(
+                "protected release requires an exact two-parent merge whose second "
+                "parent is the reviewed metadata-only envelope, whose tree equals "
+                "the merge tree, and whose sole parent is the manifest runtime: "
+                f"manifest={manifest_sha} head={head_sha} parents={parent_shas} "
+                f"disallowed_descendants={disallowed_descendants}"
+            )
+        else:
+            failures.append(
+                "release manifest runtime commit is not HEAD, its parent, or a metadata-only ancestor: "
+                f"manifest={manifest_sha} head={head_sha} parents={parent_shas} "
+                f"disallowed_descendants={disallowed_descendants}"
+            )
     tracked_dirty_paths: list[str] = []
     untracked_release_source_paths: list[str] = []
     for row in _git_status_rows():
@@ -441,6 +558,8 @@ def build_release_hygiene_receipt() -> dict[str, object]:
         "manifest_runtime_commit": manifest_sha,
         "head_commit": head_sha,
         "parent_commit": parent_sha,
+        "merge_commit_required": require_merge_commit,
+        **topology,
         "manifest_descendant_paths": manifest_descendant_paths,
         "manifest_metadata_only_ancestor": bool(manifest_descendant_paths) and manifest_binding_ok,
         "tracked_dirty_path_count": len(tracked_dirty_paths),
@@ -452,9 +571,16 @@ def build_release_hygiene_receipt() -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check PropertyQuarry release hygiene.")
     parser.add_argument("--write", default="", help="Optional path for a JSON receipt.")
+    parser.add_argument(
+        "--require-merge-commit",
+        action="store_true",
+        help="Require the protected two-parent merge and reviewed-envelope topology.",
+    )
     args = parser.parse_args()
 
-    receipt = build_release_hygiene_receipt()
+    receipt = build_release_hygiene_receipt(
+        require_merge_commit=args.require_merge_commit,
+    )
     failures = list(receipt.get("failures") or [])
     if args.write:
         out_path = Path(args.write)

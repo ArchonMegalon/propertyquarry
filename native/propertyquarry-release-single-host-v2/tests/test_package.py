@@ -2368,6 +2368,11 @@ class PackageTests(unittest.TestCase):
                 b"0700 root root - -\n",
                 tmpfiles_raw,
             )
+            self.assertIn(
+                b"d /var/lib/propertyquarry-release-single-host-v2/"
+                b"ai-panorama-publication-locks 0700 root root - -\n",
+                tmpfiles_raw,
+            )
             neutral_lines = []
             for raw_line in tmpfiles_raw.decode("ascii").splitlines():
                 fields = raw_line.split()

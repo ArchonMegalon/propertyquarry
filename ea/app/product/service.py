@@ -168,6 +168,7 @@ from app.product.property_fact_enrichment import (
     property_fact_value,
 )
 from app.product.property_tour_hosting import (
+    _assert_governed_property_tour_slug_not_reserved,
     _configured_public_tour_hosts,
     _download_public_tour_asset,
     _download_public_tour_asset_with_type,
@@ -20664,6 +20665,7 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
         variant_key=variant_key,
         principal_id=normalized_principal,
     )
+    _assert_governed_property_tour_slug_not_reserved(slug)
     legacy_slug = _make_hosted_property_tour_slug(
         title=title,
         listing_id=listing_id,
@@ -21053,6 +21055,7 @@ def _write_generated_reconstruction_property_tour_bundle_with_lock_held(
         variant_key=variant_key,
         principal_id=normalized_principal,
     )
+    _assert_governed_property_tour_slug_not_reserved(slug)
     bundle_dir = public_dir / slug
     tour_url = f"{_hosted_property_tour_public_base_url()}/{slug}"
     legacy_slug = _make_hosted_property_tour_slug(
@@ -21269,6 +21272,7 @@ def _write_generated_reconstruction_property_tour_bundle(
         variant_key=variant_key,
         principal_id=normalized_principal,
     )
+    _assert_governed_property_tour_slug_not_reserved(slug)
     with _hosted_property_tour_publication_lock(public_dir=public_dir, slug=slug):
         return _write_generated_reconstruction_property_tour_bundle_with_lock_held(
             principal_id=normalized_principal,

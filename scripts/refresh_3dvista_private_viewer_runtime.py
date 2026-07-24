@@ -21,6 +21,9 @@ from scripts.import_3dvista_export import (
     _public_tour_dir,
     _safe_relpath,
 )
+from scripts.property_tour_governed_reservation import (
+    require_dynamic_tour_slug,
+)
 
 
 DEFAULT_LOCAL_STORE_DIR = (
@@ -52,6 +55,10 @@ def _bundle_dir_for_slug(slug: str) -> Path:
     safe_slug = _safe_relpath(slug)
     if "/" in safe_slug or not safe_slug:
         raise SystemExit("invalid_tour_slug")
+    try:
+        require_dynamic_tour_slug(safe_slug)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     bundle_dir = (_public_tour_dir() / safe_slug).resolve()
     if not bundle_dir.is_dir():
         raise SystemExit("tour_bundle_missing")

@@ -203,9 +203,13 @@ def test_propertyquarry_tour_lanes_share_persistent_fail_closed_host_limits() ->
         "PROPERTYQUARRY_MAGICFIT_RENDER_MAX_TIMEOUT_MINUTES",
     ):
         assert name not in render_environment
-    assert render["volumes"] == [
-        "propertyquarry_public_tours:/data/public_property_tours"
+    render_volumes = render["volumes"]
+    assert type(render_volumes) is list
+    assert render_volumes == [
+        "propertyquarry_public_tours:/data/public_property_tours",
+        "propertyquarry_governed_public_tours:/data/governed_public_property_tours:ro",
     ]
+    assert render_volumes[1].endswith(":ro")
 
 
 def test_propertyquarry_tunnel_is_bounded_and_read_only() -> None:

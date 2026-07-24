@@ -213,7 +213,10 @@ def test_packaged_property_runtime_scripts_import_from_isolated_web_layout(
         encoding="utf-8"
     )
     copied_scripts = set(
-        re.findall(r"COPY\s+scripts/([^\s]+)\s+/app/scripts/", dockerfile)
+        re.findall(
+            r"COPY(?:\s+--\S+)*\s+scripts/([^\s]+)\s+/app/scripts/",
+            dockerfile,
+        )
     )
     required_scripts = {
         "browseract_ui_media.py",
@@ -228,6 +231,7 @@ def test_packaged_property_runtime_scripts_import_from_isolated_web_layout(
         "property_tour_3dvista_provenance.py",
         "property_tour_host_safety.py",
         "property_tour_panorama_provenance.py",
+        "property_tour_governed_reservation.py",
         "property_tour_runtime_paths.py",
         "property_scene_video_shared_env.py",
         "propertyquarry_playwright_runtime.py",

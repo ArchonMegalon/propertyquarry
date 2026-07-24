@@ -334,6 +334,501 @@ class MaterializeBootstrapTests(unittest.TestCase):
                 )
 
 
+class ReleaseMergeTopologyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="propertyquarry-release-topology-test-"
+        )
+        self.parent = Path(self.temporary.name)
+        os.chmod(self.parent, 0o700)
+        self.checkout_root = self.parent / "single-host-v2-release-checkouts"
+        self.checkout_root.mkdir(mode=0o700)
+        self.root_patch = mock.patch.object(
+            materialize,
+            "RUNNER_RELEASE_CHECKOUT_ROOT",
+            self.checkout_root,
+        )
+        self.root_patch.start()
+
+    def tearDown(self) -> None:
+        self.root_patch.stop()
+        self.temporary.cleanup()
+
+    @staticmethod
+    def _git(checkout: Path, *arguments: str) -> str:
+        completed = subprocess.run(
+            ["/usr/bin/git", "-C", os.fspath(checkout), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_TERMINAL_PROMPT": "0",
+                "LANG": "C",
+                "LC_ALL": "C",
+                "TZ": "UTC",
+            },
+        )
+        return completed.stdout.strip()
+
+    def _commit_all(self, checkout: Path, message: str) -> str:
+        self._git(checkout, "add", "--all")
+        self._git(checkout, "commit", "-q", "-m", message)
+        return self._git(checkout, "rev-parse", "HEAD")
+
+    def _write(self, checkout: Path, relative: str, value: str) -> None:
+        path = checkout / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value, encoding="utf-8")
+
+    def _topology(
+        self,
+        *,
+        extra_parent: bool = False,
+        merge_parent_order: tuple[str, str] | None = None,
+        merge_tree_drift: bool = False,
+        non_direct_envelope_parent: bool = False,
+        extra_gitlink: bool = False,
+        metadata_paths: tuple[str, ...] = materialize.RELEASE_METADATA_DESCENDANT_PATHS,
+    ) -> tuple[Path, dict[str, str]]:
+        staging = self.checkout_root / "staging"
+        staging.mkdir(mode=0o700)
+        self._git(staging, "init", "-q")
+        os.chmod(staging / ".git", 0o700)
+        self._git(staging, "config", "user.email", "release-topology@example.test")
+        self._git(staging, "config", "user.name", "Release Topology")
+        self._git(
+            staging,
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/ArchonMegalon/propertyquarry.git",
+        )
+
+        self._write(staging, "base.txt", "base\n")
+        base_sha = self._commit_all(staging, "base")
+        self._write(staging, "runtime.txt", "runtime\n")
+        runtime_sha = self._commit_all(staging, "runtime")
+
+        remaining_paths = list(metadata_paths)
+        if non_direct_envelope_parent:
+            first_path = remaining_paths.pop(0)
+            self._write(staging, first_path, "metadata-intermediate\n")
+            self._commit_all(staging, "metadata intermediate")
+        for relative in remaining_paths:
+            self._write(staging, relative, f"metadata:{relative}\n")
+        if extra_gitlink:
+            self._git(staging, "add", "--all")
+            self._git(
+                staging,
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                f"160000,{runtime_sha},vendor/hidden-submodule",
+            )
+            self._git(staging, "commit", "-q", "-m", "reviewed envelope")
+            envelope_sha = self._git(staging, "rev-parse", "HEAD")
+        else:
+            envelope_sha = self._commit_all(staging, "reviewed envelope")
+        envelope_tree = self._git(
+            staging,
+            "rev-parse",
+            f"{envelope_sha}^{{tree}}",
+        )
+
+        merge_tree = envelope_tree
+        if merge_tree_drift:
+            self._write(staging, "merge-resolution-drift.txt", "drift\n")
+            self._git(staging, "add", "--all")
+            merge_tree = self._git(staging, "write-tree")
+        parents = (
+            [base_sha, envelope_sha]
+            if merge_parent_order is None
+            else [
+                envelope_sha if merge_parent_order[0] == "envelope" else base_sha,
+                envelope_sha if merge_parent_order[1] == "envelope" else base_sha,
+            ]
+        )
+        arguments = ["commit-tree", merge_tree]
+        for parent_sha in parents:
+            arguments.extend(["-p", parent_sha])
+        if extra_parent:
+            arguments.extend(["-p", runtime_sha])
+        arguments.extend(["-m", "protected merge"])
+        workflow_sha = self._git(staging, *arguments)
+        self._git(staging, "checkout", "-q", "--detach", workflow_sha)
+
+        checkout = self.checkout_root / workflow_sha
+        staging.rename(checkout)
+        os.chmod(checkout, 0o700)
+        os.chmod(checkout / ".git", 0o700)
+        return checkout, {
+            "head_tree": merge_tree,
+            "merge_base_parent_commit": base_sha,
+            "reviewed_envelope_commit": envelope_sha,
+            "reviewed_envelope_tree": envelope_tree,
+            "runtime_sha": runtime_sha,
+            "workflow_sha": workflow_sha,
+        }
+
+    @staticmethod
+    def _core_evidence(topology: dict[str, str]) -> dict[str, str]:
+        return {
+            "envelope_sha": "1" * 64,
+            "final_artifact_id": "101",
+            "final_artifact_sha256": "2" * 64,
+            "github_run_attempt": "1",
+            "github_run_completed_at_epoch": "1900000000",
+            "github_run_id": "102",
+            "preflight_artifact_id": "103",
+            "preflight_artifact_sha256": "3" * 64,
+            "release_hygiene_sha256": "4" * 64,
+            "render_attestation_id": "104",
+            "render_image": (
+                "ghcr.io/archonmegalon/"
+                "propertyquarry-standalone-render-runtime@sha256:"
+                + "5" * 64
+            ),
+            "runtime_sha": topology["runtime_sha"],
+            "web_attestation_id": "105",
+            "web_image": (
+                "ghcr.io/archonmegalon/"
+                "propertyquarry-standalone-web-runtime@sha256:"
+                + "6" * 64
+            ),
+            "workflow_sha": topology["workflow_sha"],
+        }
+
+    def test_exact_protected_merge_topology_is_verified(self) -> None:
+        checkout, evidence = self._topology()
+
+        observed = materialize._verify_release_merge_topology(
+            checkout=checkout,
+            release_evidence=evidence,
+        )
+
+        self.assertEqual(observed, evidence)
+
+    def test_parent_order_and_extra_parent_are_rejected(self) -> None:
+        for case in ("receipt-order", "commit-order", "extra-parent"):
+            with self.subTest(case=case):
+                if case == "commit-order":
+                    checkout, evidence = self._topology(
+                        merge_parent_order=("envelope", "base")
+                    )
+                else:
+                    checkout, evidence = self._topology(
+                        extra_parent=case == "extra-parent"
+                    )
+                if case == "receipt-order":
+                    evidence["merge_base_parent_commit"], evidence[
+                        "reviewed_envelope_commit"
+                    ] = (
+                        evidence["reviewed_envelope_commit"],
+                        evidence["merge_base_parent_commit"],
+                    )
+                with self.assertRaisesRegex(
+                    materialize.MaterializeFailure,
+                    "release-topology-binding-invalid",
+                ):
+                    materialize._verify_release_merge_topology(
+                        checkout=checkout,
+                        release_evidence=evidence,
+                    )
+                shutil.rmtree(checkout)
+
+    def test_non_direct_runtime_parent_and_tree_drift_are_rejected(self) -> None:
+        for case in ("non-direct-parent", "tree-drift"):
+            with self.subTest(case=case):
+                checkout, evidence = self._topology(
+                    non_direct_envelope_parent=case == "non-direct-parent",
+                    merge_tree_drift=case == "tree-drift",
+                )
+                with self.assertRaisesRegex(
+                    materialize.MaterializeFailure,
+                    "release-topology-binding-invalid",
+                ):
+                    materialize._verify_release_merge_topology(
+                        checkout=checkout,
+                        release_evidence=evidence,
+                    )
+                shutil.rmtree(checkout)
+
+    def test_extra_and_missing_metadata_paths_are_rejected(self) -> None:
+        exact_paths = materialize.RELEASE_METADATA_DESCENDANT_PATHS
+        for case, paths in (
+            ("extra", (*exact_paths, "ea/app/api/routes/landing.py")),
+            ("missing", exact_paths[1:]),
+        ):
+            with self.subTest(case=case):
+                checkout, evidence = self._topology(metadata_paths=paths)
+                with self.assertRaisesRegex(
+                    materialize.MaterializeFailure,
+                    "release-topology-binding-invalid",
+                ):
+                    materialize._verify_release_merge_topology(
+                        checkout=checkout,
+                        release_evidence=evidence,
+                    )
+                shutil.rmtree(checkout)
+
+    def test_noncanonical_origin_and_checkout_identity_are_rejected(self) -> None:
+        checkout, evidence = self._topology()
+        self._git(
+            checkout,
+            "remote",
+            "set-url",
+            "origin",
+            "https://example.invalid/propertyquarry.git",
+        )
+        with self.assertRaisesRegex(
+            materialize.MaterializeFailure,
+            "release-topology-checkout-binding-invalid",
+        ):
+            materialize._verify_release_merge_topology(
+                checkout=checkout,
+                release_evidence=evidence,
+            )
+        self._git(
+            checkout,
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/ArchonMegalon/propertyquarry.git",
+        )
+        wrong_checkout = self.checkout_root / "wrong-checkout"
+        checkout.rename(wrong_checkout)
+        with self.assertRaisesRegex(
+            materialize.MaterializeFailure,
+            "release-topology-checkout-invalid",
+        ):
+            materialize._verify_release_merge_topology(
+                checkout=wrong_checkout,
+                release_evidence=evidence,
+            )
+
+    def test_replace_ref_and_dangerous_local_config_are_rejected(self) -> None:
+        for case in (
+            "replace-ref",
+            "local-config",
+            "include-path",
+            "extensions-worktree-config",
+        ):
+            with self.subTest(case=case):
+                checkout, evidence = self._topology()
+                if case == "replace-ref":
+                    self._git(
+                        checkout,
+                        "replace",
+                        evidence["workflow_sha"],
+                        evidence["merge_base_parent_commit"],
+                    )
+                    expected = "release-topology-checkout-binding-invalid"
+                elif case == "local-config":
+                    self._git(
+                        checkout,
+                        "config",
+                        "core.fsmonitor",
+                        "/bin/false",
+                    )
+                    expected = "release-topology-git-configuration-invalid"
+                elif case == "include-path":
+                    self._git(
+                        checkout,
+                        "config",
+                        "include.path",
+                        "/definitely/not/read/propertyquarry-release-config",
+                    )
+                    expected = "release-topology-git-configuration-invalid"
+                else:
+                    self._git(
+                        checkout,
+                        "config",
+                        "extensions.worktreeConfig",
+                        "true",
+                    )
+                    expected = "release-topology-git-configuration-invalid"
+                with self.assertRaisesRegex(
+                    materialize.MaterializeFailure,
+                    expected,
+                ):
+                    materialize._verify_release_merge_topology(
+                        checkout=checkout,
+                        release_evidence=evidence,
+                    )
+                shutil.rmtree(checkout)
+
+    def test_fsmonitor_sentinel_is_rejected_without_execution(self) -> None:
+        checkout, evidence = self._topology()
+        marker = self.parent / "fsmonitor-executed"
+        sentinel = self.parent / "fsmonitor-sentinel"
+        sentinel.write_text(
+            "#!/bin/sh\n/usr/bin/touch " + os.fspath(marker) + "\n",
+            encoding="ascii",
+        )
+        os.chmod(sentinel, 0o755)
+        self._git(
+            checkout,
+            "config",
+            "core.fsmonitor",
+            os.fspath(sentinel),
+        )
+
+        self.assertEqual(
+            materialize._release_topology_git_text(
+                checkout,
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ),
+            "",
+        )
+        self.assertFalse(marker.exists())
+        with self.assertRaisesRegex(
+            materialize.MaterializeFailure,
+            "release-topology-git-configuration-invalid",
+        ):
+            materialize._verify_release_merge_topology(
+                checkout=checkout,
+                release_evidence=evidence,
+            )
+
+        self.assertFalse(marker.exists())
+
+    def test_git_metadata_indirection_files_are_rejected(self) -> None:
+        for case in (
+            "common-dir",
+            "config-worktree",
+            "grafts",
+            "alternates",
+            "http-alternates",
+            "shallow",
+        ):
+            with self.subTest(case=case):
+                checkout, evidence = self._topology()
+                git_directory = checkout / ".git"
+                if case == "common-dir":
+                    path = git_directory / "commondir"
+                    raw = ".\n"
+                elif case == "config-worktree":
+                    path = git_directory / "config.worktree"
+                    raw = "[core]\n\tfsmonitor = /bin/false\n"
+                elif case == "grafts":
+                    path = git_directory / "info" / "grafts"
+                    raw = (
+                        evidence["workflow_sha"]
+                        + " "
+                        + evidence["merge_base_parent_commit"]
+                        + "\n"
+                    )
+                elif case == "alternates":
+                    path = git_directory / "objects" / "info" / "alternates"
+                    raw = os.fspath(git_directory / "objects") + "\n"
+                elif case == "http-alternates":
+                    path = (
+                        git_directory
+                        / "objects"
+                        / "info"
+                        / "http-alternates"
+                    )
+                    raw = "https://example.invalid/propertyquarry/objects\n"
+                else:
+                    path = git_directory / "shallow"
+                    raw = ""
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(raw, encoding="ascii")
+
+                with self.assertRaisesRegex(
+                    materialize.MaterializeFailure,
+                    "release-topology-checkout-invalid",
+                ):
+                    materialize._verify_release_merge_topology(
+                        checkout=checkout,
+                        release_evidence=evidence,
+                    )
+                shutil.rmtree(checkout)
+
+    def test_gitlink_delta_cannot_be_hidden_by_local_diff_config(self) -> None:
+        checkout, evidence = self._topology(extra_gitlink=True)
+        self._git(
+            checkout,
+            "config",
+            "diff.ignoreSubmodules",
+            "all",
+        )
+
+        self.assertIn(
+            "vendor/hidden-submodule",
+            materialize._release_topology_diff_paths(
+                checkout,
+                evidence["runtime_sha"],
+                evidence["reviewed_envelope_commit"],
+            ),
+        )
+        with self.assertRaisesRegex(
+            materialize.MaterializeFailure,
+            "release-topology-binding-invalid",
+        ):
+            materialize._verify_release_merge_topology(
+                checkout=checkout,
+                release_evidence=evidence,
+            )
+
+    def test_public_release_evidence_rejects_stripped_topology(self) -> None:
+        _checkout, topology = self._topology()
+        with self.assertRaisesRegex(
+            materialize.MaterializeFailure,
+            "release-evidence-shape-invalid",
+        ):
+            materialize._validate_release_evidence(
+                self._core_evidence(topology)
+            )
+
+    def test_materialize_proves_topology_then_strips_unsigned_transport_fields(
+        self,
+    ) -> None:
+        _checkout, topology = self._topology()
+        release_evidence = {
+            **self._core_evidence(topology),
+            **{
+                key: topology[key]
+                for key in materialize.RELEASE_EVIDENCE_TOPOLOGY_KEYS
+            },
+        }
+        lock_path = self.parent / "materialize.lock"
+        lock_descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        with (
+            mock.patch.object(
+                materialize,
+                "_acquire_runner_reservation_lock",
+                return_value=lock_descriptor,
+            ),
+            mock.patch.object(
+                materialize,
+                "_materialize_locked",
+                return_value={"status": "verified"},
+            ) as locked,
+        ):
+            result = materialize.materialize(
+                authority_root=os.fspath(self.parent / "authority"),
+                output=os.fspath(self.parent / "materialization"),
+                release_evidence=release_evidence,
+            )
+
+        self.assertEqual(result, {"status": "verified"})
+        accepted_evidence = locked.call_args.kwargs["release_evidence"]
+        self.assertEqual(
+            set(accepted_evidence),
+            set(materialize.RELEASE_EVIDENCE_CORE_KEYS),
+        )
+        self.assertTrue(
+            materialize.RELEASE_EVIDENCE_TOPOLOGY_KEYS.isdisjoint(
+                accepted_evidence
+            )
+        )
+
+
 class RunnerReservationBindingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(
@@ -943,7 +1438,13 @@ class RunnerReservationBindingTests(unittest.TestCase):
     def test_publish_a_crash_rejects_output_b_then_only_a_binds(self) -> None:
         reservation_raw = b'{"signed":"reservation-cross-output"}'
         self._write_active(reservation_raw)
-        evidence = self._evidence()
+        evidence = {
+            **self._evidence(),
+            "head_tree": "e" * 40,
+            "merge_base_parent_commit": "c" * 40,
+            "reviewed_envelope_commit": "d" * 40,
+            "reviewed_envelope_tree": "e" * 40,
+        }
         output_a = self.parent / "materialization-a"
         output_b = self.parent / "materialization-b"
         package_private = Ed25519PrivateKey.generate()
@@ -1071,6 +1572,24 @@ class RunnerReservationBindingTests(unittest.TestCase):
             mock.patch.object(materialize, "_build_documents", build_documents),
             mock.patch.object(
                 materialize.package, "validate_config_and_plan", return_value=None
+            ),
+            mock.patch.object(
+                materialize,
+                "_verify_release_merge_topology",
+                return_value={
+                    "head_tree": evidence["head_tree"],
+                    "merge_base_parent_commit": evidence[
+                        "merge_base_parent_commit"
+                    ],
+                    "reviewed_envelope_commit": evidence[
+                        "reviewed_envelope_commit"
+                    ],
+                    "reviewed_envelope_tree": evidence[
+                        "reviewed_envelope_tree"
+                    ],
+                    "runtime_sha": evidence["runtime_sha"],
+                    "workflow_sha": evidence["workflow_sha"],
+                },
             ),
             mock.patch.object(materialize, "_materialization_checkpoint", checkpoint),
         )

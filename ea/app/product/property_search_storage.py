@@ -1594,6 +1594,21 @@ def _property_search_run_transaction(conn: object):  # type: ignore[no-untyped-d
     return contextlib.nullcontext()
 
 
+def _require_property_search_active_transaction(
+    connection: object,
+    *,
+    code: str,
+) -> None:
+    """Require one already-open psycopg transaction for xact-scoped authority."""
+
+    if getattr(connection, "autocommit", False) is True:
+        raise ValueError(code)
+    info = getattr(connection, "info", None)
+    transaction_status = getattr(info, "transaction_status", None)
+    if str(getattr(transaction_status, "name", "") or "").upper() != "INTRANS":
+        raise ValueError(code)
+
+
 def _set_property_search_writer_contract(cursor: object) -> None:
     cursor.execute(  # type: ignore[attr-defined]
         """
@@ -1699,6 +1714,82 @@ def property_account_publication_authority(  # type: ignore[no-untyped-def]
         with _property_search_run_transaction(conn):
             with conn.cursor() as cur:
                 _set_property_search_writer_contract(cur)
+                cur.execute("SELECT property_search_assert_erasure_key()")
+                cur.execute(
+                    """
+                    SELECT pg_advisory_xact_lock(
+                        hashtextextended('property_search_erasure:' || %s, 0)
+                    )
+                    """,
+                    (principal_key,),
+                )
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM property_search_erasure_fences
+                        WHERE principal_key = %s
+                          AND (run_id = '' OR run_id = %s)
+                    )
+                    """,
+                    (principal_key, normalized_run_id),
+                )
+                row = cur.fetchone()
+                if not row or bool(row[0]):
+                    raise PropertyAccountPublicationForbiddenError(
+                        "property_account_publication_forbidden"
+                    )
+                yield conn
+
+
+@contextlib.contextmanager
+def property_account_publication_recovery_observation(  # type: ignore[no-untyped-def]
+    principal_id: object,
+    *,
+    run_id: object = "",
+):
+    """Hold an erasure-ordered repeatable read-only recovery snapshot."""
+
+    normalized_principal = str(principal_id or "").strip()
+    normalized_run_id = str(run_id or "").strip()
+    if not normalized_principal or not normalized_run_id:
+        raise ValueError(
+            "property_account_publication_recovery_identity_required"
+        )
+    database_url = _property_search_run_database_url()
+    if not database_url:
+        runtime_mode = str(
+            os.getenv("EA_RUNTIME_MODE")
+            or os.getenv("PROPERTYQUARRY_RUNTIME_MODE")
+            or os.getenv("ENVIRONMENT")
+            or ""
+        ).strip().lower()
+        if runtime_mode in {"prod", "production"}:
+            raise RuntimeError(
+                "property_account_publication_recovery_unavailable"
+            )
+        yield None
+        return
+    principal_key = _property_search_principal_key(normalized_principal)
+    if not principal_key:
+        raise ValueError("property_search_principal_key_required")
+    with _property_search_run_connect() as conn:
+        with _property_search_run_transaction(conn):
+            with conn.cursor() as cur:
+                # Deliberately the first statement in this transaction.
+                cur.execute(
+                    "SET TRANSACTION ISOLATION LEVEL "
+                    "REPEATABLE READ, READ ONLY"
+                )
+                cur.execute("SHOW transaction_read_only")
+                read_only = cur.fetchone()
+                if (
+                    not read_only
+                    or str(read_only[0]).strip().lower() not in {"on", "true"}
+                ):
+                    raise RuntimeError(
+                        "property_account_publication_recovery_not_read_only"
+                    )
                 cur.execute("SELECT property_search_assert_erasure_key()")
                 cur.execute(
                     """
@@ -1951,6 +2042,177 @@ def _compare_and_swap_property_search_run_record(
         raise
 
 
+def update_property_search_run_record_for_publication(
+    connection: object,
+    *,
+    principal_id: str,
+    run_id: str,
+    expected_record_sha256: str,
+    updated_record: dict[str, object],
+) -> dict[str, object]:
+    """CAS one run on the caller's publication-authority transaction.
+
+    This variant is intentionally connection-bound.  It lets a filesystem
+    publication and its candidate binding share the erasure lock, row lock,
+    and transaction instead of opening a second connection after publication.
+    The caller owns commit/rollback.
+    """
+
+    from app.product.property_search_tour_binding import (
+        property_search_run_record_sha256,
+    )
+
+    normalized_principal = str(principal_id or "").strip()
+    normalized_run_id = str(run_id or "").strip()
+    normalized_expected_sha256 = str(expected_record_sha256 or "").strip().lower()
+    if (
+        connection is None
+        or not normalized_principal
+        or not normalized_run_id
+        or len(normalized_expected_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in normalized_expected_sha256
+        )
+    ):
+        return {"status": "invalid_request"}
+    _require_property_search_active_transaction(
+        connection,
+        code="property_search_publication_active_transaction_required",
+    )
+    normalized_record = _property_search_run_canonicalize_record(
+        dict(updated_record or {})
+    )
+    if (
+        str(normalized_record.get("principal_id") or "").strip()
+        != normalized_principal
+        or str(normalized_record.get("run_id") or "").strip()
+        != normalized_run_id
+    ):
+        return {"status": "identity_mismatch"}
+    principal_key = _property_search_principal_key(normalized_principal)
+    if not principal_key:
+        return {"status": "identity_mismatch"}
+    write_timestamp = _now_iso()
+    normalized_record["created_at"] = (
+        str(normalized_record.get("created_at") or write_timestamp).strip()
+        or write_timestamp
+    )
+    normalized_record["updated_at"] = (
+        str(normalized_record.get("updated_at") or write_timestamp).strip()
+        or write_timestamp
+    )
+    compact_record = _compact_property_search_run_record(normalized_record)
+    packet_links = project_property_research_packet_links(normalized_record)
+    status_value = str(compact_record.get("status") or "").strip() or None
+    from psycopg.types.json import Json
+
+    try:
+        with connection.cursor() as cur:  # type: ignore[attr-defined]
+            _set_property_search_writer_contract(cur)
+            cur.execute("SELECT property_search_assert_erasure_key()")
+            cur.execute(
+                """
+                SELECT pg_advisory_xact_lock(
+                    hashtextextended('property_search_erasure:' || %s, 0)
+                )
+                """,
+                (principal_key,),
+            )
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM property_search_erasure_fences
+                    WHERE principal_key = %s
+                      AND (run_id = '' OR run_id = %s)
+                )
+                """,
+                (principal_key, normalized_run_id),
+            )
+            erasure_row = cur.fetchone()
+            if not erasure_row or bool(erasure_row[0]):
+                return {"status": "store_rejected"}
+            cur.execute(
+                """
+                SELECT payload_json
+                FROM property_search_runs
+                WHERE principal_id = %s AND run_id = %s
+                FOR UPDATE
+                """,
+                (normalized_principal, normalized_run_id),
+            )
+            locked_row = cur.fetchone()
+            if not locked_row or not isinstance(locked_row[0], dict):
+                return {"status": "not_found"}
+            locked_record = _property_search_run_canonicalize_record(
+                dict(locked_row[0] or {})
+            )
+            locked_sha256 = property_search_run_record_sha256(locked_record)
+            if not hmac.compare_digest(
+                locked_sha256,
+                normalized_expected_sha256,
+            ):
+                return {
+                    "status": "record_changed",
+                    "record_sha256": locked_sha256,
+                }
+            cur.execute(
+                """
+                UPDATE property_search_runs
+                SET principal_key = %s,
+                    payload_json = %s,
+                    status = %s,
+                    compact_json = %s,
+                    compact_schema_version = %s,
+                    delivery_pending = %s,
+                    delivery_checked_at = CASE
+                        WHEN %s THEN NULL
+                        ELSE delivery_checked_at
+                    END,
+                    updated_at = %s
+                WHERE principal_id = %s AND run_id = %s
+                RETURNING payload_json
+                """,
+                (
+                    principal_key,
+                    Json(normalized_record),
+                    status_value,
+                    Json(compact_record),
+                    _PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION,
+                    bool(compact_record.get("delivery_pending", True)),
+                    bool(compact_record.get("delivery_pending", True)),
+                    normalized_record["updated_at"],
+                    normalized_principal,
+                    normalized_run_id,
+                ),
+            )
+            persisted_row = cur.fetchone()
+            if not persisted_row or not isinstance(persisted_row[0], dict):
+                return {"status": "store_rejected"}
+            upsert_property_research_packet_links(cur, packet_links)
+            sync_property_research_packet_run_memberships(
+                cur,
+                principal_id=normalized_principal,
+                run_id=normalized_run_id,
+                links=packet_links,
+            )
+            persisted_record = _property_search_run_canonicalize_record(
+                dict(persisted_row[0] or {})
+            )
+            return {
+                "status": "applied",
+                "record": persisted_record,
+                "record_sha256": property_search_run_record_sha256(
+                    persisted_record
+                ),
+            }
+    except Exception as exc:
+        if _is_property_search_account_erased_error(exc):
+            return {"status": "store_rejected"}
+        raise
+
+
 def _store_property_search_run_compact_record(record: dict[str, object]) -> bool:
     """Refresh the bounded scheduler/UI projection without rewriting the full payload."""
     if not _property_search_run_database_url():
@@ -2028,27 +2290,195 @@ def _mark_property_search_run_delivery_checked(record: dict[str, object]) -> boo
                 return cur.fetchone() is not None
 
 
-def _load_property_search_run_record(*, run_id: str, principal_id: str) -> dict[str, object] | None:
-    if not _property_search_run_database_url():
-        return None
-    _require_property_search_run_schema()
+def load_property_search_run_record_for_publication(
+    *,
+    run_id: str,
+    principal_id: str,
+    connection: object | None = None,
+    for_update: bool = False,
+) -> dict[str, object] | None:
+    """Load one principal-owned run, optionally locking it for publication.
+
+    A row lock is durable only when ``connection`` is the caller's active
+    transaction and remains open through the publication effect.  Callers must
+    not rely on ``for_update=True`` with an internally opened connection.
+    """
+
     normalized_run_id = str(run_id or "").strip()
     normalized_principal_id = str(principal_id or "").strip()
     if not normalized_run_id or not normalized_principal_id:
         return None
-    with _property_search_run_connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT payload_json FROM property_search_runs WHERE run_id = %s AND principal_id = %s",
-                (normalized_run_id, normalized_principal_id),
+    if connection is None:
+        if for_update:
+            raise ValueError(
+                "property_search_publication_lock_connection_required"
             )
-            row = cur.fetchone()
+        if not _property_search_run_database_url():
+            return None
+        _require_property_search_run_schema()
+        with _property_search_run_connect() as conn:
+            return load_property_search_run_record_for_publication(
+                run_id=normalized_run_id,
+                principal_id=normalized_principal_id,
+                connection=conn,
+                for_update=for_update,
+            )
+    cursor_factory = getattr(connection, "cursor", None)
+    if not callable(cursor_factory):
+        return None
+    if for_update:
+        _require_property_search_active_transaction(
+            connection,
+            code="property_search_publication_active_transaction_required",
+        )
+    with cursor_factory() as cur:
+        query = (
+            "SELECT payload_json FROM property_search_runs "
+            "WHERE run_id = %s AND principal_id = %s"
+        )
+        if for_update:
+            query += " FOR UPDATE"
+        cur.execute(query, (normalized_run_id, normalized_principal_id))
+        row = cur.fetchone()
     if not row:
         return None
     return (
         _property_search_run_canonicalize_record(dict(row[0] or {}))
         if isinstance(row[0], dict)
         else None
+    )
+
+
+def load_unique_property_search_run_record_for_discovery(
+    *,
+    run_id: str,
+    connection: object | None = None,
+) -> dict[str, object] | None:
+    """Read one globally unique run without accepting caller identity."""
+
+    normalized_run_id = str(run_id or "").strip()
+    if not normalized_run_id:
+        return None
+    if connection is None:
+        if not _property_search_run_database_url():
+            return None
+        _require_property_search_run_schema()
+        with _property_search_run_connect() as conn:
+            with _property_search_run_transaction(conn):
+                # psycopg may defer BEGIN until the first statement.  Force
+                # INTRANS before the recursive xact-lock guard is evaluated.
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                return load_unique_property_search_run_record_for_discovery(
+                    run_id=normalized_run_id,
+                    connection=conn,
+                )
+    cursor_factory = getattr(connection, "cursor", None)
+    if not callable(cursor_factory):
+        return None
+    _require_property_search_active_transaction(
+        connection,
+        code="property_search_discovery_active_transaction_required",
+    )
+    from app.product.property_search_tour_binding import (
+        property_search_run_record_sha256,
+    )
+
+    def _unique_record(rows: object) -> dict[str, object] | None:
+        if (
+            not isinstance(rows, (list, tuple))
+            or len(rows) != 1
+            or not isinstance(rows[0], (list, tuple))
+            or not rows[0]
+            or not isinstance(rows[0][0], dict)
+        ):
+            return None
+        return _property_search_run_canonicalize_record(
+            dict(rows[0][0] or {})
+        )
+
+    try:
+        with cursor_factory() as cur:
+            cur.execute(
+                """
+                SELECT payload_json
+                FROM property_search_runs
+                WHERE run_id = %s
+                ORDER BY principal_id
+                LIMIT 2
+                """,
+                (normalized_run_id,),
+            )
+            observed = _unique_record(cur.fetchall())
+            if observed is None:
+                return None
+            principal_id = str(observed.get("principal_id") or "").strip()
+            principal_key = _property_search_principal_key(principal_id)
+            if (
+                not principal_id
+                or not principal_key
+                or str(observed.get("run_id") or "").strip()
+                != normalized_run_id
+            ):
+                return None
+            observed_sha256 = property_search_run_record_sha256(observed)
+            _set_property_search_writer_contract(cur)
+            cur.execute("SELECT property_search_assert_erasure_key()")
+            cur.execute(
+                """
+                SELECT pg_advisory_xact_lock(
+                    hashtextextended('property_search_erasure:' || %s, 0)
+                )
+                """,
+                (principal_key,),
+            )
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM property_search_erasure_fences
+                    WHERE principal_key = %s
+                      AND (run_id = '' OR run_id = %s)
+                )
+                """,
+                (principal_key, normalized_run_id),
+            )
+            erasure_row = cur.fetchone()
+            if not erasure_row or bool(erasure_row[0]):
+                return None
+            cur.execute(
+                """
+                SELECT payload_json
+                FROM property_search_runs
+                WHERE run_id = %s
+                ORDER BY principal_id
+                LIMIT 2
+                FOR SHARE
+                """,
+                (normalized_run_id,),
+            )
+            locked = _unique_record(cur.fetchall())
+            if (
+                locked is None
+                or str(locked.get("principal_id") or "").strip()
+                != principal_id
+                or not hmac.compare_digest(
+                    property_search_run_record_sha256(locked),
+                    observed_sha256,
+                )
+            ):
+                return None
+            return locked
+    except Exception as exc:
+        if _is_property_search_account_erased_error(exc):
+            return None
+        raise
+
+
+def _load_property_search_run_record(*, run_id: str, principal_id: str) -> dict[str, object] | None:
+    return load_property_search_run_record_for_publication(
+        run_id=run_id,
+        principal_id=principal_id,
     )
 
 

@@ -57,11 +57,16 @@ COPY scripts/import_pano2vr_export.py /app/scripts/import_pano2vr_export.py
 COPY scripts/import_krpano_walkable_scene.py /app/scripts/import_krpano_walkable_scene.py
 COPY scripts/import_property_tour_exports.py /app/scripts/import_property_tour_exports.py
 COPY --chmod=0555 scripts/install_ai_panorama_tour_bundle.py /app/scripts/install_ai_panorama_tour_bundle.py
+COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_controller.py /app/scripts/propertyquarry_prater_ai_panorama_controller.py
+COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_recovery.py /app/scripts/propertyquarry_prater_ai_panorama_recovery.py
+COPY --chmod=0444 scripts/propertyquarry_prater_governed_volume_bootstrap.py /app/scripts/propertyquarry_prater_governed_volume_bootstrap.py
+COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_closeout.py /app/scripts/propertyquarry_prater_ai_panorama_closeout.py
 COPY --chmod=0555 scripts/bind_property_search_candidate_tour.py /app/scripts/bind_property_search_candidate_tour.py
 COPY scripts/attach_provider_tour_layer.py /app/scripts/attach_provider_tour_layer.py
 COPY scripts/discover_property_tour_exports.py /app/scripts/discover_property_tour_exports.py
 COPY scripts/materialize_property_tour_export_manifest.py /app/scripts/materialize_property_tour_export_manifest.py
 COPY scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_paths.py
+COPY --chmod=0444 scripts/property_tour_governed_reservation.py /app/scripts/property_tour_governed_reservation.py
 COPY scripts/generate_property_reconstruction.py /app/scripts/generate_property_reconstruction.py
 COPY scripts/property_reconstruction_styles.py /app/scripts/property_reconstruction_styles.py
 COPY scripts/import_magicfit_walkthrough.py /app/scripts/import_magicfit_walkthrough.py
@@ -74,6 +79,13 @@ COPY vendor/three /app/vendor/three
 COPY ea/app /app/app
 COPY ea/schema /app/schema
 COPY docs/PROPERTYQUARRY_RELEASE_MANIFEST.md /app/docs/PROPERTYQUARRY_RELEASE_MANIFEST.md
+COPY --chmod=0444 docs/PROPERTYQUARRY_AI_PANORAMA_INSTALL_CONTROLLER_V1.md /app/docs/PROPERTYQUARRY_AI_PANORAMA_INSTALL_CONTROLLER_V1.md
+COPY --chmod=0555 scripts/propertyquarry_prater_ai_panorama_controller.py /usr/local/libexec/propertyquarry-prater-ai-panorama-controller-v1.py
+COPY --chmod=0555 scripts/propertyquarry_prater_ai_panorama_controller.py /usr/local/libexec/propertyquarry-prater-ai-panorama-preflight-v1.py
+COPY --chmod=0555 scripts/propertyquarry_prater_ai_panorama_controller.py /usr/local/libexec/propertyquarry-prater-ai-panorama-record-discovery-v1.py
+COPY --chmod=0555 scripts/propertyquarry_prater_ai_panorama_recovery.py /usr/local/libexec/propertyquarry-prater-ai-panorama-recovery-v1.py
+COPY --chmod=0555 scripts/propertyquarry_prater_governed_volume_bootstrap.py /usr/local/libexec/propertyquarry-prater-governed-volume-bootstrap-v1.py
+COPY --chmod=0555 scripts/propertyquarry_prater_ai_panorama_closeout.py /usr/local/libexec/propertyquarry-prater-ai-panorama-closeout-v1.py
 COPY --chmod=0555 ea/property_web_entrypoint.py /usr/local/libexec/property_web_entrypoint.py
 COPY --chmod=0555 ea/property_web_elf_validator.py /usr/local/libexec/property_web_elf_validator.py
 COPY LTDs.md /app/LTDs.md

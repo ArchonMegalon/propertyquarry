@@ -74,6 +74,14 @@ SOURCE_BINDING_KEYS = {
     "manifest_runtime_commit",
     "head_commit",
     "parent_commit",
+    "merge_commit_required",
+    "merge_base_parent_commit",
+    "merge_parent_commits",
+    "head_tree",
+    "reviewed_envelope_commit",
+    "reviewed_envelope_parent_commits",
+    "reviewed_envelope_tree",
+    "merge_tree_matches_reviewed_envelope",
     "manifest_descendant_paths",
     "manifest_metadata_only_ancestor",
     "tracked_dirty_path_count",
@@ -784,6 +792,37 @@ def validate_source_binding_receipt(
         errors.append("source_binding_workflow_sha_mismatch")
     if type(parent_sha) is not str or COMMIT_SHA_RE.fullmatch(parent_sha) is None:
         errors.append("source_binding_parent_sha_invalid")
+
+    merge_parent_commits = receipt.get("merge_parent_commits")
+    head_tree = receipt.get("head_tree")
+    protected_topology_defaults = (
+        receipt.get("merge_commit_required") is False
+        and receipt.get("merge_base_parent_commit") == ""
+        and receipt.get("reviewed_envelope_commit") == ""
+        and receipt.get("reviewed_envelope_parent_commits") == []
+        and receipt.get("reviewed_envelope_tree") == ""
+        and receipt.get("merge_tree_matches_reviewed_envelope") is False
+    )
+    if not protected_topology_defaults:
+        errors.append("source_binding_protected_topology_forbidden")
+    if (
+        type(merge_parent_commits) is not list
+        or not 1 <= len(merge_parent_commits) <= 2
+        or any(
+            type(value) is not str or COMMIT_SHA_RE.fullmatch(value) is None
+            for value in merge_parent_commits
+        )
+        or len(set(merge_parent_commits)) != len(merge_parent_commits)
+        or (
+            type(parent_sha) is str
+            and COMMIT_SHA_RE.fullmatch(parent_sha) is not None
+            and parent_sha not in merge_parent_commits
+        )
+        or workflow_sha in merge_parent_commits
+        or type(head_tree) is not str
+        or COMMIT_SHA_RE.fullmatch(head_tree) is None
+    ):
+        errors.append("source_binding_topology_invalid")
 
     descendant_paths = receipt.get("manifest_descendant_paths")
     metadata_only = receipt.get("manifest_metadata_only_ancestor")

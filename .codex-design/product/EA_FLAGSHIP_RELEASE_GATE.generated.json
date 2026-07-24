@@ -3,7 +3,7 @@
   "surface": "propertyquarry_flagship_release_control",
   "version": 2,
   "kind": "release_receipt",
-  "generated_at": "2026-07-24T04:52:57Z",
+  "generated_at": "2026-07-24T19:14:56Z",
   "generated_by": "scripts/materialize_ea_flagship_release_gate.py",
   "approved_baseline": {
     "id": "propertyquarry.release-proof.v1",
@@ -28,7 +28,7 @@
       "id": "propertyquarry.release-proof.v1",
       "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
     },
-    "code_commit": "5a91955b00351509143ca1fed70fe8b6fc501721",
+    "code_commit": "f1110c2263282c6eff01099487af78798fb6245e",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
@@ -37,13 +37,13 @@
     "required_test_sources": [
       {
         "path": "tests/test_propertyquarry_workspace_redesign.py",
-        "sha256": "2bdbf5aa50631948b329c820c466e2b79a891ba8833c7d36874bbb1ade94391b",
-        "git_blob_oid": "59601a7f0560090c6c552745fd7c8f568e15b967"
+        "sha256": "bd9112dce00665e1bbddeddd5e6351f58908094acceb5b55ebde3f389a25e669",
+        "git_blob_oid": "b85eddd8b9e3b96546cfb4d3518b3e8b656e2017"
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
-        "sha256": "e30ff36222189031684870af996245ea6713a53927a2e84834b19d2d56bbf9f3",
-        "git_blob_oid": "f3e5285e16430fc184dcd66cc470470aee4a49c2"
+        "sha256": "d474a183bb294b6dcb6f2b3ff6434d1550acbf96d673fcac0b91667b6e8137cb",
+        "git_blob_oid": "236c168d4e9847e38a367f099df2e588354a429d"
       },
       {
         "path": "tests/test_property_evidence_overlays.py",
@@ -54,8 +54,8 @@
   },
   "browser_receipt_binding": {
     "path": ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json",
-    "sha256": "d790f7e084889277171d17d1a472291ca1cd98871133de99cd4f3ad8a4a75f17",
-    "git_blob_oid": "21fafb05537961440b2981309a91b26a48cce720"
+    "sha256": "6a8f739326813331a1876121894004b5b7f735fdadd047b84ca5e64aa7e4c101",
+    "git_blob_oid": "5c36c9eda7afb3edada94615f545780b7e760fc8"
   },
   "operator_summary": "PropertyQuarry source/browser checkpoint is published and green; this does not establish global launch authority, and final live readiness is not evaluated by this receipt.",
   "truth_plane": {
@@ -307,7 +307,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "5a91955b00351509143ca1fed70fe8b6fc501721",
+    "runtime_commit_sha": "f1110c2263282c6eff01099487af78798fb6245e",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",

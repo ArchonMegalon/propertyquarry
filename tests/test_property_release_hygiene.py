@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 from scripts import check_property_release_hygiene as release_hygiene
 
 
@@ -206,6 +208,11 @@ def test_release_hygiene_receipt_reports_safe_synthetic_merge_parent(monkeypatch
     assert receipt["status"] == "pass"
     assert receipt["parent_commit"] == feature_parent_sha
     assert "parent_commits" not in receipt
+    assert receipt["merge_commit_required"] is False
+    assert receipt["merge_parent_commits"] == [
+        base_parent_sha,
+        feature_parent_sha,
+    ]
     assert set(receipt) == {
         "schema",
         "generated_at",
@@ -216,6 +223,14 @@ def test_release_hygiene_receipt_reports_safe_synthetic_merge_parent(monkeypatch
         "manifest_runtime_commit",
         "head_commit",
         "parent_commit",
+        "merge_commit_required",
+        "merge_base_parent_commit",
+        "merge_parent_commits",
+        "head_tree",
+        "reviewed_envelope_commit",
+        "reviewed_envelope_parent_commits",
+        "reviewed_envelope_tree",
+        "merge_tree_matches_reviewed_envelope",
         "manifest_descendant_paths",
         "manifest_metadata_only_ancestor",
         "tracked_dirty_path_count",
@@ -258,6 +273,201 @@ def test_manifest_release_binding_rejects_merge_parent_with_source_delta_from_ma
 
     assert accepted is False
     assert descendant_paths == ["ea/app/api/routes/landing.py"]
+
+
+def _patch_protected_merge(
+    monkeypatch,
+    *,
+    parent_shas: list[str] | None = None,
+    envelope_parent_shas: list[str] | None = None,
+    head_tree: str | None = None,
+    envelope_tree: str | None = None,
+    envelope_paths: list[str] | None = None,
+    merge_paths: list[str] | None = None,
+    base_is_ancestor: bool = True,
+    runtime_is_base_ancestor: bool = False,
+) -> tuple[str, str, str, str]:
+    runtime_sha = "a" * 40
+    head_sha = "b" * 40
+    base_sha = "c" * 40
+    envelope_sha = "d" * 40
+    tree_sha = "e" * 40
+    actual_parent_shas = (
+        [base_sha, envelope_sha] if parent_shas is None else parent_shas
+    )
+    actual_envelope_parents = (
+        [runtime_sha]
+        if envelope_parent_shas is None
+        else envelope_parent_shas
+    )
+    actual_envelope_paths = (
+        sorted(release_hygiene.RELEASE_METADATA_DESCENDANT_PATHS)
+        if envelope_paths is None
+        else envelope_paths
+    )
+    actual_merge_paths = [] if merge_paths is None else merge_paths
+    monkeypatch.setattr(
+        release_hygiene,
+        "git_commit_parent_shas",
+        lambda commit: (
+            actual_parent_shas
+            if commit == head_sha
+            else actual_envelope_parents
+            if commit == envelope_sha
+            else []
+        ),
+    )
+    monkeypatch.setattr(
+        release_hygiene,
+        "git_commit_tree_sha",
+        lambda commit: (
+            (tree_sha if head_tree is None else head_tree)
+            if commit == head_sha
+            else (tree_sha if envelope_tree is None else envelope_tree)
+            if commit == envelope_sha
+            else ""
+        ),
+    )
+    monkeypatch.setattr(
+        release_hygiene,
+        "git_commit_is_ancestor",
+        lambda ancestor, descendant: (
+            base_is_ancestor
+            if (ancestor, descendant) == (base_sha, envelope_sha)
+            else runtime_is_base_ancestor
+            if (ancestor, descendant) == (runtime_sha, base_sha)
+            else False
+        ),
+    )
+    monkeypatch.setattr(
+        release_hygiene,
+        "tree_paths_between",
+        lambda base, head: (
+            actual_envelope_paths
+            if (base, head) == (runtime_sha, envelope_sha)
+            else actual_merge_paths
+            if (base, head) == (envelope_sha, head_sha)
+            else []
+        ),
+    )
+    return runtime_sha, head_sha, base_sha, envelope_sha
+
+
+def test_protected_merge_binding_accepts_exact_reviewed_envelope(
+    monkeypatch,
+) -> None:
+    runtime_sha, head_sha, base_sha, envelope_sha = _patch_protected_merge(
+        monkeypatch
+    )
+
+    accepted, descendant_paths = release_hygiene.manifest_release_binding(
+        runtime_sha,
+        head_sha,
+        [base_sha, envelope_sha],
+        require_merge_commit=True,
+    )
+
+    assert accepted is True
+    assert descendant_paths == sorted(
+        release_hygiene.RELEASE_METADATA_DESCENDANT_PATHS
+    )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "linear",
+        "parent-order",
+        "extra-parent",
+        "non-direct-runtime-parent",
+        "tree-drift",
+        "base-not-ancestor",
+        "runtime-in-base",
+        "extra-metadata-path",
+        "missing-metadata-path",
+        "merge-delta",
+    ],
+)
+def test_protected_merge_binding_rejects_topology_tamper(
+    monkeypatch,
+    tamper: str,
+) -> None:
+    runtime_sha = "a" * 40
+    head_sha = "b" * 40
+    base_sha = "c" * 40
+    envelope_sha = "d" * 40
+    kwargs: dict[str, object] = {}
+    parent_shas = [base_sha, envelope_sha]
+    if tamper == "linear":
+        parent_shas = [envelope_sha]
+    elif tamper == "parent-order":
+        parent_shas = [envelope_sha, base_sha]
+    elif tamper == "extra-parent":
+        parent_shas = [base_sha, envelope_sha, "f" * 40]
+    elif tamper == "non-direct-runtime-parent":
+        kwargs["envelope_parent_shas"] = ["f" * 40]
+    elif tamper == "tree-drift":
+        kwargs["head_tree"] = "f" * 40
+    elif tamper == "base-not-ancestor":
+        kwargs["base_is_ancestor"] = False
+    elif tamper == "runtime-in-base":
+        kwargs["runtime_is_base_ancestor"] = True
+    elif tamper == "extra-metadata-path":
+        kwargs["envelope_paths"] = sorted(
+            [
+                *release_hygiene.RELEASE_METADATA_DESCENDANT_PATHS,
+                "ea/app/api/routes/landing.py",
+            ]
+        )
+    elif tamper == "missing-metadata-path":
+        kwargs["envelope_paths"] = sorted(
+            release_hygiene.RELEASE_METADATA_DESCENDANT_PATHS
+        )[1:]
+    elif tamper == "merge-delta":
+        kwargs["merge_paths"] = ["docs/PROPERTYQUARRY_RELEASE_MANIFEST.md"]
+    _patch_protected_merge(
+        monkeypatch,
+        parent_shas=parent_shas,
+        **kwargs,
+    )
+
+    accepted, _descendant_paths = release_hygiene.manifest_release_binding(
+        runtime_sha,
+        head_sha,
+        parent_shas,
+        require_merge_commit=True,
+    )
+
+    assert accepted is False
+
+
+def test_protected_release_receipt_carries_exact_topology(monkeypatch) -> None:
+    runtime_sha, head_sha, base_sha, envelope_sha = _patch_protected_merge(
+        monkeypatch
+    )
+    monkeypatch.setattr(
+        release_hygiene,
+        "release_manifest_runtime_sha",
+        lambda: runtime_sha,
+    )
+    monkeypatch.setattr(release_hygiene, "git_head_sha", lambda: head_sha)
+    monkeypatch.setattr(release_hygiene, "_git_status_rows", lambda: [])
+    monkeypatch.setattr(release_hygiene, "tracked_paths", lambda: [])
+
+    receipt = release_hygiene.build_release_hygiene_receipt(
+        require_merge_commit=True
+    )
+
+    assert receipt["status"] == "pass"
+    assert receipt["merge_commit_required"] is True
+    assert receipt["merge_base_parent_commit"] == base_sha
+    assert receipt["merge_parent_commits"] == [base_sha, envelope_sha]
+    assert receipt["parent_commit"] == envelope_sha
+    assert receipt["reviewed_envelope_commit"] == envelope_sha
+    assert receipt["reviewed_envelope_parent_commits"] == [runtime_sha]
+    assert receipt["head_tree"] == "e" * 40
+    assert receipt["reviewed_envelope_tree"] == "e" * 40
+    assert receipt["merge_tree_matches_reviewed_envelope"] is True
 
 
 def test_manifest_release_binding_rejects_merge_resolution_source_delta(monkeypatch) -> None:

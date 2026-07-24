@@ -29,6 +29,12 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Iterable, Iterator
 
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+for _dependency_root in (ROOT, SCRIPT_DIRECTORY):
+    if str(_dependency_root) not in sys.path:
+        sys.path.insert(0, str(_dependency_root))
+
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 try:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
@@ -36,10 +42,9 @@ except Exception:
     PlaywrightTimeoutError = RuntimeError  # type: ignore[assignment]
     sync_playwright = None  # type: ignore[assignment]
 
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from scripts.property_tour_governed_reservation import (
+    require_dynamic_tour_slug,
+)
 
 try:
     from scripts.property_tour_runtime_paths import preferred_public_tour_root, running_container_public_tour_dir
@@ -5298,6 +5303,10 @@ def _validated_tour_slug(value: object) -> str:
         or normalized.startswith(_PUBLIC_BUNDLE_STAGE_PREFIX)
     ):
         raise SystemExit("invalid_tour_slug")
+    try:
+        require_dynamic_tour_slug(normalized)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     return normalized
 
 

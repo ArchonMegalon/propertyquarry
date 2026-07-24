@@ -18,6 +18,10 @@ _REQUIRED_GOVERNANCE_REVIEWS = {
     "privacy": "approved",
     "provenance": "verified",
 }
+_ALLOWED_PREVIEW_KINDS = {
+    "rendered_diorama",
+    "illustrative_drawn_diorama",
+}
 
 
 def curated_diorama_governance_subject_sha256(
@@ -100,15 +104,15 @@ def curated_diorama_entry_is_approved(
     )
 
 
-def build_curated_diorama_preview_index(
+def build_curated_diorama_entry_index(
     payload: object,
     *,
     static_root: Path,
-) -> dict[str, str]:
+) -> dict[str, dict[str, object]]:
     if not isinstance(payload, Mapping) or payload.get("contract_name") != CURATED_DIORAMA_CONTRACT:
         return {}
     resolved_static_root = static_root.resolve()
-    index: dict[str, str] = {}
+    index: dict[str, dict[str, object]] = {}
     entries = payload.get("entries")
     if not isinstance(entries, list):
         return index
@@ -117,7 +121,17 @@ def build_curated_diorama_preview_index(
             continue
         asset_url = str(raw_entry.get("asset_url") or "").strip()
         declared_sha256 = str(raw_entry.get("asset_sha256") or "").strip().lower()
-        if raw_entry.get("preview_kind") != "rendered_diorama":
+        preview_kind = str(raw_entry.get("preview_kind") or "").strip()
+        representation = str(raw_entry.get("representation") or "").strip().lower()
+        source_basis = str(raw_entry.get("source_basis") or "").strip()
+        truth_boundary = str(raw_entry.get("truth_boundary") or "").strip()
+        if preview_kind not in _ALLOWED_PREVIEW_KINDS:
+            continue
+        if preview_kind == "illustrative_drawn_diorama" and (
+            representation != "illustrative"
+            or not source_basis
+            or not truth_boundary
+        ):
             continue
         if not asset_url.startswith("/static/property/research/") or _SHA256_PATTERN.fullmatch(declared_sha256) is None:
             continue
@@ -154,18 +168,43 @@ def build_curated_diorama_preview_index(
         listing_ids = raw_entry.get("listing_ids")
         if not isinstance(candidate_refs, list) or not isinstance(listing_ids, list):
             continue
-        entry_index: dict[str, str] = {}
+        normalized_entry = dict(raw_entry)
+        normalized_entry["asset_url"] = asset_url
+        normalized_entry["asset_sha256"] = declared_sha256
+        normalized_entry["preview_kind"] = preview_kind
+        normalized_entry["representation"] = representation
+        normalized_entry["source_basis"] = source_basis
+        normalized_entry["truth_boundary"] = truth_boundary
+        entry_index: dict[str, dict[str, object]] = {}
         for candidate_ref in candidate_refs:
             normalized = str(candidate_ref or "").strip().lower()
             if _CANDIDATE_REF_PATTERN.fullmatch(normalized):
-                entry_index[f"candidate:{normalized}"] = asset_url
+                entry_index[f"candidate:{normalized}"] = normalized_entry
         for listing_id in listing_ids:
             normalized = str(listing_id or "").strip().lower()
             if _LISTING_ID_PATTERN.fullmatch(normalized):
-                entry_index[f"listing:{normalized}"] = asset_url
+                entry_index[f"listing:{normalized}"] = normalized_entry
         if not entry_index:
             continue
-        if any(key in index and index[key] != value for key, value in entry_index.items()):
+        if any(
+            key in index
+            and str(index[key].get("asset_url") or "") != str(value.get("asset_url") or "")
+            for key, value in entry_index.items()
+        ):
             return {}
         index.update(entry_index)
     return index
+
+
+def build_curated_diorama_preview_index(
+    payload: object,
+    *,
+    static_root: Path,
+) -> dict[str, str]:
+    return {
+        lookup_key: str(entry.get("asset_url") or "").strip()
+        for lookup_key, entry in build_curated_diorama_entry_index(
+            payload,
+            static_root=static_root,
+        ).items()
+    }

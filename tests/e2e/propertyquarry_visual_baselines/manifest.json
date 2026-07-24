@@ -15,14 +15,14 @@
       "baseline": "images/public-home.desktop.png",
       "height": 820,
       "id": "public-home.desktop",
-      "sha256": "609c3a9892503a2ceb2784de9bdf377b588a2d803f6916b5d0277fcf1e15425b",
+      "sha256": "88292c014cdfe6257ba5973e258fefa4821dc37b5dd8f6e040369e78a2f3861d",
       "width": 1440
     },
     {
       "baseline": "images/public-home.mobile.png",
       "height": 932,
       "id": "public-home.mobile",
-      "sha256": "7eeeed74d6bfb56a7ccf60f481a7304649472ce728c48d976e8f536d0e5f64ae",
+      "sha256": "a664712c9482aa148796c14f50ee266619aaff2e4294366940e4e0ad106a255c",
       "width": 430
     },
     {
@@ -43,7 +43,7 @@
       "baseline": "images/search-setup.desktop.png",
       "height": 1200,
       "id": "search-setup.desktop",
-      "sha256": "710b15546978c34c227b74051213abc0c48ded7301bf979d14893521a9aa14ee",
+      "sha256": "1e7619ce615b613e31c3d2df071b2c8a207c76c25cca26b3e5e5090aec9ab0f8",
       "width": 1600
     },
     {
@@ -57,7 +57,7 @@
       "baseline": "images/results.desktop.png",
       "height": 900,
       "id": "results.desktop",
-      "sha256": "de742ad301905732e6324907592707adf984b794c51af9211cfdfae617375278",
+      "sha256": "ae09c6f8f46cdbebc6e7ea2bad3199aed2e489c5148c43ee4d727e66b90bc825",
       "width": 1440
     },
     {

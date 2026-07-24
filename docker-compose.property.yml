@@ -59,6 +59,7 @@ services:
       EA_ALLOW_LOOPBACK_NO_AUTH: "${EA_ALLOW_LOOPBACK_NO_AUTH:-0}"
       EA_ARTIFACTS_DIR: /data/artifacts
       EA_PUBLIC_TOUR_DIR: /data/public_property_tours
+      EA_GOVERNED_PUBLIC_TOUR_DIR: /data/governed_public_property_tours
       PROPERTYQUARRY_TOUR_MIN_FREE_BYTES: "${PROPERTYQUARRY_TOUR_MIN_FREE_BYTES:-10737418240}"
       PROPERTYQUARRY_TOUR_LOCK_DIR: /data/artifacts/propertyquarry-tour-locks
       PROPERTYQUARRY_TOUR_EXPORT_DROP_DIR: /data/incoming_property_tours
@@ -177,6 +178,7 @@ services:
       - propertyquarry_artifacts:/data/artifacts
       - propertyquarry_governed_render_consents:/data/governed-render-consents
       - propertyquarry_public_tours:/data/public_property_tours
+      - propertyquarry_governed_public_tours:/data/governed_public_property_tours:ro
       - propertyquarry_provider_ledger:/data/provider-ledger
     networks:
       - default
@@ -426,6 +428,7 @@ services:
       - ./state/incoming_property_tours:/data/incoming_property_tours
       - propertyquarry_artifacts:/data/artifacts
       - propertyquarry_public_tours:/data/public_property_tours
+      - propertyquarry_governed_public_tours:/data/governed_public_property_tours:ro
       - propertyquarry_provider_ledger:/data/provider-ledger
     depends_on:
       propertyquarry-db:
@@ -524,6 +527,7 @@ services:
         max-file: "3"
     volumes:
       - propertyquarry_public_tours:/data/public_property_tours
+      - propertyquarry_governed_public_tours:/data/governed_public_property_tours:ro
     networks:
       - propertyquarry_render_internal
     depends_on:
@@ -569,6 +573,8 @@ services:
 volumes:
   propertyquarry_artifacts: {}
   propertyquarry_governed_render_consents: {}
+  propertyquarry_governed_public_tours:
+    name: property_propertyquarry_governed_public_tours
   propertyquarry_pgdata: {}
   propertyquarry_public_tours: {}
   propertyquarry_provider_ledger: {}

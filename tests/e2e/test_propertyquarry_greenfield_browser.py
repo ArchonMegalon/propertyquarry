@@ -3577,10 +3577,14 @@ def test_propertyquarry_public_shared_fast_ranked_run_shows_sample_homes_with_di
         fast_rows.first.wait_for(timeout=5000)
         first_row = fast_rows.first
         expect(first_row).to_contain_text("Danube Flats demo")
-        expect(first_row.locator(".pq-fast-thumb img")).to_have_attribute(
+        first_diorama = first_row.locator(".pq-fast-thumb img")
+        expect(first_diorama).to_have_attribute(
             "src",
-            re.compile(r"(?:telegram-preview|diorama-preview|scene-01|example-shortlist-home-1)\.(?:png|jpg)"),
+            re.compile(r"(?:telegram-preview|diorama-preview|scene-01)\.(?:png|jpg)|example-shortlist-diorama-1\.webp"),
         )
+        expect(first_diorama).to_have_attribute("alt", "Illustrative diorama of Danube Flats demo")
+        assert first_diorama.evaluate("(node) => node.complete && node.naturalWidth > 0")
+        expect(first_row.locator(".pq-fast-diorama-badge")).to_have_text("Illustrative")
         expect(first_row.locator(".pq-fast-actions").get_by_role("link", name="Open property")).to_have_attribute(
             "href",
             re.compile(r"/app/example/shortlist\?candidate=danube-flats-demo"),
