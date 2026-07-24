@@ -4,14 +4,18 @@ import json
 import os
 import shlex
 import shutil
+import socket
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 import PIL
+from fastapi import HTTPException
 
+from app.api.routes import public_tours
 from app.product import property_tour_governed_reservations as reservations
 from app.product import property_tour_hosting
 from scripts import propertyquarry_prater_ai_panorama_closeout as closeout
@@ -170,6 +174,433 @@ def test_closeout_no_argument_stdout_byte_matches_immutable_marker(
     assert marker.read_bytes() == raw
 
 
+def _create_protected_closeout_target(
+    root: Path,
+    kind: str,
+) -> None:
+    target = root / reservations.GOVERNED_PRATER_SLUG
+    if kind == "partial-directory":
+        target.mkdir()
+        (target / "partial.tmp").write_bytes(b"partial")
+    elif kind == "regular-file":
+        target.write_bytes(b"partial")
+    elif kind == "symlink":
+        outside = root.parent / "closeout-symlink-target"
+        outside.write_bytes(b"outside")
+        target.symlink_to(outside)
+    elif kind == "broken-symlink":
+        target.symlink_to(root / "missing-forever")
+    elif kind == "fifo":
+        os.mkfifo(target)
+    elif kind == "socket":
+        endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            endpoint.bind(str(target))
+        finally:
+            endpoint.close()
+    else:
+        raise AssertionError(kind)
+
+
+@pytest.mark.parametrize(
+    "target_kind",
+    (
+        "partial-directory",
+        "regular-file",
+        "symlink",
+        "broken-symlink",
+        "fifo",
+        "socket",
+    ),
+)
+def test_closeout_marks_any_no_follow_protected_target_in_isolated_process(
+    tmp_path: Path,
+    target_kind: str,
+) -> None:
+    short_root: Path | None = None
+    if target_kind == "socket":
+        short_root = Path(tempfile.mkdtemp(prefix="pqc-", dir="/tmp"))
+    base = short_root if short_root is not None else tmp_path
+    governed_root = base / "governed"
+    governed_root.mkdir(mode=0o755)
+    governed_root.chmod(0o755)
+    _create_protected_closeout_target(governed_root, target_kind)
+    request_root = base / "runtime"
+    request_root.mkdir()
+    request_path = request_root / "closeout.json"
+    raw = _marker_bytes()
+    request_path.write_bytes(raw)
+    request_path.chmod(0o400)
+    repository_root = Path(__file__).resolve().parents[1]
+    code = (
+        "import os,sys;"
+        "from pathlib import Path;"
+        "sys.path.insert(0,sys.argv[1]);"
+        "from scripts import propertyquarry_prater_ai_panorama_closeout as c;"
+        "c.GOVERNED_ROOT=Path(sys.argv[2]);"
+        "c.REQUEST_PATH=Path(sys.argv[3]);"
+        "uid=os.geteuid();gid=os.getegid();"
+        "c.REQUEST_UID=uid;c.REQUEST_GID=gid;"
+        "c.ROOT_UID=uid;c.ROOT_GID=gid;"
+        "c.MARKER_UID=uid;c.MARKER_GID=gid;"
+        "os.umask(0o777);"
+        "os.write(1,c.closeout())"
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            code,
+            str(repository_root),
+            str(governed_root),
+            str(request_path),
+        ],
+        cwd=base,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr.decode(
+        "utf-8",
+        errors="replace",
+    )
+    assert completed.stdout == raw
+    assert completed.stderr == b""
+    marker = governed_root / reservations.GOVERNED_PRATER_REVOCATION_FILENAME
+    assert marker.read_bytes() == raw
+    assert os.stat(
+        governed_root / reservations.GOVERNED_PRATER_SLUG,
+        follow_symlinks=False,
+    )
+    if short_root is not None:
+        shutil.rmtree(short_root)
+
+
+def test_closeout_detects_protected_target_type_race_after_marker_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    governed_root = tmp_path / "governed"
+    governed_root.mkdir(mode=0o755)
+    governed_root.chmod(0o755)
+    target = governed_root / reservations.GOVERNED_PRATER_SLUG
+    target.mkdir()
+    request_root = tmp_path / "runtime"
+    request_root.mkdir()
+    request_path = request_root / "closeout.json"
+    raw = _marker_bytes()
+    request_path.write_bytes(raw)
+    request_path.chmod(0o400)
+    current_uid = os.geteuid()
+    current_gid = os.getegid()
+    monkeypatch.setattr(closeout, "GOVERNED_ROOT", governed_root)
+    monkeypatch.setattr(closeout, "REQUEST_PATH", request_path)
+    for name, value in (
+        ("REQUEST_UID", current_uid),
+        ("REQUEST_GID", current_gid),
+        ("ROOT_UID", current_uid),
+        ("ROOT_GID", current_gid),
+        ("MARKER_UID", current_uid),
+        ("MARKER_GID", current_gid),
+    ):
+        monkeypatch.setattr(closeout, name, value)
+    monkeypatch.setenv("EA_RUNTIME_MODE", "test")
+    monkeypatch.setenv(
+        "EA_GOVERNED_PUBLIC_TOUR_DIR",
+        str(governed_root),
+    )
+    monkeypatch.setattr(
+        public_tours,
+        "_GOVERNED_PRATER_REVOCATION_REQUIRED_UID",
+        current_uid,
+    )
+    monkeypatch.setattr(
+        public_tours,
+        "_GOVERNED_PRATER_REVOCATION_REQUIRED_GID",
+        current_gid,
+    )
+    entrypoint = _attest_source_entrypoint(monkeypatch, closeout)
+    monkeypatch.setattr(sys, "argv", [str(entrypoint)])
+    original_target_identity = closeout._governed_target_identity
+    calls = 0
+
+    def _raced_target_identity(
+        root_descriptor: int,
+    ) -> os.stat_result:
+        nonlocal calls
+        observed = original_target_identity(root_descriptor)
+        calls += 1
+        if calls == 1:
+            target.rmdir()
+            target.write_bytes(b"replaced")
+        return observed
+
+    monkeypatch.setattr(
+        closeout,
+        "_governed_target_identity",
+        _raced_target_identity,
+    )
+
+    assert closeout.main() == 1
+    assert capsysbinary.readouterr().out == b""
+    assert (
+        governed_root / reservations.GOVERNED_PRATER_REVOCATION_FILENAME
+    ).read_bytes() == raw
+
+
+@pytest.mark.parametrize(
+    "crash_stage",
+    ("marker-created", "marker-private"),
+)
+def test_closeout_resumes_pre_durable_fixed_marker_crash_states(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_stage: str,
+) -> None:
+    governed_root = tmp_path / "governed"
+    governed_root.mkdir(mode=0o755)
+    governed_root.chmod(0o755)
+    (governed_root / reservations.GOVERNED_PRATER_SLUG).write_bytes(
+        b"partial-private-state"
+    )
+    request_root = tmp_path / "runtime"
+    request_root.mkdir()
+    request_path = request_root / "closeout.json"
+    raw = _marker_bytes()
+    request_path.write_bytes(raw)
+    request_path.chmod(0o400)
+    current_uid = os.geteuid()
+    current_gid = os.getegid()
+    monkeypatch.setattr(closeout, "GOVERNED_ROOT", governed_root)
+    monkeypatch.setattr(closeout, "REQUEST_PATH", request_path)
+    for name, value in (
+        ("REQUEST_UID", current_uid),
+        ("REQUEST_GID", current_gid),
+        ("ROOT_UID", current_uid),
+        ("ROOT_GID", current_gid),
+        ("MARKER_UID", current_uid),
+        ("MARKER_GID", current_gid),
+    ):
+        monkeypatch.setattr(closeout, name, value)
+    monkeypatch.setenv("EA_RUNTIME_MODE", "test")
+    monkeypatch.setenv(
+        "EA_GOVERNED_PUBLIC_TOUR_DIR",
+        str(governed_root),
+    )
+    monkeypatch.setattr(
+        public_tours,
+        "_GOVERNED_PRATER_REVOCATION_REQUIRED_UID",
+        current_uid,
+    )
+    monkeypatch.setattr(
+        public_tours,
+        "_GOVERNED_PRATER_REVOCATION_REQUIRED_GID",
+        current_gid,
+    )
+    real_fchmod = os.fchmod
+    real_fsync = os.fsync
+    injected = False
+
+    def _fchmod_or_crash(descriptor: int, mode: int) -> None:
+        nonlocal injected
+        if crash_stage == "marker-created" and not injected:
+            injected = True
+            raise RuntimeError("injected-closeout-crash")
+        real_fchmod(descriptor, mode)
+
+    def _fsync_or_crash(descriptor: int) -> None:
+        nonlocal injected
+        details = os.fstat(descriptor)
+        if (
+            crash_stage == "marker-private"
+            and not injected
+            and stat.S_ISREG(details.st_mode)
+            and stat.S_IMODE(details.st_mode) == 0o600
+        ):
+            injected = True
+            raise RuntimeError("injected-closeout-crash")
+        real_fsync(descriptor)
+
+    old_umask = os.umask(0o777)
+    try:
+        monkeypatch.setattr(os, "fchmod", _fchmod_or_crash)
+        monkeypatch.setattr(os, "fsync", _fsync_or_crash)
+        with pytest.raises(RuntimeError, match="injected-closeout-crash"):
+            closeout.closeout()
+    finally:
+        os.umask(old_umask)
+        monkeypatch.setattr(os, "fchmod", real_fchmod)
+        monkeypatch.setattr(os, "fsync", real_fsync)
+    assert injected is True
+    marker = governed_root / reservations.GOVERNED_PRATER_REVOCATION_FILENAME
+    assert marker.exists()
+    if crash_stage == "marker-created":
+        assert stat.S_IMODE(marker.stat().st_mode) == 0
+    else:
+        assert stat.S_IMODE(marker.stat().st_mode) == 0o600
+    with pytest.raises(HTTPException) as unavailable:
+        public_tours._load_tour(reservations.GOVERNED_PRATER_SLUG)
+    assert unavailable.value.status_code == 503
+
+    marker_inode = marker.stat(follow_symlinks=False).st_ino
+    privileged_descriptor = -1
+    real_open = os.open
+    try:
+        if crash_stage == "marker-created" and os.geteuid() != 0:
+            marker.chmod(0o600)
+            privileged_descriptor = real_open(
+                marker,
+                os.O_RDWR | getattr(os, "O_CLOEXEC", 0),
+            )
+            marker.chmod(0)
+
+            def _root_equivalent_open(
+                path: object,
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                if (
+                    path == closeout.MARKER_NAME
+                    and not flags & os.O_EXCL
+                ):
+                    os.lseek(privileged_descriptor, 0, os.SEEK_SET)
+                    return os.dup(privileged_descriptor)
+                if dir_fd is None:
+                    return real_open(path, flags, mode)
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            monkeypatch.setattr(os, "open", _root_equivalent_open)
+        assert closeout.closeout() == raw
+    finally:
+        monkeypatch.setattr(os, "open", real_open)
+        if privileged_descriptor >= 0:
+            os.close(privileged_descriptor)
+    assert marker.read_bytes() == raw
+    assert stat.S_IMODE(marker.stat().st_mode) == 0o444
+    assert marker.stat(follow_symlinks=False).st_ino == marker_inode
+    with pytest.raises(HTTPException) as revoked:
+        public_tours._load_tour(reservations.GOVERNED_PRATER_SLUG)
+    assert revoked.value.status_code == 410
+
+
+@pytest.mark.parametrize(
+    ("failure_checkpoint", "failure_occurrence", "route_status"),
+    (
+        ("marker-kill-switch-durable", 1, 503),
+        ("marker-write-progress", 1, 503),
+        ("marker-write-progress", 2, 503),
+        ("marker-write-progress", 3, 503),
+        ("marker-write-progress", 4, 503),
+        ("marker-write-progress", 5, 503),
+        ("marker-write-progress", 6, 503),
+        ("marker-written", 1, 503),
+        ("marker-bytes-fsynced", 1, 503),
+        ("marker-readonly", 1, 410),
+        ("marker-final-fsynced", 1, 410),
+        ("marker-stable-reread", 1, 410),
+        ("marker-stable", 1, 410),
+    ),
+)
+def test_closeout_crash_boundaries_resume_to_one_exact_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_checkpoint: str,
+    failure_occurrence: int,
+    route_status: int,
+) -> None:
+    governed_root = tmp_path / "governed"
+    governed_root.mkdir(mode=0o755)
+    governed_root.chmod(0o755)
+    target = governed_root / reservations.GOVERNED_PRATER_SLUG
+    target.write_bytes(b"partial-private-state")
+    request_root = tmp_path / "runtime"
+    request_root.mkdir()
+    request_path = request_root / "closeout.json"
+    raw = _marker_bytes()
+    request_path.write_bytes(raw)
+    request_path.chmod(0o400)
+    current_uid = os.geteuid()
+    current_gid = os.getegid()
+    monkeypatch.setattr(closeout, "GOVERNED_ROOT", governed_root)
+    monkeypatch.setattr(closeout, "REQUEST_PATH", request_path)
+    for name, value in (
+        ("REQUEST_UID", current_uid),
+        ("REQUEST_GID", current_gid),
+        ("ROOT_UID", current_uid),
+        ("ROOT_GID", current_gid),
+        ("MARKER_UID", current_uid),
+        ("MARKER_GID", current_gid),
+    ):
+        monkeypatch.setattr(closeout, name, value)
+    monkeypatch.setenv("EA_RUNTIME_MODE", "test")
+    monkeypatch.setenv(
+        "EA_GOVERNED_PUBLIC_TOUR_DIR",
+        str(governed_root),
+    )
+    monkeypatch.setattr(
+        public_tours,
+        "_GOVERNED_PRATER_REVOCATION_REQUIRED_UID",
+        current_uid,
+    )
+    monkeypatch.setattr(
+        public_tours,
+        "_GOVERNED_PRATER_REVOCATION_REQUIRED_GID",
+        current_gid,
+    )
+    failed = False
+    checkpoint_occurrences = 0
+
+    def _fail_once(name: str) -> None:
+        nonlocal checkpoint_occurrences, failed
+        if name == failure_checkpoint:
+            checkpoint_occurrences += 1
+        if (
+            name == failure_checkpoint
+            and checkpoint_occurrences == failure_occurrence
+            and not failed
+        ):
+            failed = True
+            raise RuntimeError("injected-closeout-crash")
+
+    monkeypatch.setattr(closeout, "_checkpoint", _fail_once)
+    with pytest.raises(RuntimeError, match="injected-closeout-crash"):
+        closeout.closeout()
+    assert failed is True
+    marker = governed_root / reservations.GOVERNED_PRATER_REVOCATION_FILENAME
+    assert marker.exists()
+    with pytest.raises(HTTPException) as unavailable:
+        public_tours._load_tour(reservations.GOVERNED_PRATER_SLUG)
+    assert unavailable.value.status_code == route_status
+    assert unavailable.value.detail == (
+        "governed_tour_closeout_invalid"
+        if route_status == 503
+        else "tour_revoked"
+    )
+    marker_inode = marker.stat(follow_symlinks=False).st_ino
+
+    monkeypatch.setattr(closeout, "_checkpoint", lambda _name: None)
+    assert closeout.closeout() == raw
+    marker_details = marker.stat(follow_symlinks=False)
+    assert marker.read_bytes() == raw
+    assert stat.S_IMODE(marker_details.st_mode) == 0o444
+    assert marker_details.st_nlink == 1
+    assert marker_details.st_ino == marker_inode
+    assert set(os.listdir(governed_root)) == {
+        reservations.GOVERNED_PRATER_SLUG,
+        reservations.GOVERNED_PRATER_REVOCATION_FILENAME,
+    }
+    with pytest.raises(HTTPException) as revoked:
+        public_tours._load_tour(reservations.GOVERNED_PRATER_SLUG)
+    assert revoked.value.status_code == 410
+    assert revoked.value.detail == "tour_revoked"
+
+
 def test_closeout_rejects_unknown_inventory_and_never_rewrites_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -199,15 +630,57 @@ def test_closeout_rejects_unknown_inventory_and_never_rewrites_marker(
         ("MARKER_GID", current_gid),
     ):
         monkeypatch.setattr(closeout, name, value)
+    monkeypatch.setenv("EA_RUNTIME_MODE", "test")
+    monkeypatch.setenv(
+        "EA_GOVERNED_PUBLIC_TOUR_DIR",
+        str(governed_root),
+    )
+    monkeypatch.setattr(
+        public_tours,
+        "_GOVERNED_PRATER_REVOCATION_REQUIRED_UID",
+        current_uid,
+    )
+    monkeypatch.setattr(
+        public_tours,
+        "_GOVERNED_PRATER_REVOCATION_REQUIRED_GID",
+        current_gid,
+    )
     entrypoint = _attest_source_entrypoint(monkeypatch, closeout)
     monkeypatch.setattr(sys, "argv", [str(entrypoint)])
 
+    crashed = False
+
+    def _crash_with_unrelated_entry(name: str) -> None:
+        nonlocal crashed
+        if name == "marker-write-progress" and not crashed:
+            crashed = True
+            raise RuntimeError("injected-closeout-crash")
+
+    monkeypatch.setattr(
+        closeout,
+        "_checkpoint",
+        _crash_with_unrelated_entry,
+    )
     assert closeout.main() == 1
     assert capsysbinary.readouterr().out == b""
     marker = governed_root / reservations.GOVERNED_PRATER_REVOCATION_FILENAME
-    assert not marker.exists()
+    assert crashed is True
+    assert marker.exists()
+    with pytest.raises(HTTPException) as unavailable:
+        public_tours._load_tour(reservations.GOVERNED_PRATER_SLUG)
+    assert unavailable.value.status_code == 503
+
+    monkeypatch.setattr(closeout, "_checkpoint", lambda _name: None)
+    assert closeout.main() == 1
+    assert capsysbinary.readouterr().out == b""
+    assert marker.read_bytes() == raw
+    assert stat.S_IMODE(marker.stat().st_mode) == 0o444
+    with pytest.raises(HTTPException) as revoked:
+        public_tours._load_tour(reservations.GOVERNED_PRATER_SLUG)
+    assert revoked.value.status_code == 410
 
     (governed_root / "other-tour").rmdir()
+    marker.unlink()
     marker.write_bytes(b"{}\n")
     marker.chmod(0o444)
     before = marker.read_bytes()

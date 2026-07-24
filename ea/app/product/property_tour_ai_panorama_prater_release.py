@@ -7,26 +7,39 @@ import os
 import re
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Mapping
 
 from app.product.property_search_storage import (
+    load_property_search_run_record_for_publication,
     load_unique_property_search_run_record_for_discovery,
+    property_account_publication_recovery_observation,
 )
 from app.product.property_search_tour_binding import (
     PropertySearchTourBindingError,
     authorize_property_search_candidate_tour_install,
+    exact_property_search_candidate_tour_binding_receipt,
     property_search_run_record_sha256,
     property_search_source_url_sha256,
+)
+from app.product.property_tour_ai_panorama_admission import (
+    AiPanoramaInstallExpectedBindings,
 )
 from app.product.property_tour_ai_panorama_intake import (
     AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2,
     AiPanoramaIntakeError,
     _revalidate_ai_panorama_install_admission,
+    inspect_ai_panorama_historical_publication_target,
     install_sealed_ai_panorama_bundle,
+    prepare_ai_panorama_publication_binding,
 )
 from app.product.property_tour_ai_panorama_operation_journal import (
+    AiPanoramaHistoricalOperationObservation,
+    _finish_historical_ai_panorama_install_operation,
+    _record_consumed_without_operation_failed_clean,
     begin_ai_panorama_install_operation,
     finish_ai_panorama_install_operation,
+    load_historical_ai_panorama_install_operation,
 )
 from app.product.property_tour_governed_reservations import (
     GOVERNED_PRATER_CANDIDATE_MARKER_SHA256 as PRATER_CANDIDATE_MARKER_SHA256,
@@ -58,6 +71,12 @@ PRATER_AI_PANORAMA_RELEASE_CONTRACT = (
 )
 PRATER_PUBLICATION_RECORD_DISCOVERY_CONTRACT = (
     "propertyquarry.prater_ai_panorama_publication_record_discovery.v1"
+)
+PRATER_RECOVERY_CLASSIFICATION_SCHEMA = (
+    "propertyquarry.prater-ai-panorama-recovery-evidence.v1"
+)
+PRATER_RECOVERY_CLASSIFICATION_AUTHORITY = (
+    "propertyquarry-release-control"
 )
 PRATER_PROPERTY_URL_SHA256 = (
     "f451d904167c5b1a2b27f698ec38c18f6760fe55b79cca32c99bc986f8293d8e"
@@ -202,6 +221,84 @@ def _prater_install_request(verified: object) -> dict[str, object]:
         "expected_candidate_marker_sha256": PRATER_CANDIDATE_MARKER_SHA256,
         "expected_publication_record_sha256": str(
             getattr(verified, "expected_publication_record_sha256")
+        ),
+    }
+
+
+def _historical_prater_install_request(
+    expected: AiPanoramaInstallExpectedBindings,
+) -> dict[str, object]:
+    """Project the full signed historical binding into read-only observation."""
+
+    if type(expected) is not AiPanoramaInstallExpectedBindings:
+        _fail("ai_panorama_prater_historical_binding_invalid")
+    fixed = {
+        "search_run_id": PRATER_SEARCH_RUN_ID,
+        "candidate_ref": PRATER_CANDIDATE_REF,
+        "external_id": PRATER_EXTERNAL_ID,
+        "listing_url": PRATER_LISTING_URL,
+        "source_ref": PRATER_SOURCE_REF,
+        "provider_key": PRATER_PROVIDER_KEY,
+        "expected_slug": PRATER_SLUG,
+        "expected_source_tree_sha256": PRATER_SOURCE_TREE_SHA256,
+        "expected_tour_sha256": PRATER_TOUR_SHA256,
+        "expected_core_manifest_sha256": PRATER_CORE_MANIFEST_SHA256,
+        "expected_materialization_receipt_sha256": (
+            PRATER_MATERIALIZATION_RECEIPT_SHA256
+        ),
+        "expected_candidate_marker_sha256": (
+            PRATER_CANDIDATE_MARKER_SHA256
+        ),
+        "artifact_relpath": PRATER_ARTIFACT_RELPATH,
+        "materialization_receipt_relpath": (
+            PRATER_MATERIALIZATION_RECEIPT_RELPATH
+        ),
+    }
+    if any(
+        not hmac.compare_digest(
+            str(getattr(expected, field)),
+            value,
+        )
+        for field, value in fixed.items()
+    ):
+        _fail("ai_panorama_prater_historical_binding_invalid")
+    if (
+        expected.public_tour_root_device < 1
+        or expected.public_tour_root_inode < 1
+    ):
+        _fail("ai_panorama_prater_historical_binding_invalid")
+    return {
+        "contract": AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2,
+        "source_bundle": str(
+            PRATER_CONTROLLER_ARTIFACT_ROOT / PRATER_ARTIFACT_RELPATH
+        ),
+        "materialization_receipt_path": str(
+            PRATER_CONTROLLER_ARTIFACT_ROOT
+            / PRATER_MATERIALIZATION_RECEIPT_RELPATH
+        ),
+        "public_tour_dir": PRATER_PUBLIC_MOUNT_TARGET,
+        "public_tour_root_device": expected.public_tour_root_device,
+        "public_tour_root_inode": expected.public_tour_root_inode,
+        "principal_id": expected.owner_principal_id,
+        "search_run_id": PRATER_SEARCH_RUN_ID,
+        "candidate_ref": PRATER_CANDIDATE_REF,
+        "external_id": PRATER_EXTERNAL_ID,
+        "listing_url": PRATER_LISTING_URL,
+        "source_ref": PRATER_SOURCE_REF,
+        "provider_key": PRATER_PROVIDER_KEY,
+        "expected_slug": PRATER_SLUG,
+        "public_control_url": PRATER_PUBLIC_CONTROL_URL,
+        "expected_source_tree_sha256": PRATER_SOURCE_TREE_SHA256,
+        "expected_tour_sha256": PRATER_TOUR_SHA256,
+        "expected_core_manifest_sha256": PRATER_CORE_MANIFEST_SHA256,
+        "expected_materialization_receipt_sha256": (
+            PRATER_MATERIALIZATION_RECEIPT_SHA256
+        ),
+        "expected_candidate_marker_sha256": (
+            PRATER_CANDIDATE_MARKER_SHA256
+        ),
+        "expected_publication_record_sha256": (
+            expected.expected_publication_record_sha256
         ),
     }
 
@@ -770,6 +867,7 @@ def _operation_evidence(
     install_receipt: Mapping[str, object] | None = None,
     error_code: str = "",
     publication_outcome: str = "",
+    binding_preparation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     evidence: dict[str, object] = {
         "contract": PRATER_AI_PANORAMA_RELEASE_CONTRACT,
@@ -818,7 +916,427 @@ def _operation_evidence(
         evidence["error_code"] = error_code
     if publication_outcome:
         evidence["publication_outcome"] = publication_outcome
+    if binding_preparation is not None:
+        evidence["publication_binding_preparation"] = {
+            "status": str(binding_preparation.get("status") or ""),
+            "publication_binding_expected_before_sha256": str(
+                binding_preparation.get(
+                    "publication_binding_expected_before_sha256"
+                )
+                or ""
+            ),
+            "publication_binding_expected_after_sha256": str(
+                binding_preparation.get(
+                    "publication_binding_expected_after_sha256"
+                )
+                or ""
+            ),
+            "publication_binding_bound_at": str(
+                binding_preparation.get("publication_binding_bound_at")
+                or ""
+            ),
+            "database_mutation_performed": (
+                binding_preparation.get("database_mutation_performed")
+                is True
+            ),
+            "private_values_redacted": True,
+        }
     return evidence
+
+
+def _historical_prepared_recovery_evidence(
+    expected: AiPanoramaInstallExpectedBindings,
+    operation: AiPanoramaHistoricalOperationObservation,
+) -> tuple[dict[str, object], dict[str, object]]:
+    evidence = operation.prepared_evidence
+    required = {
+        "contract",
+        "phase",
+        "slug",
+        "listing_url_sha256",
+        "source_tree_sha256",
+        "tour_sha256",
+        "core_manifest_sha256",
+        "materialization_receipt_sha256",
+        "candidate_marker_sha256",
+        "publication_record_sha256",
+        "volume_profile_sha256",
+        "public_tour_volume_name",
+        "public_tour_mount_target",
+        "target_manifest",
+        "publication_binding_preparation",
+        "admission_recovery_binding",
+        "private_values_redacted",
+    }
+    if (
+        type(evidence) is not dict
+        or set(evidence) != required
+        or evidence.get("contract") != PRATER_AI_PANORAMA_RELEASE_CONTRACT
+        or evidence.get("phase") != "prepared"
+        or evidence.get("slug") != PRATER_SLUG
+        or evidence.get("listing_url_sha256")
+        != PRATER_PROPERTY_URL_SHA256
+        or evidence.get("source_tree_sha256") != PRATER_SOURCE_TREE_SHA256
+        or evidence.get("tour_sha256") != PRATER_TOUR_SHA256
+        or evidence.get("core_manifest_sha256")
+        != PRATER_CORE_MANIFEST_SHA256
+        or evidence.get("materialization_receipt_sha256")
+        != PRATER_MATERIALIZATION_RECEIPT_SHA256
+        or evidence.get("candidate_marker_sha256")
+        != PRATER_CANDIDATE_MARKER_SHA256
+        or evidence.get("publication_record_sha256")
+        != expected.expected_publication_record_sha256
+        or evidence.get("volume_profile_sha256")
+        != expected.volume_profile_sha256
+        or evidence.get("public_tour_volume_name")
+        != PRATER_PUBLIC_VOLUME_NAME
+        or evidence.get("public_tour_mount_target")
+        != PRATER_PUBLIC_MOUNT_TARGET
+        or evidence.get("private_values_redacted") is not True
+    ):
+        _fail("ai_panorama_prater_recovery_evidence_invalid")
+    historical = operation.historical_consumption
+    if evidence.get("admission_recovery_binding") != {
+        "ledger_instance_id": historical.ledger_instance_id,
+        "ledger_sequence": historical.ledger_sequence,
+        "ledger_entry_sha256": historical.ledger_entry_sha256,
+    }:
+        _fail("ai_panorama_prater_recovery_evidence_invalid")
+    baseline = evidence.get("target_manifest")
+    preparation = evidence.get("publication_binding_preparation")
+    if (
+        type(baseline) is not dict
+        or baseline.get("reserved_entry_count") != 0
+        or baseline.get("state") not in {"absent", "present"}
+        or type(preparation) is not dict
+        or set(preparation)
+        != {
+            "status",
+            "publication_binding_expected_before_sha256",
+            "publication_binding_expected_after_sha256",
+            "publication_binding_bound_at",
+            "database_mutation_performed",
+            "private_values_redacted",
+        }
+        or preparation.get("status")
+        not in {"change-required", "already-bound"}
+        or preparation.get("publication_binding_expected_before_sha256")
+        != expected.expected_publication_record_sha256
+        or preparation.get("database_mutation_performed") is not False
+        or preparation.get("private_values_redacted") is not True
+    ):
+        _fail("ai_panorama_prater_recovery_evidence_invalid")
+    before = str(
+        preparation["publication_binding_expected_before_sha256"]
+    )
+    after = str(preparation["publication_binding_expected_after_sha256"])
+    changed = not hmac.compare_digest(before, after)
+    if (
+        len(after) != 64
+        or any(character not in "0123456789abcdef" for character in after)
+        or (preparation["status"] == "change-required") != changed
+        or not str(preparation["publication_binding_bound_at"]).strip()
+    ):
+        _fail("ai_panorama_prater_recovery_evidence_invalid")
+    return dict(baseline), dict(preparation)
+
+
+def _recovery_terminal_evidence(
+    *,
+    operation: AiPanoramaHistoricalOperationObservation,
+    classification: str,
+    event: str,
+    classification_basis: str,
+    observed_database_record_sha256: str,
+    target_manifest: Mapping[str, object],
+    target_identity: Mapping[str, object],
+    observed_publication_binding_exact: bool,
+    expected_before_sha256: str,
+    expected_after_sha256: str,
+    plan_status: str,
+) -> dict[str, object]:
+    manifest = dict(target_manifest)
+    manifest_sha256 = hashlib.sha256(
+        json.dumps(
+            manifest,
+            ensure_ascii=True,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+    ).hexdigest()
+    historical = operation.historical_consumption
+    return {
+        "schema": PRATER_RECOVERY_CLASSIFICATION_SCHEMA,
+        "version": 1,
+        "authority": PRATER_RECOVERY_CLASSIFICATION_AUTHORITY,
+        "phase": event,
+        "classification": classification,
+        "classification_basis": classification_basis,
+        "prepared_entry_sha256": (
+            operation.prepared_entry_sha256 or "genesis"
+        ),
+        "prepared_evidence_sha256": (
+            operation.prepared_evidence_sha256 or "genesis"
+        ),
+        "observed_target_manifest": manifest,
+        "observed_target_manifest_sha256": manifest_sha256,
+        "observed_target_identity": dict(target_identity),
+        "observed_database_record_sha256": (
+            observed_database_record_sha256
+        ),
+        "observed_publication_binding_exact": (
+            observed_publication_binding_exact
+        ),
+        "publication_binding_expected_before_sha256": (
+            expected_before_sha256
+        ),
+        "publication_binding_expected_after_sha256": (
+            expected_after_sha256
+        ),
+        "publication_binding_plan_status": plan_status,
+        "historical_consumption_binding": {
+            "ledger_instance_id": historical.ledger_instance_id,
+            "ledger_sequence": historical.ledger_sequence,
+            "ledger_entry_sha256": historical.ledger_entry_sha256,
+        },
+        "database_mutation_performed": False,
+        "public_target_mutation_performed": False,
+        "private_values_redacted": True,
+    }
+
+
+def _existing_historical_terminal_projection(
+    operation: AiPanoramaHistoricalOperationObservation,
+) -> dict[str, object]:
+    event = operation.terminal_event
+    classification = (
+        "failed-clean" if event == "consumed-failed-clean" else event
+    )
+    if classification not in {
+        "committed",
+        "failed-clean",
+        "rolled-back",
+        "recovery-required",
+    }:
+        _fail("ai_panorama_prater_recovery_terminal_invalid")
+    evidence = operation.terminal_evidence
+    if evidence.get("schema") == PRATER_RECOVERY_CLASSIFICATION_SCHEMA:
+        if (
+            evidence.get("classification") != classification
+            or evidence.get("phase") != event
+            or evidence.get("database_mutation_performed") is not False
+            or evidence.get("public_target_mutation_performed") is not False
+            or evidence.get("private_values_redacted") is not True
+        ):
+            _fail("ai_panorama_prater_recovery_terminal_invalid")
+    elif (
+        evidence.get("contract") != PRATER_AI_PANORAMA_RELEASE_CONTRACT
+        or evidence.get("phase") != event
+        or evidence.get("private_values_redacted") is not True
+    ):
+        _fail("ai_panorama_prater_recovery_terminal_invalid")
+    return {
+        "classification": classification,
+        "event": event,
+        "operation_id": operation.operation_id,
+        "operation_terminal_entry_sha256": (
+            operation.terminal_entry_sha256
+        ),
+        "operation_terminal_evidence_sha256": (
+            operation.terminal_evidence_sha256
+        ),
+        "permit_sha256": operation.permit_sha256,
+        "request_id_sha256": operation.request_id_sha256,
+        "database_mutation_performed": False,
+        "public_target_mutation_performed": False,
+        "private_values_redacted": True,
+    }
+
+
+def recover_prater_ai_panorama_historical_operation(
+    permit_relpath: str,
+    expected: AiPanoramaInstallExpectedBindings,
+) -> dict[str, object]:
+    """Classify and terminalize one historical operation without writes to product state."""
+
+    request = _historical_prater_install_request(expected)
+    operation = load_historical_ai_panorama_install_operation(
+        permit_relpath,
+        expected,
+    )
+    if operation.state == "terminal":
+        return _existing_historical_terminal_projection(operation)
+
+    holder = SimpleNamespace(
+        public_tour_dir=Path(str(request["public_tour_dir"])),
+        public_tour_root_device=expected.public_tour_root_device,
+        public_tour_root_inode=expected.public_tour_root_inode,
+    )
+    with property_account_publication_recovery_observation(
+        expected.owner_principal_id,
+        run_id=PRATER_SEARCH_RUN_ID,
+    ) as connection:
+        record = load_property_search_run_record_for_publication(
+            run_id=PRATER_SEARCH_RUN_ID,
+            principal_id=expected.owner_principal_id,
+            connection=connection,
+            for_update=False,
+        )
+        if not isinstance(record, Mapping):
+            _fail("ai_panorama_prater_recovery_record_unavailable")
+        observed_database_sha256 = property_search_run_record_sha256(
+            record
+        )
+        target_manifest = _target_manifest(holder)
+        target_identity = inspect_ai_panorama_historical_publication_target(
+            request,
+            historical_consumption=operation.historical_consumption,
+        )
+        reserved_clean = target_manifest.get("reserved_entry_count") == 0
+        try:
+            exact_binding = exact_property_search_candidate_tour_binding_receipt(
+                record,
+                principal_id=expected.owner_principal_id,
+                run_id=PRATER_SEARCH_RUN_ID,
+                candidate_ref=PRATER_CANDIDATE_REF,
+                expected_listing_id=PRATER_EXTERNAL_ID,
+                generated_reconstruction_url=(
+                    PRATER_PUBLIC_CONTROL_URL
+                ),
+                reconstruction_kind="ai_panorama_360",
+                disclosure="",
+            )
+        except PropertySearchTourBindingError:
+            exact_binding = None
+
+        if operation.state == "consumed-no-operation":
+            clean = (
+                hmac.compare_digest(
+                    observed_database_sha256,
+                    expected.expected_publication_record_sha256,
+                )
+                and reserved_clean
+                and target_identity.get("state") in {"absent", "exact"}
+            )
+            if not clean:
+                _fail("ai_panorama_prater_recovery_required")
+            event = "consumed-failed-clean"
+            classification = "failed-clean"
+            evidence = _recovery_terminal_evidence(
+                operation=operation,
+                classification=classification,
+                event=event,
+                classification_basis=(
+                    "consumed-before-operation-preparation"
+                ),
+                observed_database_record_sha256=(
+                    observed_database_sha256
+                ),
+                target_manifest=target_manifest,
+                target_identity=target_identity,
+                observed_publication_binding_exact=(
+                    exact_binding is not None
+                ),
+                expected_before_sha256=(
+                    expected.expected_publication_record_sha256
+                ),
+                expected_after_sha256=(
+                    expected.expected_publication_record_sha256
+                ),
+                plan_status="not-prepared",
+            )
+            terminal_entry_sha256 = (
+                _record_consumed_without_operation_failed_clean(
+                    permit_relpath,
+                    expected,
+                    operation,
+                    evidence=evidence,
+                )
+            )
+        else:
+            baseline, preparation = _historical_prepared_recovery_evidence(
+                expected,
+                operation,
+            )
+            before = str(
+                preparation[
+                    "publication_binding_expected_before_sha256"
+                ]
+            )
+            after = str(
+                preparation[
+                    "publication_binding_expected_after_sha256"
+                ]
+            )
+            committed = (
+                hmac.compare_digest(observed_database_sha256, after)
+                and target_manifest.get("state") == "present"
+                and target_identity.get("state") == "exact"
+                and reserved_clean
+                and exact_binding is not None
+            )
+            failed_clean = (
+                hmac.compare_digest(observed_database_sha256, before)
+                and target_manifest == baseline
+                and reserved_clean
+            )
+            if committed:
+                classification = "committed"
+                basis = "prepared-after-binding-and-exact-target"
+            elif failed_clean:
+                classification = "failed-clean"
+                basis = "prepared-before-binding-and-baseline-target"
+            else:
+                classification = "recovery-required"
+                basis = "prepared-observation-contradiction"
+            event = classification
+            evidence = _recovery_terminal_evidence(
+                operation=operation,
+                classification=classification,
+                event=event,
+                classification_basis=basis,
+                observed_database_record_sha256=(
+                    observed_database_sha256
+                ),
+                target_manifest=target_manifest,
+                target_identity=target_identity,
+                observed_publication_binding_exact=(
+                    exact_binding is not None
+                ),
+                expected_before_sha256=before,
+                expected_after_sha256=after,
+                plan_status=str(preparation["status"]),
+            )
+            terminal_entry_sha256 = (
+                _finish_historical_ai_panorama_install_operation(
+                    permit_relpath,
+                    expected,
+                    operation,
+                    event=event,
+                    evidence=evidence,
+                )
+            )
+    return {
+        "classification": classification,
+        "event": event,
+        "operation_id": operation.operation_id,
+        "operation_terminal_entry_sha256": terminal_entry_sha256,
+        "operation_terminal_evidence_sha256": hashlib.sha256(
+            json.dumps(
+                evidence,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "permit_sha256": operation.permit_sha256,
+        "request_id_sha256": operation.request_id_sha256,
+        "database_mutation_performed": False,
+        "public_target_mutation_performed": False,
+        "private_values_redacted": True,
+    }
 
 
 def run_prater_ai_panorama_artifact_preflight(
@@ -883,6 +1401,30 @@ def run_prater_ai_panorama_release(
         pre_target_manifest = _target_manifest(verified)
         if pre_target_manifest.get("reserved_entry_count") != 0:
             _fail("ai_panorama_prater_recovery_required")
+        binding_preparation = prepare_ai_panorama_publication_binding(
+            request,
+            publication_admission=admission,
+        )
+        request.update(
+            {
+                "publication_binding_expected_before_sha256": (
+                    binding_preparation[
+                        "publication_binding_expected_before_sha256"
+                    ]
+                ),
+                "publication_binding_expected_after_sha256": (
+                    binding_preparation[
+                        "publication_binding_expected_after_sha256"
+                    ]
+                ),
+                "publication_binding_bound_at": binding_preparation[
+                    "publication_binding_bound_at"
+                ],
+                "publication_binding_expected_status": (
+                    binding_preparation["status"]
+                ),
+            }
+        )
         try:
             operation = begin_ai_panorama_install_operation(
                 verified,
@@ -890,6 +1432,7 @@ def run_prater_ai_panorama_release(
                     verified,
                     phase="prepared",
                     target_manifest=pre_target_manifest,
+                    binding_preparation=binding_preparation,
                 ),
             )
         except Exception as exc:
@@ -929,8 +1472,7 @@ def run_prater_ai_panorama_release(
                     and unchanged
                     and bool(getattr(exc, "rollback_performed", False))
                     else "failed-clean"
-                    if publication_outcome in {"uncommitted", "unknown"}
-                    and unchanged
+                    if publication_outcome == "uncommitted" and unchanged
                     else "recovery-required"
                 )
                 finish_ai_panorama_install_operation(
@@ -1081,6 +1623,7 @@ __all__ = [
     "PRATER_SOURCE_TREE_SHA256",
     "PRATER_TOUR_SHA256",
     "discover_prater_ai_panorama_publication_record",
+    "recover_prater_ai_panorama_historical_operation",
     "run_prater_ai_panorama_artifact_preflight",
     "run_prater_ai_panorama_release",
 ]

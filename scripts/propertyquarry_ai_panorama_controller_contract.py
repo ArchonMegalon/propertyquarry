@@ -38,6 +38,7 @@ SOURCE_RELPATHS = (
     "scripts/propertyquarry_ai_panorama_controller_contract.py",
     "scripts/propertyquarry_prater_ai_panorama_closeout.py",
     "scripts/propertyquarry_prater_ai_panorama_controller.py",
+    "scripts/propertyquarry_prater_ai_panorama_recovery.py",
     "scripts/propertyquarry_prater_governed_volume_bootstrap.py",
     "scripts/property_tour_governed_reservation.py",
     "scripts/attach_provider_tour_layer.py",
@@ -238,6 +239,121 @@ def build_info() -> dict[str, object]:
                 "operation-journal.v1.lock",
             ],
         },
+        "permit_leaf_contract": {
+            "schema": "propertyquarry.ai-panorama-install-permit.v2",
+            "relative_path_pattern": (
+                "prater-ai-panorama-install-"
+                "<32-lowercase-hex-request-id>.v2.json"
+            ),
+            "file_mode": STATE_FILE_MODE,
+            "creation": "exclusive-file-fsync-directory-fsync",
+            "overwrite": "forbidden",
+            "deletion": "forbidden",
+            "minimum_retention_seconds": 24 * 60 * 60,
+            "request_selector": "prater-release-request.v2.json",
+            "request_schema": (
+                "propertyquarry.prater-ai-panorama-release-request.v2"
+            ),
+        },
+        "terminal_receipt_publication": {
+            "schema": (
+                "propertyquarry.prater-ai-panorama-terminal-receipt.v1"
+            ),
+            "relative_path_pattern": (
+                "terminal-<32-lowercase-hex-request-id>.v1.json"
+            ),
+            "temporary_inode": "linux-o-tmpfile-unnamed",
+            "publication": "linkat-no-replace",
+            "named_temporary_paths": False,
+            "pre_link_crash_residue": "none",
+            "post_link_nlink": 1,
+            "file_mode": STATE_FILE_MODE,
+            "durability": "file-fsync-link-parent-fsync",
+            "validation": (
+                "exact-path-bytes-inode-mode-uid-device-mount"
+            ),
+        },
+        "retry_contract": {
+            "attempt_sequence_authority": "native-signed-journal",
+            "attempt_sequence_field": "ai_panorama_attempt_sequence",
+            "attempt_sequence_minimum": 1,
+            "attempt_sequence_maximum": 32,
+            "attempt_sequence_rule": (
+                "one-plus-prior-attempts-for-same-release-receipt"
+            ),
+            "maximum_attempts_per_release_receipt": 32,
+            "retry_predecessor_field": (
+                "ai_panorama_retry_of_terminal_receipt_digest"
+            ),
+            "retry_predecessor": (
+                "immediately-previous-global-install-terminal-"
+                "receipt-or-genesis"
+            ),
+            "genesis_allowed_only_if": (
+                "no-prior-global-install-terminal"
+            ),
+            "terminal_receipt_format": "sha256:<64-lowercase-hex>",
+            "new_release_receipt": (
+                "sequence-may-reset-to-1-but-global-predecessor-"
+                "link-remains"
+            ),
+            "at_cap": (
+                "new-reviewed-core-release-receipt-required-no-rollover"
+            ),
+            "python_request_or_permit_fields_added": False,
+        },
+        "historical_recovery_contract": {
+            "entrypoint": (
+                "/usr/local/libexec/"
+                "propertyquarry-prater-ai-panorama-recovery-v1.py"
+            ),
+            "arguments": "forbidden",
+            "authority": "classification-only-no-install-authority",
+            "wall_clock_cutoff": "none",
+            "key_validation_time": "permit-issued-at",
+            "archive_authority": "native-signed-journal",
+            "archive_binding": (
+                "exact-canonical-bytes-and-sha256-per-attempt"
+            ),
+            "archive_selection": (
+                "request-id-and-permit-sha256-from-signed-journal"
+            ),
+            "caller_selected_archive": False,
+            "current_context_substitution": "forbidden",
+            "mount_mode": "read-only",
+            "fixed_mounts": {
+                "trust_assertion": (
+                    "/run/propertyquarry-release-control/"
+                    "ai-panorama-install/"
+                    "ai-panorama-install-trust-assertion.v1.json"
+                ),
+                "volume_profile": (
+                    "/run/propertyquarry-release-control/"
+                    "ai-panorama-install/"
+                    "public-tour-volume-profile.v2.json"
+                ),
+                "compose_plan": (
+                    "/run/propertyquarry-release-control/"
+                    "ai-panorama-install/"
+                    "public-tour-compose-plan.v1.json"
+                ),
+                "keyring": (
+                    "/etc/propertyquarry/release-control/"
+                    "ai-panorama-install-keyring.v1.json"
+                ),
+            },
+            "required_archive_digests": [
+                "trust_assertion_sha256",
+                "volume_profile_sha256",
+                "compose_plan_sha256",
+                "keyring_sha256",
+            ],
+            "mutation": {
+                "database": False,
+                "public_target": False,
+                "permit_consumption": False,
+            },
+        },
         "required_external_controls": [
             "independently-built-and-signed-controller-package",
             "root-owned-digest-bound-installed-file-manifest",
@@ -246,6 +362,10 @@ def build_info() -> dict[str, object]:
             "fixed-root-public-volume-profile",
             "fixed-root-consumption-ledger-and-tombstones",
             "fixed-root-operation-journal",
+            "append-only-request-derived-permit-leaves",
+            "journal-bound-exclusive-ephemeral-request-projections",
+            "signed-retry-predecessor-and-eligibility-chain",
+            "signed-journal-bound-immutable-historical-context-archive",
             "separately-fenced-root-controller-process",
         ],
     }

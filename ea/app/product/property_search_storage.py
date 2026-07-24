@@ -1742,6 +1742,82 @@ def property_account_publication_authority(  # type: ignore[no-untyped-def]
                 yield conn
 
 
+@contextlib.contextmanager
+def property_account_publication_recovery_observation(  # type: ignore[no-untyped-def]
+    principal_id: object,
+    *,
+    run_id: object = "",
+):
+    """Hold an erasure-ordered repeatable read-only recovery snapshot."""
+
+    normalized_principal = str(principal_id or "").strip()
+    normalized_run_id = str(run_id or "").strip()
+    if not normalized_principal or not normalized_run_id:
+        raise ValueError(
+            "property_account_publication_recovery_identity_required"
+        )
+    database_url = _property_search_run_database_url()
+    if not database_url:
+        runtime_mode = str(
+            os.getenv("EA_RUNTIME_MODE")
+            or os.getenv("PROPERTYQUARRY_RUNTIME_MODE")
+            or os.getenv("ENVIRONMENT")
+            or ""
+        ).strip().lower()
+        if runtime_mode in {"prod", "production"}:
+            raise RuntimeError(
+                "property_account_publication_recovery_unavailable"
+            )
+        yield None
+        return
+    principal_key = _property_search_principal_key(normalized_principal)
+    if not principal_key:
+        raise ValueError("property_search_principal_key_required")
+    with _property_search_run_connect() as conn:
+        with _property_search_run_transaction(conn):
+            with conn.cursor() as cur:
+                # Deliberately the first statement in this transaction.
+                cur.execute(
+                    "SET TRANSACTION ISOLATION LEVEL "
+                    "REPEATABLE READ, READ ONLY"
+                )
+                cur.execute("SHOW transaction_read_only")
+                read_only = cur.fetchone()
+                if (
+                    not read_only
+                    or str(read_only[0]).strip().lower() not in {"on", "true"}
+                ):
+                    raise RuntimeError(
+                        "property_account_publication_recovery_not_read_only"
+                    )
+                cur.execute("SELECT property_search_assert_erasure_key()")
+                cur.execute(
+                    """
+                    SELECT pg_advisory_xact_lock(
+                        hashtextextended('property_search_erasure:' || %s, 0)
+                    )
+                    """,
+                    (principal_key,),
+                )
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM property_search_erasure_fences
+                        WHERE principal_key = %s
+                          AND (run_id = '' OR run_id = %s)
+                    )
+                    """,
+                    (principal_key, normalized_run_id),
+                )
+                row = cur.fetchone()
+                if not row or bool(row[0]):
+                    raise PropertyAccountPublicationForbiddenError(
+                        "property_account_publication_forbidden"
+                    )
+                yield conn
+
+
 def _store_property_search_run_record(record: dict[str, object]) -> bool:
     if not _property_search_run_database_url():
         return True

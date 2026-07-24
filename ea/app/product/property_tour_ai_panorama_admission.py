@@ -49,6 +49,8 @@ PERMIT_ISSUER = "propertyquarry-release-control"
 PERMIT_OPERATION = "ai-panorama-install"
 PERMIT_KEY_USAGE = "propertyquarry.ai-panorama-install-permit.signing.v1"
 SIGNATURE_DOMAIN = b"propertyquarry.ai-panorama-install-permit.signature.v2\0"
+PERMIT_RELPATH_PREFIX = "prater-ai-panorama-install-"
+PERMIT_RELPATH_SUFFIX = ".v2.json"
 LEDGER_SCHEMA = "propertyquarry.ai-panorama-install-consumption-ledger.v2"
 LEDGER_AUTHORITY = "propertyquarry-release-control"
 TOMBSTONE_SCHEMA = "propertyquarry.ai-panorama-install-tombstone.v1"
@@ -56,6 +58,9 @@ TRUST_ASSERTION_SCHEMA = "propertyquarry.ai-panorama-install-trust-assertion.v1"
 VOLUME_PROFILE_SCHEMA = "propertyquarry.public-tour-volume-profile.v2"
 COMPOSE_PLAN_SCHEMA = "propertyquarry.public-tour-compose-plan.v1"
 KEYRING_SCHEMA = "propertyquarry.ai-panorama-install-keyring.v1"
+PERMIT_FILE_IDENTITY_SCHEMA = (
+    "propertyquarry.ai-panorama-install-permit-file-identity.v1"
+)
 CANONICAL_PUBLIC_TOUR_SETTING = "EA_GOVERNED_PUBLIC_TOUR_DIR"
 CANONICAL_PUBLIC_TOUR_STORAGE_KIND = "docker-named-volume"
 CANONICAL_PUBLIC_TOUR_VOLUME_ID = (
@@ -303,6 +308,7 @@ class VerifiedAiPanoramaInstallAdmission:
     nonce_consumed: bool
     _permit_relpath: str
     _permit_file_identity: tuple[int, ...]
+    _permit_file_mount_id: int
     _source_bundle_identity: tuple[int, ...]
     _candidate_marker_identity: tuple[int, ...]
     _materialization_receipt_identity: tuple[int, ...]
@@ -328,6 +334,7 @@ class VerifiedAiPanoramaInstallAdmission:
 class _StableFile:
     data: bytes
     identity: tuple[int, ...]
+    mount_id: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +409,23 @@ class VerifiedAiPanoramaInstallRecoveryEvidence:
     ledger_entry_sha256: str
     consumed_at: str
     recovery_expires_at: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class VerifiedAiPanoramaHistoricalConsumptionProof:
+    """Non-expiring, non-authorizing proof of one durable consumption."""
+
+    permit_sha256: str
+    request_id_sha256: str
+    nonce_sha256: str
+    context_sha256: str
+    signed_preimage_sha256: str
+    trust_assertion_sha256: str
+    ledger_instance_id: str
+    ledger_sequence: int
+    ledger_entry_sha256: str
+    consumed_at: str
+    execution_lease_expires_at: str
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -494,6 +518,17 @@ def _safe_relpath(
     ):
         _fail(code)
     return text
+
+
+def ai_panorama_install_permit_relpath(request_id: str) -> str:
+    """Return the sole permit leaf authorized for one controller attempt."""
+
+    if (
+        type(request_id) is not str
+        or _REQUEST_ID_RE.fullmatch(request_id) is None
+    ):
+        _fail("ai_panorama_request_id_invalid")
+    return f"{PERMIT_RELPATH_PREFIX}{request_id}{PERMIT_RELPATH_SUFFIX}"
 
 
 def _https_url(value: Any, code: str) -> str:
@@ -629,6 +664,137 @@ def _file_identity(details: os.stat_result) -> tuple[int, ...]:
         int(details.st_size),
         int(details.st_mtime_ns),
         int(details.st_ctime_ns),
+    )
+
+
+def _validated_permit_file_identity(
+    value: object,
+    *,
+    code: str,
+) -> dict[str, Any]:
+    if type(value) is not dict:
+        _fail(code)
+    fields = {
+        "schema",
+        "version",
+        "permit_relpath",
+        "permit_relpath_sha256",
+        "permit_sha256",
+        "device",
+        "inode",
+        "mount_id",
+        "mode",
+        "uid",
+        "gid",
+        "nlink",
+        "size_bytes",
+        "mtime_ns",
+        "ctime_ns",
+        "identity_sha256",
+    }
+    if (
+        set(value) != fields
+        or value.get("schema") != PERMIT_FILE_IDENTITY_SCHEMA
+        or type(value.get("version")) is not int
+        or value["version"] != 1
+    ):
+        _fail(code)
+    relpath = _safe_relpath(
+        value.get("permit_relpath"),
+        code,
+    )
+    request_id = (
+        relpath[
+            len(PERMIT_RELPATH_PREFIX) : -len(PERMIT_RELPATH_SUFFIX)
+        ]
+        if relpath.startswith(PERMIT_RELPATH_PREFIX)
+        and relpath.endswith(PERMIT_RELPATH_SUFFIX)
+        else ""
+    )
+    if (
+        _REQUEST_ID_RE.fullmatch(request_id) is None
+        or relpath
+        != f"{PERMIT_RELPATH_PREFIX}{request_id}{PERMIT_RELPATH_SUFFIX}"
+        or value.get("permit_relpath_sha256")
+        != _sha256(relpath.encode("ascii"))
+    ):
+        _fail(code)
+    for field in (
+        "permit_relpath_sha256",
+        "permit_sha256",
+        "identity_sha256",
+    ):
+        _digest(value.get(field), code)
+    for field in (
+        "device",
+        "inode",
+        "mount_id",
+        "size_bytes",
+    ):
+        _positive_int(value.get(field), code)
+    for field in ("uid", "gid", "mtime_ns", "ctime_ns"):
+        if (
+            type(value.get(field)) is not int
+            or int(value[field]) < 0
+        ):
+            _fail(code)
+    if (
+        type(value.get("mode")) is not int
+        or value["mode"] != CONTROLLER_FILE_MODE
+        or type(value.get("nlink")) is not int
+        or value["nlink"] != 1
+        or value["uid"] != _CONTROLLER_PATHS.required_uid
+    ):
+        _fail(code)
+    unsigned = dict(value)
+    claimed = unsigned.pop("identity_sha256")
+    expected_digest = _sha256(
+        b"propertyquarry.ai-panorama-install-permit-file-identity.v1\0"
+        + _canonical_bytes(unsigned)
+    )
+    if claimed != expected_digest:
+        _fail(code)
+    return dict(value)
+
+
+def _permit_file_identity_payload(
+    admission: VerifiedAiPanoramaInstallAdmission,
+) -> dict[str, Any]:
+    identity = admission._permit_file_identity
+    if (
+        len(identity) != 9
+        or admission._permit_file_mount_id < 1
+    ):
+        _fail("ai_panorama_permit_file_identity_invalid")
+    unsigned: dict[str, Any] = {
+        "schema": PERMIT_FILE_IDENTITY_SCHEMA,
+        "version": 1,
+        "permit_relpath": admission._permit_relpath,
+        "permit_relpath_sha256": _sha256(
+            admission._permit_relpath.encode("ascii")
+        ),
+        "permit_sha256": admission.permit_sha256,
+        "device": identity[0],
+        "inode": identity[1],
+        "mount_id": admission._permit_file_mount_id,
+        "mode": stat.S_IMODE(identity[2]),
+        "uid": identity[3],
+        "gid": identity[4],
+        "nlink": identity[5],
+        "size_bytes": identity[6],
+        "mtime_ns": identity[7],
+        "ctime_ns": identity[8],
+    }
+    value = {
+        **unsigned,
+        "identity_sha256": _sha256(
+            b"propertyquarry.ai-panorama-install-permit-file-identity.v1\0"
+            + _canonical_bytes(unsigned)
+        ),
+    }
+    return _validated_permit_file_identity(
+        value,
+        code="ai_panorama_permit_file_identity_invalid",
     )
 
 
@@ -835,6 +1001,7 @@ def _read_relative_regular(
         return _StableFile(
             data=b"".join(chunks),
             identity=before_identity,
+            mount_id=mount_id,
         )
     except AiPanoramaInstallPermitError:
         raise
@@ -1749,6 +1916,7 @@ def _load_permit(
     trust: AiPanoramaInstallTrustedContext,
     *,
     allow_expired: bool,
+    historical_key_at_issuance_only: bool = False,
 ) -> tuple[
     dict[str, Any],
     _StableFile,
@@ -1756,7 +1924,15 @@ def _load_permit(
     str,
     _TrustedAiPanoramaInstallKey,
 ]:
-    normalized = _safe_relpath(permit_relpath, "ai_panorama_permit_relpath_invalid")
+    expected_relpath = ai_panorama_install_permit_relpath(
+        expected.request_id
+    )
+    if type(permit_relpath) is not str or permit_relpath != expected_relpath:
+        _fail("ai_panorama_permit_relpath_invalid")
+    normalized = _safe_relpath(
+        permit_relpath,
+        "ai_panorama_permit_relpath_invalid",
+    )
     permit_root_descriptor = _open_absolute_directory(
         _CONTROLLER_PATHS.permit_root,
         code="ai_panorama_permit_root_invalid",
@@ -1778,6 +1954,7 @@ def _load_permit(
             code="ai_panorama_permit_file_invalid",
             maximum_bytes=MAX_PERMIT_BYTES,
             required_uid=_CONTROLLER_PATHS.required_uid,
+            exact_mode=CONTROLLER_FILE_MODE,
             required_device=int(root_details.st_dev),
             required_mount_id=root_mount_id,
         )
@@ -1847,28 +2024,31 @@ def _load_permit(
             key_id=key_id,
             at=issued,
         )
-        trusted = _select_panorama_install_key(
-            keys,
-            minimum_epoch=minimum_epoch,
-            key_id=key_id,
-            at=checked_at,
-        )
-        if (
-            (
+        trusted = trusted_at_issuance
+        if not historical_key_at_issuance_only:
+            trusted_now = _select_panorama_install_key(
+                keys,
+                minimum_epoch=minimum_epoch,
+                key_id=key_id,
+                at=checked_at,
+            )
+            if (
                 trusted_at_issuance.key_id,
                 trusted_at_issuance.epoch,
                 trusted_at_issuance.usage,
                 trusted_at_issuance.public_key_sha256,
                 trusted_at_issuance.public_key,
-            )
-            != (
-                trusted.key_id,
-                trusted.epoch,
-                trusted.usage,
-                trusted.public_key_sha256,
-                trusted.public_key,
-            )
-            or key_id != expected.key_id
+            ) != (
+                trusted_now.key_id,
+                trusted_now.epoch,
+                trusted_now.usage,
+                trusted_now.public_key_sha256,
+                trusted_now.public_key,
+            ):
+                _fail("ai_panorama_release_key_context_mismatch")
+            trusted = trusted_now
+        if (
+            key_id != expected.key_id
             or key_id != trust.key_id
             or trusted.usage != expected.key_usage
             or trusted.usage != trust.key_usage
@@ -1985,6 +2165,7 @@ def _unconsumed_admission(
     expected: AiPanoramaInstallExpectedBindings,
     *,
     allow_expired: bool = False,
+    historical_key_at_issuance_only: bool = False,
 ) -> VerifiedAiPanoramaInstallAdmission:
     _validate_expected(expected)
     controller_paths_sha256 = _controller_paths_sha256()
@@ -1996,6 +2177,9 @@ def _unconsumed_admission(
         expected,
         trust,
         allow_expired=allow_expired,
+        historical_key_at_issuance_only=(
+            historical_key_at_issuance_only
+        ),
     )
     (
         source_bundle,
@@ -2079,6 +2263,7 @@ def _unconsumed_admission(
             "ai_panorama_permit_relpath_invalid",
         ),
         _permit_file_identity=stable.identity,
+        _permit_file_mount_id=stable.mount_id,
         _source_bundle_identity=source_identity,
         _candidate_marker_identity=marker_identity,
         _materialization_receipt_identity=receipt_identity,
@@ -2220,6 +2405,7 @@ def _validate_ledger(value: Mapping[str, Any]) -> dict[str, Any]:
                 "request_tombstone_sha256",
                 "nonce_tombstone_sha256",
                 "permit_tombstone_sha256",
+                "permit_file_identity",
                 "previous_entry_sha256",
                 "entry_sha256",
             },
@@ -2254,6 +2440,15 @@ def _validate_ledger(value: Mapping[str, Any]) -> dict[str, Any]:
             "entry_sha256",
         ):
             _digest(raw_entry[key], "ai_panorama_ledger_invalid")
+        permit_file_identity = _validated_permit_file_identity(
+            raw_entry["permit_file_identity"],
+            code="ai_panorama_ledger_invalid",
+        )
+        if (
+            permit_file_identity["permit_sha256"]
+            != raw_entry["permit_sha256"]
+        ):
+            _fail("ai_panorama_ledger_invalid")
         _safe_id(raw_entry["key_id"], "ai_panorama_ledger_invalid")
         consumed_at = _timestamp(
             raw_entry["consumed_at"],
@@ -2509,6 +2704,7 @@ def _tombstone_payload(
         "consumed_at": consumed_at,
         "execution_lease_seconds": admission.execution_lease_seconds,
         "execution_lease_expires_at": lease_expires_at,
+        "permit_file_identity": _permit_file_identity_payload(admission),
     }
 
 
@@ -2692,6 +2888,7 @@ def _consumption_entry(
         "request_tombstone_sha256": tombstones["request"],
         "nonce_tombstone_sha256": tombstones["nonce"],
         "permit_tombstone_sha256": tombstones["permit"],
+        "permit_file_identity": _permit_file_identity_payload(admission),
         "previous_entry_sha256": ledger["tip_sha256"],
     }
     return {**unsigned, "entry_sha256": _entry_digest(unsigned)}
@@ -2846,6 +3043,8 @@ def _matching_consumption_entry(
         != admission._nonce_tombstone_sha256
         or entry["permit_tombstone_sha256"]
         != admission._permit_tombstone_sha256
+        or entry["permit_file_identity"]
+        != _permit_file_identity_payload(admission)
         or entry["consumed_at"] != admission.consumed_at
         or entry["execution_lease_expires_at"]
         != admission.execution_lease_expires_at
@@ -3029,11 +3228,11 @@ def revalidate_ai_panorama_install_recovery(
     return _recovery_evidence(consumed)
 
 
-def recover_ai_panorama_install_consumption(
+def _recover_ai_panorama_install_consumed_admission(
     permit_relpath: str,
     expected: AiPanoramaInstallExpectedBindings,
-) -> VerifiedAiPanoramaInstallRecoveryEvidence:
-    """Reconstruct recovery-only evidence after controller process loss."""
+) -> VerifiedAiPanoramaInstallAdmission:
+    """Reconstruct a consumed admission only for internal classification."""
 
     fresh = _unconsumed_admission(
         permit_relpath,
@@ -3076,7 +3275,115 @@ def recover_ai_panorama_install_consumption(
             ledger,
             entry,
         )
-        return _recovery_evidence(consumed)
+        return consumed
+    finally:
+        os.close(lock_descriptor)
+        os.close(control_descriptor)
+
+
+def recover_ai_panorama_install_consumption(
+    permit_relpath: str,
+    expected: AiPanoramaInstallExpectedBindings,
+) -> VerifiedAiPanoramaInstallRecoveryEvidence:
+    """Reconstruct recovery-only evidence after controller process loss."""
+
+    return _recovery_evidence(
+        _recover_ai_panorama_install_consumed_admission(
+            permit_relpath,
+            expected,
+        )
+    )
+
+
+def load_ai_panorama_install_historical_consumption(
+    permit_relpath: str,
+    expected: AiPanoramaInstallExpectedBindings,
+) -> VerifiedAiPanoramaHistoricalConsumptionProof:
+    """Prove historical consumption from the exact signed retained context.
+
+    This proof has no wall-clock cutoff and is intentionally not accepted by
+    any install, binding, deletion, or bounded recovery API.
+    """
+
+    fresh = _unconsumed_admission(
+        permit_relpath,
+        expected,
+        allow_expired=True,
+        historical_key_at_issuance_only=True,
+    )
+    request_id_sha256 = _sha256(fresh.request_id.encode("ascii"))
+    nonce_sha256 = _sha256(fresh.nonce.encode("ascii"))
+    control_descriptor, lock_descriptor, ledger, _ledger_identity = (
+        _open_locked_ledger()
+    )
+    try:
+        matches = [
+            entry
+            for entry in ledger["entries"]
+            if entry["permit_sha256"] == fresh.permit_sha256
+            and entry["request_id_sha256"] == request_id_sha256
+            and entry["nonce_sha256"] == nonce_sha256
+            and entry["context_sha256"] == fresh._context_sha256
+            and entry["signed_preimage_sha256"]
+            == fresh._signed_preimage_sha256
+            and entry["trust_assertion_sha256"]
+            == fresh._trust_assertion_sha256
+        ]
+        if len(matches) != 1:
+            _fail("ai_panorama_consumption_record_missing")
+        entry = matches[0]
+        consumed = _with_consumption(
+            fresh,
+            ledger_instance_id=ledger["instance_id"],
+            entry=entry,
+        )
+        _matching_consumption_entry(consumed, ledger)
+        consumed_at = _timestamp(
+            entry["consumed_at"],
+            "ai_panorama_consumption_record_mismatch",
+        )
+        lease_expires_at = _timestamp(
+            entry["execution_lease_expires_at"],
+            "ai_panorama_consumption_record_mismatch",
+        )
+        issued_at = _timestamp(
+            consumed.issued_at,
+            "ai_panorama_consumption_record_mismatch",
+        )
+        permit_expires_at = _timestamp(
+            consumed.expires_at,
+            "ai_panorama_consumption_record_mismatch",
+        )
+        if (
+            not issued_at <= consumed_at < permit_expires_at
+            or lease_expires_at
+            != consumed_at
+            + timedelta(seconds=consumed.execution_lease_seconds)
+        ):
+            _fail("ai_panorama_consumption_record_mismatch")
+        _validate_consumption_tombstones(
+            control_descriptor,
+            consumed,
+            ledger,
+            entry,
+        )
+        return VerifiedAiPanoramaHistoricalConsumptionProof(
+            permit_sha256=consumed.permit_sha256,
+            request_id_sha256=request_id_sha256,
+            nonce_sha256=nonce_sha256,
+            context_sha256=consumed._context_sha256,
+            signed_preimage_sha256=consumed._signed_preimage_sha256,
+            trust_assertion_sha256=str(
+                consumed._trust_assertion_sha256
+            ),
+            ledger_instance_id=str(ledger["instance_id"]),
+            ledger_sequence=int(entry["sequence"]),
+            ledger_entry_sha256=str(entry["entry_sha256"]),
+            consumed_at=str(entry["consumed_at"]),
+            execution_lease_expires_at=str(
+                entry["execution_lease_expires_at"]
+            ),
+        )
     finally:
         os.close(lock_descriptor)
         os.close(control_descriptor)

@@ -18,6 +18,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from app.product import property_tour_ai_panorama_admission as admission
+from app.product import (
+    property_tour_ai_panorama_operation_journal as operation_journal,
+)
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,216 @@ def _empty_ledger(instance_id: str = "a" * 32) -> dict[str, object]:
         "tip_sha256": "0" * 64,
         "entries": [],
     }
+
+
+def _empty_operation_journal(
+    instance_id: str = "e" * 32,
+) -> dict[str, object]:
+    return {
+        "schema": operation_journal.OPERATION_JOURNAL_SCHEMA,
+        "authority": operation_journal.OPERATION_JOURNAL_AUTHORITY,
+        "instance_id": instance_id,
+        "sequence": 0,
+        "tip_sha256": "0" * 64,
+        "entries": [],
+    }
+
+
+def _provision_operation_journal(case: _Case) -> None:
+    _write_json(
+        case.control_root / operation_journal.OPERATION_JOURNAL_NAME,
+        _empty_operation_journal(),
+        mode=operation_journal.OPERATION_JOURNAL_MODE,
+    )
+    lock_path = (
+        case.control_root / operation_journal.OPERATION_JOURNAL_LOCK_NAME
+    )
+    lock_path.write_bytes(b"lock\n")
+    lock_path.chmod(operation_journal.OPERATION_JOURNAL_MODE)
+
+
+def _journal_snapshot(case: _Case) -> tuple[bytes, tuple[int, int]]:
+    path = case.control_root / operation_journal.OPERATION_JOURNAL_NAME
+    details = path.stat(follow_symlinks=False)
+    return path.read_bytes(), (int(details.st_dev), int(details.st_ino))
+
+
+def _absent_target_manifest(
+    expected: admission.AiPanoramaInstallExpectedBindings,
+) -> dict[str, object]:
+    return {
+        "state": "absent",
+        "target_relpath": expected.expected_slug,
+        "public_root_device": expected.public_tour_root_device,
+        "public_root_inode": expected.public_tour_root_inode,
+        "reserved_entry_count": 0,
+        "reserved_entries_sha256": hashlib.sha256(b"[]").hexdigest(),
+    }
+
+
+def _prepared_release_evidence(
+    expected: admission.AiPanoramaInstallExpectedBindings,
+    *,
+    target_manifest: dict[str, object] | None = None,
+    after_sha256: str = "8" * 64,
+) -> dict[str, object]:
+    return {
+        "contract": "propertyquarry.prater_ai_panorama_governed_release.v1",
+        "phase": "prepared",
+        "slug": expected.expected_slug,
+        "listing_url_sha256": hashlib.sha256(
+            expected.listing_url.encode("utf-8")
+        ).hexdigest(),
+        "source_tree_sha256": expected.expected_source_tree_sha256,
+        "tour_sha256": expected.expected_tour_sha256,
+        "core_manifest_sha256": expected.expected_core_manifest_sha256,
+        "materialization_receipt_sha256": (
+            expected.expected_materialization_receipt_sha256
+        ),
+        "candidate_marker_sha256": (
+            expected.expected_candidate_marker_sha256
+        ),
+        "publication_record_sha256": (
+            expected.expected_publication_record_sha256
+        ),
+        "volume_profile_sha256": expected.volume_profile_sha256,
+        "public_tour_volume_name": (
+            admission.CANONICAL_PUBLIC_TOUR_VOLUME_NAME
+        ),
+        "public_tour_mount_target": (
+            admission.CANONICAL_PUBLIC_TOUR_MOUNT_TARGET
+        ),
+        "target_manifest": (
+            dict(target_manifest)
+            if target_manifest is not None
+            else _absent_target_manifest(expected)
+        ),
+        "publication_binding_preparation": {
+            "status": (
+                "already-bound"
+                if after_sha256
+                == expected.expected_publication_record_sha256
+                else "change-required"
+            ),
+            "publication_binding_expected_before_sha256": (
+                expected.expected_publication_record_sha256
+            ),
+            "publication_binding_expected_after_sha256": after_sha256,
+            "publication_binding_bound_at": "2026-07-24T08:00:00Z",
+            "database_mutation_performed": False,
+            "private_values_redacted": True,
+        },
+        "private_values_redacted": True,
+    }
+
+
+def _historical_terminal_evidence(
+    operation: operation_journal.AiPanoramaHistoricalOperationObservation,
+    expected: admission.AiPanoramaInstallExpectedBindings,
+    *,
+    event: str,
+    classification: str,
+    basis: str,
+    observed_database_record_sha256: str,
+    target_manifest: dict[str, object] | None = None,
+    target_state: str = "absent",
+    binding_exact: bool = False,
+) -> dict[str, object]:
+    manifest = (
+        dict(target_manifest)
+        if target_manifest is not None
+        else _absent_target_manifest(expected)
+    )
+    return {
+        "schema": "propertyquarry.prater-ai-panorama-recovery-evidence.v1",
+        "version": 1,
+        "authority": operation_journal.OPERATION_JOURNAL_AUTHORITY,
+        "phase": event,
+        "classification": classification,
+        "classification_basis": basis,
+        "prepared_entry_sha256": (
+            operation.prepared_entry_sha256 or "genesis"
+        ),
+        "prepared_evidence_sha256": (
+            operation.prepared_evidence_sha256 or "genesis"
+        ),
+        "observed_target_manifest": manifest,
+        "observed_target_manifest_sha256": hashlib.sha256(
+            _canonical(manifest)
+        ).hexdigest(),
+        "observed_target_identity": {
+            "state": target_state,
+            "source_tree_sha256": expected.expected_source_tree_sha256,
+            "source_tour_sha256": expected.expected_tour_sha256,
+            "core_manifest_sha256": (
+                expected.expected_core_manifest_sha256
+            ),
+            "public_root_device": expected.public_tour_root_device,
+            "public_root_inode": expected.public_tour_root_inode,
+            "private_values_redacted": True,
+        },
+        "observed_database_record_sha256": (
+            observed_database_record_sha256
+        ),
+        "observed_publication_binding_exact": binding_exact,
+        "publication_binding_expected_before_sha256": (
+            expected.expected_publication_record_sha256
+        ),
+        "publication_binding_expected_after_sha256": (
+            operation.prepared_evidence.get(
+                "publication_binding_preparation", {}
+            ).get(
+                "publication_binding_expected_after_sha256",
+                expected.expected_publication_record_sha256,
+            )
+        ),
+        "publication_binding_plan_status": (
+            operation.prepared_evidence.get(
+                "publication_binding_preparation", {}
+            ).get("status", "not-prepared")
+        ),
+        "historical_consumption_binding": {
+            "ledger_instance_id": (
+                operation.historical_consumption.ledger_instance_id
+            ),
+            "ledger_sequence": (
+                operation.historical_consumption.ledger_sequence
+            ),
+            "ledger_entry_sha256": (
+                operation.historical_consumption.ledger_entry_sha256
+            ),
+        },
+        "database_mutation_performed": False,
+        "public_target_mutation_performed": False,
+        "private_values_redacted": True,
+    }
+
+
+def _write_fresh_attempt(
+    case: _Case,
+    *,
+    request_id: str,
+    nonce: str,
+    now: datetime | None = None,
+) -> tuple[
+    admission.AiPanoramaInstallExpectedBindings,
+    str,
+    Path,
+]:
+    expected = replace(case.expected, request_id=request_id)
+    relpath = admission.ai_panorama_install_permit_relpath(request_id)
+    path = case.permit_path.parent / relpath
+    _write_json(
+        path,
+        _permit_envelope(
+            expected,
+            private_key=case.private_key,
+            now=now or case.now,
+            nonce=nonce,
+        ),
+        mode=admission.CONTROLLER_FILE_MODE,
+    )
+    return expected, relpath, path
 
 
 def _write_panorama_keyring(
@@ -230,7 +443,7 @@ def _rewrite_trust_and_permit(
             private_key=case.private_key,
             now=case.now,
         ),
-        mode=0o400,
+        mode=admission.CONTROLLER_FILE_MODE,
     )
 
 
@@ -482,7 +695,9 @@ def permit_case(
         mode=admission.RUNTIME_PROFILE_MODE,
     )
 
-    permit_relpath = "prater-ai-panorama-install.json"
+    permit_relpath = admission.ai_panorama_install_permit_relpath(
+        expected.request_id
+    )
     permit_path = permit_root / permit_relpath
     _write_json(
         permit_path,
@@ -491,7 +706,7 @@ def permit_case(
             private_key=private_key,
             now=now,
         ),
-        mode=0o400,
+        mode=admission.CONTROLLER_FILE_MODE,
     )
     return _Case(
         expected=expected,
@@ -590,6 +805,259 @@ def test_verified_admission_is_exact_fixed_root_and_revalidated(
         )
 
 
+@pytest.mark.parametrize(
+    "relpath",
+    (
+        "prater-ai-panorama-install.json",
+        f"prater-ai-panorama-install-{'7' * 31}.v2.json",
+        f"prater-ai-panorama-install-{'7' * 32}.json",
+        f"prater-ai-panorama-install-{'7' * 32}.V2.json",
+        f"prater-ai-panorama-install-{'8' * 32}.v2.json",
+        f"nested/prater-ai-panorama-install-{'7' * 32}.v2.json",
+        f"../prater-ai-panorama-install-{'7' * 32}.v2.json",
+    ),
+)
+def test_permit_leaf_is_exactly_derived_from_signed_request_id(
+    permit_case: _Case,
+    relpath: str,
+) -> None:
+    with pytest.raises(
+        admission.AiPanoramaInstallPermitError,
+        match="ai_panorama_permit_relpath_invalid",
+    ):
+        admission.verify_ai_panorama_install_permit(
+            relpath,
+            permit_case.expected,
+        )
+
+
+@pytest.mark.parametrize("mutation", ("wrong-mode", "hardlink"))
+def test_per_attempt_permit_leaf_requires_private_single_link_file(
+    permit_case: _Case,
+    mutation: str,
+) -> None:
+    if mutation == "wrong-mode":
+        permit_case.permit_path.chmod(0o400)
+    else:
+        os.link(
+            permit_case.permit_path,
+            permit_case.permit_path.with_name("copied-permit.v2.json"),
+        )
+
+    with pytest.raises(
+        admission.AiPanoramaInstallPermitError,
+        match="ai_panorama_permit_file_invalid",
+    ):
+        admission.verify_ai_panorama_install_permit(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+
+
+@pytest.mark.parametrize("terminal_event", ("failed-clean", "rolled-back"))
+def test_fresh_unique_attempt_survives_consumed_clean_predecessor(
+    permit_case: _Case,
+    terminal_event: str,
+) -> None:
+    _provision_operation_journal(permit_case)
+    first = admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    first_handle = operation_journal.begin_ai_panorama_install_operation(
+        first,
+        evidence={"attempt": 1, "phase": "prepared"},
+    )
+    operation_journal.finish_ai_panorama_install_operation(
+        first_handle,
+        event=terminal_event,
+        evidence={"attempt": 1, "phase": terminal_event},
+    )
+
+    second_expected, second_relpath, second_path = _write_fresh_attempt(
+        permit_case,
+        request_id="8" * 32,
+        nonce="c" * 32,
+    )
+    second = admission.consume_ai_panorama_install_permit(
+        second_relpath,
+        second_expected,
+    )
+    second_handle = operation_journal.begin_ai_panorama_install_operation(
+        second,
+        evidence={"attempt": 2, "phase": "prepared"},
+    )
+    operation_journal.finish_ai_panorama_install_operation(
+        second_handle,
+        event="failed-clean",
+        evidence={"attempt": 2, "phase": "failed-clean"},
+    )
+
+    assert second_path.exists()
+    assert permit_case.permit_path.exists()
+    assert second._ledger_sequence == 2
+    assert second.request_id != first.request_id
+    assert second.nonce != first.nonce
+    assert second.permit_sha256 != first.permit_sha256
+    assert second_handle.operation_id != first_handle.operation_id
+    with pytest.raises(
+        admission.AiPanoramaInstallPermitError,
+        match="ai_panorama_permit_replayed",
+    ):
+        admission.consume_ai_panorama_install_permit(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+
+
+def test_fresh_unique_attempt_survives_expired_unconsumed_predecessor(
+    permit_case: _Case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admission.verify_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    retry_now = permit_case.now + timedelta(minutes=4)
+    monkeypatch.setattr(admission, "_utc_now", lambda: retry_now)
+    with pytest.raises(
+        admission.AiPanoramaInstallPermitError,
+        match="ai_panorama_permit_not_fresh",
+    ):
+        admission.verify_ai_panorama_install_permit(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+
+    second_expected, second_relpath, _second_path = _write_fresh_attempt(
+        permit_case,
+        request_id="8" * 32,
+        nonce="c" * 32,
+        now=retry_now,
+    )
+    second = admission.consume_ai_panorama_install_permit(
+        second_relpath,
+        second_expected,
+    )
+
+    assert second.nonce_consumed is True
+    assert second._ledger_sequence == 1
+    assert permit_case.permit_path.exists()
+
+
+def test_copied_permit_bytes_cannot_authorize_another_request_leaf(
+    permit_case: _Case,
+) -> None:
+    second_expected = replace(permit_case.expected, request_id="8" * 32)
+    second_relpath = admission.ai_panorama_install_permit_relpath(
+        second_expected.request_id
+    )
+    copied_path = permit_case.permit_path.parent / second_relpath
+    copied_path.write_bytes(permit_case.permit_path.read_bytes())
+    copied_path.chmod(admission.CONTROLLER_FILE_MODE)
+
+    with pytest.raises(
+        admission.AiPanoramaInstallPermitError,
+        match="ai_panorama_permit_binding_mismatch",
+    ):
+        admission.verify_ai_panorama_install_permit(
+            second_relpath,
+            second_expected,
+        )
+
+
+def test_replacing_selected_leaf_breaks_admission_identity(
+    permit_case: _Case,
+) -> None:
+    verified = admission.verify_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    replacement = permit_case.permit_path.with_name(".replacement")
+    replacement.write_bytes(permit_case.permit_path.read_bytes())
+    replacement.chmod(admission.CONTROLLER_FILE_MODE)
+    os.replace(replacement, permit_case.permit_path)
+
+    with pytest.raises(
+        admission.AiPanoramaInstallPermitError,
+        match="ai_panorama_admission_context_changed",
+    ):
+        admission.revalidate_ai_panorama_install_admission(
+            verified,
+            require_consumed=False,
+        )
+
+
+def test_partial_old_tombstone_does_not_authorize_or_block_unique_attempt(
+    permit_case: _Case,
+) -> None:
+    old_request_sha256 = hashlib.sha256(
+        permit_case.expected.request_id.encode("ascii")
+    ).hexdigest()
+    orphan = permit_case.tombstone_root / (
+        f"request-{old_request_sha256}.json"
+    )
+    orphan.write_bytes(b"orphan-evidence\n")
+    orphan.chmod(admission.CONTROLLER_FILE_MODE)
+    second_expected, second_relpath, _second_path = _write_fresh_attempt(
+        permit_case,
+        request_id="8" * 32,
+        nonce="c" * 32,
+    )
+
+    second = admission.consume_ai_panorama_install_permit(
+        second_relpath,
+        second_expected,
+    )
+
+    assert second.nonce_consumed is True
+    assert second._ledger_sequence == 1
+    assert orphan.read_bytes() == b"orphan-evidence\n"
+    assert not (
+        permit_case.tombstone_root
+        / f"request-{old_request_sha256}.json"
+    ).samefile(
+        permit_case.tombstone_root
+        / f"request-{hashlib.sha256(second.request_id.encode('ascii')).hexdigest()}.json"
+    )
+
+
+def test_recovery_required_attempt_cannot_be_reused_or_replayed(
+    permit_case: _Case,
+) -> None:
+    _provision_operation_journal(permit_case)
+    consumed = admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    handle = operation_journal.begin_ai_panorama_install_operation(
+        consumed,
+        evidence={"attempt": 1, "phase": "prepared"},
+    )
+    operation_journal.finish_ai_panorama_install_operation(
+        handle,
+        event="recovery-required",
+        evidence={"attempt": 1, "phase": "recovery-required"},
+    )
+
+    with pytest.raises(
+        admission.AiPanoramaInstallPermitError,
+        match="ai_panorama_permit_replayed",
+    ):
+        admission.consume_ai_panorama_install_permit(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+    with pytest.raises(
+        operation_journal.AiPanoramaOperationJournalError,
+        match="ai_panorama_operation_journal_transition_invalid",
+    ):
+        operation_journal.begin_ai_panorama_install_operation(
+            consumed,
+            evidence={"attempt": 1, "phase": "prepared-again"},
+        )
+
+
 def test_signature_context_and_exact_release_bindings_fail_closed(
     permit_case: _Case,
 ) -> None:
@@ -606,7 +1074,11 @@ def test_signature_context_and_exact_release_bindings_fail_closed(
     envelope = json.loads(permit_case.permit_path.read_text(encoding="utf-8"))
     envelope["permit"]["nonce"] = "c" * 32
     permit_case.permit_path.chmod(0o600)
-    _write_json(permit_case.permit_path, envelope, mode=0o400)
+    _write_json(
+        permit_case.permit_path,
+        envelope,
+        mode=admission.CONTROLLER_FILE_MODE,
+    )
     with pytest.raises(
         admission.AiPanoramaInstallPermitError,
         match="ai_panorama_signature_invalid",
@@ -740,6 +1212,11 @@ def test_public_api_has_no_caller_selected_authority_paths(
             admission.recover_ai_panorama_install_consumption
         ).parameters
     ) == ("permit_relpath", "expected")
+    assert tuple(
+        inspect.signature(
+            admission.load_ai_panorama_install_historical_consumption
+        ).parameters
+    ) == ("permit_relpath", "expected")
     assert (
         tuple(
             inspect.signature(
@@ -849,7 +1326,7 @@ def test_short_ttl_and_external_keyring_are_mandatory(
             now=permit_case.now,
             lifetime_seconds=301,
         ),
-        mode=0o400,
+        mode=admission.CONTROLLER_FILE_MODE,
     )
     with pytest.raises(
         admission.AiPanoramaInstallPermitError,
@@ -868,7 +1345,7 @@ def test_short_ttl_and_external_keyring_are_mandatory(
             private_key=permit_case.private_key,
             now=permit_case.now,
         ),
-        mode=0o400,
+        mode=admission.CONTROLLER_FILE_MODE,
     )
     permit_case.keyring_path.unlink()
     with pytest.raises(
@@ -906,7 +1383,6 @@ def test_trusted_context_actor_owner_source_ref_and_private_repr(
         consumed.owner_principal_id,
         consumed.listing_url,
         consumed.source_ref,
-        consumed.request_id,
     )
     for private_value in private_values:
         assert private_value not in repr(permit_case.expected)
@@ -918,6 +1394,15 @@ def test_trusted_context_actor_owner_source_ref_and_private_repr(
             private_value not in path.read_text(encoding="utf-8")
             for path in permit_case.tombstone_root.iterdir()
         )
+    assert consumed.request_id not in repr(permit_case.expected)
+    assert consumed.request_id not in repr(consumed)
+    assert consumed._permit_relpath in permit_case.ledger_path.read_text(
+        encoding="utf-8"
+    )
+    assert all(
+        consumed._permit_relpath in path.read_text(encoding="utf-8")
+        for path in permit_case.tombstone_root.iterdir()
+    )
     assert hashlib.sha256(consumed.request_id.encode("ascii")).hexdigest() in (
         permit_case.ledger_path.read_text(encoding="utf-8")
     )
@@ -1176,9 +1661,17 @@ def test_runtime_mount_ids_may_shift_between_preflight_and_apply(
     namespace_offset = {"value": 0}
 
     def shifted_mount_id(descriptor: int, *, code: str) -> int:
-        return (
-            real_mount_id(descriptor, code=code)
-            + namespace_offset["value"]
+        resolved = Path(f"/proc/self/fd/{descriptor}").resolve()
+        runtime_roots = (
+            permit_case.artifact_root,
+            permit_case.public_root,
+        )
+        shifted = any(
+            resolved == root or root in resolved.parents
+            for root in runtime_roots
+        )
+        return real_mount_id(descriptor, code=code) + (
+            namespace_offset["value"] if shifted else 0
         )
 
     monkeypatch.setattr(
@@ -1427,6 +1920,531 @@ def test_recovery_reconstructs_evidence_after_process_loss(
         evidence,
         require_consumed=True,
     )
+
+
+def test_historical_consumption_uses_exact_archived_old_keyring_after_rotation(
+    permit_case: _Case,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _provision_operation_journal(permit_case)
+    old_keyring = json.loads(
+        permit_case.keyring_path.read_text(encoding="utf-8")
+    )
+    old_keyring["keys"][0]["accept_until"] = (
+        permit_case.now + timedelta(seconds=100)
+    ).isoformat().replace("+00:00", "Z")
+    expected = _rewrite_keyring_and_bind(permit_case, old_keyring)
+    consumed = admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        expected,
+    )
+    archived_keyring_bytes = permit_case.keyring_path.read_bytes()
+    journal_before = _journal_snapshot(permit_case)
+    state_before = {
+        path.name: path.read_bytes()
+        for path in (
+            permit_case.ledger_path,
+            *sorted(permit_case.tombstone_root.iterdir()),
+        )
+    }
+    monkeypatch.setattr(
+        admission,
+        "_utc_now",
+        lambda: permit_case.now + timedelta(days=30),
+    )
+
+    rotated_root = tmp_path / "rotated-keyring"
+    rotated_root.mkdir()
+    rotated_private_key = Ed25519PrivateKey.generate()
+    rotated_path, _key_id, _key_sha256, _keyring_sha256 = (
+        _write_panorama_keyring(
+            rotated_root,
+            private_key=rotated_private_key,
+            now=permit_case.now + timedelta(days=1),
+        )
+    )
+    rotated_bytes = rotated_path.read_bytes()
+    assert rotated_bytes != archived_keyring_bytes
+    _replace_json(
+        permit_case.keyring_path,
+        json.loads(rotated_bytes.decode("utf-8")),
+        mode=admission.EXTERNAL_KEYRING_MODE,
+    )
+    with pytest.raises(admission.AiPanoramaInstallPermitError):
+        admission.load_ai_panorama_install_historical_consumption(
+            permit_case.permit_relpath,
+            expected,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+
+    _replace_json(
+        permit_case.keyring_path,
+        json.loads(archived_keyring_bytes.decode("utf-8")),
+        mode=admission.EXTERNAL_KEYRING_MODE,
+    )
+    proof = admission.load_ai_panorama_install_historical_consumption(
+        permit_case.permit_relpath,
+        expected,
+    )
+    assert (
+        type(proof)
+        is admission.VerifiedAiPanoramaHistoricalConsumptionProof
+    )
+    assert proof.permit_sha256 == consumed.permit_sha256
+    assert proof.ledger_entry_sha256 == consumed._ledger_entry_sha256
+    assert _journal_snapshot(permit_case) == journal_before
+    assert {
+        path.name: path.read_bytes()
+        for path in (
+            permit_case.ledger_path,
+            *sorted(permit_case.tombstone_root.iterdir()),
+        )
+    } == state_before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing",
+        "symlink",
+        "wrong-mode",
+        "wrong-digest",
+        "wrong-key-id",
+        "wrong-key-epoch",
+        "wrong-key-sha256",
+        "wrong-signature",
+    ),
+)
+def test_historical_consumption_rejects_wrong_archived_trust_material(
+    permit_case: _Case,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    _provision_operation_journal(permit_case)
+    admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    monkeypatch.setattr(
+        admission,
+        "_utc_now",
+        lambda: permit_case.now + timedelta(days=30),
+    )
+    journal_before = _journal_snapshot(permit_case)
+    ledger_before = permit_case.ledger_path.read_bytes()
+    tombstones_before = {
+        path.name: path.read_bytes()
+        for path in permit_case.tombstone_root.iterdir()
+    }
+    if mutation == "missing":
+        permit_case.keyring_path.unlink()
+    elif mutation == "symlink":
+        retained = permit_case.keyring_path.with_name(".archived-keyring")
+        permit_case.keyring_path.rename(retained)
+        permit_case.keyring_path.symlink_to(retained.name)
+    elif mutation == "wrong-mode":
+        permit_case.keyring_path.chmod(0o600)
+    elif mutation == "wrong-signature":
+        envelope = json.loads(
+            permit_case.permit_path.read_text(encoding="utf-8")
+        )
+        signature = str(envelope["signature"]["value"])
+        envelope["signature"]["value"] = (
+            ("A" if signature[0] != "A" else "B") + signature[1:]
+        )
+        _replace_json(
+            permit_case.permit_path,
+            envelope,
+            mode=admission.CONTROLLER_FILE_MODE,
+        )
+    else:
+        keyring = json.loads(
+            permit_case.keyring_path.read_text(encoding="utf-8")
+        )
+        if mutation == "wrong-digest":
+            keyring["status"] = "retired"
+        elif mutation == "wrong-key-id":
+            keyring["keys"][0]["key_id"] = "wrong-archive-key"
+        elif mutation == "wrong-key-epoch":
+            keyring["keys"][0]["epoch"] = 2
+        else:
+            keyring["keys"][0]["public_key_sha256"] = "f" * 64
+        _replace_json(
+            permit_case.keyring_path,
+            keyring,
+            mode=admission.EXTERNAL_KEYRING_MODE,
+        )
+
+    with pytest.raises(admission.AiPanoramaInstallPermitError):
+        admission.load_ai_panorama_install_historical_consumption(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+    assert permit_case.ledger_path.read_bytes() == ledger_before
+    assert {
+        path.name: path.read_bytes()
+        for path in permit_case.tombstone_root.iterdir()
+    } == tombstones_before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "byte-identical-replacement",
+        "hardlink",
+        "symlink",
+        "wrong-mode",
+        "mount-id",
+        "timestamp",
+        "chown",
+    ),
+)
+def test_historical_consumption_rejects_changed_retained_permit_identity(
+    permit_case: _Case,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    _provision_operation_journal(permit_case)
+    consumed = admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    monkeypatch.setattr(
+        admission,
+        "_utc_now",
+        lambda: permit_case.now + timedelta(days=30),
+    )
+    reopened = admission.load_ai_panorama_install_historical_consumption(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    assert reopened.permit_sha256 == consumed.permit_sha256
+    journal_before = _journal_snapshot(permit_case)
+    ledger_before = permit_case.ledger_path.read_bytes()
+    tombstones_before = {
+        path.name: path.read_bytes()
+        for path in permit_case.tombstone_root.iterdir()
+    }
+    before = permit_case.permit_path.stat(follow_symlinks=False)
+    if mutation == "byte-identical-replacement":
+        replacement = permit_case.permit_path.with_name(".replacement")
+        replacement.write_bytes(permit_case.permit_path.read_bytes())
+        replacement.chmod(admission.CONTROLLER_FILE_MODE)
+        os.replace(replacement, permit_case.permit_path)
+        assert (
+            permit_case.permit_path.stat(follow_symlinks=False).st_ino
+            != before.st_ino
+        )
+    elif mutation == "hardlink":
+        os.link(
+            permit_case.permit_path,
+            permit_case.permit_path.with_name(".retained-hardlink"),
+        )
+    elif mutation == "symlink":
+        retained = permit_case.permit_path.with_name(".retained-original")
+        permit_case.permit_path.rename(retained)
+        permit_case.permit_path.symlink_to(retained.name)
+    elif mutation == "wrong-mode":
+        permit_case.permit_path.chmod(0o400)
+    elif mutation == "mount-id":
+        real_mount_id = admission._descriptor_mount_id
+
+        def _shifted_permit_mount(
+            descriptor: int,
+            *,
+            code: str,
+        ) -> int:
+            resolved = Path(f"/proc/self/fd/{descriptor}").resolve()
+            shifted = (
+                resolved == permit_case.permit_path.parent
+                or permit_case.permit_path.parent in resolved.parents
+            )
+            return real_mount_id(descriptor, code=code) + (
+                10_000 if shifted else 0
+            )
+
+        monkeypatch.setattr(
+            admission,
+            "_descriptor_mount_id",
+            _shifted_permit_mount,
+        )
+    elif mutation == "timestamp":
+        os.utime(
+            permit_case.permit_path,
+            ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000),
+        )
+    else:
+        os.chown(
+            permit_case.permit_path,
+            os.geteuid(),
+            os.getegid(),
+        )
+        assert (
+            permit_case.permit_path.stat(follow_symlinks=False).st_ctime_ns
+            != before.st_ctime_ns
+        )
+
+    with pytest.raises(admission.AiPanoramaInstallPermitError):
+        admission.load_ai_panorama_install_historical_consumption(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+    assert permit_case.ledger_path.read_bytes() == ledger_before
+    assert {
+        path.name: path.read_bytes()
+        for path in permit_case.tombstone_root.iterdir()
+    } == tombstones_before
+
+
+def test_historical_terminal_append_rejects_forged_observation_and_evidence(
+    permit_case: _Case,
+) -> None:
+    _provision_operation_journal(permit_case)
+    consumed = admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    operation_journal.begin_ai_panorama_install_operation(
+        consumed,
+        evidence=_prepared_release_evidence(permit_case.expected),
+    )
+    observed = operation_journal.load_historical_ai_panorama_install_operation(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    clean_evidence = _historical_terminal_evidence(
+        observed,
+        permit_case.expected,
+        event="failed-clean",
+        classification="failed-clean",
+        basis="prepared-before-binding-and-baseline-target",
+        observed_database_record_sha256=(
+            permit_case.expected.expected_publication_record_sha256
+        ),
+    )
+    forged_prepared = dict(observed.prepared_evidence)
+    forged_plan = dict(
+        forged_prepared["publication_binding_preparation"]  # type: ignore[arg-type]
+    )
+    forged_plan["publication_binding_expected_after_sha256"] = "9" * 64
+    forged_prepared["publication_binding_preparation"] = forged_plan
+    forged = replace(observed, prepared_evidence=forged_prepared)
+    journal_before = _journal_snapshot(permit_case)
+
+    with pytest.raises(
+        operation_journal.AiPanoramaOperationJournalError,
+        match="ai_panorama_operation_historical_state_invalid",
+    ):
+        operation_journal._finish_historical_ai_panorama_install_operation(
+            permit_case.permit_relpath,
+            permit_case.expected,
+            forged,
+            event="failed-clean",
+            evidence=clean_evidence,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+
+    class _PreparedEvidenceSubclass(dict[str, object]):
+        pass
+
+    forged_subclass = replace(
+        observed,
+        prepared_evidence=_PreparedEvidenceSubclass(
+            observed.prepared_evidence
+        ),
+    )
+    with pytest.raises(
+        operation_journal.AiPanoramaOperationJournalError,
+        match="ai_panorama_operation_historical_state_invalid",
+    ):
+        operation_journal._finish_historical_ai_panorama_install_operation(
+            permit_case.permit_relpath,
+            permit_case.expected,
+            forged_subclass,
+            event="failed-clean",
+            evidence=clean_evidence,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+
+    invalid_evidence = dict(clean_evidence)
+    invalid_evidence["unexpected"] = True
+    with pytest.raises(
+        operation_journal.AiPanoramaOperationJournalError,
+        match="ai_panorama_operation_evidence_invalid",
+    ):
+        operation_journal._finish_historical_ai_panorama_install_operation(
+            permit_case.permit_relpath,
+            permit_case.expected,
+            observed,
+            event="failed-clean",
+            evidence=invalid_evidence,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+
+    invalid_nested = json.loads(json.dumps(clean_evidence))
+    invalid_nested["observed_target_identity"]["unexpected"] = True
+    with pytest.raises(
+        operation_journal.AiPanoramaOperationJournalError,
+        match="ai_panorama_operation_evidence_invalid",
+    ):
+        operation_journal._finish_historical_ai_panorama_install_operation(
+            permit_case.permit_relpath,
+            permit_case.expected,
+            observed,
+            event="failed-clean",
+            evidence=invalid_nested,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+
+    false_contradiction = dict(clean_evidence)
+    false_contradiction.update(
+        {
+            "phase": "recovery-required",
+            "classification": "recovery-required",
+            "classification_basis": "prepared-observation-contradiction",
+        }
+    )
+    with pytest.raises(
+        operation_journal.AiPanoramaOperationJournalError,
+        match="ai_panorama_operation_evidence_invalid",
+    ):
+        operation_journal._finish_historical_ai_panorama_install_operation(
+            permit_case.permit_relpath,
+            permit_case.expected,
+            observed,
+            event="recovery-required",
+            evidence=false_contradiction,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+
+
+def test_historical_reload_rejects_unknown_standard_terminal_schema(
+    permit_case: _Case,
+) -> None:
+    _provision_operation_journal(permit_case)
+    consumed = admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    handle = operation_journal.begin_ai_panorama_install_operation(
+        consumed,
+        evidence=_prepared_release_evidence(permit_case.expected),
+    )
+    operation_journal.finish_ai_panorama_install_operation(
+        handle,
+        event="failed-clean",
+        evidence={
+            "contract": "unknown-terminal-contract.v1",
+            "phase": "failed-clean",
+        },
+    )
+    journal_before = _journal_snapshot(permit_case)
+
+    with pytest.raises(
+        operation_journal.AiPanoramaOperationJournalError,
+        match="ai_panorama_operation_evidence_invalid",
+    ):
+        operation_journal.load_historical_ai_panorama_install_operation(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+    assert _journal_snapshot(permit_case) == journal_before
+
+
+def test_historical_reload_accepts_exact_standard_live_terminal_schema(
+    permit_case: _Case,
+) -> None:
+    _provision_operation_journal(permit_case)
+    consumed = admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    prepared = _prepared_release_evidence(permit_case.expected)
+    handle = operation_journal.begin_ai_panorama_install_operation(
+        consumed,
+        evidence=prepared,
+    )
+    terminal = {
+        key: value
+        for key, value in prepared.items()
+        if key != "publication_binding_preparation"
+    }
+    terminal.update(
+        {
+            "phase": "failed-clean",
+            "error_code": "ai_panorama_install_failed",
+            "publication_outcome": "uncommitted",
+        }
+    )
+    operation_journal.finish_ai_panorama_install_operation(
+        handle,
+        event="failed-clean",
+        evidence=terminal,
+    )
+
+    reloaded = (
+        operation_journal.load_historical_ai_panorama_install_operation(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+    )
+    assert reloaded.state == "terminal"
+    assert reloaded.terminal_event == "failed-clean"
+    assert reloaded.terminal_evidence == terminal
+
+
+def test_consumed_without_prepared_operation_gets_one_truthful_terminal(
+    permit_case: _Case,
+) -> None:
+    _provision_operation_journal(permit_case)
+    admission.consume_ai_panorama_install_permit(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    observed = operation_journal.load_historical_ai_panorama_install_operation(
+        permit_case.permit_relpath,
+        permit_case.expected,
+    )
+    assert observed.state == "consumed-no-operation"
+    evidence = _historical_terminal_evidence(
+        observed,
+        permit_case.expected,
+        event="consumed-failed-clean",
+        classification="failed-clean",
+        basis="consumed-before-operation-preparation",
+        observed_database_record_sha256=(
+            permit_case.expected.expected_publication_record_sha256
+        ),
+    )
+    terminal = (
+        operation_journal._record_consumed_without_operation_failed_clean(
+            permit_case.permit_relpath,
+            permit_case.expected,
+            observed,
+            evidence=evidence,
+        )
+    )
+    assert len(terminal) == 64
+    assert (
+        operation_journal._record_consumed_without_operation_failed_clean(
+            permit_case.permit_relpath,
+            permit_case.expected,
+            observed,
+            evidence=evidence,
+        )
+        == terminal
+    )
+    reloaded = (
+        operation_journal.load_historical_ai_panorama_install_operation(
+            permit_case.permit_relpath,
+            permit_case.expected,
+        )
+    )
+    assert reloaded.state == "terminal"
+    assert reloaded.terminal_event == "consumed-failed-clean"
 
 
 def test_independent_golden_signature_vector() -> None:

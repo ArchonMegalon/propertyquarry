@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import socket
+import tempfile
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -326,6 +329,81 @@ def test_governed_closeout_blocks_manifests_assets_and_inflight_snapshot(
         ):
             pass
     assert asset.value.status_code == 410
+
+
+@pytest.mark.parametrize(
+    "target_kind",
+    (
+        "partial-directory",
+        "regular-file",
+        "symlink",
+        "broken-symlink",
+        "fifo",
+        "socket",
+    ),
+)
+def test_governed_closeout_is_marker_first_for_any_protected_target_node(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    target_kind: str,
+) -> None:
+    short_root: Path | None = None
+    if target_kind == "socket":
+        short_root = Path(tempfile.mkdtemp(prefix="pqr-", dir="/tmp"))
+        dynamic_root = short_root / "d"
+        governed_root = short_root / "g"
+        dynamic_root.mkdir()
+        governed_root.mkdir()
+        monkeypatch.setenv("EA_RUNTIME_MODE", "test")
+        monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(dynamic_root))
+        monkeypatch.setenv(
+            "EA_GOVERNED_PUBLIC_TOUR_DIR",
+            str(governed_root),
+        )
+    else:
+        _dynamic_root, governed_root = _configure_roots(
+            monkeypatch,
+            tmp_path,
+        )
+    target = governed_root / PROTECTED_SLUG
+    if target_kind == "partial-directory":
+        target.mkdir()
+        (target / "partial.tmp").write_bytes(b"partial")
+    elif target_kind == "regular-file":
+        target.write_bytes(b"partial")
+    elif target_kind == "symlink":
+        outside = tmp_path / "existing-target"
+        outside.write_bytes(b"outside")
+        target.symlink_to(outside)
+    elif target_kind == "broken-symlink":
+        target.symlink_to(tmp_path / "missing-target")
+    elif target_kind == "fifo":
+        os.mkfifo(target)
+    elif target_kind == "socket":
+        endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            endpoint.bind(str(target))
+        finally:
+            endpoint.close()
+    else:
+        raise AssertionError(target_kind)
+    _write_closeout(governed_root, monkeypatch)
+
+    with pytest.raises(HTTPException) as revoked:
+        public_tours._load_tour(PROTECTED_SLUG)
+    assert revoked.value.status_code == 410
+    assert revoked.value.detail == "tour_revoked"
+
+    with pytest.raises(HTTPException) as snapshot:
+        with public_tours._public_tour_file_policy_snapshot(
+            PROTECTED_SLUG,
+            include_private_receipt=False,
+        ):
+            pass
+    assert snapshot.value.status_code == 410
+    assert snapshot.value.detail == "tour_revoked"
+    if short_root is not None:
+        shutil.rmtree(short_root)
 
 
 def test_malformed_or_symlinked_governed_closeout_fails_closed(

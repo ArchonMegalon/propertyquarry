@@ -64,6 +64,10 @@ _REVOKED_AT_RE = re.compile(
 )
 
 
+def _checkpoint(_name: str) -> None:
+    """Crash-injection seam; production execution intentionally does nothing."""
+
+
 def _canonical(value: object) -> bytes:
     return (
         json.dumps(
@@ -202,6 +206,8 @@ def _same_file(
 def _read_existing_marker(
     root_descriptor: int,
     expected: bytes,
+    *,
+    required_nlink: int = 1,
 ) -> os.stat_result:
     descriptor = -1
     try:
@@ -219,7 +225,7 @@ def _read_existing_marker(
             or int(before.st_uid) != MARKER_UID
             or int(before.st_gid) != MARKER_GID
             or stat.S_IMODE(before.st_mode) != MARKER_MODE
-            or int(before.st_nlink) != 1
+            or int(before.st_nlink) != required_nlink
             or int(before.st_size) != len(expected)
         ):
             raise RuntimeError("existing_closeout_marker_invalid")
@@ -231,6 +237,7 @@ def _read_existing_marker(
                 raise RuntimeError("existing_closeout_marker_changed")
             chunks.append(chunk)
             remaining -= len(chunk)
+            _checkpoint("marker-stable-reread")
         if os.read(descriptor, 1):
             raise RuntimeError("existing_closeout_marker_changed")
         after = os.fstat(descriptor)
@@ -245,6 +252,177 @@ def _read_existing_marker(
             os.close(descriptor)
 
 
+def _complete_marker(
+    root_descriptor: int,
+    *,
+    expected: bytes,
+) -> os.stat_result:
+    """Create or resume the fixed marker as an immediate privacy kill switch."""
+
+    descriptor = -1
+    try:
+        try:
+            descriptor = os.open(
+                MARKER_NAME,
+                os.O_RDWR
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                0o600,
+                dir_fd=root_descriptor,
+            )
+            os.fchmod(descriptor, 0o600)
+        except FileExistsError:
+            descriptor = os.open(
+                MARKER_NAME,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=root_descriptor,
+            )
+        root = os.fstat(root_descriptor)
+        before = os.fstat(descriptor)
+        path_before = os.stat(
+            MARKER_NAME,
+            dir_fd=root_descriptor,
+            follow_symlinks=False,
+        )
+        mode = stat.S_IMODE(before.st_mode)
+        creator_mode_subset = mode & ~0o600 == 0
+        if (
+            not _same_file(before, path_before)
+            or not stat.S_ISREG(before.st_mode)
+            or int(before.st_dev) != int(root.st_dev)
+            or int(before.st_uid) != MARKER_UID
+            or int(before.st_gid) != MARKER_GID
+            or int(before.st_nlink) != 1
+            or not (
+                creator_mode_subset
+                or (mode == MARKER_MODE and int(before.st_size) == len(expected))
+            )
+            or int(before.st_size) < 0
+            or int(before.st_size) > len(expected)
+        ):
+            raise RuntimeError("closeout_marker_invalid")
+        size = int(before.st_size)
+        completed_read_only = (
+            mode == MARKER_MODE and size == len(expected)
+        )
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        prefix = bytearray()
+        while len(prefix) < size:
+            chunk = os.read(descriptor, min(size - len(prefix), 4096))
+            if not chunk:
+                raise RuntimeError("closeout_marker_changed")
+            prefix.extend(chunk)
+        if bytes(prefix) != expected[:size]:
+            raise RuntimeError("closeout_marker_invalid")
+        after_prefix = os.fstat(descriptor)
+        path_after_prefix = os.stat(
+            MARKER_NAME,
+            dir_fd=root_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not _same_file(
+                after_prefix,
+                path_after_prefix,
+            )
+            or int(after_prefix.st_size) != size
+        ):
+            raise RuntimeError("closeout_marker_changed")
+        if completed_read_only:
+            os.fsync(descriptor)
+            os.fsync(root_descriptor)
+            return after_prefix
+        read_identity = after_prefix
+        os.close(descriptor)
+        descriptor = os.open(
+            MARKER_NAME,
+            os.O_RDWR
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=root_descriptor,
+        )
+        reopened = os.fstat(descriptor)
+        path_reopened = os.stat(
+            MARKER_NAME,
+            dir_fd=root_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not _same_file(read_identity, reopened)
+            or not _same_file(reopened, path_reopened)
+        ):
+            raise RuntimeError("closeout_marker_changed")
+        if stat.S_IMODE(reopened.st_mode) != 0o600:
+            os.fchmod(descriptor, 0o600)
+            reopened = os.fstat(descriptor)
+            path_reopened = os.stat(
+                MARKER_NAME,
+                dir_fd=root_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not _same_file(reopened, path_reopened)
+                or stat.S_IMODE(reopened.st_mode) != 0o600
+            ):
+                raise RuntimeError("closeout_marker_changed")
+
+        # The fixed final leaf is durable before content work.  From this
+        # point the public route observes an invalid in-progress marker and
+        # fails closed even if this process is lost.
+        os.fsync(descriptor)
+        os.fsync(root_descriptor)
+        _checkpoint("marker-kill-switch-durable")
+        if size < len(expected):
+            os.lseek(descriptor, size, os.SEEK_SET)
+            remaining = memoryview(expected)[size:]
+            while remaining:
+                written = os.write(descriptor, remaining[:64])
+                if written <= 0:
+                    raise RuntimeError("closeout_marker_short_write")
+                remaining = remaining[written:]
+                _checkpoint("marker-write-progress")
+        _checkpoint("marker-written")
+        os.fsync(descriptor)
+        _checkpoint("marker-bytes-fsynced")
+        os.fchmod(descriptor, MARKER_MODE)
+        _checkpoint("marker-readonly")
+        os.fsync(descriptor)
+        _checkpoint("marker-final-fsynced")
+        after = os.fstat(descriptor)
+        path_after = os.stat(
+            MARKER_NAME,
+            dir_fd=root_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not _same_file(after, path_after)
+            or not stat.S_ISREG(after.st_mode)
+            or int(after.st_dev) != int(root.st_dev)
+            or int(after.st_uid) != MARKER_UID
+            or int(after.st_gid) != MARKER_GID
+            or stat.S_IMODE(after.st_mode) != MARKER_MODE
+            or int(after.st_nlink) != 1
+            or int(after.st_size) != len(expected)
+        ):
+            raise RuntimeError("closeout_marker_verification_failed")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+    # Stable exact reread occurs after the writable descriptor is closed.
+    final_stat = _read_existing_marker(root_descriptor, expected)
+    os.fsync(root_descriptor)
+    _checkpoint("marker-stable")
+    return final_stat
+
+
 def _governed_root_inventory(
     root_descriptor: int,
     *,
@@ -253,17 +431,22 @@ def _governed_root_inventory(
     names = set(os.listdir(root_descriptor))
     if names != expected_names:
         raise RuntimeError("governed_root_inventory_invalid")
+    return _governed_target_identity(root_descriptor)
+
+
+def _governed_target_identity(
+    root_descriptor: int,
+) -> os.stat_result:
     target = os.stat(
         MARKER_SLUG,
         dir_fd=root_descriptor,
         follow_symlinks=False,
     )
     root = os.fstat(root_descriptor)
-    if (
-        stat.S_ISLNK(target.st_mode)
-        or not stat.S_ISDIR(target.st_mode)
-        or int(target.st_dev) != int(root.st_dev)
-    ):
+    # Closeout is a one-way privacy boundary, not install validation.  Bind
+    # only the no-follow directory-entry identity and never open, follow, or
+    # read a possibly partial or attacker-shaped protected target.
+    if int(target.st_dev) != int(root.st_dev):
         raise RuntimeError("governed_target_invalid")
     return target
 
@@ -322,8 +505,6 @@ def _read_request() -> bytes:
 def closeout() -> bytes:
     raw = _read_request()
     root_descriptor = -1
-    marker_descriptor = -1
-    verify_descriptor = -1
     try:
         root_descriptor = os.open(
             GOVERNED_ROOT,
@@ -340,101 +521,29 @@ def closeout() -> bytes:
             or stat.S_IMODE(root_details.st_mode) != GOVERNED_ROOT_MODE
         ):
             raise RuntimeError("governed_root_invalid")
-        names = set(os.listdir(root_descriptor))
-        if names == {MARKER_SLUG, MARKER_NAME}:
-            target_before = _governed_root_inventory(
-                root_descriptor,
-                expected_names={MARKER_SLUG, MARKER_NAME},
-            )
-            _read_existing_marker(root_descriptor, raw)
-            target_after = _governed_root_inventory(
-                root_descriptor,
-                expected_names={MARKER_SLUG, MARKER_NAME},
-            )
-            if not _same_file(target_before, target_after):
-                raise RuntimeError("governed_target_changed")
-            os.fsync(root_descriptor)
-            return raw
-        target_before = _governed_root_inventory(
+        # Establish only that the protected entry exists on this governed
+        # volume.  The fixed marker is completed before the wider inventory
+        # proof so unrelated entries can never keep the protected tour live.
+        target_before = _governed_target_identity(root_descriptor)
+        marker = _complete_marker(
             root_descriptor,
-            expected_names={MARKER_SLUG},
+            expected=raw,
         )
-        try:
-            marker_descriptor = os.open(
-                MARKER_NAME,
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                MARKER_MODE,
-                dir_fd=root_descriptor,
-            )
-        except FileExistsError:
-            _read_existing_marker(root_descriptor, raw)
-            target_after = _governed_root_inventory(
-                root_descriptor,
-                expected_names={MARKER_SLUG, MARKER_NAME},
-            )
-            if not _same_file(target_before, target_after):
-                raise RuntimeError("governed_target_changed")
-            os.fsync(root_descriptor)
-            return raw
-        remaining = memoryview(raw)
-        while remaining:
-            written = os.write(marker_descriptor, remaining)
-            if written <= 0:
-                raise RuntimeError("closeout_marker_short_write")
-            remaining = remaining[written:]
-        os.fsync(marker_descriptor)
-        os.fchmod(marker_descriptor, MARKER_MODE)
-        os.fsync(marker_descriptor)
-        created = os.fstat(marker_descriptor)
-        if (
-            not stat.S_ISREG(created.st_mode)
-            or int(created.st_uid) != MARKER_UID
-            or int(created.st_gid) != MARKER_GID
-            or stat.S_IMODE(created.st_mode) != MARKER_MODE
-            or int(created.st_nlink) != 1
-            or int(created.st_size) != len(raw)
-        ):
-            raise RuntimeError("closeout_marker_verification_failed")
-        os.fsync(root_descriptor)
         target_after = _governed_root_inventory(
             root_descriptor,
             expected_names={MARKER_SLUG, MARKER_NAME},
         )
         if not _same_file(target_before, target_after):
             raise RuntimeError("governed_target_changed")
-        verify_descriptor = os.open(
+        path_marker = os.stat(
             MARKER_NAME,
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
             dir_fd=root_descriptor,
+            follow_symlinks=False,
         )
-        verified = os.fstat(verify_descriptor)
-        if not _same_file(created, verified):
-            raise RuntimeError("closeout_marker_changed")
-        chunks: list[bytes] = []
-        remaining_bytes = len(raw)
-        while remaining_bytes:
-            chunk = os.read(
-                verify_descriptor,
-                min(remaining_bytes, 4096),
-            )
-            if not chunk:
-                raise RuntimeError("closeout_marker_changed")
-            chunks.append(chunk)
-            remaining_bytes -= len(chunk)
-        if os.read(verify_descriptor, 1) or b"".join(chunks) != raw:
+        if not _same_file(marker, path_marker):
             raise RuntimeError("closeout_marker_changed")
         return raw
     finally:
-        if verify_descriptor >= 0:
-            os.close(verify_descriptor)
-        if marker_descriptor >= 0:
-            os.close(marker_descriptor)
         if root_descriptor >= 0:
             os.close(root_descriptor)
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +13,7 @@ import pytest
 from app.product import property_tour_ai_panorama_admission as admission_authority
 from scripts import propertyquarry_ai_panorama_controller_contract as contract
 from scripts import propertyquarry_prater_ai_panorama_controller as controller
+from scripts import propertyquarry_prater_ai_panorama_recovery as recovery
 
 
 _REAL_DATABASE_SECRET_ENVIRONMENT = controller._database_secret_environment
@@ -83,10 +86,60 @@ def _release_module() -> SimpleNamespace:
 
 
 def _request() -> dict[str, str]:
+    request_id = "7" * 32
     return {
         "owner_principal_id": "private-owner@example.invalid",
         "expected_publication_record_sha256": "6" * 64,
-        "request_id": "7" * 32,
+        "request_id": request_id,
+        "permit_relpath": (
+            f"prater-ai-panorama-install-{request_id}.v2.json"
+        ),
+    }
+
+
+def _terminal_storage_admission(root: Path) -> SimpleNamespace:
+    return SimpleNamespace(
+        _open_control_root=lambda: os.open(
+            root,
+            os.O_RDONLY | os.O_DIRECTORY,
+        ),
+        _read_relative_regular=admission_authority._read_relative_regular,
+        _descriptor_mount_id=admission_authority._descriptor_mount_id,
+        _CONTROLLER_PATHS=SimpleNamespace(required_uid=os.geteuid()),
+    )
+
+
+def _normal_terminal_payload() -> dict[str, object]:
+    return {
+        "schema": controller.TERMINAL_SCHEMA,
+        "version": 1,
+        "authority": controller.AUTHORITY,
+        "status": "committed",
+        "request_id_sha256": "1" * 64,
+        "permit_sha256": "2" * 64,
+        "result": {
+            "status": "released",
+            "release_eligible": True,
+            "private_values_redacted": True,
+        },
+        "private_values_redacted": True,
+    }
+
+
+def _historical_terminal_payload() -> dict[str, object]:
+    return {
+        "schema": controller.TERMINAL_SCHEMA,
+        "version": 1,
+        "authority": controller.AUTHORITY,
+        "status": "committed",
+        "request_id_sha256": "1" * 64,
+        "permit_sha256": "2" * 64,
+        "operation_id_sha256": "3" * 64,
+        "operation_terminal_entry_sha256": "4" * 64,
+        "operation_terminal_evidence_sha256": "5" * 64,
+        "database_mutation_performed": False,
+        "public_target_mutation_performed": False,
+        "private_values_redacted": True,
     }
 
 
@@ -96,6 +149,65 @@ def test_source_contract_is_inert_and_hashes_exact_controller_sources() -> None:
     assert value["authoritative"] is False
     assert value["production_ready"] is False
     assert value["performs_release_effects"] is False
+    assert value["permit_leaf_contract"] == {
+        "schema": "propertyquarry.ai-panorama-install-permit.v2",
+        "relative_path_pattern": (
+            "prater-ai-panorama-install-"
+            "<32-lowercase-hex-request-id>.v2.json"
+        ),
+        "file_mode": 0o600,
+        "creation": "exclusive-file-fsync-directory-fsync",
+        "overwrite": "forbidden",
+        "deletion": "forbidden",
+        "minimum_retention_seconds": 24 * 60 * 60,
+        "request_selector": "prater-release-request.v2.json",
+        "request_schema": (
+            "propertyquarry.prater-ai-panorama-release-request.v2"
+        ),
+    }
+    assert value["terminal_receipt_publication"] == {
+        "schema": (
+            "propertyquarry.prater-ai-panorama-terminal-receipt.v1"
+        ),
+        "relative_path_pattern": (
+            "terminal-<32-lowercase-hex-request-id>.v1.json"
+        ),
+        "temporary_inode": "linux-o-tmpfile-unnamed",
+        "publication": "linkat-no-replace",
+        "named_temporary_paths": False,
+        "pre_link_crash_residue": "none",
+        "post_link_nlink": 1,
+        "file_mode": 0o600,
+        "durability": "file-fsync-link-parent-fsync",
+        "validation": "exact-path-bytes-inode-mode-uid-device-mount",
+    }
+    assert value["retry_contract"] == {
+        "attempt_sequence_authority": "native-signed-journal",
+        "attempt_sequence_field": "ai_panorama_attempt_sequence",
+        "attempt_sequence_minimum": 1,
+        "attempt_sequence_maximum": 32,
+        "attempt_sequence_rule": (
+            "one-plus-prior-attempts-for-same-release-receipt"
+        ),
+        "maximum_attempts_per_release_receipt": 32,
+        "retry_predecessor_field": (
+            "ai_panorama_retry_of_terminal_receipt_digest"
+        ),
+        "retry_predecessor": (
+            "immediately-previous-global-install-terminal-"
+            "receipt-or-genesis"
+        ),
+        "genesis_allowed_only_if": "no-prior-global-install-terminal",
+        "terminal_receipt_format": "sha256:<64-lowercase-hex>",
+        "new_release_receipt": (
+            "sequence-may-reset-to-1-but-global-predecessor-"
+            "link-remains"
+        ),
+        "at_cap": (
+            "new-reviewed-core-release-receipt-required-no-rollover"
+        ),
+        "python_request_or_permit_fields_added": False,
+    }
     assert len(str(value["source_manifest_sha256"])) == 64
     relpaths = {row["relpath"] for row in value["files"]}
     assert "scripts/propertyquarry_prater_ai_panorama_controller.py" in relpaths
@@ -110,7 +222,58 @@ def test_source_contract_is_inert_and_hashes_exact_controller_sources() -> None:
         in relpaths
     )
     assert "scripts/propertyquarry_prater_ai_panorama_closeout.py" in relpaths
+    assert "scripts/propertyquarry_prater_ai_panorama_recovery.py" in relpaths
     assert "ea/Dockerfile.property-web" in relpaths
+    assert value["historical_recovery_contract"] == {
+        "entrypoint": (
+            "/usr/local/libexec/"
+            "propertyquarry-prater-ai-panorama-recovery-v1.py"
+        ),
+        "arguments": "forbidden",
+        "authority": "classification-only-no-install-authority",
+        "wall_clock_cutoff": "none",
+        "key_validation_time": "permit-issued-at",
+        "archive_authority": "native-signed-journal",
+        "archive_binding": "exact-canonical-bytes-and-sha256-per-attempt",
+        "archive_selection": (
+            "request-id-and-permit-sha256-from-signed-journal"
+        ),
+        "caller_selected_archive": False,
+        "current_context_substitution": "forbidden",
+        "mount_mode": "read-only",
+        "fixed_mounts": {
+            "trust_assertion": (
+                "/run/propertyquarry-release-control/"
+                "ai-panorama-install/"
+                "ai-panorama-install-trust-assertion.v1.json"
+            ),
+            "volume_profile": (
+                "/run/propertyquarry-release-control/"
+                "ai-panorama-install/"
+                "public-tour-volume-profile.v2.json"
+            ),
+            "compose_plan": (
+                "/run/propertyquarry-release-control/"
+                "ai-panorama-install/"
+                "public-tour-compose-plan.v1.json"
+            ),
+            "keyring": (
+                "/etc/propertyquarry/release-control/"
+                "ai-panorama-install-keyring.v1.json"
+            ),
+        },
+        "required_archive_digests": [
+            "trust_assertion_sha256",
+            "volume_profile_sha256",
+            "compose_plan_sha256",
+            "keyring_sha256",
+        ],
+        "mutation": {
+            "database": False,
+            "public_target": False,
+            "permit_consumption": False,
+        },
+    }
     dockerfile = (
         Path(__file__).resolve().parents[1]
         / "ea"
@@ -127,6 +290,17 @@ def test_source_contract_is_inert_and_hashes_exact_controller_sources() -> None:
     assert (
         "/usr/local/libexec/"
         "propertyquarry-prater-ai-panorama-closeout-v1.py"
+    ) in dockerfile
+    assert (
+        "COPY --chmod=0444 "
+        "scripts/propertyquarry_prater_ai_panorama_recovery.py "
+        "/app/scripts/propertyquarry_prater_ai_panorama_recovery.py"
+    ) in dockerfile
+    assert (
+        "COPY --chmod=0555 "
+        "scripts/propertyquarry_prater_ai_panorama_recovery.py "
+        "/usr/local/libexec/"
+        "propertyquarry-prater-ai-panorama-recovery-v1.py"
     ) in dockerfile
 
 
@@ -168,12 +342,15 @@ def test_fixed_request_loader_rejects_noncanonical_or_extra_fields(
 ) -> None:
     request = {
         "schema": controller.REQUEST_SCHEMA,
-        "version": 1,
+        "version": 2,
         "authority": controller.AUTHORITY,
         "status": "approved",
         "owner_principal_id": "owner@example.invalid",
         "expected_publication_record_sha256": "a" * 64,
         "request_id": "b" * 32,
+        "permit_relpath": (
+            f"prater-ai-panorama-install-{'b' * 32}.v2.json"
+        ),
     }
     request_path = tmp_path / controller.REQUEST_RELPATH
     request_path.write_bytes(controller._canonical(request))
@@ -198,6 +375,9 @@ def test_fixed_request_loader_rejects_noncanonical_or_extra_fields(
         _open_control_root=_open_root,
         _read_relative_regular=_read,
         _CONTROLLER_PATHS=SimpleNamespace(required_uid=os.geteuid()),
+        ai_panorama_install_permit_relpath=(
+            admission_authority.ai_panorama_install_permit_relpath
+        ),
     )
     assert controller._load_request(admission)["request_id"] == "b" * 32
 
@@ -210,6 +390,31 @@ def test_fixed_request_loader_rejects_noncanonical_or_extra_fields(
         controller._load_request(admission)
 
     request.pop("unexpected")
+    request["owner_principal_id"] = "owner@example.invalid"
+    canonical = controller._canonical(request)
+    request_path.write_bytes(canonical[:-1] + b" \n")
+    with pytest.raises(
+        controller.PraterControllerEntrypointError,
+        match="prater-controller-request-invalid",
+    ):
+        controller._load_request(admission)
+
+    duplicate = canonical.replace(
+        b'"permit_relpath":',
+        (
+            b'"permit_relpath":"'
+            + request["permit_relpath"].encode("ascii")
+            + b'","permit_relpath":'
+        ),
+        1,
+    )
+    request_path.write_bytes(duplicate)
+    with pytest.raises(
+        controller.PraterControllerEntrypointError,
+        match="prater-controller-request-invalid",
+    ):
+        controller._load_request(admission)
+
     request["owner_principal_id"] = "nön-ascii@example.invalid"
     request_path.write_bytes(controller._canonical(request))
     with pytest.raises(
@@ -217,6 +422,117 @@ def test_fixed_request_loader_rejects_noncanonical_or_extra_fields(
         match="prater-controller-request-invalid",
     ):
         controller._load_request(admission)
+
+
+@pytest.mark.parametrize(
+    "permit_relpath",
+    (
+        "prater-ai-panorama-install.json",
+        f"prater-ai-panorama-install-{'a' * 32}.v2.json",
+        f"prater-ai-panorama-install-{'b' * 32}.json",
+        f"prater-ai-panorama-install-{'b' * 32}.V2.json",
+        f"nested/prater-ai-panorama-install-{'b' * 32}.v2.json",
+        f"../prater-ai-panorama-install-{'b' * 32}.v2.json",
+    ),
+)
+def test_fixed_request_loader_rejects_alternate_permit_selection(
+    tmp_path: Path,
+    permit_relpath: str,
+) -> None:
+    request = {
+        "schema": controller.REQUEST_SCHEMA,
+        "version": 2,
+        "authority": controller.AUTHORITY,
+        "status": "approved",
+        "owner_principal_id": "owner@example.invalid",
+        "expected_publication_record_sha256": "a" * 64,
+        "request_id": "b" * 32,
+        "permit_relpath": permit_relpath,
+    }
+    request_path = tmp_path / controller.REQUEST_RELPATH
+    request_path.write_bytes(controller._canonical(request))
+    request_path.chmod(0o600)
+
+    def _read(
+        root_descriptor: int,
+        relpath: str,
+        **_kwargs: object,
+    ) -> object:
+        descriptor = os.open(relpath, os.O_RDONLY, dir_fd=root_descriptor)
+        try:
+            return SimpleNamespace(data=os.read(descriptor, 64 * 1024))
+        finally:
+            os.close(descriptor)
+
+    admission = SimpleNamespace(
+        _open_control_root=lambda: os.open(
+            tmp_path,
+            os.O_RDONLY | os.O_DIRECTORY,
+        ),
+        _read_relative_regular=_read,
+        _CONTROLLER_PATHS=SimpleNamespace(required_uid=os.geteuid()),
+        ai_panorama_install_permit_relpath=(
+            admission_authority.ai_panorama_install_permit_relpath
+        ),
+    )
+
+    with pytest.raises(
+        controller.PraterControllerEntrypointError,
+        match="prater-controller-request-invalid",
+    ):
+        controller._load_request(admission)
+
+
+def test_release_request_v2_never_reads_stale_v1_selector(
+    tmp_path: Path,
+) -> None:
+    stale_path = tmp_path / "prater-release-request.v1.json"
+    stale_path.write_bytes(
+        controller._canonical(
+            {
+                "schema": "propertyquarry.prater-ai-panorama-release-request.v1",
+                "version": 1,
+                "authority": controller.AUTHORITY,
+                "status": "approved",
+                "owner_principal_id": "owner@example.invalid",
+                "expected_publication_record_sha256": "a" * 64,
+                "request_id": "b" * 32,
+            }
+        )
+    )
+    stale_path.chmod(0o600)
+    observed: list[str] = []
+
+    def _read(
+        root_descriptor: int,
+        relpath: str,
+        **_kwargs: object,
+    ) -> object:
+        observed.append(relpath)
+        descriptor = os.open(relpath, os.O_RDONLY, dir_fd=root_descriptor)
+        try:
+            return SimpleNamespace(data=os.read(descriptor, 64 * 1024))
+        finally:
+            os.close(descriptor)
+
+    admission = SimpleNamespace(
+        _open_control_root=lambda: os.open(
+            tmp_path,
+            os.O_RDONLY | os.O_DIRECTORY,
+        ),
+        _read_relative_regular=_read,
+        _CONTROLLER_PATHS=SimpleNamespace(required_uid=os.geteuid()),
+        ai_panorama_install_permit_relpath=(
+            admission_authority.ai_panorama_install_permit_relpath
+        ),
+    )
+
+    with pytest.raises(
+        controller.PraterControllerEntrypointError,
+        match="prater-controller-request-unavailable",
+    ):
+        controller._load_request(admission)
+    assert observed == ["prater-release-request.v2.json"]
 
 
 def test_database_secret_file_is_fixed_private_canonical_and_ephemeral(
@@ -405,11 +721,7 @@ def test_expected_bindings_are_closed_over_prater_and_trusted_context() -> None:
         admission=SimpleNamespace(AiPanoramaInstallExpectedBindings=_expected),
         release=_release_module(),
     )
-    request = {
-        "owner_principal_id": "private-owner@example.invalid",
-        "expected_publication_record_sha256": "6" * 64,
-        "request_id": "7" * 32,
-    }
+    request = _request()
 
     controller._expected_bindings(components, request, _trusted())
 
@@ -474,11 +786,7 @@ def test_run_consumes_fixed_permit_and_writes_terminal_receipt(
     monkeypatch.setattr(
         controller,
         "_load_request",
-        lambda _admission: {
-            "owner_principal_id": "private-owner@example.invalid",
-            "expected_publication_record_sha256": "6" * 64,
-            "request_id": "7" * 32,
-        },
+        lambda _admission: _request(),
     )
     monkeypatch.setattr(
         controller,
@@ -496,7 +804,7 @@ def test_run_consumes_fixed_permit_and_writes_terminal_receipt(
 
     result = controller.run()
 
-    assert captured["permit_relpath"] == controller.PERMIT_RELPATH
+    assert captured["permit_relpath"] == _request()["permit_relpath"]
     assert captured["db_secret_loaded"] is True
     assert captured["terminal_relpath"] == f"terminal-{'7' * 32}.v1.json"
     assert captured["terminal"]["status"] == "committed"
@@ -568,7 +876,7 @@ def test_preflight_verifies_without_consuming_or_writing_terminal(
     result = controller.run_preflight()
 
     assert captured["entrypoint"] == controller.PREFLIGHT_ENTRYPOINT_PATH
-    assert captured["permit_relpath"] == controller.PERMIT_RELPATH
+    assert captured["permit_relpath"] == _request()["permit_relpath"]
     assert result["status"] == "preflight-passed"
     assert result["nonce_consumed"] is False
     assert result["database_access_performed"] is False
@@ -846,6 +1154,180 @@ def test_committed_release_terminal_write_failure_never_writes_false_failure(
     assert calls[0]["status"] == "committed"
 
 
+def test_terminal_receipt_uses_single_link_unnamed_atomic_publication(
+    tmp_path: Path,
+) -> None:
+    admission = _terminal_storage_admission(tmp_path)
+    relpath = controller._terminal_relpath(_request()["request_id"])
+    payload = _normal_terminal_payload()
+
+    receipt_sha256 = controller._write_terminal_receipt(
+        admission,
+        relpath=relpath,
+        payload=payload,
+    )
+
+    target = tmp_path / relpath
+    details = target.stat(follow_symlinks=False)
+    assert receipt_sha256 == hashlib.sha256(
+        controller._canonical(payload)
+    ).hexdigest()
+    assert target.read_bytes() == controller._canonical(payload)
+    assert stat.S_IMODE(details.st_mode) == 0o600
+    assert details.st_uid == os.geteuid()
+    assert details.st_nlink == 1
+    assert sorted(path.name for path in tmp_path.iterdir()) == [relpath]
+    assert (
+        controller._write_or_validate_terminal_receipt(
+            admission,
+            relpath=relpath,
+            payload=payload,
+        )
+        == receipt_sha256
+    )
+    assert target.stat(follow_symlinks=False).st_nlink == 1
+
+
+def test_existing_terminal_validation_is_bound_to_root_device_and_mount(
+    tmp_path: Path,
+) -> None:
+    admission = _terminal_storage_admission(tmp_path)
+    relpath = controller._terminal_relpath(_request()["request_id"])
+    payload = _normal_terminal_payload()
+    controller._write_terminal_receipt(
+        admission,
+        relpath=relpath,
+        payload=payload,
+    )
+    observed: dict[str, int] = {}
+    real_read = admission_authority._read_relative_regular
+
+    def _read(
+        root_descriptor: int,
+        observed_relpath: str,
+        **kwargs: object,
+    ) -> object:
+        observed["required_device"] = int(kwargs["required_device"])
+        observed["required_mount_id"] = int(
+            kwargs["required_mount_id"]
+        )
+        return real_read(
+            root_descriptor,
+            observed_relpath,
+            **kwargs,
+        )
+
+    admission._read_relative_regular = _read
+    controller._read_matching_terminal_receipt(
+        admission,
+        relpath=relpath,
+        payload=payload,
+    )
+
+    assert observed["required_device"] == tmp_path.stat().st_dev
+    assert observed["required_mount_id"] > 0
+    with pytest.raises(
+        controller.PraterControllerEntrypointError,
+        match="prater-controller-terminal-receipt-invalid",
+    ):
+        controller._read_matching_terminal_receipt(
+            admission,
+            relpath=f"nested/{relpath}",
+            payload=payload,
+        )
+
+
+@pytest.mark.parametrize(
+    "checkpoint",
+    (
+        "temporary-fsynced",
+        "target-linked",
+        "directory-fsynced",
+    ),
+)
+def test_terminal_receipt_process_death_is_cross_entrypoint_recoverable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checkpoint: str,
+) -> None:
+    class _InjectedProcessDeath(BaseException):
+        pass
+
+    admission = _terminal_storage_admission(tmp_path)
+    relpath = controller._terminal_relpath(_request()["request_id"])
+    normal_payload = _normal_terminal_payload()
+    historical_payload = _historical_terminal_payload()
+
+    def _checkpoint(observed: str) -> None:
+        if observed == checkpoint:
+            raise _InjectedProcessDeath
+
+    monkeypatch.setattr(
+        controller,
+        "_terminal_publication_checkpoint",
+        _checkpoint,
+    )
+    with pytest.raises(_InjectedProcessDeath):
+        controller._write_terminal_receipt(
+            admission,
+            relpath=relpath,
+            payload=normal_payload,
+        )
+    monkeypatch.setattr(
+        controller,
+        "_terminal_publication_checkpoint",
+        lambda _observed: None,
+    )
+
+    target = tmp_path / relpath
+    if checkpoint == "temporary-fsynced":
+        assert list(tmp_path.iterdir()) == []
+        expected_sha256 = hashlib.sha256(
+            controller._canonical(historical_payload)
+        ).hexdigest()
+        assert (
+            controller._write_or_validate_terminal_receipt(
+                admission,
+                relpath=relpath,
+                payload=historical_payload,
+            )
+            == expected_sha256
+        )
+        assert target.read_bytes() == controller._canonical(
+            historical_payload
+        )
+    else:
+        before = target.stat(follow_symlinks=False)
+        before_bytes = target.read_bytes()
+        assert before_bytes == controller._canonical(normal_payload)
+        assert before.st_nlink == 1
+        assert (
+            controller._read_matching_terminal_receipt(
+                admission,
+                relpath=relpath,
+                payload=normal_payload,
+            )
+            == hashlib.sha256(before_bytes).hexdigest()
+        )
+        with pytest.raises(
+            controller.PraterControllerEntrypointError,
+            match="prater-controller-terminal-state-invalid",
+        ):
+            controller._write_or_validate_terminal_receipt(
+                admission,
+                relpath=relpath,
+                payload=historical_payload,
+            )
+        after = target.stat(follow_symlinks=False)
+        assert controller._terminal_file_identity(
+            after
+        ) == controller._terminal_file_identity(before)
+        assert target.read_bytes() == before_bytes
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == [relpath]
+    assert target.stat(follow_symlinks=False).st_nlink == 1
+
+
 def test_main_refuses_all_arguments_before_release(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -860,3 +1342,152 @@ def test_main_refuses_all_arguments_before_release(
     assert controller.main() == 2
     value = json.loads(capsys.readouterr().out)
     assert value["error"] == "prater-controller-arguments-forbidden"
+
+
+def test_fixed_recovery_entrypoint_classifies_and_writes_immutable_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    expected = object()
+    release_module = _release_module()
+    release_module.recover_prater_ai_panorama_historical_operation = (
+        lambda permit_relpath, observed_expected: (
+            captured.update(
+                {
+                    "permit_relpath": permit_relpath,
+                    "expected": observed_expected,
+                }
+            )
+            or {
+                "classification": "failed-clean",
+                "event": "consumed-failed-clean",
+                "operation_id": "1" * 64,
+                "operation_terminal_entry_sha256": "2" * 64,
+                "operation_terminal_evidence_sha256": "3" * 64,
+                "permit_sha256": "4" * 64,
+                "request_id_sha256": (
+                    __import__("hashlib").sha256(
+                        _request()["request_id"].encode("ascii")
+                    ).hexdigest()
+                ),
+                "database_mutation_performed": False,
+                "public_target_mutation_performed": False,
+                "private_values_redacted": True,
+            }
+        )
+    )
+    admission = SimpleNamespace(
+        load_ai_panorama_install_trusted_context=_trusted,
+    )
+    components = SimpleNamespace(
+        admission=admission,
+        release=release_module,
+    )
+    monkeypatch.setattr(recovery.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(recovery.os, "getegid", lambda: 0)
+    monkeypatch.setattr(recovery, "_self_attest", lambda: None)
+    monkeypatch.setattr(controller, "_components", lambda: components)
+    monkeypatch.setattr(
+        controller,
+        "_load_request",
+        lambda _admission: _request(),
+    )
+    monkeypatch.setattr(
+        controller,
+        "_expected_bindings",
+        lambda *_args: expected,
+    )
+
+    def _terminal(
+        _admission: object,
+        *,
+        relpath: str,
+        payload: dict[str, object],
+    ) -> str:
+        captured["terminal_relpath"] = relpath
+        captured["terminal"] = payload
+        return "5" * 64
+
+    monkeypatch.setattr(
+        controller,
+        "_write_or_validate_terminal_receipt",
+        _terminal,
+    )
+
+    result = recovery.run()
+
+    assert captured["permit_relpath"] == _request()["permit_relpath"]
+    assert captured["expected"] is expected
+    assert captured["terminal_relpath"] == (
+        f"terminal-{_request()['request_id']}.v1.json"
+    )
+    terminal = captured["terminal"]
+    assert isinstance(terminal, dict)
+    assert terminal["status"] == "failed-clean"
+    assert terminal["database_mutation_performed"] is False
+    assert terminal["public_target_mutation_performed"] is False
+    assert result["schema"] == recovery.RESULT_SCHEMA
+    assert result["status"] == "classified"
+    assert result["classification"] == "failed-clean"
+    assert result["retry_authorized"] is False
+    assert result["terminal_receipt_sha256"] == "5" * 64
+
+
+def test_recovery_entrypoint_self_attests_exact_single_link_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entrypoint = tmp_path / "propertyquarry-recovery.py"
+    entrypoint.write_bytes(Path(recovery.__file__).read_bytes())
+    entrypoint.chmod(0o555)
+    monkeypatch.setattr(recovery, "__file__", str(entrypoint))
+    monkeypatch.setattr(recovery, "ENTRYPOINT_PATH", entrypoint)
+    monkeypatch.setattr(recovery, "ENTRYPOINT_UID", os.geteuid())
+    monkeypatch.setattr(recovery, "ENTRYPOINT_GID", os.getegid())
+
+    recovery._self_attest()
+
+    entrypoint.chmod(0o755)
+    with pytest.raises(
+        RuntimeError,
+        match="prater-recovery-entrypoint-invalid",
+    ):
+        recovery._self_attest()
+    entrypoint.chmod(0o555)
+    os.link(entrypoint, tmp_path / "unexpected-hardlink.py")
+    with pytest.raises(
+        RuntimeError,
+        match="prater-recovery-entrypoint-invalid",
+    ):
+        recovery._self_attest()
+
+
+def test_recovery_entrypoint_has_no_error_stdout_and_forbids_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        recovery.sys,
+        "argv",
+        [str(recovery.ENTRYPOINT_PATH), "--permit", "forbidden"],
+    )
+    monkeypatch.setattr(
+        recovery,
+        "run",
+        lambda: pytest.fail("argument-bearing recovery must not run"),
+    )
+    assert recovery.main() == 2
+    assert capsys.readouterr().out == ""
+
+    monkeypatch.setattr(
+        recovery.sys,
+        "argv",
+        [str(recovery.ENTRYPOINT_PATH)],
+    )
+    monkeypatch.setattr(
+        recovery,
+        "run",
+        lambda: (_ for _ in ()).throw(RuntimeError("private failure")),
+    )
+    assert recovery.main() == 1
+    assert capsys.readouterr().out == ""

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from app.product import property_tour_ai_panorama_admission as admission
+from app.product import property_search_storage as storage
 from app.product import property_tour_ai_panorama_prater_release as release
 from app.product.property_tour_ai_panorama_intake import AiPanoramaIntakeError
 from app.product.property_search_tour_binding import (
@@ -60,6 +63,61 @@ def _admission(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
+def _historical_expected() -> admission.AiPanoramaInstallExpectedBindings:
+    return admission.AiPanoramaInstallExpectedBindings(
+        subject=admission.CANONICAL_SUBJECT,
+        actor_principal_id="propertyquarry-release-controller",
+        owner_principal_id="private-owner@example.invalid",
+        search_run_id=release.PRATER_SEARCH_RUN_ID,
+        candidate_ref=release.PRATER_CANDIDATE_REF,
+        external_id=release.PRATER_EXTERNAL_ID,
+        listing_url=release.PRATER_LISTING_URL,
+        source_ref=release.PRATER_SOURCE_REF,
+        provider_key=release.PRATER_PROVIDER_KEY,
+        expected_slug=release.PRATER_SLUG,
+        expected_source_tree_sha256=release.PRATER_SOURCE_TREE_SHA256,
+        expected_tour_sha256=release.PRATER_TOUR_SHA256,
+        expected_core_manifest_sha256=release.PRATER_CORE_MANIFEST_SHA256,
+        expected_materialization_receipt_sha256=(
+            release.PRATER_MATERIALIZATION_RECEIPT_SHA256
+        ),
+        expected_candidate_marker_sha256=(
+            release.PRATER_CANDIDATE_MARKER_SHA256
+        ),
+        expected_publication_record_sha256="5" * 64,
+        artifact_relpath=release.PRATER_ARTIFACT_RELPATH,
+        materialization_receipt_relpath=(
+            release.PRATER_MATERIALIZATION_RECEIPT_RELPATH
+        ),
+        request_id="7" * 32,
+        repository=admission.CANONICAL_REPOSITORY,
+        git_ref=admission.CANONICAL_GIT_REF,
+        git_head_sha="d" * 40,
+        workflow_ref=admission.CANONICAL_WORKFLOW_REF,
+        job=admission.CANONICAL_JOB,
+        environment=admission.CANONICAL_ENVIRONMENT,
+        review_receipt_sha256="6" * 64,
+        web_image=(
+            f"{admission.CANONICAL_WEB_IMAGE_REPOSITORY}@sha256:"
+            + "c" * 64
+        ),
+        web_image_id="sha256:" + "d" * 64,
+        key_usage=admission.PERMIT_KEY_USAGE,
+        key_id="release-key",
+        key_epoch=1,
+        key_sha256="a" * 64,
+        keyring_sha256="b" * 64,
+        volume_profile_sha256="c" * 64,
+        compose_plan_sha256="d" * 64,
+        volume_id=admission.CANONICAL_PUBLIC_TOUR_VOLUME_ID,
+        artifact_root_device=31,
+        artifact_root_inode=32,
+        public_tour_root_device=41,
+        public_tour_root_inode=42,
+        execution_lease_seconds=600,
+    )
+
+
 def _publication_record(
     *,
     status: str = "processed",
@@ -85,11 +143,26 @@ def _publication_record(
 
 
 @pytest.fixture
-def _verified_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+def _verified_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, object]:
+    observed: dict[str, object] = {}
     monkeypatch.setattr(
         release,
         "_revalidate_ai_panorama_install_admission",
         lambda admission, *, require_consumed: admission,
+    )
+    monkeypatch.setattr(
+        release,
+        "prepare_ai_panorama_publication_binding",
+        lambda *_args, **_kwargs: {
+            "status": "change-required",
+            "publication_binding_expected_before_sha256": "1" * 64,
+            "publication_binding_expected_after_sha256": "2" * 64,
+            "publication_binding_bound_at": "2026-07-24T12:00:00+00:00",
+            "database_mutation_performed": False,
+            "private_values_redacted": True,
+        },
     )
     manifests = iter(
         (
@@ -116,16 +189,25 @@ def _verified_profile(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     )
     monkeypatch.setattr(release, "_target_manifest", lambda _verified: next(manifests))
+    def _begin(
+        _verified: object,
+        *,
+        evidence: dict[str, object],
+    ) -> SimpleNamespace:
+        observed["prepared_evidence"] = evidence
+        return SimpleNamespace(operation_id="operation")
+
     monkeypatch.setattr(
         release,
         "begin_ai_panorama_install_operation",
-        lambda *_args, **_kwargs: SimpleNamespace(operation_id="operation"),
+        _begin,
     )
     monkeypatch.setattr(
         release,
         "finish_ai_panorama_install_operation",
         lambda *_args, **_kwargs: "9" * 64,
     )
+    return observed
 
 
 def test_prater_dry_run_projects_only_exact_signed_fixed_root_request(
@@ -257,7 +339,7 @@ def test_prater_artifact_preflight_is_read_only_and_database_free(
 
 def test_prater_apply_finishes_owner_receipt_cas_binding(
     monkeypatch: pytest.MonkeyPatch,
-    _verified_profile: None,
+    _verified_profile: dict[str, object],
 ) -> None:
     admission = _admission()
     observed: dict[str, object] = {}
@@ -294,6 +376,18 @@ def test_prater_apply_finishes_owner_receipt_cas_binding(
     assert observed["candidate_ref"] == release.PRATER_CANDIDATE_REF
     assert observed["public_control_url"] == release.PRATER_PUBLIC_CONTROL_URL
     assert observed["expected_publication_record_sha256"] == "1" * 64
+    assert observed["publication_binding_expected_before_sha256"] == "1" * 64
+    assert observed["publication_binding_expected_after_sha256"] == "2" * 64
+    prepared = _verified_profile["prepared_evidence"]
+    assert isinstance(prepared, dict)
+    assert prepared["publication_binding_preparation"] == {
+        "status": "change-required",
+        "publication_binding_expected_before_sha256": "1" * 64,
+        "publication_binding_expected_after_sha256": "2" * 64,
+        "publication_binding_bound_at": "2026-07-24T12:00:00+00:00",
+        "database_mutation_performed": False,
+        "private_values_redacted": True,
+    }
     assert receipt["status"] == "released"
     assert receipt["release_eligible"] is True
     assert receipt["binding_status"] == "applied"
@@ -320,14 +414,14 @@ def test_prater_apply_journals_clean_failure_without_public_target(
         "finish_ai_panorama_install_operation",
         lambda _operation, *, event, evidence: events.append(event) or "9" * 64,
     )
+    failure = AiPanoramaIntakeError(
+        "ai_panorama_publication_binding_store_rejected"
+    )
+    failure.publication_outcome = "uncommitted"
     monkeypatch.setattr(
         release,
         "install_sealed_ai_panorama_bundle",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AiPanoramaIntakeError(
-                "ai_panorama_publication_binding_store_rejected"
-            )
-        ),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
     )
 
     with pytest.raises(
@@ -337,6 +431,50 @@ def test_prater_apply_journals_clean_failure_without_public_target(
         release.run_prater_ai_panorama_release(admission, apply=True)
 
     assert events == ["failed-clean"]
+
+
+def test_prater_apply_unknown_db_outcome_is_never_failed_clean(
+    monkeypatch: pytest.MonkeyPatch,
+    _verified_profile: None,
+) -> None:
+    admission = _admission()
+    absent = {
+        "state": "absent",
+        "target_relpath": release.PRATER_SLUG,
+        "public_root_device": 41,
+        "public_root_inode": 42,
+        "reserved_entry_count": 0,
+        "reserved_entries_sha256": "0" * 64,
+    }
+    monkeypatch.setattr(
+        release,
+        "_target_manifest",
+        lambda _verified: dict(absent),
+    )
+    events: list[str] = []
+    monkeypatch.setattr(
+        release,
+        "finish_ai_panorama_install_operation",
+        lambda _operation, *, event, evidence: events.append(event)
+        or "9" * 64,
+    )
+    failure = AiPanoramaIntakeError(
+        "ai_panorama_publication_transaction_failed"
+    )
+    failure.publication_outcome = "unknown"
+    monkeypatch.setattr(
+        release,
+        "install_sealed_ai_panorama_bundle",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(failure),
+    )
+
+    with pytest.raises(
+        AiPanoramaIntakeError,
+        match="ai_panorama_prater_recovery_required",
+    ):
+        release.run_prater_ai_panorama_release(admission, apply=True)
+
+    assert events == ["recovery-required"]
 
 
 def test_prater_apply_journals_exact_compensation_as_rolled_back(
@@ -645,3 +783,355 @@ def test_target_manifest_enforces_bounded_file_budget(
         match="ai_panorama_prater_target_manifest_budget_exceeded",
     ):
         release._target_manifest(verified)
+
+
+@pytest.mark.parametrize("read_only_value", ("on", "true"))
+def test_recovery_snapshot_sets_read_only_before_every_other_cursor_statement(
+    monkeypatch: pytest.MonkeyPatch,
+    read_only_value: str,
+) -> None:
+    statements: list[tuple[str, object]] = []
+
+    class _Cursor:
+        def __init__(self) -> None:
+            self.rows = iter(((read_only_value,), (False,)))
+
+        def __enter__(self) -> "_Cursor":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(
+            self,
+            statement: str,
+            parameters: object = None,
+        ) -> None:
+            statements.append((statement.strip(), parameters))
+
+        def fetchone(self) -> tuple[object, ...]:
+            return next(self.rows)
+
+    class _Connection:
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+    connection = _Connection()
+
+    @contextlib.contextmanager
+    def _connect():  # type: ignore[no-untyped-def]
+        yield connection
+
+    @contextlib.contextmanager
+    def _transaction(observed: object):  # type: ignore[no-untyped-def]
+        assert observed is connection
+        yield
+
+    monkeypatch.setattr(
+        storage,
+        "_property_search_run_database_url",
+        lambda: "postgresql://fixed.invalid/propertyquarry",
+    )
+    monkeypatch.setattr(
+        storage,
+        "_property_search_principal_key",
+        lambda _principal: "principal-key",
+    )
+    monkeypatch.setattr(storage, "_property_search_run_connect", _connect)
+    monkeypatch.setattr(
+        storage,
+        "_property_search_run_transaction",
+        _transaction,
+    )
+    monkeypatch.setattr(
+        storage,
+        "_require_property_search_run_schema",
+        lambda: pytest.fail("recovery must not run schema setup"),
+    )
+    monkeypatch.setattr(
+        storage,
+        "_set_property_search_writer_contract",
+        lambda _cursor: pytest.fail(
+            "recovery must not install a writer contract"
+        ),
+    )
+
+    with storage.property_account_publication_recovery_observation(
+        "owner@example.invalid",
+        run_id=release.PRATER_SEARCH_RUN_ID,
+    ) as yielded:
+        assert yielded is connection
+
+    assert statements[0] == (
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+        None,
+    )
+    assert statements[1] == ("SHOW transaction_read_only", None)
+    assert "property_search_assert_erasure_key" in statements[2][0]
+    assert "pg_advisory_xact_lock" in statements[3][0]
+    assert "property_search_erasure_fences" in statements[4][0]
+
+
+def test_recovery_snapshot_rejects_non_read_only_transaction_before_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+
+    class _Cursor:
+        def __enter__(self) -> "_Cursor":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(
+            self,
+            statement: str,
+            _parameters: object = None,
+        ) -> None:
+            statements.append(statement.strip())
+
+        def fetchone(self) -> tuple[str]:
+            return ("off",)
+
+    class _Connection:
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+    @contextlib.contextmanager
+    def _connect():  # type: ignore[no-untyped-def]
+        yield _Connection()
+
+    @contextlib.contextmanager
+    def _transaction(_connection: object):  # type: ignore[no-untyped-def]
+        yield
+
+    monkeypatch.setattr(
+        storage,
+        "_property_search_run_database_url",
+        lambda: "postgresql://fixed.invalid/propertyquarry",
+    )
+    monkeypatch.setattr(
+        storage,
+        "_property_search_principal_key",
+        lambda _principal: "principal-key",
+    )
+    monkeypatch.setattr(storage, "_property_search_run_connect", _connect)
+    monkeypatch.setattr(
+        storage,
+        "_property_search_run_transaction",
+        _transaction,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="property_account_publication_recovery_not_read_only",
+    ):
+        with storage.property_account_publication_recovery_observation(
+            "owner@example.invalid",
+            run_id=release.PRATER_SEARCH_RUN_ID,
+        ):
+            pytest.fail("non-read-only transaction must not yield")
+
+    assert statements == [
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+        "SHOW transaction_read_only",
+    ]
+
+
+def test_historical_classifier_holds_read_only_db_lock_through_terminal_append(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _historical_expected()
+    historical = SimpleNamespace(
+        ledger_instance_id="a" * 32,
+        ledger_sequence=1,
+        ledger_entry_sha256="b" * 64,
+    )
+    operation = SimpleNamespace(
+        state="consumed-no-operation",
+        operation_id="c" * 64,
+        permit_sha256="d" * 64,
+        request_id_sha256="e" * 64,
+        nonce_sha256="f" * 64,
+        context_sha256="1" * 64,
+        prepared_entry_sha256="",
+        prepared_evidence_sha256="",
+        prepared_evidence={},
+        terminal_event="",
+        terminal_entry_sha256="",
+        terminal_evidence_sha256="",
+        terminal_evidence={},
+        historical_consumption=historical,
+    )
+    held = {"value": False}
+    observed: dict[str, object] = {}
+
+    @contextlib.contextmanager
+    def _recovery_context(
+        principal_id: str,
+        *,
+        run_id: str,
+    ):  # type: ignore[no-untyped-def]
+        assert principal_id == expected.owner_principal_id
+        assert run_id == release.PRATER_SEARCH_RUN_ID
+        held["value"] = True
+        try:
+            yield object()
+        finally:
+            held["value"] = False
+
+    def _load_record(**kwargs: object) -> dict[str, object]:
+        assert held["value"] is True
+        observed["record_kwargs"] = kwargs
+        return {"record": "read-only-snapshot"}
+
+    target_manifest = {
+        "state": "absent",
+        "target_relpath": release.PRATER_SLUG,
+        "public_root_device": expected.public_tour_root_device,
+        "public_root_inode": expected.public_tour_root_inode,
+        "reserved_entry_count": 0,
+        "reserved_entries_sha256": "0" * 64,
+    }
+    target_identity = {
+        "state": "absent",
+        "source_tree_sha256": release.PRATER_SOURCE_TREE_SHA256,
+        "source_tour_sha256": release.PRATER_TOUR_SHA256,
+        "core_manifest_sha256": release.PRATER_CORE_MANIFEST_SHA256,
+        "public_root_device": expected.public_tour_root_device,
+        "public_root_inode": expected.public_tour_root_inode,
+        "private_values_redacted": True,
+    }
+
+    def _append(
+        permit_relpath: str,
+        append_expected: object,
+        append_operation: object,
+        *,
+        evidence: dict[str, object],
+    ) -> str:
+        assert held["value"] is True
+        assert permit_relpath.endswith(f"{expected.request_id}.v2.json")
+        assert append_expected is expected
+        assert append_operation is operation
+        assert evidence["observed_publication_binding_exact"] is False
+        observed["terminal_evidence"] = evidence
+        return "9" * 64
+
+    monkeypatch.setattr(
+        release,
+        "load_historical_ai_panorama_install_operation",
+        lambda *_args: operation,
+    )
+    monkeypatch.setattr(
+        release,
+        "property_account_publication_recovery_observation",
+        _recovery_context,
+    )
+    monkeypatch.setattr(
+        release,
+        "load_property_search_run_record_for_publication",
+        _load_record,
+    )
+    monkeypatch.setattr(
+        release,
+        "property_search_run_record_sha256",
+        lambda _record: expected.expected_publication_record_sha256,
+    )
+    monkeypatch.setattr(
+        release,
+        "_target_manifest",
+        lambda _holder: (
+            pytest.fail("manifest observed outside DB lock")
+            if not held["value"]
+            else dict(target_manifest)
+        ),
+    )
+    monkeypatch.setattr(
+        release,
+        "inspect_ai_panorama_historical_publication_target",
+        lambda *_args, **_kwargs: (
+            pytest.fail("target observed outside DB lock")
+            if not held["value"]
+            else dict(target_identity)
+        ),
+    )
+    monkeypatch.setattr(
+        release,
+        "exact_property_search_candidate_tour_binding_receipt",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        release,
+        "_record_consumed_without_operation_failed_clean",
+        _append,
+    )
+
+    result = release.recover_prater_ai_panorama_historical_operation(
+        f"prater-ai-panorama-install-{expected.request_id}.v2.json",
+        expected,
+    )
+
+    assert held["value"] is False
+    assert result["classification"] == "failed-clean"
+    assert result["database_mutation_performed"] is False
+    assert result["public_target_mutation_performed"] is False
+    record_kwargs = observed["record_kwargs"]
+    assert isinstance(record_kwargs, dict)
+    assert record_kwargs["for_update"] is False
+
+
+def test_historical_classifier_transient_db_failure_writes_no_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _historical_expected()
+    operation = SimpleNamespace(
+        state="consumed-no-operation",
+        operation_id="c" * 64,
+        permit_sha256="d" * 64,
+        request_id_sha256="e" * 64,
+        nonce_sha256="f" * 64,
+        context_sha256="1" * 64,
+        prepared_entry_sha256="",
+        prepared_evidence_sha256="",
+        prepared_evidence={},
+        terminal_event="",
+        terminal_entry_sha256="",
+        terminal_evidence_sha256="",
+        terminal_evidence={},
+        historical_consumption=SimpleNamespace(
+            ledger_instance_id="a" * 32,
+            ledger_sequence=1,
+            ledger_entry_sha256="b" * 64,
+        ),
+    )
+
+    @contextlib.contextmanager
+    def _unavailable(*_args: object, **_kwargs: object):  # type: ignore[no-untyped-def]
+        raise RuntimeError("database-unavailable")
+        yield
+
+    monkeypatch.setattr(
+        release,
+        "load_historical_ai_panorama_install_operation",
+        lambda *_args: operation,
+    )
+    monkeypatch.setattr(
+        release,
+        "property_account_publication_recovery_observation",
+        _unavailable,
+    )
+    monkeypatch.setattr(
+        release,
+        "_record_consumed_without_operation_failed_clean",
+        lambda *_args, **_kwargs: pytest.fail(
+            "transient observation failure must not append a terminal"
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="database-unavailable"):
+        release.recover_prater_ai_panorama_historical_operation(
+            f"prater-ai-panorama-install-{expected.request_id}.v2.json",
+            expected,
+        )

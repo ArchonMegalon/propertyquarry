@@ -9,11 +9,12 @@ by ``PROPERTYQUARRY_AI_PANORAMA_INSTALL_CONTROLLER_V1.md``.
 from __future__ import annotations
 
 import contextlib
+import ctypes
+import errno
 import hashlib
 import json
 import os
 import re
-import secrets
 import stat
 import sys
 import urllib.parse
@@ -35,10 +36,9 @@ DISCOVERY_ENTRYPOINT_PATH = Path(
 CONTROL_ROOT = Path(
     "/var/lib/propertyquarry/release-control/ai-panorama-install"
 )
-REQUEST_RELPATH = "prater-release-request.v1.json"
+REQUEST_RELPATH = "prater-release-request.v2.json"
 DISCOVERY_REQUEST_RELPATH = "prater-record-discovery-request.v1.json"
-PERMIT_RELPATH = "prater-ai-panorama-install.json"
-REQUEST_SCHEMA = "propertyquarry.prater-ai-panorama-release-request.v1"
+REQUEST_SCHEMA = "propertyquarry.prater-ai-panorama-release-request.v2"
 DISCOVERY_REQUEST_SCHEMA = (
     "propertyquarry.prater-ai-panorama-record-discovery-request.v1"
 )
@@ -295,10 +295,11 @@ def _load_request(admission_module: object) -> dict[str, str]:
             "owner_principal_id",
             "expected_publication_record_sha256",
             "request_id",
+            "permit_relpath",
         }
         or value["schema"] != REQUEST_SCHEMA
         or type(value["version"]) is not int
-        or value["version"] != 1
+        or value["version"] != 2
         or value["authority"] != AUTHORITY
         or value["status"] != "approved"
         or type(value["owner_principal_id"]) is not str
@@ -313,7 +314,20 @@ def _load_request(admission_module: object) -> dict[str, str]:
         is None
         or type(value["request_id"]) is not str
         or _REQUEST_ID_RE.fullmatch(value["request_id"]) is None
+        or type(value["permit_relpath"]) is not str
     ):
+        _fail("prater-controller-request-invalid")
+    try:
+        expected_permit_relpath = (
+            admission_module.ai_panorama_install_permit_relpath(
+                value["request_id"]
+            )
+        )
+    except Exception as exc:
+        raise PraterControllerEntrypointError(
+            "prater-controller-request-invalid"
+        ) from exc
+    if value["permit_relpath"] != expected_permit_relpath:
         _fail("prater-controller-request-invalid")
     return {
         "owner_principal_id": value["owner_principal_id"],
@@ -321,6 +335,7 @@ def _load_request(admission_module: object) -> dict[str, str]:
             "expected_publication_record_sha256"
         ],
         "request_id": value["request_id"],
+        "permit_relpath": value["permit_relpath"],
     }
 
 
@@ -447,6 +462,24 @@ def _terminal_relpath(request_id: str) -> str:
     return f"terminal-{request_id}.v1.json"
 
 
+def _validated_terminal_relpath(relpath: object) -> str:
+    prefix = "terminal-"
+    suffix = ".v1.json"
+    request_id = (
+        relpath[len(prefix) : -len(suffix)]
+        if type(relpath) is str
+        and relpath.startswith(prefix)
+        and relpath.endswith(suffix)
+        else ""
+    )
+    if (
+        _REQUEST_ID_RE.fullmatch(request_id) is None
+        or relpath != f"{prefix}{request_id}{suffix}"
+    ):
+        _fail("prater-controller-terminal-receipt-invalid")
+    return str(relpath)
+
+
 def _require_terminal_absent(admission_module: object, relpath: str) -> None:
     descriptor = -1
     try:
@@ -464,6 +497,86 @@ def _require_terminal_absent(admission_module: object, relpath: str) -> None:
     _fail("prater-controller-terminal-already-exists")
 
 
+def _terminal_publication_checkpoint(_checkpoint: str) -> None:
+    """Test-only process-death seam; production execution is a no-op."""
+
+
+def _terminal_file_identity(details: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(details.st_dev),
+        int(details.st_ino),
+        int(details.st_mode),
+        int(details.st_uid),
+        int(details.st_gid),
+        int(details.st_nlink),
+        int(details.st_size),
+        int(details.st_mtime_ns),
+        int(details.st_ctime_ns),
+    )
+
+
+def _link_unnamed_terminal(
+    descriptor: int,
+    control_descriptor: int,
+    relpath: str,
+) -> None:
+    """Publish one O_TMPFILE inode without a replace-capable operation."""
+
+    linkat = ctypes.CDLL(None, use_errno=True).linkat
+    linkat.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+    )
+    linkat.restype = ctypes.c_int
+    encoded_relpath = relpath.encode("ascii")
+    result = linkat(
+        descriptor,
+        b"",
+        control_descriptor,
+        encoded_relpath,
+        0x1000,  # AT_EMPTY_PATH
+    )
+    observed_errno = ctypes.get_errno()
+    if result != 0 and observed_errno in {errno.ENOENT, errno.EPERM}:
+        # AT_EMPTY_PATH requires CAP_DAC_READ_SEARCH on some kernels.  The
+        # proc-fd form names this exact still-open descriptor and linkat
+        # follows only that kernel-owned descriptor symlink.
+        proc_descriptor_path = f"/proc/self/fd/{descriptor}".encode("ascii")
+        result = linkat(
+            -100,  # AT_FDCWD
+            proc_descriptor_path,
+            control_descriptor,
+            encoded_relpath,
+            0x400,  # AT_SYMLINK_FOLLOW
+        )
+        observed_errno = ctypes.get_errno()
+    if result != 0:
+        raise OSError(
+            observed_errno,
+            os.strerror(observed_errno),
+            relpath,
+        )
+
+
+def _read_descriptor_bytes(descriptor: int, maximum: int) -> bytes:
+    chunks: list[bytes] = []
+    offset = 0
+    while offset <= maximum:
+        chunk = os.pread(
+            descriptor,
+            min(64 * 1024, maximum + 1 - offset),
+            offset,
+        )
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        offset += len(chunk)
+    _fail("prater-controller-terminal-write-failed")
+
+
 def _write_terminal_receipt(
     admission_module: object,
     *,
@@ -473,30 +586,27 @@ def _write_terminal_receipt(
     raw = _canonical(payload)
     if len(raw) > MAX_TERMINAL_BYTES:
         _fail("prater-controller-terminal-receipt-invalid")
+    relpath = _validated_terminal_relpath(relpath)
     control_descriptor = -1
     temporary_descriptor = -1
-    temporary_name = ""
     try:
         control_descriptor = admission_module._open_control_root()
-        for _ in range(32):
-            temporary_name = f".terminal.tmp-{secrets.token_hex(8)}"
-            try:
-                temporary_descriptor = os.open(
-                    temporary_name,
-                    os.O_WRONLY
-                    | os.O_CREAT
-                    | os.O_EXCL
-                    | getattr(os, "O_CLOEXEC", 0)
-                    | getattr(os, "O_NOFOLLOW", 0),
-                    0o600,
-                    dir_fd=control_descriptor,
-                )
-            except FileExistsError:
-                temporary_name = ""
-                continue
-            break
-        if temporary_descriptor < 0 or not temporary_name:
+        root_details = os.fstat(control_descriptor)
+        root_mount_id = admission_module._descriptor_mount_id(
+            control_descriptor,
+            code="prater-controller-terminal-write-failed",
+        )
+        tmpfile_flag = getattr(os, "O_TMPFILE", 0)
+        if not tmpfile_flag:
             _fail("prater-controller-terminal-write-failed")
+        temporary_descriptor = os.open(
+            ".",
+            os.O_RDWR
+            | tmpfile_flag
+            | getattr(os, "O_CLOEXEC", 0),
+            0o600,
+            dir_fd=control_descriptor,
+        )
         offset = 0
         while offset < len(raw):
             written = os.write(temporary_descriptor, raw[offset:])
@@ -505,19 +615,63 @@ def _write_terminal_receipt(
             offset += written
         os.fchmod(temporary_descriptor, 0o600)
         os.fsync(temporary_descriptor)
-        os.close(temporary_descriptor)
-        temporary_descriptor = -1
-        os.link(
-            temporary_name,
-            relpath,
-            src_dir_fd=control_descriptor,
-            dst_dir_fd=control_descriptor,
-            follow_symlinks=False,
+        temporary_details = os.fstat(temporary_descriptor)
+        temporary_mount_id = admission_module._descriptor_mount_id(
+            temporary_descriptor,
+            code="prater-controller-terminal-write-failed",
         )
+        if (
+            not stat.S_ISREG(temporary_details.st_mode)
+            or stat.S_IMODE(temporary_details.st_mode) != 0o600
+            or int(temporary_details.st_uid)
+            != admission_module._CONTROLLER_PATHS.required_uid
+            or int(temporary_details.st_nlink) != 0
+            or int(temporary_details.st_size) != len(raw)
+            or int(temporary_details.st_dev) != int(root_details.st_dev)
+            or temporary_mount_id != root_mount_id
+            or _read_descriptor_bytes(
+                temporary_descriptor,
+                MAX_TERMINAL_BYTES,
+            )
+            != raw
+        ):
+            _fail("prater-controller-terminal-write-failed")
+        _terminal_publication_checkpoint("temporary-fsynced")
+        _link_unnamed_terminal(
+            temporary_descriptor,
+            control_descriptor,
+            relpath,
+        )
+        linked_details = os.fstat(temporary_descriptor)
+        linked_identity = _terminal_file_identity(linked_details)
+        if (
+            int(linked_details.st_nlink) != 1
+            or admission_module._descriptor_mount_id(
+                temporary_descriptor,
+                code="prater-controller-terminal-write-failed",
+            )
+            != root_mount_id
+        ):
+            _fail("prater-controller-terminal-write-failed")
+        _terminal_publication_checkpoint("target-linked")
         os.fsync(control_descriptor)
-        os.unlink(temporary_name, dir_fd=control_descriptor)
-        temporary_name = ""
-        os.fsync(control_descriptor)
+        _terminal_publication_checkpoint("directory-fsynced")
+        stable = admission_module._read_relative_regular(
+            control_descriptor,
+            relpath,
+            code="prater-controller-terminal-write-failed",
+            maximum_bytes=MAX_TERMINAL_BYTES,
+            required_uid=admission_module._CONTROLLER_PATHS.required_uid,
+            exact_mode=0o600,
+            required_device=int(root_details.st_dev),
+            required_mount_id=root_mount_id,
+        )
+        if (
+            stable.data != raw
+            or stable.identity != linked_identity
+            or stable.mount_id != root_mount_id
+        ):
+            _fail("prater-controller-terminal-write-failed")
         return hashlib.sha256(raw).hexdigest()
     except PraterControllerEntrypointError:
         raise
@@ -533,12 +687,67 @@ def _write_terminal_receipt(
         if temporary_descriptor >= 0:
             os.close(temporary_descriptor)
         if control_descriptor >= 0:
-            if temporary_name:
-                try:
-                    os.unlink(temporary_name, dir_fd=control_descriptor)
-                except FileNotFoundError:
-                    pass
             os.close(control_descriptor)
+
+
+def _read_matching_terminal_receipt(
+    admission_module: object,
+    *,
+    relpath: str,
+    payload: Mapping[str, object],
+) -> str:
+    expected = _canonical(payload)
+    relpath = _validated_terminal_relpath(relpath)
+    descriptor = -1
+    try:
+        descriptor = admission_module._open_control_root()
+        root_details = os.fstat(descriptor)
+        root_mount_id = admission_module._descriptor_mount_id(
+            descriptor,
+            code="prater-controller-terminal-state-invalid",
+        )
+        stable = admission_module._read_relative_regular(
+            descriptor,
+            relpath,
+            code="prater-controller-terminal-state-invalid",
+            maximum_bytes=MAX_TERMINAL_BYTES,
+            required_uid=admission_module._CONTROLLER_PATHS.required_uid,
+            exact_mode=0o600,
+            required_device=int(root_details.st_dev),
+            required_mount_id=root_mount_id,
+        )
+    except Exception as exc:
+        raise PraterControllerEntrypointError(
+            "prater-controller-terminal-state-invalid"
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if stable.data != expected or stable.mount_id != root_mount_id:
+        _fail("prater-controller-terminal-state-invalid")
+    return hashlib.sha256(expected).hexdigest()
+
+
+def _write_or_validate_terminal_receipt(
+    admission_module: object,
+    *,
+    relpath: str,
+    payload: Mapping[str, object],
+) -> str:
+    try:
+        return _write_terminal_receipt(
+            admission_module,
+            relpath=relpath,
+            payload=payload,
+        )
+    except PraterControllerEntrypointError as exc:
+        if exc.code != "prater-controller-terminal-already-exists":
+            raise
+    return _read_matching_terminal_receipt(
+        admission_module,
+        relpath=relpath,
+        payload=payload,
+    )
 
 
 def run() -> dict[str, object]:
@@ -559,7 +768,7 @@ def run() -> dict[str, object]:
             )
             expected = _expected_bindings(components, request, trusted)
             verified = components.admission.consume_ai_panorama_install_permit(
-                PERMIT_RELPATH,
+                request["permit_relpath"],
                 expected,
             )
             permit_consumed = True
@@ -664,7 +873,7 @@ def run_preflight() -> dict[str, object]:
     trusted = components.admission.load_ai_panorama_install_trusted_context()
     expected = _expected_bindings(components, request, trusted)
     verified = components.admission.verify_ai_panorama_install_permit(
-        PERMIT_RELPATH,
+        request["permit_relpath"],
         expected,
     )
     result = (
