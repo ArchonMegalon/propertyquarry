@@ -115,15 +115,26 @@ may complete only missing intent-bound bytes or a verified staging/link
 boundary. Once the signed completion exists, a missing, replaced, relinked, or
 partial state leaf is terminal tamper and is never regenerated.
 
-Closeout is a database-independent privacy kill switch bound to the prior
-signed install success, installed manifest, exact governed volume identity,
-and fresh closeout OIDC authority. It remains usable when the API, scheduler,
-render service, current database environment, or original release run is
-absent. A no-network one-shot receives only the governed volume and the fixed
-mode-`0400` canonical revocation request, writes the byte-identical
-root-owned mode-`0444` marker, and returns the same canonical bytes. Recovery
-binds that marker to the signed closeout journal and never deletes or replaces
-an authenticated revocation.
+Every admitted attempt also publishes a permit-addressed, immutable archive of
+the exact signing keyring, trust assertion, Compose model, and governed-volume
+profile used for that attempt outside the controller's writable root. Mutation
+recovery mounts only those archived leaves read-only, mounts the public volume
+read-only, and runs a classification-only database phase. The native
+controller independently verifies the classifier result, historical permit,
+private state, and public manifest before it may terminalize the attempt;
+historical classification never authorizes a retry.
+
+Closeout is a database-independent privacy kill switch bound either to a prior
+signed install success and installed manifest or to one uniquely unresolved,
+journal-bound install mutation that may already have published the protected
+tour. Both paths bind the complete protected subtree, exact governed-volume
+identity, and fresh closeout OIDC authority. Closeout remains usable when the
+API, scheduler, render service, current database environment, or original
+release run is absent. A no-network one-shot receives only the governed volume
+and the fixed mode-`0400` canonical revocation request, writes the
+byte-identical root-owned mode-`0444` marker, and returns the same canonical
+bytes. Recovery binds that marker to the signed closeout journal and never
+deletes or replaces an authenticated revocation.
 
 The 226 MB GitHub runner archive is intentionally not in this package. Its
 official version, byte count, URL, and SHA-256 are pinned by `runner.lock.json`;

@@ -22,20 +22,21 @@ import (
 )
 
 const (
-	aiPanoramaInstallOperation             = "ai-panorama-install"
-	aiPanoramaInstallAdmittedEvent         = "ai-panorama-install-admitted"
-	aiPanoramaInstallFenceReadyEvent       = "ai-panorama-install-fence-ready"
-	aiPanoramaInstallPreflightStartedEvent = "ai-panorama-install-preflight-started"
-	aiPanoramaInstallPreflightReadyEvent   = "ai-panorama-install-preflight-ready"
-	aiPanoramaInstallMutationStartedEvent  = "ai-panorama-install-mutation-started"
-	aiPanoramaInstallMutationVerifiedEvent = "ai-panorama-install-mutation-verified"
-	aiPanoramaInstallRecoveryStartedEvent  = "ai-panorama-install-recovery-started"
-	aiPanoramaInstallSucceededEvent        = "ai-panorama-install-succeeded"
-	aiPanoramaInstallRolledBackEvent       = "ai-panorama-install-rolled-back"
-	aiPanoramaInstallRecoveryRequiredEvent = "ai-panorama-install-recovery-required"
-	aiPanoramaInstallFailedNoEffectsEvent  = "ai-panorama-install-failed-no-effects"
-	aiPanoramaSealedArtifactIntentEvent    = "ai-panorama-install-sealed-artifact-intent"
-	aiPanoramaSealedArtifactCleanedEvent   = "ai-panorama-install-sealed-artifact-stage-cleaned"
+	aiPanoramaInstallOperation                = "ai-panorama-install"
+	aiPanoramaInstallAdmittedEvent            = "ai-panorama-install-admitted"
+	aiPanoramaInstallFenceReadyEvent          = "ai-panorama-install-fence-ready"
+	aiPanoramaInstallPreflightStartedEvent    = "ai-panorama-install-preflight-started"
+	aiPanoramaInstallPreflightReadyEvent      = "ai-panorama-install-preflight-ready"
+	aiPanoramaInstallMutationStartedEvent     = "ai-panorama-install-mutation-started"
+	aiPanoramaInstallMutationVerifiedEvent    = "ai-panorama-install-mutation-verified"
+	aiPanoramaInstallRecoveryStartedEvent     = "ai-panorama-install-recovery-started"
+	aiPanoramaInstallSucceededEvent           = "ai-panorama-install-succeeded"
+	aiPanoramaInstallRolledBackEvent          = "ai-panorama-install-rolled-back"
+	aiPanoramaInstallRecoveryRequiredEvent    = "ai-panorama-install-recovery-required"
+	aiPanoramaInstallFailedNoEffectsEvent     = "ai-panorama-install-failed-no-effects"
+	aiPanoramaInstallPreparationResolvedEvent = "ai-panorama-install-preparation-resolved"
+	aiPanoramaSealedArtifactIntentEvent       = "ai-panorama-install-sealed-artifact-intent"
+	aiPanoramaSealedArtifactCleanedEvent      = "ai-panorama-install-sealed-artifact-stage-cleaned"
 
 	aiPanoramaPraterSlug             = "prater-messe-maisonette-ai-360-053ad185e1c44b2e"
 	aiPanoramaPraterControlURL       = "https://propertyquarry.com/tours/" + aiPanoramaPraterSlug + "/control"
@@ -99,6 +100,14 @@ const (
 type aiPanoramaDockerCommand func(context.Context, string, ...string) ([]byte, error)
 
 var executeAiPanoramaDocker aiPanoramaDockerCommand = runAiPanoramaDocker
+
+// Test-only crash boundary after atomic sealed-artifact publication and before
+// the parent directory fsync. Production leaves it nil.
+var aiPanoramaSealedArtifactPostRenameHook func() error
+
+// Test-only dispatcher seam. Production always uses the exact sealed artifact
+// recovery implementation below.
+var recoverAiPanoramaSealedArtifactIntentForRecovery = recoverAiPanoramaSealedArtifactIntent
 
 type aiPanoramaRuntimeObservation struct {
 	DockerRoot                      string
@@ -1389,13 +1398,84 @@ func prepareAiPanoramaSealedArtifact(
 	); err != nil {
 		return nil, err
 	}
-	if err := renameAtNoReplace(int(parent.Fd()), pending, filepath.Base(aiPanoramaSealedArtifactRoot)); err != nil {
-		return nil, fmt.Errorf("ai-panorama-sealed-publish-failed")
-	}
-	if parent.Sync() != nil {
-		return nil, fmt.Errorf("ai-panorama-sealed-publish-durability-unknown")
+	if err := publishAiPanoramaSealedStage(
+		parent, pending, filepath.Base(aiPanoramaSealedArtifactRoot),
+	); err != nil {
+		return nil, err
 	}
 	return validateAiPanoramaSealedArtifact()
+}
+
+func publishAiPanoramaSealedStage(
+	parent *os.File,
+	pending string,
+	target string,
+) error {
+	if parent == nil || !tourV4SafeEntryName(pending) ||
+		!tourV4SafeEntryName(target) || pending == target {
+		return fmt.Errorf("ai-panorama-sealed-publish-input-invalid")
+	}
+	if err := renameAtNoReplace(
+		int(parent.Fd()), pending, target,
+	); err != nil {
+		return fmt.Errorf("ai-panorama-sealed-publish-failed")
+	}
+	if aiPanoramaSealedArtifactPostRenameHook != nil &&
+		aiPanoramaSealedArtifactPostRenameHook() != nil {
+		return fmt.Errorf("ai-panorama-sealed-publish-durability-unknown")
+	}
+	if parent.Sync() != nil {
+		return fmt.Errorf("ai-panorama-sealed-publish-durability-unknown")
+	}
+	return nil
+}
+
+func recoverAiPanoramaSealedPublication(
+	parentPath string,
+	pending string,
+	target string,
+	validateFinal func() error,
+	cleanupStage func(*os.File, string, uint64, uint64) error,
+) error {
+	if !filepath.IsAbs(parentPath) ||
+		!tourV4SafeEntryName(pending) ||
+		!tourV4SafeEntryName(target) ||
+		pending == target || validateFinal == nil || cleanupStage == nil {
+		return fmt.Errorf("ai-panorama-sealed-recovery-input-invalid")
+	}
+	parent, err := tourV4OpenDirectoryAbsolute(parentPath)
+	if err != nil {
+		return fmt.Errorf("ai-panorama-sealed-parent-unavailable")
+	}
+	defer parent.Close()
+	parentInfo, err := parent.Stat()
+	parentMetadata, parentOK := infoSys(parentInfo)
+	parentMountID, mountIDErr := aiPanoramaFileMountID(parent)
+	names, namesErr := aiPanoramaDirectoryNames(parent)
+	if err != nil || !parentOK || namesErr != nil ||
+		parentInfo.Mode().Perm() != 0o700 ||
+		parentMetadata.Uid != 0 || parentMetadata.Gid != 0 ||
+		parentMetadata.Nlink < 2 || mountIDErr != nil || len(names) > 1 ||
+		(len(names) == 1 && names[0] != pending &&
+			names[0] != target) {
+		return fmt.Errorf("ai-panorama-sealed-recovery-parent-invalid")
+	}
+	switch {
+	case len(names) == 1 && names[0] == target:
+		if err := validateFinal(); err != nil {
+			return err
+		}
+	case len(names) == 1:
+		if err := cleanupStage(
+			parent, pending, uint64(parentMetadata.Dev), parentMountID,
+		); err != nil {
+			return err
+		}
+	}
+	if parent.Sync() != nil {
+		return fmt.Errorf("ai-panorama-sealed-recovery-parent-sync-failed")
+	}
+	return nil
 }
 
 func recoverAiPanoramaSealedArtifactIntent(
@@ -1418,67 +1498,61 @@ func recoverAiPanoramaSealedArtifactIntent(
 		) {
 		return fmt.Errorf("ai-panorama-sealed-recovery-intent-invalid")
 	}
-	parent, err := tourV4OpenDirectoryAbsolute(aiPanoramaSealedArtifactParent)
-	if err != nil {
-		return fmt.Errorf("ai-panorama-sealed-parent-unavailable")
+	if err := recoverAiPanoramaSealedPublication(
+		aiPanoramaSealedArtifactParent,
+		pending,
+		filepath.Base(aiPanoramaSealedArtifactRoot),
+		func() error {
+			_, err := validateAiPanoramaSealedArtifact()
+			return err
+		},
+		func(
+			parent *os.File,
+			stageName string,
+			parentDevice uint64,
+			parentMountID uint64,
+		) error {
+			source, err := snapshotAiPanoramaSource(
+				aiPanoramaReviewedBundlePath,
+				1000, 1000, 0o700, 0o600, true,
+			)
+			if err != nil {
+				return err
+			}
+			defer source.release()
+			marker, err := readAiPanoramaExactFile(
+				aiPanoramaReviewedMarkerPath,
+				1000, 1000, 0o600, 1024*1024,
+			)
+			if err != nil {
+				return err
+			}
+			defer zero(marker.Content)
+			receipt, err := readAiPanoramaExactFile(
+				aiPanoramaReviewedReceiptPath,
+				1000, 1000, 0o600, 1024*1024,
+			)
+			if err != nil {
+				return err
+			}
+			defer zero(receipt.Content)
+			if source.TreeSHA256 != aiPanoramaExpectedSourceTree ||
+				source.TourSHA256 != aiPanoramaExpectedTourDigest ||
+				marker.SHA256 != aiPanoramaExpectedMarkerDigest ||
+				receipt.SHA256 != aiPanoramaExpectedReceiptDigest ||
+				cleanupAiPanoramaSealedStage(
+					parent, stageName, source,
+					marker.Content, receipt.Content,
+					parentDevice, parentMountID, 0, 0,
+				) != nil {
+				return fmt.Errorf("ai-panorama-sealed-recovery-stage-invalid")
+			}
+			return nil
+		},
+	); err != nil {
+		return err
 	}
-	defer parent.Close()
-	parentInfo, err := parent.Stat()
-	parentMetadata, parentOK := infoSys(parentInfo)
-	parentMountID, mountIDErr := aiPanoramaFileMountID(parent)
-	names, namesErr := aiPanoramaDirectoryNames(parent)
-	if err != nil || !parentOK || namesErr != nil ||
-		parentInfo.Mode().Perm() != 0o700 ||
-		parentMetadata.Uid != 0 || parentMetadata.Gid != 0 ||
-		parentMetadata.Nlink < 2 || mountIDErr != nil || len(names) > 1 ||
-		(len(names) == 1 && names[0] != pending &&
-			names[0] != filepath.Base(aiPanoramaSealedArtifactRoot)) {
-		return fmt.Errorf("ai-panorama-sealed-recovery-parent-invalid")
-	}
-	if len(names) == 1 &&
-		names[0] == filepath.Base(aiPanoramaSealedArtifactRoot) {
-		if _, err := validateAiPanoramaSealedArtifact(); err != nil {
-			return err
-		}
-		if parent.Sync() != nil {
-			return fmt.Errorf("ai-panorama-sealed-recovery-parent-sync-failed")
-		}
-	} else if len(names) == 1 {
-		source, err := snapshotAiPanoramaSource(
-			aiPanoramaReviewedBundlePath, 1000, 1000, 0o700, 0o600, true,
-		)
-		if err != nil {
-			return err
-		}
-		defer source.release()
-		marker, err := readAiPanoramaExactFile(
-			aiPanoramaReviewedMarkerPath, 1000, 1000, 0o600, 1024*1024,
-		)
-		if err != nil {
-			return err
-		}
-		defer zero(marker.Content)
-		receipt, err := readAiPanoramaExactFile(
-			aiPanoramaReviewedReceiptPath, 1000, 1000, 0o600, 1024*1024,
-		)
-		if err != nil {
-			return err
-		}
-		defer zero(receipt.Content)
-		if source.TreeSHA256 != aiPanoramaExpectedSourceTree ||
-			source.TourSHA256 != aiPanoramaExpectedTourDigest ||
-			marker.SHA256 != aiPanoramaExpectedMarkerDigest ||
-			receipt.SHA256 != aiPanoramaExpectedReceiptDigest ||
-			cleanupAiPanoramaSealedStage(
-				parent, pending, source, marker.Content, receipt.Content,
-				uint64(parentMetadata.Dev), parentMountID, 0, 0,
-			) != nil {
-			return fmt.Errorf("ai-panorama-sealed-recovery-stage-invalid")
-		}
-	} else if parent.Sync() != nil {
-		return fmt.Errorf("ai-panorama-sealed-recovery-parent-sync-failed")
-	}
-	fields := cloneFields(last.Payload)
+	fields := aiPanoramaRecoveryFields(last.Payload)
 	fields["ai_panorama_sealed_stage_cleanup_verified"] = true
 	fields["disposition"] = "sealed-artifact-stage-cleaned"
 	return appendAiPanoramaJournalEvent(

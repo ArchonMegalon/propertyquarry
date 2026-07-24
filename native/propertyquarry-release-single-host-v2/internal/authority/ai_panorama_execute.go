@@ -644,73 +644,36 @@ func recoverIncompleteAiPanoramaInstallV2(
 		return recoverAiPanoramaCleanedTerminal(root, journal, last)
 	}
 	if last.EventType == aiPanoramaSealedArtifactIntentEvent {
-		if err := recoverAiPanoramaSealedArtifactIntent(
+		if err := recoverAiPanoramaSealedArtifactIntentForRecovery(
 			journal, last,
 		); err != nil {
 			return aiPanoramaRecordRecoveryRequired(
-				journal, last.Payload, "sealed-artifact-recovery-ambiguous",
+				journal, aiPanoramaRecoveryFields(last.Payload),
+				"sealed-artifact-recovery-ambiguous",
 			)
 		}
 		last = &journal.events[len(journal.events)-1]
+		if last.EventType != aiPanoramaSealedArtifactCleanedEvent {
+			return aiPanoramaRecordRecoveryRequired(
+				journal, aiPanoramaRecoveryFields(last.Payload),
+				"sealed-artifact-recovery-resolution-missing",
+			)
+		}
+	}
+	if last.EventType == aiPanoramaSealedArtifactCleanedEvent {
+		return recordAiPanoramaPreparationResolution(
+			journal, last.Payload,
+			"recovered-sealed-artifact-publication",
+		)
 	}
 	if last.EventType == aiPanoramaInstallBootstrapPreparedEvent ||
 		last.EventType == aiPanoramaInstallVolumeInitializedEvent {
-		before, ok := last.Payload["ai_panorama_bootstrap_before"].(map[string]any)
-		mountpoint, mountOK := exactString(before["public_volume_mountpoint"])
-		device, deviceOK := exactInt(before["public_volume_device"], 1, 1<<62)
-		inode, inodeOK := exactInt(before["public_volume_inode"], 1, 1<<62)
-		if !ok || !mountOK || !deviceOK || !inodeOK {
-			return aiPanoramaRecordRecoveryRequired(
-				journal, last.Payload, "bootstrap-recovery-intent-invalid",
-			)
-		}
-		runtime, err := observeAiPanoramaRuntime(parent, root, config)
-		if err != nil || runtime.PublicVolumeMountpoint != mountpoint ||
-			runtime.PublicVolumeDevice != uint64(device) ||
-			runtime.PublicVolumeInode != uint64(inode) ||
-			runtime.PublicVolumeMode != 0o755 {
-			return aiPanoramaRecordRecoveryRequired(
-				journal, last.Payload, "bootstrap-recovery-identity-ambiguous",
-			)
-		}
-		empty, err := snapshotAiPanoramaRelated(runtime.PublicVolumeMountpoint)
-		if err != nil || len(empty.Entries) != 0 {
-			return aiPanoramaRecordRecoveryRequired(
-				journal, last.Payload, "bootstrap-recovery-inventory-ambiguous",
-			)
-		}
-		fields := aiPanoramaRecoveryFields(last.Payload)
-		if runtime.PublicVolumeUID == 10001 && runtime.PublicVolumeGID == 10001 &&
-			!runtime.PublicVolumeNeedsInitialization {
-			fields["ai_panorama_bootstrap_after"] = aiPanoramaRuntimeObservationValue(runtime)
-			fields["disposition"] = "recovered-volume-bootstrap-verified"
-			if last.EventType != aiPanoramaInstallVolumeInitializedEvent {
-				if err := appendAiPanoramaJournalEvent(
-					journal, aiPanoramaInstallVolumeInitializedEvent, cloneFields(fields),
-				); err != nil {
-					return err
-				}
-			}
-		} else if runtime.PublicVolumeUID == 0 && runtime.PublicVolumeGID == 0 &&
-			runtime.PublicVolumeNeedsInitialization {
-			fields["disposition"] = "recovered-before-volume-bootstrap-mutation"
-		} else {
-			return aiPanoramaRecordRecoveryRequired(
-				journal, last.Payload, "bootstrap-recovery-ownership-ambiguous",
-			)
-		}
-		fields["completed_at"] = json.Number(strconv.FormatInt(authorityNow().UTC().Unix(), 10))
-		fields["production_ready"] = false
-		fields["release_effects_performed"] = false
-		fields["rollback_performed"] = false
-		wire, err := journal.Append(aiPanoramaInstallFailedNoEffectsEvent, fields)
-		zero(wire)
-		return err
+		return recoverAiPanoramaInterruptedBootstrap(
+			parent, root, journal, config, last,
+		)
 	}
 	preMutation := last.EventType == aiPanoramaStateGenesisIntentEvent ||
 		last.EventType == aiPanoramaStateGenesisEvent ||
-		last.EventType == aiPanoramaSealedArtifactIntentEvent ||
-		last.EventType == aiPanoramaSealedArtifactCleanedEvent ||
 		last.EventType == aiPanoramaAttemptStartedEvent ||
 		last.EventType == aiPanoramaDiscoveryValidatedEvent ||
 		last.EventType == aiPanoramaContextProjectionIntentEvent ||

@@ -954,6 +954,7 @@ func terminalEvent(value string) bool {
 	return value == "run-succeeded" || value == "run-rolled-back" || value == "run-rollback-failed" || value == "run-failed-no-effects" ||
 		value == aiPanoramaInstallSucceededEvent || value == aiPanoramaInstallRolledBackEvent ||
 		value == aiPanoramaInstallFailedNoEffectsEvent ||
+		value == aiPanoramaInstallPreparationResolvedEvent ||
 		value == aiPanoramaCloseoutSucceededEvent || value == aiPanoramaCloseoutFailedEvent
 }
 

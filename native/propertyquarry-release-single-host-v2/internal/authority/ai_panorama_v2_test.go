@@ -288,6 +288,317 @@ func TestAiPanoramaGovernedVolumeVirginInitializationIsOneWay(t *testing.T) {
 	}
 }
 
+func TestAiPanoramaInterruptedBootstrapRecoversPostChownPreJournalCrash(
+	t *testing.T,
+) {
+	root := aiPanoramaTestGenesisRoot(t)
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zero(key)
+	journal := aiPanoramaTestOpenJournal(t, root, key)
+	defer journal.Close()
+	volume := t.TempDir()
+	if err := os.Chmod(volume, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(volume)
+	metadata, ok := infoSys(info)
+	if err != nil || !ok {
+		t.Fatal("failed to observe virgin volume")
+	}
+	before := aiPanoramaRecoveryTestRuntime()
+	before.PublicVolumeMountpoint = volume
+	before.PublicVolumeDevice = uint64(metadata.Dev)
+	before.PublicVolumeInode = metadata.Ino
+	before.PublicVolumeUID = 0
+	before.PublicVolumeGID = 0
+	before.PublicVolumeMode = 0o755
+	before.PublicVolumeNeedsInitialization = true
+	after := *before
+	after.PublicVolumeUID = 10001
+	after.PublicVolumeGID = 10001
+	after.PublicVolumeNeedsInitialization = false
+	config := aiPanoramaTestConfig()
+	request := &workflowRequest{
+		Operation: aiPanoramaInstallOperation,
+		RequestID: "ai-panorama-install-12345-1",
+	}
+	identity := &Identity{
+		RunID: "12345", RunAttempt: 1,
+		TokenID: "bootstrap-crash-jti",
+	}
+	fields := authorityFields(config, request, identity)
+	fields["release_run_receipt_digest"] =
+		"sha256:" + strings.Repeat("a", 64)
+	fields["ai_panorama_bootstrap_before"] =
+		aiPanoramaRuntimeObservationValue(before)
+	fields["ready"] = false
+	fields["production_ready"] = false
+	fields["release_effects_authorized"] = true
+	fields["release_effects_performed"] = false
+	fields["rollback_performed"] = false
+	fields["recovery"] = false
+	fields["disposition"] = "volume-bootstrap-prepared"
+	wire, err := journal.Append(
+		aiPanoramaInstallBootstrapPreparedEvent, fields,
+	)
+	zero(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := observeAiPanoramaInterruptedBootstrapRuntime
+	t.Cleanup(func() {
+		observeAiPanoramaInterruptedBootstrapRuntime = previous
+	})
+	observeAiPanoramaInterruptedBootstrapRuntime = func(
+		context.Context,
+		string,
+		*Config,
+	) (*aiPanoramaRuntimeObservation, error) {
+		copy := after
+		return &copy, nil
+	}
+	last := &journal.events[len(journal.events)-1]
+	if err := recoverAiPanoramaInterruptedBootstrap(
+		context.Background(), root, journal, config, last,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(journal.events) != 3 ||
+		journal.events[1].EventType !=
+			aiPanoramaInstallVolumeInitializedEvent ||
+		journal.events[2].EventType !=
+			aiPanoramaInstallPreparationResolvedEvent ||
+		journal.events[2].Payload["release_effects_performed"] != false ||
+		journal.events[2].Payload["rollback_performed"] != false ||
+		journal.events[2].Payload["pre_attempt_resolution"] != true ||
+		journal.events[2].Payload["disposition"] !=
+			"recovered-volume-bootstrap-verified" {
+		t.Fatal("post-chown crash did not converge to a preparation terminal")
+	}
+	if unresolved := unresolvedWorkflowOperations(journal); len(unresolved) != 0 {
+		t.Fatalf("recovered bootstrap remained unresolved: %#v", unresolved)
+	}
+	lineage, prior, err := aiPanoramaAttemptLineageFor(
+		journal, config, "sha256:"+strings.Repeat("a", 64),
+	)
+	if err != nil || prior != nil || lineage == nil ||
+		lineage.Sequence != 1 || lineage.RetryOf != "genesis" {
+		t.Fatalf(
+			"pre-attempt bootstrap resolution poisoned attempt lineage: %#v %#v %v",
+			lineage, prior, err,
+		)
+	}
+}
+
+func TestAiPanoramaInterruptedBootstrapRecoveryStateMachine(t *testing.T) {
+	for _, fixture := range []struct {
+		name            string
+		lastInitialized bool
+		observe         func(*aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation
+		populate        func(*testing.T, string)
+		wantRecovery    bool
+		wantInitialized int
+		wantDisposition string
+	}{
+		{
+			name: "prepared-before-chown",
+			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
+				copy := *before
+				return &copy
+			},
+			wantDisposition: "recovered-before-volume-bootstrap-mutation",
+		},
+		{
+			name:            "initialized-restart-is-idempotent",
+			lastInitialized: true,
+			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
+				copy := *before
+				copy.PublicVolumeUID = 10001
+				copy.PublicVolumeGID = 10001
+				copy.PublicVolumeNeedsInitialization = false
+				return &copy
+			},
+			wantInitialized: 1,
+			wantDisposition: "recovered-volume-bootstrap-verified",
+		},
+		{
+			name:            "initialized-event-reverted-to-virgin-is-ambiguous",
+			lastInitialized: true,
+			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
+				copy := *before
+				return &copy
+			},
+			wantRecovery: true,
+		},
+		{
+			name: "mixed-owner-is-ambiguous",
+			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
+				copy := *before
+				copy.PublicVolumeGID = 10001
+				return &copy
+			},
+			wantRecovery: true,
+		},
+		{
+			name: "changed-inode-is-ambiguous",
+			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
+				copy := *before
+				copy.PublicVolumeInode++
+				return &copy
+			},
+			wantRecovery: true,
+		},
+		{
+			name: "nonempty-volume-is-ambiguous",
+			observe: func(before *aiPanoramaRuntimeObservation) *aiPanoramaRuntimeObservation {
+				copy := *before
+				return &copy
+			},
+			populate: func(t *testing.T, volume string) {
+				t.Helper()
+				if err := os.Mkdir(
+					filepath.Join(volume, aiPanoramaPraterSlug), 0o755,
+				); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantRecovery: true,
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			root := aiPanoramaTestGenesisRoot(t)
+			_, key, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer zero(key)
+			journal := aiPanoramaTestOpenJournal(t, root, key)
+			defer journal.Close()
+			volume := t.TempDir()
+			if err := os.Chmod(volume, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Lstat(volume)
+			metadata, ok := infoSys(info)
+			if err != nil || !ok {
+				t.Fatal("failed to observe virgin volume")
+			}
+			before := aiPanoramaRecoveryTestRuntime()
+			before.PublicVolumeMountpoint = volume
+			before.PublicVolumeDevice = uint64(metadata.Dev)
+			before.PublicVolumeInode = metadata.Ino
+			before.PublicVolumeUID = 0
+			before.PublicVolumeGID = 0
+			before.PublicVolumeMode = 0o755
+			before.PublicVolumeNeedsInitialization = true
+			config := aiPanoramaTestConfig()
+			request := &workflowRequest{
+				Operation: aiPanoramaInstallOperation,
+				RequestID: "ai-panorama-install-67890-1",
+			}
+			identity := &Identity{
+				RunID: "67890", RunAttempt: 1,
+				TokenID: "bootstrap-recovery-state-machine-jti",
+			}
+			releaseDigest := "sha256:" + strings.Repeat("b", 64)
+			fields := authorityFields(config, request, identity)
+			fields["release_run_receipt_digest"] = releaseDigest
+			fields["ai_panorama_bootstrap_before"] =
+				aiPanoramaRuntimeObservationValue(before)
+			fields["ready"] = false
+			fields["production_ready"] = false
+			fields["release_effects_authorized"] = true
+			fields["release_effects_performed"] = false
+			fields["rollback_performed"] = false
+			fields["recovery"] = false
+			fields["disposition"] = "volume-bootstrap-prepared"
+			if err := appendAiPanoramaJournalEvent(
+				journal, aiPanoramaInstallBootstrapPreparedEvent, fields,
+			); err != nil {
+				t.Fatal(err)
+			}
+			observed := fixture.observe(before)
+			if fixture.lastInitialized {
+				initialized := cloneFields(fields)
+				initialized["ai_panorama_bootstrap_after"] =
+					aiPanoramaRuntimeObservationValue(observed)
+				initialized["disposition"] = "governed-volume-initialized"
+				if err := appendAiPanoramaJournalEvent(
+					journal, aiPanoramaInstallVolumeInitializedEvent,
+					initialized,
+				); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if fixture.populate != nil {
+				fixture.populate(t, volume)
+			}
+			previous := observeAiPanoramaInterruptedBootstrapRuntime
+			t.Cleanup(func() {
+				observeAiPanoramaInterruptedBootstrapRuntime = previous
+			})
+			observeAiPanoramaInterruptedBootstrapRuntime = func(
+				context.Context,
+				string,
+				*Config,
+			) (*aiPanoramaRuntimeObservation, error) {
+				copy := *observed
+				return &copy, nil
+			}
+			last := &journal.events[len(journal.events)-1]
+			recoveryErr := recoverAiPanoramaInterruptedBootstrap(
+				context.Background(), root, journal, config, last,
+			)
+			if fixture.wantRecovery {
+				if recoveryErr == nil ||
+					journal.events[len(journal.events)-1].EventType !=
+						aiPanoramaInstallRecoveryRequiredEvent {
+					t.Fatalf(
+						"ambiguous bootstrap state was accepted: %v %#v",
+						recoveryErr, journal.events,
+					)
+				}
+				return
+			}
+			if recoveryErr != nil {
+				t.Fatal(recoveryErr)
+			}
+			initializedCount := 0
+			for index := range journal.events {
+				if journal.events[index].EventType ==
+					aiPanoramaInstallVolumeInitializedEvent {
+					initializedCount++
+				}
+			}
+			terminal := &journal.events[len(journal.events)-1]
+			if initializedCount != fixture.wantInitialized ||
+				terminal.EventType !=
+					aiPanoramaInstallPreparationResolvedEvent ||
+				terminal.Payload["disposition"] !=
+					fixture.wantDisposition ||
+				len(unresolvedWorkflowOperations(journal)) != 0 {
+				t.Fatalf(
+					"bootstrap recovery did not converge exactly: %#v",
+					journal.events,
+				)
+			}
+			lineage, prior, err := aiPanoramaAttemptLineageFor(
+				journal, config, releaseDigest,
+			)
+			if err != nil || prior != nil || lineage == nil ||
+				lineage.Sequence != 1 || lineage.RetryOf != "genesis" {
+				t.Fatalf(
+					"bootstrap preparation terminal consumed an attempt: %#v %#v %v",
+					lineage, prior, err,
+				)
+			}
+		})
+	}
+}
+
 func TestAiPanoramaGovernedRootInventoryRejectsUnrelatedEntries(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to construct the production 10001:10001 volume fixture")

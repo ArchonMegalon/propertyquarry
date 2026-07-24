@@ -6,16 +6,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -46,7 +49,8 @@ func TestAiPanoramaOperationIsClosedAndRecoveryRequiredIsNonterminal(t *testing.
 	}
 	if !terminalEvent(aiPanoramaInstallSucceededEvent) ||
 		!terminalEvent(aiPanoramaInstallRolledBackEvent) ||
-		!terminalEvent(aiPanoramaInstallFailedNoEffectsEvent) {
+		!terminalEvent(aiPanoramaInstallFailedNoEffectsEvent) ||
+		!terminalEvent(aiPanoramaInstallPreparationResolvedEvent) {
 		t.Fatal("ai panorama terminal set is incomplete")
 	}
 }
@@ -423,4 +427,283 @@ func TestAiPanoramaPermitCanonicalJSONMatchesPythonAndExactSignatureFraming(t *t
 	zero(goldenPreimage)
 	zero(goldenPublic)
 	zero(goldenSignature)
+}
+
+func TestAiPanoramaSealedPublishCrashLeavesOneRecoverableFinalName(t *testing.T) {
+	root := t.TempDir()
+	parent, err := os.OpenFile(
+		root,
+		os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW,
+		0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	if err := os.Mkdir(filepath.Join(root, "stage"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		aiPanoramaSealedArtifactPostRenameHook = nil
+		_ = os.Chmod(filepath.Join(root, "sealed"), 0o700)
+	})
+	aiPanoramaSealedArtifactPostRenameHook = func() error {
+		return fmt.Errorf("injected-post-rename-crash")
+	}
+	if err := publishAiPanoramaSealedStage(
+		parent, "stage", "sealed",
+	); err == nil {
+		t.Fatal("post-rename crash boundary was ignored")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "stage")); !os.IsNotExist(err) {
+		t.Fatal("stage name survived atomic publication")
+	}
+	info, err := os.Lstat(filepath.Join(root, "sealed"))
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o500 {
+		t.Fatal("atomically published final name was lost")
+	}
+	aiPanoramaSealedArtifactPostRenameHook = nil
+	if err := parent.Sync(); err != nil {
+		t.Fatal("published final name could not be made durable on recovery")
+	}
+}
+
+func TestAiPanoramaSealedPublicationRecoveryStates(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("production sealed parent is root-owned")
+	}
+	for _, fixture := range []struct {
+		name          string
+		entry         string
+		validatorFail bool
+		wantError     bool
+		wantFinal     int
+		wantStage     int
+	}{
+		{name: "target-absent-stage-absent"},
+		{
+			name:  "post-rename-final-present",
+			entry: "sealed", wantFinal: 1,
+		},
+		{
+			name:  "post-rename-invalid-final-is-unchanged",
+			entry: "sealed", validatorFail: true,
+			wantError: true, wantFinal: 1,
+		},
+		{
+			name:  "journal-bound-stage-is-cleaned",
+			entry: "stage", wantStage: 1,
+		},
+		{
+			name:  "unknown-residue-is-unchanged",
+			entry: "unknown", wantError: true,
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Chmod(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if fixture.entry != "" {
+				if err := os.Mkdir(
+					filepath.Join(root, fixture.entry), 0o500,
+				); err != nil {
+					t.Fatal(err)
+				}
+			}
+			finalCalls := 0
+			stageCalls := 0
+			recoveryErr := recoverAiPanoramaSealedPublication(
+				root, "stage", "sealed",
+				func() error {
+					finalCalls++
+					info, err := os.Lstat(filepath.Join(root, "sealed"))
+					if err != nil || !info.IsDir() {
+						return fmt.Errorf("sealed final is not exact")
+					}
+					if fixture.validatorFail {
+						return fmt.Errorf("sealed final failed validation")
+					}
+					return nil
+				},
+				func(
+					_ *os.File,
+					name string,
+					_ uint64,
+					_ uint64,
+				) error {
+					stageCalls++
+					return os.Remove(filepath.Join(root, name))
+				},
+			)
+			if (recoveryErr != nil) != fixture.wantError ||
+				finalCalls != fixture.wantFinal ||
+				stageCalls != fixture.wantStage {
+				t.Fatalf(
+					"unexpected sealed recovery result: err=%v final=%d stage=%d",
+					recoveryErr, finalCalls, stageCalls,
+				)
+			}
+			switch fixture.entry {
+			case "sealed":
+				if _, err := os.Lstat(
+					filepath.Join(root, fixture.entry),
+				); err != nil {
+					t.Fatal("final name was changed by recovery")
+				}
+			case "unknown":
+				if _, err := os.Lstat(
+					filepath.Join(root, fixture.entry),
+				); err != nil {
+					t.Fatal("unknown residue was changed by recovery")
+				}
+			case "stage":
+				if _, err := os.Lstat(
+					filepath.Join(root, fixture.entry),
+				); !os.IsNotExist(err) {
+					t.Fatal("stage callback did not remove exact stage")
+				}
+			}
+		})
+	}
+}
+
+func TestAiPanoramaSealedStageBindingRejectsStaleIntent(t *testing.T) {
+	pendingPath := filepath.Join(
+		aiPanoramaSealedArtifactParent, aiPanoramaSealedStageName(),
+	)
+	payload := map[string]any{
+		"operation":  aiPanoramaInstallOperation,
+		"request_id": "ai-panorama-install-123-1",
+		"run_id":     "123", "run_attempt": json.Number("1"),
+		"config_digest":          "sha256:" + strings.Repeat("1", 64),
+		"plan_digest":            "sha256:" + strings.Repeat("2", 64),
+		"runtime_sha":            strings.Repeat("3", 40),
+		"workflow_sha":           strings.Repeat("4", 40),
+		"deployment_id":          strings.Repeat("5", 64),
+		"host_machine_id_digest": "sha256:" + strings.Repeat("6", 64),
+		"authority_scope":        "single-production-host-v2",
+		"authoritative":          true, "single_host_authority": true,
+		"external_cas_profile":                  false,
+		"ai_panorama_sealed_stage_path":         pendingPath,
+		"ai_panorama_sealed_target_path":        aiPanoramaSealedArtifactRoot,
+		"ai_panorama_sealed_source_tree_sha256": aiPanoramaExpectedSourceTree,
+		"ai_panorama_sealed_marker_sha256":      aiPanoramaExpectedMarkerDigest,
+		"ai_panorama_sealed_receipt_sha256":     aiPanoramaExpectedReceiptDigest,
+	}
+	intent := JournalEvent{
+		EventType: aiPanoramaSealedArtifactIntentEvent,
+		Operation: aiPanoramaInstallOperation,
+		RequestID: "ai-panorama-install-123-1",
+		RunID:     "123", RunAttempt: 1, Payload: payload,
+	}
+	journal := &Journal{events: []JournalEvent{intent}}
+	if !aiPanoramaSealedStageWasJournalBound(
+		journal, pendingPath, payload,
+	) {
+		t.Fatal("exact current sealed intent was not recognized")
+	}
+	cleaned := intent
+	cleaned.EventType = aiPanoramaSealedArtifactCleanedEvent
+	cleaned.Payload = cloneFields(payload)
+	journal.events = append(journal.events, cleaned)
+	if aiPanoramaSealedStageWasJournalBound(
+		journal, pendingPath, payload,
+	) {
+		t.Fatal("stale sealed intent authorized later residue")
+	}
+}
+
+func TestAiPanoramaSealedRecoveryDispatchResolvesBeforeAttemptLineage(
+	t *testing.T,
+) {
+	root := aiPanoramaTestGenesisRoot(t)
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zero(key)
+	journal := aiPanoramaTestOpenJournal(t, root, key)
+	defer journal.Close()
+	config := aiPanoramaTestConfig()
+	request := &workflowRequest{
+		Operation: aiPanoramaInstallOperation,
+		RequestID: "ai-panorama-install-54321-1",
+	}
+	identity := &Identity{
+		RunID: "54321", RunAttempt: 1,
+		TokenID: "sealed-recovery-jti",
+	}
+	fields := authorityFields(config, request, identity)
+	releaseDigest := "sha256:" + strings.Repeat("a", 64)
+	fields["release_run_receipt_digest"] = releaseDigest
+	fields["ai_panorama_sealed_stage_path"] = filepath.Join(
+		aiPanoramaSealedArtifactParent, aiPanoramaSealedStageName(),
+	)
+	fields["ai_panorama_sealed_target_path"] =
+		aiPanoramaSealedArtifactRoot
+	fields["ai_panorama_sealed_source_tree_sha256"] =
+		aiPanoramaExpectedSourceTree
+	fields["ai_panorama_sealed_marker_sha256"] =
+		aiPanoramaExpectedMarkerDigest
+	fields["ai_panorama_sealed_receipt_sha256"] =
+		aiPanoramaExpectedReceiptDigest
+	fields["disposition"] = "sealed-artifact-intent"
+	if err := appendAiPanoramaJournalEvent(
+		journal, aiPanoramaSealedArtifactIntentEvent, fields,
+	); err != nil {
+		t.Fatal(err)
+	}
+	previous := recoverAiPanoramaSealedArtifactIntentForRecovery
+	t.Cleanup(func() {
+		recoverAiPanoramaSealedArtifactIntentForRecovery = previous
+	})
+	recoveryCalls := 0
+	recoverAiPanoramaSealedArtifactIntentForRecovery = func(
+		active *Journal,
+		intent *JournalEvent,
+	) error {
+		recoveryCalls++
+		if active != journal ||
+			!exactUniqueUnresolvedWorkflowEvent(
+				active, intent, aiPanoramaInstallOperation,
+			) {
+			return fmt.Errorf("sealed recovery dispatch binding was lost")
+		}
+		cleaned := aiPanoramaRecoveryFields(intent.Payload)
+		cleaned["ai_panorama_sealed_stage_cleanup_verified"] = true
+		cleaned["disposition"] = "sealed-artifact-stage-cleaned"
+		return appendAiPanoramaJournalEvent(
+			active, aiPanoramaSealedArtifactCleanedEvent, cleaned,
+		)
+	}
+	last := &journal.events[len(journal.events)-1]
+	if err := recoverIncompleteAiPanoramaInstallV2(
+		context.Background(), "/", journal, config, last,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if recoveryCalls != 1 || len(journal.events) != 3 ||
+		journal.events[1].EventType != aiPanoramaSealedArtifactCleanedEvent ||
+		journal.events[2].EventType !=
+			aiPanoramaInstallPreparationResolvedEvent ||
+		journal.events[2].Payload["pre_attempt_resolution"] != true ||
+		journal.events[2].Payload["disposition"] !=
+			"recovered-sealed-artifact-publication" {
+		t.Fatalf("sealed recovery did not reach its preparation terminal: %#v",
+			journal.events)
+	}
+	if unresolved := unresolvedWorkflowOperations(journal); len(unresolved) != 0 {
+		t.Fatalf("sealed recovery remained unresolved: %#v", unresolved)
+	}
+	lineage, prior, err := aiPanoramaAttemptLineageFor(
+		journal, config, releaseDigest,
+	)
+	if err != nil || prior != nil || lineage == nil ||
+		lineage.Sequence != 1 || lineage.RetryOf != "genesis" {
+		t.Fatalf(
+			"sealed preparation recovery poisoned attempt lineage: %#v %#v %v",
+			lineage, prior, err,
+		)
+	}
 }

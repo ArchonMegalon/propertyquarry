@@ -7,9 +7,38 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 )
 
 const aiPanoramaBootstrapSchema = "propertyquarry.prater-governed-volume-bootstrap-result.v1"
+
+// Test-only observation seam for the crash window after the bootstrap
+// container changed ownership but before the initialized event was appended.
+var observeAiPanoramaInterruptedBootstrapRuntime = observeAiPanoramaRuntime
+
+func recordAiPanoramaPreparationResolution(
+	journal *Journal,
+	payload map[string]any,
+	disposition string,
+) error {
+	if journal == nil || payload == nil || disposition == "" {
+		return fmt.Errorf("ai-panorama-preparation-resolution-input-invalid")
+	}
+	fields := aiPanoramaRecoveryFields(payload)
+	fields["completed_at"] = json.Number(
+		strconv.FormatInt(authorityNow().UTC().Unix(), 10),
+	)
+	fields["ready"] = false
+	fields["production_ready"] = false
+	fields["release_effects_performed"] = false
+	fields["rollback_performed"] = false
+	fields["recovery"] = true
+	fields["pre_attempt_resolution"] = true
+	fields["disposition"] = disposition
+	return appendAiPanoramaJournalEvent(
+		journal, aiPanoramaInstallPreparationResolvedEvent, fields,
+	)
+}
 
 type aiPanoramaBootstrapResult struct {
 	RootDevice uint64
@@ -117,4 +146,72 @@ func bootstrapAiPanoramaGovernedVolume(
 		return nil, nil, fmt.Errorf("ai-panorama-bootstrap-postaudit-invalid")
 	}
 	return after, result, nil
+}
+
+func recoverAiPanoramaInterruptedBootstrap(
+	parent context.Context,
+	root string,
+	journal *Journal,
+	config *Config,
+	last *JournalEvent,
+) error {
+	if parent == nil || journal == nil || config == nil || last == nil ||
+		(last.EventType != aiPanoramaInstallBootstrapPreparedEvent &&
+			last.EventType != aiPanoramaInstallVolumeInitializedEvent) {
+		return fmt.Errorf("ai-panorama-bootstrap-recovery-input-invalid")
+	}
+	recoveryBase := aiPanoramaRecoveryFields(last.Payload)
+	before, ok := last.Payload["ai_panorama_bootstrap_before"].(map[string]any)
+	mountpoint, mountOK := exactString(before["public_volume_mountpoint"])
+	device, deviceOK := exactInt(before["public_volume_device"], 1, 1<<62)
+	inode, inodeOK := exactInt(before["public_volume_inode"], 1, 1<<62)
+	if !ok || !mountOK || !deviceOK || !inodeOK {
+		return aiPanoramaRecordRecoveryRequired(
+			journal, recoveryBase, "bootstrap-recovery-intent-invalid",
+		)
+	}
+	runtime, err := observeAiPanoramaInterruptedBootstrapRuntime(
+		parent, root, config,
+	)
+	if err != nil || runtime.PublicVolumeMountpoint != mountpoint ||
+		runtime.PublicVolumeDevice != uint64(device) ||
+		runtime.PublicVolumeInode != uint64(inode) ||
+		runtime.PublicVolumeMode != 0o755 {
+		return aiPanoramaRecordRecoveryRequired(
+			journal, recoveryBase, "bootstrap-recovery-identity-ambiguous",
+		)
+	}
+	empty, err := snapshotAiPanoramaRelated(runtime.PublicVolumeMountpoint)
+	if err != nil || len(empty.Entries) != 0 {
+		return aiPanoramaRecordRecoveryRequired(
+			journal, recoveryBase, "bootstrap-recovery-inventory-ambiguous",
+		)
+	}
+	fields := cloneFields(recoveryBase)
+	if runtime.PublicVolumeUID == 10001 && runtime.PublicVolumeGID == 10001 &&
+		!runtime.PublicVolumeNeedsInitialization {
+		fields["ai_panorama_bootstrap_after"] =
+			aiPanoramaRuntimeObservationValue(runtime)
+		fields["disposition"] = "recovered-volume-bootstrap-verified"
+		if last.EventType != aiPanoramaInstallVolumeInitializedEvent {
+			if err := appendAiPanoramaJournalEvent(
+				journal, aiPanoramaInstallVolumeInitializedEvent,
+				cloneFields(fields),
+			); err != nil {
+				return err
+			}
+		}
+	} else if last.EventType == aiPanoramaInstallBootstrapPreparedEvent &&
+		runtime.PublicVolumeUID == 0 && runtime.PublicVolumeGID == 0 &&
+		runtime.PublicVolumeNeedsInitialization {
+		fields["disposition"] =
+			"recovered-before-volume-bootstrap-mutation"
+	} else {
+		return aiPanoramaRecordRecoveryRequired(
+			journal, recoveryBase, "bootstrap-recovery-ownership-ambiguous",
+		)
+	}
+	return recordAiPanoramaPreparationResolution(
+		journal, fields, stringValue(fields["disposition"]),
+	)
 }

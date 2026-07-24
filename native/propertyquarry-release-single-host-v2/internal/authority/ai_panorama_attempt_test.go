@@ -799,6 +799,95 @@ func TestAiPanoramaProtectedNodeObservationDistinguishesAbsentAndSymlink(
 	}
 }
 
+func TestAiPanoramaProtectedNodeAndCloseoutProjectionAreNonvacuous(
+	t *testing.T,
+) {
+	publicRoot := t.TempDir()
+	rootInfo, err := os.Lstat(publicRoot)
+	rootMetadata, ok := infoSys(rootInfo)
+	if err != nil || !ok {
+		t.Fatal(err)
+	}
+	runtime := &aiPanoramaRuntimeObservation{
+		PublicVolumeMountpoint: publicRoot,
+		PublicVolumeDevice:     uint64(rootMetadata.Dev),
+		PublicVolumeInode:      rootMetadata.Ino,
+	}
+	protected := filepath.Join(publicRoot, aiPanoramaPraterSlug)
+	if err := os.Mkdir(protected, 0o755); err != nil ||
+		os.Chmod(protected, 0o755) != nil ||
+		os.WriteFile(
+			filepath.Join(protected, "tour.private.json"),
+			[]byte("{\"tour\":\"present\"}\n"), 0o600,
+		) != nil {
+		t.Fatal(err)
+	}
+	before, err := observeAiPanoramaProtectedNode(runtime)
+	if err != nil || !before.Present ||
+		os.FileMode(before.Mode)&os.ModeDir == 0 {
+		t.Fatal("real protected tour node was not observed")
+	}
+	if err := os.WriteFile(
+		filepath.Join(publicRoot, aiPanoramaRevocationLeaf),
+		[]byte("{\"revoked\":true}\n"), 0o444,
+	); err != nil {
+		t.Fatal(err)
+	}
+	afterMarker, err := observeAiPanoramaProtectedNode(runtime)
+	if err != nil || afterMarker.Digest != before.Digest {
+		t.Fatal("sibling revocation marker changed the protected node proof")
+	}
+	if err := os.Chmod(protected, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	afterMutation, err := observeAiPanoramaProtectedNode(runtime)
+	if err == nil && afterMutation.Digest == before.Digest {
+		t.Fatal("real protected node mutation was not detected")
+	}
+
+	controlRoot := t.TempDir()
+	for _, relative := range []string{
+		"run", "run/propertyquarry-release-control",
+		"run/propertyquarry-release-control/ai-panorama-install",
+	} {
+		if err := os.Mkdir(filepath.Join(controlRoot, relative), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := aiPanoramaRevocationWire(
+		strings.Repeat("a", 32),
+		time.Date(2026, 7, 24, 10, 11, 12, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := &aiPanoramaProjection{
+		Kind: "closeout-request", Path: aiPanoramaCloseoutRequestPath,
+		Mode: 0o400, SHA256: aiPanoramaRawSHA256(raw), Raw: raw,
+	}
+	if err := persistAiPanoramaProjectionFile(
+		controlRoot, projection,
+	); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := os.ReadFile(rooted(controlRoot, projection.Path))
+	info, statErr := os.Lstat(rooted(controlRoot, projection.Path))
+	if err != nil || statErr != nil || info.Mode().Perm() != 0o400 ||
+		!bytes.Equal(persisted, raw) {
+		t.Fatal("nonvacuous closeout projection did not persist exactly")
+	}
+	if err := removeAiPanoramaProjection(
+		controlRoot, projection,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(
+		rooted(controlRoot, projection.Path),
+	); !os.IsNotExist(err) {
+		t.Fatal("nonvacuous closeout projection survived exact cleanup")
+	}
+}
+
 func aiPanoramaCloseoutTestEvent(
 	config *Config,
 	requestID string,
