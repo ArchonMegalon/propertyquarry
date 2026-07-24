@@ -1329,9 +1329,52 @@ jobs:
           [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" =~ ^pqrelease-[0-9a-f]{32}$ ]]
           [[ "${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"
+          [[ "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${GITHUB_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          [[ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]
+          [[ "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" != *$'\n'* ]]
+          [[ "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" != *$'\r'* ]]
+          umask 077
+          oidc_fifo="${RUNNER_TEMP}/propertyquarry-release-preflight-oidc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.fifo"
+          receipt="${RUNNER_TEMP}/propertyquarry-release-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.receipt.v2.json"
+          oidc_writer=""
+          cleanup_release_client_step() {
+            status=$?
+            trap - EXIT HUP INT TERM
+            set +e
+            if [[ "${oidc_writer:-}" =~ ^[1-9][0-9]*$ ]]; then
+              builtin kill -- "${oidc_writer}" 2>/dev/null
+              wait "${oidc_writer}" 2>/dev/null
+            fi
+            exec 9<&-
+            if [[ -p "${oidc_fifo}" || -L "${oidc_fifo}" ]]; then
+              /usr/bin/rm -f -- "${oidc_fifo}"
+            fi
+            if [[ -f "${receipt}" || -L "${receipt}" ]]; then
+              /usr/bin/rm -f -- "${receipt}"
+            fi
+            exit "${status}"
+          }
+          trap cleanup_release_client_step EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          [[ ! -e "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
+          [[ ! -e "${receipt}" && ! -L "${receipt}" ]]
+          /usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"
+          [[ -p "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
+          [[ "$(/usr/bin/stat -Lc '%a' -- "${oidc_fifo}")" == "600" ]]
+          (
+            builtin printf '%s\n' "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >"${oidc_fifo}"
+          ) &
+          oidc_writer=$!
+          exec 9<"${oidc_fifo}"
+          wait "${oidc_writer}"
+          oidc_writer=""
           unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
-          exec /usr/bin/env -i \
+          /usr/bin/rm -f -- "${oidc_fifo}"
+          set -o noclobber
+          /usr/bin/env -i \
             PATH=/usr/sbin:/usr/bin:/sbin:/bin \
             HOME=/nonexistent \
             LANG=C \
@@ -1352,7 +1395,14 @@ jobs:
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \
             /usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2 \
-              client release-preflight
+              client release-preflight >"${receipt}"
+          exec 9<&-
+          [[ -f "${receipt}" && ! -L "${receipt}" && -s "${receipt}" ]]
+          [[ "$(/usr/bin/stat -Lc '%a:%h' -- "${receipt}")" == "600:1" ]]
+          [[ "$(/usr/bin/wc -l <"${receipt}")" == "1" ]]
+          [[ "$(/usr/bin/tail -c 1 -- "${receipt}" | /usr/bin/od -An -t u1 | /usr/bin/tr -d '[:space:]')" == "10" ]]
+          /usr/bin/rm -f -- "${receipt}"
+          [[ ! -e "${receipt}" && ! -L "${receipt}" ]]
       - name: Request the atomic release lifecycle from the installed supervisor
         shell: /bin/bash --noprofile --norc -p -euo pipefail {0}
         run: |
@@ -1361,9 +1411,52 @@ jobs:
           [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" =~ ^pqrelease-[0-9a-f]{32}$ ]]
           [[ "${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"
+          [[ "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${GITHUB_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          [[ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]
+          [[ "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" != *$'\n'* ]]
+          [[ "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" != *$'\r'* ]]
+          umask 077
+          oidc_fifo="${RUNNER_TEMP}/propertyquarry-release-run-oidc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.fifo"
+          receipt="${RUNNER_TEMP}/propertyquarry-release-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.receipt.v2.json"
+          oidc_writer=""
+          cleanup_release_client_step() {
+            status=$?
+            trap - EXIT HUP INT TERM
+            set +e
+            if [[ "${oidc_writer:-}" =~ ^[1-9][0-9]*$ ]]; then
+              builtin kill -- "${oidc_writer}" 2>/dev/null
+              wait "${oidc_writer}" 2>/dev/null
+            fi
+            exec 9<&-
+            if [[ -p "${oidc_fifo}" || -L "${oidc_fifo}" ]]; then
+              /usr/bin/rm -f -- "${oidc_fifo}"
+            fi
+            if [[ -f "${receipt}" || -L "${receipt}" ]]; then
+              /usr/bin/rm -f -- "${receipt}"
+            fi
+            exit "${status}"
+          }
+          trap cleanup_release_client_step EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          [[ ! -e "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
+          [[ ! -e "${receipt}" && ! -L "${receipt}" ]]
+          /usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"
+          [[ -p "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
+          [[ "$(/usr/bin/stat -Lc '%a' -- "${oidc_fifo}")" == "600" ]]
+          (
+            builtin printf '%s\n' "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >"${oidc_fifo}"
+          ) &
+          oidc_writer=$!
+          exec 9<"${oidc_fifo}"
+          wait "${oidc_writer}"
+          oidc_writer=""
           unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
-          exec /usr/bin/env -i \
+          /usr/bin/rm -f -- "${oidc_fifo}"
+          set -o noclobber
+          /usr/bin/env -i \
             PATH=/usr/sbin:/usr/bin:/sbin:/bin \
             HOME=/nonexistent \
             LANG=C \
@@ -1384,7 +1477,96 @@ jobs:
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \
             PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \
             /usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2 \
-              client release-run
+              client release-run >"${receipt}"
+          exec 9<&-
+          [[ -f "${receipt}" && ! -L "${receipt}" && -s "${receipt}" ]]
+          [[ "$(/usr/bin/stat -Lc '%a:%h' -- "${receipt}")" == "600:1" ]]
+          [[ "$(/usr/bin/wc -l <"${receipt}")" == "1" ]]
+          [[ "$(/usr/bin/tail -c 1 -- "${receipt}" | /usr/bin/od -An -t u1 | /usr/bin/tr -d '[:space:]')" == "10" ]]
+          /usr/bin/rm -f -- "${receipt}"
+          [[ ! -e "${receipt}" && ! -L "${receipt}" ]]
+      - name: Require signed AI panorama install receipt after runtime deployment
+        shell: /bin/bash --noprofile --norc -p -euo pipefail {0}
+        run: |
+          [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" =~ ^pqrelease-[0-9a-f]{32}$ ]]
+          [[ "${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${GITHUB_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          [[ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]
+          [[ "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" != *$'\n'* ]]
+          [[ "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" != *$'\r'* ]]
+          umask 077
+          oidc_fifo="${RUNNER_TEMP}/propertyquarry-ai-panorama-install-oidc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.fifo"
+          receipt="${RUNNER_TEMP}/propertyquarry-ai-panorama-install-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.receipt.v2.json"
+          oidc_writer=""
+          cleanup_release_client_step() {
+            status=$?
+            trap - EXIT HUP INT TERM
+            set +e
+            if [[ "${oidc_writer:-}" =~ ^[1-9][0-9]*$ ]]; then
+              builtin kill -- "${oidc_writer}" 2>/dev/null
+              wait "${oidc_writer}" 2>/dev/null
+            fi
+            exec 9<&-
+            if [[ -p "${oidc_fifo}" || -L "${oidc_fifo}" ]]; then
+              /usr/bin/rm -f -- "${oidc_fifo}"
+            fi
+            if [[ -f "${receipt}" || -L "${receipt}" ]]; then
+              /usr/bin/rm -f -- "${receipt}"
+            fi
+            exit "${status}"
+          }
+          trap cleanup_release_client_step EXIT
+          trap 'exit 129' HUP
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          [[ ! -e "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
+          [[ ! -e "${receipt}" && ! -L "${receipt}" ]]
+          /usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"
+          [[ -p "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]
+          [[ "$(/usr/bin/stat -Lc '%a' -- "${oidc_fifo}")" == "600" ]]
+          (
+            builtin printf '%s\n' "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >"${oidc_fifo}"
+          ) &
+          oidc_writer=$!
+          exec 9<"${oidc_fifo}"
+          wait "${oidc_writer}"
+          oidc_writer=""
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          /usr/bin/rm -f -- "${oidc_fifo}"
+          set -o noclobber
+          /usr/bin/env -i \
+            PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            HOME=/nonexistent \
+            LANG=C \
+            LC_ALL=C \
+            ACTIONS_ID_TOKEN_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}" \
+            PROPERTYQUARRY_OIDC_TOKEN_FD=9 \
+            GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            GITHUB_REF="${GITHUB_REF}" \
+            GITHUB_SHA="${GITHUB_SHA}" \
+            GITHUB_WORKFLOW_REF="${GITHUB_WORKFLOW_REF}" \
+            GITHUB_WORKFLOW_SHA="${GITHUB_WORKFLOW_SHA}" \
+            GITHUB_RUN_ID="${GITHUB_RUN_ID}" \
+            GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
+            GITHUB_JOB="${GITHUB_JOB}" \
+            PROPERTYQUARRY_RELEASE_RUNNER_LABEL="${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" \
+            PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256="${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" \
+            PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" \
+            PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \
+            PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \
+            /usr/libexec/propertyquarry-release-control/propertyquarry-release-single-host-v2 \
+              client ai-panorama-install >"${receipt}"
+          exec 9<&-
+          [[ -f "${receipt}" && ! -L "${receipt}" && -s "${receipt}" ]]
+          [[ "$(/usr/bin/stat -Lc '%a:%h' -- "${receipt}")" == "600:1" ]]
+          [[ "$(/usr/bin/wc -l <"${receipt}")" == "1" ]]
+          [[ "$(/usr/bin/tail -c 1 -- "${receipt}" | /usr/bin/od -An -t u1 | /usr/bin/tr -d '[:space:]')" == "10" ]]
+          /usr/bin/rm -f -- "${receipt}"
+          [[ ! -e "${receipt}" && ! -L "${receipt}" ]]
 
   propertyquarry-activation-request-inert:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_activation_journey == true }}

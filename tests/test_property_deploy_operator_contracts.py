@@ -69,6 +69,11 @@ RELEASE_JOB_ENV = {
         "bootstrap_artifact_digest }}"
     ),
 }
+RELEASE_OPERATIONS = (
+    "release-preflight",
+    "release-run",
+    "ai-panorama-install",
+)
 
 
 class _StrictWorkflowLoader(yaml.SafeLoader):
@@ -114,16 +119,66 @@ def _strict_workflow_document(workflow: str) -> dict[str, object]:
 
 
 def _expected_release_client_run(operation: str) -> str:
-    assert operation in {"release-preflight", "release-run"}
+    assert operation in RELEASE_OPERATIONS
+    path_operation = operation
     lines = [
         '[[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" =~ ^[0-9a-f]{64}$ ]]',
         '[[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]',
         '[[ "${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]',
         '[[ "${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" =~ ^pqrelease-[0-9a-f]{32}$ ]]',
         '[[ "${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" =~ ^sha256:[0-9a-f]{64}$ ]]',
-        'exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"',
+        '[[ "${GITHUB_RUN_ID}" =~ ^[1-9][0-9]*$ ]]',
+        '[[ "${GITHUB_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]',
+        '[[ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]',
+        '[[ "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" != *$\'\\n\'* ]]',
+        '[[ "${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" != *$\'\\r\'* ]]',
+        "umask 077",
+        (
+            f'oidc_fifo="${{RUNNER_TEMP}}/propertyquarry-{path_operation}'
+            '-oidc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.fifo"'
+        ),
+        (
+            f'receipt="${{RUNNER_TEMP}}/propertyquarry-{path_operation}-'
+            '${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.receipt.v2.json"'
+        ),
+        'oidc_writer=""',
+        "cleanup_release_client_step() {",
+        "  status=$?",
+        "  trap - EXIT HUP INT TERM",
+        "  set +e",
+        '  if [[ "${oidc_writer:-}" =~ ^[1-9][0-9]*$ ]]; then',
+        '    builtin kill -- "${oidc_writer}" 2>/dev/null',
+        '    wait "${oidc_writer}" 2>/dev/null',
+        "  fi",
+        "  exec 9<&-",
+        '  if [[ -p "${oidc_fifo}" || -L "${oidc_fifo}" ]]; then',
+        '    /usr/bin/rm -f -- "${oidc_fifo}"',
+        "  fi",
+        '  if [[ -f "${receipt}" || -L "${receipt}" ]]; then',
+        '    /usr/bin/rm -f -- "${receipt}"',
+        "  fi",
+        '  exit "${status}"',
+        "}",
+        "trap cleanup_release_client_step EXIT",
+        "trap 'exit 129' HUP",
+        "trap 'exit 130' INT",
+        "trap 'exit 143' TERM",
+        '[[ ! -e "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]',
+        '[[ ! -e "${receipt}" && ! -L "${receipt}" ]]',
+        '/usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"',
+        '[[ -p "${oidc_fifo}" && ! -L "${oidc_fifo}" ]]',
+        '[[ "$(/usr/bin/stat -Lc \'%a\' -- "${oidc_fifo}")" == "600" ]]',
+        "(",
+        "  builtin printf '%s\\n' \"${ACTIONS_ID_TOKEN_REQUEST_TOKEN}\" >\"${oidc_fifo}\"",
+        ") &",
+        "oidc_writer=$!",
+        'exec 9<"${oidc_fifo}"',
+        'wait "${oidc_writer}"',
+        'oidc_writer=""',
         "unset ACTIONS_ID_TOKEN_REQUEST_TOKEN",
-        "exec /usr/bin/env -i \\",
+        '/usr/bin/rm -f -- "${oidc_fifo}"',
+        "set -o noclobber",
+        "/usr/bin/env -i \\",
         "  PATH=/usr/sbin:/usr/bin:/sbin:/bin \\",
         "  HOME=/nonexistent \\",
         "  LANG=C \\",
@@ -144,7 +199,17 @@ def _expected_release_client_run(operation: str) -> str:
         '  PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \\',
         '  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \\',
         f"  {RELEASE_CLIENT} \\",
-        f"    client {operation}",
+        f'    client {operation} >"${{receipt}}"',
+        "exec 9<&-",
+        '[[ -f "${receipt}" && ! -L "${receipt}" && -s "${receipt}" ]]',
+        '[[ "$(/usr/bin/stat -Lc \'%a:%h\' -- "${receipt}")" == "600:1" ]]',
+        '[[ "$(/usr/bin/wc -l <"${receipt}")" == "1" ]]',
+        (
+            '[[ "$(/usr/bin/tail -c 1 -- "${receipt}" | /usr/bin/od -An -t u1 '
+            '| /usr/bin/tr -d \'[:space:]\')" == "10" ]]'
+        ),
+        '/usr/bin/rm -f -- "${receipt}"',
+        '[[ ! -e "${receipt}" && ! -L "${receipt}" ]]',
     ]
     return "\n".join(lines) + "\n"
 
@@ -194,7 +259,7 @@ def _assert_exact_v2_release_job(workflow: str) -> dict[str, object]:
     ]
     assert release_job["env"] == RELEASE_JOB_ENV
     steps = release_job["steps"]
-    assert type(steps) is list and len(steps) == 2
+    assert type(steps) is list and len(steps) == 3
     expected_steps = (
         (
             "Request non-authorizing release preflight from the installed supervisor",
@@ -203,6 +268,10 @@ def _assert_exact_v2_release_job(workflow: str) -> dict[str, object]:
         (
             "Request the atomic release lifecycle from the installed supervisor",
             "release-run",
+        ),
+        (
+            "Require signed AI panorama install receipt after runtime deployment",
+            "ai-panorama-install",
         ),
     )
     for step, (name, operation) in zip(steps, expected_steps, strict=True):
@@ -1039,20 +1108,35 @@ def test_smoke_runtime_uses_only_the_fixed_v2_supervisor_for_release() -> None:
         "shell: /bin/bash --noprofile --norc -p -euo pipefail {0}"
         in release_job
     )
-    assert release_job.count(RELEASE_CLIENT) == 2
-    assert release_job.count("exec /usr/bin/env -i") == 2
-    assert release_job.count("PATH=/usr/sbin:/usr/bin:/sbin:/bin") == 2
-    assert release_job.count("HOME=/nonexistent") == 2
-    assert release_job.count("LANG=C") == 2
-    assert release_job.count("LC_ALL=C") == 2
-    assert release_job.count("      - name:") == 2
-    assert release_job.index("release-preflight") < release_job.index("release-run")
-    assert release_job.count("ACTIONS_ID_TOKEN_REQUEST_URL") == 4
+    assert release_job.count(RELEASE_CLIENT) == 3
+    assert release_job.count("/usr/bin/env -i") == 3
+    assert release_job.count("PATH=/usr/sbin:/usr/bin:/sbin:/bin") == 3
+    assert release_job.count("HOME=/nonexistent") == 3
+    assert release_job.count("LANG=C") == 3
+    assert release_job.count("LC_ALL=C") == 3
+    assert release_job.count("      - name:") == 3
+    assert (
+        release_job.index("release-preflight")
+        < release_job.index("release-run")
+        < release_job.index("ai-panorama-install")
+    )
+    assert release_job.count("ACTIONS_ID_TOKEN_REQUEST_URL") == 6
+    assert "exec 9<<<" not in release_job
+    assert release_job.count('/usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"') == 3
+    assert release_job.count('exec 9<"${oidc_fifo}"') == 3
     assert release_job.count(
-        'exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"'
-    ) == 2
-    assert release_job.count("unset ACTIONS_ID_TOKEN_REQUEST_TOKEN") == 2
-    assert release_job.count("PROPERTYQUARRY_OIDC_TOKEN_FD=9") == 2
+        "builtin printf '%s\\n' "
+        '"${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" >"${oidc_fifo}"'
+    ) == 3
+    assert release_job.count("unset ACTIONS_ID_TOKEN_REQUEST_TOKEN") == 3
+    assert release_job.count("PROPERTYQUARRY_OIDC_TOKEN_FD=9") == 3
+    assert release_job.count('>"${receipt}"') == 3
+    assert release_job.count(
+        '[[ "$(/usr/bin/stat -Lc \'%a:%h\' -- "${receipt}")" == "600:1" ]]'
+    ) == 3
+    assert release_job.count(
+        '[[ "$(/usr/bin/wc -l <"${receipt}")" == "1" ]]'
+    ) == 3
     assert (
         'ACTIONS_ID_TOKEN_REQUEST_TOKEN="${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"'
         not in release_job
@@ -1063,11 +1147,11 @@ def test_smoke_runtime_uses_only_the_fixed_v2_supervisor_for_release() -> None:
         "GITHUB_SHA",
         "GITHUB_WORKFLOW_REF",
         "GITHUB_WORKFLOW_SHA",
-        "GITHUB_RUN_ID",
-        "GITHUB_RUN_ATTEMPT",
         "GITHUB_JOB",
     ):
-        assert release_job.count(identity) == 4
+        assert release_job.count(identity) == 6
+    for run_identity in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
+        assert release_job.count(run_identity) == 15
     for forbidden in (
         "uses:",
         "actions/",
@@ -1098,6 +1182,328 @@ def test_smoke_runtime_uses_only_the_fixed_v2_supervisor_for_release() -> None:
     ):
         assert forbidden not in release_job
     assert "if: ${{ false }}" in legacy_live_job
+
+
+def test_governed_tour_install_follows_managed_compose_volume_genesis() -> None:
+    workflow = _read(".github/workflows/smoke-runtime.yml")
+    release_job = _assert_exact_v2_release_job(workflow)
+    steps = release_job["steps"]
+    assert type(steps) is list
+    assert [
+        str(step["run"]).rsplit("client ", 1)[1].split(" ", 1)[0]
+        for step in steps
+    ] == list(RELEASE_OPERATIONS)
+
+    compose = _strict_workflow_document(_read("docker-compose.property.yml"))
+    volumes = compose.get("volumes")
+    services = compose.get("services")
+    assert type(volumes) is dict
+    assert type(services) is dict
+    governed_volume = volumes.get("propertyquarry_governed_public_tours")
+    assert governed_volume == {
+        "name": "property_propertyquarry_governed_public_tours"
+    }
+    assert "external" not in governed_volume
+    assert "labels" not in governed_volume
+
+    governed_mount = (
+        "propertyquarry_governed_public_tours:"
+        "/data/governed_public_property_tours:ro"
+    )
+    governed_consumers = {}
+    for service_name, service in services.items():
+        assert type(service_name) is str
+        assert type(service) is dict
+        service_volumes = service.get("volumes", [])
+        assert type(service_volumes) is list
+        matches = [
+            mount
+            for mount in service_volumes
+            if "propertyquarry_governed_public_tours" in str(mount)
+        ]
+        if matches:
+            governed_consumers[service_name] = matches
+    assert governed_consumers == {
+        "propertyquarry-api": [governed_mount],
+        "propertyquarry-scheduler": [governed_mount],
+        "propertyquarry-render-tools": [governed_mount],
+    }
+
+
+@pytest.mark.parametrize("step_index", range(len(RELEASE_OPERATIONS)))
+@pytest.mark.parametrize(
+    "required_line",
+    (
+        'exec 9<"${oidc_fifo}"\n',
+        "unset ACTIONS_ID_TOKEN_REQUEST_TOKEN\n",
+        (
+            "  PROPERTYQUARRY_RELEASE_RUNNER_LABEL="
+            '"${PROPERTYQUARRY_RELEASE_RUNNER_LABEL}" \\\n'
+        ),
+        (
+            "  PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256="
+            '"${PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256}" \\\n'
+        ),
+        (
+            "  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256="
+            '"${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256}" \\\n'
+        ),
+        (
+            "  PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID="
+            '"${PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID}" \\\n'
+        ),
+        (
+            "  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST="
+            '"${PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST}" \\\n'
+        ),
+    ),
+)
+def test_every_release_operation_requires_fifo_and_five_authenticated_bindings(
+    step_index: int,
+    required_line: str,
+) -> None:
+    document = _strict_workflow_document(_read(".github/workflows/smoke-runtime.yml"))
+    jobs = document["jobs"]
+    assert type(jobs) is dict
+    release_job = jobs["propertyquarry-release-v2"]
+    assert type(release_job) is dict
+    steps = release_job["steps"]
+    assert type(steps) is list
+    step = steps[step_index]
+    assert type(step) is dict
+    run = step["run"]
+    assert type(run) is str
+    assert required_line in run
+    step["run"] = run.replace(required_line, "", 1)
+    with pytest.raises(AssertionError):
+        _assert_exact_v2_release_job(yaml.safe_dump(document, sort_keys=False))
+
+
+def _release_step_test_environment(runner_temp: Path, *, run_attempt: str) -> dict[str, str]:
+    return {
+        "BASH_ENV": "/dev/null",
+        "ENV": "/dev/null",
+        "LD_PRELOAD": "",
+        "LD_LIBRARY_PATH": "",
+        "LD_AUDIT": "",
+        "GCONV_PATH": "",
+        "RUNNER_TEMP": str(runner_temp),
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "private-test-oidc-bearer",
+        "ACTIONS_ID_TOKEN_REQUEST_URL": "https://actions.invalid/oidc",
+        "GITHUB_REPOSITORY": "ArchonMegalon/propertyquarry",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_SHA": "a" * 40,
+        "GITHUB_WORKFLOW_REF": (
+            "ArchonMegalon/propertyquarry/.github/workflows/"
+            "smoke-runtime.yml@refs/heads/main"
+        ),
+        "GITHUB_WORKFLOW_SHA": "b" * 40,
+        "GITHUB_RUN_ID": "123456789",
+        "GITHUB_RUN_ATTEMPT": run_attempt,
+        "GITHUB_JOB": "propertyquarry-release-v2",
+        "PROPERTYQUARRY_RELEASE_RUNNER_LABEL": "pqrelease-" + ("c" * 32),
+        "PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256": "sha256:" + ("d" * 64),
+        "PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256": "e" * 64,
+        "PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID": "987654321",
+        "PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST": "sha256:" + ("f" * 64),
+    }
+
+
+def _write_fake_release_client(
+    client: Path,
+    event_log: Path,
+    *,
+    exit_code: int,
+    newline_terminated: bool = True,
+) -> None:
+    output_command = (
+        "builtin printf '%s\\n' '{\"signed_wrapper\":\"private-test-value\"}'"
+        if newline_terminated
+        else "builtin printf '%s' '{\"signed_wrapper\":\"private-test-value\"}'"
+    )
+    client.write_text(
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        '[[ "$#" -eq 2 && "$1" == "client" ]]\n'
+        '[[ "${PROPERTYQUARRY_OIDC_TOKEN_FD}" == "9" ]]\n'
+        '[[ -p "/proc/self/fd/9" ]]\n'
+        '[[ "$(/usr/bin/stat -Lc \'%a\' -- /proc/self/fd/9)" == "600" ]]\n'
+        "IFS= read -r oidc_bearer <&9\n"
+        '[[ "${oidc_bearer}" == "private-test-oidc-bearer" ]]\n'
+        '[[ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN+x}" ]]\n'
+        "for required_name in \\\n"
+        "  PROPERTYQUARRY_RELEASE_RUNNER_LABEL \\\n"
+        "  PROPERTYQUARRY_RELEASE_RUNNER_TICKET_SHA256 \\\n"
+        "  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ATTESTATION_SHA256 \\\n"
+        "  PROPERTYQUARRY_SECURITY_BOOTSTRAP_RUN_ID \\\n"
+        "  PROPERTYQUARRY_SECURITY_BOOTSTRAP_ARTIFACT_DIGEST; do\n"
+        '  [[ -n "${!required_name:-}" ]]\n'
+        "done\n"
+        f"builtin printf '%s\\n' \"$2\" >>{shlex.quote(str(event_log))}\n"
+        f"{output_command}\n"
+        f"exit {exit_code}\n",
+        encoding="utf-8",
+    )
+    client.chmod(0o700)
+
+
+def test_release_client_fifo_transport_is_private_fresh_and_cleaned(
+    tmp_path: Path,
+) -> None:
+    document = _strict_workflow_document(_read(".github/workflows/smoke-runtime.yml"))
+    jobs = document["jobs"]
+    assert type(jobs) is dict
+    release_job = jobs["propertyquarry-release-v2"]
+    assert type(release_job) is dict
+    steps = release_job["steps"]
+    assert type(steps) is list
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir(mode=0o700)
+    event_log = tmp_path / "events"
+    fake_client = tmp_path / "fixed-release-client"
+    _write_fake_release_client(fake_client, event_log, exit_code=0)
+    environment = _release_step_test_environment(runner_temp, run_attempt="1")
+
+    for index, (step, operation) in enumerate(
+        zip(steps, RELEASE_OPERATIONS, strict=True)
+    ):
+        assert type(step) is dict
+        run = step["run"]
+        assert type(run) is str
+        executable_run = run.replace(RELEASE_CLIENT, shlex.quote(str(fake_client)))
+        assert executable_run != run
+        script = tmp_path / f"release-step-{index}.sh"
+        script.write_text(executable_run, encoding="utf-8")
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                "-p",
+                "-euo",
+                "pipefail",
+                str(script),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == ""
+        assert "private-test-oidc-bearer" not in result.stderr
+        assert "private-test-value" not in result.stderr
+        assert list(runner_temp.iterdir()) == []
+        assert event_log.read_text(encoding="utf-8").splitlines()[-1] == operation
+
+    assert event_log.read_text(encoding="utf-8").splitlines() == list(
+        RELEASE_OPERATIONS
+    )
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "newline_terminated"),
+    ((42, True), (0, False)),
+)
+def test_release_client_failure_or_noncanonical_receipt_cleans_private_state(
+    tmp_path: Path,
+    exit_code: int,
+    newline_terminated: bool,
+) -> None:
+    document = _strict_workflow_document(_read(".github/workflows/smoke-runtime.yml"))
+    jobs = document["jobs"]
+    assert type(jobs) is dict
+    release_job = jobs["propertyquarry-release-v2"]
+    assert type(release_job) is dict
+    steps = release_job["steps"]
+    assert type(steps) is list
+    step = steps[-1]
+    assert type(step) is dict
+    run = step["run"]
+    assert type(run) is str
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir(mode=0o700)
+    event_log = tmp_path / "events"
+    fake_client = tmp_path / "fixed-release-client"
+    _write_fake_release_client(
+        fake_client,
+        event_log,
+        exit_code=exit_code,
+        newline_terminated=newline_terminated,
+    )
+    script = tmp_path / "release-step.sh"
+    script.write_text(
+        run.replace(RELEASE_CLIENT, shlex.quote(str(fake_client))),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-p",
+            "-euo",
+            "pipefail",
+            str(script),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_release_step_test_environment(runner_temp, run_attempt="2"),
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "private-test-oidc-bearer" not in result.stderr
+    assert "private-test-value" not in result.stderr
+    assert list(runner_temp.iterdir()) == []
+
+
+def test_release_client_signal_cleanup_reaps_blocked_fifo_writer(
+    tmp_path: Path,
+) -> None:
+    document = _strict_workflow_document(_read(".github/workflows/smoke-runtime.yml"))
+    jobs = document["jobs"]
+    assert type(jobs) is dict
+    release_job = jobs["propertyquarry-release-v2"]
+    assert type(release_job) is dict
+    steps = release_job["steps"]
+    assert type(steps) is list
+    step = steps[-1]
+    assert type(step) is dict
+    run = step["run"]
+    assert type(run) is str
+    interrupted_run = run.replace(
+        'exec 9<"${oidc_fifo}"\n',
+        'builtin kill -TERM "${BASHPID}"\nexec 9<"${oidc_fifo}"\n',
+        1,
+    )
+    assert interrupted_run != run
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir(mode=0o700)
+    script = tmp_path / "release-step.sh"
+    script.write_text(interrupted_run, encoding="utf-8")
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-p",
+            "-euo",
+            "pipefail",
+            str(script),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_release_step_test_environment(runner_temp, run_attempt="3"),
+        timeout=10,
+    )
+    assert result.returncode == 143
+    assert result.stdout == ""
+    assert "private-test-oidc-bearer" not in result.stderr
+    assert list(runner_temp.iterdir()) == []
 
 
 def test_smoke_runtime_binds_flagship_security_to_one_time_protected_runner() -> None:
@@ -1213,10 +1619,11 @@ def test_v2_release_job_closed_yaml_contract_rejects_execution_indirection() -> 
         "        run: /usr/bin/id\n\n"
     )
     missing_fd_handoff = body.replace(
-        '          exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"\n',
+        '          exec 9<"${oidc_fifo}"\n',
         "",
         1,
     )
+    assert missing_fd_handoff != body
     missing_bearer_unset = body.replace(
         "          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN\n",
         "",
@@ -1227,6 +1634,27 @@ def test_v2_release_job_closed_yaml_contract_rejects_execution_indirection() -> 
         "            PROPERTYQUARRY_OIDC_TOKEN_FD=8 \\\n",
         1,
     )
+    wrong_fifo_mode = body.replace(
+        '          /usr/bin/mkfifo -m 0600 -- "${oidc_fifo}"\n',
+        '          /usr/bin/mkfifo -m 0666 -- "${oidc_fifo}"\n',
+        1,
+    )
+    missing_private_receipt_capture = body.replace(
+        '              client release-preflight >"${receipt}"\n',
+        "              client release-preflight\n",
+        1,
+    )
+    bypassed_install = body.replace(
+        "              client ai-panorama-install >\"${receipt}\"\n",
+        '              client release-run >"${receipt}"\n',
+        1,
+    )
+    for mutant in (
+        wrong_fifo_mode,
+        missing_private_receipt_capture,
+        bypassed_install,
+    ):
+        assert mutant != body
     bearer_in_env_argv = body.replace(
         "            PROPERTYQUARRY_OIDC_TOKEN_FD=9 \\\n",
         "            PROPERTYQUARRY_OIDC_TOKEN_FD=9 \\\n"
@@ -1260,6 +1688,9 @@ def test_v2_release_job_closed_yaml_contract_rejects_execution_indirection() -> 
         missing_fd_handoff,
         missing_bearer_unset,
         wrong_fd_contract,
+        wrong_fifo_mode,
+        missing_private_receipt_capture,
+        bypassed_install,
         bearer_in_env_argv,
         *hostile_startup_environment,
     ):
