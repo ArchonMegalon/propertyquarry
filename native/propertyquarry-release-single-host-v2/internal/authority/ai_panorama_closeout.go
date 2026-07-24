@@ -54,15 +54,16 @@ type aiPanoramaInstalledProof struct {
 }
 
 type aiPanoramaProtectedNodeObservation struct {
-	Present bool
-	Device  uint64
-	Inode   uint64
-	Mode    uint32
-	UID     uint32
-	GID     uint32
-	Nlink   uint64
-	Size    int64
-	Digest  string
+	Present       bool
+	Device        uint64
+	Inode         uint64
+	Mode          uint32
+	UID           uint32
+	GID           uint32
+	Nlink         uint64
+	Size          int64
+	SubtreeSHA256 string
+	Digest        string
 }
 
 func aiPanoramaProtectedNodeValue(
@@ -81,6 +82,7 @@ func aiPanoramaProtectedNodeValue(
 		value["gid"] = json.Number(strconv.FormatUint(uint64(observation.GID), 10))
 		value["nlink"] = json.Number(strconv.FormatUint(observation.Nlink, 10))
 		value["size_bytes"] = json.Number(strconv.FormatInt(observation.Size, 10))
+		value["subtree_sha256"] = observation.SubtreeSHA256
 	}
 	if observation != nil {
 		value["sha256"] = observation.Digest
@@ -97,13 +99,14 @@ func aiPanoramaProtectedNodePayloadMatches(
 		!aiPanoramaRawSHA256Pattern.MatchString(expectedDigest) ||
 		!hasKeys(
 			value, "path", "state", "device", "inode", "mode", "uid",
-			"gid", "nlink", "size_bytes", "sha256",
+			"gid", "nlink", "size_bytes", "subtree_sha256", "sha256",
 		) ||
 		value["path"] !=
 			aiPanoramaPublicMountTarget+"/"+aiPanoramaPraterSlug ||
 		value["state"] != "present" || value["sha256"] != expectedDigest {
 		return false
 	}
+	subtreeSHA256, subtreeOK := exactString(value["subtree_sha256"])
 	device, deviceOK := exactInt(value["device"], 1, 1<<62)
 	inode, inodeOK := exactInt(value["inode"], 1, 1<<62)
 	mode, modeOK := exactInt(value["mode"], 0, 1<<32-1)
@@ -111,20 +114,23 @@ func aiPanoramaProtectedNodePayloadMatches(
 	gid, gidOK := exactInt(value["gid"], 0, 1<<32-1)
 	nlink, nlinkOK := exactInt(value["nlink"], 1, 1<<62)
 	size, sizeOK := exactInt(value["size_bytes"], 0, 1<<62)
-	if !deviceOK || !inodeOK || !modeOK || !uidOK || !gidOK ||
+	if !subtreeOK ||
+		!aiPanoramaRawSHA256Pattern.MatchString(subtreeSHA256) ||
+		!deviceOK || !inodeOK || !modeOK || !uidOK || !gidOK ||
 		!nlinkOK || !sizeOK || uint64(device) != runtime.PublicVolumeDevice {
 		return false
 	}
 	observation := &aiPanoramaProtectedNodeObservation{
-		Present: true,
-		Device:  uint64(device),
-		Inode:   uint64(inode),
-		Mode:    uint32(mode),
-		UID:     uint32(uid),
-		GID:     uint32(gid),
-		Nlink:   uint64(nlink),
-		Size:    size,
-		Digest:  expectedDigest,
+		Present:       true,
+		Device:        uint64(device),
+		Inode:         uint64(inode),
+		Mode:          uint32(mode),
+		UID:           uint32(uid),
+		GID:           uint32(gid),
+		Nlink:         uint64(nlink),
+		Size:          size,
+		SubtreeSHA256: subtreeSHA256,
+		Digest:        expectedDigest,
 	}
 	reconstructed := aiPanoramaProtectedNodeValue(observation)
 	digestValue := cloneFields(reconstructed)
@@ -154,6 +160,16 @@ func observeAiPanoramaProtectedNode(
 		rootMetadata.Ino != runtime.PublicVolumeInode {
 		return nil, fmt.Errorf("ai-panorama-protected-node-root-invalid")
 	}
+	root, err := tourV4OpenDirectoryAbsolute(runtime.PublicVolumeMountpoint)
+	if err != nil {
+		return nil, fmt.Errorf("ai-panorama-protected-node-root-invalid")
+	}
+	defer root.Close()
+	rootDescriptorBefore, rootDescriptorErr := root.Stat()
+	if rootDescriptorErr != nil ||
+		!os.SameFile(rootBefore, rootDescriptorBefore) {
+		return nil, fmt.Errorf("ai-panorama-protected-node-root-changed")
+	}
 	target := filepath.Join(runtime.PublicVolumeMountpoint, aiPanoramaPraterSlug)
 	info, targetErr := os.Lstat(target)
 	if targetErr != nil && !os.IsNotExist(targetErr) {
@@ -177,6 +193,51 @@ func observeAiPanoramaProtectedNode(
 		observation.GID = metadata.Gid
 		observation.Nlink = metadata.Nlink
 		observation.Size = info.Size()
+		if info.IsDir() {
+			subtree, subtreeErr := tourV4SnapshotTreeAt(
+				root, aiPanoramaPraterSlug,
+				aiPanoramaPublicMountTarget+"/"+aiPanoramaPraterSlug,
+				nil, false,
+			)
+			if subtreeErr != nil {
+				return nil, fmt.Errorf(
+					"ai-panorama-protected-node-subtree-invalid: %w",
+					subtreeErr,
+				)
+			}
+			subtreeSHA256 := strings.TrimPrefix(
+				subtree.TreeSHA256, "sha256:",
+			)
+			subtreeValid := subtree.Device == observation.Device &&
+				subtree.Inode == observation.Inode &&
+				subtree.Mode == uint32(info.Mode().Perm()) &&
+				subtree.UID == observation.UID &&
+				subtree.GID == observation.GID &&
+				subtreeSHA256 != subtree.TreeSHA256 &&
+				aiPanoramaRawSHA256Pattern.MatchString(
+					subtreeSHA256,
+				)
+			observation.SubtreeSHA256 = subtreeSHA256
+			subtree.release()
+			if !subtreeValid {
+				return nil, fmt.Errorf(
+					"ai-panorama-protected-node-subtree-changed",
+				)
+			}
+		} else {
+			observation.SubtreeSHA256 = aiPanoramaRawSHA256(
+				[]byte(
+					"propertyquarry-ai-panorama-protected-subtree:" +
+						"non-directory:v1",
+				),
+			)
+		}
+		targetAfter, targetAfterErr := os.Lstat(target)
+		if targetAfterErr != nil || !os.SameFile(info, targetAfter) {
+			return nil, fmt.Errorf(
+				"ai-panorama-protected-node-target-changed",
+			)
+		}
 	}
 	value := aiPanoramaProtectedNodeValue(observation)
 	delete(value, "sha256")
@@ -186,6 +247,17 @@ func observeAiPanoramaProtectedNode(
 	}
 	observation.Digest = aiPanoramaRawSHA256(raw)
 	zero(raw)
+	rootDescriptorAfter, rootDescriptorAfterErr := root.Stat()
+	rootPathAfter, rootPathAfterErr := os.Lstat(
+		runtime.PublicVolumeMountpoint,
+	)
+	if rootDescriptorAfterErr != nil || rootPathAfterErr != nil ||
+		!os.SameFile(rootBefore, rootPathAfter) ||
+		!tourV4SameFingerprint(
+			rootDescriptorBefore, rootDescriptorAfter,
+		) {
+		return nil, fmt.Errorf("ai-panorama-protected-node-root-changed")
+	}
 	return observation, nil
 }
 
@@ -1654,7 +1726,7 @@ func recoverIncompleteAiPanoramaCloseout(
 				journal, last.Payload, "unbound-marker-classification-ambiguous",
 			)
 		}
-		terminal := cloneFields(last.Payload)
+		terminal := aiPanoramaRecoveryFields(last.Payload)
 		terminal["completed_at"] = json.Number(strconv.FormatInt(authorityNow().UTC().Unix(), 10))
 		terminal["disposition"] = "recovered-before-closeout-request-intent"
 		terminal["production_ready"] = false
@@ -1664,7 +1736,7 @@ func recoverIncompleteAiPanoramaCloseout(
 		return err
 	}
 	defer projection.release()
-	base := cloneFields(last.Payload)
+	base := aiPanoramaRecoveryFields(last.Payload)
 	wire, err := continueAiPanoramaCloseout(
 		parent, root, journal, config, installed, runtime, base, projection,
 	)

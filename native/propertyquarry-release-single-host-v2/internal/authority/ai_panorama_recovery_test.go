@@ -3,11 +3,16 @@
 package authority
 
 import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func aiPanoramaTestRecoveryResultWire(
@@ -178,5 +183,236 @@ func TestAiPanoramaRecoveryClassificationTerminalBindsControlRoot(t *testing.T) 
 		root, requestID, runtime, result,
 	); err == nil {
 		t.Fatal("classifier terminal accepted against replaced control root")
+	}
+}
+
+func TestAiPanoramaProtectedNodeProofBindsSameLengthChildContent(
+	t *testing.T,
+) {
+	publicRoot := t.TempDir()
+	protected := filepath.Join(publicRoot, aiPanoramaPraterSlug)
+	privatePath := filepath.Join(protected, "tour.private.json")
+	original := []byte("{\"tour\":\"present\"}\n")
+	if err := os.Mkdir(protected, 0o755); err != nil ||
+		os.Chmod(protected, 0o755) != nil ||
+		os.WriteFile(privatePath, original, 0o600) != nil ||
+		os.Chmod(privatePath, 0o600) != nil {
+		t.Fatal("failed to create protected tour fixture")
+	}
+	rootInfo, err := os.Lstat(publicRoot)
+	rootMetadata, ok := infoSys(rootInfo)
+	if err != nil || !ok {
+		t.Fatal("failed to observe protected tour root")
+	}
+	runtime := &aiPanoramaRuntimeObservation{
+		PublicVolumeMountpoint: publicRoot,
+		PublicVolumeDevice:     uint64(rootMetadata.Dev),
+		PublicVolumeInode:      rootMetadata.Ino,
+	}
+	before, err := observeAiPanoramaProtectedNode(runtime)
+	if err != nil || before == nil || !before.Present ||
+		!aiPanoramaRawSHA256Pattern.MatchString(before.SubtreeSHA256) {
+		t.Fatalf("protected subtree was not cryptographically observed: %#v %v", before, err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(publicRoot, aiPanoramaRevocationLeaf),
+		[]byte("{\"revoked\":true}\n"), 0o444,
+	); err != nil {
+		t.Fatal(err)
+	}
+	afterSibling, err := observeAiPanoramaProtectedNode(runtime)
+	if err != nil || afterSibling.Digest != before.Digest ||
+		afterSibling.SubtreeSHA256 != before.SubtreeSHA256 {
+		t.Fatal("sibling revocation marker changed the protected subtree proof")
+	}
+	mutated := append([]byte(nil), original...)
+	mutated[len(mutated)-2] ^= 1
+	if len(mutated) != len(original) ||
+		os.WriteFile(privatePath, mutated, 0o600) != nil {
+		t.Fatal("failed to perform same-length protected child overwrite")
+	}
+	afterOverwrite, err := observeAiPanoramaProtectedNode(runtime)
+	if err != nil {
+		t.Fatalf("same-length overwrite became unclassifiable: %v", err)
+	}
+	if afterOverwrite.SubtreeSHA256 == before.SubtreeSHA256 ||
+		afterOverwrite.Digest == before.Digest {
+		t.Fatal("same-length protected child overwrite preserved closeout proof")
+	}
+}
+
+func TestAiPanoramaCloseoutContinuesExactPersistedProjectionForRealMarker(
+	t *testing.T,
+) {
+	if os.Geteuid() != 0 {
+		t.Skip("root ownership is required for the production revocation contract")
+	}
+	publicRoot := t.TempDir()
+	protected := filepath.Join(publicRoot, aiPanoramaPraterSlug)
+	privatePath := filepath.Join(protected, "tour.private.json")
+	privateRaw := []byte("{\"tour\":\"present\"}\n")
+	if err := os.Mkdir(protected, 0o755); err != nil ||
+		os.Chmod(protected, 0o755) != nil ||
+		os.WriteFile(privatePath, privateRaw, 0o600) != nil ||
+		os.Chmod(privatePath, 0o600) != nil ||
+		os.Chown(protected, 10001, 10001) != nil ||
+		os.Chown(privatePath, 10001, 10001) != nil ||
+		os.Chmod(publicRoot, 0o755) != nil ||
+		os.Chown(publicRoot, 10001, 10001) != nil {
+		t.Fatal("failed to create production-owned public tour fixture")
+	}
+	rootInfo, err := os.Lstat(publicRoot)
+	rootMetadata, ok := infoSys(rootInfo)
+	if err != nil || !ok {
+		t.Fatal("failed to observe production-owned public root")
+	}
+	runtime := &aiPanoramaRuntimeObservation{
+		PublicVolumeMountpoint: publicRoot,
+		PublicVolumeDevice:     uint64(rootMetadata.Dev),
+		PublicVolumeInode:      rootMetadata.Ino,
+		PublicVolumeUID:        10001,
+		PublicVolumeGID:        10001,
+		PublicVolumeMode:       0o755,
+	}
+	before, err := observeAiPanoramaProtectedNode(runtime)
+	if err != nil || before == nil || !before.Present {
+		t.Fatalf("failed to bind protected subtree before closeout: %v", err)
+	}
+	revocationID := strings.Repeat("a", 32)
+	raw, err := aiPanoramaRevocationWire(
+		revocationID,
+		time.Date(2026, 7, 24, 10, 11, 12, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zero(raw)
+	markerPath := filepath.Join(publicRoot, aiPanoramaRevocationLeaf)
+	if err := os.WriteFile(markerPath, raw, 0o444); err != nil ||
+		os.Chmod(markerPath, 0o444) != nil ||
+		os.Chown(markerPath, 0, 0) != nil {
+		t.Fatal("failed to publish real revocation marker")
+	}
+
+	controlRoot := aiPanoramaTestGenesisRoot(t)
+	for _, relative := range []string{
+		"run", "run/propertyquarry-release-control",
+		"run/propertyquarry-release-control/ai-panorama-install",
+	} {
+		if err := os.Mkdir(filepath.Join(controlRoot, relative), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := aiPanoramaTestOpenJournal(t, controlRoot, key)
+	defer journal.Close()
+	config := aiPanoramaCloseoutTestConfig()
+	requestID := strings.Repeat("b", 32)
+	request := &workflowRequest{
+		Operation: aiPanoramaCloseoutOperation,
+		RequestID: requestID,
+	}
+	identity := &Identity{
+		RunID: "123456", RunAttempt: 1, TokenID: "closeout-recovery-jti",
+	}
+	projection := &aiPanoramaProjection{
+		Kind: "closeout-request", Path: aiPanoramaCloseoutRequestPath,
+		Mode: 0o400, SHA256: aiPanoramaRawSHA256(raw), Raw: raw,
+	}
+	fields := authorityFields(config, request, identity)
+	fields["ai_panorama_closeout_projection"] = projection.journalValue()
+	fields["ai_panorama_closeout_request_sha256"] = projection.SHA256
+	fields["ai_panorama_before_protected_node"] =
+		aiPanoramaProtectedNodeValue(before)
+	fields["ai_panorama_before_protected_node_sha256"] = before.Digest
+	fields["ai_panorama_closeout_container_verified"] = true
+	fields["release_effects_performed"] = true
+	fields["production_ready"] = false
+	if err := persistAiPanoramaProjectionFile(
+		controlRoot, projection,
+	); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := journal.Append(aiPanoramaCloseoutPreparedEvent, fields)
+	zero(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mismatchedRaw, err := aiPanoramaRevocationWire(
+		strings.Repeat("c", 32),
+		time.Date(2026, 7, 24, 10, 11, 12, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mismatchedRaw) != len(raw) ||
+		os.Remove(markerPath) != nil ||
+		os.WriteFile(markerPath, mismatchedRaw, 0o444) != nil ||
+		os.Chmod(markerPath, 0o444) != nil ||
+		os.Chown(markerPath, 0, 0) != nil {
+		zero(mismatchedRaw)
+		t.Fatal("failed to install mismatched revocation marker")
+	}
+	zero(mismatchedRaw)
+	if found, err := findAiPanoramaCloseoutProjectionForMarker(
+		journal, config, runtime,
+	); err == nil {
+		found.release()
+		t.Fatal("mismatched marker recovered a persisted projection")
+	}
+	persisted, persistErr := os.ReadFile(
+		rooted(controlRoot, aiPanoramaCloseoutRequestPath),
+	)
+	protectedAfterMismatch, protectedErr := os.ReadFile(privatePath)
+	if persistErr != nil || protectedErr != nil ||
+		!bytes.Equal(persisted, raw) ||
+		!bytes.Equal(protectedAfterMismatch, privateRaw) {
+		t.Fatal("mismatched marker recovery performed a side effect")
+	}
+	if err := os.Remove(markerPath); err != nil ||
+		os.WriteFile(markerPath, raw, 0o444) != nil ||
+		os.Chmod(markerPath, 0o444) != nil ||
+		os.Chown(markerPath, 0, 0) != nil {
+		t.Fatal("failed to restore exact revocation marker")
+	}
+	found, err := findAiPanoramaCloseoutProjectionForMarker(
+		journal, config, runtime,
+	)
+	if err != nil || found == nil || found.SHA256 != projection.SHA256 ||
+		!bytes.Equal(found.Raw, raw) {
+		if found != nil {
+			found.release()
+		}
+		t.Fatalf("exact marker did not recover persisted projection: %v", err)
+	}
+	base := aiPanoramaRecoveryFields(journal.events[0].Payload)
+	terminalWire, err := continueAiPanoramaCloseout(
+		context.Background(), controlRoot, journal, config,
+		&aiPanoramaInstalledProof{}, runtime, base, found,
+	)
+	found.release()
+	zero(terminalWire)
+	if err != nil {
+		t.Fatalf("exact persisted closeout did not continue: %v", err)
+	}
+	protectedAfter, protectedErr := os.ReadFile(privatePath)
+	markerAfter, markerErr := os.ReadFile(markerPath)
+	if protectedErr != nil || markerErr != nil ||
+		!bytes.Equal(protectedAfter, privateRaw) ||
+		!bytes.Equal(markerAfter, raw) {
+		t.Fatal("successful closeout continuation changed protected subtree bytes")
+	}
+	if _, err := os.Lstat(
+		rooted(controlRoot, aiPanoramaCloseoutRequestPath),
+	); !os.IsNotExist(err) {
+		t.Fatal("successful closeout continuation retained its exact projection")
+	}
+	if len(journal.events) != 2 ||
+		journal.events[1].EventType != aiPanoramaCloseoutSucceededEvent {
+		t.Fatal("successful closeout continuation did not terminalize")
 	}
 }
