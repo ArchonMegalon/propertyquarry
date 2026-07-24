@@ -75,7 +75,8 @@ CANONICAL_WORKFLOW_REF = (
 CANONICAL_JOB = "propertyquarry-release-v2"
 CANONICAL_ENVIRONMENT = "propertyquarry-production"
 CANONICAL_SUBJECT = (
-    "repo:ArchonMegalon/propertyquarry:environment:propertyquarry-production"
+    "repo:ArchonMegalon@11421547/propertyquarry@1257593732:"
+    "environment:propertyquarry-production"
 )
 
 MAX_PERMIT_BYTES = 128 * 1024
@@ -203,10 +204,13 @@ class AiPanoramaInstallExpectedBindings:
     request_id: str
     repository: str
     git_ref: str
+    # The authenticated protected-workflow candidate SHA
+    # (native Identity.CandidateSHA == Config.WorkflowSHA).
     git_head_sha: str
     workflow_ref: str
     job: str
     environment: str
+    # Raw SHA-256 of the signed run-succeeded journal receipt.
     review_receipt_sha256: str
     web_image: str
     web_image_id: str

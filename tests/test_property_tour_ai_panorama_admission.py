@@ -931,6 +931,12 @@ def test_trusted_context_actor_owner_source_ref_and_private_repr(
             "propertyquarry-release-controller",
             "ai_panorama_principal_roles_not_separated",
         ),
+        (
+            "subject",
+            "repo:ArchonMegalon/propertyquarry:"
+            "environment:propertyquarry-production",
+            "ai_panorama_release_context_invalid",
+        ),
     ),
 )
 def test_opaque_identifiers_and_key_purpose_fail_closed(
@@ -1329,6 +1335,12 @@ def test_independent_golden_signature_vector() -> None:
     )
     vector = json.loads(fixture_path.read_text(encoding="utf-8"))
     envelope = vector["envelope"]
+    assert (
+        envelope["permit"]["subject"]
+        == admission.CANONICAL_SUBJECT
+        == "repo:ArchonMegalon@11421547/propertyquarry@1257593732:"
+        "environment:propertyquarry-production"
+    )
     assert (
         envelope["permit"]["workflow_ref"]
         == admission.CANONICAL_WORKFLOW_REF
