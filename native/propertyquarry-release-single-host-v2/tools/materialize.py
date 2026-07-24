@@ -185,6 +185,12 @@ MAX_OBSERVATION_SECONDS = 900
 MAX_PUBLICATION_EVIDENCE_AGE_SECONDS = 21_600
 MAX_RELEASE_ARTIFACT_BYTES = 16 * 1024 * 1024
 MAX_REMOTE_BUNDLE_BYTES = 2 * 1024 * 1024
+RELEASE_METADATA_DESCENDANT_PATHS = (
+    ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
+    ".codex-design/product/WEEKLY_PRODUCT_PULSE.generated.json",
+    ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json",
+    "docs/PROPERTYQUARRY_RELEASE_MANIFEST.md",
+)
 GITHUB_API_HOST = "api.github.com"
 GITHUB_API_VERSION = "2026-03-10"
 GITHUB_USER_AGENT = "propertyquarry-release-materializer-v2"
@@ -4197,6 +4203,383 @@ def _verify_remote_bundle(
         fail("github-attestation-remote-bundle-mismatch")
 
 
+def _release_topology_git(
+    checkout: Path,
+    *arguments: str,
+    accepted_returncodes: tuple[int, ...] = (0,),
+) -> subprocess.CompletedProcess[bytes]:
+    try:
+        metadata = os.stat("/usr/bin/git", follow_symlinks=False)
+    except OSError:
+        fail("release-topology-git-invalid")
+    if (
+        os.path.realpath("/usr/bin/git") != "/usr/bin/git"
+        or not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o755
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or metadata.st_nlink != 1
+    ):
+        fail("release-topology-git-invalid")
+    try:
+        completed = subprocess.run(
+            [
+                "/usr/bin/git",
+                "-c",
+                "core.commitGraph=false",
+                "-c",
+                "core.fsmonitor=false",
+                "-C",
+                os.fspath(checkout),
+                *arguments,
+            ],
+            check=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            env={
+                "GIT_CONFIG_GLOBAL": "/dev/null",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_SYSTEM": "/dev/null",
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_ASKPASS": "/bin/false",
+                "SSH_ASKPASS": "/bin/false",
+                "GCM_INTERACTIVE": "never",
+                "HOME": "/nonexistent",
+                "PATH": "/usr/bin:/bin",
+                "LANG": "C",
+                "LC_ALL": "C",
+                "TZ": "UTC",
+            },
+        )
+    except (OSError, subprocess.SubprocessError):
+        fail("release-topology-git-query-failed")
+    if completed.returncode not in accepted_returncodes:
+        fail("release-topology-git-query-failed")
+    return completed
+
+
+def _release_topology_git_text(checkout: Path, *arguments: str) -> str:
+    raw = _release_topology_git(checkout, *arguments).stdout
+    if b"\0" in raw or b"\r" in raw:
+        fail("release-topology-git-output-invalid")
+    try:
+        return raw.decode("ascii").removesuffix("\n")
+    except UnicodeDecodeError:
+        fail("release-topology-git-output-invalid")
+
+
+def _release_topology_parents(checkout: Path, commit_sha: str) -> list[str]:
+    value = _release_topology_git_text(
+        checkout,
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        commit_sha,
+    ).split()
+    if (
+        not value
+        or value[0] != commit_sha
+        or any(SHA1.fullmatch(item) is None for item in value)
+    ):
+        fail("release-topology-commit-invalid")
+    return value[1:]
+
+
+def _release_topology_tree(checkout: Path, commit_sha: str) -> str:
+    value = _release_topology_git_text(
+        checkout,
+        "rev-parse",
+        "--verify",
+        f"{commit_sha}^{{tree}}",
+    )
+    if SHA1.fullmatch(value) is None:
+        fail("release-topology-tree-invalid")
+    return value
+
+
+def _release_topology_is_ancestor(
+    checkout: Path,
+    ancestor_sha: str,
+    descendant_sha: str,
+) -> bool:
+    completed = _release_topology_git(
+        checkout,
+        "merge-base",
+        "--is-ancestor",
+        ancestor_sha,
+        descendant_sha,
+        accepted_returncodes=(0, 1),
+    )
+    return completed.returncode == 0
+
+
+def _release_topology_diff_paths(
+    checkout: Path,
+    base_sha: str,
+    head_sha: str,
+) -> list[str]:
+    raw = _release_topology_git(
+        checkout,
+        "diff",
+        "--ignore-submodules=none",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        base_sha,
+        head_sha,
+        "--",
+    ).stdout
+    if not raw:
+        return []
+    if not raw.endswith(b"\0"):
+        fail("release-topology-diff-invalid")
+    result: list[str] = []
+    for item in raw.removesuffix(b"\0").split(b"\0"):
+        try:
+            path = item.decode("ascii")
+        except UnicodeDecodeError:
+            fail("release-topology-diff-invalid")
+        if (
+            not path
+            or path.startswith("/")
+            or "\\" in path
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+        ):
+            fail("release-topology-diff-invalid")
+        result.append(path)
+    if result != sorted(set(result)):
+        fail("release-topology-diff-invalid")
+    return result
+
+
+def _verify_release_merge_topology(
+    *,
+    checkout: Path,
+    release_evidence: dict[str, str],
+) -> dict[str, str]:
+    workflow_sha = release_evidence.get("workflow_sha", "")
+    runtime_sha = release_evidence.get("runtime_sha", "")
+    base_parent_sha = release_evidence.get("merge_base_parent_commit", "")
+    envelope_sha = release_evidence.get("reviewed_envelope_commit", "")
+    head_tree = release_evidence.get("head_tree", "")
+    envelope_tree = release_evidence.get("reviewed_envelope_tree", "")
+    if (
+        any(
+            SHA1.fullmatch(value) is None
+            for value in (
+                workflow_sha,
+                runtime_sha,
+                base_parent_sha,
+                envelope_sha,
+                head_tree,
+                envelope_tree,
+            )
+        )
+        or len(
+            {
+                workflow_sha,
+                runtime_sha,
+                base_parent_sha,
+                envelope_sha,
+            }
+        )
+        != 4
+    ):
+        fail("release-topology-input-invalid")
+    try:
+        checkout_metadata = checkout.lstat()
+        git_metadata = (checkout / ".git").lstat()
+        resolved = checkout.resolve(strict=True)
+    except OSError:
+        fail("release-topology-checkout-invalid")
+    if (
+        stat.S_ISLNK(checkout_metadata.st_mode)
+        or not stat.S_ISDIR(checkout_metadata.st_mode)
+        or stat.S_IMODE(checkout_metadata.st_mode) != 0o700
+        or checkout_metadata.st_uid != os.geteuid()
+        or checkout_metadata.st_gid != os.getegid()
+        or resolved != checkout
+        or checkout.parent != RUNNER_RELEASE_CHECKOUT_ROOT
+        or checkout.name != workflow_sha
+        or stat.S_ISLNK(git_metadata.st_mode)
+        or not stat.S_ISDIR(git_metadata.st_mode)
+        or stat.S_IMODE(git_metadata.st_mode) != 0o700
+        or git_metadata.st_uid != os.geteuid()
+        or git_metadata.st_gid != os.getegid()
+    ):
+        fail("release-topology-checkout-invalid")
+    git_directory = checkout / ".git"
+    for forbidden_path in (
+        git_directory / "commondir",
+        git_directory / "config.worktree",
+        git_directory / "info" / "grafts",
+        git_directory / "objects" / "info" / "alternates",
+        git_directory / "objects" / "info" / "http-alternates",
+        git_directory / "shallow",
+    ):
+        try:
+            forbidden_path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            fail("release-topology-checkout-invalid")
+        fail("release-topology-checkout-invalid")
+    configuration = _release_topology_git_text(
+        checkout,
+        "config",
+        "--no-includes",
+        "--local",
+        "--list",
+        "--name-only",
+    ).splitlines()
+    dangerous_configuration = {key.lower() for key in configuration if key}
+    if any(
+        key.startswith("url.")
+        and (key.endswith(".insteadof") or key.endswith(".pushinsteadof"))
+        or key.startswith("credential.")
+        or key.startswith("include.")
+        or key.startswith("includeif.")
+        or key.startswith("filter.")
+        or key.startswith("submodule.")
+        or key.startswith("alias.")
+        or key.startswith("protocol.")
+        or key.startswith("merge.")
+        and key.endswith(".driver")
+        or key.startswith("diff.")
+        and (
+            key.endswith(".command")
+            or key.endswith(".external")
+            or key.endswith(".textconv")
+        )
+        or "proxy" in key
+        or key
+        in {
+            "core.alternaterefscommand",
+            "core.askpass",
+            "core.fsmonitor",
+            "core.hookspath",
+            "core.replacerefs",
+            "core.sshcommand",
+            "extensions.worktreeconfig",
+            "http.extraheader",
+            "remote.origin.pushurl",
+            "remote.origin.uploadpack",
+        }
+        for key in dangerous_configuration
+    ):
+        fail("release-topology-git-configuration-invalid")
+    git_directory_text = _release_topology_git_text(
+        checkout,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-dir",
+    )
+    git_common_directory_text = _release_topology_git_text(
+        checkout,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+    )
+    try:
+        resolved_git_directory = Path(git_directory_text).resolve(strict=True)
+        resolved_git_common_directory = Path(git_common_directory_text).resolve(
+            strict=True
+        )
+    except OSError:
+        fail("release-topology-checkout-invalid")
+    if (
+        git_directory_text != os.fspath(git_directory)
+        or git_common_directory_text != os.fspath(git_directory)
+        or resolved_git_directory != git_directory
+        or resolved_git_common_directory != git_directory
+    ):
+        fail("release-topology-checkout-invalid")
+    if (
+        _release_topology_git_text(checkout, "rev-parse", "--show-toplevel")
+        != os.fspath(checkout)
+        or _release_topology_git_text(
+            checkout,
+            "rev-parse",
+            "--is-inside-work-tree",
+        )
+        != "true"
+        or _release_topology_git_text(
+            checkout,
+            "rev-parse",
+            "--is-shallow-repository",
+        )
+        != "false"
+        or _release_topology_git_text(checkout, "rev-parse", "--abbrev-ref", "HEAD")
+        != "HEAD"
+        or _release_topology_git_text(checkout, "rev-parse", "--verify", "HEAD")
+        != workflow_sha
+        or _release_topology_git_text(checkout, "remote", "get-url", "origin")
+        != "https://github.com/ArchonMegalon/propertyquarry.git"
+        or _release_topology_git_text(
+            checkout,
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/replace",
+        )
+        != ""
+        or _release_topology_git_text(
+            checkout,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignored=matching",
+        )
+        != ""
+    ):
+        fail("release-topology-checkout-binding-invalid")
+    if (
+        _release_topology_parents(checkout, workflow_sha)
+        != [base_parent_sha, envelope_sha]
+        or _release_topology_parents(checkout, envelope_sha) != [runtime_sha]
+        or not _release_topology_is_ancestor(
+            checkout,
+            base_parent_sha,
+            envelope_sha,
+        )
+        or _release_topology_is_ancestor(
+            checkout,
+            runtime_sha,
+            base_parent_sha,
+        )
+        or _release_topology_tree(checkout, workflow_sha) != head_tree
+        or _release_topology_tree(checkout, envelope_sha) != envelope_tree
+        or head_tree != envelope_tree
+        or _release_topology_diff_paths(
+            checkout,
+            runtime_sha,
+            envelope_sha,
+        )
+        != list(RELEASE_METADATA_DESCENDANT_PATHS)
+        or _release_topology_diff_paths(
+            checkout,
+            envelope_sha,
+            workflow_sha,
+        )
+        != []
+    ):
+        fail("release-topology-binding-invalid")
+    return {
+        "head_tree": head_tree,
+        "merge_base_parent_commit": base_parent_sha,
+        "reviewed_envelope_commit": envelope_sha,
+        "reviewed_envelope_tree": envelope_tree,
+        "runtime_sha": runtime_sha,
+        "workflow_sha": workflow_sha,
+    }
+
+
 def _validate_artifact_metadata(
     artifact: dict[str, Any], *, name: str, archive_raw: bytes, run_id: str, workflow_sha: str
 ) -> str:
@@ -4360,14 +4743,58 @@ def load_release_evidence(
     }:
         fail("image-publication-preflight-binding-invalid")
     hygiene = _strict_decode_json(hygiene_raw, "release-hygiene-receipt-invalid")
+    merge_parent_commits = (
+        hygiene.get("merge_parent_commits") if isinstance(hygiene, dict) else None
+    )
+    reviewed_envelope_commit = (
+        hygiene.get("reviewed_envelope_commit")
+        if isinstance(hygiene, dict)
+        else None
+    )
+    reviewed_envelope_parent_commits = (
+        hygiene.get("reviewed_envelope_parent_commits")
+        if isinstance(hygiene, dict)
+        else None
+    )
+    merge_base_parent_commit = (
+        hygiene.get("merge_base_parent_commit")
+        if isinstance(hygiene, dict)
+        else None
+    )
+    head_tree = hygiene.get("head_tree") if isinstance(hygiene, dict) else None
+    reviewed_envelope_tree = (
+        hygiene.get("reviewed_envelope_tree")
+        if isinstance(hygiene, dict)
+        else None
+    )
     if (
         not isinstance(hygiene, dict)
         or hygiene.get("schema") != "propertyquarry.release_hygiene_receipt.v1"
         or hygiene.get("status") != "pass"
         or hygiene.get("failure_count") != 0
         or hygiene.get("failures") != []
+        or hygiene.get("merge_commit_required") is not True
         or hygiene.get("head_commit") != workflow_sha
-        or hygiene.get("parent_commit") != runtime_sha
+        or not isinstance(merge_parent_commits, list)
+        or len(merge_parent_commits) != 2
+        or any(
+            not isinstance(value, str) or SHA1.fullmatch(value) is None
+            for value in merge_parent_commits
+        )
+        or not isinstance(merge_base_parent_commit, str)
+        or SHA1.fullmatch(merge_base_parent_commit) is None
+        or merge_base_parent_commit != merge_parent_commits[0]
+        or not isinstance(reviewed_envelope_commit, str)
+        or SHA1.fullmatch(reviewed_envelope_commit) is None
+        or reviewed_envelope_commit != merge_parent_commits[1]
+        or hygiene.get("parent_commit") != reviewed_envelope_commit
+        or reviewed_envelope_parent_commits != [runtime_sha]
+        or not isinstance(head_tree, str)
+        or SHA1.fullmatch(head_tree) is None
+        or not isinstance(reviewed_envelope_tree, str)
+        or SHA1.fullmatch(reviewed_envelope_tree) is None
+        or head_tree != reviewed_envelope_tree
+        or hygiene.get("merge_tree_matches_reviewed_envelope") is not True
         or hygiene.get("manifest_runtime_commit") != runtime_sha
         or hygiene.get("manifest_metadata_only_ancestor") is not True
         or hygiene.get("tracked_dirty_path_count") != 0
@@ -4505,6 +4932,10 @@ def load_release_evidence(
         "render_attestation_id": attestation_ids["render"],
         "render_image": resolved["render"],
         "runtime_sha": runtime_sha,
+        "merge_base_parent_commit": merge_base_parent_commit,
+        "reviewed_envelope_commit": reviewed_envelope_commit,
+        "head_tree": head_tree,
+        "reviewed_envelope_tree": reviewed_envelope_tree,
         "web_attestation_id": attestation_ids["web"],
         "web_image": resolved["web"],
         "workflow_sha": workflow_sha,
@@ -4831,9 +5262,8 @@ def observe_live(release: dict[str, str], deployment_id: str) -> dict[str, Any]:
 
 Observer = Callable[[dict[str, str], str], dict[str, Any]]
 
-
-def _validate_release_evidence(release_evidence: dict[str, str]) -> None:
-    if set(release_evidence) != {
+RELEASE_EVIDENCE_CORE_KEYS = frozenset(
+    {
         "envelope_sha",
         "final_artifact_id",
         "final_artifact_sha256",
@@ -4849,7 +5279,20 @@ def _validate_release_evidence(release_evidence: dict[str, str]) -> None:
         "web_attestation_id",
         "web_image",
         "workflow_sha",
-    }:
+    }
+)
+RELEASE_EVIDENCE_TOPOLOGY_KEYS = frozenset(
+    {
+        "head_tree",
+        "merge_base_parent_commit",
+        "reviewed_envelope_commit",
+        "reviewed_envelope_tree",
+    }
+)
+
+
+def _validate_release_evidence_core(release_evidence: dict[str, str]) -> None:
+    if set(release_evidence) != set(RELEASE_EVIDENCE_CORE_KEYS):
         fail("release-evidence-shape-invalid")
     runtime_sha = release_evidence["runtime_sha"]
     workflow_sha = release_evidence["workflow_sha"]
@@ -4880,6 +5323,41 @@ def _validate_release_evidence(release_evidence: dict[str, str]) -> None:
         or not HEX64.fullmatch(release_evidence["final_artifact_sha256"])
         or not HEX64.fullmatch(release_evidence["preflight_artifact_sha256"])
         or not HEX64.fullmatch(release_evidence["release_hygiene_sha256"])
+    ):
+        fail("materialization-input-invalid")
+
+
+def _release_evidence_core(
+    release_evidence: dict[str, str],
+) -> dict[str, str]:
+    return {
+        key: release_evidence[key]
+        for key in sorted(RELEASE_EVIDENCE_CORE_KEYS)
+    }
+
+
+def _validate_release_evidence(release_evidence: dict[str, str]) -> None:
+    if set(release_evidence) != set(
+        RELEASE_EVIDENCE_CORE_KEYS | RELEASE_EVIDENCE_TOPOLOGY_KEYS
+    ):
+        fail("release-evidence-shape-invalid")
+    _validate_release_evidence_core(_release_evidence_core(release_evidence))
+    topology_values = [
+        release_evidence[key] for key in RELEASE_EVIDENCE_TOPOLOGY_KEYS
+    ]
+    if (
+        any(SHA1.fullmatch(value) is None for value in topology_values)
+        or release_evidence["head_tree"]
+        != release_evidence["reviewed_envelope_tree"]
+        or len(
+            {
+                release_evidence["runtime_sha"],
+                release_evidence["workflow_sha"],
+                release_evidence["merge_base_parent_commit"],
+                release_evidence["reviewed_envelope_commit"],
+            }
+        )
+        != 4
     ):
         fail("materialization-input-invalid")
 
@@ -4917,7 +5395,7 @@ def _materialize_locked(
     observer: Observer = observe_live,
     runner_observer: RunnerObserver = observe_runner_dispatch,
 ) -> dict[str, Any]:
-    _validate_release_evidence(release_evidence)
+    _validate_release_evidence_core(release_evidence)
     runtime_sha = release_evidence["runtime_sha"]
     workflow_sha = release_evidence["workflow_sha"]
     envelope_sha = release_evidence["envelope_sha"]
@@ -5235,6 +5713,13 @@ def materialize(
 ) -> dict[str, Any]:
     lock = _acquire_runner_reservation_lock()
     try:
+        _validate_release_evidence(release_evidence)
+        _verify_release_merge_topology(
+            checkout=RUNNER_RELEASE_CHECKOUT_ROOT
+            / release_evidence["workflow_sha"],
+            release_evidence=release_evidence,
+        )
+        release_evidence = _release_evidence_core(release_evidence)
         target = _absolute(output, "output-path-invalid")
         if target.exists() or target.is_symlink():
             return _recover_published_materialization(
@@ -5477,7 +5962,7 @@ def _validated_materialization(
     ):
         fail("materialization-binding-or-freshness-invalid")
     release_evidence = _release_evidence_from_materialization(config, receipt)
-    _validate_release_evidence(release_evidence)
+    _validate_release_evidence_core(release_evidence)
     claim_path = _runner_claim_path(reservation_raw)
     if not claim_path.exists():
         fail("materialization-runner-claim-missing")
@@ -5575,7 +6060,7 @@ def _recover_published_materialization(
     release_evidence: dict[str, str],
     now: int | None,
 ) -> dict[str, Any]:
-    _validate_release_evidence(release_evidence)
+    _validate_release_evidence_core(release_evidence)
     current = int(time.time()) if now is None else now
     validated = _validated_materialization(
         authority_root=authority_root,

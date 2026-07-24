@@ -103,7 +103,7 @@ def test_image_publish_preflight_binds_clean_main_envelope_to_manifest_runtime()
         '"${REPOSITORY_VISIBILITY}" != "public"',
         '"${envelope_sha}" != "${GITHUB_SHA}"',
         "git status --porcelain --untracked-files=all",
-        "scripts/check_property_release_hygiene.py --write",
+        "scripts/check_property_release_hygiene.py",
         "release_manifest_runtime_sha",
         'git merge-base --is-ancestor "${runtime_sha}" "${envelope_sha}"',
         '"release_branch": "main"',
@@ -114,6 +114,7 @@ def test_image_publish_preflight_binds_clean_main_envelope_to_manifest_runtime()
     ):
         assert required in preflight
 
+    assert workflow.count("--require-merge-commit") == 3
     assert "EXPECTED_WEB_IMAGE: ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime" in preflight
     assert "EXPECTED_RENDER_IMAGE: ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime" in preflight
     assert "fetch-depth: 0" in preflight

@@ -67,7 +67,9 @@ jobs:
           output_root="_completion/propertyquarry_image_publish/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/preflight"
           mkdir -p "${output_root}"
           hygiene_receipt="${output_root}/release-hygiene.json"
-          PYTHONPATH=ea python3 scripts/check_property_release_hygiene.py --write "${hygiene_receipt}"
+          PYTHONPATH=ea python3 scripts/check_property_release_hygiene.py \
+            --require-merge-commit \
+            --write "${hygiene_receipt}"
 
           runtime_sha="$(PYTHONPATH=ea python3 -c 'from scripts.check_property_release_hygiene import release_manifest_runtime_sha; print(release_manifest_runtime_sha())')"
           if [[ ! "${runtime_sha}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -208,7 +210,8 @@ jobs:
             echo "Manifest runtime SHA is not an ancestor of the build envelope" >&2
             exit 1
           fi
-          PYTHONPATH=source/ea python3 source/scripts/check_property_release_hygiene.py
+          PYTHONPATH=source/ea python3 source/scripts/check_property_release_hygiene.py \
+            --require-merge-commit
 
           case "${COMPONENT}:${SERVICE}:${DOCKERFILE}:${IMAGE_REPOSITORY}" in
             "web:propertyquarry-api:ea/Dockerfile.property-web:ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime") ;;
@@ -669,7 +672,8 @@ jobs:
             echo "Receipt checkout must be completely clean" >&2
             exit 1
           fi
-          PYTHONPATH=ea python3 scripts/check_property_release_hygiene.py
+          PYTHONPATH=ea python3 scripts/check_property_release_hygiene.py \
+            --require-merge-commit
           observed_runtime="$(PYTHONPATH=ea python3 -c 'from scripts.check_property_release_hygiene import release_manifest_runtime_sha; print(release_manifest_runtime_sha())')"
           if [[ "${observed_runtime}" != "${RUNTIME_SHA}" ]]; then
             echo "Receipt job manifest runtime does not match the preflight binding" >&2
