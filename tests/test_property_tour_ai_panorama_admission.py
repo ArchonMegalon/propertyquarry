@@ -221,7 +221,7 @@ def _rewrite_trust_and_permit(
     _replace_json(
         case.trust_assertion_path,
         _trust_assertion(expected),
-        mode=0o444,
+        mode=admission.RUNTIME_PROFILE_MODE,
     )
     _replace_json(
         case.permit_path,
@@ -307,6 +307,10 @@ def permit_case(
     trust_assertion_path = (
         tmp_path / "ai-panorama-install-trust-assertion.v1.json"
     )
+    public_host_mount_source = Path(
+        "/synthetic/docker-root/volumes/"
+        "property_propertyquarry_governed_public_tours/_data"
+    )
 
     paths = admission._ControllerPaths(
         control_root=control_root,
@@ -319,6 +323,7 @@ def permit_case(
         compose_plan_path=compose_plan_path,
         trust_assertion_path=trust_assertion_path,
         keyring_path=keyring_path,
+        public_tour_runtime_root=public_root,
         required_uid=os.geteuid(),
     )
     monkeypatch.setattr(admission, "_CONTROLLER_PATHS", paths)
@@ -351,7 +356,7 @@ def permit_case(
 
     artifact_details = artifact_root.stat(follow_symlinks=False)
     public_details = public_root.stat(follow_symlinks=False)
-    volume_id = "propertyquarry-public-tours-production"
+    volume_id = admission.CANONICAL_PUBLIC_TOUR_VOLUME_ID
     web_image = (
         f"{admission.CANONICAL_WEB_IMAGE_REPOSITORY}@sha256:"
         + "c" * 64
@@ -377,7 +382,11 @@ def permit_case(
         "public_tour_root_device": public_details.st_dev,
         "public_tour_root_inode": public_details.st_ino,
     }
-    _write_json(compose_plan_path, compose_plan, mode=0o444)
+    _write_json(
+        compose_plan_path,
+        compose_plan,
+        mode=admission.RUNTIME_PROFILE_MODE,
+    )
     compose_plan_sha256 = hashlib.sha256(
         compose_plan_path.read_bytes()
     ).hexdigest()
@@ -388,14 +397,14 @@ def permit_case(
         "status": "active",
         "environment": admission.CANONICAL_ENVIRONMENT,
         "volume_id": volume_id,
-        "logical_purpose": "public-tours",
+        "logical_purpose": admission.CANONICAL_PUBLIC_TOUR_LOGICAL_PURPOSE,
         "application_setting": admission.CANONICAL_PUBLIC_TOUR_SETTING,
         "application_setting_value": (
             admission.CANONICAL_PUBLIC_TOUR_MOUNT_TARGET
         ),
         "storage_kind": admission.CANONICAL_PUBLIC_TOUR_STORAGE_KIND,
         "docker_volume_name": admission.CANONICAL_PUBLIC_TOUR_VOLUME_NAME,
-        "container_mount_source": str(public_root),
+        "container_mount_source": str(public_host_mount_source),
         "container_mount_target": admission.CANONICAL_PUBLIC_TOUR_MOUNT_TARGET,
         "runtime_uid": admission.CANONICAL_PUBLIC_TOUR_RUNTIME_UID,
         "runtime_gid": admission.CANONICAL_PUBLIC_TOUR_RUNTIME_GID,
@@ -408,7 +417,11 @@ def permit_case(
         "public_tour_root_inode": public_details.st_ino,
         "compose_plan_sha256": compose_plan_sha256,
     }
-    _write_json(volume_profile_path, volume_profile, mode=0o444)
+    _write_json(
+        volume_profile_path,
+        volume_profile,
+        mode=admission.RUNTIME_PROFILE_MODE,
+    )
     volume_profile_sha256 = hashlib.sha256(
         volume_profile_path.read_bytes()
     ).hexdigest()
@@ -463,7 +476,11 @@ def permit_case(
         execution_lease_seconds=600,
     )
     trust_assertion = _trust_assertion(expected)
-    _write_json(trust_assertion_path, trust_assertion, mode=0o444)
+    _write_json(
+        trust_assertion_path,
+        trust_assertion,
+        mode=admission.RUNTIME_PROFILE_MODE,
+    )
 
     permit_relpath = "prater-ai-panorama-install.json"
     permit_path = permit_root / permit_relpath
@@ -529,9 +546,12 @@ def test_verified_admission_is_exact_fixed_root_and_revalidated(
     )
     assert (
         dry_run.public_tour_volume_name
-        == "property_propertyquarry_public_tours"
+        == "property_propertyquarry_governed_public_tours"
     )
-    assert dry_run.public_tour_mount_target == "/data/public_property_tours"
+    assert (
+        dry_run.public_tour_mount_target
+        == "/data/governed_public_property_tours"
+    )
     assert dry_run.public_control_url.endswith(
         f"/tours/{permit_case.expected.expected_slug}/control"
     )
@@ -964,7 +984,11 @@ def test_fixed_trust_and_compose_context_drift_fail_closed(
         permit_case.trust_assertion_path.read_text(encoding="utf-8")
     )
     trust["actor_principal_id"] = "different-release-controller"
-    _replace_json(permit_case.trust_assertion_path, trust, mode=0o444)
+    _replace_json(
+        permit_case.trust_assertion_path,
+        trust,
+        mode=admission.RUNTIME_PROFILE_MODE,
+    )
     with pytest.raises(
         admission.AiPanoramaInstallPermitError,
         match="ai_panorama_trusted_context_mismatch",
@@ -977,13 +1001,17 @@ def test_fixed_trust_and_compose_context_drift_fail_closed(
     _replace_json(
         permit_case.trust_assertion_path,
         _trust_assertion(permit_case.expected),
-        mode=0o444,
+        mode=admission.RUNTIME_PROFILE_MODE,
     )
     compose = json.loads(
         permit_case.compose_plan_path.read_text(encoding="utf-8")
     )
     compose["web_mount_read_only"] = False
-    _replace_json(permit_case.compose_plan_path, compose, mode=0o444)
+    _replace_json(
+        permit_case.compose_plan_path,
+        compose,
+        mode=admission.RUNTIME_PROFILE_MODE,
+    )
     with pytest.raises(
         admission.AiPanoramaInstallPermitError,
         match="ai_panorama_compose_plan_invalid",
@@ -991,6 +1019,75 @@ def test_fixed_trust_and_compose_context_drift_fail_closed(
         admission.verify_ai_panorama_install_permit(
             permit_case.permit_relpath,
             permit_case.expected,
+        )
+
+
+def test_fully_resigned_old_dynamic_volume_profile_is_rejected(
+    permit_case: _Case,
+) -> None:
+    old_volume_id = "propertyquarry-public-tours-production"
+    old_volume_name = "property_propertyquarry_public_tours"
+    old_target = "/data/public_property_tours"
+
+    compose = json.loads(
+        permit_case.compose_plan_path.read_text(encoding="utf-8")
+    )
+    compose.update(
+        {
+            "volume_id": old_volume_id,
+            "docker_volume_name": old_volume_name,
+            "container_mount_target": old_target,
+        }
+    )
+    _replace_json(
+        permit_case.compose_plan_path,
+        compose,
+        mode=admission.RUNTIME_PROFILE_MODE,
+    )
+    compose_sha256 = hashlib.sha256(
+        permit_case.compose_plan_path.read_bytes()
+    ).hexdigest()
+
+    profile = json.loads(
+        permit_case.volume_profile_path.read_text(encoding="utf-8")
+    )
+    profile.update(
+        {
+            "volume_id": old_volume_id,
+            "logical_purpose": "public-tours",
+            "application_setting": "EA_PUBLIC_TOUR_DIR",
+            "application_setting_value": old_target,
+            "docker_volume_name": old_volume_name,
+            "container_mount_source": (
+                "/synthetic/docker-root/volumes/"
+                "property_propertyquarry_public_tours/_data"
+            ),
+            "container_mount_target": old_target,
+            "compose_plan_sha256": compose_sha256,
+        }
+    )
+    _replace_json(
+        permit_case.volume_profile_path,
+        profile,
+        mode=admission.RUNTIME_PROFILE_MODE,
+    )
+    expected = replace(
+        permit_case.expected,
+        volume_id=old_volume_id,
+        compose_plan_sha256=compose_sha256,
+        volume_profile_sha256=hashlib.sha256(
+            permit_case.volume_profile_path.read_bytes()
+        ).hexdigest(),
+    )
+    _rewrite_trust_and_permit(permit_case, expected)
+
+    with pytest.raises(
+        admission.AiPanoramaInstallPermitError,
+        match="ai_panorama_release_context_invalid",
+    ):
+        admission.verify_ai_panorama_install_permit(
+            permit_case.permit_relpath,
+            expected,
         )
 
 
@@ -1006,7 +1103,11 @@ def test_signed_root_device_and_inode_identity_fail_closed(
         permit_case.volume_profile_path.read_text(encoding="utf-8")
     )
     profile[identity_field] += 1
-    _replace_json(permit_case.volume_profile_path, profile, mode=0o444)
+    _replace_json(
+        permit_case.volume_profile_path,
+        profile,
+        mode=admission.RUNTIME_PROFILE_MODE,
+    )
     profile_sha256 = hashlib.sha256(
         permit_case.volume_profile_path.read_bytes()
     ).hexdigest()
@@ -1346,6 +1447,11 @@ def test_independent_golden_signature_vector() -> None:
         == admission.CANONICAL_WORKFLOW_REF
         == "ArchonMegalon/propertyquarry/.github/workflows/"
         "smoke-runtime.yml@refs/heads/main"
+    )
+    assert (
+        envelope["permit"]["volume_id"]
+        == admission.CANONICAL_PUBLIC_TOUR_VOLUME_ID
+        == "propertyquarry-governed-public-tours-production"
     )
     preimage = admission._signature_preimage(envelope)
     assert hashlib.sha256(preimage).hexdigest() == vector["preimage_sha256"]

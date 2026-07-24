@@ -5,11 +5,13 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.product import (
     property_search_storage,
+    property_tour_ai_panorama_admission,
     property_tour_hosting,
     service as product_service,
 )
@@ -20,9 +22,11 @@ from app.product.property_search_tour_binding import (
     PropertySearchTourBindingError,
     authorize_property_search_candidate_tour_install,
     exact_property_search_candidate_tour_binding_receipt,
+    plan_governed_prater_candidate_tour_binding,
     plan_property_search_candidate_tour_binding,
     property_search_run_record_sha256,
 )
+from app.product import property_tour_governed_reservations as reservations
 from scripts import bind_property_search_candidate_tour as binding_script
 
 
@@ -101,6 +105,196 @@ def _record() -> dict[str, object]:
             ],
         },
     }
+
+
+@pytest.mark.parametrize(
+    "reserved_url",
+    (
+        reservations.GOVERNED_PRATER_CONTROL_URL,
+        f"/tours/{reservations.GOVERNED_PRATER_SLUG}",
+        f"tours/{reservations.GOVERNED_PRATER_SLUG}/control",
+        (
+            "https://propertyquarry.com/tours/"
+            f"{reservations.GOVERNED_PRATER_SLUG}/control?mode=viewer#scene"
+        ),
+        (
+            "https://propertyquarry.com/tours/"
+            f"{reservations.GOVERNED_PRATER_SLUG}/assets/scene.webp"
+        ),
+        (
+            "/tours/%70rater-messe-maisonette-ai-360-"
+            "053ad185e1c44b2e/control"
+        ),
+        (
+            "%25252525252Ftours%25252525252F"
+            "prater-messe-maisonette-ai-360-053ad185e1c44b2e"
+            "%25252525252Fcontrol"
+        ),
+        (
+            f"/tours/ordinary/../{reservations.GOVERNED_PRATER_SLUG}/viewer"
+        ),
+        (
+            "https:\\\\propertyquarry.com\\tours\\"
+            f"{reservations.GOVERNED_PRATER_SLUG}\\control"
+        ),
+        (
+            "https:/\\propertyquarry.com/tours/"
+            f"{reservations.GOVERNED_PRATER_SLUG}/control"
+        ),
+        (
+            "https:////propertyquarry.com/tours/"
+            f"{reservations.GOVERNED_PRATER_SLUG}/control"
+        ),
+        (
+            "/\\propertyquarry.com/tours/"
+            f"{reservations.GOVERNED_PRATER_SLUG}/control"
+        ),
+    ),
+)
+def test_generic_binding_rejects_every_governed_prater_namespace_spelling(
+    reserved_url: str,
+) -> None:
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_governed_url_reserved",
+    ):
+        plan_property_search_candidate_tour_binding(
+            _record(),
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=reserved_url,
+            bundle_identity=_bundle_identity(),
+        )
+
+
+def test_dedicated_governed_binding_requires_fresh_exact_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    verified = SimpleNamespace(
+        authenticated_principal_id=PRINCIPAL_ID,
+        search_run_id=reservations.GOVERNED_PRATER_SEARCH_RUN_ID,
+        candidate_ref=reservations.GOVERNED_PRATER_CANDIDATE_REF,
+        external_id=reservations.GOVERNED_PRATER_EXTERNAL_ID,
+        listing_url=reservations.GOVERNED_PRATER_LISTING_URL,
+        source_ref=reservations.GOVERNED_PRATER_SOURCE_REF,
+        provider_key=reservations.GOVERNED_PRATER_PROVIDER_KEY,
+        expected_slug=reservations.GOVERNED_PRATER_SLUG,
+        public_control_url=reservations.GOVERNED_PRATER_CONTROL_URL,
+        expected_source_tree_sha256=(
+            reservations.GOVERNED_PRATER_SOURCE_TREE_SHA256
+        ),
+        expected_tour_sha256=reservations.GOVERNED_PRATER_TOUR_SHA256,
+        expected_core_manifest_sha256=(
+            reservations.GOVERNED_PRATER_CORE_MANIFEST_SHA256
+        ),
+        expected_materialization_receipt_sha256=(
+            reservations.GOVERNED_PRATER_MATERIALIZATION_RECEIPT_SHA256
+        ),
+        expected_candidate_marker_sha256=(
+            reservations.GOVERNED_PRATER_CANDIDATE_MARKER_SHA256
+        ),
+        public_tour_volume_name=(
+            reservations.GOVERNED_PUBLIC_TOUR_VOLUME_NAME
+        ),
+        public_tour_mount_target=(
+            reservations.GOVERNED_PUBLIC_TOUR_MOUNT_TARGET
+        ),
+        public_tour_dir=Path(
+            reservations.GOVERNED_PUBLIC_TOUR_MOUNT_TARGET
+        ),
+        nonce_consumed=True,
+    )
+    observed: list[tuple[object, bool]] = []
+
+    def _revalidate(
+        value: object,
+        *,
+        require_consumed: bool,
+    ) -> SimpleNamespace:
+        observed.append((value, require_consumed))
+        return verified
+
+    authority = object()
+    monkeypatch.setattr(
+        property_tour_ai_panorama_admission,
+        "revalidate_ai_panorama_install_admission",
+        _revalidate,
+    )
+    updated, receipt = plan_governed_prater_candidate_tour_binding(
+        _record(),
+        principal_id=PRINCIPAL_ID,
+        run_id=RUN_ID,
+        candidate_ref=CANDIDATE_REF,
+        expected_listing_id=LISTING_ID,
+        generated_reconstruction_url=(
+            reservations.GOVERNED_PRATER_CONTROL_URL
+        ),
+        bundle_identity=_bundle_identity(),
+        publication_admission=authority,
+        bound_at="2026-07-24T12:00:00+00:00",
+    )
+
+    assert observed == [(authority, True)]
+    assert receipt["changed"] is True
+    assert updated["summary"]["ranked_candidates"][0][
+        "generated_reconstruction_url"
+    ] == reservations.GOVERNED_PRATER_CONTROL_URL
+
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_governed_url_invalid",
+    ):
+        plan_governed_prater_candidate_tour_binding(
+            _record(),
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=(
+                f"/tours/{reservations.GOVERNED_PRATER_SLUG}/control"
+            ),
+            bundle_identity=_bundle_identity(),
+            publication_admission=authority,
+        )
+
+    verified.nonce_consumed = False
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_governed_authority_invalid",
+    ):
+        plan_governed_prater_candidate_tour_binding(
+            _record(),
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=(
+                reservations.GOVERNED_PRATER_CONTROL_URL
+            ),
+            bundle_identity=_bundle_identity(),
+            publication_admission=authority,
+        )
+
+    verified.nonce_consumed = True
+    verified.expected_tour_sha256 = "0" * 64
+    with pytest.raises(
+        PropertySearchTourBindingError,
+        match="property_search_tour_governed_authority_invalid",
+    ):
+        plan_governed_prater_candidate_tour_binding(
+            _record(),
+            principal_id=PRINCIPAL_ID,
+            run_id=RUN_ID,
+            candidate_ref=CANDIDATE_REF,
+            expected_listing_id=LISTING_ID,
+            generated_reconstruction_url=(
+                reservations.GOVERNED_PRATER_CONTROL_URL
+            ),
+            bundle_identity=_bundle_identity(),
+            publication_admission=authority,
+        )
 
 
 def _ready_bundle(
@@ -189,6 +383,10 @@ def test_publication_loader_filters_owner_and_locks_the_exact_run() -> None:
             return (_record(),)
 
     class _Connection:
+        info = SimpleNamespace(
+            transaction_status=SimpleNamespace(name="INTRANS")
+        )
+
         def cursor(self) -> _Cursor:
             return _Cursor()
 

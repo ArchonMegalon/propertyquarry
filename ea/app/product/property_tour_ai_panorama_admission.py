@@ -37,6 +37,10 @@ from typing import Any, Mapping
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from app.product.property_tour_governed_reservations import (
+    GOVERNED_PUBLIC_TOUR_MOUNT_TARGET as CANONICAL_PUBLIC_TOUR_MOUNT_TARGET,
+    GOVERNED_PUBLIC_TOUR_VOLUME_NAME as CANONICAL_PUBLIC_TOUR_VOLUME_NAME,
+)
 
 PERMIT_SCHEMA = "propertyquarry.ai-panorama-install-permit.v2"
 PERMIT_VERSION = 2
@@ -52,11 +56,12 @@ TRUST_ASSERTION_SCHEMA = "propertyquarry.ai-panorama-install-trust-assertion.v1"
 VOLUME_PROFILE_SCHEMA = "propertyquarry.public-tour-volume-profile.v2"
 COMPOSE_PLAN_SCHEMA = "propertyquarry.public-tour-compose-plan.v1"
 KEYRING_SCHEMA = "propertyquarry.ai-panorama-install-keyring.v1"
-CANONICAL_PUBLIC_TOUR_VOLUME_NAME = "property_propertyquarry_public_tours"
-CANONICAL_PUBLIC_TOUR_MOUNT_TARGET = "/data/public_property_tours"
-CANONICAL_PUBLIC_TOUR_SETTING = "EA_PUBLIC_TOUR_DIR"
+CANONICAL_PUBLIC_TOUR_SETTING = "EA_GOVERNED_PUBLIC_TOUR_DIR"
 CANONICAL_PUBLIC_TOUR_STORAGE_KIND = "docker-named-volume"
-CANONICAL_PUBLIC_TOUR_VOLUME_ID = "propertyquarry-public-tours-production"
+CANONICAL_PUBLIC_TOUR_VOLUME_ID = (
+    "propertyquarry-governed-public-tours-production"
+)
+CANONICAL_PUBLIC_TOUR_LOGICAL_PURPOSE = "governed-public-tours"
 CANONICAL_PUBLIC_TOUR_RUNTIME_UID = 10001
 CANONICAL_PUBLIC_TOUR_RUNTIME_GID = 10001
 CANONICAL_PUBLIC_ORIGIN = "https://propertyquarry.com"
@@ -101,14 +106,16 @@ SEALED_ARTIFACT_ROOT = Path(
 )
 LEDGER_PATH = CONTROL_ROOT / "consumption-ledger.v2.json"
 LEDGER_LOCK_PATH = CONTROL_ROOT / "consumption-ledger.v2.lock"
-VOLUME_PROFILE_PATH = Path(
-    "/etc/propertyquarry/release-control/public-tour-volume-profile.v2.json"
+RUNTIME_CONTROL_ROOT = Path(
+    "/run/propertyquarry-release-control/ai-panorama-install"
 )
-COMPOSE_PLAN_PATH = Path(
-    "/etc/propertyquarry/release-control/public-tour-compose-plan.v1.json"
+VOLUME_PROFILE_PATH = RUNTIME_CONTROL_ROOT / (
+    "public-tour-volume-profile.v2.json"
 )
-TRUST_ASSERTION_PATH = Path(
-    "/etc/propertyquarry/release-control/"
+COMPOSE_PLAN_PATH = RUNTIME_CONTROL_ROOT / (
+    "public-tour-compose-plan.v1.json"
+)
+TRUST_ASSERTION_PATH = RUNTIME_CONTROL_ROOT / (
     "ai-panorama-install-trust-assertion.v1.json"
 )
 KEYRING_PATH = Path(
@@ -117,7 +124,8 @@ KEYRING_PATH = Path(
 )
 CONTROLLER_REQUIRED_UID = 0
 CONTROLLER_FILE_MODE = 0o600
-EXTERNAL_PROFILE_MODE = 0o444
+EXTERNAL_KEYRING_MODE = 0o444
+RUNTIME_PROFILE_MODE = 0o400
 
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 _OCI_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -161,6 +169,7 @@ class _ControllerPaths:
     compose_plan_path: Path
     trust_assertion_path: Path
     keyring_path: Path
+    public_tour_runtime_root: Path
     required_uid: int
 
 
@@ -175,6 +184,7 @@ _CONTROLLER_PATHS = _ControllerPaths(
     compose_plan_path=COMPOSE_PLAN_PATH,
     trust_assertion_path=TRUST_ASSERTION_PATH,
     keyring_path=KEYRING_PATH,
+    public_tour_runtime_root=Path(CANONICAL_PUBLIC_TOUR_MOUNT_TARGET),
     required_uid=CONTROLLER_REQUIRED_UID,
 )
 
@@ -955,7 +965,7 @@ def _load_panorama_install_keyring() -> tuple[
         code="ai_panorama_release_keyring_unavailable",
         maximum_bytes=MAX_KEYRING_BYTES,
         required_uid=paths.required_uid,
-        exact_mode=EXTERNAL_PROFILE_MODE,
+        exact_mode=EXTERNAL_KEYRING_MODE,
     )
     payload = _canonical_external_json(
         stable,
@@ -1125,7 +1135,7 @@ def _load_trust_assertion() -> AiPanoramaInstallTrustedContext:
         code="ai_panorama_trust_assertion_unavailable",
         maximum_bytes=64 * 1024,
         required_uid=paths.required_uid,
-        exact_mode=EXTERNAL_PROFILE_MODE,
+        exact_mode=RUNTIME_PROFILE_MODE,
     )
     payload = _canonical_external_json(
         stable,
@@ -1268,7 +1278,7 @@ def _load_compose_plan(
         code="ai_panorama_compose_plan_unavailable",
         maximum_bytes=1024 * 1024,
         required_uid=paths.required_uid,
-        exact_mode=EXTERNAL_PROFILE_MODE,
+        exact_mode=RUNTIME_PROFILE_MODE,
     )
     payload = _canonical_external_json(
         stable,
@@ -1344,7 +1354,7 @@ def _load_volume_profile(
         code="ai_panorama_volume_profile_unavailable",
         maximum_bytes=64 * 1024,
         required_uid=paths.required_uid,
-        exact_mode=EXTERNAL_PROFILE_MODE,
+        exact_mode=RUNTIME_PROFILE_MODE,
     )
     payload = _canonical_external_json(
         stable,
@@ -1386,7 +1396,8 @@ def _load_volume_profile(
         or payload["authority"] != LEDGER_AUTHORITY
         or payload["status"] != "active"
         or payload["environment"] != expected.environment
-        or payload["logical_purpose"] != "public-tours"
+        or payload["logical_purpose"]
+        != CANONICAL_PUBLIC_TOUR_LOGICAL_PURPOSE
         or payload["application_setting"] != CANONICAL_PUBLIC_TOUR_SETTING
         or payload["application_setting_value"]
         != CANONICAL_PUBLIC_TOUR_MOUNT_TARGET
@@ -1405,13 +1416,24 @@ def _load_volume_profile(
         _fail("ai_panorama_volume_profile_identity_mismatch")
     artifact_root = Path(_string(payload["artifact_root"], "ai_panorama_volume_profile_invalid"))
     public_root = Path(_string(payload["public_tour_root"], "ai_panorama_volume_profile_invalid"))
-    mount_source = Path(
-        _string(
-            payload["container_mount_source"],
-            "ai_panorama_volume_profile_invalid",
-        )
+    mount_source_text = _string(
+        payload["container_mount_source"],
+        "ai_panorama_volume_profile_invalid",
     )
-    if mount_source != public_root:
+    mount_source = Path(mount_source_text)
+    mount_source_suffix = (
+        "volumes",
+        CANONICAL_PUBLIC_TOUR_VOLUME_NAME,
+        "_data",
+    )
+    if (
+        public_root != paths.public_tour_runtime_root
+        or public_root == mount_source
+        or not mount_source.is_absolute()
+        or mount_source_text != os.path.normpath(mount_source_text)
+        or mount_source.parts[-3:] != mount_source_suffix
+        or any(part in {"", ".", ".."} for part in mount_source.parts[1:])
+    ):
         _fail("ai_panorama_volume_profile_invalid")
     if artifact_root != paths.sealed_artifact_root:
         _fail("ai_panorama_volume_profile_invalid")

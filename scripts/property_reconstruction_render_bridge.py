@@ -25,6 +25,9 @@ from pathlib import Path, PurePosixPath
 EA_RUNTIME_ROOT = Path(__file__).resolve().parents[1] / "ea"
 if str(EA_RUNTIME_ROOT) not in sys.path:
     sys.path.insert(0, str(EA_RUNTIME_ROOT))
+SOURCE_ROOT = Path(__file__).resolve().parents[1]
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
 from app.services.admission_control import (  # noqa: E402
     AdmissionBackend,
@@ -38,6 +41,9 @@ from app.observability import (  # noqa: E402
     bounded_correlation_id,
     new_server_trace_context,
     outbound_observability_headers,
+)
+from scripts.property_tour_governed_reservation import (  # noqa: E402
+    require_dynamic_tour_slug,
 )
 
 try:
@@ -79,6 +85,10 @@ def _valid_generated_bundle_slug(value: object) -> str:
         or ".." in normalized
         or normalized.startswith(_GENERATED_BUNDLE_STAGE_PREFIX)
     ):
+        return ""
+    try:
+        require_dynamic_tour_slug(normalized)
+    except RuntimeError:
         return ""
     return normalized
 

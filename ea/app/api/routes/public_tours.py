@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import formatdate
@@ -74,6 +74,19 @@ from app.product.property_tour_hosting import (
     _read_hosted_property_tour_json_file,
     hosted_property_tour_revocation_receipt,
 )
+from app.product.property_tour_governed_reservations import (
+    GOVERNED_PRATER_REVOCATION_FILENAME as _GOVERNED_PRATER_REVOCATION_FILENAME,
+    GOVERNED_PRATER_REVOCATION_MAX_BYTES as _GOVERNED_PRATER_REVOCATION_MAX_BYTES,
+    GOVERNED_PRATER_REVOCATION_MODE as _GOVERNED_PRATER_REVOCATION_MODE,
+    GOVERNED_PRATER_REVOCATION_REQUIRED_GID as _GOVERNED_PRATER_REVOCATION_REQUIRED_GID,
+    GOVERNED_PRATER_REVOCATION_REQUIRED_UID as _GOVERNED_PRATER_REVOCATION_REQUIRED_UID,
+    GOVERNED_PRATER_REVOCATION_SCHEMA as _GOVERNED_PRATER_REVOCATION_SCHEMA,
+    GOVERNED_PRATER_SLUG as _PRATER_GOVERNED_PUBLIC_TOUR_SLUG,
+    GOVERNED_PRATER_TOUR_SHA256 as _GOVERNED_PRATER_REVOCATION_TOUR_SHA256,
+    GOVERNED_PUBLIC_TOUR_MOUNT_TARGET,
+    governed_prater_slug_reserved,
+    validate_governed_prater_revocation_bytes,
+)
 from app.product.service import _property_feedback_reason_map, build_product_service
 from app.services.public_clickrank import clickrank_head_snippet, request_hostname, request_path
 from app.services.property_market_catalog import currency_code_for_country, supported_currency_codes
@@ -139,6 +152,13 @@ _PUBLIC_TOUR_FEEDBACK_RATE_LIMIT: OrderedDict[str, tuple[float, int]] = OrderedD
 _PUBLIC_TOUR_FEEDBACK_RATE_LIMIT_WINDOW_SECONDS = 60.0
 _PUBLIC_TOUR_FEEDBACK_RATE_LIMIT_MAX = 12
 _PUBLIC_TOUR_FEEDBACK_RATE_LIMIT_MAX_KEYS = 2048
+_GOVERNED_PUBLIC_TOUR_DIR_ENV = "EA_GOVERNED_PUBLIC_TOUR_DIR"
+_GOVERNED_PUBLIC_TOUR_PRODUCTION_DIR = Path(
+    GOVERNED_PUBLIC_TOUR_MOUNT_TARGET
+)
+_GOVERNED_PUBLIC_TOUR_DEVELOPMENT_DIR = Path(
+    "/docker/property/state/governed_public_property_tours"
+)
 _PUBLIC_TOUR_DEFAULT_EXTERNAL_MEDIA_HOSTS = (
     "propertyquarry.com",
     "*.propertyquarry.com",
@@ -300,17 +320,173 @@ def _tour_dir() -> Path:
     return Path("/docker/property/state/public_property_tours").expanduser()
 
 
-def _resolved_tour_root() -> Path:
-    return _tour_dir().resolve()
+def _governed_public_tour_slug(slug: object) -> bool:
+    return governed_prater_slug_reserved(slug)
+
+
+def _governed_tour_dir() -> Path:
+    production_mode = (
+        str(os.getenv("EA_RUNTIME_MODE") or "").strip().lower() == "prod"
+    )
+    raw_value = str(
+        os.getenv(_GOVERNED_PUBLIC_TOUR_DIR_ENV) or ""
+    ).strip()
+    if not raw_value:
+        if production_mode:
+            raise HTTPException(
+                status_code=503,
+                detail="governed_tour_storage_unconfigured",
+            )
+        candidate = _GOVERNED_PUBLIC_TOUR_DEVELOPMENT_DIR
+    else:
+        candidate = Path(raw_value).expanduser()
+    if production_mode and candidate != _GOVERNED_PUBLIC_TOUR_PRODUCTION_DIR:
+        raise HTTPException(
+            status_code=503,
+            detail="governed_tour_storage_invalid",
+        )
+    try:
+        if not candidate.is_absolute() or candidate.is_symlink():
+            raise ValueError("governed tour root must be an absolute mount")
+        governed_root = candidate.resolve()
+        dynamic_root = _tour_dir().resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="governed_tour_storage_invalid",
+        ) from exc
+    if (
+        governed_root == dynamic_root
+        or dynamic_root in governed_root.parents
+        or governed_root in dynamic_root.parents
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="governed_tour_storage_invalid",
+        )
+    return candidate
+
+
+def _require_governed_prater_tour_open(root: Path) -> None:
+    """Fail closed on the native authority's one-way closeout tombstone."""
+
+    directory_descriptor = -1
+    descriptor = -1
+    directory_flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    file_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        try:
+            directory_descriptor = os.open(root, directory_flags)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="governed_tour_closeout_invalid",
+            ) from exc
+        try:
+            descriptor = os.open(
+                _GOVERNED_PRATER_REVOCATION_FILENAME,
+                file_flags,
+                dir_fd=directory_descriptor,
+            )
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="governed_tour_closeout_invalid",
+            ) from exc
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != _GOVERNED_PRATER_REVOCATION_REQUIRED_UID
+            or before.st_gid != _GOVERNED_PRATER_REVOCATION_REQUIRED_GID
+            or stat.S_IMODE(before.st_mode)
+            != _GOVERNED_PRATER_REVOCATION_MODE
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > _GOVERNED_PRATER_REVOCATION_MAX_BYTES
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="governed_tour_closeout_invalid",
+            )
+        remaining = int(before.st_size)
+        chunks: list[bytes] = []
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 4096))
+            if not chunk:
+                raise HTTPException(
+                    status_code=503,
+                    detail="governed_tour_closeout_invalid",
+                )
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise HTTPException(
+                status_code=503,
+                detail="governed_tour_closeout_invalid",
+            )
+        after = os.fstat(descriptor)
+        if _public_tour_stat_identity(before) != _public_tour_stat_identity(
+            after
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="governed_tour_closeout_invalid",
+            )
+        raw = b"".join(chunks)
+        try:
+            validate_governed_prater_revocation_bytes(raw)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="governed_tour_closeout_invalid",
+            ) from exc
+        raise HTTPException(
+            status_code=410,
+            detail="tour_revoked",
+        )
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+
+
+def _resolved_tour_root(slug: str = "") -> Path:
+    root = (
+        _governed_tour_dir()
+        if _governed_public_tour_slug(slug)
+        else _tour_dir()
+    )
+    resolved = root.resolve()
+    if _governed_public_tour_slug(slug):
+        _require_governed_prater_tour_open(resolved)
+    return resolved
 
 
 def _resolved_tour_bundle(slug: str) -> Path:
     safe = str(slug or "").strip()
     if not safe or safe.startswith(".") or "/" in safe or ".." in safe:
         raise HTTPException(status_code=404, detail="tour_not_found")
-    if hosted_property_tour_revocation_receipt(safe):
+    if (
+        not _governed_public_tour_slug(safe)
+        and hosted_property_tour_revocation_receipt(safe)
+    ):
         raise HTTPException(status_code=410, detail="tour_revoked")
-    root = _resolved_tour_root()
+    root = _resolved_tour_root(safe)
     bundle_entry = root / safe
     if bundle_entry.is_symlink():
         raise HTTPException(status_code=404, detail="tour_not_found")
@@ -326,9 +502,12 @@ def _tour_path(slug: str) -> Path:
     safe = str(slug or "").strip()
     if not safe or safe.startswith(".") or "/" in safe or ".." in safe:
         raise HTTPException(status_code=404, detail="tour_not_found")
-    if hosted_property_tour_revocation_receipt(safe):
+    if (
+        not _governed_public_tour_slug(safe)
+        and hosted_property_tour_revocation_receipt(safe)
+    ):
         raise HTTPException(status_code=410, detail="tour_revoked")
-    root = _resolved_tour_root()
+    root = _resolved_tour_root(safe)
     bundle_entry = root / safe
     if bundle_entry.is_symlink():
         raise HTTPException(status_code=404, detail="tour_not_found")
@@ -343,6 +522,8 @@ def _tour_path(slug: str) -> Path:
             raise HTTPException(status_code=500, detail="tour_payload_invalid") from exc
         else:
             return bundle_manifest
+    if _governed_public_tour_slug(safe):
+        raise HTTPException(status_code=404, detail="tour_not_found")
     candidate = root / f"{safe}.json"
     if candidate.parent != root:
         raise HTTPException(status_code=404, detail="tour_not_found")
@@ -364,6 +545,13 @@ def _load_tour(slug: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="tour_not_found") from exc
     except HostedPropertyTourManifestError as exc:
         raise HTTPException(status_code=500, detail="tour_payload_invalid") from exc
+    if _governed_public_tour_slug(slug):
+        if payload.get("slug") != slug:
+            raise HTTPException(
+                status_code=500,
+                detail="tour_payload_invalid",
+            )
+        _require_governed_prater_tour_open(path.parent.parent)
     return payload
 
 
@@ -387,20 +575,29 @@ def _load_tour_with_private_receipt(slug: str) -> dict[str, object]:
     if bundle_dir is None:
         # Legacy flat manifests have no paired private receipt.
         return _load_tour(slug)
-    with _hosted_property_tour_publication_lock(
-        public_dir=bundle_dir.parent,
-        slug=bundle_dir.name,
-    ):
+    publication_guard = (
+        nullcontext()
+        if _governed_public_tour_slug(slug)
+        else _hosted_property_tour_publication_lock(
+            public_dir=bundle_dir.parent,
+            slug=bundle_dir.name,
+        )
+    )
+    with publication_guard:
         payload = _load_tour(slug)
         private_payload = _load_private_tour_receipt(slug)
         if not private_payload:
-            return payload
-        safe_private_payload = {
-            key: value
-            for key, value in private_payload.items()
-            if key in _PRIVATE_TOUR_RECEIPT_ALLOWED_KEYS
-        }
-        return {**payload, **safe_private_payload}
+            result = payload
+        else:
+            safe_private_payload = {
+                key: value
+                for key, value in private_payload.items()
+                if key in _PRIVATE_TOUR_RECEIPT_ALLOWED_KEYS
+            }
+            result = {**payload, **safe_private_payload}
+        if _governed_public_tour_slug(slug):
+            _require_governed_prater_tour_open(bundle_dir.parent)
+        return result
 
 
 @dataclass(frozen=True)
@@ -535,12 +732,22 @@ def _public_tour_file_policy_snapshot(
         or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", safe_slug)
     ):
         raise HTTPException(status_code=404, detail="tour_not_found")
-    public_root = Path(os.path.abspath(os.fspath(_tour_dir().expanduser())))
-    with _hosted_property_tour_publication_lock(
-        public_dir=public_root,
-        slug=safe_slug,
-    ):
-        if hosted_property_tour_revocation_receipt(safe_slug):
+    public_root = Path(
+        os.path.abspath(os.fspath(_resolved_tour_root(safe_slug)))
+    )
+    publication_guard = (
+        nullcontext()
+        if _governed_public_tour_slug(safe_slug)
+        else _hosted_property_tour_publication_lock(
+            public_dir=public_root,
+            slug=safe_slug,
+        )
+    )
+    with publication_guard:
+        if (
+            not _governed_public_tour_slug(safe_slug)
+            and hosted_property_tour_revocation_receipt(safe_slug)
+        ):
             raise HTTPException(status_code=410, detail="tour_revoked")
         root_fd = _open_public_tour_directory_componentwise(public_root)
         bundle_fd = -1
@@ -578,13 +785,18 @@ def _public_tour_file_policy_snapshot(
                             if key in _PRIVATE_TOUR_RECEIPT_ALLOWED_KEYS
                         },
                     }
-            yield _PublicTourFilePolicySnapshot(
+            snapshot = _PublicTourFilePolicySnapshot(
                 slug=safe_slug,
                 bundle_dir=public_root / safe_slug,
                 bundle_fd=bundle_fd,
                 payload=payload,
                 manifest_identity=manifest_identity,
             )
+            try:
+                yield snapshot
+            finally:
+                if _governed_public_tour_slug(safe_slug):
+                    _require_governed_prater_tour_open(public_root)
         finally:
             if bundle_fd >= 0:
                 os.close(bundle_fd)

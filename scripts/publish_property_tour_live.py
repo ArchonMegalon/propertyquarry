@@ -35,6 +35,9 @@ from scripts.materialize_property_tour_publication_package import (  # noqa: E40
     PUBLICATION_AUTHORITY_SCHEMA,
     PUBLIC_TOUR_PACKAGE_SCHEMA,
 )
+from scripts.property_tour_governed_reservation import (  # noqa: E402
+    require_dynamic_tour_slug,
+)
 
 
 PRECONDITION_SCHEMA = "propertyquarry.live-tour-publication-precondition.v1"
@@ -687,6 +690,10 @@ def _safe_slug(value: object) -> str:
     slug = _strict_string(value, "slug_invalid")
     _require(bool(_SAFE_NAME_RE.fullmatch(slug)), "slug_invalid")
     _require(slug == AUTHORIZED_SLUG, "slug_unauthorized")
+    try:
+        require_dynamic_tour_slug(slug)
+    except RuntimeError as exc:
+        raise LivePublicationError(str(exc)) from exc
     return slug
 
 

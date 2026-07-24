@@ -10,8 +10,15 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+
+_SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(_SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIRECTORY))
+
+from property_tour_governed_reservation import require_dynamic_tour_slug
 
 try:
     from property_magicfit_delivery_contract import (
@@ -507,6 +514,10 @@ def _main_unlocked() -> int:
     slug = _safe_relpath(args.slug)
     if "/" in slug or not slug:
         raise SystemExit("invalid_tour_slug")
+    try:
+        require_dynamic_tour_slug(slug)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     try:
         source = lexical_absolute_path(args.video_path)
         source_snapshot = hash_stable_bounded_file(

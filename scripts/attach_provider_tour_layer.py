@@ -5,8 +5,15 @@ import argparse
 import json
 import os
 import re
+import sys
 import urllib.parse
 from pathlib import Path, PurePosixPath
+
+_SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(_SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIRECTORY))
+
+from property_tour_governed_reservation import require_dynamic_tour_slug
 
 
 _3DVISTA_EXPORT_MARKERS = ("tdvplayer", "tdvplayerapi", "tourviewer")
@@ -171,6 +178,10 @@ def main() -> int:
     slug = _safe_relpath(args.slug)
     if "/" in slug or not slug:
         raise SystemExit("invalid_tour_slug")
+    try:
+        require_dynamic_tour_slug(slug)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     bundle_dir = _public_tour_dir() / slug
     manifest_path = bundle_dir / "tour.json"
     if not manifest_path.is_file():

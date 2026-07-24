@@ -11,12 +11,18 @@ from pathlib import Path
 
 import pytest
 
+from app.product import property_search_storage as storage
 from app.product import property_tour_ai_panorama_intake as intake
 from app.product.property_search_tour_binding import (
     property_search_run_record_sha256,
     property_search_source_url_sha256,
 )
 from scripts import install_ai_panorama_tour_bundle as installer_script
+
+
+_REAL_BIND_CANDIDATE_IN_PUBLICATION_TRANSACTION = (
+    intake._bind_candidate_in_publication_transaction
+)
 
 
 LISTING_URL = "https://www.willhaben.at/iad/immobilien/d/1807240910/"
@@ -84,6 +90,16 @@ def _strict_contract_stub(monkeypatch: pytest.MonkeyPatch) -> None:
                 )
             )
         ),
+    )
+    monkeypatch.setattr(
+        intake,
+        "_bind_candidate_in_publication_transaction",
+        lambda **_kwargs: {
+            "publication_binding_verified": "true",
+            "publication_binding_status": "applied",
+            "publication_binding_before_sha256": "1" * 64,
+            "publication_binding_after_sha256": "2" * 64,
+        },
     )
 
 
@@ -282,6 +298,12 @@ def _controller_admission(
         "expected_publication_record_sha256",
         property_search_run_record_sha256(_authorization_record()),
     )
+    request.setdefault(
+        "public_control_url",
+        f"https://propertyquarry.com/tours/{request['expected_slug']}/control",
+    )
+    public_tour_dir = Path(str(request.get("public_tour_dir") or ""))
+    public_details = public_tour_dir.stat()
     values: dict[str, object] = {
         "authenticated_principal_id": request.get("principal_id"),
         "search_run_id": request.get("search_run_id"),
@@ -291,6 +313,7 @@ def _controller_admission(
         "source_ref": request.get("source_ref"),
         "provider_key": request.get("provider_key"),
         "expected_slug": request.get("expected_slug"),
+        "public_control_url": request.get("public_control_url"),
         "expected_source_tree_sha256": request.get("expected_source_tree_sha256"),
         "expected_tour_sha256": request.get("expected_tour_sha256"),
         "expected_core_manifest_sha256": request.get(
@@ -312,7 +335,15 @@ def _controller_admission(
         "incoming_root": Path(
             str(os.environ["PROPERTYQUARRY_TOUR_EXPORT_INCOMING_DIR"])
         ),
-        "public_tour_dir": Path(str(request.get("public_tour_dir") or "")),
+        "public_tour_dir": public_tour_dir,
+        "public_tour_volume_name": (
+            "property_propertyquarry_governed_public_tours"
+        ),
+        "public_tour_mount_target": (
+            "/data/governed_public_property_tours"
+        ),
+        "public_tour_root_device": int(public_details.st_dev),
+        "public_tour_root_inode": int(public_details.st_ino),
         "permit_sha256": "d" * 64,
         "nonce_consumed": True,
     }
@@ -514,6 +545,117 @@ def test_v2_protected_dry_run_can_report_release_eligible(
     assert not (public_dir / SLUG).exists()
 
 
+def test_governed_artifact_preflight_accepts_only_exact_sealed_relocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sealed_root = tmp_path / "sealed-root"
+    bundle = _make_bundle(
+        sealed_root / "bundle",
+        directory_name=SLUG,
+    )
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, original_receipt_path, marker_path = _v2_lineage_request(
+        bundle,
+        public_dir,
+    )
+    historical_root = Path("/historical/propertyquarry/prater-source")
+    receipt = json.loads(original_receipt_path.read_text(encoding="utf-8"))
+    receipt["candidate_public_root"] = str(historical_root)
+    receipt_path = sealed_root / "materialization.receipt.json"
+    receipt_path.write_bytes(_canonical(receipt))
+    receipt_path.chmod(0o600)
+    original_receipt_path.unlink()
+    source_identity = intake.snapshot_ai_panorama_installer_source_bundle(bundle)
+    marker_sha256 = hashlib.sha256(marker_path.read_bytes()).hexdigest()
+    receipt_sha256 = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    core_sha256 = intake._semantic_manifest_sha256(
+        json.loads((bundle / "tour.json").read_text(encoding="utf-8"))
+    )
+    request.update(
+        {
+            "materialization_receipt_path": str(receipt_path),
+            "expected_materialization_receipt_sha256": receipt_sha256,
+            "expected_candidate_marker_sha256": marker_sha256,
+            "expected_source_tree_sha256": source_identity.tree_sha256,
+            "expected_tour_sha256": source_identity.tour_sha256,
+            "expected_core_manifest_sha256": core_sha256,
+        }
+    )
+    monkeypatch.setattr(intake, "_GOVERNED_RELOCATION_ROOT", sealed_root)
+    monkeypatch.setattr(intake, "_GOVERNED_RELOCATION_SLUG", SLUG)
+    monkeypatch.setattr(
+        intake,
+        "_GOVERNED_RELOCATION_HISTORICAL_CANDIDATE_ROOT",
+        historical_root,
+    )
+    monkeypatch.setattr(
+        intake,
+        "_GOVERNED_RELOCATION_RECEIPT_SHA256",
+        receipt_sha256,
+    )
+    monkeypatch.setattr(
+        intake,
+        "_GOVERNED_RELOCATION_MARKER_SHA256",
+        marker_sha256,
+    )
+    monkeypatch.setattr(
+        intake,
+        "_GOVERNED_RELOCATION_SOURCE_TREE_SHA256",
+        source_identity.tree_sha256,
+    )
+    monkeypatch.setattr(
+        intake,
+        "_GOVERNED_RELOCATION_TOUR_SHA256",
+        source_identity.tour_sha256,
+    )
+    monkeypatch.setattr(
+        intake,
+        "_GOVERNED_RELOCATION_CORE_MANIFEST_SHA256",
+        core_sha256,
+    )
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_materialization_relocation_forbidden",
+    ):
+        intake.install_sealed_ai_panorama_bundle(request)
+
+    monkeypatch.setattr(
+        intake,
+        "_validate_v2_publication_authority",
+        lambda **_kwargs: pytest.fail(
+            "artifact preflight must not query publication storage"
+        ),
+    )
+    admission = _controller_admission(request, nonce_consumed=False)
+    result = intake.install_sealed_ai_panorama_bundle(
+        request,
+        publication_admission=admission,
+        artifact_preflight_only=True,
+    )
+
+    assert result["status"] == "artifact_preflight_validated"
+    assert result["release_eligible"] is False
+    assert result["controller_nonce_consumed"] is False
+    assert result["materialization_receipt_sha256"] == receipt_sha256
+    assert not (public_dir / SLUG).exists()
+
+
+def test_artifact_preflight_rejects_apply_mode() -> None:
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_artifact_preflight_invalid",
+    ):
+        intake.install_sealed_ai_panorama_bundle(
+            {"contract": intake.AI_PANORAMA_INSTALL_REQUEST_CONTRACT_V2},
+            apply=True,
+            publication_admission=object(),
+            artifact_preflight_only=True,
+        )
+
+
 @pytest.mark.parametrize(
     ("record_update", "candidate_update", "reason"),
     (
@@ -706,6 +848,548 @@ def test_v2_apply_rejects_publication_record_drift_under_row_lock(
         }
     ]
     assert not (public_dir / SLUG).exists()
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "reason"),
+    (
+        ("rejected", "ai_panorama_publication_binding_store_rejected"),
+        ("exception", "ai_panorama_publication_binding_store_failed"),
+    ),
+)
+def test_v2_binding_cas_failure_rolls_back_before_public_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+    reason: str,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
+    admission = _controller_admission(request)
+
+    def _binding_failure(**_kwargs: object) -> dict[str, str]:
+        if failure_kind == "exception":
+            raise intake.AiPanoramaIntakeError(
+                "ai_panorama_publication_binding_store_failed"
+            )
+        raise intake.AiPanoramaIntakeError(
+            "ai_panorama_publication_binding_store_rejected"
+        )
+
+    monkeypatch.setattr(
+        intake,
+        "_bind_candidate_in_publication_transaction",
+        _binding_failure,
+    )
+
+    with pytest.raises(intake.AiPanoramaIntakeError, match=reason):
+        intake.install_sealed_ai_panorama_bundle(
+            request,
+            apply=True,
+            publication_admission=admission,
+        )
+
+    assert not (public_dir / SLUG).exists()
+    assert not tuple(public_dir.glob(f".{SLUG}.ai-intake-*"))
+
+
+def test_post_rename_transaction_failure_exactly_compensates_new_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
+    admission = _controller_admission(request)
+    original_rename = intake.os.rename
+    original_fsync = intake.os.fsync
+    target_renamed = False
+    injected = False
+
+    def _rename(source: object, target: object, *args: object, **kwargs: object):
+        nonlocal target_renamed
+        result = original_rename(source, target, *args, **kwargs)
+        if Path(target) == public_dir / SLUG:
+            target_renamed = True
+        return result
+
+    def _fsync(descriptor: int) -> None:
+        nonlocal injected
+        if target_renamed and not injected:
+            injected = True
+            raise OSError("injected post-rename fsync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(intake.os, "rename", _rename)
+    monkeypatch.setattr(intake.os, "fsync", _fsync)
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_publication_transaction_failed",
+    ):
+        intake.install_sealed_ai_panorama_bundle(
+            request,
+            apply=True,
+            publication_admission=admission,
+        )
+
+    assert injected is True
+    assert not (public_dir / SLUG).exists()
+    assert not tuple(public_dir.glob(f".{SLUG}.ai-rollback-*"))
+
+
+def test_raise_before_commit_compensates_only_after_fresh_unbound_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
+    admission = _controller_admission(request)
+
+    @contextlib.contextmanager
+    def _commit_failure(*_args: object, **_kwargs: object):
+        yield object()
+        raise RuntimeError("injected ambiguous commit failure")
+
+    monkeypatch.setattr(
+        intake,
+        "property_account_publication_authority",
+        _commit_failure,
+    )
+    monkeypatch.setattr(
+        intake,
+        "_classify_publication_commit_outcome",
+        lambda **_kwargs: "uncommitted",
+    )
+
+    with pytest.raises(
+        intake.AiPanoramaIntakeError,
+        match="ai_panorama_publication_transaction_failed",
+    ) as captured:
+        intake.install_sealed_ai_panorama_bundle(
+            request,
+            apply=True,
+            publication_admission=admission,
+        )
+
+    assert captured.value.rollback_performed is True
+    assert captured.value.commit_outcome_ambiguous is False
+    assert captured.value.publication_outcome == "uncommitted"
+    assert not (public_dir / SLUG).exists()
+    assert not tuple(public_dir.glob(f".{SLUG}.ai-rollback-*"))
+
+
+def test_commit_then_raise_retains_target_after_fresh_bound_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
+    admission = _controller_admission(request)
+
+    @contextlib.contextmanager
+    def _commit_then_raise(*_args: object, **_kwargs: object):
+        yield object()
+        raise RuntimeError("injected lost commit acknowledgement")
+
+    monkeypatch.setattr(
+        intake,
+        "property_account_publication_authority",
+        _commit_then_raise,
+    )
+    monkeypatch.setattr(
+        intake,
+        "_classify_publication_commit_outcome",
+        lambda **_kwargs: "committed",
+    )
+
+    result = intake.install_sealed_ai_panorama_bundle(
+        request,
+        apply=True,
+        publication_admission=admission,
+    )
+
+    assert result["status"] == "installed"
+    assert result["publication_binding_verified"] is True
+    assert (public_dir / SLUG).is_dir()
+
+
+@pytest.mark.parametrize(
+    ("durable_state", "expected"),
+    (("before", "uncommitted"), ("after", "committed")),
+)
+def test_fresh_publication_outcome_classification_requires_exact_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    durable_state: str,
+    expected: str,
+) -> None:
+    before_record = _authorization_record()
+    bundle_identity = {
+        "owner_verified": True,
+        "search_run_id": RUN_ID,
+        "candidate_ref": CANDIDATE_REF,
+        "listing_url": LISTING_URL,
+        "property_url": LISTING_URL,
+        "property_url_sha256": property_search_source_url_sha256(LISTING_URL),
+        "provider_key": "willhaben",
+        "source_ref": SOURCE_REF,
+        "external_id": EXTERNAL_ID,
+    }
+    control_url = f"https://propertyquarry.com/tours/{SLUG}/control"
+    after_record, binding = intake.plan_property_search_candidate_tour_binding(
+        before_record,
+        principal_id=PRINCIPAL,
+        run_id=RUN_ID,
+        candidate_ref=CANDIDATE_REF,
+        expected_listing_id=EXTERNAL_ID,
+        generated_reconstruction_url=control_url,
+        bundle_identity=bundle_identity,
+        reconstruction_kind="ai_panorama_360",
+    )
+    identity = {
+        "principal_id": PRINCIPAL,
+        "search_run_id": RUN_ID,
+        "candidate_ref": CANDIDATE_REF,
+        "external_id": EXTERNAL_ID,
+        "listing_url": LISTING_URL,
+        "source_ref": SOURCE_REF,
+        "provider_key": "willhaben",
+        "property_url_sha256": property_search_source_url_sha256(LISTING_URL),
+        "publication_binding_before_sha256": binding["before_sha256"],
+        "publication_binding_after_sha256": binding["after_sha256"],
+    }
+
+    @contextlib.contextmanager
+    def _authority(*_args: object, **_kwargs: object):
+        yield object()
+
+    monkeypatch.setattr(
+        intake,
+        "property_account_publication_authority",
+        _authority,
+    )
+    monkeypatch.setattr(
+        intake,
+        "load_property_search_run_record_for_publication",
+        lambda **_kwargs: (
+            before_record if durable_state == "before" else after_record
+        ),
+    )
+    monkeypatch.setattr(
+        intake,
+        "_publication_bundle_identity",
+        lambda **_kwargs: bundle_identity,
+    )
+
+    assert (
+        intake._classify_publication_commit_outcome(
+            bundle_dir=tmp_path,
+            request={
+                "expected_slug": SLUG,
+                "public_control_url": control_url,
+            },
+            identity=identity,
+        )
+        == expected
+    )
+
+
+def test_publication_storage_cas_checks_erasure_fence_before_row_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+
+    class _Cursor:
+        def __enter__(self) -> "_Cursor":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(
+            self,
+            query: object,
+            _parameters: object = None,
+        ) -> None:
+            statements.append(" ".join(str(query).split()))
+
+        def fetchone(self) -> tuple[bool]:
+            return (True,)
+
+    class _Connection:
+        autocommit = False
+        info = SimpleNamespace(
+            transaction_status=SimpleNamespace(name="INTRANS")
+        )
+
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+    monkeypatch.setattr(
+        storage,
+        "_set_property_search_writer_contract",
+        lambda _cursor: None,
+    )
+    result = storage.update_property_search_run_record_for_publication(
+        _Connection(),
+        principal_id=PRINCIPAL,
+        run_id=RUN_ID,
+        expected_record_sha256="a" * 64,
+        updated_record=_authorization_record(),
+    )
+
+    assert result == {"status": "store_rejected"}
+    assert statements[0] == "SELECT property_search_assert_erasure_key()"
+    assert "pg_advisory_xact_lock" in statements[1]
+    assert "property_search_erasure_fences" in statements[2]
+    assert all("property_search_runs" not in statement for statement in statements)
+
+
+def test_publication_storage_cas_rejects_autocommit_connection() -> None:
+    class _Connection:
+        autocommit = True
+        info = SimpleNamespace(
+            transaction_status=SimpleNamespace(name="INTRANS")
+        )
+
+        def cursor(self) -> object:
+            pytest.fail("autocommit must be rejected before opening a cursor")
+
+    with pytest.raises(
+        ValueError,
+        match="property_search_publication_active_transaction_required",
+    ):
+        storage.update_property_search_run_record_for_publication(
+            _Connection(),
+            principal_id=PRINCIPAL,
+            run_id=RUN_ID,
+            expected_record_sha256="a" * 64,
+            updated_record=_authorization_record(),
+        )
+
+
+def test_identity_free_discovery_rejects_erasure_fence_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+    record = _authorization_record()
+
+    class _Cursor:
+        def __enter__(self) -> "_Cursor":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(
+            self,
+            query: object,
+            _parameters: object = None,
+        ) -> None:
+            statements.append(" ".join(str(query).split()))
+
+        def fetchall(self) -> list[tuple[dict[str, object]]]:
+            return [(record,)]
+
+        def fetchone(self) -> tuple[bool]:
+            return (True,)
+
+    class _Connection:
+        autocommit = False
+        info = SimpleNamespace(
+            transaction_status=SimpleNamespace(name="INTRANS")
+        )
+
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+    monkeypatch.setattr(
+        storage,
+        "_set_property_search_writer_contract",
+        lambda _cursor: None,
+    )
+
+    result = storage.load_unique_property_search_run_record_for_discovery(
+        run_id=RUN_ID,
+        connection=_Connection(),
+    )
+
+    assert result is None
+    assert "pg_advisory_xact_lock" in statements[2]
+    assert "property_search_erasure_fences" in statements[3]
+    assert sum(
+        "FROM property_search_runs" in statement
+        for statement in statements
+    ) == 1
+
+
+def test_identity_free_discovery_rejects_record_drift_after_erasure_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial = _authorization_record()
+    changed = _authorization_record()
+    changed["status"] = "changed-during-discovery"
+    rows = iter(([(initial,)], [(changed,)]))
+
+    class _Cursor:
+        def __enter__(self) -> "_Cursor":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(
+            self,
+            _query: object,
+            _parameters: object = None,
+        ) -> None:
+            return None
+
+        def fetchall(self) -> list[tuple[dict[str, object]]]:
+            return next(rows)
+
+        def fetchone(self) -> tuple[bool]:
+            return (False,)
+
+    class _Connection:
+        autocommit = False
+        info = SimpleNamespace(
+            transaction_status=SimpleNamespace(name="INTRANS")
+        )
+
+        def cursor(self) -> _Cursor:
+            return _Cursor()
+
+    monkeypatch.setattr(
+        storage,
+        "_set_property_search_writer_contract",
+        lambda _cursor: None,
+    )
+
+    assert (
+        storage.load_unique_property_search_run_record_for_discovery(
+            run_id=RUN_ID,
+            connection=_Connection(),
+        )
+        is None
+    )
+
+
+def test_publication_binding_updates_locked_record_on_existing_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _authorization_record()
+    expected_sha256 = property_search_run_record_sha256(record)
+    identity = {
+        "principal_id": PRINCIPAL,
+        "search_run_id": RUN_ID,
+        "candidate_ref": CANDIDATE_REF,
+        "external_id": EXTERNAL_ID,
+        "listing_url": LISTING_URL,
+        "source_ref": SOURCE_REF,
+        "provider_key": "willhaben",
+        "property_url_sha256": property_search_source_url_sha256(LISTING_URL),
+        "expected_publication_record_sha256": expected_sha256,
+    }
+    request = {
+        "expected_slug": SLUG,
+        "public_control_url": f"https://propertyquarry.com/tours/{SLUG}/control",
+    }
+    private_receipt = {
+        "principal_id": PRINCIPAL,
+        "search_run_id": RUN_ID,
+        "candidate_ref": CANDIDATE_REF,
+        "listing_url": LISTING_URL,
+        "property_url": LISTING_URL,
+        "source_ref": SOURCE_REF,
+        "external_id": EXTERNAL_ID,
+    }
+    connection = object()
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        intake,
+        "_load_hosted_property_tour_private_receipt",
+        lambda _bundle_dir: private_receipt,
+    )
+    monkeypatch.setattr(
+        intake,
+        "load_property_search_run_record_for_publication",
+        lambda **kwargs: observed.setdefault("load", kwargs) and record,
+    )
+
+    def _update(
+        passed_connection: object,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        observed["connection"] = passed_connection
+        observed["update"] = kwargs
+        updated = dict(kwargs["updated_record"])
+        return {
+            "status": "applied",
+            "record": updated,
+            "record_sha256": property_search_run_record_sha256(updated),
+        }
+
+    monkeypatch.setattr(
+        intake,
+        "update_property_search_run_record_for_publication",
+        _update,
+    )
+
+    receipt = _REAL_BIND_CANDIDATE_IN_PUBLICATION_TRANSACTION(
+        connection=connection,
+        bundle_dir=tmp_path,
+        request=request,
+        identity=identity,
+    )
+
+    assert observed["load"] == {
+        "run_id": RUN_ID,
+        "principal_id": PRINCIPAL,
+        "connection": connection,
+        "for_update": True,
+    }
+    assert observed["connection"] is connection
+    assert observed["update"]["expected_record_sha256"] == expected_sha256
+    assert receipt["publication_binding_verified"] == "true"
+    assert receipt["publication_binding_status"] == "applied"
 
 
 def test_v2_release_eligible_lineage_applies_with_exact_cas_hashes(
@@ -1168,6 +1852,7 @@ def test_operator_cli_cannot_apply_without_controller_authority(
 
 def test_apply_writes_owned_pair_atomically_and_new_admission_is_idempotent(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
     public_dir = tmp_path / "public"
@@ -1183,6 +1868,24 @@ def test_apply_writes_owned_pair_atomically_and_new_admission_is_idempotent(
 
     first_admission = _controller_admission(request)
     second_admission = _controller_admission(request, permit_sha256="e" * 64)
+    binding_statuses = iter(("applied", "already_bound"))
+
+    def _binding(**_kwargs: object) -> dict[str, str]:
+        status = next(binding_statuses)
+        return {
+            "publication_binding_verified": "true",
+            "publication_binding_status": status,
+            "publication_binding_before_sha256": "1" * 64,
+            "publication_binding_after_sha256": (
+                "2" * 64 if status == "applied" else "1" * 64
+            ),
+        }
+
+    monkeypatch.setattr(
+        intake,
+        "_bind_candidate_in_publication_transaction",
+        _binding,
+    )
     first = intake.install_sealed_ai_panorama_bundle(
         request,
         apply=True,
@@ -1201,6 +1904,8 @@ def test_apply_writes_owned_pair_atomically_and_new_admission_is_idempotent(
     assert first["applied"] is True
     assert second["status"] == "already_installed"
     assert second["applied"] is False
+    assert first["publication_binding_status"] == "applied"
+    assert second["publication_binding_status"] == "already_bound"
     assert stat_mode(private_path) == 0o600
     assert {
         key: private[key]
@@ -1225,6 +1930,57 @@ def test_apply_writes_owned_pair_atomically_and_new_admission_is_idempotent(
     public = json.loads((target / "tour.json").read_text(encoding="utf-8"))
     assert public["property_url_sha256"] == property_search_source_url_sha256(LISTING_URL)
     assert not intake._PRIVATE_MANIFEST_KEYS.intersection(public)
+
+
+def test_existing_target_commit_then_raise_is_reclassified_as_committed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _make_bundle(tmp_path / "source", directory_name=SLUG)
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    request, _receipt_path, _marker_path = _v2_lineage_request(bundle, public_dir)
+    plan = intake.install_sealed_ai_panorama_bundle(request)
+    request.update(
+        {
+            "expected_source_tree_sha256": plan["source_tree_sha256"],
+            "expected_tour_sha256": plan["source_tour_sha256"],
+        }
+    )
+    intake.install_sealed_ai_panorama_bundle(
+        request,
+        apply=True,
+        publication_admission=_controller_admission(request),
+    )
+
+    @contextlib.contextmanager
+    def _commit_then_raise(*_args: object, **_kwargs: object):
+        yield object()
+        raise RuntimeError("injected lost commit acknowledgement")
+
+    monkeypatch.setattr(
+        intake,
+        "property_account_publication_authority",
+        _commit_then_raise,
+    )
+    monkeypatch.setattr(
+        intake,
+        "_classify_publication_commit_outcome",
+        lambda **_kwargs: "committed",
+    )
+
+    result = intake.install_sealed_ai_panorama_bundle(
+        request,
+        apply=True,
+        publication_admission=_controller_admission(
+            request,
+            permit_sha256="e" * 64,
+        ),
+    )
+
+    assert result["status"] == "already_installed"
+    assert result["already_installed"] is True
+    assert (public_dir / SLUG).is_dir()
 
 
 def stat_mode(path: Path) -> int:

@@ -2,16 +2,37 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
 import re
 import urllib.parse
 from collections.abc import Iterator, Mapping, MutableMapping
 from datetime import datetime, timezone
+from pathlib import Path
 
 from app.product.property_research_packet_links import (
     _RUN_CANDIDATE_KEYS,
     _SOURCE_CANDIDATE_KEYS,
     property_research_candidate_ref,
+)
+from app.product.property_tour_governed_reservations import (
+    GOVERNED_PRATER_CANDIDATE_MARKER_SHA256,
+    GOVERNED_PRATER_CANDIDATE_REF,
+    GOVERNED_PRATER_CONTROL_URL,
+    GOVERNED_PRATER_CORE_MANIFEST_SHA256,
+    GOVERNED_PRATER_EXTERNAL_ID,
+    GOVERNED_PRATER_LISTING_URL,
+    GOVERNED_PRATER_MATERIALIZATION_RECEIPT_SHA256,
+    GOVERNED_PRATER_PROVIDER_KEY,
+    GOVERNED_PRATER_SEARCH_RUN_ID,
+    GOVERNED_PRATER_SLUG,
+    GOVERNED_PRATER_SOURCE_REF,
+    GOVERNED_PRATER_SOURCE_TREE_SHA256,
+    GOVERNED_PRATER_TOUR_SHA256,
+    GOVERNED_PUBLIC_TOUR_MOUNT_TARGET,
+    GOVERNED_PUBLIC_TOUR_VOLUME_NAME,
+    governed_prater_control_url_reserved,
+    governed_prater_url_namespace_reserved,
 )
 
 
@@ -746,7 +767,7 @@ def authorize_property_search_candidate_tour_install(
     }
 
 
-def plan_property_search_candidate_tour_binding(
+def _plan_property_search_candidate_tour_binding(
     record: Mapping[str, object],
     *,
     principal_id: str,
@@ -866,3 +887,142 @@ def plan_property_search_candidate_tour_binding(
         "changed_paths": changed_paths,
     }
     return updated, receipt
+
+
+def plan_property_search_candidate_tour_binding(
+    record: Mapping[str, object],
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    expected_listing_id: str,
+    generated_reconstruction_url: str,
+    bundle_identity: Mapping[str, object],
+    reconstruction_kind: str = "ai_panorama_360",
+    disclosure: str = "",
+    bound_at: str = "",
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Plan an ordinary binding while keeping governed identities reserved."""
+
+    normalized_url = _normalized_text(generated_reconstruction_url)
+    if governed_prater_url_namespace_reserved(normalized_url):
+        raise PropertySearchTourBindingError(
+            "property_search_tour_governed_url_reserved"
+        )
+    return _plan_property_search_candidate_tour_binding(
+        record,
+        principal_id=principal_id,
+        run_id=run_id,
+        candidate_ref=candidate_ref,
+        expected_listing_id=expected_listing_id,
+        generated_reconstruction_url=normalized_url,
+        bundle_identity=bundle_identity,
+        reconstruction_kind=reconstruction_kind,
+        disclosure=disclosure,
+        bound_at=bound_at,
+    )
+
+
+def plan_governed_prater_candidate_tour_binding(
+    record: Mapping[str, object],
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    expected_listing_id: str,
+    generated_reconstruction_url: str,
+    bundle_identity: Mapping[str, object],
+    publication_admission: object,
+    reconstruction_kind: str = "ai_panorama_360",
+    disclosure: str = "",
+    bound_at: str = "",
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Plan the reserved binding only under a freshly revalidated permit."""
+
+    normalized_url = _normalized_text(generated_reconstruction_url)
+    if not governed_prater_control_url_reserved(normalized_url):
+        raise PropertySearchTourBindingError(
+            "property_search_tour_governed_url_invalid"
+        )
+    try:
+        from app.product.property_tour_ai_panorama_admission import (
+            revalidate_ai_panorama_install_admission,
+        )
+
+        verified = revalidate_ai_panorama_install_admission(
+            publication_admission,
+            require_consumed=True,
+        )
+    except Exception as exc:
+        raise PropertySearchTourBindingError(
+            "property_search_tour_governed_authority_invalid"
+        ) from exc
+    exact_fields = (
+        ("search_run_id", GOVERNED_PRATER_SEARCH_RUN_ID),
+        ("candidate_ref", GOVERNED_PRATER_CANDIDATE_REF),
+        ("external_id", GOVERNED_PRATER_EXTERNAL_ID),
+        ("listing_url", GOVERNED_PRATER_LISTING_URL),
+        ("source_ref", GOVERNED_PRATER_SOURCE_REF),
+        ("provider_key", GOVERNED_PRATER_PROVIDER_KEY),
+        ("expected_slug", GOVERNED_PRATER_SLUG),
+        ("public_control_url", GOVERNED_PRATER_CONTROL_URL),
+        ("expected_source_tree_sha256", GOVERNED_PRATER_SOURCE_TREE_SHA256),
+        ("expected_tour_sha256", GOVERNED_PRATER_TOUR_SHA256),
+        (
+            "expected_core_manifest_sha256",
+            GOVERNED_PRATER_CORE_MANIFEST_SHA256,
+        ),
+        (
+            "expected_materialization_receipt_sha256",
+            GOVERNED_PRATER_MATERIALIZATION_RECEIPT_SHA256,
+        ),
+        (
+            "expected_candidate_marker_sha256",
+            GOVERNED_PRATER_CANDIDATE_MARKER_SHA256,
+        ),
+        ("public_tour_volume_name", GOVERNED_PUBLIC_TOUR_VOLUME_NAME),
+        ("public_tour_mount_target", GOVERNED_PUBLIC_TOUR_MOUNT_TARGET),
+    )
+    if (
+        any(
+            not hmac.compare_digest(
+                str(getattr(verified, field, "") or "").strip(),
+                expected,
+            )
+            for field, expected in exact_fields
+        )
+        or Path(getattr(verified, "public_tour_dir", ""))
+        != Path(GOVERNED_PUBLIC_TOUR_MOUNT_TARGET)
+        or getattr(verified, "nonce_consumed", None) is not True
+        or not hmac.compare_digest(
+            _normalized_text(principal_id),
+            str(getattr(verified, "authenticated_principal_id", "") or "").strip(),
+        )
+        or not hmac.compare_digest(
+            _normalized_text(run_id),
+            GOVERNED_PRATER_SEARCH_RUN_ID,
+        )
+        or not hmac.compare_digest(
+            _normalized_text(candidate_ref),
+            GOVERNED_PRATER_CANDIDATE_REF,
+        )
+        or not hmac.compare_digest(
+            _normalized_text(expected_listing_id),
+            GOVERNED_PRATER_EXTERNAL_ID,
+        )
+    ):
+        raise PropertySearchTourBindingError(
+            "property_search_tour_governed_authority_invalid"
+        )
+    return _plan_property_search_candidate_tour_binding(
+        record,
+        principal_id=principal_id,
+        run_id=run_id,
+        candidate_ref=candidate_ref,
+        expected_listing_id=expected_listing_id,
+        generated_reconstruction_url=normalized_url,
+        bundle_identity=bundle_identity,
+        reconstruction_kind=reconstruction_kind,
+        disclosure=disclosure,
+        bound_at=bound_at,
+    )

@@ -7,10 +7,17 @@ import json
 import os
 import shutil
 import stat
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+
+_SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(_SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIRECTORY))
+
+from property_tour_governed_reservation import require_dynamic_tour_slug
 
 try:
     from property_tour_host_safety import (
@@ -475,6 +482,10 @@ def _main_unlocked() -> int:
     slug = _safe_relpath(args.slug)
     if "/" in slug or not slug:
         raise SystemExit("invalid_tour_slug")
+    try:
+        require_dynamic_tour_slug(slug)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     has_export_dir = bool(str(args.export_dir or "").strip())
     has_export_zip = bool(str(args.export_zip or "").strip())
     if args.attach_provenance_only:

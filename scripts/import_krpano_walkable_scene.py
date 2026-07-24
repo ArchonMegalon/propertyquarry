@@ -5,11 +5,18 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
+_SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(_SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIRECTORY))
+
 from PIL import Image
+
+from property_tour_governed_reservation import require_dynamic_tour_slug
 
 try:
     from property_tour_host_safety import (
@@ -221,6 +228,10 @@ def _main_unlocked() -> int:
     slug = _safe_relpath(args.slug)
     if "/" in slug or not slug:
         raise SystemExit("invalid_tour_slug")
+    try:
+        require_dynamic_tour_slug(slug)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     license_config = _license_runtime_config()
     if not license_config and not args.skip_license_env_check:
         raise SystemExit("krpano_license_environment_missing")
