@@ -51,12 +51,27 @@ class FakeGitHub:
         self.pending_delay = pending_delay
         self.history_reads_after_approval = 0
         self.pending_reads_after_approval = 0
+        self.jobs_reads_after_approval = 0
+        self.run_reads_after_approval = 0
         self.duplicate_reviews = False
+        self.conflicting_environment_review = False
         self.release_job_mode = "absent"
         self.release_job_labels_override: list[str] | None = None
         self.manual_environment_approval = False
         self.current_run_attempt = 1
         self.job_name_override: str | None = None
+        self.post_approval_pending: list[dict[str, object]] | None = (
+            self.pending()
+        )
+        self.post_approval_pending_sequence: (
+            list[list[dict[str, object]]] | None
+        ) = None
+        self.reconciliation_drift: str | None = None
+        self.security_job_count = 1
+        self.security_ready_after_jobs_read = 0
+        self.security_job_overrides: dict[str, object] = {}
+        self.unexpected_protected_job = False
+        self.unrelated_job_drift = False
 
     @staticmethod
     def raw(value):
@@ -106,7 +121,78 @@ class FakeGitHub:
             "status": "completed" if self.approved or self.terminal else "waiting",
         }
         jobs = [prerequisite]
-        if self.release_job_mode == "queued":
+        if (
+            self.approved
+            and not self.terminal
+            and self.jobs_reads_after_approval
+            > self.security_ready_after_jobs_read
+        ):
+            for index in range(self.security_job_count):
+                security = {
+                    "conclusion": None,
+                    "head_sha": self.payload["workflow_sha"],
+                    "id": run_id + 3000 + index,
+                    "labels": [
+                        "self-hosted",
+                        "propertyquarry-security",
+                        "pqsec-" + "d" * 32,
+                    ],
+                    "name": approval.SECURITY_JOB,
+                    "run_url": (
+                        f"https://api.github.com/repos/{approval.REPOSITORY}/"
+                        f"actions/runs/{run_id}"
+                    ),
+                    "runner_group_id": None,
+                    "runner_group_name": None,
+                    "runner_id": None,
+                    "runner_name": None,
+                    "run_attempt": self.current_run_attempt,
+                    "status": "waiting",
+                    "steps": [],
+                }
+                security.update(self.security_job_overrides)
+                jobs.append(security)
+            if self.unexpected_protected_job:
+                jobs.append(
+                    {
+                        "conclusion": None,
+                        "head_sha": self.payload["workflow_sha"],
+                        "id": run_id + 4000,
+                        "labels": None,
+                        "name": "unexpected-protected-downstream",
+                        "run_url": (
+                            f"https://api.github.com/repos/"
+                            f"{approval.REPOSITORY}/actions/runs/{run_id}"
+                        ),
+                        "status": "waiting",
+                    }
+                )
+            if self.unrelated_job_drift:
+                jobs.append(
+                    {
+                        "conclusion": None,
+                        "head_sha": self.payload["workflow_sha"],
+                        "id": run_id + 5000,
+                        "labels": ["ubuntu-latest"],
+                        "name": "property-security-posture",
+                        "run_url": (
+                            f"https://api.github.com/repos/"
+                            f"{approval.REPOSITORY}/actions/runs/{run_id}"
+                        ),
+                        "status": (
+                            "queued"
+                            if self.jobs_reads_after_approval <= 1
+                            else "in_progress"
+                        ),
+                    }
+                )
+        if (
+            self.release_job_mode == "queued"
+            or (
+                self.release_job_mode == "post-approved-queued"
+                and self.approved
+            )
+        ):
             jobs.append(
                 {
                     "conclusion": None,
@@ -207,15 +293,56 @@ class FakeGitHub:
             )
         for run_id in (123, 124):
             if path == f"{prefix}/runs/{run_id}" and method == "GET":
-                return 200, self.raw(self.run(run_id))
+                value = self.run(run_id)
+                if self.approved:
+                    self.run_reads_after_approval += 1
+                    if (
+                        self.reconciliation_drift == "run"
+                        and self.run_reads_after_approval == 2
+                    ):
+                        value["status"] = "waiting"
+                return 200, self.raw(value)
             if path == f"{prefix}/runs/{run_id}/attempts/1/jobs?per_page=100":
-                return 200, self.raw(self.jobs(run_id))
+                if self.approved:
+                    self.jobs_reads_after_approval += 1
+                value = self.jobs(run_id)
+                if (
+                    self.reconciliation_drift == "jobs"
+                    and self.jobs_reads_after_approval == 2
+                ):
+                    for job in value["jobs"]:
+                        if job.get("name") == approval.SECURITY_JOB:
+                            job["id"] = run_id + 3999
+                return 200, self.raw(value)
             if path == f"{prefix}/runs/{run_id}/pending_deployments":
                 if method == "GET":
                     if self.terminal:
                         return 200, self.raw([])
                     if self.approved:
                         self.pending_reads_after_approval += 1
+                        if self.post_approval_pending_sequence is not None:
+                            index = min(
+                                self.pending_reads_after_approval - 1,
+                                len(self.post_approval_pending_sequence) - 1,
+                            )
+                            return 200, self.raw(
+                                self.post_approval_pending_sequence[index]
+                            )
+                        if self.post_approval_pending is not None:
+                            value = self.post_approval_pending
+                            if (
+                                self.reconciliation_drift == "pending"
+                                and self.pending_reads_after_approval == 2
+                            ):
+                                value = [
+                                    {
+                                        **value[0],
+                                        "wait_timer": 0,
+                                    }
+                                ]
+                            return 200, self.raw(
+                                value
+                            )
                         if self.pending_reads_after_approval > self.pending_delay:
                             return 200, self.raw([])
                     return 200, self.raw(self.pending())
@@ -255,6 +382,21 @@ class FakeGitHub:
                     "state": "approved",
                     "user": {"id": 7, "login": "release-controller"},
                 }
+                if self.conflicting_environment_review:
+                    conflict = dict(review)
+                    conflict["comment"] = "unrelated approval"
+                    return 200, self.raw([review, conflict])
+                if (
+                    self.reconciliation_drift == "review"
+                    and self.history_reads_after_approval == 2
+                ):
+                    review = {
+                        **review,
+                        "user": {
+                            "id": 8,
+                            "login": "release-controller",
+                        },
+                    }
                 return 200, self.raw(
                     [review, dict(review)]
                     if self.duplicate_reviews
@@ -767,15 +909,319 @@ class RunnerPrerequisiteTests(unittest.TestCase):
         )
         self.assertEqual(github.posts, 1)
 
-    def test_delayed_history_and_stale_pending_reconcile_without_repost(
+    def test_delayed_history_and_same_environment_pending_reconcile_without_repost(
         self,
     ) -> None:
         github = self.fake(history_delay=2, pending_delay=3)
         result = self.approve(github)
         self.assertEqual(result["disposition"], "approved")
         self.assertEqual(github.posts, 1)
-        self.assertGreaterEqual(github.history_reads_after_approval, 3)
-        self.assertGreaterEqual(github.pending_reads_after_approval, 4)
+        self.assertEqual(github.history_reads_after_approval, 4)
+        self.assertEqual(github.pending_reads_after_approval, 4)
+
+    def test_same_environment_downstream_pending_is_sealed_after_success(
+        self,
+    ) -> None:
+        github = self.fake()
+        github.post_approval_pending = github.pending()
+        result = self.approve(github)
+        self.assertEqual(result["disposition"], "approved")
+        self.assertEqual(github.posts, 1)
+        self.assertEqual(github.pending_reads_after_approval, 2)
+        prefix = f"/{approval.REPOSITORY_API}/actions/runs/123"
+        self.assertEqual(
+            github.calls[-8:],
+            [
+                ("GET", prefix),
+                ("GET", prefix + "/attempts/1/jobs?per_page=100"),
+                ("GET", prefix + "/pending_deployments"),
+                ("GET", prefix + "/approvals"),
+                ("GET", prefix + "/approvals"),
+                ("GET", prefix + "/pending_deployments"),
+                ("GET", prefix + "/attempts/1/jobs?per_page=100"),
+                ("GET", prefix),
+            ],
+        )
+
+        intent_path, approval_path = approval._record_paths(
+            self.reservation_raw
+        )
+        intent_raw = intent_path.read_bytes()
+        intent = approval._verify_wire(
+            intent_raw,
+            public=self.private.public_key(),
+            key_id=self.key_id,
+            schema=approval.INTENT_SCHEMA,
+            domain=approval.INTENT_SIGNATURE_DOMAIN,
+        )
+        approval_raw = approval_path.read_bytes()
+        approval_payload = approval._verify_wire(
+            approval_raw,
+            public=self.private.public_key(),
+            key_id=self.key_id,
+            schema=approval.APPROVAL_SCHEMA,
+            domain=approval.APPROVAL_SIGNATURE_DOMAIN,
+        )
+        approval._validate_approval(
+            approval_payload,
+            intent_raw=intent_raw,
+            intent=intent,
+        )
+        self.assertEqual(
+            approval_payload["post_pending_deployments_sha256"],
+            approval._digest(github.raw(github.pending())),
+        )
+        self.assertEqual(
+            approval_payload["completed_jobs_sha256"],
+            approval._digest(github.raw(github.jobs(123))),
+        )
+        self.assertEqual(
+            approval_payload["review_history_sha256"],
+            approval._digest(
+                github.raw(
+                    [
+                        {
+                            "comment": intent["comment"],
+                            "environments": [
+                                {
+                                    "id": 42,
+                                    "name": approval.ENVIRONMENT,
+                                }
+                            ],
+                            "state": "approved",
+                            "user": {
+                                "id": 7,
+                                "login": "release-controller",
+                            },
+                        }
+                    ]
+                )
+            ),
+        )
+        self.assertEqual(approval_payload["schema"], approval.APPROVAL_SCHEMA)
+
+    def test_downstream_security_job_exact_binding_is_required(self) -> None:
+        cases = (
+            (
+                "missing-base-label",
+                {
+                    "labels": [
+                        "self-hosted",
+                        "pqsec-" + "d" * 32,
+                    ]
+                },
+            ),
+            (
+                "extra-label",
+                {
+                    "labels": [
+                        "self-hosted",
+                        "propertyquarry-security",
+                        "pqsec-" + "d" * 32,
+                        "unexpected",
+                    ]
+                },
+            ),
+            (
+                "malformed-one-time-label",
+                {
+                    "labels": [
+                        "self-hosted",
+                        "propertyquarry-security",
+                        "pqsec-" + "D" * 32,
+                    ]
+                },
+            ),
+            ("runner-assigned", {"runner_id": 77}),
+            ("runner-id-boolean", {"runner_id": False}),
+            ("runner-name-assigned", {"runner_name": "security-host"}),
+            ("runner-group-assigned", {"runner_group_id": 9}),
+            ("runner-group-id-boolean", {"runner_group_id": False}),
+            ("run-attempt-rebound", {"run_attempt": 2}),
+            ("run-attempt-boolean", {"run_attempt": True}),
+            ("steps-present", {"steps": [{"name": "ran"}]}),
+            ("not-environment-waiting", {"status": "queued"}),
+        )
+        for index, (name, overrides) in enumerate(cases):
+            if index:
+                self.tearDown()
+                self.setUp()
+            with self.subTest(name=name):
+                github = self.fake()
+                github.security_job_overrides = overrides
+                with self.assertRaisesRegex(
+                    approval.ApprovalFailure,
+                    "runner-prerequisite-security-job-binding-invalid",
+                ):
+                    self.approve(github)
+                self.assertEqual(github.posts, 1)
+
+    def test_permanently_empty_completion_state_times_out_without_approval(
+        self,
+    ) -> None:
+        missing = self.fake()
+        missing.security_job_count = 0
+        missing.post_approval_pending_sequence = [[]]
+        with mock.patch.object(
+            approval, "MAXIMUM_RECONCILIATION_POLLS", 3
+        ):
+            with self.assertRaisesRegex(
+                approval.ApprovalFailure,
+                "runner-prerequisite-completion-timeout",
+            ):
+                self.approve(missing)
+        self.assertEqual(missing.posts, 1)
+        _intent_path, approval_path = approval._record_paths(
+            self.reservation_raw
+        )
+        self.assertFalse(approval_path.exists())
+
+    def test_downstream_rejects_ambiguous_and_protected_jobs(
+        self,
+    ) -> None:
+        ambiguous = self.fake()
+        ambiguous.security_job_count = 2
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-prerequisite-security-job-selection-invalid",
+        ):
+            self.approve(ambiguous)
+        self.assertEqual(ambiguous.posts, 1)
+
+        self.tearDown()
+        self.setUp()
+        unexpected = self.fake()
+        unexpected.unexpected_protected_job = True
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-prerequisite-protected-job-unexpected",
+        ):
+            self.approve(unexpected)
+        self.assertEqual(unexpected.posts, 1)
+
+        self.tearDown()
+        self.setUp()
+        release = self.fake()
+        release.release_job_mode = "post-approved-queued"
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-prerequisite-release-job-already-present",
+        ):
+            self.approve(release)
+        self.assertEqual(release.posts, 1)
+
+    def test_empty_completion_state_retries_until_security_gate_appears(
+        self,
+    ) -> None:
+        github = self.fake()
+        github.security_ready_after_jobs_read = 1
+        github.post_approval_pending_sequence = [
+            [],
+            github.pending(),
+        ]
+        wire = approval._wire
+        approval_signatures = 0
+
+        def tracked_wire(*args, **kwargs):
+            nonlocal approval_signatures
+            domain = args[3] if len(args) > 3 else kwargs.get("domain")
+            if domain == approval.APPROVAL_SIGNATURE_DOMAIN:
+                approval_signatures += 1
+            return wire(*args, **kwargs)
+
+        with mock.patch.object(
+            approval, "_wire", side_effect=tracked_wire
+        ):
+            result = self.approve(github)
+        self.assertEqual(result["disposition"], "approved")
+        self.assertEqual(github.posts, 1)
+        self.assertEqual(approval_signatures, 1)
+        self.assertEqual(github.jobs_reads_after_approval, 3)
+        self.assertEqual(github.pending_reads_after_approval, 3)
+        _intent_path, approval_path = approval._record_paths(
+            self.reservation_raw
+        )
+        self.assertTrue(approval_path.exists())
+
+    def test_reconciliation_rejects_relevant_snapshot_drift(self) -> None:
+        for index, surface in enumerate(
+            ("run", "jobs", "pending", "review")
+        ):
+            if index:
+                self.tearDown()
+                self.setUp()
+            with self.subTest(surface=surface):
+                github = self.fake()
+                github.reconciliation_drift = surface
+                with self.assertRaisesRegex(
+                    approval.ApprovalFailure,
+                    "runner-prerequisite-observation-drift",
+                ):
+                    self.approve(github)
+                self.assertEqual(github.posts, 1)
+
+    def test_reconciliation_allows_unrelated_ci_job_progress(self) -> None:
+        github = self.fake()
+        github.unrelated_job_drift = True
+        result = self.approve(github)
+        self.assertEqual(result["disposition"], "approved")
+        self.assertEqual(github.jobs_reads_after_approval, 2)
+        _intent_path, approval_path = approval._record_paths(
+            self.reservation_raw
+        )
+        payload = approval._verify_wire(
+            approval_path.read_bytes(),
+            public=self.private.public_key(),
+            key_id=self.key_id,
+            schema=approval.APPROVAL_SCHEMA,
+            domain=approval.APPROVAL_SIGNATURE_DOMAIN,
+        )
+        self.assertEqual(
+            payload["completed_jobs_sha256"],
+            approval._digest(github.raw(github.jobs(123))),
+        )
+
+    def test_downstream_pending_rejects_rebound_environment(self) -> None:
+        github = self.fake()
+        github.post_approval_pending = [
+            {
+                "current_user_can_approve": True,
+                "environment": {
+                    "id": 43,
+                    "name": approval.ENVIRONMENT,
+                },
+            }
+        ]
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-prerequisite-pending-rebound",
+        ):
+            self.approve(github)
+        self.assertEqual(github.posts, 1)
+
+    def test_downstream_pending_rejects_multiple_environments(self) -> None:
+        github = self.fake()
+        github.post_approval_pending = [
+            *github.pending(),
+            *github.pending(),
+        ]
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-prerequisite-pending-invalid",
+        ):
+            self.approve(github)
+        self.assertEqual(github.posts, 1)
+
+    def test_downstream_pending_does_not_relax_review_scope(self) -> None:
+        github = self.fake()
+        github.post_approval_pending = github.pending()
+        github.conflicting_environment_review = True
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-prerequisite-review-conflict",
+        ):
+            self.approve(github)
+        self.assertEqual(github.posts, 1)
 
     def test_approval_reconcile_rejects_run_attempt_drift(self) -> None:
         github = self.fake()

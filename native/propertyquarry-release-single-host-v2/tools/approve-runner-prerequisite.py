@@ -87,6 +87,7 @@ WORKFLOW_REF = (
 )
 ENVIRONMENT = "propertyquarry-production"
 PREREQUISITE_JOB_KEY = "propertyquarry-protected-dispatch-inputs"
+SECURITY_JOB = "propertyquarry-flagship-security"
 RELEASE_JOB = "propertyquarry-release-v2"
 MAXIMUM_RESPONSE_BYTES = 4 * 1024 * 1024
 MAXIMUM_TOKEN_BYTES = 2048
@@ -94,6 +95,7 @@ MAXIMUM_COMPLETION_WAIT_SECONDS = 900
 MAXIMUM_RECONCILIATION_POLLS = 451
 NUMERIC_ID = re.compile(r"^[1-9][0-9]{0,19}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+SECURITY_RUNNER_LABEL = re.compile(r"^pqsec-[0-9a-f]{32}$")
 STAGE_NAME = re.compile(r"^\.runner-prerequisite-[0-9a-f]{64}\.tmp$")
 RECORD_NAME = re.compile(
     r"^[0-9a-f]{64}\.(?:(?:intent|approved)\.v2|(?:intent|approved|post-attempt)\.v3|retire-terminal\.v2)\.json$"
@@ -652,6 +654,96 @@ def _bound_prerequisite_job(
     return job
 
 
+def _pending_security_job(
+    jobs: list[dict[str, Any]], intent: dict[str, Any]
+) -> dict[str, Any] | None:
+    release_jobs = [job for job in jobs if job.get("name") == RELEASE_JOB]
+    if release_jobs:
+        fail("runner-prerequisite-release-job-already-present")
+
+    matches = [job for job in jobs if job.get("name") == SECURITY_JOB]
+    if len(matches) > 1:
+        fail("runner-prerequisite-security-job-selection-invalid")
+
+    for job in jobs:
+        if job.get("name") in {
+            intent["prerequisite_job_name"],
+            SECURITY_JOB,
+        }:
+            continue
+        if job.get("status") == "waiting":
+            fail("runner-prerequisite-protected-job-unexpected")
+        labels = job.get("labels")
+        if not isinstance(labels, list):
+            continue
+        if (
+            "self-hosted" in labels
+            or "propertyquarry-security" in labels
+            or "propertyquarry-release-controller-v2" in labels
+            or intent["runner_label"] in labels
+            or any(
+                isinstance(label, str)
+                and SECURITY_RUNNER_LABEL.fullmatch(label)
+                for label in labels
+            )
+        ):
+            fail("runner-prerequisite-protected-job-unexpected")
+
+    if not matches:
+        return None
+    job = matches[0]
+    labels = job.get("labels")
+    security_labels = (
+        [
+            label
+            for label in labels
+            if isinstance(label, str)
+            and SECURITY_RUNNER_LABEL.fullmatch(label)
+        ]
+        if isinstance(labels, list)
+        else []
+    )
+    if (
+        _numeric(job.get("id")) is None
+        or job.get("head_sha") != intent["workflow_sha"]
+        or job.get("run_url")
+        != (
+            f"https://api.github.com/repos/{REPOSITORY}/actions/runs/"
+            f"{intent['run_id']}"
+        )
+        or type(job.get("run_attempt")) is not int
+        or job.get("run_attempt") != intent["run_attempt"]
+        or not isinstance(labels, list)
+        or len(labels) != 3
+        or any(not isinstance(label, str) for label in labels)
+        or labels.count("self-hosted") != 1
+        or labels.count("propertyquarry-security") != 1
+        or len(security_labels) != 1
+        or len(set(labels)) != 3
+        or job.get("status") != "waiting"
+        or job.get("conclusion") is not None
+        or not (
+            job.get("runner_id") is None
+            or (
+                type(job.get("runner_id")) is int
+                and job.get("runner_id") == 0
+            )
+        )
+        or job.get("runner_name") not in {None, ""}
+        or not (
+            job.get("runner_group_id") is None
+            or (
+                type(job.get("runner_group_id")) is int
+                and job.get("runner_group_id") == 0
+            )
+        )
+        or job.get("runner_group_name") not in {None, ""}
+        or job.get("steps") != []
+    ):
+        fail("runner-prerequisite-security-job-binding-invalid")
+    return job
+
+
 def _terminal_release_job_evidence(
     jobs: list[dict[str, Any]],
     intent: dict[str, Any],
@@ -1039,6 +1131,116 @@ def _approval_pre_attempt_observation(
     return run_raw, jobs_raw, pending_raw, review_raw, exact_reviews
 
 
+def _approval_completion_observation(
+    requester: Requester,
+    intent: dict[str, Any],
+    *,
+    reverse: bool = False,
+) -> dict[str, bytes] | None:
+    if reverse:
+        review_raw, reviews = _review_history_matches(requester, intent)
+        pending, pending_raw = _pending_for_run(
+            requester, intent["run_id"]
+        )
+        jobs, jobs_raw = _jobs_for_run(
+            requester, intent["run_id"], intent["run_attempt"]
+        )
+        run, _run_raw = _run_for_id(requester, intent, terminal=False)
+    else:
+        run, _run_raw = _run_for_id(requester, intent, terminal=False)
+        jobs, jobs_raw = _jobs_for_run(
+            requester, intent["run_id"], intent["run_attempt"]
+        )
+        pending, pending_raw = _pending_for_run(
+            requester, intent["run_id"]
+        )
+        review_raw, reviews = _review_history_matches(requester, intent)
+    if len(pending) == 1:
+        environment_id, environment_name = _pending_environment(pending[0])
+        if (
+            environment_id != intent["environment_id"]
+            or environment_name != intent["environment_name"]
+        ):
+            fail("runner-prerequisite-pending-rebound")
+    elif pending != []:
+        fail("runner-prerequisite-pending-invalid")
+    prerequisite = _bound_prerequisite_job(jobs, intent)
+    security = _pending_security_job(jobs, intent)
+    if prerequisite.get("status") == "completed":
+        job_id, prerequisite = _prerequisite_job(
+            jobs,
+            expected_name=intent["prerequisite_job_name"],
+            run_id=intent["run_id"],
+            workflow_sha=intent["workflow_sha"],
+            waiting=False,
+        )
+        if job_id != intent["prerequisite_job_id"]:
+            fail("runner-prerequisite-completion-job-invalid")
+    elif (
+        prerequisite.get("status")
+        not in {"queued", "in_progress", "waiting", "pending", "requested"}
+        or prerequisite.get("conclusion") is not None
+    ):
+        fail("runner-prerequisite-completion-failed")
+    else:
+        if security is not None:
+            fail("runner-prerequisite-security-job-before-prerequisite")
+        return None
+
+    # An empty deployment gate is only a transient propagation state for this
+    # governed launch: it does not prove which downstream protected job became
+    # eligible. Seal only after the exact phase-two security gate is visible.
+    if not reviews or len(pending) != 1 or security is None:
+        return None
+    run_projection = _canonical(
+        {
+            "event": run.get("event"),
+            "head_branch": run.get("head_branch"),
+            "head_sha": run.get("head_sha"),
+            "id": run.get("id"),
+            "path": run.get("path"),
+            "run_attempt": run.get("run_attempt"),
+            "status": run.get("status"),
+        }
+    )
+    jobs_projection = _canonical(
+        {
+            "prerequisite": {
+                "conclusion": prerequisite.get("conclusion"),
+                "head_sha": prerequisite.get("head_sha"),
+                "id": prerequisite.get("id"),
+                "labels": prerequisite.get("labels"),
+                "name": prerequisite.get("name"),
+                "run_url": prerequisite.get("run_url"),
+                "status": prerequisite.get("status"),
+            },
+            "release_jobs": [],
+            "security": {
+                "conclusion": security.get("conclusion"),
+                "head_sha": security.get("head_sha"),
+                "id": security.get("id"),
+                "labels": security.get("labels"),
+                "name": security.get("name"),
+                "run_attempt": security.get("run_attempt"),
+                "run_url": security.get("run_url"),
+                "runner_group_id": security.get("runner_group_id"),
+                "runner_group_name": security.get("runner_group_name"),
+                "runner_id": security.get("runner_id"),
+                "runner_name": security.get("runner_name"),
+                "status": security.get("status"),
+                "steps": security.get("steps"),
+            },
+        }
+    )
+    return {
+        "jobs_projection": jobs_projection,
+        "jobs_raw": jobs_raw,
+        "pending_raw": pending_raw,
+        "review_raw": review_raw,
+        "run_projection": run_projection,
+    }
+
+
 def _reconcile_prerequisite_approval(
     requester: Requester,
     intent: dict[str, Any],
@@ -1053,42 +1255,26 @@ def _reconcile_prerequisite_approval(
         and current_time() <= deadline
     ):
         polls += 1
-        _run, _run_raw = _run_for_id(
-            requester, intent, terminal=False
-        )
-        pending, pending_raw = _pending_for_run(requester, intent["run_id"])
-        if len(pending) == 1:
-            environment_id, environment_name = _pending_environment(pending[0])
-            if (
-                environment_id != intent["environment_id"]
-                or environment_name != intent["environment_name"]
-            ):
-                fail("runner-prerequisite-pending-rebound")
-        elif pending != []:
-            fail("runner-prerequisite-pending-invalid")
-        review_raw, reviews = _review_history_matches(requester, intent)
-        jobs, jobs_raw = _jobs_for_run(
-            requester, intent["run_id"], intent["run_attempt"]
-        )
-        job = _bound_prerequisite_job(jobs, intent)
-        if job.get("status") == "completed":
-            job_id, job = _prerequisite_job(
-                jobs,
-                expected_name=intent["prerequisite_job_name"],
-                run_id=intent["run_id"],
-                workflow_sha=intent["workflow_sha"],
-                waiting=False,
+        first = _approval_completion_observation(requester, intent)
+        if first is not None:
+            second = _approval_completion_observation(
+                requester, intent, reverse=True
             )
-            if job_id != intent["prerequisite_job_id"]:
-                fail("runner-prerequisite-completion-job-invalid")
-            if reviews and pending == []:
-                return pending_raw, review_raw, jobs_raw
-        elif (
-            job.get("status")
-            not in {"queued", "in_progress", "waiting", "pending", "requested"}
-            or job.get("conclusion") is not None
-        ):
-            fail("runner-prerequisite-completion-failed")
+            stable_fields = (
+                "jobs_projection",
+                "pending_raw",
+                "review_raw",
+                "run_projection",
+            )
+            if second is None or any(
+                first[field] != second[field] for field in stable_fields
+            ):
+                fail("runner-prerequisite-observation-drift")
+            return (
+                second["pending_raw"],
+                second["review_raw"],
+                second["jobs_raw"],
+            )
         sleeper(2.0)
     fail("runner-prerequisite-completion-timeout")
 
@@ -1596,6 +1782,14 @@ def approve(
             "workflow_ref": WORKFLOW_REF,
             "workflow_sha": intent["workflow_sha"],
         }
+        # Approval v3 already seals the complete canonical jobs, pending
+        # deployments, and review-history responses. Reconciliation validates
+        # their exact downstream semantics twice, while the repeated signed
+        # run identity fields bind those responses to this run and attempt.
+        # Existing v3 approvals sealed the safe empty-pending state; this new
+        # non-empty path is distinguishable by the already-signed response
+        # digests. Strengthening issuance therefore needs no new unsigned
+        # claim or schema revision.
         _validate_approval(approval, intent_raw=intent_raw, intent=intent)
         approval_raw = _wire(
             approval, receipt_private, receipt_id, APPROVAL_SIGNATURE_DOMAIN
