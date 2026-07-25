@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import hashlib
 import importlib.util
 import os
@@ -123,6 +124,21 @@ def _checkpoint(_name: str) -> None:
 
 def _digest(raw: bytes) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _canonical_utc_timestamp(value: object) -> bool:
+    if type(value) is not str or re.fullmatch(
+        r"20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+        value,
+    ) is None:
+        return False
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return False
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ") == value
 
 
 def _prerequisite_job_name(
@@ -1598,12 +1614,28 @@ def _validate_retirement_terminal(
             "propertyquarry-release-controller-v2",
             intent["runner_label"],
         ]
+        observed_release_labels = payload.get("release_job_labels")
+        labels_are_bound = observed_release_labels in (
+            release_labels,
+            ["self-hosted", *release_labels],
+        )
+        labels_are_unevaluated = (
+            observed_release_labels == []
+            and payload.get("approval_post_attempt_present") is True
+            and payload.get("prerequisite_conclusion") == "failure"
+            and payload.get("run_conclusion") == "cancelled"
+            and payload.get("release_job_conclusion") == "cancelled"
+            and _canonical_utc_timestamp(
+                payload.get("release_job_started_at")
+            )
+            and payload.get("release_job_started_at")
+            == payload.get("release_job_completed_at")
+        )
         if (
             payload.get("release_job_present") is not True
             or type(payload.get("release_job_id")) is not str
             or NUMERIC_ID_PATTERN.fullmatch(payload["release_job_id"]) is None
-            or payload.get("release_job_labels")
-            not in (release_labels, ["self-hosted", *release_labels])
+            or not (labels_are_bound or labels_are_unevaluated)
             or payload.get("release_job_run_attempt")
             != intent["run_attempt"]
             or payload.get("release_job_runner_id") not in {None, 0}

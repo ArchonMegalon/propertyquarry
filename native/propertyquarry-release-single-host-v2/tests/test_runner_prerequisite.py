@@ -1260,6 +1260,221 @@ class RunnerPrerequisiteTests(unittest.TestCase):
         ):
             self.retire(wrong_labels)
 
+    def test_retirement_accepts_unevaluated_labels_only_after_failed_prerequisite(
+        self,
+    ) -> None:
+        def arm_post_attempt(github: FakeGitHub) -> None:
+            def checkpoint(name: str) -> None:
+                if name == "after-runner-prerequisite-post-attempt":
+                    raise SimulatedCrash(name)
+
+            with mock.patch.object(
+                approval, "_checkpoint", side_effect=checkpoint
+            ):
+                with self.assertRaises(SimulatedCrash):
+                    self.approve(github)
+            self.assertEqual(github.posts, 0)
+
+        def configure_unevaluated(
+            github: FakeGitHub, *, arm: bool = True
+        ) -> None:
+            if arm:
+                arm_post_attempt(github)
+            else:
+                self.discover_intent(github)
+            github.terminal = True
+            github.prerequisite_conclusion = "failure"
+            github.release_job_mode = "inert-stamped"
+            github.release_job_labels_override = []
+
+        def mutate_release_job(
+            github: FakeGitHub, **updates: object
+        ) -> None:
+            original_jobs = github.jobs
+
+            def mutated_jobs(run_id: int) -> dict[str, object]:
+                value = original_jobs(run_id)
+                for job in value["jobs"]:
+                    if job.get("name") == approval.RELEASE_JOB:
+                        job.update(updates)
+                return value
+
+            github.jobs = mutated_jobs  # type: ignore[method-assign]
+
+        unevaluated = self.fake()
+        configure_unevaluated(unevaluated)
+        retired = self.retire(unevaluated)
+        self.assertEqual(
+            retired["disposition"], "terminal-adopted-get-only"
+        )
+        terminal = approval._verify_wire(
+            approval._retirement_terminal_path(
+                self.reservation_raw
+            ).read_bytes(),
+            public=self.private.public_key(),
+            key_id=self.key_id,
+            schema=approval.RETIREMENT_TERMINAL_SCHEMA,
+            domain=approval.RETIREMENT_TERMINAL_SIGNATURE_DOMAIN,
+        )
+        self.assertEqual(terminal["release_job_labels"], [])
+        self.assertEqual(terminal["prerequisite_conclusion"], "failure")
+        approval.reservation._validate_retirement_terminal(
+            terminal,
+            intent_raw=approval._read_record(
+                approval._record_paths(self.reservation_raw)[0]
+            ),
+            intent=approval._verify_wire(
+                approval._record_paths(self.reservation_raw)[0].read_bytes(),
+                public=self.private.public_key(),
+                key_id=self.key_id,
+                schema=approval.INTENT_SCHEMA,
+                domain=approval.INTENT_SIGNATURE_DOMAIN,
+            ),
+            post_attempt_raw=approval._post_attempt_path(
+                self.reservation_raw
+            ).read_bytes(),
+        )
+        forged_without_post_attempt = json.loads(
+            json.dumps(terminal)
+        )
+        forged_without_post_attempt["approval_post_attempt_present"] = False
+        forged_without_post_attempt["approval_post_attempt_sha256"] = None
+        with self.assertRaisesRegex(
+            approval.reservation.ReservationFailure,
+            "runner-reservation-retirement-terminal-invalid",
+        ):
+            approval.reservation._validate_retirement_terminal(
+                forged_without_post_attempt,
+                intent_raw=approval._read_record(
+                    approval._record_paths(self.reservation_raw)[0]
+                ),
+                intent=approval._verify_wire(
+                    approval._record_paths(
+                        self.reservation_raw
+                    )[0].read_bytes(),
+                    public=self.private.public_key(),
+                    key_id=self.key_id,
+                    schema=approval.INTENT_SCHEMA,
+                    domain=approval.INTENT_SIGNATURE_DOMAIN,
+                ),
+                post_attempt_raw=None,
+            )
+        forged_invalid_timestamp = json.loads(json.dumps(terminal))
+        forged_invalid_timestamp["release_job_started_at"] = (
+            "not-a-timestamp"
+        )
+        forged_invalid_timestamp["release_job_completed_at"] = (
+            "not-a-timestamp"
+        )
+        with self.assertRaisesRegex(
+            approval.reservation.ReservationFailure,
+            "runner-reservation-retirement-terminal-invalid",
+        ):
+            approval.reservation._validate_retirement_terminal(
+                forged_invalid_timestamp,
+                intent_raw=approval._read_record(
+                    approval._record_paths(self.reservation_raw)[0]
+                ),
+                intent=approval._verify_wire(
+                    approval._record_paths(
+                        self.reservation_raw
+                    )[0].read_bytes(),
+                    public=self.private.public_key(),
+                    key_id=self.key_id,
+                    schema=approval.INTENT_SCHEMA,
+                    domain=approval.INTENT_SIGNATURE_DOMAIN,
+                ),
+                post_attempt_raw=approval._post_attempt_path(
+                    self.reservation_raw
+                ).read_bytes(),
+            )
+        abandoned = approval.reservation.abandon_terminal(
+            now=1_900_000_020
+        )
+        self.assertEqual(
+            abandoned["disposition"], "abandoned-terminal-published"
+        )
+
+        self.tearDown()
+        self.setUp()
+        unarmed = self.fake()
+        configure_unevaluated(unarmed, arm=False)
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(unarmed)
+
+        self.tearDown()
+        self.setUp()
+        cancelled_prerequisite = self.fake()
+        configure_unevaluated(cancelled_prerequisite)
+        cancelled_prerequisite.prerequisite_conclusion = "cancelled"
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(cancelled_prerequisite)
+
+        self.tearDown()
+        self.setUp()
+        failed_run = self.fake()
+        configure_unevaluated(failed_run)
+        failed_run.run_conclusion = "failure"
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(failed_run)
+
+        self.tearDown()
+        self.setUp()
+        skipped_release = self.fake()
+        configure_unevaluated(skipped_release)
+        mutate_release_job(skipped_release, conclusion="skipped")
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(skipped_release)
+
+        self.tearDown()
+        self.setUp()
+        grouped_release = self.fake()
+        configure_unevaluated(grouped_release)
+        mutate_release_job(
+            grouped_release,
+            runner_group_id=17,
+            runner_group_name="unexpected-group",
+        )
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(grouped_release)
+
+        self.tearDown()
+        self.setUp()
+        unstamped = self.fake()
+        configure_unevaluated(unstamped)
+        unstamped.release_job_mode = "inert"
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(unstamped)
+
+        self.tearDown()
+        self.setUp()
+        successful_prerequisite = self.fake()
+        configure_unevaluated(successful_prerequisite)
+        successful_prerequisite.prerequisite_conclusion = "success"
+        with self.assertRaisesRegex(
+            approval.ApprovalFailure,
+            "runner-retirement-release-job-executed",
+        ):
+            self.retire(successful_prerequisite)
+
     def test_retirement_requires_double_stable_terminal_observation(
         self,
     ) -> None:
