@@ -653,7 +653,12 @@ def _bound_prerequisite_job(
 
 
 def _terminal_release_job_evidence(
-    jobs: list[dict[str, Any]], intent: dict[str, Any]
+    jobs: list[dict[str, Any]],
+    intent: dict[str, Any],
+    *,
+    post_attempt_present: bool,
+    prerequisite_conclusion: object,
+    run_conclusion: object,
 ) -> dict[str, Any]:
     matches = [job for job in jobs if job.get("name") == RELEASE_JOB]
     if len(matches) > 1:
@@ -684,6 +689,16 @@ def _terminal_release_job_evidence(
     ]
     legacy_labels = ["self-hosted", *labels]
     observed_labels = job.get("labels")
+    labels_are_bound = observed_labels in (labels, legacy_labels)
+    labels_are_unevaluated = (
+        observed_labels == []
+        and post_attempt_present
+        and prerequisite_conclusion == "failure"
+        and run_conclusion == "cancelled"
+        and job.get("conclusion") == "cancelled"
+        and isinstance(started_at, str)
+        and started_at == completed_at
+    )
     if (
         job_id is None
         or job.get("status") != "completed"
@@ -691,7 +706,7 @@ def _terminal_release_job_evidence(
         or job.get("head_sha") != intent["workflow_sha"]
         or job.get("run_url")
         != f"https://api.github.com/repos/{REPOSITORY}/actions/runs/{intent['run_id']}"
-        or observed_labels not in (labels, legacy_labels)
+        or not (labels_are_bound or labels_are_unevaluated)
         or job.get("run_attempt") != intent["run_attempt"]
         or job.get("runner_id") not in {None, 0}
         or job.get("runner_name") not in {None, ""}
@@ -1149,6 +1164,8 @@ def _validate_retirement_terminal(
 def _retirement_observation(
     requester: Requester,
     intent: dict[str, Any],
+    *,
+    post_attempt_present: bool,
 ) -> dict[str, Any]:
     run, run_raw = _run_for_id(requester, intent, terminal=True)
     jobs, jobs_raw = _jobs_for_run(
@@ -1161,7 +1178,13 @@ def _retirement_observation(
         not in {"cancelled", "failure", "success"}
     ):
         fail("runner-retirement-prerequisite-state-invalid")
-    release = _terminal_release_job_evidence(jobs, intent)
+    release = _terminal_release_job_evidence(
+        jobs,
+        intent,
+        post_attempt_present=post_attempt_present,
+        prerequisite_conclusion=prerequisite["conclusion"],
+        run_conclusion=run["conclusion"],
+    )
     pending, pending_raw = _pending_for_run(requester, intent["run_id"])
     if pending != []:
         fail("runner-retirement-pending-present")
@@ -1193,7 +1216,11 @@ def _retirement_observation(
         verified_jobs, intent
     )
     verified_release = _terminal_release_job_evidence(
-        verified_jobs, intent
+        verified_jobs,
+        intent,
+        post_attempt_present=post_attempt_present,
+        prerequisite_conclusion=verified_prerequisite["conclusion"],
+        run_conclusion=verified_run["conclusion"],
     )
     if (
         verified_pending != []
@@ -1704,7 +1731,11 @@ def retire_terminal(
         if requester is None:
             token = _read_admin_token()
             requester = _production_requester(token)
-        observation = _retirement_observation(requester, intent)
+        observation = _retirement_observation(
+            requester,
+            intent,
+            post_attempt_present=post_attempt_raw is not None,
+        )
         _require_no_materialization(
             reservation_raw,
             receipt_public=receipt_public,

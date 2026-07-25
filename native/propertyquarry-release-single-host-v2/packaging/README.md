@@ -350,8 +350,16 @@ The release dispatch has no manual environment-review step. Its exact order is:
    `completed_at`; that exact terminal stamp is inert only when the runner,
    runner group, and steps are all absent and both governed custom labels are
    exact. Frozen history may additionally carry the formerly explicit
-   `self-hosted` label. A different start timestamp, missing custom label, or
-   any execution evidence still fails closed. Then
+   `self-hosted` label. After a signed approval precommit, if the protected
+   prerequisite fails and the run is cancelled, GitHub may leave the
+   never-scheduled downstream job's dynamic labels unevaluated as an empty
+   list. That empty list is terminally inert only when the downstream
+   conclusion is also `cancelled`, the non-null start/completion stamp is
+   identical, and the runner, runner group, and steps are all absent. It is
+   rejected without the signed precommit, after a successful or cancelled
+   prerequisite, for a failed or skipped downstream job, or for a failed run.
+   A different start timestamp, partial or substituted labels, or any
+   execution evidence still fails closed. Then
    `prepare-runner-reservation.py abandon-terminal` signs the abandonment and
    atomically retains the reservation as an `.abandoned.v2` terminal. These
    safe retirement steps may run after reservation expiry; neither command
