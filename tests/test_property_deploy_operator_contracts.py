@@ -88,6 +88,9 @@ def test_local_deploy_protects_project_scope_and_waits_for_health() -> None:
     assert "Refusing --remove-orphans with unexpected project services" in deploy
     assert "--file docker-compose.property.yml" in deploy
     assert "--file docker-compose.cloudflared.yml" in deploy
+    assert "scripts/provision_propertyquarry_admission_database.py" in deploy
+    assert '--runtime-image "${web_image}"' in deploy
+    assert "propertyquarry-admission-database.v1.json" in deploy
     assert "up --detach --remove-orphans --wait --wait-timeout 420" in deploy
 
 

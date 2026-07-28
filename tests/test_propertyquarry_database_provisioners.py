@@ -167,6 +167,13 @@ def test_admission_probe_is_digest_pinned_and_keeps_secret_out_of_argv(
         credential.database_url,
     )
 
+    admission._probe_runtime(
+        image="sha256:" + "b" * 64,
+        network="property_default",
+        env_file=env_file,
+        credential=credential,
+    )
+
     with pytest.raises(
         admission.ProvisioningError,
         match="runtime_image_must_be_digest_pinned",

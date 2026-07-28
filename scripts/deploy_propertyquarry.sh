@@ -10,6 +10,7 @@ cd "${APP_ROOT}"
 
 COMPOSE_PROJECT_NAME="${PROPERTYQUARRY_COMPOSE_PROJECT_NAME:-property}"
 LOCAL_RECEIPT="${PROPERTYQUARRY_LOCAL_DEPLOYMENT_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-local-deployment.v1.json}"
+ADMISSION_RECEIPT="${PROPERTYQUARRY_ADMISSION_DATABASE_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-admission-database.v1.json}"
 PREFLIGHT_ONLY=0
 SKIP_BUILD=0
 
@@ -235,6 +236,20 @@ if ((PREFLIGHT_ONLY == 1)); then
     "${runtime_sha}" "${head_sha}" "${web_image}" "${render_image}"
   exit 0
 fi
+
+/usr/bin/docker compose \
+  --project-name "${COMPOSE_PROJECT_NAME}" \
+  --file docker-compose.property.yml \
+  up --detach --wait --wait-timeout 120 propertyquarry-db
+
+python3 scripts/provision_propertyquarry_admission_database.py \
+  --runtime-image "${web_image}" \
+  --database-container "${PROPERTYQUARRY_DB_CONTAINER_NAME}" \
+  --database-host propertyquarry-db \
+  --docker-network "${COMPOSE_PROJECT_NAME}_default" \
+  --env-file "${APP_ROOT}/state/runtime/propertyquarry_admission.env" \
+  --receipt "${ADMISSION_RECEIPT}" \
+  > /dev/null
 
 /usr/bin/docker compose \
   --project-name "${COMPOSE_PROJECT_NAME}" \

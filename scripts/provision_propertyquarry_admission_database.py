@@ -36,7 +36,9 @@ DEFAULT_DATABASE_CONTAINER = "propertyquarry-db-live"
 DEFAULT_DATABASE_HOST = "propertyquarry-db"
 DEFAULT_DOCKER_NETWORK = "property_default"
 DEFAULT_ENV_FILE = Path("state/runtime/propertyquarry_admission.env")
-IMAGE_RE = re.compile(r"^[a-z0-9./_-]+@sha256:[0-9a-f]{64}$")
+IMAGE_RE = re.compile(
+    r"^(?:[a-z0-9./_-]+@)?sha256:[0-9a-f]{64}$"
+)
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 PASSWORD_RE = re.compile(r"^[A-Za-z0-9_-]{48,128}$")
 
