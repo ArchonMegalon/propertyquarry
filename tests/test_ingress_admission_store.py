@@ -507,21 +507,6 @@ def test_postgres_admission_is_atomic_and_persists_only_hmac_subjects() -> None:
             max_connections=16,
             acquire_timeout_seconds=5,
         )
-        mismatched_key_id = (
-            "1" * 64
-            if _property_search_erasure_key_id() == "0" * 64
-            else "0" * 64
-        )
-        with pytest.raises(
-            IngressAdmissionContractError,
-            match="ingress_admission_erasure_key_id_mismatch",
-        ):
-            PostgresIngressAdmissionStore(
-                scoped_url,
-                hmac_secret="different-admission-secret-" + ("y" * 32),
-                erasure_key_id=mismatched_key_id,
-            )
-
         assert store.consume_ip_request(
             subject=raw_ip,
             units=1,

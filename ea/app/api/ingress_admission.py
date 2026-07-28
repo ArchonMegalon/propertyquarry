@@ -1602,36 +1602,13 @@ class PostgresIngressAdmissionStore:
             )
 
     def require_ready(self) -> None:
-        # Keep the canonical migration ledger, relation, trigger, function,
-        # and row-count inspection in one bounded store transaction.
-        from app.product.property_search_schema import (
-            inspect_property_search_schema_cursor,
-        )
-
-        with self._transaction(AdmissionOperation.SNAPSHOT) as cursor:
-            status = inspect_property_search_schema_cursor(cursor)
-            if status.ready:
-                cursor.execute(
-                    """
-                    SELECT key_id
-                    FROM property_search_erasure_key_state
-                    WHERE singleton = TRUE
-                    """
-                )
-                key_row = cursor.fetchone()
-                if (
-                    key_row is None
-                    or str(key_row[0] or "").strip()
-                    != self._erasure_key_id
-                ):
-                    raise IngressAdmissionContractError(
-                        "ingress_admission_erasure_key_id_mismatch",
-                        backend=AdmissionBackend.POSTGRES,
-                        operation=AdmissionOperation.SNAPSHOT,
-                    )
-        if not status.ready:
+        # The production admission database deliberately contains only the
+        # quota, lease, and capacity relations. It must not require or acquire
+        # authority over the primary property-search migration ledger.
+        snapshot = self.capacity_snapshot()
+        if not snapshot.contract_valid:
             raise IngressAdmissionContractError(
-                status.reason,
+                "ingress_admission_capacity_contract_invalid",
                 backend=AdmissionBackend.POSTGRES,
                 operation=AdmissionOperation.SNAPSHOT,
             )
