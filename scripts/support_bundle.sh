@@ -31,6 +31,62 @@ EOF
   exit 0
 fi
 
+OPERATOR_PYTHONPATH="${EA_ROOT}/ea:${EA_ROOT}"
+
+operator_python_usable() {
+  local candidate="$1"
+
+  if [[ "${candidate}" == */* ]]; then
+    [[ -x "${candidate}" ]] || return 1
+  else
+    command -v "${candidate}" >/dev/null 2>&1 || return 1
+  fi
+
+  PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
+    PYTHONSAFEPATH=1 \
+    PYTHONPATH="${OPERATOR_PYTHONPATH}" \
+    "${candidate}" -B -c \
+      'import yaml; from app.product.service import _public_guide_freshness_projection; from app.api.routes.responses import _codex_governance_payload, _codex_profiles' \
+      >/dev/null 2>&1
+}
+
+select_operator_python() {
+  local explicit="${PROPERTYQUARRY_OPERATOR_PYTHON:-}"
+  local candidate
+
+  if [[ -n "${explicit}" ]]; then
+    if ! operator_python_usable "${explicit}"; then
+      echo "support bundle: PROPERTYQUARRY_OPERATOR_PYTHON is not a usable application interpreter: ${explicit}" >&2
+      return 1
+    fi
+    printf '%s\n' "${explicit}"
+    return 0
+  fi
+
+  for candidate in \
+    "${EA_ROOT}/.venv/bin/python" \
+    "${EA_ROOT}/scripts/propertyquarry_release_python.sh" \
+    python3
+  do
+    if operator_python_usable "${candidate}"; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "support bundle: no usable application Python interpreter found" >&2
+  return 1
+}
+
+run_operator_python() {
+  PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
+    PYTHONSAFEPATH=1 \
+    PYTHONPATH="${OPERATOR_PYTHONPATH}" \
+    "${OPERATOR_PYTHON}" -B "$@"
+}
+
 if command -v timeout >/dev/null 2>&1; then
   COMPOSE_PROBE=(timeout 5s)
 else
@@ -65,6 +121,10 @@ INCLUDE_GROUNDING="${SUPPORT_INCLUDE_GROUNDING:-1}"
 DB_SIZE_LIMIT="${SUPPORT_DB_SIZE_LIMIT:-10}"
 INCLUDE_QUEUE="${SUPPORT_INCLUDE_QUEUE:-1}"
 DB_CONTAINER="${EA_DB_CONTAINER:-${DB_SERVICE}}"
+OPERATOR_PYTHON=""
+if [[ "${INCLUDE_PRODUCT_CONTROL}" == "1" || "${INCLUDE_GROUNDING}" == "1" ]]; then
+  OPERATOR_PYTHON="$(select_operator_python)"
+fi
 
 redact() {
   sed -E \
@@ -92,7 +152,7 @@ run_compose() {
 }
 
 print_product_control_summary() {
-  python3 - <<'PY'
+  run_operator_python - <<'PY'
 from __future__ import annotations
 
 import json
@@ -152,7 +212,7 @@ PY
 }
 
 print_grounding_summary() {
-  python3 - <<'PY'
+  run_operator_python - <<'PY'
 from __future__ import annotations
 
 from pathlib import Path
@@ -204,7 +264,7 @@ PY
 }
 
 print_codex_governance_summary() {
-  python3 - <<'PY'
+  run_operator_python - <<'PY'
 from __future__ import annotations
 
 import sys

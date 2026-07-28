@@ -32,10 +32,178 @@ from app.product.service import ProductService
 from app.product.service import _property_alert_personal_fit_snapshot, _property_candidate_google_maps_url, _property_candidate_is_generic_listing_page, _property_candidate_matches_requested_location, _property_candidate_url_has_exact_location_probe, _property_candidate_url_has_location_probe, _property_search_location_hints
 from app.product.service import _property_investment_underwriting_payload
 from app.services.fliplink import build_fliplink_packet_service
+from app.services.onboarding import OnboardingService, flatten_property_search_preferences_snapshot
 from app.services.property_billing import property_billing_event_updates, property_billing_invoice_handoffs, property_commercial_snapshot, property_worker_cap
 from app.services import property_market_catalog
 from app.services.heyy_whatsapp_service import redact_phone_number
 from tests.product_test_helpers import build_product_client, build_property_client, seed_product_state, start_workspace
+
+
+def test_property_search_preferences_normalization_is_idempotent_and_preserves_raw_only_values() -> None:
+    normalized = OnboardingService._normalize_property_search_preferences(
+        {
+            "country_code": "AT",
+            "listing_mode": "rent",
+            "location_query": "Wien",
+            "selected_platforms": ["willhaben"],
+            "future_raw_only_preference": {"mode": "keep"},
+        }
+    )
+
+    serialized_sizes: list[int] = []
+    for _ in range(10):
+        normalized = OnboardingService._normalize_property_search_preferences(normalized)
+        raw_preferences = dict(normalized.get("raw_preferences") or {})
+        assert raw_preferences["future_raw_only_preference"] == {"mode": "keep"}
+        assert "raw_preferences" not in raw_preferences
+        assert "saved_shortlist_candidates" not in raw_preferences
+        assert "search_agents" not in raw_preferences
+        serialized_sizes.append(len(json.dumps(normalized, ensure_ascii=True, sort_keys=True)))
+
+    assert len(set(serialized_sizes)) == 1
+
+
+def test_property_search_preferences_normalization_flattens_full_legacy_chain_with_outer_precedence() -> None:
+    normalized = OnboardingService._normalize_property_search_preferences(
+        {
+            "country_code": "AT",
+            "listing_mode": "buy",
+            "location_query": "Wien",
+            "selected_platforms": ["willhaben"],
+            "investment_strategy": "appreciation",
+            "raw_preferences": {
+                "alert_frequency": "weekday",
+                "raw_preferences": {
+                    "investment_strategy": "cash_flow",
+                    "include_shared_housing_sources": True,
+                    "raw_preferences": {"legacy_raw_only_leaf": "preserve-deep-value"},
+                },
+            },
+        }
+    )
+
+    raw_preferences = dict(normalized.get("raw_preferences") or {})
+    assert raw_preferences["investment_strategy"] == "appreciation"
+    assert raw_preferences["alert_frequency"] == "weekday"
+    assert raw_preferences["include_shared_housing_sources"] is True
+    assert raw_preferences["legacy_raw_only_leaf"] == "preserve-deep-value"
+    assert "raw_preferences" not in raw_preferences
+
+
+def test_property_search_preferences_snapshot_flattening_fails_closed_at_depth_bound() -> None:
+    nested: dict[str, object] = {"deep_value": "must-not-be-silently-lost"}
+    for _ in range(3):
+        nested = {"raw_preferences": nested}
+
+    with pytest.raises(ValueError, match="property_search_raw_preferences_depth_limit_exceeded"):
+        flatten_property_search_preferences_snapshot(nested, max_depth=2)
+
+
+def test_property_search_preferences_upsert_flattens_legacy_raw_snapshot_and_stays_bounded() -> None:
+    principal_id = "exec-property-search-raw-preferences-idempotent"
+    client = build_property_client(principal_id=principal_id)
+    start_workspace(client, mode="personal", workspace_name="Raw Preferences Office")
+    onboarding = client.app.state.container.onboarding
+
+    state = onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json={
+            "country_code": "AT",
+            "listing_mode": "rent",
+            "location_query": "Wien",
+            "raw_preferences": {
+                "location_query": "Graz",
+                "future_raw_only_preference": "preserve-me",
+                "raw_preferences": {
+                    "location_query": "legacy-nested-value",
+                    "legacy_nested_raw_only_value": "preserve-me-too",
+                },
+            },
+        },
+    )
+
+    serialized_sizes: list[int] = []
+    for _ in range(8):
+        preferences = dict(state.get("property_search_preferences") or {})
+        raw_preferences = dict(preferences.get("raw_preferences") or {})
+        assert preferences["location_query"] == "Wien"
+        assert raw_preferences["location_query"] == "Wien"
+        assert raw_preferences["future_raw_only_preference"] == "preserve-me"
+        assert "raw_preferences" not in raw_preferences
+        assert "saved_shortlist_candidates" not in raw_preferences
+        assert "search_agents" not in raw_preferences
+        assert raw_preferences["legacy_nested_raw_only_value"] == "preserve-me-too"
+        serialized_sizes.append(len(json.dumps(preferences, ensure_ascii=True, sort_keys=True)))
+        state = onboarding.upsert_property_search_preferences(
+            principal_id=principal_id,
+            property_search_preferences_json=preferences,
+        )
+
+    # The first persisted round trip may add derived agent/commercial defaults;
+    # subsequent full-state saves must remain stable instead of nesting again.
+    assert len(set(serialized_sizes[1:])) == 1
+    assert max(serialized_sizes) < min(serialized_sizes) * 2
+
+
+def test_property_search_run_merge_drops_legacy_nested_raw_preferences(monkeypatch: pytest.MonkeyPatch) -> None:
+    principal_id = "exec-property-search-run-legacy-raw"
+    client = build_property_client(principal_id=principal_id)
+    service = ProductService(client.app.state.container)
+    monkeypatch.setattr(
+        client.app.state.container.onboarding,
+        "status",
+        lambda *, principal_id: {
+            "property_search_preferences": {
+                "country_code": "AT",
+                "listing_mode": "rent",
+                "location_query": "Wien",
+                "selected_platforms": ["willhaben"],
+                "raw_preferences": {
+                    "future_raw_only_preference": "preserve-me",
+                    "raw_preferences": {
+                        "investment_strategy": "cash_flow",
+                        "alert_frequency": "weekday",
+                        "include_shared_housing_sources": True,
+                        "raw_preferences": {"legacy_raw_only_leaf": "preserve-deep-value"},
+                    },
+                },
+            }
+        },
+    )
+
+    merged = service._merged_raw_property_search_preferences(
+        principal_id=principal_id,
+        property_preferences=None,
+    )
+    assert merged["future_raw_only_preference"] == "preserve-me"
+    assert merged["investment_strategy"] == "cash_flow"
+    assert merged["alert_frequency"] == "weekday"
+    assert merged["include_shared_housing_sources"] is True
+    assert merged["legacy_raw_only_leaf"] == "preserve-deep-value"
+    assert "raw_preferences" not in merged
+
+    _platforms, resolved, _max_results = service._resolve_property_search_run_preferences(
+        principal_id=principal_id,
+        selected_platforms=("willhaben",),
+        property_preferences=None,
+        max_results_per_source=1,
+        force_refresh=False,
+    )
+    assert resolved["investment_strategy"] == "cash_flow"
+    assert resolved["alert_frequency"] == "weekday"
+    assert resolved["include_shared_housing_sources"] is True
+    assert "future_raw_only_preference" not in resolved
+    assert "legacy_raw_only_leaf" not in resolved
+    assert "raw_preferences" not in resolved
+
+    record = product_service._new_property_search_run_record(
+        run_id="run-legacy-raw-preferences",
+        principal_id=principal_id,
+        selected_platforms=("willhaben",),
+        property_search_preferences=resolved,
+        force_refresh=False,
+    )
+    assert "raw_preferences" not in dict(record["property_search_preferences"])
 
 
 def test_property_search_compact_record_hydrates_preview_from_provider_media_diagnostics() -> None:
@@ -1338,8 +1506,9 @@ def test_ranked_candidates_return_all_rows_without_global_slice_by_default() -> 
     assert unlimited_ranked[-1]["rank"] == 75
 
 
-def test_private_brigittenau_showcase_injects_first_for_allowed_user_and_1200_search(monkeypatch) -> None:
+def test_private_brigittenau_showcase_does_not_inject_when_bundle_is_missing(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS", "property-showcase-owner@example.test")
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
     monkeypatch.setenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_FLOOR", "6")
     monkeypatch.setenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_LIFT", "1")
     monkeypatch.setenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_BALCONY", "1")
@@ -1374,16 +1543,126 @@ def test_private_brigittenau_showcase_injects_first_for_allowed_user_and_1200_se
     )
 
     summary = dict(snapshot["summary"])
-    ranked = [dict(row) for row in list(summary["ranked_candidates"])]
+    assert summary.get("private_showcase_candidate_ref") is None
+    assert summary.get("private_showcase_status") is None
+    assert [row["candidate_ref"] for row in summary["sources"][0]["top_candidates"]] == ["public-hit"]
+    serialized = json.dumps(snapshot, sort_keys=True)
+    assert "private-showcase-flat" not in serialized
+    assert "generated-walkthrough.mp4" not in serialized
+    assert "source-floorplan.jpg" not in serialized
 
-    assert ranked[0]["candidate_ref"] == product_service._PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF  # type: ignore[attr-defined]
-    assert ranked[0]["rank"] == 1
-    assert ranked[0]["ranking_score"] == 999.0
-    assert ranked[0]["tour_url"].endswith("/control/3dvista")
-    assert ranked[0]["flythrough_url"].endswith("/generated-reconstruction/generated-walkthrough.mp4")
-    assert dict(ranked[0]["property_facts"])["total_rent_eur"] == 0
-    assert dict(ranked[0]["property_facts"])["floor"] == 6
-    assert dict(ranked[0]["property_facts"])["floorplan_urls_json"][0].endswith("/generated-reconstruction/source-floorplan.jpg")
+
+def test_private_brigittenau_showcase_injects_verified_first_party_tour(monkeypatch, tmp_path: Path) -> None:
+    from scripts.property_tour_3dvista_provenance import (
+        THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
+        export_tree_sha256,
+    )
+
+    principal_id = "cf-email:property-showcase-owner@example.test"
+    slug = product_service._PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG  # type: ignore[attr-defined]
+    bundle_dir = tmp_path / slug
+    export_dir = bundle_dir / "3dvista"
+    export_dir.mkdir(parents=True)
+    (export_dir / "index.htm").write_text(
+        "<!doctype html><html><body><div id='tour-viewer'>3D tour ready</div>"
+        "<script>window.TDVPlayer = { ready: true };</script></body></html>",
+        encoding="utf-8",
+    )
+    (bundle_dir / "tour.json").write_text(
+        json.dumps(
+            {
+                "slug": slug,
+                "three_d_vista_target_provenance": {
+                    "schema": THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
+                    "status": "pass",
+                    "provider": "3dvista",
+                    "target_slug": slug,
+                    "artifact": {
+                        "kind": "local_export",
+                        "sha256": export_tree_sha256(export_dir),
+                        "entry_relpath": "index.htm",
+                    },
+                    "authorization": {
+                        "status": "approved",
+                        "reference": f"fixture-authorization:{slug}",
+                    },
+                    "review": {
+                        "property_match": "pass",
+                        "visual_match": "pass",
+                        "reviewed_by": "propertyquarry-test-reviewer",
+                        "reviewed_at": "2026-07-18T00:00:00+00:00",
+                    },
+                    "target_subdir": "3dvista",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "principal_id": principal_id,
+                "three_d_vista_entry_relpath": "3dvista/index.htm",
+                "three_d_vista_import": {"source_project": "propertyquarry"},
+                "three_d_vista_white_label_proof": {
+                    "source_project": "propertyquarry",
+                    "private_viewer_verified": True,
+                    "non_trial_export_verified": True,
+                    "propertyquarry_tour_metadata": True,
+                    "trial_branding_checked": True,
+                    "trial_branding_present": False,
+                },
+                "three_d_vista_browser_render_proof": {
+                    "provider": "3dvista",
+                    "status": "pass",
+                    "rendered_viewer": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS", "property-showcase-owner@example.test")
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
+
+    snapshot = product_service._property_search_snapshot_with_private_showcase(  # type: ignore[attr-defined]
+        {
+            "run_id": "run-private-20",
+            "property_search_preferences": {"country_code": "AT", "location_query": "1200 Vienna"},
+            "summary": {
+                "sources": [
+                    {
+                        "source_label": "Willhaben",
+                        "top_candidates": [
+                            {
+                                "candidate_ref": "public-hit",
+                                "source_ref": "provider:public-hit",
+                                "title": "Normal Brigittenau hit",
+                                "property_url": "https://example.test/hit",
+                                "fit_score": 95,
+                                "ranking_score": 95,
+                                "property_facts": {"postal_name": "1200 Wien"},
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+        principal_id=principal_id,
+    )
+
+    summary = dict(snapshot["summary"])
+    ranked = [dict(row) for row in list(summary["ranked_candidates"])]
+    showcase = ranked[0]
+    facts = dict(showcase["property_facts"])
+
+    assert showcase["candidate_ref"] == product_service._PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF  # type: ignore[attr-defined]
+    assert showcase["tour_url"] == f"/tours/{slug}/control/3dvista"
+    assert "://" not in showcase["tour_url"]
+    assert showcase["tour_status"] == "ready"
+    assert showcase["flythrough_url"] == ""
+    assert showcase["flythrough_status"] == "unavailable"
+    assert facts["has_floorplan"] is False
+    assert facts["floorplan_urls_json"] == []
     assert ranked[1]["candidate_ref"] == "public-hit"
 
 
@@ -2215,6 +2494,99 @@ def test_property_public_preview_cache_reuses_sanitized_public_facts() -> None:
     assert loaded is not None
     assert loaded["title"] == "Quiet courtyard flat"
     assert loaded["property_facts_json"]["has_floorplan"] is True
+
+
+def test_property_cached_floorplan_augments_current_derstandard_preview_without_replacing_fresher_data() -> None:
+    property_url = "https://immobilien.derstandard.at/detail/15201500"
+    merged = product_service._property_merge_public_preview(
+        property_url=property_url,
+        current={
+            "property_url": property_url,
+            "listing_id": "derstandard-15201500",
+            "title": "Current DerStandard title",
+            "summary": "Current availability and pricing summary.",
+            "media_urls_json": ["https://cdn.example.test/current-hero.jpg"],
+            "property_facts_json": {
+                "price_eur": 249000,
+                "area_m2": 78,
+                "is_available": False,
+                "has_floorplan": False,
+                "floorplan_count": 0,
+            },
+        },
+        cached={
+            "property_url": property_url,
+            "listing_id": "stale-cache-id",
+            "title": "Stale cached title",
+            "summary": "Stale cached summary.",
+            "media_urls_json": ["https://cdn.example.test/cached-room.jpg"],
+            "floorplan_urls_json": ["https://cdn.example.test/derstandard-15201500-floorplan.png"],
+            "source_virtual_tour_url": "https://tour.example.test/derstandard-15201500",
+            "property_facts_json": {
+                "price_eur": 239000,
+                "area_m2": 74,
+                "is_available": True,
+                "rooms": 3,
+                "has_floorplan": True,
+                "floorplan_count": 1,
+                "floorplan_urls_json": [
+                    "https://cdn.example.test/derstandard-15201500-floorplan.png"
+                ],
+            },
+        },
+    )
+
+    assert merged["listing_id"] == "derstandard-15201500"
+    assert merged["title"] == "Current DerStandard title"
+    assert merged["summary"] == "Current availability and pricing summary."
+    assert merged["media_urls_json"] == [
+        "https://cdn.example.test/current-hero.jpg",
+        "https://cdn.example.test/cached-room.jpg",
+    ]
+    assert merged["floorplan_urls_json"] == [
+        "https://cdn.example.test/derstandard-15201500-floorplan.png"
+    ]
+    assert merged["source_virtual_tour_url"] == "https://tour.example.test/derstandard-15201500"
+    assert merged["property_facts_json"] == {
+        "price_eur": 249000,
+        "area_m2": 78,
+        "is_available": False,
+        "rooms": 3,
+        "has_floorplan": True,
+        "floorplan_count": 1,
+        "floorplan_urls_json": [
+            "https://cdn.example.test/derstandard-15201500-floorplan.png"
+        ],
+    }
+
+
+def test_property_source_research_only_promotes_labelled_floorplan_media() -> None:
+    assert product_service._property_scout_floorplan_media_urls(
+        (
+            "https://cdn.example.test/living-room.jpg",
+            "https://cdn.example.test/Grundriss-Wohnung-12.png",
+            "https://cdn.example.test/balcony.webp",
+            "https://cdn.example.test/Grundriss-Wohnung-12.png",
+        )
+    ) == ("https://cdn.example.test/Grundriss-Wohnung-12.png",)
+
+
+def test_property_floorplan_unknown_status_is_not_positive_layout_evidence() -> None:
+    assert product_service._property_candidate_has_floorplan(
+        property_url="https://listings.example.test/home-12",
+        title="Home 12",
+        summary="Two-room rental with balcony.",
+        property_facts={
+            "has_floorplan": False,
+            "floorplan_count": 0,
+            "floorplan_research_status": "missing_or_unverified_soft_requirement",
+            "floorplan_requirement_mode": "soft",
+            "unknowns_json": [
+                "Floorplan is required by preference but not exposed by this provider before review."
+            ],
+            "missing_facts_json": ["floorplan"],
+        },
+    ) is False
 
 
 def test_austria_noise_preference_uses_layout_quiet_signal_only_as_weak_hint() -> None:
@@ -11876,6 +12248,7 @@ def test_property_search_run_preserves_restored_agent_commercial_when_raw_prefer
                 "active_until": "2999-01-01T00:00:00+00:00",
             },
         },
+        trusted_commercial_update=True,
     )
     observed: dict[str, object] = {}
 
@@ -11957,6 +12330,12 @@ def test_property_search_run_preferences_strip_workspace_state_and_keep_active_a
         },
         "saved_shortlist_candidates": [{"property_url": "https://requested.example.test/listing"}],
         "saved_shortlist_share_slug": "requested-private-slug",
+        "provider_selection_filter_applied": True,
+        "provider_selection_filter_removed": ["stale-selection-provider"],
+        "provider_selection_filter_removed_details": [{"platform": "stale-selection-provider"}],
+        "provider_country_filter_applied": True,
+        "provider_country_filter_removed": ["stale-country-provider"],
+        "provider_country_filter_removed_details": [{"platform": "stale-country-provider"}],
     }
 
     selected_platforms, run_preferences, resolved_max_results = service._resolve_property_search_run_preferences(
@@ -11985,6 +12364,15 @@ def test_property_search_run_preferences_strip_workspace_state_and_keep_active_a
         "contact_email",
     ):
         assert workspace_only_key not in run_preferences
+    for stale_filter_key in (
+        "provider_selection_filter_applied",
+        "provider_selection_filter_removed",
+        "provider_selection_filter_removed_details",
+        "provider_country_filter_applied",
+        "provider_country_filter_removed",
+        "provider_country_filter_removed_details",
+    ):
+        assert stale_filter_key not in run_preferences
 
 
 def test_property_search_run_snapshot_projection_strips_historical_workspace_state() -> None:
@@ -12051,6 +12439,39 @@ def test_property_search_run_snapshot_projection_strips_historical_workspace_sta
         "pi_historical_secret",
     ):
         assert excluded_value not in serialized
+
+
+def test_property_search_run_projection_preserves_provider_filter_audit_only() -> None:
+    projected = product_service._property_search_run_preferences_projection(
+        {
+            "country_code": "AT",
+            "provider_selection_filter_applied": True,
+            "provider_selection_filter_removed": ["unsupported-provider"],
+            "provider_selection_filter_removed_details": [
+                {"platform": "unsupported-provider", "reason": "not_searchable"}
+            ],
+            "provider_country_filter_applied": True,
+            "provider_country_filter_removed": ["wrong-country-provider"],
+            "provider_country_filter_removed_details": [
+                {"platform": "wrong-country-provider", "reason": "country_mismatch"}
+            ],
+            "future_workspace_secret": "must-not-enter-run-snapshot",
+        }
+    )
+
+    assert projected == {
+        "country_code": "AT",
+        "provider_selection_filter_applied": True,
+        "provider_selection_filter_removed": ["unsupported-provider"],
+        "provider_selection_filter_removed_details": [
+            {"platform": "unsupported-provider", "reason": "not_searchable"}
+        ],
+        "provider_country_filter_applied": True,
+        "provider_country_filter_removed": ["wrong-country-provider"],
+        "provider_country_filter_removed_details": [
+            {"platform": "wrong-country-provider", "reason": "country_mismatch"}
+        ],
+    }
 
 
 def test_property_search_run_worker_concurrency_defaults_to_four(monkeypatch) -> None:
@@ -13043,14 +13464,28 @@ def test_property_search_results_ready_email_waits_for_tour_completion(monkeypat
             }
         ],
     }
-
-    service._await_property_search_results_delivery_ready(
+    run_id = "run-final-1"
+    state = product_service._new_property_search_run_record(
+        run_id=run_id,
         principal_id=principal_id,
-        run_id="run-final-1",
-        result=result,
-        timeout_seconds=1,
-        poll_interval_seconds=0.01,
+        selected_platforms=("willhaben",),
+        property_search_preferences={"country_code": "AT", "location_query": "Vienna"},
+        force_refresh=False,
     )
+    state.update({"status": "processed", "summary": dict(result)})
+    with product_service._PROPERTY_SEARCH_RUN_LOCK:
+        product_service._PROPERTY_SEARCH_RUN_REGISTRY[run_id] = state
+    try:
+        service._await_property_search_results_delivery_ready(
+            principal_id=principal_id,
+            run_id=run_id,
+            result=result,
+            timeout_seconds=1,
+            poll_interval_seconds=0.01,
+        )
+    finally:
+        with product_service._PROPERTY_SEARCH_RUN_LOCK:
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY.pop(run_id, None)
 
     assert sent
     assert sent[0]["hosted_tour_total"] == 1
@@ -14697,13 +15132,23 @@ def test_property_search_run_uses_saved_platforms_before_family_toggles(monkeypa
             "country_code": "AT",
             "language_code": "de",
             "listing_mode": "rent",
-            "location_query": "Wien",
-            "selected_platforms": ["willhaben", "immmo", "immoscout_at", "remax_at", "kalandra", "broker_direct_at"],
-            "include_broker_direct_sources": True,
-            "property_commercial": {"active_plan_key": "agent", "status": "active", "active_until": "2999-01-01T00:00:00+00:00"},
-        },
-    )
+                "location_query": "Wien",
+                "selected_platforms": ["willhaben", "immmo", "immoscout_at", "remax_at", "kalandra", "broker_direct_at"],
+                "include_broker_direct_sources": True,
+            },
+        )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "active_plan_key": "agent",
+        "status": "active",
+        "active_until": "2999-01-01T00:00:00+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     observed: dict[str, object] = {}
 
@@ -14934,9 +15379,9 @@ def test_property_search_preferences_update_preserves_existing_commercial_state(
     started = client.post("/v1/onboarding/start", json={"workspace_name": "Commercial Preserve", "workspace_mode": "personal"})
     assert started.status_code == 200
 
-    seeded = client.post(
-        "/v1/onboarding/property-search/preferences",
-        json={
+    seeded = client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json={
             "country_code": "AT",
             "language_code": "de",
             "listing_mode": "buy",
@@ -14948,8 +15393,9 @@ def test_property_search_preferences_update_preserves_existing_commercial_state(
                 "active_until": "2099-12-31T23:59:59+00:00",
             },
         },
+        trusted_commercial_update=True,
     )
-    assert seeded.status_code == 200
+    assert seeded["property_search_preferences"]["property_commercial"]["active_plan_key"] == "agent"
 
     updated = client.post(
         "/v1/onboarding/property-search/preferences",
@@ -16044,10 +16490,20 @@ def test_property_search_run_drops_saved_providers_from_wrong_country(monkeypatc
             "listing_mode": "rent",
             "location_query": "1020 Vienna",
             "selected_platforms": ["re_cr_mls", "encuentra24_cr"],
-            "property_commercial": {"active_plan_key": "agent", "status": "active", "active_until": "2999-01-01T00:00:00+00:00"},
         },
     )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "active_plan_key": "agent",
+        "status": "active",
+        "active_until": "2999-01-01T00:00:00+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     observed: dict[str, object] = {}
 
@@ -17941,7 +18397,7 @@ def test_property_search_storage_schema_scripts() -> None:
     env["PYTHONPATH"] = "ea"
 
     migrate = subprocess.run(
-        ["python3", "scripts/migrate_property_search_storage.py"],
+        [sys.executable, "scripts/migrate_property_search_storage.py"],
         cwd="/docker/property",
         env=env,
         capture_output=True,
@@ -17951,7 +18407,7 @@ def test_property_search_storage_schema_scripts() -> None:
     assert migrate.returncode == 0, migrate.stderr or migrate.stdout
 
     check = subprocess.run(
-        ["python3", "scripts/check_property_search_storage_schema.py"],
+        [sys.executable, "scripts/check_property_search_storage_schema.py"],
         cwd="/docker/property",
         env=env,
         capture_output=True,
@@ -17991,7 +18447,7 @@ def test_property_search_storage_schema_check_runs_source_contracts_without_data
     env["PYTHONPATH"] = "ea"
 
     result = subprocess.run(
-        ["python3", "scripts/check_property_search_storage_schema.py"],
+        [sys.executable, "scripts/check_property_search_storage_schema.py"],
         cwd="/docker/property",
         env=env,
         capture_output=True,

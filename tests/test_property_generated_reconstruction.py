@@ -5,13 +5,14 @@ import json
 import math
 import os
 import pwd
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -77,6 +78,92 @@ def _write_photo(path: Path, color: tuple[int, int, int]) -> None:
     draw = ImageDraw.Draw(image)
     draw.rectangle((80, 100, 820, 620), outline=(255, 255, 255), width=8)
     image.save(path, format="JPEG")
+
+
+def _read_glb_document(path: Path) -> dict[str, object]:
+    payload = path.read_bytes()
+    magic, version, total_length = struct.unpack_from("<4sII", payload)
+    assert magic == b"glTF"
+    assert version == 2
+    assert total_length == len(payload)
+    json_length, json_type = struct.unpack_from("<I4s", payload, 12)
+    assert json_type == b"JSON"
+    json_start = 20
+    json_end = json_start + json_length
+    binary_length, binary_type = struct.unpack_from("<I4s", payload, json_end)
+    assert binary_type == b"BIN\0"
+    assert json_end + 8 + binary_length == len(payload)
+    document = json.loads(payload[json_start:json_end].rstrip(b" ").decode("utf-8"))
+    assert isinstance(document, dict)
+    return document
+
+
+def test_generated_reconstruction_glb_export_is_deterministic_and_valid(tmp_path: Path) -> None:
+    receipts: list[dict[str, object]] = []
+    outputs: list[bytes] = []
+    for name in ("first", "second"):
+        target_dir = tmp_path / name
+        target_dir.mkdir()
+        reconstruction_script._write_obj(
+            target_dir,
+            width_m=8.0,
+            depth_m=6.0,
+            height_m=2.7,
+            wall_rectangles=[
+                {
+                    "center_x": 0.0,
+                    "center_z": -2.5,
+                    "width": 7.8,
+                    "depth": 0.15,
+                    "rotation_y": 0.0,
+                }
+            ],
+        )
+
+        receipt = reconstruction_script._write_glb_in_process(target_dir)
+
+        assert receipt["status"] == "generated"
+        assert receipt["exporter"] == reconstruction_script.GLB_EXPORTER_VERSION
+        assert receipt["glb_relpath"] == "model.glb"
+        assert receipt["material_count"] == 2
+        assert receipt["triangle_count"] == 14
+        assert receipt["vertex_count"] == 42
+        assert receipt["source_obj_sha256"] == reconstruction_script._sha256(target_dir / "model.obj")
+        assert receipt["glb_sha256"] == reconstruction_script._sha256(target_dir / "model.glb")
+        assert receipt["glb_size_bytes"] == (target_dir / "model.glb").stat().st_size
+        receipts.append(receipt)
+        outputs.append((target_dir / "model.glb").read_bytes())
+
+    assert outputs[0] == outputs[1]
+    assert receipts[0]["glb_sha256"] == receipts[1]["glb_sha256"]
+    document = _read_glb_document(tmp_path / "first" / "model.glb")
+    assert document["asset"] == {
+        "generator": reconstruction_script.GLB_EXPORTER_VERSION,
+        "version": "2.0",
+    }
+    assert document["scene"] == 0
+    assert document["scenes"] == [{"nodes": [0]}]
+    assert [material["name"] for material in document["materials"]] == ["warm_floor", "warm_plaster"]
+    assert len(document["meshes"][0]["primitives"]) == 2
+    assert len(document["accessors"]) == 6
+    assert len(document["bufferViews"]) == 6
+
+
+def test_generated_reconstruction_glb_export_fails_closed_on_invalid_obj(tmp_path: Path) -> None:
+    (tmp_path / "model.obj").write_text(
+        "v 0 0 0\nv 1 0 0\nf 1 2 9\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "model.glb").write_bytes(b"stale")
+
+    receipt = reconstruction_script._write_glb_in_process(tmp_path)
+
+    assert receipt == {
+        "status": "failed",
+        "reason": "in_process_glb_export_failed",
+        "detail": "face_index_out_of_range:3",
+    }
+    assert not (tmp_path / "model.glb").exists()
 
 
 def _run_generator(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -592,7 +679,7 @@ def test_generated_reconstruction_render_tools_runtime_defaults_to_stop_card_wal
     assert receipt["composition"] == "route_focused_stop_cards"
 
 
-def test_generated_reconstruction_diorama_preview_reads_as_staged_layout_composition(tmp_path: Path) -> None:
+def test_generated_reconstruction_diorama_preview_reads_as_bright_elevated_cutaway(tmp_path: Path) -> None:
     floorplan = tmp_path / "floorplan.jpg"
     hero = tmp_path / "hero.jpg"
     support = tmp_path / "support.jpg"
@@ -634,47 +721,49 @@ def test_generated_reconstruction_diorama_preview_reads_as_staged_layout_composi
     layout = dict(receipt["layout"])
     assert layout["status"] == "pass"
     assert all(dict(layout["checks"]).values())
+    assert layout["renderer_version"] == "propertyquarry_bright_playful_cutaway_v1"
+    assert layout["composition"] == "elevated_three_quarter_cutaway"
+    assert layout["camera"] == "elevated_three_quarter"
+    assert layout["background"] == "bright_neutral"
+    assert layout["mood"] == "warm_playful_miniature"
     assert layout["displayed_route_stop_count"] == 9
+    assert layout["furnished_room_count"] == 9
+    assert layout["wall_relief"] is True
     assert layout["route_sequence_complete"] is True
     boxes = dict(layout["boxes"])
-    route_rows = [list(box) for box in boxes["route_rows"]]
-    route_label_boxes = [list(box) for box in boxes["route_labels"]]
-    assert len(route_rows) == 9
-    assert len(route_label_boxes) == len(route_rows)
-    assert all(first[3] <= second[1] for first, second in zip(route_rows, route_rows[1:]))
-    assert route_rows[-1][3] <= list(boxes["route_rail"])[3] - 12
-    assert all(
-        row[0] + 6 <= label[0] <= label[2] <= row[2] - 6 and row[1] + 6 <= label[1] <= label[3] <= row[3] - 6
-        for row, label in zip(route_rows, route_label_boxes)
-    )
-    assert str(layout["displayed_route_labels"][-1]).endswith("…")
+    stage_box = list(boxes["stage"])
+    assert stage_box[2] - stage_box[0] >= 1150
+    assert stage_box[3] - stage_box[1] >= 638
+    assert 0.004 <= float(layout["wall_mask_coverage"]) <= 0.34
+    brightness = dict(layout["brightness"])
+    assert float(brightness["mean_luma"]) >= 145.0
+    assert float(brightness["dark_pixel_ratio"]) <= 0.18
+    assert float(brightness["light_pixel_ratio"]) >= 0.45
     rendered = Image.open(preview).convert("RGB")
     assert rendered.size == (1600, 1100)
-    background_mean = _mean_rgb(rendered, (24, 24, 144, 144))
-    title_mean = _mean_rgb(rendered, (110, 96, 320, 210))
-    stage_mean = _mean_rgb(rendered, (520, 630, 1040, 860))
-    hero_mean = _mean_rgb(rendered, (700, 160, 940, 320))
-    right_panel_mean = _mean_rgb(rendered, (1180, 240, 1360, 380))
-    route_rail_mean = _mean_rgb(rendered, (1190, 590, 1450, 900))
-
-    assert sum(abs(title_mean[index] - background_mean[index]) for index in range(3)) > 18.0
-    assert sum(abs(stage_mean[index] - background_mean[index]) for index in range(3)) > 30.0
-    assert sum(abs(hero_mean[index] - stage_mean[index]) for index in range(3)) > 35.0
-    assert sum(abs(right_panel_mean[index] - hero_mean[index]) for index in range(3)) > 20.0
-    assert sum(abs(route_rail_mean[index] - background_mean[index]) for index in range(3)) > 24.0
+    background_mean = _mean_rgb(rendered, (20, 820, 150, 990))
+    floor_mean = _mean_rgb(rendered, (420, 390, 1040, 720))
+    slab_mean = _mean_rgb(rendered, (620, 840, 1080, 910))
+    assert sum(background_mean) / 3 >= 175.0
+    assert sum(floor_mean) / 3 >= 200.0
+    assert sum(abs(slab_mean[index] - floor_mean[index]) for index in range(3)) > 12.0
 
     pixels = rendered.load()
-    accent_pixels = 0
+    warm_material_pixels = 0
     dark_structure_pixels = 0
+    light_canvas_pixels = 0
     for y in range(0, rendered.height, 3):
         for x in range(0, rendered.width, 3):
             r, g, b = pixels[x, y]
-            if r >= 150 and 90 <= g <= 190 and b <= 150:
-                accent_pixels += 1
-            if r <= 96 and g <= 96 and b <= 96:
+            if r >= 125 and 75 <= g <= 185 and b <= 145:
+                warm_material_pixels += 1
+            if r <= 112 and g <= 112 and b <= 112:
                 dark_structure_pixels += 1
-    assert accent_pixels > 130
-    assert dark_structure_pixels > 340
+            if r >= 190 and g >= 185 and b >= 175:
+                light_canvas_pixels += 1
+    assert warm_material_pixels > 280
+    assert dark_structure_pixels > 180
+    assert light_canvas_pixels > 80_000
 
 
 def test_generated_reconstruction_previews_disclose_floorplan_only_and_fit_share_canvas(tmp_path: Path) -> None:
@@ -949,6 +1038,7 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
         "photo-02.jpg",
         "model.obj",
         "model.mtl",
+        "model.glb",
         "viewer.html",
         "reconstruction.json",
         "vendor/three.module.js",
@@ -980,6 +1070,19 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     assert "floorTextureCrop" in viewer_html
     assert "floorTexture.offset.set" in viewer_html
     assert "floorTexture.repeat.set" in viewer_html
+    assert "THREE.ACESFilmicToneMapping" in viewer_html
+    assert "stagingDetailObjectCount" in viewer_html
+    assert "physicallyBasedToneMapping" in viewer_html
+    assert "apartmentPlinthVisible" in viewer_html
+    assert "generated-sofa-cushion-left" in viewer_html
+    assert "generated-kitchen-pendant" in viewer_html
+    assert "generated-bath-mirror" in viewer_html
+    assert '"webglcontextlost"' in viewer_html
+    assert "disposeViewer" in viewer_html
+    assert "visibilitychange" in viewer_html
+    assert "new ResizeObserver" in viewer_html
+    assert "const maxStagedRouteStops = 12" in viewer_html
+    assert 'const renderQualityTier = constrainedDevice ? "balanced" : "high"' in viewer_html
     orbit_controls_html = (output_dir / "vendor" / "examples" / "jsm" / "controls" / "OrbitControls.js").read_text(
         encoding="utf-8"
     )
@@ -1094,10 +1197,12 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     assert receipt["bundle_preview_assets"]["telegram"]["status"] == "generated"
     assert receipt["bundle_preview_assets"]["telegram"]["bundle_relpath"] == "telegram-preview.png"
     assert len(receipt["walkthrough_route_labels"]) >= len(receipt["route_labels"])
-    assert receipt["model"]["glb_export"]["status"] in {"generated", "failed", "skipped"}
-    if receipt["model"]["glb_export"]["status"] == "generated":
-        assert receipt["model"]["glb_relpath"] == "model.glb"
-        assert (output_dir / "model.glb").is_file()
+    assert receipt["model"]["glb_export"]["status"] == "generated"
+    assert receipt["model"]["glb_export"]["exporter"] == reconstruction_script.GLB_EXPORTER_VERSION
+    assert receipt["model"]["glb_export"]["triangle_count"] > 0
+    assert receipt["model"]["glb_relpath"] == "model.glb"
+    assert (output_dir / "model.glb").is_file()
+    _read_glb_document(output_dir / "model.glb")
     assert receipt["walkthrough"]["status"] in {"generated", "failed", "skipped"}
     if receipt["walkthrough"]["status"] == "generated":
         expected_composition, expected_motion_style, expected_route_context_mode = _expected_default_walkthrough_contract()
@@ -1126,9 +1231,8 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
         "generated-reconstruction/photo-01.jpg",
         "generated-reconstruction/photo-02.jpg",
     ]
-    assert generated_reconstruction["glb_export_status"] in {"generated", "failed", "skipped"}
-    if generated_reconstruction["glb_export_status"] == "generated":
-        assert generated_reconstruction["glb_model_relpath"] == "generated-reconstruction/model.glb"
+    assert generated_reconstruction["glb_export_status"] == "generated"
+    assert generated_reconstruction["glb_model_relpath"] == "generated-reconstruction/model.glb"
     assert generated_reconstruction["viewer_version"] == "propertyquarry_3d_tour_viewer_v3"
     assert len(generated_reconstruction["walkthrough_route_labels"]) >= len(generated_reconstruction["route_labels"])
     assert generated_reconstruction["photo_reference_panel_count"] == len(receipt["photo_reference_panels"])
@@ -2221,9 +2325,32 @@ def test_generated_reconstruction_viewer_guided_route_runs_in_real_browser(tmp_p
         with reconstruction_script.sync_playwright() as playwright:
             launch_kwargs = reconstruction_script._playwright_chromium_launch_kwargs(playwright)
             browser = playwright.chromium.launch(**launch_kwargs)
-            page = browser.new_page(viewport={"width": 1280, "height": 720}, device_scale_factor=1)
             try:
-                page.goto(f"{base_url}/{viewer_relpath}?guided=1", wait_until="domcontentloaded")
+                page = None
+                viewer_url = f"{base_url}/{viewer_relpath}?guided=1"
+                for attempt in range(3):
+                    page = browser.new_page(
+                        viewport={"width": 1280, "height": 720},
+                        device_scale_factor=1,
+                    )
+                    try:
+                        page.goto(
+                            viewer_url,
+                            wait_until="domcontentloaded",
+                        )
+                        break
+                    except Exception as exc:
+                        with suppress(Exception):
+                            page.close()
+                        if (
+                            attempt >= 2
+                            or (
+                                "Page crashed" not in str(exc)
+                                and "ERR_INSUFFICIENT_RESOURCES" not in str(exc)
+                            )
+                        ):
+                            raise
+                assert page is not None
                 _wait_for_playwright_condition(
                     page,
                     """() => {
@@ -2480,14 +2607,21 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
             "satisfies_verified_tour_gate": False,
             "disclosure": "Planning preview built from the floor plan and listing photos. Use it as a layout aid, not as a captured tour.",
             "viewer": {"version": "propertyquarry_3d_tour_viewer_v3", "photo_reference_panel_count": 2},
+            "geometry": {"wall_rect_count": 4},
+            "room_dimensions_m": {"width": 8.0, "depth": 6.0, "height": 2.7},
             "walkable_scene": {
                 "kind": "generated_reconstruction_layout",
-                "rooms": [{"label": "entry/hall"}, {"label": "living area"}, {"label": "sleeping area"}, {"label": "balcony/terrace"}],
+                "rooms": [
+                    {"label": "entry/hall", "position": {"x": 0.0, "z": 0.0}, "focus": {"x": 1.0, "z": 1.0}},
+                    {"label": "living area", "position": {"x": 2.0, "z": 0.0}, "focus": {"x": 3.0, "z": 1.0}},
+                    {"label": "sleeping area", "position": {"x": 4.0, "z": 0.0}, "focus": {"x": 5.0, "z": 1.0}},
+                    {"label": "balcony/terrace", "position": {"x": 6.0, "z": 0.0}, "focus": {"x": 7.0, "z": 1.0}},
+                ],
                 "route": [
-                    {"label": "entry/hall"},
-                    {"label": "living area"},
-                    {"label": "sleeping area"},
-                    {"label": "balcony/terrace"},
+                    {"label": "entry/hall", "focus": {"x": 1.0, "z": 1.0}, "camera": {"x": 0.0, "z": 0.0}},
+                    {"label": "living area", "focus": {"x": 3.0, "z": 1.0}, "camera": {"x": 2.0, "z": 0.0}},
+                    {"label": "sleeping area", "focus": {"x": 5.0, "z": 1.0}, "camera": {"x": 4.0, "z": 0.0}},
+                    {"label": "balcony/terrace", "focus": {"x": 7.0, "z": 1.0}, "camera": {"x": 6.0, "z": 0.0}},
                 ],
             },
             "walkthrough": {
@@ -2512,9 +2646,10 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
         manifest_path = bundle_dir / "tour.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["generated_reconstruction"] = {
-            "provider": "propertyquarry_generated_reconstruction",
-            "viewer_relpath": "generated-reconstruction/viewer.html",
-            "model_relpath": "generated-reconstruction/model.obj",
+                "provider": "propertyquarry_generated_reconstruction",
+                "viewer_relpath": "generated-reconstruction/viewer.html",
+                "manifest_relpath": "generated-reconstruction/reconstruction.json",
+                "model_relpath": "generated-reconstruction/model.obj",
             "material_relpath": "generated-reconstruction/model.mtl",
             "floorplan_relpath": "generated-reconstruction/source-floorplan.jpg",
             "photo_relpaths": [

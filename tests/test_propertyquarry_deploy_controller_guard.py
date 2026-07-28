@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import shutil
 import subprocess
 import time
@@ -320,27 +321,56 @@ def test_controller_path_swap_after_fd_open_fails_closed_without_reopen(
         text=True,
         env=env,
     )
-    opened = False
+    hashing_verified_controller = False
+    wrapper_stopped = False
     deadline = time.monotonic() + 5
     while process.poll() is None and time.monotonic() < deadline:
-        for descriptor in range(10, 40):
+        try:
+            child_pids = (
+                Path(f"/proc/{process.pid}/task/{process.pid}/children")
+                .read_text(encoding="ascii")
+                .split()
+            )
+        except OSError:
+            child_pids = []
+        for child_pid in child_pids:
             try:
-                observed = os.stat(f"/proc/{process.pid}/fd/{descriptor}")
+                executable = os.readlink(f"/proc/{child_pid}/exe")
             except OSError:
                 continue
-            if (observed.st_dev, observed.st_ino) == (original.st_dev, original.st_ino):
-                opened = True
+            if Path(executable).name != "sha256sum":
+                continue
+            for descriptor in range(0, 64):
+                try:
+                    observed = os.stat(f"/proc/{child_pid}/fd/{descriptor}")
+                except OSError:
+                    continue
+                if (observed.st_dev, observed.st_ino) == (
+                    original.st_dev,
+                    original.st_ino,
+                ):
+                    hashing_verified_controller = True
+                    break
+            if hashing_verified_controller:
                 break
-        if opened:
+        if hashing_verified_controller:
+            os.kill(process.pid, signal.SIGSTOP)
+            wrapper_stopped = True
             break
         time.sleep(0.001)
-    replacement = controller.with_name("replacement-controller")
-    shutil.copyfile("/usr/bin/false", replacement)
-    replacement.chmod(0o555)
-    os.replace(replacement, controller)
+    try:
+        replacement = controller.with_name("replacement-controller")
+        shutil.copyfile("/usr/bin/false", replacement)
+        replacement.chmod(0o555)
+        os.replace(replacement, controller)
+    finally:
+        if wrapper_stopped and process.poll() is None:
+            os.kill(process.pid, signal.SIGCONT)
     stdout, stderr = process.communicate(timeout=10)
 
-    assert opened, "wrapper never exposed its verified controller FD"
+    assert hashing_verified_controller, (
+        "wrapper never hashed its retained verified controller FD"
+    )
     assert process.returncode == 2
     assert not stdout
     assert (

@@ -1,7 +1,7 @@
 {
-  "path": "UNCONFIGURED",
+  "path": "/docker/EA/state/propertyquarry_release_tools/aws-cli-2.35.16/v2/2.35.16/dist/aws",
   "schema": "propertyquarry.aws_cli_release_pin.v1",
-  "sha256": "UNCONFIGURED",
-  "status": "UNCONFIGURED",
-  "version": "UNCONFIGURED"
+  "sha256": "d17130561271a8c117f517c03bcd867fd8525408c999558149dc8f2f8f9b1d3d",
+  "status": "CONFIGURED",
+  "version": "2.35.16"
 }

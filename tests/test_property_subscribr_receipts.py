@@ -13,6 +13,13 @@ from app.services.property_content_packet_builder import build_synthetic_dossier
 from app.services.property_content_studio import PropertyContentStudio
 
 
+_SYSTEM_OWNERSHIP = {
+    "principal_id": "propertyquarry:system:content-studio",
+    "ownership_scope": "system",
+    "search_run_id": "",
+}
+
+
 def _markdown() -> str:
     return (
         "# Why this listing matched\n\n"
@@ -27,6 +34,7 @@ def test_script_receipt_is_review_required_and_never_publishable(monkeypatch, tm
     receipt = PropertyContentStudio(ledger=PropertyContentJobLedger(path=tmp_path / "ledger.json")).materialize_script_receipt(
         packet=packet,
         markdown=_markdown(),
+        **_SYSTEM_OWNERSHIP,
         provider_channel_id="212",
         provider_idea_id="idea-1",
         provider_script_id="script-1",
@@ -49,7 +57,18 @@ def test_subscribr_webhook_requires_signature_and_rejects_replay(monkeypatch, tm
     monkeypatch.setenv("PROPERTYQUARRY_CONTENT_JOB_LEDGER", str(ledger_path))
     monkeypatch.setenv("SUBSCRIBR_PROPERTY_WEBHOOK_SECRET", "webhook-secret")
     packet = build_synthetic_dossier_source_packet()
-    PropertyContentStudio(ledger=PropertyContentJobLedger(path=ledger_path)).prepare_source_packet(packet)
+    ledger = PropertyContentJobLedger(path=ledger_path)
+    PropertyContentStudio(ledger=ledger).prepare_source_packet(
+        packet,
+        **_SYSTEM_OWNERSHIP,
+    )
+    ledger.record_provider_ids(
+        packet_id=str(packet["packet_id"]),
+        **_SYSTEM_OWNERSHIP,
+        provider_channel_id="212",
+        provider_idea_id="idea-1",
+        provider_script_id="script-1",
+    )
     payload = {
         "event_id": "evt-1",
         "event_type": "script.generated",
@@ -73,7 +92,11 @@ def test_subscribr_webhook_requires_signature_and_rejects_replay(monkeypatch, tm
     assert accepted.json()["receipt"]["publication_allowed"] is False
     assert replay.status_code == 200
     assert replay.json()["status"] == "duplicate_ignored"
-    event_row = PropertyContentJobLedger(path=ledger_path)._load()["webhook_events"]["evt-1"]
+    event_row = next(
+        row
+        for row in PropertyContentJobLedger(path=ledger_path)._load()["webhook_events"].values()
+        if row["event_id"] == "evt-1"
+    )
     assert event_row["signature_status"] == "verified"
     assert event_row["raw_body_sha256"] == hashlib.sha256(raw).hexdigest()
 
@@ -94,9 +117,8 @@ def test_subscribr_webhook_uses_only_local_source_packets(monkeypatch, tmp_path:
 
     response = client.post("/internal/providers/subscribr/webhook", content=raw, headers={"x-subscribr-signature": signature})
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "received"
-    assert response.json()["next"] == "await_local_source_packet"
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "subscribr_webhook_job_missing"
     assert not list((tmp_path / "completion").glob("*.generated.json"))
 
 
@@ -106,7 +128,10 @@ def test_subscribr_webhook_does_not_treat_non_completion_event_as_script(monkeyp
     monkeypatch.setenv("PROPERTYQUARRY_CONTENT_JOB_LEDGER", str(ledger_path))
     monkeypatch.setenv("SUBSCRIBR_PROPERTY_WEBHOOK_SECRET", "webhook-secret")
     packet = build_synthetic_dossier_source_packet()
-    PropertyContentStudio(ledger=PropertyContentJobLedger(path=ledger_path)).prepare_source_packet(packet)
+    PropertyContentStudio(ledger=PropertyContentJobLedger(path=ledger_path)).prepare_source_packet(
+        packet,
+        **_SYSTEM_OWNERSHIP,
+    )
     payload = {
         "event_id": "evt-idea-created",
         "event_type": "idea.created",

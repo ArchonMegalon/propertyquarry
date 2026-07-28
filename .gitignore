@@ -12,6 +12,10 @@
 __pycache__/
 *.py[cod]
 .venv/
+.propertyquarry_release_tools/
+
+# Deterministic local build outputs
+build/
 
 # Local runtime data
 state/

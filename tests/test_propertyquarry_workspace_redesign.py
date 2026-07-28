@@ -2461,6 +2461,7 @@ def test_propertyquarry_account_surfaces_use_persisted_property_plan() -> None:
                 "active_until": "2999-01-01T00:00:00+00:00",
             },
         },
+        trusted_commercial_update=True,
     )
 
     billing = client.get("/app/billing", follow_redirects=False)
@@ -10750,6 +10751,94 @@ def test_property_map_preview_backdrop_softens_tile_noise_without_erasing_map_de
     assert landing_view_models._PROPERTY_MAP_PREVIEW_STYLE_VERSION.startswith("flagship_map_v")
 
 
+def test_property_local_map_overview_renders_focus_pin_without_external_tiles(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    focus_labels: list[object] = []
+    original_focus_card = landing_view_models._draw_flagship_preview_focus_card
+
+    def _record_focus_card(draw, *, pin, label, width, height) -> None:
+        focus_labels.append(label)
+        original_focus_card(draw, pin=pin, label=label, width=width, height=height)
+
+    monkeypatch.setattr(landing_view_models, "_draw_flagship_preview_focus_card", _record_focus_card)
+    base_path = landing_view_models._cached_local_map_overview_png_path(
+        tmp_path / "local-map-overview-base.png",
+    )
+    preview_path = landing_view_models._cached_local_map_overview_png_path(
+        tmp_path / "local-map-overview.png",
+        pin=(320.0, 184.0),
+        focus_label="Trieben, AT",
+    )
+
+    base_image = Image.open(base_path).convert("RGB")
+    assert preview_path.exists()
+    image = Image.open(preview_path).convert("RGB")
+    assert image.size == (640, 368)
+    assert image.tobytes() != base_image.tobytes()
+    assert focus_labels == ["Trieben, AT"]
+
+
+def test_property_map_tile_fetch_fails_closed_before_urlopen_when_network_is_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("PROPERTYQUARRY_MAP_TILE_NETWORK_ENABLED", "0")
+
+    def _unexpected_urlopen(*_args, **_kwargs):
+        raise AssertionError("urlopen must not be called while map tile networking is disabled")
+
+    monkeypatch.setattr(landing_view_models.urllib.request, "urlopen", _unexpected_urlopen)
+
+    with pytest.raises(landing_view_models.urllib.error.URLError, match="property_map_tile_network_disabled"):
+        landing_view_models._fetch_property_map_tile(
+            "https://tile.openstreetmap.org/10/1/1.png",
+            timeout_seconds=0.1,
+        )
+
+
+def test_property_map_preview_cache_separates_offline_and_network_tile_modes(monkeypatch) -> None:
+    cache_key = {"kind": "tile-mode-cache-isolation", "query": "Trieben, AT"}
+    monkeypatch.setenv("PROPERTYQUARRY_MAP_TILE_NETWORK_ENABLED", "0")
+    offline_path = landing_view_models._map_preview_cache_path_for_key(cache_key)
+    monkeypatch.setenv("PROPERTYQUARRY_MAP_TILE_NETWORK_ENABLED", "1")
+    network_path = landing_view_models._map_preview_cache_path_for_key(cache_key)
+
+    assert offline_path != network_path
+
+
+def test_property_map_tile_fetch_sets_user_agent_timeout_and_returns_response_bytes(monkeypatch) -> None:
+    monkeypatch.setenv("PROPERTYQUARRY_MAP_TILE_NETWORK_ENABLED", "1")
+    observed: dict[str, object] = {}
+
+    class _TileResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"synthetic-tile-bytes"
+
+    def _open_tile(request, *, timeout):
+        observed["url"] = request.full_url
+        observed["user_agent"] = request.get_header("User-agent")
+        observed["timeout"] = timeout
+        return _TileResponse()
+
+    payload = landing_view_models._fetch_property_map_tile(
+        "https://tile.openstreetmap.org/10/1/1.png",
+        timeout_seconds=2.5,
+        opener=_open_tile,
+    )
+
+    assert payload == b"synthetic-tile-bytes"
+    assert observed == {
+        "url": "https://tile.openstreetmap.org/10/1/1.png",
+        "user_agent": "PropertyQuarry/1.0",
+        "timeout": 2.5,
+    }
+
+
 def test_property_map_preview_selected_overlay_keeps_real_map_detail_visible(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("EA_ARTIFACTS_DIR", str(tmp_path))
 
@@ -10765,23 +10854,10 @@ def test_property_map_preview_selected_overlay_keeps_real_map_detail_visible(mon
     tile_bytes = io.BytesIO()
     tile.save(tile_bytes, format="PNG")
 
-    class _TileResponse:
-        def __init__(self, payload: bytes) -> None:
-            self._payload = payload
-
-        def __enter__(self) -> "_TileResponse":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return self._payload
-
     monkeypatch.setattr(
-        landing_view_models.urllib.request,
-        "urlopen",
-        lambda request, timeout=6.0: _TileResponse(tile_bytes.getvalue()),
+        landing_view_models,
+        "_fetch_property_map_tile",
+        lambda _url, *, timeout_seconds=6.0: tile_bytes.getvalue(),
     )
 
     base_path = landing_view_models._cached_preview_png_path(
@@ -10843,23 +10919,10 @@ def test_property_map_preview_point_focus_card_meets_flagship_gate(monkeypatch, 
     tile_bytes = io.BytesIO()
     tile.save(tile_bytes, format="PNG")
 
-    class _TileResponse:
-        def __init__(self, payload: bytes) -> None:
-            self._payload = payload
-
-        def __enter__(self) -> "_TileResponse":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return self._payload
-
     monkeypatch.setattr(
-        landing_view_models.urllib.request,
-        "urlopen",
-        lambda request, timeout=6.0: _TileResponse(tile_bytes.getvalue()),
+        landing_view_models,
+        "_fetch_property_map_tile",
+        lambda _url, *, timeout_seconds=6.0: tile_bytes.getvalue(),
     )
 
     preview_url = landing_view_models._cached_preview_image_url(
@@ -13760,7 +13823,7 @@ def test_property_workspace_payload_does_not_count_raw_provider_tour_as_ready() 
 def test_propertyquarry_prepare_run_payload_synthesizes_tour_payload_for_verified_hosted_url(
     monkeypatch,
 ) -> None:
-    from app.product import property_tour_hosting
+    from app.product import service as product_service
 
     verified_url = "https://propertyquarry.com/tours/ready-tour/control/matterport"
     validated_principals: list[str] = []
@@ -13770,7 +13833,7 @@ def test_propertyquarry_prepare_run_payload_synthesizes_tour_payload_for_verifie
         return verified_url
 
     monkeypatch.setattr(
-        property_tour_hosting,
+        product_service,
         "_hosted_property_tour_verified_open_url",
         _verified_open_url,
     )
@@ -20342,9 +20405,11 @@ def test_property_shortlist_surface_keeps_results_first_and_restores_desktop_rev
     assert "candidate_facts.get('price_eur')" in body
     assert "provisional_facts.get('price_eur')" in body
     assert 'data-candidate-listing-url="${escapeHtml(propertyUrl)}"' in body
-    assert "const openRowTarget = () => {" in body
-    assert "window.location.href = packetUrl;" in body
-    assert "window.open(listingUrl, '_blank', 'noopener,noreferrer');" in body
+    assert 'packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">Open property</a>`' in body
+    assert 'data-rybbit-prop-cta-key="open_listing" data-rybbit-prop-surface="selected_review">Open listing</a>' in body
+    assert "const interactiveTarget = event.target?.closest?.('a, button, [data-pqx-scope-open]');" in body
+    assert "if (interactiveTarget && interactiveTarget !== row) return;" in body
+    assert "selectCandidate(row.getAttribute('data-candidate-ref'));" in body
     assert "event.key !== 'Enter' && event.key !== ' '" in body
     assert 'aria-label="Account navigation"' in body
     assert ">Me<" not in body
@@ -20560,6 +20625,8 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
 def test_property_search_loader_keeps_mobile_map_usable_before_full_hydration() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     loader = (repo_root / "ea/app/templates/app/_property_search_loader_script.html").read_text(encoding="utf-8")
+    workbench = (repo_root / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
+    workbench_script = (repo_root / "ea/app/templates/app/_property_workbench_script.html").read_text(encoding="utf-8")
 
     assert "'[data-location-map-open]'" not in loader.split("const setBusy", 1)[0]
     assert "'[data-location-mode-button]'" not in loader.split("const setBusy", 1)[0]
@@ -20573,10 +20640,26 @@ def test_property_search_loader_keeps_mobile_map_usable_before_full_hydration() 
     assert "activePointers" in loader
     assert "details[data-what-matters-group]" in loader
     assert "root.dataset.pqWorkbenchController === 'loaded'" in loader
-    assert "existing.dataset.pqWorkbenchLoaded === 'true'" in loader
-    assert "existing.dataset.pqWorkbenchLoaded = 'true';" in loader
     assert "script.dataset.pqWorkbenchLoaded = 'true';" in loader
-    assert "root.dataset.pqWorkbenchController = 'loaded';" in loader
+    assert "existing.remove();" in loader
+    assert "loadPromise = null;" in loader
+    assert "scriptUrl.searchParams.set('pq_retry', String(attempt));" in loader
+    assert "property_workbench_initializer_handoff_missing" in loader
+    assert "property_workbench_initializer_timeout" in loader
+    assert "root.dataset.pqWorkbenchRetryMode = retryMode;" in loader
+    assert "retryMode === 'reinject'" in loader
+    assert "root.dataset.pqWorkbenchController = 'failed';" in loader
+    assert "Search controls stopped while loading. Select Launch search to reload safely." in loader
+    assert "Search controls are ready. Review your search, then launch again." in loader
+    assert "root.dispatchEvent(new CustomEvent('propertyquarry:launch-bootstrap-ready'));" in loader
+    assert "const queuedLaunch = root.querySelector('[data-property-start-top][data-pq-launch-queued=\"true\"]');" in loader
+    assert "Search controls did not load. Select Launch search to retry." in loader
+    assert "PQ_SEARCH_LAUNCH_BOOT_GUARD_START" in workbench
+    assert "data-property-top-launch-status" in workbench
+    assert "button.dataset.pqLaunchQueued" in workbench
+    assert "Search controls took too long to load. Select Launch search to retry." in workbench
+    assert "root.dataset.pqWorkbenchController = 'loaded';" in workbench_script
+    assert "root.dispatchEvent(new CustomEvent('propertyquarry:workbench-ready'));" in workbench_script
     assert "'[data-pqx-save-what-matters]'" in loader
     assert "'[data-pqx-load-what-matters]'" in loader
 
@@ -21421,11 +21504,11 @@ def test_propertyquarry_running_surface_exposes_full_history_fold_when_recent_ru
 
 
 def test_property_lookup_candidate_across_runs_collects_recent_run_ids_without_hydrating(monkeypatch) -> None:
-    observed_calls: list[tuple[str, int, bool]] = []
+    observed_calls: list[tuple[str, int]] = []
 
     class _StubProduct:
-        def list_property_search_runs(self, *, principal_id: str, limit: int = 8, hydrate: bool = True):
-            observed_calls.append((principal_id, limit, hydrate))
+        def list_property_search_runs(self, *, principal_id: str, limit: int = 8):
+            observed_calls.append((principal_id, limit))
             return [{"run_id": "run-recent-1"}]
 
         def get_property_search_run_status(self, *, principal_id: str, run_id: str):
@@ -21451,9 +21534,270 @@ def test_property_lookup_candidate_across_runs_collects_recent_run_ids_without_h
         max_runs=3,
     )
 
-    assert observed_calls == [("pq-research-cross-run", 3, False)]
+    assert observed_calls == [("pq-research-cross-run", 3)]
     assert matched_run_id == "run-recent-1"
     assert candidate == {"candidate_ref": "perf-candidate-1020"}
+
+
+def test_property_lookup_candidate_across_runs_resolves_compact_candidate_without_full_status() -> None:
+    full_status_calls: list[str] = []
+    candidate = {
+        "candidate_ref": "compact-candidate-1020",
+        "title": "Compact candidate",
+        "property_url": "https://example.test/compact-candidate-1020",
+    }
+
+    class _CompactProduct:
+        def list_property_search_runs(
+            self,
+            *,
+            principal_id: str,
+            limit: int = 8,
+            hydrate: bool = True,
+            account_email: str = "",
+        ):
+            assert principal_id == "pq-research-compact-hit"
+            assert limit == 3
+            assert hydrate is False
+            assert account_email == "workspace@example.test"
+            return [
+                {
+                    "run_id": "run-compact-hit",
+                    "status": "processed",
+                    "summary": {"ranked_candidates": [candidate]},
+                }
+            ]
+
+        def get_property_search_run_status(self, *, principal_id: str, run_id: str, **kwargs):
+            del principal_id, kwargs
+            full_status_calls.append(run_id)
+            raise AssertionError("compact candidate lookup must not hydrate full run status")
+
+    resolved, matched_run_id = landing_routes._property_lookup_candidate_across_runs(
+        _CompactProduct(),
+        principal_id="pq-research-compact-hit",
+        access_email="workspace@example.test",
+        candidate_ref="compact-candidate-1020",
+        max_runs=3,
+    )
+
+    assert resolved is not None
+    assert resolved["candidate_ref"] == "compact-candidate-1020"
+    assert matched_run_id == "run-compact-hit"
+    assert full_status_calls == []
+
+
+def test_property_lookup_candidate_across_runs_proven_index_miss_skips_full_status() -> None:
+    full_status_calls: list[str] = []
+
+    class _CompactProduct:
+        def get_property_research_packet_link(self, **_kwargs):
+            return None
+
+        def property_research_packet_index_coverage_complete(self) -> bool:
+            return True
+
+        def list_property_search_runs(
+            self,
+            *,
+            principal_id: str,
+            limit: int = 8,
+            hydrate: bool = True,
+            account_email: str = "",
+        ):
+            assert principal_id == "pq-research-compact-miss"
+            assert hydrate is False
+            del limit, account_email
+            return [
+                {
+                    "run_id": "run-compact-miss",
+                    "status": "processed",
+                    "summary": {
+                        "ranked_candidates": [
+                            {
+                                "candidate_ref": "different-candidate",
+                                "title": "Different candidate",
+                                "property_url": "https://example.test/different-candidate",
+                            }
+                        ]
+                    },
+                }
+            ]
+
+        def get_property_search_run_status(self, *, principal_id: str, run_id: str, **kwargs):
+            del principal_id, kwargs
+            full_status_calls.append(run_id)
+            raise AssertionError("compact miss must fail fast instead of hydrating full run status")
+
+    resolved, matched_run_id = landing_routes._property_lookup_candidate_across_runs(
+        _CompactProduct(),
+        principal_id="pq-research-compact-miss",
+        candidate_ref="missing-compact-candidate",
+        max_runs=3,
+    )
+
+    assert resolved is None
+    assert matched_run_id == ""
+    assert full_status_calls == []
+
+
+def test_property_lookup_candidate_across_runs_incomplete_index_miss_hydrates_full_status() -> None:
+    class _IncompleteIndexProduct:
+        def get_property_research_packet_link(self, **_kwargs):
+            return None
+
+        def property_research_packet_index_coverage_complete(self) -> bool:
+            return False
+
+        def list_property_search_runs(self, **_kwargs):
+            return [{"run_id": "run-full-fallback", "summary": {"ranked_candidates": []}}]
+
+        def get_property_search_run_status(self, **_kwargs):
+            return {
+                "run_id": "run-full-fallback",
+                "summary": {
+                    "ranked_candidates": [
+                        {
+                            "candidate_ref": "candidate-only-in-full-run",
+                            "title": "Full fallback candidate",
+                        }
+                    ]
+                },
+            }
+
+    resolved, matched_run_id = landing_routes._property_lookup_candidate_across_runs(
+        _IncompleteIndexProduct(),
+        principal_id="pq-incomplete-index",
+        candidate_ref="candidate-only-in-full-run",
+        max_runs=3,
+    )
+
+    assert resolved and resolved["title"] == "Full fallback candidate"
+    assert matched_run_id == "run-full-fallback"
+
+
+def test_property_lookup_candidate_across_runs_hydrates_explicit_run_when_compact_projection_is_truncated() -> None:
+    full_status_calls: list[str] = []
+    compact_candidates = [
+        {
+            "candidate_ref": f"compact-candidate-{index}",
+            "title": f"Compact candidate {index}",
+            "property_url": f"https://example.test/compact-candidate-{index}",
+        }
+        for index in range(40)
+    ]
+    target_candidate = {
+        "candidate_ref": "candidate-outside-compact-projection",
+        "title": "Candidate outside compact projection",
+        "property_url": "https://example.test/candidate-outside-compact-projection",
+    }
+
+    class _TruncatedCompactProduct:
+        def list_property_search_runs(
+            self,
+            *,
+            principal_id: str,
+            limit: int = 8,
+            hydrate: bool = True,
+            account_email: str = "",
+        ):
+            assert principal_id == "pq-research-explicit-truncated"
+            assert hydrate is False
+            del limit, account_email
+            return [
+                {
+                    "run_id": "run-explicit-truncated",
+                    "status": "processed",
+                    "summary": {
+                        "ranked_total": 41,
+                        "ranked_candidates": compact_candidates,
+                    },
+                }
+            ]
+
+        def get_property_search_run_status(self, *, principal_id: str, run_id: str, **kwargs):
+            assert principal_id == "pq-research-explicit-truncated"
+            del kwargs
+            full_status_calls.append(run_id)
+            return {
+                "run_id": run_id,
+                "status": "processed",
+                "summary": {"ranked_candidates": [*compact_candidates, target_candidate]},
+            }
+
+    resolved, matched_run_id = landing_routes._property_lookup_candidate_across_runs(
+        _TruncatedCompactProduct(),
+        principal_id="pq-research-explicit-truncated",
+        candidate_ref="candidate-outside-compact-projection",
+        run_id="run-explicit-truncated",
+        max_runs=3,
+    )
+
+    assert resolved is not None
+    assert resolved["candidate_ref"] == "candidate-outside-compact-projection"
+    assert matched_run_id == "run-explicit-truncated"
+    assert full_status_calls == ["run-explicit-truncated"]
+
+
+def test_property_lookup_candidate_across_runs_hydrates_explicit_run_absent_from_compact_listing() -> None:
+    full_status_calls: list[str] = []
+    target_candidate = {
+        "candidate_ref": "candidate-from-older-explicit-run",
+        "title": "Candidate from older explicit run",
+        "property_url": "https://example.test/candidate-from-older-explicit-run",
+    }
+
+    class _RecentCompactProduct:
+        def list_property_search_runs(
+            self,
+            *,
+            principal_id: str,
+            limit: int = 8,
+            hydrate: bool = True,
+            account_email: str = "",
+        ):
+            assert principal_id == "pq-research-explicit-older-run"
+            assert hydrate is False
+            del limit, account_email
+            return [
+                {
+                    "run_id": "run-recent-without-target",
+                    "status": "processed",
+                    "summary": {
+                        "ranked_candidates": [
+                            {
+                                "candidate_ref": "different-recent-candidate",
+                                "title": "Different recent candidate",
+                                "property_url": "https://example.test/different-recent-candidate",
+                            }
+                        ]
+                    },
+                }
+            ]
+
+        def get_property_search_run_status(self, *, principal_id: str, run_id: str, **kwargs):
+            assert principal_id == "pq-research-explicit-older-run"
+            del kwargs
+            full_status_calls.append(run_id)
+            assert run_id == "run-explicit-older"
+            return {
+                "run_id": run_id,
+                "status": "processed",
+                "summary": {"ranked_candidates": [target_candidate]},
+            }
+
+    resolved, matched_run_id = landing_routes._property_lookup_candidate_across_runs(
+        _RecentCompactProduct(),
+        principal_id="pq-research-explicit-older-run",
+        candidate_ref="candidate-from-older-explicit-run",
+        run_id="run-explicit-older",
+        max_runs=3,
+    )
+
+    assert resolved is not None
+    assert resolved["candidate_ref"] == "candidate-from-older-explicit-run"
+    assert matched_run_id == "run-explicit-older"
+    assert full_status_calls == ["run-explicit-older"]
 
 
 def test_property_research_packet_prefers_saved_shortlist_before_cross_run_scan(monkeypatch) -> None:
@@ -25818,14 +26162,20 @@ def test_propertyquarry_packet_enriches_sparse_candidate_facts_for_investment(mo
             "location_query": "Wien",
             "selected_platforms": ["willhaben"],
             "preference_person_id": "self",
-            "property_commercial": {
-                "status": "active",
-                "active_plan_key": "agent",
-                "active_until": "2099-12-31T23:59:59+00:00",
-            },
         },
     )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "status": "active",
+        "active_plan_key": "agent",
+        "active_until": "2099-12-31T23:59:59+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     sparse_candidate = {
         "title": "Familien-Maisonette mit weitläufiger Terrasse und drei Zimmern, 88,48 m², € 659.000,-, (1160 Wien) - willhaben",
@@ -25941,14 +26291,20 @@ def test_propertyquarry_research_packet_shows_auction_investment_context_when_be
             "location_query": "Wien",
             "selected_platforms": ["justiz_edikte_at"],
             "preference_person_id": "self",
-            "property_commercial": {
-                "status": "active",
-                "active_plan_key": "agent",
-                "active_until": "2099-12-31T23:59:59+00:00",
-            },
         },
     )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "status": "active",
+        "active_plan_key": "agent",
+        "active_until": "2099-12-31T23:59:59+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     auction_candidate = {
         "title": "BG Innere Stadt Wien, 001 50 E 30/25a",
@@ -26028,14 +26384,20 @@ def test_propertyquarry_research_packet_shows_cooperative_investment_context_whe
             "location_query": "Wien",
             "selected_platforms": ["genossenschaften_at"],
             "preference_person_id": "self",
-            "property_commercial": {
-                "status": "active",
-                "active_plan_key": "agent",
-                "active_until": "2099-12-31T23:59:59+00:00",
-            },
         },
     )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "status": "active",
+        "active_plan_key": "agent",
+        "active_until": "2099-12-31T23:59:59+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     coop_candidate = {
         "title": "1210 Wien | Antonie-Lehr-Straße 18 / Leopoldauer Haide Gasse 12",

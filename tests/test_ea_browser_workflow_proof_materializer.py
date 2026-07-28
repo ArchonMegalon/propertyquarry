@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -195,6 +196,18 @@ def _write_seed(root: Path) -> None:
     )
 
 
+def test_browser_workflow_proof_json_loader_rejects_ambiguous_input(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "seed.json"
+    path.write_text(
+        '{"product":"wrong","product":"propertyquarry"}\n',
+        encoding="utf-8",
+    )
+
+    assert browser_proof_materializer._load_json(path) == {}
+
+
 def test_browser_workflow_proof_passes_when_both_lanes_pass(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -355,6 +368,546 @@ def test_pytest_lane_runner_isolates_release_runtime_environment(
     assert all(key not in captured_env for key in browser_proof_materializer.PYTEST_ISOLATED_ENV_KEYS)
     assert captured_env["PLAYWRIGHT_BROWSERS_PATH"] == "/tmp/playwright-browsers"
     assert "ea" in captured_env["PYTHONPATH"].split(":")
+
+
+def test_browser_workflow_proof_keeps_authenticated_invoking_python(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout_python = tmp_path / ".venv" / "bin" / "python"
+    checkout_python.parent.mkdir(parents=True)
+    checkout_python.write_text("untrusted checkout interpreter\n", encoding="utf-8")
+    authenticated_python = "/opt/propertyquarry-release-python/bin/python"
+    monkeypatch.setattr(browser_proof_materializer.sys, "executable", authenticated_python)
+
+    assert browser_proof_materializer._resolve_python_bin(tmp_path) == authenticated_python
+
+
+def test_missing_pytest_is_reported_as_a_materialization_limitation() -> None:
+    assert browser_proof_materializer._extract_limitations(
+        "/release/python: No module named pytest",
+        real_browser=False,
+    ) == ["pytest is not installed in the selected Python environment"]
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    (Path("../outside.json"), Path("/tmp/propertyquarry-browser-outside.json")),
+)
+def test_browser_proof_stable_writer_rejects_output_escape(
+    tmp_path: Path,
+    relative_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="safe repository-relative path"):
+        browser_proof_materializer._write_json_stable(
+            relative_path,
+            {"status": "blocked"},
+            root=tmp_path,
+        )
+
+
+def test_browser_proof_stable_writer_rejects_symlinks_and_repairs_provenance(
+    tmp_path: Path,
+) -> None:
+    victim = tmp_path / "victim.json"
+    victim.write_text('{"preserve":true}\n', encoding="utf-8")
+    destination = tmp_path / "proof.json"
+    destination.symlink_to(victim.name)
+    with pytest.raises(ValueError, match="symlinked or unreadable"):
+        browser_proof_materializer._write_json_stable(
+            Path("proof.json"),
+            {"status": "blocked"},
+            root=tmp_path,
+        )
+    assert victim.read_text(encoding="utf-8") == '{"preserve":true}\n'
+
+    destination.unlink()
+    destination.write_text(
+        '{"status":"blocked","status":"pass"}\n',
+        encoding="utf-8",
+    )
+    browser_proof_materializer._write_json_stable(
+        Path("proof.json"),
+        {"status": "pass"},
+        root=tmp_path,
+    )
+    assert destination.read_text(encoding="utf-8").count('"status"') == 1
+
+    stale = {
+        "status": "pass",
+        "source_binding": {"seed": {"sha256": "a" * 64}},
+    }
+    fresh = {
+        "status": "pass",
+        "source_binding": {"seed": {"sha256": "b" * 64}},
+    }
+    destination.write_text(json.dumps(stale) + "\n", encoding="utf-8")
+    browser_proof_materializer._write_json_stable(
+        Path("proof.json"),
+        fresh,
+        root=tmp_path,
+    )
+    assert json.loads(destination.read_text(encoding="utf-8")) == fresh
+
+    external_parent = tmp_path / "external-parent"
+    external_parent.mkdir()
+    (tmp_path / "linked-parent").symlink_to(
+        external_parent.name,
+        target_is_directory=True,
+    )
+    with pytest.raises(ValueError, match="parent is symlinked"):
+        browser_proof_materializer._write_json_stable(
+            Path("linked-parent/proof.json"),
+            fresh,
+            root=tmp_path,
+        )
+    assert not (external_parent / "proof.json").exists()
+
+    (tmp_path / "directory-output").mkdir()
+    with pytest.raises(ValueError, match="not a regular file"):
+        browser_proof_materializer._write_json_stable(
+            Path("directory-output"),
+            fresh,
+            root=tmp_path,
+        )
+    (tmp_path / "file-parent").write_text("not a directory\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="parent is symlinked or not a directory"):
+        browser_proof_materializer._write_json_stable(
+            Path("file-parent/proof.json"),
+            fresh,
+            root=tmp_path,
+        )
+
+    browser_proof_materializer._write_json_stable(
+        Path("new/canonical/proof.json"),
+        fresh,
+        root=tmp_path,
+    )
+    created = tmp_path / "new/canonical/proof.json"
+    assert json.loads(created.read_text(encoding="utf-8")) == fresh
+    assert created.stat().st_mode & 0o777 == 0o644
+
+
+def test_browser_proof_stable_writer_repairs_equal_payload_mode_with_cas(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "proof.json"
+    payload = {"status": "pass"}
+    destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    destination.chmod(0o777)
+
+    browser_proof_materializer._write_json_stable(
+        Path("proof.json"),
+        payload,
+        root=tmp_path,
+    )
+
+    assert json.loads(destination.read_text(encoding="utf-8")) == payload
+    assert destination.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.parametrize("mutation", ("in_place", "replacement"))
+def test_browser_proof_stable_writer_preserves_final_window_destination_edit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    destination = tmp_path / "proof.json"
+    destination.write_bytes(b'{"status":"approved"}\n')
+    concurrent_bytes = b'{"status":"concurrent-operator-edit"}\n'
+    original_exchange = browser_proof_materializer._rename_exchange
+    exchange_calls = 0
+
+    def exchange_with_destination_edit(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal exchange_calls
+        exchange_calls += 1
+        if exchange_calls == 1:
+            if mutation == "in_place":
+                destination.write_bytes(concurrent_bytes)
+            else:
+                replacement = tmp_path / "operator-replacement.json"
+                replacement.write_bytes(concurrent_bytes)
+                replacement.replace(destination)
+        original_exchange(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(
+        browser_proof_materializer,
+        "_rename_exchange",
+        exchange_with_destination_edit,
+    )
+
+    with pytest.raises(RuntimeError, match="changed before publication"):
+        browser_proof_materializer._write_json_stable(
+            Path("proof.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    assert destination.read_bytes() == concurrent_bytes
+
+
+@pytest.mark.parametrize("destination_exists", (True, False))
+def test_browser_proof_stable_writer_detects_staged_path_substitution_at_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    destination_exists: bool,
+) -> None:
+    destination = tmp_path / "proof.json"
+    approved_bytes = b'{"status":"approved"}\n'
+    substituted_bytes = b'{"status":"substituted-staging-path"}\n'
+    if destination_exists:
+        destination.write_bytes(approved_bytes)
+        helper_name = "_rename_exchange"
+    else:
+        helper_name = "_rename_noreplace"
+    original_rename = getattr(browser_proof_materializer, helper_name)
+    rename_calls = 0
+
+    def rename_with_staged_substitution(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal rename_calls
+        rename_calls += 1
+        if rename_calls == 1:
+            replacement = tmp_path / "staging-substitute.json"
+            replacement.write_bytes(substituted_bytes)
+            replacement.replace(tmp_path / source)
+        original_rename(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(
+        browser_proof_materializer,
+        helper_name,
+        rename_with_staged_substitution,
+    )
+
+    with pytest.raises(
+        browser_proof_materializer._PreserveStagedOutputError,
+        match="staging path changed",
+    ):
+        browser_proof_materializer._write_json_stable(
+            Path("proof.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    if destination_exists:
+        assert destination.read_bytes() == approved_bytes
+        recovery = [
+            path
+            for path in tmp_path.iterdir()
+            if path.name.startswith(".proof.json.release-write-")
+        ]
+        assert [path.read_bytes() for path in recovery] == [substituted_bytes]
+    else:
+        assert not destination.exists()
+        recovery = [
+            path
+            for path in tmp_path.iterdir()
+            if path.name.startswith(".proof.json.release-write-")
+        ]
+        assert [path.read_bytes() for path in recovery] == [substituted_bytes]
+
+
+def test_browser_proof_stable_writer_preserves_displaced_data_if_rollback_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "proof.json"
+    destination.write_bytes(b'{"status":"approved"}\n')
+    concurrent_bytes = b'{"status":"concurrent-before-failed-rollback"}\n'
+    original_exchange = browser_proof_materializer._rename_exchange
+    exchange_calls = 0
+
+    def exchange_with_failed_rollback(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal exchange_calls
+        exchange_calls += 1
+        if exchange_calls == 1:
+            destination.write_bytes(concurrent_bytes)
+            original_exchange(parent_fd, source, destination_name)
+            return
+        raise OSError(errno.EIO, "injected exchange rollback failure")
+
+    monkeypatch.setattr(
+        browser_proof_materializer,
+        "_rename_exchange",
+        exchange_with_failed_rollback,
+    )
+
+    with pytest.raises(
+        browser_proof_materializer._PreserveStagedOutputError,
+        match="rollback failed",
+    ):
+        browser_proof_materializer._write_json_stable(
+            Path("proof.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    assert json.loads(destination.read_text(encoding="utf-8")) == {"status": "fresh"}
+    recovery = [
+        path
+        for path in tmp_path.iterdir()
+        if path.name.startswith(".proof.json.release-write-")
+    ]
+    assert [path.read_bytes() for path in recovery] == [concurrent_bytes]
+
+
+@pytest.mark.parametrize("destination_exists", (True, False))
+def test_browser_proof_stable_writer_rolls_back_staged_symlink_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    destination_exists: bool,
+) -> None:
+    destination = tmp_path / "proof.json"
+    approved_bytes = b'{"status":"approved"}\n'
+    victim = tmp_path / "symlink-victim.json"
+    victim_bytes = b'{"preserve":"symlink-victim"}\n'
+    victim.write_bytes(victim_bytes)
+    if destination_exists:
+        destination.write_bytes(approved_bytes)
+        helper_name = "_rename_exchange"
+    else:
+        helper_name = "_rename_noreplace"
+    original_rename = getattr(browser_proof_materializer, helper_name)
+    rename_calls = 0
+
+    def rename_with_staged_symlink(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal rename_calls
+        rename_calls += 1
+        if rename_calls == 1:
+            staged_path = tmp_path / source
+            staged_path.unlink()
+            staged_path.symlink_to(victim.name)
+        original_rename(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(
+        browser_proof_materializer,
+        helper_name,
+        rename_with_staged_symlink,
+    )
+
+    with pytest.raises(browser_proof_materializer._PreserveStagedOutputError):
+        browser_proof_materializer._write_json_stable(
+            Path("proof.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    if destination_exists:
+        assert not destination.is_symlink()
+        assert destination.read_bytes() == approved_bytes
+    else:
+        assert not destination.exists()
+        assert not destination.is_symlink()
+    assert victim.read_bytes() == victim_bytes
+    recovery = [
+        path
+        for path in tmp_path.iterdir()
+        if path.name.startswith(".proof.json.release-write-")
+    ]
+    assert len(recovery) == 1
+    assert recovery[0].is_symlink()
+    assert recovery[0].readlink() == Path(victim.name)
+
+
+def test_browser_proof_stable_writer_preserves_quarantine_after_identity_eio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "proof.json"
+    concurrent_bytes = b'{"status":"concurrent-staged-entry"}\n'
+    original_noreplace = browser_proof_materializer._rename_noreplace
+    rename_calls = 0
+
+    def noreplace_with_staged_replacement(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal rename_calls
+        rename_calls += 1
+        if rename_calls == 1:
+            replacement = tmp_path / "concurrent-staged-entry.json"
+            replacement.write_bytes(concurrent_bytes)
+            replacement.replace(tmp_path / source)
+        original_noreplace(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(
+        browser_proof_materializer,
+        "_rename_noreplace",
+        noreplace_with_staged_replacement,
+    )
+    monkeypatch.setattr(
+        browser_proof_materializer,
+        "_entry_identity_no_follow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError(errno.EIO, "injected post-quarantine identity failure")
+        ),
+    )
+
+    with pytest.raises(browser_proof_materializer._PreserveStagedOutputError):
+        browser_proof_materializer._write_json_stable(
+            Path("proof.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    assert not destination.exists()
+    recovery = [
+        path
+        for path in tmp_path.iterdir()
+        if path.name.startswith(".proof.json.release-write-")
+    ]
+    assert [path.read_bytes() for path in recovery] == [concurrent_bytes]
+
+
+def test_browser_proof_stable_writer_preserves_new_destination_racing_noreplace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "proof.json"
+    concurrent_bytes = b'{"status":"concurrent-new-destination"}\n'
+    original_noreplace = browser_proof_materializer._rename_noreplace
+
+    def noreplace_after_destination_appears(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        destination.write_bytes(concurrent_bytes)
+        original_noreplace(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(
+        browser_proof_materializer,
+        "_rename_noreplace",
+        noreplace_after_destination_appears,
+    )
+
+    with pytest.raises(RuntimeError, match="appeared during publication"):
+        browser_proof_materializer._write_json_stable(
+            Path("proof.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    assert destination.read_bytes() == concurrent_bytes
+
+
+def test_browser_journey_matrix_blocks_non_list_case_nodes() -> None:
+    seed = {"journey_evidence_matrix": _journey_evidence_matrix()}
+    matrix = seed["journey_evidence_matrix"]
+    assert isinstance(matrix, dict)
+    rows = matrix["rows"]
+    assert isinstance(rows, list)
+    first_row = rows[0]
+    assert isinstance(first_row, dict)
+    evidence_sources = first_row["evidence_sources"]
+    assert isinstance(evidence_sources, list)
+    evidence_sources[0]["cases"] = 1
+
+    rendered, blockers = browser_proof_materializer._build_journey_evidence_matrix(
+        seed,
+        source_backed={"status": "pass"},
+        real_browser={"status": "pass"},
+        source_binding=None,
+    )
+
+    assert rendered["status"] == "blocked"
+    assert any("evidence source cases must be a list" in item for item in blockers)
+
+
+def test_browser_journey_matrix_blocks_mixed_type_required_ids_and_cases() -> None:
+    seed = {"journey_evidence_matrix": _journey_evidence_matrix()}
+    matrix = seed["journey_evidence_matrix"]
+    assert isinstance(matrix, dict)
+    required_ids = matrix["required_journey_ids"]
+    rows = matrix["rows"]
+    assert isinstance(required_ids, list)
+    assert isinstance(rows, list)
+    required_ids.append(7)
+    first_row = rows[0]
+    assert isinstance(first_row, dict)
+    evidence_sources = first_row["evidence_sources"]
+    assert isinstance(evidence_sources, list)
+    cases = evidence_sources[0]["cases"]
+    assert isinstance(cases, list)
+    cases.append(False)
+
+    rendered, blockers = browser_proof_materializer._build_journey_evidence_matrix(
+        seed,
+        source_backed={"status": "pass"},
+        real_browser={"status": "pass"},
+        source_binding=None,
+    )
+
+    assert rendered["status"] == "blocked"
+    assert any("required IDs must contain only non-empty strings" in item for item in blockers)
+    assert any("cases must be a list of non-empty strings" in item for item in blockers)
+
+
+def test_browser_materializer_turns_binding_type_error_into_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_seed(tmp_path)
+
+    def passing_runner(
+        _root: Path,
+        *,
+        test_file: str,
+        cases: list[str],
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        return {
+            "status": "pass",
+            "test_file": test_file,
+            "cases": cases,
+            "exit_code": 0,
+            "duration_seconds": 0.1,
+            "limitations": [],
+            "outcome_counts": {
+                "passed": len(cases),
+                "failed": 0,
+                "skipped": 0,
+                "errors": 0,
+                "xfailed": 0,
+                "xpassed": 0,
+            },
+        }
+
+    def malformed_binding(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise TypeError("malformed nested evidence cases")
+
+    monkeypatch.setattr(
+        browser_proof_materializer,
+        "build_source_binding",
+        malformed_binding,
+    )
+    receipt = build_receipt(
+        tmp_path,
+        runner=passing_runner,
+        require_source_binding=True,
+    )
+
+    assert receipt["status"] == "blocked"
+    assert (
+        "immutable source binding failed: malformed nested evidence cases"
+        in receipt["blocking_reasons"]
+    )
 
 
 def test_browser_workflow_proof_blocks_false_green_zero_outcome_real_browser_lane(tmp_path: Path) -> None:

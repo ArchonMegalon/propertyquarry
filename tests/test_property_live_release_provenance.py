@@ -84,9 +84,8 @@ def _manifest_values(origin: str) -> dict[str, str]:
         "release_label": "propertyquarry-source-browser-candidate-aaaaaaaaaaaa",
         "release_generated_at": GENERATED_AT,
         "release_verification_commands": (
-            "bash scripts/verify_release_assets.sh && "
-            "python3 scripts/verify_flagship_release_readiness.py && "
-            "python3 scripts/verify_generated_release_artifacts_clean.py"
+            "./scripts/propertyquarry_release_python.sh "
+            "scripts/propertyquarry_release_make_dispatch.py release-preflight"
         ),
         "release_deployment_id": "propertyquarry-governed-deploy-aaaaaaaaaaaa",
     }

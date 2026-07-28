@@ -156,6 +156,76 @@ groups:
           summary: A required PropertyQuarry runtime heartbeat is stale or invalid
           runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#runtime-heartbeats
 
+      - alert: PropertyQuarryIngressAdmissionBackendUnavailable
+        expr: increase(propertyquarry_ingress_admission_operations_total{outcome="backend_unavailable"}[5m]) > 0
+        for: 2m
+        labels:
+          service: propertyquarry
+          severity: critical
+          slo: ingress_admission
+        annotations:
+          summary: PropertyQuarry ingress admission recorded a backend-unavailable outcome
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-backend
+
+      - alert: PropertyQuarryAdmissionCapacityContractInvalid
+        expr: |-
+          (count(propertyquarry_admission_capacity_contract_valid{backend="postgres"} == 1) or vector(0))
+            != (count(up{job="propertyquarry"} == 1) or vector(0))
+          or (count(propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="lease"}) or vector(0))
+            != (count(up{job="propertyquarry"} == 1) or vector(0))
+          or (count(propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="quota"}) or vector(0))
+            != (count(up{job="propertyquarry"} == 1) or vector(0))
+          or (count(propertyquarry_admission_capacity_limit{backend="postgres",capacity_key="lease"} == 100000) or vector(0))
+            != (count(up{job="propertyquarry"} == 1) or vector(0))
+          or (count(propertyquarry_admission_capacity_limit{backend="postgres",capacity_key="quota"} == 1000000) or vector(0))
+            != (count(up{job="propertyquarry"} == 1) or vector(0))
+        for: 2m
+        labels:
+          backend: postgres
+          service: propertyquarry
+          severity: critical
+          slo: admission_capacity
+        annotations:
+          summary: PropertyQuarry PostgreSQL admission capacity contract is invalid or missing
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity
+
+      - alert: PropertyQuarryAdmissionCapacityWarning
+        expr: |-
+          (
+            propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="lease"} / 100000 >= 0.8
+            and on (backend, capacity_key)
+            propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="lease"} / 100000 < 0.95
+          )
+          or
+          (
+            propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="quota"} / 1000000 >= 0.8
+            and on (backend, capacity_key)
+            propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="quota"} / 1000000 < 0.95
+          )
+        for: 10m
+        labels:
+          backend: postgres
+          service: propertyquarry
+          severity: warning
+          slo: admission_capacity
+        annotations:
+          summary: PropertyQuarry admission capacity utilization is at least 80 percent
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity
+
+      - alert: PropertyQuarryAdmissionCapacityCritical
+        expr: |-
+          propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="lease"} / 100000 >= 0.95
+          or propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="quota"} / 1000000 >= 0.95
+        for: 5m
+        labels:
+          backend: postgres
+          service: propertyquarry
+          severity: critical
+          slo: admission_capacity
+        annotations:
+          summary: PropertyQuarry admission capacity utilization is at least 95 percent
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity
+
       - alert: PropertyQuarryDatabasePoolSaturation
         expr: propertyquarry_db_pool_in_use / clamp_min(propertyquarry_db_pool_capacity, 1) > 0.85
         for: 10m
@@ -178,24 +248,57 @@ groups:
           summary: PropertyQuarry database pool utilization exceeds 95 percent
           runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#database-saturation
 
+      - alert: PropertyQuarryQueueTelemetryUnobserved
+        expr: |-
+          (
+            count(
+              (propertyquarry_queue_observed{queue="property_search"} == 1)
+              and on (job, instance)
+              (
+                (propertyquarry_runtime_heartbeat_required{role="worker"} == 1)
+                and on (job, instance) (propertyquarry_runtime_heartbeat_present{role="worker"} == 1)
+                and on (job, instance) (propertyquarry_runtime_heartbeat_stale{role="worker"} == 0)
+              )
+            ) or vector(0)
+          )
+          !=
+          (
+            count(
+              (propertyquarry_runtime_heartbeat_required{role="worker"} == 1)
+              and on (job, instance) (propertyquarry_runtime_heartbeat_present{role="worker"} == 1)
+              and on (job, instance) (propertyquarry_runtime_heartbeat_stale{role="worker"} == 0)
+            ) or vector(0)
+          )
+        for: 2m
+        labels:
+          service: propertyquarry
+          severity: critical
+          slo: queue_backlog
+          queue: property_search
+        annotations:
+          summary: PropertyQuarry queue telemetry is unobserved despite a healthy required worker
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#queue-backlog
+
       - alert: PropertyQuarryQueueDepthHigh
-        expr: propertyquarry_queue_depth > 100
+        expr: propertyquarry_queue_depth{queue="property_search"} > 100
         for: 10m
         labels:
           service: propertyquarry
           severity: warning
           slo: queue_backlog
+          queue: property_search
         annotations:
           summary: PropertyQuarry queue depth exceeds the launch threshold
           runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#queue-backlog
 
       - alert: PropertyQuarryQueueOldestItemStale
-        expr: propertyquarry_queue_oldest_item_age_seconds > 300
+        expr: propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} > 300
         for: 10m
         labels:
           service: propertyquarry
           severity: critical
           slo: queue_backlog
+          queue: property_search
         annotations:
           summary: The oldest PropertyQuarry queue item exceeds five minutes
           runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#queue-backlog

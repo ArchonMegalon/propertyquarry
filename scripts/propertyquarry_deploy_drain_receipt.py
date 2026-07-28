@@ -102,6 +102,7 @@ class DrainReceiptBindings:
     compose_project: str
     public_origin: str
     api_container: str
+    worker_container: str
     scheduler_container: str
     render_container: str
     ingress_container: str
@@ -114,6 +115,7 @@ class DrainReceiptBindings:
             "compose_project": self.compose_project,
             "public_origin": self.public_origin,
             "api_container": self.api_container,
+            "worker_container": self.worker_container,
             "scheduler_container": self.scheduler_container,
             "render_container": self.render_container,
             "ingress_container": self.ingress_container,
@@ -412,6 +414,7 @@ def _validate_bindings(bindings: DrainReceiptBindings) -> None:
         _require_pattern(value, IDENTIFIER_RE, label)
     for label, value in (
         ("expected API container", bindings.api_container),
+        ("expected worker container", bindings.worker_container),
         ("expected scheduler container", bindings.scheduler_container),
         ("expected render container", bindings.render_container),
         ("expected ingress container", bindings.ingress_container),
@@ -485,6 +488,7 @@ def verify_drain_receipt(
             "compose_project",
             "public_origin",
             "api_container",
+            "worker_container",
             "scheduler_container",
             "render_container",
             "ingress_container",
@@ -496,7 +500,13 @@ def verify_drain_receipt(
     _require_pattern(receipt["actor_id"], IDENTIFIER_RE, "drain receipt actor_id")
     _require_pattern(target["id"], IDENTIFIER_RE, "drain receipt target.id")
     _require_pattern(target["compose_project"], IDENTIFIER_RE, "drain receipt target.compose_project")
-    for key in ("api_container", "scheduler_container", "render_container", "ingress_container"):
+    for key in (
+        "api_container",
+        "worker_container",
+        "scheduler_container",
+        "render_container",
+        "ingress_container",
+    ):
         _require_pattern(target[key], CONTAINER_RE, f"drain receipt target.{key}")
     _require_pattern(
         target["writer_topology_sha256"],
@@ -684,6 +694,7 @@ def _add_binding_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--compose-project", required=True)
     parser.add_argument("--public-origin", required=True)
     parser.add_argument("--api-container", required=True)
+    parser.add_argument("--worker-container", required=True)
     parser.add_argument("--scheduler-container", required=True)
     parser.add_argument("--render-container", required=True)
     parser.add_argument("--ingress-container", required=True)
@@ -703,6 +714,7 @@ def _bindings_from_args(args: argparse.Namespace) -> DrainReceiptBindings:
         compose_project=args.compose_project,
         public_origin=args.public_origin,
         api_container=args.api_container,
+        worker_container=args.worker_container,
         scheduler_container=args.scheduler_container,
         render_container=args.render_container,
         ingress_container=args.ingress_container,

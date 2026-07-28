@@ -265,6 +265,13 @@ def _route_checks(*, path: str, status_code: int, final_url: str, text: str) -> 
         facebook_unavailable = not facebook_href and "Facebook unavailable" in text
         google_hidden = not google_href and "Google unavailable" not in text
         facebook_hidden = not facebook_href and "Facebook unavailable" not in text
+        google_identity_only = (
+            not google_active
+            or (
+                "Google only verifies your identity for a PropertyQuarry-local session." in text
+                and "Identity only" in text
+            )
+        )
         signed_in_state = 'action="/app/actions/sign-out"' in text
         email_link_available = 'action="/sign-in/email-link"' in text
         connected_provider_active = google_active or facebook_active or id_austria_href
@@ -283,8 +290,7 @@ def _route_checks(*, path: str, status_code: int, final_url: str, text: str) -> 
                             and (not email_link_available or "Create an account with email." in text)
                         )
                     )
-                    and "Identity only" not in text
-                    and "Identity-only." not in text
+                    and google_identity_only
                     and "Google?" not in text
                     and "Facebook?" not in text,
                 ),
@@ -292,7 +298,10 @@ def _route_checks(*, path: str, status_code: int, final_url: str, text: str) -> 
                     "sign_in_connected_identity_creates_account",
                     signed_in_state
                     or not connected_provider_active
-                    or "Sign-in providers open the same account and create it if needed." in text,
+                    or (
+                        "Sign-in providers verify who you are, then open the same local account or create it if needed."
+                        in text
+                    ),
                 ),
                 (
                     "sign_in_no_unavailable_auth_copy",

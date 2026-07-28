@@ -12,6 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,10 @@ from app.api.app import create_app
 from app.api.routes import landing as landing_routes
 from app.product.models import HandoffNote
 from app.product.service import ProductService
+from scripts.property_tour_3dvista_provenance import (
+    THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
+    export_tree_sha256,
+)
 from scripts.propertyquarry_playwright_runtime import (
     normalize_playwright_engine,
     playwright_engine_launch_browser,
@@ -53,6 +58,15 @@ def _wait_for_http(base_url: str, *, timeout_seconds: float = 30.0) -> None:
         except Exception:
             time.sleep(0.1)
     raise AssertionError(f"server at {base_url} did not become ready in time")
+
+
+def _stop_uvicorn_server(*, server: Server, thread: threading.Thread, label: str) -> None:
+    server.should_exit = True
+    thread.join(timeout=10.0)
+    if thread.is_alive():
+        server.force_exit = True
+        thread.join(timeout=5.0)
+    assert not thread.is_alive(), f"{label} uvicorn thread did not stop"
 
 
 def _write_floorplan_png(path: Path) -> None:
@@ -360,9 +374,15 @@ def _settled_checked_provider_values(
 
 
 @pytest.fixture()
-def propertyquarry_browser_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[dict[str, object]]:
+def propertyquarry_browser_server(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> Iterator[dict[str, object]]:
     from tests.product_test_helpers import build_product_client, start_workspace
 
+    cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
     monkeypatch.setenv("PROPERTYQUARRY_LEGACY_PDF_RENDERER_ALLOW", "1")
     monkeypatch.setenv("PAYPAL_CLIENT_ID", "paypal-client")
     monkeypatch.setenv("PAYPAL_SECRET", "paypal-secret")
@@ -391,6 +411,37 @@ def propertyquarry_browser_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     (three_d_vista_dir / "index.htm").write_text(
         "<!doctype html><html><body><div id='tour-viewer'>3D tour ready</div>"
         "<script>window.TDVPlayer = { ready: true };</script></body></html>",
+        encoding="utf-8",
+    )
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "three_d_vista_target_provenance": {
+                    "schema": THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
+                    "status": "pass",
+                    "provider": "3dvista",
+                    "target_slug": slug,
+                    "target_subdir": "3dvista",
+                    "artifact": {
+                        "kind": "local_export",
+                        "sha256": export_tree_sha256(three_d_vista_dir),
+                        "entry_relpath": "index.htm",
+                    },
+                    "authorization": {
+                        "status": "approved",
+                        "reference": "pytest:propertyquarry-browser-fixture",
+                    },
+                    "review": {
+                        "property_match": "pass",
+                        "visual_match": "pass",
+                        "reviewed_by": "propertyquarry-e2e-fixture",
+                        "reviewed_at": "2026-07-08T07:00:00Z",
+                    },
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     (bundle_dir / "tour.json").write_text(
@@ -448,6 +499,7 @@ def propertyquarry_browser_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setenv("EA_PUBLIC_APP_BASE_URL", "https://propertyquarry.com")
     monkeypatch.setenv("PROPERTYQUARRY_ENABLE_PUBLIC_TOURS", "1")
     client = build_product_client(principal_id="pq-greenfield-browser")
+    cleanup.callback(client.close)
     start_workspace(client, mode="personal", workspace_name="Property Office")
     stored = client.post(
         "/v1/onboarding/property-search/preferences",
@@ -689,6 +741,7 @@ def propertyquarry_browser_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
     app = create_app()
     test_client = TestClient(app, base_url="https://propertyquarry.com")
+    cleanup.callback(test_client.close)
     test_client.headers.update({"X-EA-Principal-ID": "pq-greenfield-browser", "host": "propertyquarry.com"})
 
     port = _free_port()
@@ -697,15 +750,17 @@ def propertyquarry_browser_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    cleanup.callback(
+        _stop_uvicorn_server,
+        server=server,
+        thread=thread,
+        label="propertyquarry browser fixture",
+    )
     local_base_url = f"http://127.0.0.1:{port}"
     browser_base_url = f"http://propertyquarry.localhost:{port}"
     monkeypatch.setenv("EA_PUBLIC_APP_BASE_URL", browser_base_url)
     _wait_for_http(local_base_url)
-    try:
-        yield {"base_url": browser_base_url, "client": test_client, "bundle_root": bundle_root}
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10.0)
+    yield {"base_url": browser_base_url, "client": test_client, "bundle_root": bundle_root}
 
 
 @pytest.fixture()
@@ -4516,6 +4571,98 @@ def test_propertyquarry_mobile_what_matters_select_changes_keep_current_group_st
             "before": before_parking,
             "after": after_parking,
         }
+    finally:
+        context.close()
+
+
+def test_propertyquarry_mobile_stale_what_matters_restore_does_not_override_new_scroll(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=True, width=390, height=844)
+    page = context.new_page()
+    try:
+        response = page.goto(f"{base_url}/app/search", wait_until="domcontentloaded")
+        assert response is not None and response.ok
+        page.locator('[data-console-form-variant="property_search"]').wait_for(state="visible")
+        page.locator('[data-property-step-trigger="children"]').click()
+        page.wait_for_function(
+            "() => document.querySelector('[data-console-form-variant=\"property_search\"]')?.dataset.propertyActiveStep === 'children'"
+        )
+
+        playground_row = page.locator('[data-keyword-priority-row][data-keyword-value="playground nearby"]')
+        playground_row.evaluate(
+            """
+            (node) => {
+              const group = node?.closest?.('details[data-what-matters-group]');
+              if (group instanceof HTMLDetailsElement) group.open = true;
+              node?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+            }
+            """
+        )
+        playground_row.locator("[data-keyword-preference-select]").select_option("nice_to_have")
+        page.wait_for_function(
+            """
+            () => document.querySelector('[data-keyword-priority-row][data-keyword-value="playground nearby"]')
+              ?.getAttribute('data-keyword-distance-enabled') === 'true'
+            """
+        )
+        page.wait_for_timeout(120)
+
+        state = page.evaluate(
+            """
+            () => new Promise((resolve) => {
+              const form = document.querySelector('[data-console-form-variant="property_search"]');
+              const playground = document.querySelector('[data-keyword-priority-row][data-keyword-value="playground nearby"]');
+              const distance = playground?.querySelector('[data-keyword-distance-select]');
+              const kindergarten = document.querySelector('[data-school-priority-row][data-school-value="kindergarten"]');
+              const group = kindergarten?.closest?.('details[data-what-matters-group]');
+              const panel = kindergarten?.closest?.('[data-property-what-matters-panel]');
+              const owner = panel?.querySelector?.('.pqx-advanced-panel-grid');
+              if (
+                !(form instanceof HTMLFormElement)
+                || !(distance instanceof HTMLSelectElement)
+                || !(kindergarten instanceof HTMLElement)
+                || !(group instanceof HTMLDetailsElement)
+                || !(owner instanceof HTMLElement)
+              ) {
+                resolve({ error: 'missing_test_target' });
+                return;
+              }
+              const capture = () => {
+                const rect = kindergarten.getBoundingClientRect();
+                return {
+                  activeStep: String(form.dataset.propertyActiveStep || ''),
+                  groupOpen: group.open,
+                  rowTop: Number(rect.top || 0),
+                  windowScrollY: Number(window.scrollY || window.pageYOffset || 0),
+                  ownerScrollTop: Number(owner.scrollTop || 0),
+                };
+              };
+              group.open = true;
+              distance.value = '2000';
+              distance.dispatchEvent(new Event('change', { bubbles: true }));
+              const restoreBaseline = capture();
+              kindergarten.scrollIntoView({ block: 'center', inline: 'nearest' });
+              const before = capture();
+              window.setTimeout(() => resolve({ restoreBaseline, before, after: capture() }), 180);
+            })
+            """
+        )
+        assert state.get("error") is None, state
+        restore_baseline = state["restoreBaseline"]
+        before = state["before"]
+        after = state["after"]
+        assert (
+            abs(float(before["windowScrollY"]) - float(restore_baseline["windowScrollY"])) > 20.0
+            or abs(float(before["ownerScrollTop"]) - float(restore_baseline["ownerScrollTop"])) > 20.0
+        ), state
+        assert after["activeStep"] == "children", state
+        assert after["groupOpen"] is True, state
+        assert abs(float(after["rowTop"]) - float(before["rowTop"])) <= 2.0, state
+        assert abs(float(after["windowScrollY"]) - float(before["windowScrollY"])) <= 2.0, state
+        assert abs(float(after["ownerScrollTop"]) - float(before["ownerScrollTop"])) <= 2.0, state
     finally:
         context.close()
 

@@ -34,8 +34,20 @@ def test_concurrent_signed_webhooks_claim_once_and_conflicting_replay_fails_clos
     monkeypatch.setenv("PROPERTYQUARRY_CONTENT_WEBHOOK_LEASE_SECONDS", "invalid-uses-safe-default")
     monkeypatch.setenv("SUBSCRIBR_PROPERTY_WEBHOOK_SECRET", secret)
     from app.api.app import create_app
+    from app.services.property_content_job_ledger import PropertyContentJobLedger
 
     client = TestClient(create_app())
+    PropertyContentJobLedger(path=tmp_path / "content-jobs.json").upsert_job(
+        {
+            "packet_id": "packet-1",
+            "content_mode": "product_tutorial",
+            "title": "Trusted webhook source",
+        },
+        principal_id="propertyquarry:system:content-studio",
+        ownership_scope="system",
+        search_run_id="",
+        status="PROVIDER_GENERATING",
+    )
     payload = {"id": "evt-concurrent", "type": "script.started", "packet_id": "packet-1"}
     body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     barrier = threading.Barrier(2)
@@ -55,7 +67,7 @@ def test_concurrent_signed_webhooks_claim_once_and_conflicting_replay_fails_clos
     assert sorted(status for status, _payload in results) == [200, 200]
     assert sorted(str(result["status"]) for _status, result in results) == ["duplicate_ignored", "received"]
 
-    conflict_payload = {**payload, "packet_id": "tampered"}
+    conflict_payload = {**payload, "type": "script.tampered"}
     conflict_body = json.dumps(conflict_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     conflict = client.post(
         "/internal/providers/subscribr/webhook",
@@ -67,7 +79,7 @@ def test_concurrent_signed_webhooks_claim_once_and_conflicting_replay_fails_clos
 
     ledger_path = tmp_path / "content-jobs.json"
     ledger_path.write_text('{"jobs":', encoding="utf-8")
-    corrupt_payload = {"id": "evt-corrupt", "type": "script.started"}
+    corrupt_payload = {"id": "evt-corrupt", "type": "script.started", "packet_id": "packet-1"}
     corrupt_body = json.dumps(corrupt_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     corrupt = client.post(
         "/internal/providers/subscribr/webhook",

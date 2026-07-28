@@ -1155,7 +1155,16 @@ def test_restore_requires_pinned_provider_attestation_and_never_falls_back_to_lo
         encoding="utf-8",
     )
     commands: list[list[str]] = []
-    monkeypatch.setattr(dr, "_load_aws_cli_release_pin", _REAL_LOAD_AWS_CLI_RELEASE_PIN)
+    missing_aws = tmp_path / "missing-pinned-aws"
+    configured_pin = _aws_cli_release_pin(
+        path=str(missing_aws),
+        sha256=hashlib.sha256(b"missing-pinned-aws").hexdigest(),
+    )
+    monkeypatch.setattr(
+        dr,
+        "_load_aws_cli_release_pin",
+        lambda: dict(configured_pin),
+    )
 
     with pytest.raises(dr.DisasterRecoveryError) as exc:
         dr.execute_restore_drill(
@@ -1172,7 +1181,7 @@ def test_restore_requires_pinned_provider_attestation_and_never_falls_back_to_lo
             which=lambda name: None if Path(name).name == "aws" else _which(name),
         )
 
-    assert exc.value.code == "aws_cli_release_pin_unconfigured"
+    assert exc.value.code == "aws_cli_path_invalid"
     assert commands == []
 
     retrieval_destination.write_bytes(remote_artifact.read_bytes())
@@ -1351,7 +1360,37 @@ def test_aws_cli_attestation_detects_path_replacement_during_version_probe(
     assert exc.value.code == "aws_cli_binary_race"
 
 
-def test_checked_in_aws_cli_release_pin_is_explicitly_unconfigured() -> None:
+def test_checked_in_aws_cli_release_pin_is_explicitly_configured() -> None:
+    raw = dr.AWS_CLI_RELEASE_PIN_PATH.read_bytes()
+    expected = dr._parse_aws_cli_release_pin(raw)
+    actual = _REAL_LOAD_AWS_CLI_RELEASE_PIN()
+
+    assert actual == expected
+    assert actual["status"] == dr.AWS_CLI_RELEASE_PIN_CONFIGURED
+
+
+def test_unconfigured_aws_cli_release_pin_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    release_pin_path = tmp_path / "aws_cli_release_pin.json"
+    release_pin_path.write_text(
+        json.dumps(
+            {
+                "path": dr.AWS_CLI_RELEASE_PIN_UNCONFIGURED,
+                "schema": dr.AWS_CLI_RELEASE_PIN_SCHEMA,
+                "sha256": dr.AWS_CLI_RELEASE_PIN_UNCONFIGURED,
+                "status": dr.AWS_CLI_RELEASE_PIN_UNCONFIGURED,
+                "version": dr.AWS_CLI_RELEASE_PIN_UNCONFIGURED,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    release_pin_path.chmod(0o600)
+    monkeypatch.setattr(dr, "AWS_CLI_RELEASE_PIN_PATH", release_pin_path)
+
     with pytest.raises(dr.DisasterRecoveryError) as exc:
         _REAL_LOAD_AWS_CLI_RELEASE_PIN()
 
@@ -1798,6 +1837,174 @@ def test_release_gate_binds_recent_encrypted_off_host_restore_to_exact_release_a
     assert all(receipt["verification"].values())
 
 
+@pytest.mark.parametrize("receipt_kind", ("backup", "restore"))
+def test_release_gate_rejects_symlinked_receipt_inputs(
+    tmp_path: Path,
+    receipt_kind: str,
+) -> None:
+    artifact = tmp_path / "propertyquarry.dump.gpg"
+    artifact.write_bytes(b"encrypted-release-backup")
+    backup_real = tmp_path / "backup.real.json"
+    restore_real = tmp_path / "restore.real.json"
+    backup_real.write_text(
+        json.dumps(_backup_receipt_payload(artifact=artifact)),
+        encoding="utf-8",
+    )
+    restore_real.write_text(
+        json.dumps(_restore_receipt_payload(artifact=artifact)),
+        encoding="utf-8",
+    )
+    backup_path = backup_real
+    restore_path = restore_real
+    if receipt_kind == "backup":
+        backup_path = tmp_path / "backup.json"
+        backup_path.symlink_to(backup_real.name)
+    else:
+        restore_path = tmp_path / "restore.json"
+        restore_path.symlink_to(restore_real.name)
+
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        dr.verify_release_dr_evidence(
+            backup_receipt_path=backup_path,
+            restore_receipt_path=restore_path,
+            release_commit_sha=RELEASE_COMMIT_SHA,
+            image_digest=RELEASE_IMAGE_DIGEST,
+            max_age_seconds=60,
+        )
+
+    assert exc.value.code == "dr_receipt_invalid"
+
+
+@pytest.mark.parametrize("unsafe_kind", ("fifo", "hardlink", "peer-writable"))
+def test_release_gate_rejects_unsafe_receipt_file_types_and_modes(
+    tmp_path: Path,
+    unsafe_kind: str,
+) -> None:
+    artifact = tmp_path / "propertyquarry.dump.gpg"
+    artifact.write_bytes(b"encrypted-release-backup")
+    backup_real = tmp_path / "backup.real.json"
+    restore_path = tmp_path / "restore.json"
+    backup_real.write_text(
+        json.dumps(_backup_receipt_payload(artifact=artifact)),
+        encoding="utf-8",
+    )
+    restore_path.write_text(
+        json.dumps(_restore_receipt_payload(artifact=artifact)),
+        encoding="utf-8",
+    )
+    backup_path = tmp_path / "backup.json"
+    if unsafe_kind == "fifo":
+        os.mkfifo(backup_path, mode=0o600)
+    elif unsafe_kind == "hardlink":
+        os.link(backup_real, backup_path)
+    else:
+        backup_path.write_bytes(backup_real.read_bytes())
+        backup_path.chmod(0o660)
+
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        dr.verify_release_dr_evidence(
+            backup_receipt_path=backup_path,
+            restore_receipt_path=restore_path,
+            release_commit_sha=RELEASE_COMMIT_SHA,
+            image_digest=RELEASE_IMAGE_DIGEST,
+            max_age_seconds=60,
+        )
+
+    assert exc.value.code == "dr_receipt_invalid"
+
+
+def test_receipt_input_rejects_non_sticky_peer_writable_ancestor(
+    tmp_path: Path,
+) -> None:
+    peer_writable_ancestor = tmp_path / "peer-writable"
+    peer_writable_ancestor.mkdir()
+    trusted_parent = peer_writable_ancestor / "trusted"
+    trusted_parent.mkdir(mode=0o700)
+    receipt_path = trusted_parent / "backup.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema": dr.RECEIPT_SCHEMA,
+                "status": "pass",
+                "operation": "backup",
+            }
+        ),
+        encoding="utf-8",
+    )
+    peer_writable_ancestor.chmod(0o777)
+
+    try:
+        with pytest.raises(dr.DisasterRecoveryError) as exc:
+            dr._load_passing_operation_receipt(
+                receipt_path,
+                operation="backup",
+            )
+    finally:
+        peer_writable_ancestor.chmod(0o700)
+
+    assert exc.value.code == "dr_receipt_invalid"
+
+
+def test_release_gate_rejects_receipt_replacement_while_reading(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "propertyquarry.dump.gpg"
+    artifact.write_bytes(b"encrypted-release-backup")
+    backup_path = tmp_path / "backup.json"
+    restore_path = tmp_path / "restore.json"
+    backup_bytes = json.dumps(
+        _backup_receipt_payload(artifact=artifact),
+    ).encode("utf-8")
+    backup_path.write_bytes(backup_bytes)
+    restore_path.write_text(
+        json.dumps(_restore_receipt_payload(artifact=artifact)),
+        encoding="utf-8",
+    )
+    original_read = dr.os.read
+    replaced = False
+
+    def replace_during_read(descriptor: int, size: int) -> bytes:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            backup_path.rename(tmp_path / "backup.displaced.json")
+            backup_path.write_bytes(backup_bytes)
+        return original_read(descriptor, size)
+
+    monkeypatch.setattr(dr.os, "read", replace_during_read)
+
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        dr.verify_release_dr_evidence(
+            backup_receipt_path=backup_path,
+            restore_receipt_path=restore_path,
+            release_commit_sha=RELEASE_COMMIT_SHA,
+            image_digest=RELEASE_IMAGE_DIGEST,
+            max_age_seconds=60,
+        )
+
+    assert replaced is True
+    assert exc.value.code == "dr_receipt_invalid"
+
+
+def test_release_gate_rejects_ambiguous_receipt_json(tmp_path: Path) -> None:
+    backup_path = tmp_path / "backup.json"
+    backup_path.write_text(
+        '{"schema":"propertyquarry.postgres_dr_receipt.v3",'
+        '"schema":"propertyquarry.postgres_dr_receipt.v3",'
+        '"status":"pass","operation":"backup"}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        dr._load_passing_operation_receipt(
+            backup_path,
+            operation="backup",
+        )
+
+    assert exc.value.code == "dr_receipt_invalid"
+
+
 def test_release_gate_rejects_receipts_for_a_different_image_digest(tmp_path: Path) -> None:
     artifact = tmp_path / "propertyquarry.dump.gpg"
     artifact.write_bytes(b"encrypted-release-backup")
@@ -2033,6 +2240,166 @@ def test_release_gate_cli_fails_closed_and_writes_v2_failure_receipt(tmp_path: P
     assert receipt["status"] == "fail"
     assert receipt["error"]["code"] == "dr_receipt_invalid"
     assert receipt_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_atomic_receipt_replaces_symlink_without_touching_its_target(
+    tmp_path: Path,
+) -> None:
+    victim = tmp_path / "victim.json"
+    victim.write_text("keep-me\n", encoding="utf-8")
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.symlink_to(victim.name)
+
+    dr._atomic_receipt(receipt_path, {"status": "pass"})
+
+    assert victim.read_text(encoding="utf-8") == "keep-me\n"
+    assert not receipt_path.is_symlink()
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == {
+        "status": "pass"
+    }
+    assert receipt_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_atomic_receipt_rejects_symlinked_parent(tmp_path: Path) -> None:
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    alias_parent = tmp_path / "alias"
+    alias_parent.symlink_to(real_parent.name, target_is_directory=True)
+
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        dr._atomic_receipt(
+            alias_parent / "receipt.json",
+            {"status": "pass"},
+        )
+
+    assert exc.value.code == "receipt_destination_invalid"
+    assert not (real_parent / "receipt.json").exists()
+
+
+def test_atomic_receipt_rejects_untrusted_ancestor_before_creating_descendants(
+    tmp_path: Path,
+) -> None:
+    untrusted = tmp_path / "untrusted"
+    untrusted.mkdir()
+    untrusted.chmod(0o777)
+    descendant = untrusted / "must-not-be-created"
+    try:
+        with pytest.raises(dr.DisasterRecoveryError) as exc:
+            dr._atomic_receipt(
+                descendant / "receipt.json",
+                {"status": "pass"},
+            )
+    finally:
+        untrusted.chmod(0o700)
+
+    assert exc.value.code == "receipt_destination_invalid"
+    assert not descendant.exists()
+
+
+def test_atomic_receipt_parent_swap_before_staging_cannot_redirect_or_clobber(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    trusted_parent = tmp_path / "trusted"
+    trusted_parent.mkdir()
+    opened_parent = tmp_path / "opened-parent"
+    attacker_parent = tmp_path / "attacker"
+    attacker_parent.mkdir()
+    attacker_receipt = attacker_parent / "receipt.json"
+    attacker_receipt.write_text("keep-attacker-file\n", encoding="utf-8")
+    receipt_path = trusted_parent / "receipt.json"
+    swapped = False
+
+    def swap_parent_before_staging(_length: int) -> str:
+        nonlocal swapped
+        if not swapped:
+            trusted_parent.rename(opened_parent)
+            attacker_parent.rename(trusted_parent)
+            swapped = True
+        return "d" * 32
+
+    monkeypatch.setattr(dr.secrets, "token_hex", swap_parent_before_staging)
+
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        dr._atomic_receipt(receipt_path, {"status": "pass"})
+
+    assert swapped is True
+    assert exc.value.code == "receipt_destination_invalid"
+    assert receipt_path.read_text(encoding="utf-8") == "keep-attacker-file\n"
+    assert list(opened_parent.iterdir()) == []
+
+
+@pytest.mark.parametrize("operation", ("destination", "input"))
+@pytest.mark.parametrize(
+    ("fault_call", "fault_location"),
+    ((1, "root"), (2, "nested")),
+)
+def test_receipt_directory_fstat_fault_closes_every_opened_fd_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    operation: str,
+    fault_call: int,
+    fault_location: str,
+) -> None:
+    parent = tmp_path / "receipt-parent"
+    parent.mkdir()
+    receipt_path = parent / "backup.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema": dr.RECEIPT_SCHEMA,
+                "status": "pass",
+                "operation": "backup",
+            }
+        ),
+        encoding="utf-8",
+    )
+    original_open = dr.os.open
+    original_fstat = dr.os.fstat
+    original_close = dr.os.close
+    directory_flag = getattr(dr.os, "O_DIRECTORY", 0)
+    opened_directory_fds: list[int] = []
+    closed_directory_fds: list[int] = []
+    directory_fstat_calls = 0
+
+    def tracking_open(path, flags, *args, **kwargs):  # type: ignore[no-untyped-def]
+        descriptor = original_open(path, flags, *args, **kwargs)
+        if flags & directory_flag:
+            opened_directory_fds.append(descriptor)
+        return descriptor
+
+    def faulting_fstat(descriptor: int):  # type: ignore[no-untyped-def]
+        nonlocal directory_fstat_calls
+        if descriptor in opened_directory_fds:
+            directory_fstat_calls += 1
+            if directory_fstat_calls == fault_call:
+                raise OSError(f"injected {fault_location} directory fstat fault")
+        return original_fstat(descriptor)
+
+    def tracking_close(descriptor: int) -> None:
+        if descriptor in opened_directory_fds:
+            closed_directory_fds.append(descriptor)
+        original_close(descriptor)
+
+    monkeypatch.setattr(dr.os, "open", tracking_open)
+    monkeypatch.setattr(dr.os, "fstat", faulting_fstat)
+    monkeypatch.setattr(dr.os, "close", tracking_close)
+
+    if operation == "destination":
+        with pytest.raises(OSError, match=f"injected {fault_location}"):
+            dr._open_receipt_destination_directory(parent)
+    else:
+        with pytest.raises(dr.DisasterRecoveryError) as exc:
+            dr._read_stable_receipt_json(
+                receipt_path,
+                code="dr_receipt_invalid",
+                label="Backup receipt",
+            )
+        assert exc.value.code == "dr_receipt_invalid"
+
+    assert directory_fstat_calls == fault_call
+    assert closed_directory_fds == list(reversed(opened_directory_fds))
+    assert len(closed_directory_fds) == len(set(closed_directory_fds))
 
 
 def test_receipt_path_must_not_overwrite_an_input(tmp_path: Path) -> None:

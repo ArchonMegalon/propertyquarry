@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import propertyquarry_release_receipt_binding as receipt_binding
 from scripts.propertyquarry_release_receipt_binding import ReleaseBindingError
 from scripts.propertyquarry_release_receipt_binding import build_source_binding
 
@@ -66,6 +67,62 @@ def _binding(root: Path, evidence_sources: list[dict[str, object]]) -> dict[str,
     )
 
 
+def test_file_snapshot_binding_derives_digests_from_one_stable_read(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    artifact = Path("evidence/receipt.json")
+    _write(tmp_path, artifact, '{"generation":"one"}\n')
+
+    snapshot, binding = receipt_binding.file_snapshot_binding(
+        tmp_path,
+        artifact,
+    )
+
+    assert snapshot.payload == b'{"generation":"one"}\n'
+    assert binding == {
+        "path": artifact.as_posix(),
+        "sha256": receipt_binding.sha256_bytes(snapshot.payload),
+        "git_blob_oid": receipt_binding.git_blob_oid_bytes(
+            tmp_path,
+            snapshot.payload,
+        ),
+    }
+    snapshot.assert_unchanged()
+
+
+def test_file_snapshot_binding_rejects_replacement_during_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    artifact = Path("evidence/receipt.json")
+    target = tmp_path / artifact
+    _write(tmp_path, artifact, '{"generation":"one"}\n')
+    original_git_blob_oid_bytes = receipt_binding.git_blob_oid_bytes
+
+    def replace_during_digest(root: Path, payload: bytes) -> str:
+        replacement = target.with_name("replacement.json")
+        replacement.write_text(
+            '{"generation":"two"}\n',
+            encoding="utf-8",
+        )
+        replacement.replace(target)
+        return original_git_blob_oid_bytes(root, payload)
+
+    monkeypatch.setattr(
+        receipt_binding,
+        "git_blob_oid_bytes",
+        replace_during_digest,
+    )
+
+    with pytest.raises(
+        ReleaseBindingError,
+        match="changed after it was read",
+    ):
+        receipt_binding.file_snapshot_binding(tmp_path, artifact)
+
+
 def test_source_binding_walks_consecutive_metadata_only_refresh_commits(tmp_path: Path) -> None:
     evidence_sources, initial = _initialize_repository(tmp_path)
     assert _binding(tmp_path, evidence_sources)["code_commit"] == initial
@@ -89,7 +146,7 @@ def test_source_binding_walks_consecutive_metadata_only_refresh_commits(tmp_path
         seed_path=SEED,
         evidence_sources=evidence_sources,
         code_commit=metadata_commit,
-    )["code_commit"] == metadata_commit
+    )["code_commit"] == source_commit
 
     _write(tmp_path, metadata_paths[1], "second metadata refresh\n")
     _commit(tmp_path, "refresh pulse metadata")
@@ -113,6 +170,113 @@ def test_source_binding_does_not_hide_evidence_changes_in_metadata_commit(tmp_pa
         "rev-parse",
         f"{evidence_commit}:{SOURCE_CASES[0].as_posix()}",
     )
+
+
+def test_source_binding_rejects_dirty_source_outside_generated_evidence(
+    tmp_path: Path,
+) -> None:
+    evidence_sources, _initial = _initialize_repository(tmp_path)
+    _write(tmp_path, "app.txt", "uncommitted-runtime-change\n")
+
+    with pytest.raises(
+        ReleaseBindingError,
+        match="release source worktree differs from the immutable candidate",
+    ):
+        _binding(tmp_path, evidence_sources)
+
+
+def test_source_binding_rejects_untracked_source_outside_generated_evidence(
+    tmp_path: Path,
+) -> None:
+    evidence_sources, _initial = _initialize_repository(tmp_path)
+    _write(tmp_path, "app/new_runtime.py", "NEW_RUNTIME = True\n")
+
+    with pytest.raises(ReleaseBindingError, match="untracked=.*app/new_runtime.py"):
+        _binding(tmp_path, evidence_sources)
+
+
+@pytest.mark.parametrize("index_flag", ("--assume-unchanged", "--skip-worktree"))
+def test_source_binding_rejects_hidden_dirty_index_entries(
+    tmp_path: Path,
+    index_flag: str,
+) -> None:
+    evidence_sources, _initial = _initialize_repository(tmp_path)
+    _git(tmp_path, "update-index", index_flag, "app.txt")
+    _write(tmp_path, "app.txt", "hidden-uncommitted-runtime-change\n")
+
+    with pytest.raises(ReleaseBindingError, match="hidden tracked release source"):
+        _binding(tmp_path, evidence_sources)
+
+
+def test_source_binding_ignores_ambient_git_repository_redirection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    evidence_sources, _initial = _initialize_repository(candidate)
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    _initialize_repository(decoy)
+    _write(candidate, "app.txt", "dirty candidate hidden by ambient Git redirect\n")
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(decoy))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(decoy / ".git" / "index"))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.fsmonitor")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
+
+    with pytest.raises(
+        ReleaseBindingError,
+        match="release source worktree differs from the immutable candidate",
+    ):
+        _binding(candidate, evidence_sources)
+
+
+def test_source_binding_allows_only_explicit_generated_evidence_drift(
+    tmp_path: Path,
+) -> None:
+    evidence_sources, initial = _initialize_repository(tmp_path)
+    _write(
+        tmp_path,
+        ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json",
+        '{"status":"pass"}\n',
+    )
+
+    assert _binding(tmp_path, evidence_sources)["code_commit"] == initial
+
+
+def test_source_binding_rejects_explicit_commit_for_an_older_source_candidate(
+    tmp_path: Path,
+) -> None:
+    evidence_sources, initial = _initialize_repository(tmp_path)
+    _write(tmp_path, "app.txt", "source-v2\n")
+    _commit(tmp_path, "change source")
+
+    with pytest.raises(ReleaseBindingError, match="does not identify the current candidate"):
+        build_source_binding(
+            tmp_path,
+            seed_path=SEED,
+            evidence_sources=evidence_sources,
+            code_commit=initial,
+        )
+
+
+def test_source_binding_rejects_ambiguous_committed_seed_json(tmp_path: Path) -> None:
+    evidence_sources, _initial = _initialize_repository(tmp_path)
+    encoded_sources = json.dumps(evidence_sources)
+    _write(
+        tmp_path,
+        SEED,
+        (
+            '{"browser_workflow_proof":{"evidence_sources":[]},'
+            f'"browser_workflow_proof":{{"evidence_sources":{encoded_sources}}}}}\n'
+        ),
+    )
+    _commit(tmp_path, "ambiguous seed")
+
+    with pytest.raises(ReleaseBindingError, match="committed flagship seed is invalid JSON"):
+        _binding(tmp_path, evidence_sources)
 
 
 def test_source_binding_rejects_shallow_metadata_history(tmp_path: Path) -> None:

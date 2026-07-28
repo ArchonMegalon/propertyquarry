@@ -1,0 +1,64 @@
+{
+  "schema": "propertyquarry.jurisdiction_privacy_rights.v1",
+  "service": "propertyquarry",
+  "version": 1,
+  "source_contract_status": "defined",
+  "market_envelope_path": "docs/propertyquarry_global_market_envelope.v1.json",
+  "required_markets": [
+    "AT",
+    "DE",
+    "CR"
+  ],
+  "required_controls": [
+    "controller_processor_roles",
+    "processing_purpose_and_lawful_basis",
+    "consent_withdrawal_and_preference_evidence",
+    "localized_privacy_cookie_and_terms_notices",
+    "dsar_identity_export_correction_deletion_and_restriction",
+    "retention_tombstone_and_legal_hold",
+    "subprocessor_inventory_dpa_and_security_review",
+    "international_transfer_mechanism_and_assessment",
+    "hosting_backup_logging_and_support_residency",
+    "security_breach_detection_and_notification",
+    "automated_ranking_explanation_and_human_review",
+    "marketing_communications_and_tracking_consent",
+    "minors_sensitive_data_and_fairness_policy",
+    "consumer_terms_pricing_refunds_and_complaints"
+  ],
+  "provider_capabilities": [
+    "automated_access",
+    "cache_normalized_facts",
+    "display_source_attributed_excerpt",
+    "store_source_media",
+    "generate_media_derivatives",
+    "public_packet_republication"
+  ],
+  "market_requirements": {
+    "AT": {
+      "notice_language": "de-AT",
+      "requires_local_privacy_counsel": true,
+      "requires_local_consumer_counsel": true,
+      "requires_eu_transfer_assessment": true
+    },
+    "DE": {
+      "notice_language": "de-DE",
+      "requires_local_privacy_counsel": true,
+      "requires_local_consumer_counsel": true,
+      "requires_eu_transfer_assessment": true
+    },
+    "CR": {
+      "notice_language": "es-CR",
+      "requires_local_privacy_counsel": true,
+      "requires_local_consumer_counsel": true,
+      "requires_eu_transfer_assessment": false
+    }
+  },
+  "launch_policy": {
+    "independent_qualified_review_required": true,
+    "exact_release_and_image_binding_required": true,
+    "current_market_envelope_binding_required": true,
+    "provider_permissions_must_cover_only_enabled_capabilities": true,
+    "technical_enforcement_required_for_prohibited_capabilities": true,
+    "source_contract_is_not_legal_approval": true
+  }
+}

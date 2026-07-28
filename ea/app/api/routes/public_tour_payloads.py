@@ -22,6 +22,7 @@ class PublicTourManifest:
 @dataclass(frozen=True)
 class PrivateTourReceipt:
     principal_id: str = ""
+    search_run_id: str = ""
     listing_url: str = ""
     property_url: str = ""
     source_ref: str = ""
@@ -43,6 +44,7 @@ class PrivateTourReceipt:
         source = dict(payload or {})
         return cls(
             principal_id=str(source.get("principal_id") or "").strip(),
+            search_run_id=str(source.get("search_run_id") or "").strip(),
             listing_url=str(source.get("listing_url") or "").strip(),
             property_url=str(source.get("property_url") or "").strip(),
             source_ref=str(source.get("source_ref") or "").strip(),
@@ -74,6 +76,7 @@ class PrivateTourReceipt:
     def as_dict(self) -> dict[str, object]:
         return {
             "principal_id": self.principal_id,
+            "search_run_id": self.search_run_id,
             "listing_url": self.listing_url,
             "property_url": self.property_url,
             "source_ref": self.source_ref,
@@ -122,6 +125,7 @@ _PUBLIC_TOUR_PRIVATE_KEYS = frozenset(
         "recipient_phone",
         "refresh_token",
         "runtime_inputs_json",
+        "search_run_id",
         "secret",
         "session",
         "shortlist",
@@ -338,6 +342,7 @@ _PUBLIC_TOUR_TOP_LEVEL_KEYS = frozenset(
         "scene_count",
         "scene_strategy",
         "creation_mode",
+        "publication_status",
         "brand_name",
         "hosted_url",
         "public_url",
@@ -412,6 +417,8 @@ def public_tour_privacy_mode(payload: dict[str, object]) -> str:
 
 
 def require_public_tour_viewable(payload: dict[str, object]) -> None:
+    if "publication_status" in payload and payload.get("publication_status") != "ready":
+        raise HTTPException(status_code=404, detail="tour_not_found")
     if public_tour_privacy_mode(payload) == "owner_private":
         raise HTTPException(status_code=404, detail="tour_not_found")
     require_governed_spatial_public_tour_viewable(payload)

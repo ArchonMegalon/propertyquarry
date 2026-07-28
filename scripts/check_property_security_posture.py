@@ -1,19 +1,260 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import re
-import sys
 import argparse
 import json
+import re
+import subprocess
+import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
+
 
 ROOT = Path(__file__).resolve().parents[1]
+DOCKER_BINARY = Path("/usr/bin/docker")
+EXPECTED_PROPERTY_SERVICES = {
+    "propertyquarry-api",
+    "propertyquarry-db",
+    "propertyquarry-migrate",
+    "propertyquarry-render-tools",
+    "propertyquarry-scheduler",
+    "propertyquarry-worker",
+}
+ALLOWED_COMPOSE_USER = "10001:10001"
+FORBIDDEN_COMPOSE_SERVICE_KEYS = (
+    "cap_add",
+    "cgroup",
+    "device_cgroup_rules",
+    "devices",
+    "extends",
+    "gpus",
+    "group_add",
+    "ipc",
+    "network_mode",
+    "pid",
+    "post_start",
+    "pre_stop",
+    "privileged",
+    "provider",
+    "runtime",
+    "sysctls",
+    "use_api_socket",
+    "userns_mode",
+    "uts",
+    "volumes_from",
+)
+
+
+class SecurityPostureConfigError(ValueError):
+    """Raised when a security input cannot be interpreted unambiguously."""
 
 
 def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def _strict_json_object(raw: str, *, label: str) -> dict[str, object]:
+    def reject_duplicate_keys(
+        pairs: list[tuple[str, object]],
+    ) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise SecurityPostureConfigError(
+                    f"{label} contains duplicate object key {key!r}"
+                )
+            result[key] = value
+        return result
+
+    def reject_non_finite_constant(value: str) -> object:
+        raise SecurityPostureConfigError(
+            f"{label} contains non-finite JSON constant {value}"
+        )
+
+    try:
+        payload = json.loads(
+            raw,
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_non_finite_constant,
+        )
+    except json.JSONDecodeError as exc:
+        raise SecurityPostureConfigError(
+            f"{label} must be strict JSON: {exc}"
+        ) from exc
+    if type(payload) is not dict:
+        raise SecurityPostureConfigError(
+            f"{label} root must be a JSON object"
+        )
+    return payload
+
+
+def _yaml_mapping_key_present(raw: str, key: str) -> bool:
+    quoted_or_plain_key = (
+        rf"(?:{re.escape(key)}|\"{re.escape(key)}\"|'{re.escape(key)}')"
+    )
+    return bool(
+        re.search(
+            rf"(?:^|[{{,])[ \t]*{quoted_or_plain_key}[ \t]*:",
+            raw,
+            flags=re.MULTILINE,
+        )
+    )
+
+
+def _compose_parser_preflight_failures(compose: str) -> list[str]:
+    failures: list[str] = []
+    if any(
+        character not in "\n\r\t"
+        and unicodedata.category(character).startswith("C")
+        for character in compose
+    ):
+        failures.append(
+            "docker-compose.property.yml must not contain BOM or control "
+            "characters before strict Compose inspection"
+        )
+    if re.search(
+        r"(?<![A-Za-z0-9_&])&[A-Za-z0-9_.-]+(?=[ \t\r\n,\]}])"
+        r"|(?<![A-Za-z0-9_*])\*[A-Za-z0-9_.-]+(?=[ \t\r\n,:,\]}])",
+        compose,
+    ):
+        failures.append(
+            "docker-compose.property.yml must not use YAML anchors or aliases "
+            "before strict Compose inspection"
+        )
+    if re.search(
+        r"""(?:^|[{,])[ \t]*["'][^"'\r\n]*["'][ \t]*:""",
+        compose,
+        flags=re.MULTILINE,
+    ):
+        failures.append(
+            "docker-compose.property.yml property keys must use plain scalars "
+            "for fail-closed security inspection"
+        )
+    if re.search(r"^[ \t]*\?", compose, flags=re.MULTILINE):
+        failures.append(
+            "docker-compose.property.yml must not use explicit YAML mapping "
+            "keys for fail-closed security inspection"
+        )
+    if _yaml_mapping_key_present(compose, "include"):
+        failures.append(
+            "docker-compose.property.yml must not include external Compose "
+            "documents outside this security inspection"
+        )
+    if _yaml_mapping_key_present(compose, "extends"):
+        failures.append(
+            "docker-compose.property.yml must not use external service "
+            "inheritance outside this security inspection"
+        )
+    return failures
+
+
+def _reject_duplicate_yaml_mapping_keys(compose: str) -> None:
+    """Reject duplicate keys independently of Docker Compose parser policy."""
+
+    failure = (
+        "docker-compose.property.yml failed strict Docker Compose "
+        "resolution (duplicate or invalid mapping)"
+    )
+    try:
+        document = yaml.compose(compose, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as exc:
+        raise SecurityPostureConfigError(failure) from exc
+
+    def visit(node: Node | None) -> None:
+        if node is None:
+            return
+        if isinstance(node, MappingNode):
+            keys: set[tuple[str, str]] = set()
+            for key_node, value_node in node.value:
+                if not isinstance(key_node, ScalarNode):
+                    raise SecurityPostureConfigError(failure)
+                identity = (key_node.tag, key_node.value)
+                if identity in keys:
+                    raise SecurityPostureConfigError(failure)
+                keys.add(identity)
+                visit(value_node)
+            return
+        if isinstance(node, SequenceNode):
+            for child in node.value:
+                visit(child)
+
+    visit(document)
+
+
+def _resolved_compose_services(
+    compose: str,
+) -> dict[str, dict[str, object]]:
+    if not compose.strip():
+        raise SecurityPostureConfigError(
+            "docker-compose.property.yml must be a non-empty Compose document"
+        )
+    _reject_duplicate_yaml_mapping_keys(compose)
+    try:
+        result = subprocess.run(
+            (
+                str(DOCKER_BINARY),
+                "compose",
+                "--project-directory",
+                str(ROOT),
+                "-f",
+                "-",
+                "config",
+                "--format",
+                "json",
+                "--no-interpolate",
+                "--no-env-resolution",
+            ),
+            cwd=ROOT,
+            env={
+                "HOME": "/nonexistent",
+                "LANG": "C",
+                "LC_ALL": "C",
+                "PATH": "/usr/bin:/bin",
+            },
+            input=compose,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SecurityPostureConfigError(
+            "docker-compose.property.yml could not be checked with the "
+            "fixed Docker Compose parser"
+        ) from exc
+    if result.returncode != 0:
+        raise SecurityPostureConfigError(
+            "docker-compose.property.yml failed strict Docker Compose "
+            "resolution (duplicate or invalid mapping)"
+        )
+
+    document = _strict_json_object(
+        result.stdout,
+        label="resolved docker-compose.property.yml",
+    )
+    services = document.get("services")
+    if type(services) is not dict:
+        raise SecurityPostureConfigError(
+            "resolved docker-compose.property.yml services must be an object"
+        )
+
+    resolved_services: dict[str, dict[str, object]] = {}
+    for service_name, service in services.items():
+        if (
+            type(service_name) is not str
+            or not service_name
+            or type(service) is not dict
+        ):
+            raise SecurityPostureConfigError(
+                "resolved docker-compose.property.yml service entries must "
+                "be named objects"
+            )
+        resolved_services[service_name] = service
+    return resolved_services
 
 
 def _normalized_requirement_name(line: str) -> str:
@@ -36,6 +277,474 @@ def _lock_package_names(lock_text: str) -> set[str]:
     return names
 
 
+def _dockerfile_uses_only_pinned_external_bases(dockerfile: str) -> bool:
+    base_images = re.findall(
+        r"^FROM\s+(?:--platform=\S+\s+)?(\S+)",
+        dockerfile,
+        flags=re.MULTILINE,
+    )
+    return bool(base_images) and all(
+        image.lower() == "scratch"
+        or re.fullmatch(r"\S+@sha256:[0-9a-f]{64}", image) is not None
+        for image in base_images
+    )
+
+
+def _dockerfile_final_user_is_non_root(dockerfile: str) -> bool:
+    users = re.findall(r"^USER\s+(\S+)\s*$", dockerfile, flags=re.MULTILINE)
+    return bool(users) and users[-1] in {"ea", "10001", "10001:10001"}
+
+
+def _compose_service_block(compose: str, service_name: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(service_name)}:\s*$"
+        rf".*?(?=^  [A-Za-z0-9_.-]+:\s*$|^[A-Za-z0-9_.-]+:\s*$|\Z)",
+        compose,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return match.group(0) if match else ""
+
+
+def _unquote_yaml_scalar(value: str) -> str:
+    raw = value.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+        return raw[1:-1]
+    return raw
+
+
+def _service_scalar(service_block: str, name: str, *, indent: int = 4) -> str | None:
+    match = re.search(
+        rf"^{' ' * indent}{re.escape(name)}:\s*(.*?)\s*$",
+        service_block,
+        flags=re.MULTILINE,
+    )
+    if not match:
+        return None
+    return _unquote_yaml_scalar(match.group(1))
+
+
+def _service_section(service_block: str, name: str) -> list[str]:
+    lines = service_block.splitlines()
+    header = f"    {name}:"
+    for index, line in enumerate(lines):
+        if line.strip() != header.strip() or len(line) - len(line.lstrip()) != 4:
+            continue
+        section: list[str] = []
+        for child in lines[index + 1 :]:
+            if child.strip() and len(child) - len(child.lstrip()) <= 4:
+                break
+            section.append(child)
+        return section
+    return []
+
+
+def _service_list_items(service_block: str, name: str) -> list[str]:
+    items: list[str] = []
+    for line in _service_section(service_block, name):
+        raw = line.strip()
+        if raw.startswith("- "):
+            items.append(_unquote_yaml_scalar(raw[2:]))
+    return items
+
+
+def _env_file_paths(service_block: str) -> list[str]:
+    paths: list[str] = []
+    for line in _service_section(service_block, "env_file"):
+        raw = line.strip()
+        if raw.startswith("- path:"):
+            paths.append(_unquote_yaml_scalar(raw.split(":", 1)[1]))
+        elif raw.startswith("path:"):
+            paths.append(_unquote_yaml_scalar(raw.split(":", 1)[1]))
+        elif raw.startswith("- "):
+            paths.append(_unquote_yaml_scalar(raw[2:]))
+    return paths
+
+
+def _compose_runtime_privilege_failures(compose: str) -> list[str]:
+    failures = _compose_parser_preflight_failures(compose)
+    if re.search(r"^\s*<<\s*:", compose, flags=re.MULTILINE):
+        failures.append(
+            "docker-compose.property.yml must not use YAML merge keys that can "
+            "hide runtime privilege overrides"
+        )
+    if re.search(r"""^(?:["']|\?|\{|\[)""", compose, flags=re.MULTILINE):
+        failures.append(
+            "docker-compose.property.yml top-level property keys must use "
+            "plain block-style mappings for fail-closed security inspection"
+        )
+    if re.search(r"(?<!\S)!(?:!|<|[A-Za-z])", compose):
+        failures.append(
+            "docker-compose.property.yml must not use explicit YAML tags that "
+            "can disguise runtime privilege values"
+        )
+    if re.search(r"^\s{4}[\"']", compose, flags=re.MULTILINE):
+        failures.append(
+            "docker-compose.property.yml service property keys must be plain "
+            "scalars for fail-closed security inspection"
+        )
+
+    for key in FORBIDDEN_COMPOSE_SERVICE_KEYS:
+        if re.search(
+            rf"^\s{{4}}[\"']?{re.escape(key)}[\"']?\s*:",
+            compose,
+            flags=re.MULTILINE,
+        ):
+            failures.append(
+                "docker-compose.property.yml must not override service runtime "
+                f"privilege boundary {key}"
+            )
+
+    section_names = sorted(
+        set(
+            re.findall(
+                r"^\s{2}([A-Za-z0-9_.-]+):\s*$",
+                compose,
+                flags=re.MULTILINE,
+            )
+        )
+    )
+    for section_name in section_names:
+        block = _compose_service_block(compose, section_name)
+        user = _service_scalar(block, "user")
+        if user is not None and user != ALLOWED_COMPOSE_USER:
+            failures.append(
+                "docker-compose.property.yml must not override service runtime "
+                "privilege boundary user except with the fixed non-root "
+                f"identity {ALLOWED_COMPOSE_USER}"
+            )
+        security_opt = _service_scalar(block, "security_opt")
+        security_options = _service_list_items(block, "security_opt")
+        if security_opt is None and not security_options:
+            continue
+        if security_options == ["no-new-privileges:true"]:
+            continue
+        if security_opt is not None or security_options:
+            failures.append(
+                "docker-compose.property.yml service "
+                f"{section_name} may set only security_opt=no-new-privileges:true"
+            )
+    return failures
+
+
+def _resolved_compose_runtime_privilege_failures(
+    services: dict[str, dict[str, object]],
+) -> list[str]:
+    failures: list[str] = []
+    actual_services = set(services)
+    if actual_services != EXPECTED_PROPERTY_SERVICES:
+        missing = sorted(EXPECTED_PROPERTY_SERVICES - actual_services)
+        unexpected = sorted(actual_services - EXPECTED_PROPERTY_SERVICES)
+        failures.append(
+            "resolved docker-compose.property.yml must contain exactly the "
+            "isolated PropertyQuarry service set "
+            f"(missing={missing}, unexpected={unexpected})"
+        )
+
+    for service_name, service in sorted(services.items()):
+        for key in FORBIDDEN_COMPOSE_SERVICE_KEYS:
+            if key in service:
+                failures.append(
+                    "resolved docker-compose.property.yml service "
+                    f"{service_name} must not set runtime privilege boundary {key}"
+                )
+        if (
+            "user" in service
+            and service["user"] != ALLOWED_COMPOSE_USER
+        ):
+            failures.append(
+                "resolved docker-compose.property.yml service "
+                f"{service_name} may set only user={ALLOWED_COMPOSE_USER}"
+            )
+        if "security_opt" in service and service["security_opt"] != [
+            "no-new-privileges:true"
+        ]:
+            failures.append(
+                "resolved docker-compose.property.yml service "
+                f"{service_name} may set only "
+                "security_opt=no-new-privileges:true"
+            )
+    return failures
+
+
+def _durable_worker_security_failures(
+    worker: str,
+    *,
+    api: str,
+) -> list[str]:
+    prefix = "docker-compose.property.yml propertyquarry-worker"
+    if not worker:
+        return [f"{prefix} must be a configured service"]
+
+    failures: list[str] = []
+    if not api or _service_scalar(worker, "image") != _service_scalar(api, "image"):
+        failures.append(f"{prefix} must use the lightweight property web runtime image")
+    if _service_scalar(worker, "read_only") != "true":
+        failures.append(f"{prefix} must use a read-only root filesystem")
+    if _service_list_items(worker, "cap_drop") != ["ALL"]:
+        failures.append(f"{prefix} must drop all Linux capabilities")
+    if _service_list_items(worker, "security_opt") != ["no-new-privileges:true"]:
+        failures.append(f"{prefix} must set no-new-privileges")
+    if _service_scalar(worker, "privileged") == "true":
+        failures.append(f"{prefix} must not be privileged")
+    if _service_scalar(worker, "network_mode") == "host":
+        failures.append(f"{prefix} must not use host networking")
+    ports = _service_scalar(worker, "ports")
+    if ports not in (None, "", "[]") or _service_list_items(worker, "ports"):
+        failures.append(f"{prefix} must not publish host ports")
+
+    expected_volumes = [
+        "./config:/config:ro",
+        "./config:/app/config:ro",
+        "propertyquarry_artifacts:/data/artifacts",
+        "propertyquarry_provider_ledger:/data/provider-ledger",
+    ]
+    if _service_list_items(worker, "volumes") != expected_volumes:
+        failures.append(f"{prefix} must mount only property config, artifacts, and provider-ledger storage")
+
+    unexpected_env_files = [
+        path
+        for path in _env_file_paths(worker)
+        if path != ".env"
+    ]
+    if unexpected_env_files:
+        failures.append(f"{prefix} must not load optional render environment bundles")
+
+    if not _service_section(worker, "environment"):
+        failures.append(f"{prefix} must declare an explicit environment")
+    expected_environment = {
+        "EA_ROLE": "worker",
+        "EA_STORAGE_BACKEND": "postgres",
+        "PROPERTYQUARRY_WORKER_PROFILE": "property_only",
+        "PROPERTYQUARRY_SEARCH_SCHEMA_READINESS_REQUIRED": "1",
+        "EA_WORKER_HEARTBEAT_PATH": "/data/artifacts/propertyquarry-worker-heartbeat.json",
+    }
+    for name, expected in expected_environment.items():
+        if _service_scalar(worker, name, indent=6) != expected:
+            failures.append(f"{prefix} must set {name}={expected}")
+    if not str(_service_scalar(worker, "DATABASE_URL", indent=6) or "").strip():
+        failures.append(f"{prefix} must receive an explicit durable database URL")
+    for name in (
+        "THREEDVISTA_LOGIN_EMAIL",
+        "THREEDVISTA_LOGIN_PASSWORD",
+        "THREEDVISTA_LICENSE_EMAIL",
+    ):
+        if _service_scalar(worker, name, indent=6) != "":
+            failures.append(f"{prefix} must explicitly blank reusable vendor credential {name}")
+
+    depends_on = "\n".join(_service_section(worker, "depends_on"))
+    if not depends_on:
+        failures.append(f"{prefix} must depend on the healthy database and completed migration")
+    else:
+        if not re.search(
+            r"^\s{6}propertyquarry-db:\s*$\n^\s{8}condition:\s*service_healthy\s*$",
+            depends_on,
+            flags=re.MULTILINE,
+        ):
+            failures.append(f"{prefix} must wait for the healthy property database")
+        if not re.search(
+            r"^\s{6}propertyquarry-migrate:\s*$"
+            r"\n^\s{8}condition:\s*service_completed_successfully\s*$",
+            depends_on,
+            flags=re.MULTILINE,
+        ):
+            failures.append(f"{prefix} must wait for the successful schema migration")
+
+    expected_healthcheck = (
+        '["CMD", "/usr/local/bin/python", "-m", "app.scheduler_healthcheck"]'
+    )
+    if _service_scalar(worker, "test", indent=6) != expected_healthcheck:
+        failures.append(f"{prefix} must expose the role-aware worker heartbeat healthcheck")
+    return failures
+
+
+def _resolved_durable_worker_security_failures(
+    worker: object,
+    *,
+    api: object,
+) -> list[str]:
+    prefix = "resolved docker-compose.property.yml propertyquarry-worker"
+    if type(worker) is not dict:
+        return [f"{prefix} must be a configured service object"]
+
+    failures: list[str] = []
+    if type(api) is not dict or worker.get("image") != api.get("image"):
+        failures.append(
+            f"{prefix} must use the lightweight property web runtime image"
+        )
+    if worker.get("read_only") is not True:
+        failures.append(f"{prefix} must use a read-only root filesystem")
+    if worker.get("cap_drop") != ["ALL"]:
+        failures.append(f"{prefix} must drop all Linux capabilities")
+    if worker.get("security_opt") != ["no-new-privileges:true"]:
+        failures.append(f"{prefix} must set no-new-privileges")
+    if "ports" in worker:
+        failures.append(f"{prefix} must not publish host ports")
+
+    expected_volumes: list[dict[str, object]] = [
+        {
+            "bind": {"create_host_path": True},
+            "read_only": True,
+            "source": str(ROOT / "config"),
+            "target": "/config",
+            "type": "bind",
+        },
+        {
+            "bind": {"create_host_path": True},
+            "read_only": True,
+            "source": str(ROOT / "config"),
+            "target": "/app/config",
+            "type": "bind",
+        },
+        {
+            "source": "propertyquarry_artifacts",
+            "target": "/data/artifacts",
+            "type": "volume",
+            "volume": {},
+        },
+        {
+            "source": "propertyquarry_provider_ledger",
+            "target": "/data/provider-ledger",
+            "type": "volume",
+            "volume": {},
+        },
+    ]
+    if worker.get("volumes") != expected_volumes:
+        failures.append(
+            f"{prefix} must mount only property config, artifacts, and "
+            "provider-ledger storage"
+        )
+
+    expected_env_files = [
+        {
+            "path": str(ROOT / ".env"),
+            "required": True,
+        }
+    ]
+    if worker.get("env_file") != expected_env_files:
+        failures.append(
+            f"{prefix} must load only the required PropertyQuarry .env file"
+        )
+
+    environment = worker.get("environment")
+    if type(environment) is not dict:
+        failures.append(f"{prefix} must declare an explicit environment object")
+        environment = {}
+    expected_environment = {
+        "EA_ROLE": "worker",
+        "EA_STORAGE_BACKEND": "postgres",
+        "PROPERTYQUARRY_WORKER_PROFILE": "property_only",
+        "PROPERTYQUARRY_SEARCH_SCHEMA_READINESS_REQUIRED": "1",
+        "EA_WORKER_HEARTBEAT_PATH": (
+            "/data/artifacts/propertyquarry-worker-heartbeat.json"
+        ),
+    }
+    for name, expected in expected_environment.items():
+        if environment.get(name) != expected:
+            failures.append(f"{prefix} must set {name}={expected}")
+    database_url = environment.get("DATABASE_URL")
+    if type(database_url) is not str or not database_url.strip():
+        failures.append(f"{prefix} must receive an explicit durable database URL")
+    for name in (
+        "THREEDVISTA_LOGIN_EMAIL",
+        "THREEDVISTA_LOGIN_PASSWORD",
+        "THREEDVISTA_LICENSE_EMAIL",
+    ):
+        if environment.get(name) != "":
+            failures.append(
+                f"{prefix} must explicitly blank reusable vendor credential {name}"
+            )
+
+    expected_depends_on = {
+        "propertyquarry-db": {
+            "condition": "service_healthy",
+            "required": True,
+        },
+        "propertyquarry-migrate": {
+            "condition": "service_completed_successfully",
+            "required": True,
+        },
+    }
+    if worker.get("depends_on") != expected_depends_on:
+        failures.append(
+            f"{prefix} must depend only on the healthy database and completed "
+            "migration"
+        )
+
+    expected_healthcheck = {
+        "interval": "30s",
+        "retries": 5,
+        "start_period": "90s",
+        "test": [
+            "CMD",
+            "/usr/local/bin/python",
+            "-m",
+            "app.scheduler_healthcheck",
+        ],
+        "timeout": "10s",
+    }
+    if worker.get("healthcheck") != expected_healthcheck:
+        failures.append(
+            f"{prefix} must expose the role-aware worker heartbeat healthcheck"
+        )
+    return failures
+
+
+def _render_non_writer_security_failures(
+    render: str,
+    *,
+    writer_topology: object,
+) -> list[str]:
+    failures: list[str] = []
+    prefix = "docker-compose.property.yml propertyquarry-render-tools"
+    if not render:
+        failures.append(f"{prefix} must be a configured service")
+    elif _service_scalar(render, "DATABASE_URL", indent=6) != "":
+        failures.append(f"{prefix} must explicitly blank DATABASE_URL")
+
+    topology_target: object = None
+    if isinstance(writer_topology, dict):
+        topology_target = writer_topology.get("target")
+    render_topology: object = None
+    if isinstance(topology_target, dict):
+        render_topology = topology_target.get("render")
+    if not isinstance(render_topology, dict) or render_topology.get("database_writer") is not False:
+        failures.append(
+            "propertyquarry deploy writer topology must classify the current render bridge as a non-writer"
+        )
+    return failures
+
+
+def _resolved_render_non_writer_security_failures(
+    render: object,
+    *,
+    writer_topology: object,
+) -> list[str]:
+    failures: list[str] = []
+    prefix = "resolved docker-compose.property.yml propertyquarry-render-tools"
+    if type(render) is not dict:
+        failures.append(f"{prefix} must be a configured service object")
+    else:
+        environment = render.get("environment")
+        if type(environment) is not dict or environment.get("DATABASE_URL") != "":
+            failures.append(f"{prefix} must explicitly blank DATABASE_URL")
+
+    topology_target: object = None
+    if type(writer_topology) is dict:
+        topology_target = writer_topology.get("target")
+    render_topology: object = None
+    if type(topology_target) is dict:
+        render_topology = topology_target.get("render")
+    if (
+        type(render_topology) is not dict
+        or render_topology.get("database_writer") is not False
+    ):
+        failures.append(
+            "propertyquarry deploy writer topology must classify the current "
+            "render bridge as a non-writer"
+        )
+    return failures
+
+
 def build_security_posture_receipt() -> dict[str, object]:
     failures: list[str] = []
     env_example = _read(".env.example")
@@ -48,9 +757,11 @@ def build_security_posture_receipt() -> dict[str, object]:
             failures.append(f".env.example must list prod auth/signing placeholder {env_name}")
     expected_service_aliases = {
         "PROPERTYQUARRY_API_SERVICE": "propertyquarry-api",
+        "PROPERTYQUARRY_WORKER_SERVICE": "propertyquarry-worker",
         "PROPERTYQUARRY_SCHEDULER_SERVICE": "propertyquarry-scheduler",
         "PROPERTYQUARRY_DB_SERVICE": "propertyquarry-db",
         "PROPERTYQUARRY_API_CONTAINER_NAME": "propertyquarry-api",
+        "PROPERTYQUARRY_WORKER_CONTAINER_NAME": "propertyquarry-worker",
         "PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME": "propertyquarry-scheduler",
         "PROPERTYQUARRY_DB_CONTAINER_NAME": "propertyquarry-db-live",
         "PROPERTYQUARRY_RENDER_CONTAINER_NAME": "propertyquarry-render-tools",
@@ -60,6 +771,18 @@ def build_security_posture_receipt() -> dict[str, object]:
             failures.append(f".env.example must default {env_name}={expected_value}")
 
     compose = _read("docker-compose.property.yml")
+    source_compose_failures = _compose_runtime_privilege_failures(compose)
+    failures.extend(source_compose_failures)
+    resolved_services: dict[str, dict[str, object]] | None = None
+    if not source_compose_failures:
+        try:
+            resolved_services = _resolved_compose_services(compose)
+        except SecurityPostureConfigError as exc:
+            failures.append(str(exc))
+        else:
+            failures.extend(
+                _resolved_compose_runtime_privilege_failures(resolved_services)
+            )
     forbidden_compose_tokens = (
         "ea-openvoice",
         "openvoice",
@@ -73,11 +796,17 @@ def build_security_posture_receipt() -> dict[str, object]:
     for token in forbidden_compose_tokens:
         if token in compose.lower():
             failures.append(f"docker-compose.property.yml contains inherited surface: {token}")
-    for service_name in ("propertyquarry-api", "propertyquarry-scheduler", "propertyquarry-db"):
+    for service_name in (
+        "propertyquarry-api",
+        "propertyquarry-worker",
+        "propertyquarry-scheduler",
+        "propertyquarry-db",
+    ):
         if service_name not in compose:
             failures.append(f"docker-compose.property.yml missing {service_name}")
     expected_container_name_envs = (
         'container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api}"',
+        'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"',
         'container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler}"',
         'container_name: "${PROPERTYQUARRY_DB_CONTAINER_NAME:-propertyquarry-db-live}"',
         'container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-tools}"',
@@ -85,8 +814,33 @@ def build_security_posture_receipt() -> dict[str, object]:
     for expected in expected_container_name_envs:
         if expected not in compose:
             failures.append(f"docker-compose.property.yml must keep recoverable container alias {expected}")
-    if "propertyquarry-worker" in compose or "PROPERTYQUARRY_WORKER_PROFILE" in compose:
-        failures.append("docker-compose.property.yml must not start the inherited idle worker by default")
+
+    if resolved_services is not None:
+        failures.extend(
+            _resolved_durable_worker_security_failures(
+                resolved_services.get("propertyquarry-worker"),
+                api=resolved_services.get("propertyquarry-api"),
+            )
+        )
+    try:
+        writer_topology = _strict_json_object(
+            _read(
+                "config/release/"
+                "propertyquarry_deploy_writer_topology.v1.json"
+            ),
+            label="propertyquarry deploy writer topology",
+        )
+    except (SecurityPostureConfigError, OSError) as exc:
+        writer_topology = {}
+        failures.append(str(exc))
+    if resolved_services is not None:
+        failures.extend(
+            _resolved_render_non_writer_security_failures(
+                resolved_services.get("propertyquarry-render-tools"),
+                writer_topology=writer_topology,
+            )
+        )
+
     if "POSTGRES_HOST_AUTH_METHOD" in compose or ":-trust" in compose:
         failures.append("docker-compose.property.yml must not default Postgres to trust auth")
     if 'POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?' not in compose:
@@ -96,7 +850,7 @@ def build_security_posture_receipt() -> dict[str, object]:
     if 'PROPERTYQUARRY_SCHEDULER_PROFILE: "${PROPERTYQUARRY_SCHEDULER_PROFILE:-property_only}"' not in compose:
         failures.append("docker-compose.property.yml must default the scheduler to property_only")
     if "dockerfile: ea/Dockerfile.property-web" not in compose:
-        failures.append("docker-compose.property.yml must run API/scheduler from the lightweight web runtime")
+        failures.append("docker-compose.property.yml must run API/worker/scheduler from the lightweight web runtime")
     if 'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"' not in compose:
         failures.append("docker-compose.property.yml must name the lightweight web runtime image")
     if "propertyquarry-render-tools:" not in compose or "render-tools" not in compose:
@@ -109,11 +863,11 @@ def build_security_posture_receipt() -> dict[str, object]:
         failures.append("docker-compose.property.yml must not grant SYS_NICE to property web services")
 
     dockerfile = _read("ea/Dockerfile.property")
-    if not re.search(r"^FROM\s+\S+@sha256:[0-9a-f]{64}\s*$", dockerfile, flags=re.MULTILINE):
+    if not _dockerfile_uses_only_pinned_external_bases(dockerfile):
         failures.append("ea/Dockerfile.property must pin its base image by digest")
     if " docker.io" in dockerfile or "docker-compose" in dockerfile or "docker-29." in dockerfile:
         failures.append("ea/Dockerfile.property must not install Docker tooling")
-    if not re.search(r"^USER\s+ea\s*$", dockerfile, flags=re.MULTILINE):
+    if not _dockerfile_final_user_is_non_root(dockerfile):
         failures.append("ea/Dockerfile.property must run as USER ea")
     if "requirements.lock" not in dockerfile or "-c requirements.lock" not in dockerfile:
         failures.append("ea/Dockerfile.property must install with requirements.lock constraints")
@@ -122,13 +876,22 @@ def build_security_posture_receipt() -> dict[str, object]:
     if "for script in /tmp/src/scripts/*" in dockerfile or 'cp "$script" /app/scripts/' in dockerfile:
         failures.append("ea/Dockerfile.property must not bulk-copy scripts into the runtime image")
     web_dockerfile = _read("ea/Dockerfile.property-web")
-    if not re.search(r"^FROM\s+\S+@sha256:[0-9a-f]{64}\s*$", web_dockerfile, flags=re.MULTILINE):
+    if not _dockerfile_uses_only_pinned_external_bases(web_dockerfile):
         failures.append("ea/Dockerfile.property-web must pin its base image by digest")
     if " docker.io" in web_dockerfile or "docker-compose" in web_dockerfile or "docker-29." in web_dockerfile:
         failures.append("ea/Dockerfile.property-web must not install Docker tooling")
-    if not re.search(r"^USER\s+ea\s*$", web_dockerfile, flags=re.MULTILINE):
+    if not _dockerfile_final_user_is_non_root(web_dockerfile):
         failures.append("ea/Dockerfile.property-web must run as USER ea")
-    if "requirements.lock" not in web_dockerfile or "-c requirements.lock" not in web_dockerfile:
+    if not (
+        "requirements.lock" in web_dockerfile
+        and (
+            "-c requirements.lock" in web_dockerfile
+            or (
+                "--require-hashes" in web_dockerfile
+                and "requirements.wheelhouse.lock" in web_dockerfile
+            )
+        )
+    ):
         failures.append("ea/Dockerfile.property-web must install with requirements.lock constraints")
     if "COPY scripts/willhaben_property_packet.py /app/scripts/willhaben_property_packet.py" not in web_dockerfile:
         failures.append("ea/Dockerfile.property-web must explicitly copy the Willhaben packet helper")
@@ -221,6 +984,9 @@ def build_security_posture_receipt() -> dict[str, object]:
         "property_env_placeholders",
         "property_service_aliases",
         "property_compose_isolation",
+        "compose_runtime_privilege_boundaries",
+        "durable_property_worker_hardening",
+        "render_database_isolation",
         "non_root_pinned_runtime_image",
         "lightweight_web_runtime_split",
         "web_runtime_browser_payload_isolation",

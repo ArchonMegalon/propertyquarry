@@ -222,7 +222,9 @@ class Settings:
 def _runtime_mode(raw: str) -> str:
     mode = str(raw or "").strip().lower() or "dev"
     if mode not in {"dev", "test", "prod"}:
-        return "dev"
+        raise RuntimeError(
+            "EA_RUNTIME_MODE must be one of: dev, test, prod"
+        )
     return mode
 
 

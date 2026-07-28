@@ -1,0 +1,21 @@
+[Unit]
+Description=PropertyQuarry release-control v2 request socket
+Documentation=man:systemd.socket(5)
+
+[Socket]
+ListenStream=/run/propertyquarry-release-control-v2/request.sock
+SocketUser=root
+SocketGroup=propertyquarry-release-callers
+SocketMode=0660
+DirectoryMode=0750
+Accept=yes
+FileDescriptorName=request
+PassCredentials=yes
+RemoveOnStop=yes
+Backlog=1
+MaxConnections=1
+TriggerLimitIntervalSec=60
+TriggerLimitBurst=4
+
+[Install]
+WantedBy=sockets.target

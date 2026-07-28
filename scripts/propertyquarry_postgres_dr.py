@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import re
+import secrets
 import shlex
 import shutil
 import stat
@@ -72,6 +73,7 @@ DEFAULT_RESTORE_MAX_DURATION_SECONDS = 1_800.0
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 3_600.0
 DEFAULT_RELEASE_EVIDENCE_MAX_AGE_SECONDS = 86_400.0
 DEFAULT_RECEIPT_FUTURE_TOLERANCE_SECONDS = 300.0
+MAX_RECEIPT_BYTES = 16 * 1024 * 1024
 RESTORE_RTO_SCOPE = (
     "off_host_retrieval",
     "decryption",
@@ -139,6 +141,10 @@ class DisasterRecoveryError(RuntimeError):
         super().__init__(message)
         self.code = str(code or "dr_error")
         self.details = dict(details or {})
+
+
+class _DuplicateReceiptKey(ValueError):
+    pass
 
 
 def _utc_iso(epoch: float) -> str:
@@ -953,19 +959,525 @@ def _snapshot_bound_sql(sql: str, snapshot_id: str | None) -> str:
     )
 
 
+def _receipt_file_identity(
+    value: os.stat_result,
+) -> tuple[int, int, int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_mode,
+        value.st_uid,
+        value.st_nlink,
+    )
+
+
+def _receipt_directory_identity(
+    value: os.stat_result,
+) -> tuple[int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_uid,
+        value.st_gid,
+    )
+
+
+_ReceiptDirectoryHandle = tuple[
+    int,
+    int | None,
+    str | None,
+    tuple[int, ...],
+]
+
+
+def _canonical_receipt_path(path: Path) -> Path:
+    return Path(os.path.abspath(os.path.normpath(os.fspath(path.expanduser()))))
+
+
+def _close_receipt_directory_handles(
+    handles: list[_ReceiptDirectoryHandle],
+) -> None:
+    for descriptor, _, _, _ in reversed(handles):
+        with suppress(OSError):
+            os.close(descriptor)
+
+
+def _validate_receipt_directory_trust(
+    value: os.stat_result,
+    *,
+    final: bool,
+    code: str,
+    label: str,
+) -> None:
+    peer_writable = bool(value.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
+    sticky = bool(value.st_mode & stat.S_ISVTX)
+    if (
+        not stat.S_ISDIR(value.st_mode)
+        or value.st_uid not in {0, os.geteuid()}
+        or (peer_writable and (final or not sticky))
+    ):
+        raise DisasterRecoveryError(
+            code,
+            f"{label} must use a trusted-owner directory chain; "
+            "only non-final sticky ancestors may be writable by peers.",
+        )
+
+
+def _revalidate_receipt_directory_chain(
+    handles: list[_ReceiptDirectoryHandle],
+    *,
+    code: str = "receipt_destination_invalid",
+    label: str = "Receipt destination",
+) -> None:
+    for index, (
+        descriptor,
+        parent_descriptor,
+        component,
+        identity,
+    ) in enumerate(handles):
+        opened = os.fstat(descriptor)
+        if parent_descriptor is None:
+            named = os.lstat("/")
+        else:
+            named = os.stat(
+                str(component),
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        _validate_receipt_directory_trust(
+            opened,
+            final=index == len(handles) - 1,
+            code=code,
+            label=label,
+        )
+        if (
+            _receipt_directory_identity(opened) != identity
+            or _receipt_directory_identity(named) != identity
+        ):
+            raise DisasterRecoveryError(
+                code,
+                f"{label} directory chain changed while it was used.",
+            )
+
+
+def _open_receipt_destination_directory(
+    parent: Path,
+) -> list[_ReceiptDirectoryHandle]:
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    handles: list[_ReceiptDirectoryHandle] = []
+    try:
+        root_descriptor = os.open("/", directory_flags)
+        handles.append((root_descriptor, None, None, ()))
+        root_metadata = os.fstat(root_descriptor)
+        root_identity = _receipt_directory_identity(root_metadata)
+        handles[-1] = (root_descriptor, None, None, root_identity)
+
+        components = parent.parts[1:]
+        _validate_receipt_directory_trust(
+            root_metadata,
+            final=not components,
+            code="receipt_destination_invalid",
+            label="Receipt destination",
+        )
+        for component_index, component in enumerate(components):
+            parent_descriptor = handles[-1][0]
+            created = False
+            try:
+                child_descriptor = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=parent_descriptor,
+                )
+            except FileNotFoundError:
+                try:
+                    os.mkdir(
+                        component,
+                        mode=0o700,
+                        dir_fd=parent_descriptor,
+                    )
+                    created = True
+                except FileExistsError:
+                    pass
+                child_descriptor = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=parent_descriptor,
+                )
+            handles.append(
+                (child_descriptor, parent_descriptor, component, ())
+            )
+            child_metadata = os.fstat(child_descriptor)
+            child_identity = _receipt_directory_identity(child_metadata)
+            handles[-1] = (
+                child_descriptor,
+                parent_descriptor,
+                component,
+                child_identity,
+            )
+            _validate_receipt_directory_trust(
+                child_metadata,
+                final=component_index == len(components) - 1,
+                code="receipt_destination_invalid",
+                label="Receipt destination",
+            )
+            named = os.stat(
+                component,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if _receipt_directory_identity(named) != child_identity:
+                raise DisasterRecoveryError(
+                    "receipt_destination_invalid",
+                    "Receipt destination directory changed while it was opened.",
+                )
+            if created:
+                os.fsync(parent_descriptor)
+
+        _revalidate_receipt_directory_chain(handles)
+        return handles
+    except BaseException:
+        _close_receipt_directory_handles(handles)
+        raise
+
+
+def _validate_receipt_file(
+    value: os.stat_result,
+    *,
+    code: str,
+    label: str,
+) -> None:
+    if (
+        not stat.S_ISREG(value.st_mode)
+        or value.st_uid not in {0, os.geteuid()}
+        or value.st_mode
+        & (stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID)
+        or value.st_nlink != 1
+    ):
+        raise DisasterRecoveryError(
+            code,
+            f"{label} must be a trusted-owner, singly linked regular file "
+            "that is immutable to peers.",
+        )
+
+
+def _unique_receipt_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateReceiptKey(key)
+        result[key] = value
+    return result
+
+
+def _reject_receipt_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
+def _read_stable_receipt_json(
+    path: Path,
+    *,
+    code: str,
+    label: str,
+) -> tuple[object, Path]:
+    candidate = _canonical_receipt_path(path)
+    if candidate == Path("/"):
+        raise DisasterRecoveryError(code, f"{label} path is invalid.")
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    file_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    directory_handles: list[
+        tuple[int, int | None, str | None, tuple[int, ...]]
+    ] = []
+    descriptor = -1
+    try:
+        try:
+            root_descriptor = os.open("/", directory_flags)
+            directory_handles.append(
+                (root_descriptor, None, None, ())
+            )
+            root_identity = _receipt_directory_identity(
+                os.fstat(root_descriptor)
+            )
+            directory_handles[-1] = (
+                root_descriptor,
+                None,
+                None,
+                root_identity,
+            )
+            for component in candidate.parts[1:-1]:
+                parent_descriptor = directory_handles[-1][0]
+                child_descriptor = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=parent_descriptor,
+                )
+                directory_handles.append(
+                    (
+                        child_descriptor,
+                        parent_descriptor,
+                        component,
+                        (),
+                    )
+                )
+                child_identity = _receipt_directory_identity(
+                    os.fstat(child_descriptor)
+                )
+                directory_handles[-1] = (
+                    child_descriptor,
+                    parent_descriptor,
+                    component,
+                    child_identity,
+                )
+                named = os.stat(
+                    component,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    not stat.S_ISDIR(named.st_mode)
+                    or _receipt_directory_identity(named) != child_identity
+                ):
+                    raise DisasterRecoveryError(
+                        code,
+                        f"{label} path changed while it was opened.",
+                    )
+
+            _revalidate_receipt_directory_chain(
+                directory_handles,
+                code=code,
+                label=f"{label} path",
+            )
+            filename = candidate.name
+            parent_descriptor = directory_handles[-1][0]
+            descriptor = os.open(
+                filename,
+                file_flags,
+                dir_fd=parent_descriptor,
+            )
+            opened = os.fstat(descriptor)
+            _validate_receipt_file(opened, code=code, label=label)
+            opened_identity = _receipt_file_identity(opened)
+            named = os.stat(
+                filename,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if _receipt_file_identity(named) != opened_identity:
+                raise DisasterRecoveryError(
+                    code,
+                    f"{label} changed while it was opened.",
+                )
+
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_RECEIPT_BYTES:
+                    raise DisasterRecoveryError(
+                        code,
+                        f"{label} exceeds the bounded receipt size.",
+                    )
+                chunks.append(chunk)
+
+            after_opened = os.fstat(descriptor)
+            after_named = os.stat(
+                filename,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                _receipt_file_identity(after_opened) != opened_identity
+                or _receipt_file_identity(after_named) != opened_identity
+            ):
+                raise DisasterRecoveryError(
+                    code,
+                    f"{label} changed while it was read.",
+                )
+            _revalidate_receipt_directory_chain(
+                directory_handles,
+                code=code,
+                label=f"{label} path",
+            )
+        except DisasterRecoveryError:
+            raise
+        except OSError as exc:
+            raise DisasterRecoveryError(
+                code,
+                f"{label} cannot be opened as a stable regular file: "
+                f"{candidate}",
+            ) from exc
+
+        try:
+            loaded = json.loads(
+                b"".join(chunks).decode("utf-8"),
+                object_pairs_hook=_unique_receipt_object,
+                parse_constant=_reject_receipt_constant,
+            )
+        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise DisasterRecoveryError(
+                code,
+                f"{label} is not unambiguous UTF-8 JSON.",
+            ) from exc
+        return loaded, candidate
+    finally:
+        if descriptor >= 0:
+            with suppress(OSError):
+                os.close(descriptor)
+        _close_receipt_directory_handles(directory_handles)
+
+
 def _atomic_receipt(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(json.dumps(dict(payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    _private_file(temp)
-    temp.replace(path)
+    destination = _canonical_receipt_path(path)
+    parent = destination.parent
+    if destination == Path("/") or destination.name in {"", ".", ".."}:
+        raise DisasterRecoveryError(
+            "receipt_destination_invalid",
+            "Receipt destination path is invalid.",
+        )
+    try:
+        encoded = (
+            json.dumps(
+                dict(payload),
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise DisasterRecoveryError(
+            "receipt_destination_invalid",
+            "Receipt payload is not finite JSON.",
+        ) from exc
+
+    directory_handles: list[_ReceiptDirectoryHandle] = []
+    descriptor = -1
+    temporary_name: str | None = None
+    try:
+        directory_handles = _open_receipt_destination_directory(parent)
+        parent_descriptor = directory_handles[-1][0]
+        staging_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        for _ in range(64):
+            candidate_name = (
+                f".{destination.name}.{secrets.token_hex(16)}.tmp"
+            )
+            try:
+                descriptor = os.open(
+                    candidate_name,
+                    staging_flags,
+                    0o600,
+                    dir_fd=parent_descriptor,
+                )
+            except FileExistsError:
+                continue
+            temporary_name = candidate_name
+            break
+        if descriptor < 0 or temporary_name is None:
+            raise DisasterRecoveryError(
+                "receipt_destination_invalid",
+                "A unique receipt staging file could not be allocated.",
+            )
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        opened = os.fstat(descriptor)
+        _validate_receipt_file(
+            opened,
+            code="receipt_destination_invalid",
+            label="Receipt staging file",
+        )
+        staged_identity = _receipt_file_identity(opened)
+        staged_named = os.stat(
+            temporary_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if _receipt_file_identity(staged_named) != staged_identity:
+            raise DisasterRecoveryError(
+                "receipt_destination_invalid",
+                "Receipt staging file changed before publication.",
+            )
+        _revalidate_receipt_directory_chain(directory_handles)
+        os.replace(
+            temporary_name,
+            destination.name,
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        temporary_name = None
+        published_identity = _receipt_file_identity(os.fstat(descriptor))
+        published_named = os.stat(
+            destination.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if _receipt_file_identity(published_named) != published_identity:
+            raise DisasterRecoveryError(
+                "receipt_destination_invalid",
+                "Receipt destination changed during publication.",
+            )
+        _revalidate_receipt_directory_chain(directory_handles)
+        os.fsync(parent_descriptor)
+    except DisasterRecoveryError:
+        raise
+    except OSError as exc:
+        raise DisasterRecoveryError(
+            "receipt_destination_invalid",
+            "Receipt destination cannot be published safely.",
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            with suppress(OSError):
+                os.close(descriptor)
+        if temporary_name is not None and directory_handles:
+            with suppress(OSError):
+                os.unlink(
+                    temporary_name,
+                    dir_fd=directory_handles[-1][0],
+                )
+        _close_receipt_directory_handles(directory_handles)
 
 
 def _load_receipt(path: Path) -> dict[str, object]:
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise DisasterRecoveryError("backup_receipt_invalid", f"Backup receipt cannot be read: {path}") from exc
+    loaded, _ = _read_stable_receipt_json(
+        path,
+        code="backup_receipt_invalid",
+        label="Backup receipt",
+    )
     if (
         not isinstance(loaded, dict)
         or loaded.get("schema") != RECEIPT_SCHEMA
@@ -977,13 +1489,11 @@ def _load_receipt(path: Path) -> dict[str, object]:
 
 
 def _load_passing_operation_receipt(path: Path, *, operation: str) -> dict[str, object]:
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise DisasterRecoveryError(
-            "dr_receipt_invalid",
-            f"DR receipt cannot be read: {path}",
-        ) from exc
+    loaded, _ = _read_stable_receipt_json(
+        path,
+        code="dr_receipt_invalid",
+        label=f"{operation.replace('_', ' ').title()} receipt",
+    )
     if (
         not isinstance(loaded, dict)
         or loaded.get("schema") != RECEIPT_SCHEMA
@@ -2876,7 +3386,7 @@ def execute_restore_drill(
     env = dict(os.environ if environ is None else environ)
     started = clock()
     runtime_mode = str(env.get("EA_RUNTIME_MODE") or "dev").strip().lower() or "dev"
-    backup_receipt = _load_receipt(backup_receipt_path.expanduser().resolve())
+    backup_receipt = _load_receipt(backup_receipt_path)
     artifact_info = dict(backup_receipt.get("artifact") or {})
     source_identity = dict(backup_receipt.get("source") or {})
     backup_release = _validated_receipt_release(backup_receipt.get("release"), label="Backup")
@@ -3252,12 +3762,14 @@ def verify_release_dr_evidence(
             "release_evidence_max_age_invalid",
             "DR release evidence max age must be at least one second.",
         )
+    backup_input_path = _canonical_receipt_path(backup_receipt_path)
+    restore_input_path = _canonical_receipt_path(restore_receipt_path)
     backup = _load_passing_operation_receipt(
-        backup_receipt_path.expanduser().resolve(),
+        backup_input_path,
         operation="backup",
     )
     restore = _load_passing_operation_receipt(
-        restore_receipt_path.expanduser().resolve(),
+        restore_input_path,
         operation="restore_drill",
     )
     backup_release = _validated_receipt_release(backup.get("release"), label="Backup")
@@ -3549,8 +4061,8 @@ def verify_release_dr_evidence(
             "off_host_retrieval": retrieval,
             "aws_cli": retrieval["aws_cli"],
             "evidence": {
-                "backup_receipt": str(backup_receipt_path.expanduser().resolve()),
-                "restore_receipt": str(restore_receipt_path.expanduser().resolve()),
+                "backup_receipt": str(backup_input_path),
+                "restore_receipt": str(restore_input_path),
                 "backup_completed_at": backup.get("completed_at"),
                 "restore_completed_at": restore.get("completed_at"),
                 "backup_age_seconds": round(backup_age, 3),

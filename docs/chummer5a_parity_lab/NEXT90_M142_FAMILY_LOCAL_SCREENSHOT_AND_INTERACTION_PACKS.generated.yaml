@@ -1,5 +1,5 @@
 contract_name: ea.next90_m142_family_local_screenshot_and_interaction_packs
-generated_at: '2026-07-13T08:32:03Z'
+generated_at: '2026-07-18T16:07:28Z'
 package_id: next90-m142-ea-compile-family-local-screenshot-and-interaction-packs-for-these-workflows
 title: Compile family-local screenshot and interaction packs for these workflows without
   collapsing them into broad family prose.
@@ -20,7 +20,7 @@ summary:
   fleet_m142_gate_status: pass
   fleet_m142_route_local_status: pass
   desktop_client_status: missing
-  desktop_client_reason_count: 1
+  desktop_client_reason_count: 10
 source_inputs:
   ea_compare_packs:
     path: /docker/EA/docs/chummer5a_parity_lab/compare_packs.yaml
@@ -101,16 +101,16 @@ source_inputs:
     coverage_key: desktop_client
     status: missing
     summary: Desktop flagship proof is still incomplete.
-    reason_count: 1
+    reason_count: 10
     source_status: missing
     source_summary: Desktop flagship proof is still incomplete.
-    source_reason_count: 1
+    source_reason_count: 10
     row_fingerprint_basis:
     - status
     - summary
     - reasons
     - evidence
-    row_fingerprint: 95871d70a44d4fc8a0643ba342d9fb2182ef1843b21b6b3835721ca4dfc2ad82
+    row_fingerprint: 708e114273019f81c2d07921ee081670a47dc68f445829d3dd4df90cd679eaa5
 canonical_monitors:
   guide_markers:
     wave: true
@@ -151,9 +151,26 @@ desktop_client_readiness:
   coverage_key: desktop_client
   status: missing
   summary: Desktop flagship proof is still incomplete.
-  reason_count: 1
+  reason_count: 10
   reasons:
-  - Executable desktop exit gate receipt is stale (92391s old; max 86400s).
+  - Executable desktop exit gate proof is missing or not passed. Desktop shell/install/support
+    liveliness must be proven from shipped artifacts.
+  - 'Executable gate blocker: Windows installer visual proof must be captured on a
+    Windows host before promotion can pass.'
+  - 'Executable gate blocker: Windows gate reason: Windows installer visual proof
+    is missing; capture progress and completion screenshots on a Windows host.'
+  - Dedicated user-journey tester audit is missing or not passed. A separate tester
+    shard must run the Linux binary like a user and prove visible workflow results.
+  - 'User-journey tester audit lacks verified existing PNG screenshot review for workflows:
+    file_new_character_visible_workspace, major_navigation_sanity, master_index_search_focus_stability,
+    minimal_character_build_save_reload, validation_or_export_smoke.'
+  - 'User-journey tester audit lacks required execution discipline: workflow_screenshot_review_must_prove_existing_pngs.'
+  - Windows desktop exit gate proof is missing, not passed, or lacks payload/sample
+    integrity proof.
+  - Release channel receipt is stale (452324s old; max 86400s).
+  - Release channel is not simultaneously published, release-proven, and Avalonia-desktop-backed.
+  - Release channel publishes Windows installer media, but executable-gate evidence
+    is missing passing Windows startup-smoke tuple proof.
 family_local_packs:
 - family_id: dense_builder_and_career_workflows
   label: Dense builder and career workflows

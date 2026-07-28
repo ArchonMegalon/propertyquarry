@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -13,7 +14,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -21,6 +22,25 @@ try:
     from scripts.property_tour_3dvista_provenance import (
         safe_relpath as _safe_provenance_relpath,
         validate_3dvista_target_provenance,
+    )
+    from scripts.property_tour_panorama_provenance import (
+        KRPANO_SPATIAL_PROVENANCE_KEY,
+        PANO2VR_SPATIAL_PROVENANCE_KEY,
+        asset_set_sha256 as _panorama_asset_set_sha256,
+        export_tree_sha256 as _panorama_export_tree_sha256,
+        panorama_asset_relpaths,
+        panorama_walkable_required,
+        pano2vr_export_topology,
+        safe_relpath as _safe_panorama_provenance_relpath,
+        validate_panorama_spatial_provenance,
+        walkable_scene_topology,
+    )
+    from scripts.property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_env_int,
+        require_bounded_file,
+        require_bounded_tree,
+        tour_manifest_max_bytes,
     )
     from scripts.property_tour_runtime_paths import (
         best_tour_root as _best_tour_root,
@@ -32,6 +52,25 @@ except ModuleNotFoundError:
     from property_tour_3dvista_provenance import (  # type: ignore[no-redef]
         safe_relpath as _safe_provenance_relpath,
         validate_3dvista_target_provenance,
+    )
+    from property_tour_panorama_provenance import (  # type: ignore[no-redef]
+        KRPANO_SPATIAL_PROVENANCE_KEY,
+        PANO2VR_SPATIAL_PROVENANCE_KEY,
+        asset_set_sha256 as _panorama_asset_set_sha256,
+        export_tree_sha256 as _panorama_export_tree_sha256,
+        panorama_asset_relpaths,
+        panorama_walkable_required,
+        pano2vr_export_topology,
+        safe_relpath as _safe_panorama_provenance_relpath,
+        validate_panorama_spatial_provenance,
+        walkable_scene_topology,
+    )
+    from property_tour_host_safety import (  # type: ignore[no-redef]
+        TourHostSafetyError,
+        bounded_env_int,
+        require_bounded_file,
+        require_bounded_tree,
+        tour_manifest_max_bytes,
     )
     from property_tour_runtime_paths import (  # type: ignore[no-redef]
         best_tour_root as _best_tour_root,
@@ -47,16 +86,18 @@ OPTIONAL_PROVIDER_CONFIGURED_BLOCKER_REASONS = {
     "krpano": {
         "missing_krpano_license_environment",
         "walkable_scene_asset_missing_or_not_360",
+        "krpano_spatial_provenance_missing_or_invalid",
     },
     "pano2vr": {
         "pano2vr_entry_missing_or_not_verified",
+        "pano2vr_spatial_provenance_missing_or_invalid",
     },
 }
 PROVIDER_DELIVERY_REQUIREMENTS = {
     "matterport": [
-        "A public Matterport model URL on my.matterport.com or matterport.com",
-        "A PropertyQuarry tour manifest containing the allowlisted Matterport URL",
-        "A hosted PropertyQuarry control route that opens the Matterport model",
+        "Matterport public control is retired; an allowlisted model URL alone is not launch evidence",
+        "A deliberately restored PropertyQuarry route backed by fresh walkthrough and model-publication receipts",
+        "A passing browser/security review proving that the restored route serves the exact approved model",
     ],
     "3dvista": [
         "A verified non-trial 3DVista VT Pro export or allowlisted hosted 3dvista.com tour URL",
@@ -66,12 +107,12 @@ PROVIDER_DELIVERY_REQUIREMENTS = {
     "pano2vr": [
         "A verified Pano2VR export containing index.html, pano.xml, and pano2vr_player.js",
         "A PropertyQuarry import/control manifest for the exported tour bundle",
-        "A hosted PropertyQuarry control route that opens the Pano2VR viewer",
+        "A private exact-byte receipt proving authorized spatial capture, observed scene topology, and dated human property/visual review",
     ],
     "krpano": [
         "A configured krpano license environment for the PropertyQuarry domain",
         "A real walkable_scene backed by equirectangular panorama or cubemap assets",
-        "A hosted PropertyQuarry control route that opens the krpano scene",
+        "A private exact-asset receipt proving authorized spatial capture, observed scene topology, and dated human property/visual review",
     ],
     "magicfit": [
         "A receipt-backed MagicFit walkthrough video for a PropertyQuarry property",
@@ -118,6 +159,78 @@ EQUIRECTANGULAR_MAX_RATIO = 2.1
 CLI_ENV_KEYS = {"KRPANO_LICENSE_DOMAIN", "KRPANO_LICENSE_KEY"}
 THREE_D_VISTA_WHITE_LABEL_SOURCE_PROJECT_TOKENS = ("propertyquarry", "property-quarry", "propertyquarry.com", "property_quarry")
 THREE_D_VISTA_CHUMMER_SOURCE_TOKENS = ("chummer", "horizon", "runsite")
+MAGICFIT_DELIVERY_ACCEPTANCE_CONTRACT = (
+    "propertyquarry.magicfit_delivery_acceptance.v1"
+)
+MAGICFIT_DELIVERY_REVIEW_CONTRACT = "propertyquarry.magicfit_delivery_review.v1"
+MAGICFIT_ACCEPTED_SIDECAR_FIELDS = frozenset(
+    {
+        "contract_name",
+        "provider",
+        "provider_key",
+        "provider_backend_key",
+        "render_status",
+        "status",
+        "acceptance_status",
+        "launch_eligible",
+        "video_relpath",
+        "video_sha256",
+        "source_receipt_sha256",
+        "generated_at",
+        "review",
+    }
+)
+MAGICFIT_REVIEW_FIELDS = frozenset(
+    {
+        "contract_name",
+        "reviewed_at",
+        "reviewer_authority_sha256",
+        "evidence_sha256",
+        "subject",
+        "checklist",
+    }
+)
+MAGICFIT_REVIEW_SUBJECT_FIELDS = frozenset(
+    {
+        "tour_slug",
+        "provider",
+        "delivery_contract_name",
+        "source_receipt_sha256",
+        "video_relpath",
+        "video_sha256",
+    }
+)
+MAGICFIT_REVIEW_CHECKS = frozenset(
+    {
+        "playback_to_end",
+        "continuous_walkthrough",
+        "no_visible_rotation_jump",
+        "intended_property_and_scope",
+        "no_sensitive_or_trial_branding",
+    }
+)
+MAGICFIT_REVIEW_MAX_FUTURE_SKEW = timedelta(minutes=5)
+MAGICFIT_UTC_TIMESTAMP_RE = re.compile(
+    r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|\+00:00)\Z"
+)
+SHA256_HEX_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+class _DuplicateJsonKey(ValueError):
+    pass
+
+
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJsonKey(key)
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json(value: str) -> None:
+    raise ValueError(f"nonfinite:{value}")
 
 
 def _tour_root() -> Path:
@@ -207,6 +320,44 @@ def _safe_asset_relpath(value: object) -> str:
     if not parts:
         return ""
     return "/".join(parts)
+
+
+def _canonical_asset_relpath(value: object) -> str:
+    """Return a safe path only when the supplied spelling is already canonical."""
+
+    if not isinstance(value, str) or not value or value != value.strip():
+        return ""
+    if "\\" in value or value.startswith("/"):
+        return ""
+    if any(part in {"", ".", ".."} for part in value.split("/")):
+        return ""
+    if any(
+        ord(character) < 0x20
+        or ord(character) == 0x7F
+        or 0xD800 <= ord(character) <= 0xDFFF
+        for character in value
+    ):
+        return ""
+    normalized = _safe_asset_relpath(value)
+    if normalized != value or PurePosixPath(value).as_posix() != value:
+        return ""
+    return normalized
+
+
+def _strict_magicfit_utc_timestamp(
+    value: object, *, require_z: bool = True
+) -> datetime | None:
+    if not isinstance(value, str) or not MAGICFIT_UTC_TIMESTAMP_RE.fullmatch(value):
+        return None
+    if require_z and not value.endswith("Z"):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _safe_http_url(value: object, *, allowed_hosts: Iterable[str]) -> str:
@@ -479,6 +630,166 @@ def _pano2vr_entry_relpath(payload: dict[str, object]) -> str:
     return ""
 
 
+def _pano2vr_export_root_relpath(payload: dict[str, object]) -> str:
+    for key in (
+        "pano2vr_export_root_relpath",
+        "pano2vr_root_relpath",
+    ):
+        relpath = _safe_panorama_provenance_relpath(payload.get(key))
+        if relpath:
+            return relpath
+    import_payload = payload.get("pano2vr_import")
+    if isinstance(import_payload, dict):
+        relpath = _safe_panorama_provenance_relpath(
+            import_payload.get("target_subdir") or import_payload.get("export_root_relpath")
+        )
+        if relpath:
+            return relpath
+    entry_relpath = _pano2vr_entry_relpath(payload)
+    entry_parts = PurePosixPath(entry_relpath).parts if entry_relpath else ()
+    if len(entry_parts) > 1:
+        return PurePosixPath(*entry_parts[:-1]).as_posix()
+    return ""
+
+
+def _panorama_hash_limits() -> tuple[int, int, int]:
+    return (
+        bounded_env_int(
+            "PROPERTYQUARRY_PANORAMA_MAX_HASH_FILES",
+            default=5_000,
+            minimum=1,
+            maximum=20_000,
+        ),
+        bounded_env_int(
+            "PROPERTYQUARRY_PANORAMA_MAX_HASH_BYTES",
+            default=512 * 1024 * 1024,
+            minimum=1_024,
+            maximum=2 * 1024 * 1024 * 1024,
+        ),
+        bounded_env_int(
+            "PROPERTYQUARRY_PANORAMA_MAX_FILE_BYTES",
+            default=256 * 1024 * 1024,
+            minimum=1_024,
+            maximum=512 * 1024 * 1024,
+        ),
+    )
+
+
+def _panorama_spatial_provenance_errors(
+    bundle_dir: Path,
+    payload: dict[str, object],
+    *,
+    provider: str,
+) -> list[str]:
+    normalized_provider = str(provider or "").strip().lower()
+    key = (
+        PANO2VR_SPATIAL_PROVENANCE_KEY
+        if normalized_provider == "pano2vr"
+        else KRPANO_SPATIAL_PROVENANCE_KEY
+        if normalized_provider == "krpano"
+        else ""
+    )
+    raw_receipt = payload.get(key) if key else None
+    if not isinstance(raw_receipt, dict):
+        return ["receipt_missing"]
+    slug = str(payload.get("slug") or bundle_dir.name).strip()
+    bundle_root = bundle_dir.resolve()
+    maximum_files, maximum_total_bytes, maximum_file_bytes = (
+        _panorama_hash_limits()
+    )
+    try:
+        if normalized_provider == "pano2vr":
+            entry_relpath = _pano2vr_entry_relpath(payload)
+            export_root_relpath = _pano2vr_export_root_relpath(payload)
+            if not entry_relpath or not export_root_relpath:
+                return ["pano2vr_export_root_missing"]
+            export_dir = (bundle_root / export_root_relpath).resolve()
+            if export_dir == bundle_root or bundle_root not in export_dir.parents:
+                return ["pano2vr_export_root_invalid"]
+            entry_prefix = f"{export_root_relpath}/"
+            if not entry_relpath.startswith(entry_prefix):
+                return ["pano2vr_entry_outside_export_root"]
+            expected_entry = entry_relpath[len(entry_prefix) :]
+            require_bounded_tree(
+                export_dir,
+                reason_prefix="panorama_pano2vr_export",
+                maximum_files=maximum_files,
+                maximum_total_bytes=maximum_total_bytes,
+                maximum_file_bytes=maximum_file_bytes,
+                maximum_depth=24,
+            )
+            artifact_sha256 = _panorama_export_tree_sha256(
+                export_dir,
+                maximum_files=maximum_files,
+                maximum_total_bytes=maximum_total_bytes,
+                maximum_file_bytes=maximum_file_bytes,
+            )
+            observed_topology = pano2vr_export_topology(export_dir)
+            artifact_kind = "local_export"
+            observed_projection = ""
+        elif normalized_provider == "krpano":
+            asset_relpaths = panorama_asset_relpaths(payload)
+            if not asset_relpaths:
+                return ["panorama_assets_missing"]
+            artifact_sha256 = _panorama_asset_set_sha256(
+                bundle_root,
+                asset_relpaths,
+                maximum_files=maximum_files,
+                maximum_total_bytes=maximum_total_bytes,
+                maximum_file_bytes=maximum_file_bytes,
+            )
+            observed_topology = walkable_scene_topology(payload)
+            artifact_kind = "panorama_assets"
+            expected_entry = ""
+            walkable_scene = payload.get("walkable_scene")
+            projection = (
+                str(
+                    walkable_scene.get("projection")
+                    or walkable_scene.get("type")
+                    or ""
+                )
+                .strip()
+                .lower()
+                if isinstance(walkable_scene, dict)
+                else ""
+            )
+            observed_projection = {
+                "panorama": "equirectangular",
+                "cube": "cubemap",
+            }.get(projection, projection)
+        else:
+            return ["provider_invalid"]
+    except (OSError, RuntimeError, ValueError, TourHostSafetyError):
+        return ["artifact_unhashable_or_topology_invalid"]
+    if not artifact_sha256:
+        return ["artifact_unhashable_or_empty"]
+    _normalized, errors = validate_panorama_spatial_provenance(
+        dict(raw_receipt),
+        provider=normalized_provider,
+        target_slug=slug,
+        artifact_kind=artifact_kind,
+        artifact_sha256=artifact_sha256,
+        entry_relpath=expected_entry,
+        observed_projection=observed_projection,
+        observed_topology=observed_topology,
+        walkable_required=panorama_walkable_required(payload),
+    )
+    return errors
+
+
+def _panorama_spatial_provenance_ready(
+    bundle_dir: Path,
+    payload: dict[str, object],
+    *,
+    provider: str,
+) -> bool:
+    return not _panorama_spatial_provenance_errors(
+        bundle_dir,
+        payload,
+        provider=provider,
+    )
+
+
 def _three_d_vista_entry_relpath(payload: dict[str, object]) -> str:
     for key in ("three_d_vista_entry_relpath", "threedvista_entry_relpath", "3dvista_entry_relpath"):
         relpath = _safe_asset_relpath(payload.get(key))
@@ -494,7 +805,7 @@ def _three_d_vista_entry_relpath(payload: dict[str, object]) -> str:
 
 def _magicfit_video_relpath(payload: dict[str, object]) -> str:
     for key in ("video_relpath", "flythrough_video_relpath", "magicfit_video_relpath"):
-        relpath = _safe_asset_relpath(payload.get(key))
+        relpath = _canonical_asset_relpath(payload.get(key))
         if relpath and PurePosixPath(relpath).suffix.lower() in PUBLIC_VIDEO_EXTENSIONS:
             return relpath
     return ""
@@ -516,28 +827,169 @@ def _magicfit_provider_declared(payload: dict[str, object]) -> bool:
     return provider == "magicfit"
 
 
-def _magicfit_delivery_receipt_disqualified(bundle_dir: Path) -> bool:
-    receipt_path = bundle_dir / "tour.magicfit.json"
-    if not receipt_path.is_file():
+def _magicfit_manifest_tour_slug(
+    payload: dict[str, object], *, bundle_dir: Path
+) -> str:
+    if "slug" not in payload:
+        return bundle_dir.name
+    value = payload.get("slug")
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or value != bundle_dir.name
+    ):
+        return ""
+    return value
+
+
+def _magicfit_accepted_receipt_contract_valid(
+    receipt: dict[str, object],
+    *,
+    bundle_dir: Path,
+    active_video_relpath: str,
+    tour_slug: str,
+    observed_at: datetime | None = None,
+) -> bool:
+    """Validate the closed, structural v1 delivery-review profile.
+
+    This deliberately does not claim reviewer or provider authority.  The
+    digests are bindings for an independently signed launch receipt; this local
+    verifier only prevents an incomplete/pending sidecar from becoming eligible
+    through a status-field flip.
+    """
+
+    if set(receipt) != MAGICFIT_ACCEPTED_SIDECAR_FIELDS:
         return False
+    exact_values = {
+        "contract_name": MAGICFIT_DELIVERY_ACCEPTANCE_CONTRACT,
+        "provider": "magicfit",
+        "provider_key": "magicfit",
+        "provider_backend_key": "magicfit",
+        "render_status": "completed",
+        "status": "delivery_accepted",
+        "acceptance_status": "accepted",
+    }
+    if any(receipt.get(key) != value for key, value in exact_values.items()):
+        return False
+    if receipt.get("launch_eligible") is not True:
+        return False
+
+    receipt_video_relpath = _canonical_asset_relpath(receipt.get("video_relpath"))
+    video_sha256 = receipt.get("video_sha256")
+    source_receipt_sha256 = receipt.get("source_receipt_sha256")
+    if (
+        receipt_video_relpath != active_video_relpath
+        or not isinstance(video_sha256, str)
+        or SHA256_HEX_RE.fullmatch(video_sha256) is None
+        or not isinstance(source_receipt_sha256, str)
+        or SHA256_HEX_RE.fullmatch(source_receipt_sha256) is None
+    ):
+        return False
+
+    generated_at = _strict_magicfit_utc_timestamp(
+        receipt.get("generated_at"), require_z=False
+    )
+    review = receipt.get("review")
+    if generated_at is None or not isinstance(review, dict):
+        return False
+    if set(review) != MAGICFIT_REVIEW_FIELDS:
+        return False
+    if review.get("contract_name") != MAGICFIT_DELIVERY_REVIEW_CONTRACT:
+        return False
+    reviewed_at = _strict_magicfit_utc_timestamp(review.get("reviewed_at"))
+    authority_digest = review.get("reviewer_authority_sha256")
+    evidence_digest = review.get("evidence_sha256")
+    if (
+        reviewed_at is None
+        or reviewed_at < generated_at
+        or not isinstance(authority_digest, str)
+        or SHA256_HEX_RE.fullmatch(authority_digest) is None
+        or not isinstance(evidence_digest, str)
+        or SHA256_HEX_RE.fullmatch(evidence_digest) is None
+    ):
+        return False
+    now = observed_at or datetime.now(timezone.utc)
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        return False
+    if reviewed_at > now.astimezone(timezone.utc) + MAGICFIT_REVIEW_MAX_FUTURE_SKEW:
+        return False
+
+    subject = review.get("subject")
+    if not isinstance(subject, dict) or set(subject) != MAGICFIT_REVIEW_SUBJECT_FIELDS:
+        return False
+    # tour_slug is intentionally stored only inside the review subject.  Bind it
+    # to both the manifest identity and the containing public bundle.
+    if tour_slug != bundle_dir.name:
+        return False
+    expected_subject = {
+        "tour_slug": tour_slug,
+        "provider": "magicfit",
+        "delivery_contract_name": MAGICFIT_DELIVERY_ACCEPTANCE_CONTRACT,
+        "source_receipt_sha256": source_receipt_sha256,
+        "video_relpath": receipt_video_relpath,
+        "video_sha256": video_sha256,
+    }
+    if subject != expected_subject:
+        return False
+
+    checklist = review.get("checklist")
+    if not isinstance(checklist, dict) or set(checklist) != MAGICFIT_REVIEW_CHECKS:
+        return False
+    return all(checklist.get(key) is True for key in MAGICFIT_REVIEW_CHECKS)
+
+
+def _magicfit_delivery_receipt_disqualified(
+    bundle_dir: Path,
+    payload: dict[str, object],
+) -> bool:
+    if not _magicfit_provider_declared(payload):
+        return False
+    active_video_relpath = _magicfit_video_relpath(payload)
+    if not active_video_relpath:
+        return False
+    tour_slug = _magicfit_manifest_tour_slug(payload, bundle_dir=bundle_dir)
+    if not tour_slug:
+        return True
+    receipt_relpath = _canonical_asset_relpath(
+        payload.get("video_sidecar_relpath") or "tour.magicfit.json"
+    )
+    if not receipt_relpath:
+        return True
+    receipt_path = _local_asset_path(bundle_dir, receipt_relpath)
+    if receipt_path is None:
+        return True
     try:
-        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt = json.loads(
+            receipt_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_strict_json_object,
+            parse_constant=_reject_nonfinite_json,
+        )
     except Exception:
         return True
     if not isinstance(receipt, dict):
         return True
 
-    acceptance_status = str(receipt.get("acceptance_status") or "").strip().lower()
-    if acceptance_status in {"blocked", "disqualified", "fail", "failed", "rejected"}:
+    if not _magicfit_accepted_receipt_contract_valid(
+        receipt,
+        bundle_dir=bundle_dir,
+        active_video_relpath=active_video_relpath,
+        tour_slug=tour_slug,
+    ):
         return True
-    if "launch_eligible" in receipt and not _truthy(receipt.get("launch_eligible")):
+    receipt_video_sha256 = receipt["video_sha256"]
+    assert isinstance(receipt_video_sha256, str)
+    active_video_path = _local_asset_path(bundle_dir, active_video_relpath)
+    if active_video_path is None or not active_video_path.is_file():
         return True
-    disqualification = receipt.get("disqualification")
-    if isinstance(disqualification, dict) and disqualification:
+    digest = hashlib.sha256()
+    try:
+        with active_video_path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
         return True
-    if isinstance(disqualification, list) and disqualification:
-        return True
-    if isinstance(disqualification, str) and disqualification.strip():
+    if digest.hexdigest() != receipt_video_sha256:
         return True
     return False
 
@@ -549,8 +1001,12 @@ def _file_exists(bundle_dir: Path, relpath: str) -> bool:
 def _local_asset_path(bundle_dir: Path, relpath: str) -> Path | None:
     if not relpath:
         return None
-    candidate = (bundle_dir / relpath).resolve()
-    if bundle_dir.resolve() not in candidate.parents or not candidate.is_file():
+    try:
+        bundle_root = bundle_dir.resolve()
+        candidate = (bundle_dir / relpath).resolve()
+        if bundle_root not in candidate.parents or not candidate.is_file():
+            return None
+    except (OSError, RuntimeError, ValueError):
         return None
     return candidate
 
@@ -591,22 +1047,25 @@ def _local_cube_face_ready(bundle_dir: Path, relpath: str) -> bool:
     return 0.9 <= ratio <= 1.1
 
 
-def _walkable_scene_has_real_360_asset(bundle_dir: Path, payload: dict[str, object]) -> bool:
-    scene_strategy = str(payload.get("scene_strategy") or "").strip().lower()
-    creation_mode = str(payload.get("creation_mode") or "").strip().lower()
-    if scene_strategy in KRPANO_FORBIDDEN_SCENE_STRATEGIES or creation_mode in KRPANO_FORBIDDEN_CREATION_MODES:
-        return False
-    walkable_scene = payload.get("walkable_scene")
-    if not isinstance(walkable_scene, dict) or not walkable_scene:
-        return False
-    projection = str(walkable_scene.get("projection") or walkable_scene.get("type") or "").strip().lower()
+def _krpano_scene_has_real_360_asset(
+    bundle_dir: Path,
+    scene: dict[str, object],
+    *,
+    default_projection: str = "",
+) -> bool:
+    projection = str(
+        scene.get("projection")
+        or scene.get("type")
+        or default_projection
+        or ""
+    ).strip().lower()
     if projection and projection not in {"equirectangular", "panorama", "cubemap", "cube"}:
         return False
     for key in ("panorama_relpath", "equirect_relpath", "image_relpath", "asset_relpath"):
-        relpath = _safe_asset_relpath(walkable_scene.get(key))
+        relpath = _safe_asset_relpath(scene.get(key))
         if _local_equirectangular_image_ready(bundle_dir, relpath):
             return True
-    cube_faces = walkable_scene.get("cube_faces")
+    cube_faces = scene.get("cube_faces")
     if isinstance(cube_faces, dict):
         values = list(cube_faces.values())
     elif isinstance(cube_faces, list):
@@ -620,6 +1079,40 @@ def _walkable_scene_has_real_360_asset(bundle_dir: Path, payload: dict[str, obje
         if _local_cube_face_ready(bundle_dir, relpath)
     ]
     return len(valid_faces) >= 6
+
+
+def _walkable_scene_has_real_360_asset(bundle_dir: Path, payload: dict[str, object]) -> bool:
+    scene_strategy = str(payload.get("scene_strategy") or "").strip().lower()
+    creation_mode = str(payload.get("creation_mode") or "").strip().lower()
+    if scene_strategy in KRPANO_FORBIDDEN_SCENE_STRATEGIES or creation_mode in KRPANO_FORBIDDEN_CREATION_MODES:
+        return False
+    walkable_scene = payload.get("walkable_scene")
+    if not isinstance(walkable_scene, dict) or not walkable_scene:
+        return False
+    default_projection = str(
+        walkable_scene.get("projection") or walkable_scene.get("type") or ""
+    ).strip().lower()
+    raw_scenes = walkable_scene.get("scenes")
+    if isinstance(raw_scenes, dict):
+        scene_rows = [row for row in raw_scenes.values() if isinstance(row, dict)]
+    elif isinstance(raw_scenes, list):
+        scene_rows = [row for row in raw_scenes if isinstance(row, dict)]
+    else:
+        scene_rows = []
+    if scene_rows:
+        return all(
+            _krpano_scene_has_real_360_asset(
+                bundle_dir,
+                scene,
+                default_projection=default_projection,
+            )
+            for scene in scene_rows
+        )
+    return _krpano_scene_has_real_360_asset(
+        bundle_dir,
+        walkable_scene,
+        default_projection=default_projection,
+    )
 
 
 def _ffprobe_video_markers(target: str | Path) -> dict[str, object]:
@@ -723,8 +1216,8 @@ def _local_html_asset_has_forbidden_marker(bundle_dir: Path, relpath: str, *, ma
 def _local_video_asset_is_playable(bundle_dir: Path, relpath: str) -> bool:
     if not relpath:
         return False
-    candidate = (bundle_dir / relpath).resolve()
-    if bundle_dir.resolve() not in candidate.parents or not candidate.is_file():
+    candidate = _local_asset_path(bundle_dir, relpath)
+    if candidate is None:
         return False
     suffix = PurePosixPath(relpath).suffix.lower()
     try:
@@ -749,7 +1242,7 @@ def _local_video_asset_is_playable(bundle_dir: Path, relpath: str) -> bool:
 def _magicfit_local_video_ready(bundle_dir: Path, payload: dict[str, object]) -> bool:
     return (
         _magicfit_provider_declared(payload)
-        and not _magicfit_delivery_receipt_disqualified(bundle_dir)
+        and not _magicfit_delivery_receipt_disqualified(bundle_dir, payload)
         and _local_video_asset_is_playable(bundle_dir, _magicfit_video_relpath(payload))
     )
 
@@ -773,17 +1266,24 @@ def _load_provider_receipt(bundle_dir: Path) -> dict[str, object]:
     if not receipt_path.is_file():
         return {}
     try:
+        require_bounded_file(
+            receipt_path,
+            reason_prefix="private_tour_receipt",
+            maximum_bytes=tour_manifest_max_bytes(),
+        )
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, UnicodeError, ValueError, TourHostSafetyError):
         return {}
     if not isinstance(receipt, dict):
         return {}
     allowed_keys = {
         "crezlo_public_url",
+        KRPANO_SPATIAL_PROVENANCE_KEY,
         "pano2vr_entry_relpath",
         "pano2vr_export_entry_relpath",
         "pano2vr_export_root_relpath",
         "pano2vr_root_relpath",
+        PANO2VR_SPATIAL_PROVENANCE_KEY,
         "source_virtual_tour_url",
         "source_virtual_tour_origin",
         "three_d_vista_browser_render_proof",
@@ -813,17 +1313,23 @@ def _provider_missing_evidence(bundle_dir: Path, payload: dict[str, object]) -> 
         str(payload.get(key) or "").strip()
         for key in ("matterport_url", "source_virtual_tour_url", "crezlo_public_url")
     )
-    if matterport_candidate:
+    matterport_url_ready = any(
+        _safe_http_url(payload.get(key), allowed_hosts=("matterport.com",))
+        for key in ("matterport_url", "source_virtual_tour_url", "crezlo_public_url")
+    )
+    if matterport_url_ready:
+        reason = "matterport_public_control_retired"
+        action = (
+            "keep the Matterport URL private, or deliberately restore the public route only after fresh "
+            "matterport_walkthrough and matterport_model_publication receipts plus passing browser/security proof"
+        )
+    elif matterport_candidate:
         reason = "matterport_url_not_allowlisted_or_invalid"
         action = "replace with a public Matterport URL on my.matterport.com or matterport.com"
     else:
         reason = "missing_matterport_url"
         action = "add matterport_url or source_virtual_tour_url from a real Matterport model"
-    if not any(
-        _safe_http_url(payload.get(key), allowed_hosts=("matterport.com",))
-        for key in ("matterport_url", "source_virtual_tour_url", "crezlo_public_url")
-    ):
-        rows.append({"provider": "matterport", "reason": reason, "action": action})
+    rows.append({"provider": "matterport", "reason": reason, "action": action})
 
     three_d_vista_entry = _three_d_vista_entry_relpath(payload)
     three_d_vista_url_ready = any(
@@ -851,13 +1357,22 @@ def _provider_missing_evidence(bundle_dir: Path, payload: dict[str, object]) -> 
     elif not (three_d_vista_url_ready or three_d_vista_entry_ready):
         if three_d_vista_entry:
             reason = "3dvista_entry_missing_or_not_verified"
-            action = "import a real 3DVista export whose entry HTML contains 3DVista runtime markers"
+            action = (
+                "import a licensed 3DVista export whose entry HTML contains runtime markers, then attach "
+                "private target-bound approval and property/visual review provenance"
+            )
         elif _has_key(payload, "three_d_vista_url", "threedvista_url", "3dvista_url"):
             reason = "3dvista_placeholder_field_empty_or_unusable"
-            action = "replace the empty 3DVista placeholder field with an allowlisted 3dvista.com URL or import a verified 3DVista export"
+            action = (
+                "replace the empty 3DVista placeholder with an allowlisted 3dvista.com URL or licensed export, then attach "
+                "private target-bound approval and property/visual review provenance"
+            )
         else:
             reason = "missing_3dvista_export"
-            action = "run import_3dvista_export.py with a verified 3DVista export or add an allowlisted 3dvista.com URL"
+            action = (
+                "provide a licensed 3DVista export or allowlisted 3dvista.com URL, then attach private "
+                "target-bound approval and property/visual review provenance"
+            )
         rows.append({"provider": "3dvista", "reason": reason, "action": action})
     elif not _three_d_vista_target_provenance_ready(bundle_dir, payload):
         rows.append(
@@ -904,6 +1419,22 @@ def _provider_missing_evidence(bundle_dir: Path, payload: dict[str, object]) -> 
             reason = "missing_pano2vr_export"
             action = "run import_pano2vr_export.py with a verified Pano2VR export"
         rows.append({"provider": "pano2vr", "reason": reason, "action": action})
+    elif not _panorama_spatial_provenance_ready(
+        bundle_dir,
+        payload,
+        provider="pano2vr",
+    ):
+        rows.append(
+            {
+                "provider": "pano2vr",
+                "reason": "pano2vr_spatial_provenance_missing_or_invalid",
+                "action": (
+                    "attach a private propertyquarry.panorama_spatial_provenance.v1 receipt that binds the exact "
+                    "Pano2VR export bytes and observed topology to approved reuse plus dated human property, visual, "
+                    "and spatial-capture review"
+                ),
+            }
+        )
 
     krpano_license_ready = bool(os.getenv("KRPANO_LICENSE_DOMAIN") and os.getenv("KRPANO_LICENSE_KEY"))
     krpano_asset_ready = _walkable_scene_has_real_360_asset(bundle_dir, payload)
@@ -918,6 +1449,22 @@ def _provider_missing_evidence(bundle_dir: Path, payload: dict[str, object]) -> 
             reason = "walkable_scene_asset_missing_or_not_360"
             action = "attach a real local equirectangular panorama or six cube-face assets before enabling krpano"
         rows.append({"provider": "krpano", "reason": reason, "action": action})
+    elif not _panorama_spatial_provenance_ready(
+        bundle_dir,
+        payload,
+        provider="krpano",
+    ):
+        rows.append(
+            {
+                "provider": "krpano",
+                "reason": "krpano_spatial_provenance_missing_or_invalid",
+                "action": (
+                    "attach a private propertyquarry.panorama_spatial_provenance.v1 receipt that binds the exact "
+                    "panorama assets and observed topology to approved reuse plus dated human property, visual, "
+                    "and spatial-capture review"
+                ),
+            }
+        )
 
     magicfit_relpath = _magicfit_video_relpath(payload)
     magicfit_url = _magicfit_video_url(payload)
@@ -928,9 +1475,12 @@ def _provider_missing_evidence(bundle_dir: Path, payload: dict[str, object]) -> 
             or payload.get("video_render_provider")
             or ""
         ).strip().lower()
-        if _magicfit_delivery_receipt_disqualified(bundle_dir):
+        if _magicfit_delivery_receipt_disqualified(bundle_dir, payload):
             reason = "magicfit_walkthrough_disqualified"
-            action = "render and import a replacement MagicFit walkthrough that passes the delivery acceptance gate"
+            action = (
+                "complete delivery acceptance for the exact active MagicFit video, "
+                "or render and import a replacement MagicFit walkthrough if review rejects it"
+            )
         elif provider and provider != "magicfit":
             reason = "walkthrough_provider_not_magicfit"
             action = "render and import a MagicFit walkthrough with provider=magicfit"
@@ -977,20 +1527,6 @@ def _control_candidates(*, slug: str, bundle_dir: Path, payload: dict[str, objec
     rows: list[dict[str, object]] = []
     if _tour_payload_is_disabled_fallback(payload):
         return rows
-    matterport_url = ""
-    for key in ("matterport_url", "source_virtual_tour_url", "crezlo_public_url"):
-        matterport_url = _safe_http_url(payload.get(key), allowed_hosts=("matterport.com",))
-        if matterport_url:
-            break
-    if matterport_url:
-        rows.append(
-            {
-                "provider": "matterport",
-                "status": "ready",
-                "control_path": f"/tours/{slug}/control/matterport",
-                "evidence": "allowlisted_matterport_url",
-            }
-        )
 
     three_d_vista_url = ""
     for key in ("three_d_vista_url", "threedvista_url", "3dvista_url", "source_virtual_tour_url", "crezlo_public_url"):
@@ -1029,29 +1565,42 @@ def _control_candidates(*, slug: str, bundle_dir: Path, payload: dict[str, objec
         pano2vr_entry,
         markers=("ggpkg", "ggskin", "pano.xml", "tour.js"),
     )
-    if pano2vr_entry_ready:
+    if pano2vr_entry_ready and _panorama_spatial_provenance_ready(
+        bundle_dir,
+        payload,
+        provider="pano2vr",
+    ):
         rows.append(
             {
                 "provider": "pano2vr",
                 "status": "ready",
                 "control_path": f"/tours/{slug}/control/pano2vr",
-                "evidence": "local_pano2vr_export_entry",
+                "evidence": "provenance_bound_pano2vr_spatial_export",
             }
         )
 
-    if os.getenv("KRPANO_LICENSE_DOMAIN") and os.getenv("KRPANO_LICENSE_KEY") and _walkable_scene_has_real_360_asset(bundle_dir, payload):
+    if (
+        os.getenv("KRPANO_LICENSE_DOMAIN")
+        and os.getenv("KRPANO_LICENSE_KEY")
+        and _walkable_scene_has_real_360_asset(bundle_dir, payload)
+        and _panorama_spatial_provenance_ready(
+            bundle_dir,
+            payload,
+            provider="krpano",
+        )
+    ):
         rows.append(
             {
                 "provider": "krpano",
                 "status": "ready",
                 "control_path": f"/tours/{slug}/control/krpano",
-                "evidence": "licensed_krpano_walkable_scene",
+                "evidence": "provenance_bound_licensed_krpano_spatial_scene",
             }
         )
 
     magicfit_relpath = _magicfit_video_relpath(payload)
     magicfit_url = _magicfit_video_url(payload)
-    magicfit_disqualified = _magicfit_delivery_receipt_disqualified(bundle_dir)
+    magicfit_disqualified = _magicfit_delivery_receipt_disqualified(bundle_dir, payload)
     if _magicfit_local_video_ready(bundle_dir, payload):
         rows.append(
             {
@@ -1096,6 +1645,33 @@ def _summarize_provider_blockers(reason_counts: dict[str, dict[str, dict[str, ob
     return summary
 
 
+def _next_provider_action(
+    provider: str, provider_blockers: dict[str, dict[str, object]]
+) -> str:
+    blocker = provider_blockers.get(provider)
+    if isinstance(blocker, dict):
+        reasons = blocker.get("reasons")
+        if isinstance(reasons, list):
+            for row in reasons:
+                if isinstance(row, dict):
+                    action = str(row.get("action") or "").strip()
+                    if action:
+                        return action
+    return {
+        "matterport": (
+            "keep Matterport private unless its retired public route is deliberately restored with fresh "
+            "walkthrough, model-publication, and browser/security proof"
+        ),
+        "3dvista": (
+            "provide a licensed 3DVista export or allowlisted 3dvista.com URL plus private target-bound "
+            "approval and property/visual review provenance"
+        ),
+        "pano2vr": "import a verified Pano2VR export",
+        "krpano": "provide a real walkable_scene and krpano license environment",
+        "magicfit": "import a receipt-backed playable MagicFit walkthrough video",
+    }[provider]
+
+
 def _provider_delivery_contracts(
     *,
     tours: list[dict[str, object]],
@@ -1116,6 +1692,11 @@ def _provider_delivery_contracts(
             if reasons
             else (f"missing_{provider}_evidence" if provider in missing else "")
         )
+        if provider == "matterport":
+            # This aggregate contract describes public-route policy, not the
+            # most common per-tour data gap. Matterport remains retired even
+            # when most manifests do not contain a model URL.
+            blocked_reason = "matterport_public_control_retired"
         (
             white_label_status,
             white_label_required_to_white_label,
@@ -1133,13 +1714,24 @@ def _provider_delivery_contracts(
             "sample_controls": ready_controls[:5],
             "manifest_url": "",
         }
+        provider_is_ready = (
+            provider not in missing
+            and int(provider_counts.get(provider) or 0) > 0
+        )
+        surface_blocker = provider in missing or (
+            provider == "matterport" and not provider_is_ready
+        )
         contracts[provider] = {
             "schema": "propertyquarry.tour_delivery_contract.v1",
             "provider": provider,
-            "status": "ready" if provider not in missing and int(provider_counts.get(provider) or 0) > 0 else "blocked",
+            "status": "ready" if provider_is_ready else "blocked",
             "ready_payload": ready_payload,
-            "blocked_reason": "" if provider not in missing else blocked_reason,
-            "required_to_send": [] if provider not in missing else list(PROVIDER_DELIVERY_REQUIREMENTS[provider]),
+            "blocked_reason": blocked_reason if surface_blocker else "",
+            "required_to_send": (
+                list(PROVIDER_DELIVERY_REQUIREMENTS[provider])
+                if surface_blocker
+                else []
+            ),
             "white_label_contract": {
                 "schema": "propertyquarry.tour_white_label_contract.v1",
                 "provider": provider,
@@ -1246,7 +1838,10 @@ def _optional_hidden_probe_is_acceptable(control: dict[str, object], probe: dict
     if str(probe.get("error_code") or "").strip() != "tour_control_panorama_export_hidden":
         return False
     evidence = str(control.get("evidence") or "").strip().lower()
-    return evidence in {"local_pano2vr_export_entry", "licensed_krpano_walkable_scene"}
+    return evidence in {
+        "provenance_bound_pano2vr_spatial_export",
+        "provenance_bound_licensed_krpano_spatial_scene",
+    }
 
 
 def build_property_tour_control_receipt(
@@ -1274,7 +1869,11 @@ def build_property_tour_control_receipt(
         for manifest_path in manifests:
             bundle_dir = manifest_path.parent.resolve()
             try:
-                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                payload = json.loads(
+                    manifest_path.read_text(encoding="utf-8"),
+                    object_pairs_hook=_strict_json_object,
+                    parse_constant=_reject_nonfinite_json,
+                )
             except Exception as exc:
                 tours.append({"slug": manifest_path.parent.name, "status": "invalid_manifest", "error": f"{type(exc).__name__}: {exc}"})
                 failed_probes += 1
@@ -1454,13 +2053,7 @@ def build_property_tour_control_receipt(
                 {
                     "provider": provider,
                     "blocked_tour_count": action_counts[provider],
-                    "action": {
-                        "matterport": "add a verified Matterport model URL to at least one hosted tour manifest",
-                        "3dvista": "import a verified 3DVista export or add an allowlisted 3dvista.com tour URL",
-                        "pano2vr": "import a verified Pano2VR export",
-                        "krpano": "provide a real walkable_scene and krpano license environment",
-                        "magicfit": "import a receipt-backed playable MagicFit walkthrough video",
-                    }[provider],
+                    "action": _next_provider_action(provider, provider_blockers),
                 }
                 for provider in PUBLIC_REQUIRED_PROVIDER_MODES
                 if provider in missing_provider_modes

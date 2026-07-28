@@ -323,7 +323,56 @@ def _gold_payload(
     activation_path: Path,
     overlay_path: Path,
     rybbit_path: Path,
+    dashboard_render_receipt_sha256: str,
+    structured_log_query_receipt_sha256: str,
+    distributed_trace_query_receipt_sha256: str,
 ) -> dict[str, object]:
+    operations_policy_sha256 = "9" * 64
+    operations_input_hashes = {
+        "dashboard_render_receipt": dashboard_render_receipt_sha256,
+        "structured_log_query_receipt": structured_log_query_receipt_sha256,
+        "distributed_trace_query_receipt": distributed_trace_query_receipt_sha256,
+    }
+    operations_release = {
+        "commit_sha": CANDIDATE_SHA,
+        "image_digest": f"sha256:{'7' * 64}",
+    }
+    operations_deployment_id = "propertyquarry-test-deployment"
+    operations_challenge_sha256 = "8" * 64
+    operations_replica_ids = [
+        "propertyquarry-api-a",
+        "propertyquarry-api-b",
+    ]
+    operations_evidence: dict[str, object] = {
+        "schema_version": launch_authority.OPERATIONS_VERIFICATION_SCHEMA,
+        "producer": launch_authority.OPERATIONS_VERIFICATION_PRODUCER,
+        "verified_at": "2026-07-16T17:00:00Z",
+        "release": dict(operations_release),
+        "deployment_id": operations_deployment_id,
+        "challenge_sha256": operations_challenge_sha256,
+        "policy_sha256": operations_policy_sha256,
+        "source_contract_status": (
+            launch_authority.OPERATIONS_SOURCE_CONTRACT_STATUS
+        ),
+        "replica_ids": list(operations_replica_ids),
+        "status": "verified",
+        "cross_receipt_links_verified": True,
+        "shared_input_hashes": dict(operations_input_hashes),
+        "receipts": {
+            "dashboard_render": {
+                "file_sha256": dashboard_render_receipt_sha256,
+            },
+            "structured_log_query": {
+                "file_sha256": structured_log_query_receipt_sha256,
+            },
+            "distributed_trace_query": {
+                "file_sha256": distributed_trace_query_receipt_sha256,
+            },
+        },
+    }
+    operations_evidence["payload_sha256"] = (
+        launch_authority._operations_payload_sha256(operations_evidence)
+    )
     return {
         "generated_at": GENERATED_AT.isoformat(),
         "status": "pass",
@@ -365,8 +414,17 @@ def _gold_payload(
             "validation_errors": [],
             "slo": {"status": "pass"},
             "observability": {
-                "status": "pass",
+                "status": "verified",
                 "cross_receipt_links_verified": True,
+                "policy_hashes": {
+                    "flagship_operations_sha256": operations_policy_sha256,
+                },
+                "shared_input_hashes": dict(operations_input_hashes),
+                "release": dict(operations_release),
+                "deployment_id": operations_deployment_id,
+                "challenge_sha256": operations_challenge_sha256,
+                "replica_ids": list(operations_replica_ids),
+                "operations_evidence": operations_evidence,
             },
         },
         "activation_to_value": {
@@ -441,6 +499,18 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
     )
     overlay = _write_json(tmp_path / "overlay.json", overlay_payload)
     rybbit = _write_json(tmp_path / "rybbit.json", _rybbit_payload())
+    dashboard_render = _write_json(
+        tmp_path / "dashboard-render.json",
+        {"schema": "dashboard-render-test.v1", "status": "pass"},
+    )
+    structured_log_query = _write_json(
+        tmp_path / "structured-log-query.json",
+        {"schema": "structured-log-query-test.v1", "status": "pass"},
+    )
+    distributed_trace_query = _write_json(
+        tmp_path / "distributed-trace-query.json",
+        {"schema": "distributed-trace-query-test.v1", "status": "pass"},
+    )
     live = _write_json(
         tmp_path / "live.json",
         _live_payload(security_sha=_digest(security), binding_sha=_digest(binding)),
@@ -451,6 +521,11 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
             activation_path=activation,
             overlay_path=overlay,
             rybbit_path=rybbit,
+            dashboard_render_receipt_sha256=_digest(dashboard_render),
+            structured_log_query_receipt_sha256=_digest(structured_log_query),
+            distributed_trace_query_receipt_sha256=_digest(
+                distributed_trace_query
+            ),
         ),
     )
     controller = tmp_path / "propertyquarry-release-controller-v1.tar.zst"
@@ -471,6 +546,9 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
         "activation_receipt_path": activation,
         "overlay_receipt_path": overlay,
         "rybbit_receipt_path": rybbit,
+        "dashboard_render_receipt_path": dashboard_render,
+        "structured_log_query_receipt_path": structured_log_query,
+        "distributed_trace_query_receipt_path": distributed_trace_query,
         "security_receipt_path": security,
         "security_workflow_binding_path": binding,
         "controller_bundle_path": controller,
@@ -545,6 +623,9 @@ def test_launch_authority_binds_every_exact_input_and_current_workflow_run(
         "activation",
         "overlay",
         "rybbit",
+        "dashboard_render_receipt",
+        "structured_log_query_receipt",
+        "distributed_trace_query_receipt",
         "security",
         "security_workflow_binding",
         "controller_bundle",
@@ -559,6 +640,11 @@ def test_launch_authority_binds_every_exact_input_and_current_workflow_run(
         "activation": inputs["activation_receipt_path"],
         "overlay": inputs["overlay_receipt_path"],
         "rybbit": inputs["rybbit_receipt_path"],
+        "dashboard_render_receipt": inputs["dashboard_render_receipt_path"],
+        "structured_log_query_receipt": inputs["structured_log_query_receipt_path"],
+        "distributed_trace_query_receipt": inputs[
+            "distributed_trace_query_receipt_path"
+        ],
         "security": inputs["security_receipt_path"],
         "security_workflow_binding": inputs["security_workflow_binding_path"],
         "controller_bundle": inputs["controller_bundle_path"],
@@ -682,6 +768,30 @@ def test_launch_authority_preserves_valid_metadata_only_ancestry_projection(
         "head_commit": HEAD_SHA,
         **projection,
     }
+
+
+def test_launch_authority_rejects_missing_release_hygiene_ancestry_projection(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    gold_path = inputs["gold_status_path"]
+    assert isinstance(gold_path, Path)
+    gold = _read_payload(gold_path)
+    ancestry_fields = {
+        "parent_commit",
+        "manifest_descendant_paths",
+        "manifest_metadata_only_ancestor",
+    }
+    for projection in (gold["release_hygiene"], gold["pass_areas"][0]):  # type: ignore[index]
+        assert isinstance(projection, dict)
+        for field in ancestry_fields:
+            projection.pop(field, None)
+    _rewrite(gold_path, gold)
+
+    envelope = launch_authority.build_launch_authority_envelope(**inputs)
+
+    assert envelope["status"] == "withheld"
+    assert "gold_pass_area_candidate_mismatch" in envelope["failures"]
 
 
 def test_launch_authority_rejects_disallowed_metadata_ancestry_projection(
@@ -1249,6 +1359,12 @@ def test_launch_authority_cli_writes_atomic_mode_600_and_exits_nonzero_when_with
         str(inputs["overlay_receipt_path"]),
         "--rybbit-receipt",
         str(inputs["rybbit_receipt_path"]),
+        "--dashboard-render-receipt",
+        str(inputs["dashboard_render_receipt_path"]),
+        "--structured-log-query-receipt",
+        str(inputs["structured_log_query_receipt_path"]),
+        "--distributed-trace-query-receipt",
+        str(inputs["distributed_trace_query_receipt_path"]),
         "--security-receipt",
         str(inputs["security_receipt_path"]),
         "--security-workflow-binding",
@@ -1290,3 +1406,193 @@ def test_launch_authority_rejects_group_writable_input(tmp_path: Path) -> None:
 
     assert envelope["status"] == "withheld"
     assert "overlay_writable_by_group_or_other" in envelope["failures"]
+
+
+@pytest.mark.parametrize(
+    "path_key",
+    (
+        "dashboard_render_receipt_path",
+        "structured_log_query_receipt_path",
+        "distributed_trace_query_receipt_path",
+    ),
+)
+def test_launch_authority_rejects_operations_receipt_hash_mismatch(
+    tmp_path: Path,
+    path_key: str,
+) -> None:
+    inputs = _inputs(tmp_path)
+    receipt_path = inputs[path_key]
+    assert isinstance(receipt_path, Path)
+    receipt = _read_payload(receipt_path)
+    receipt["tampered_after_gold"] = True
+    _rewrite(receipt_path, receipt)
+
+    envelope = launch_authority.build_launch_authority_envelope(**inputs)
+
+    assert envelope["status"] == "withheld"
+    assert "gold_operations_evidence_input_mismatch" in envelope["failures"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_failure"),
+    (
+        ("observability_status", "gold_canonical_launch_not_pass"),
+        ("operations_status", "gold_operations_evidence_input_mismatch"),
+        ("operations_schema", "gold_operations_evidence_input_mismatch"),
+        ("operations_producer", "gold_operations_evidence_input_mismatch"),
+        ("source_contract_status", "gold_operations_evidence_input_mismatch"),
+        ("release_binding", "gold_operations_evidence_input_mismatch"),
+        ("deployment_binding", "gold_operations_evidence_input_mismatch"),
+        ("challenge_binding", "gold_operations_evidence_input_mismatch"),
+        ("replica_mismatch", "gold_operations_evidence_input_mismatch"),
+        ("replica_empty", "gold_operations_evidence_input_mismatch"),
+        ("replica_unsorted", "gold_operations_evidence_input_mismatch"),
+        ("replica_duplicate", "gold_operations_evidence_input_mismatch"),
+        ("replica_unconfigured", "gold_operations_evidence_input_mismatch"),
+        ("replica_malformed", "gold_operations_evidence_input_mismatch"),
+        ("policy_binding", "gold_operations_evidence_input_mismatch"),
+        ("observability_hash", "gold_operations_evidence_input_mismatch"),
+        ("nested_receipt_hash", "gold_operations_evidence_input_mismatch"),
+        ("payload_sha256", "gold_operations_evidence_input_mismatch"),
+    ),
+)
+def test_launch_authority_rejects_invalid_gold_operations_evidence(
+    tmp_path: Path,
+    mutation: str,
+    expected_failure: str,
+) -> None:
+    inputs = _inputs(tmp_path)
+    gold_path = inputs["gold_status_path"]
+    assert isinstance(gold_path, Path)
+    gold = _read_payload(gold_path)
+    canonical = gold["canonical_launch_evidence"]
+    assert isinstance(canonical, dict)
+    observability = canonical["observability"]
+    assert isinstance(observability, dict)
+    operations = observability["operations_evidence"]
+    assert isinstance(operations, dict)
+
+    if mutation == "observability_status":
+        observability["status"] = "pass"
+    elif mutation == "operations_status":
+        operations["status"] = "pass"
+    elif mutation == "operations_schema":
+        operations["schema_version"] = "propertyquarry.invalid.v1"
+    elif mutation == "operations_producer":
+        operations["producer"] = "untrusted-verifier"
+    elif mutation == "source_contract_status":
+        operations["source_contract_status"] = "live"
+    elif mutation == "release_binding":
+        operations["release"] = {
+            "commit_sha": "f" * 40,
+            "image_digest": f"sha256:{'7' * 64}",
+        }
+    elif mutation == "deployment_binding":
+        operations["deployment_id"] = "different-deployment"
+    elif mutation == "challenge_binding":
+        operations["challenge_sha256"] = "f" * 64
+    elif mutation == "replica_mismatch":
+        observability["replica_ids"] = ["propertyquarry-api-c"]
+    elif mutation == "replica_empty":
+        operations["replica_ids"] = []
+    elif mutation == "replica_unsorted":
+        operations["replica_ids"] = [
+            "propertyquarry-api-b",
+            "propertyquarry-api-a",
+        ]
+    elif mutation == "replica_duplicate":
+        operations["replica_ids"] = [
+            "propertyquarry-api-a",
+            "propertyquarry-api-a",
+        ]
+    elif mutation == "replica_unconfigured":
+        operations["replica_ids"] = ["UNCONFIGURED"]
+    elif mutation == "replica_malformed":
+        operations["replica_ids"] = ["propertyquarry api"]
+    elif mutation == "policy_binding":
+        policy_hashes = observability["policy_hashes"]
+        assert isinstance(policy_hashes, dict)
+        policy_hashes["flagship_operations_sha256"] = "f" * 64
+    elif mutation == "observability_hash":
+        shared_input_hashes = observability["shared_input_hashes"]
+        assert isinstance(shared_input_hashes, dict)
+        shared_input_hashes["dashboard_render_receipt"] = "f" * 64
+    elif mutation == "nested_receipt_hash":
+        receipts = operations["receipts"]
+        assert isinstance(receipts, dict)
+        dashboard_render = receipts["dashboard_render"]
+        assert isinstance(dashboard_render, dict)
+        dashboard_render["file_sha256"] = "f" * 64
+    else:
+        operations["payload_sha256"] = "f" * 64
+    if mutation not in {
+        "observability_status",
+        "policy_binding",
+        "observability_hash",
+        "payload_sha256",
+        "replica_mismatch",
+    }:
+        operations["payload_sha256"] = (
+            launch_authority._operations_payload_sha256(operations)
+        )
+    _rewrite(gold_path, gold)
+
+    envelope = launch_authority.build_launch_authority_envelope(**inputs)
+
+    assert envelope["status"] == "withheld"
+    assert expected_failure in envelope["failures"]
+
+
+def test_release_shell_forwards_operations_receipts_without_policy_override() -> None:
+    repository_root = Path(__file__).parents[1]
+    shell = (repository_root / "scripts/property_release_gates.sh").read_text(
+        encoding="utf-8"
+    )
+    workflow = (
+        repository_root / ".github/workflows/smoke-runtime.yml"
+    ).read_text(encoding="utf-8")
+    environment_example = (repository_root / ".env.example").read_text(
+        encoding="utf-8"
+    )
+    active_v2_job = workflow.split(
+        "  propertyquarry-release-v2:", maxsplit=1
+    )[1].split(
+        "  # Legacy candidate-executed production jobs", maxsplit=1
+    )[0]
+    legacy_launch_job = workflow.split(
+        "  propertyquarry-launch-gold:", maxsplit=1
+    )[1].split("  smoke-runtime-postgres:", maxsplit=1)[0]
+    receipt_contracts = (
+        (
+            "PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT",
+            "dashboard_render_receipt",
+            "dashboard-render-receipt",
+        ),
+        (
+            "PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT",
+            "structured_log_query_receipt",
+            "structured-log-query-receipt",
+        ),
+        (
+            "PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT",
+            "distributed_trace_query_receipt",
+            "distributed-trace-query-receipt",
+        ),
+    )
+
+    assert '! -r "${required_monitoring_input}"' in shell
+    assert active_v2_job.count("/usr/bin/env -i") == 2
+    assert "if: ${{ false }}" in legacy_launch_job
+    for environment_name, shell_name, flag_name in receipt_contracts:
+        assert environment_example.count(f"{environment_name}=") == 1
+        assert f'{shell_name}="${{{environment_name}:-}}"' in shell
+        assert f'--{flag_name} "${{{shell_name}}}"' in shell
+        assert (
+            f"{environment_name}: "
+            f"${{{{ vars.{environment_name} }}}}"
+        ) in legacy_launch_job
+        assert legacy_launch_job.count(f"--{flag_name}") == 2
+        assert environment_name not in active_v2_job
+        assert f"--{flag_name}" not in active_v2_job
+    assert "FLAGSHIP_OPERATIONS_POLICY" not in shell
+    assert "FLAGSHIP_OPERATIONS_POLICY" not in legacy_launch_job

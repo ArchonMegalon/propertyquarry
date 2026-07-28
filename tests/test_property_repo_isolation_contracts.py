@@ -128,7 +128,7 @@ def test_property_release_workflow_runs_the_gold_gate_bundle() -> None:
         "test_propertyquarry_flagship_operating_loop_in_browser",
         "propertyquarry-live-release-gates:",
         "PROPERTYQUARRY_LIVE_MOBILE_REQUIRED_BROWSER_ENGINES: chromium,firefox,webkit",
-        "bash scripts/propertyquarry_live_release_gates.sh",
+        "./scripts/propertyquarry_live_release_gates.sh",
         "smoke-runtime-api:",
         "smoke-runtime-postgres:",
         "postgres-runtime-contracts:",

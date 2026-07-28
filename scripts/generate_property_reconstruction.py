@@ -13,6 +13,7 @@ import re
 import secrets
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -35,6 +36,11 @@ except Exception:
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+EA_ROOT = ROOT / "ea"
+if str(EA_ROOT) not in sys.path:
+    sys.path.insert(0, str(EA_ROOT))
+
+from app.product.property_diorama_preview import render_bright_apartment_diorama
 
 try:
     from scripts.property_tour_runtime_paths import preferred_public_tour_root, running_container_public_tour_dir
@@ -79,6 +85,11 @@ ORBIT_CONTROLS_TRANSFORMED_SHA256 = "f70d0bcb05e03d18b1ebd4e63599fc6c11957e9703c
 ORBIT_CONTROLS_EMITTED_SHA256 = "b15a310c930ed4ba3e26cae34931f145a9d3fb82741339563dcb623d1eedd18b"
 ORBIT_CONTROLS_BARE_IMPORT = "} from 'three';"
 ORBIT_CONTROLS_RELATIVE_IMPORT = "} from '../../../three.module.js';"
+GLB_EXPORTER_VERSION = "propertyquarry_deterministic_glb_v1"
+GLB_MAX_OBJ_BYTES = 64 * 1024 * 1024
+GLB_MAX_MTL_BYTES = 1024 * 1024
+GLB_MAX_SOURCE_VERTICES = 1_000_000
+GLB_MAX_TRIANGLES = 2_000_000
 _PREVIEW_FONT_PATHS = {
     ("sans", False): Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     ("sans", True): Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
@@ -1247,6 +1258,45 @@ def _write_generated_reconstruction_diorama_preview(
         f"Generated from {source_noun}. Use it as a layout-first briefing image, not as a captured tour."
     )
     preview_sources = list(photo_paths[:3]) or [floorplan_path]
+    try:
+        rendered_diorama = render_bright_apartment_diorama(
+            floorplan_path=floorplan_path,
+            walkable_scene=walkable_scene,
+            palette=palette,
+            hero_path=photo_paths[0] if photo_paths else None,
+            source_photo_count=photo_count,
+            canvas_size=(1600, 1100),
+        )
+        if rendered_diorama is not None:
+            canvas, composition = rendered_diorama
+            layout_checks = dict(composition.get("checks") or {})
+            failed_layout_checks = [name for name, passed in layout_checks.items() if not passed]
+            if failed_layout_checks:
+                raise RuntimeError(
+                    f"diorama_thumbnail_contract_failed:{','.join(failed_layout_checks)}"
+                )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            canvas.save(output_path, format="PNG", optimize=True)
+            layout = {
+                "status": "pass",
+                **composition,
+                "displayed_route_stop_count": len(route_labels),
+                "displayed_route_labels": route_labels,
+                "route_sequence_complete": len(route_labels) == len(route_stops),
+            }
+            return {
+                "status": "generated",
+                "bundle_relpath": output_path.name,
+                "sha256": _sha256(output_path),
+                "size_bytes": output_path.stat().st_size,
+                "source_mode": source_mode,
+                "source_photo_count": photo_count,
+                "source_disclosure": source_disclosure,
+                "layout": layout,
+            }
+    except Exception:
+        # Retain the established scrapbook composition as a safe local fallback.
+        pass
     try:
         eyebrow_font = _preview_font(22, bold=True)
         title_font = _preview_font(52, serif=True, bold=True)
@@ -3610,57 +3660,353 @@ def _copy_viewer_vendor_assets(target_dir: Path) -> dict[str, object]:
     }
 
 
-def _write_glb_with_blender(target_dir: Path) -> dict[str, object]:
-    blender = shutil.which("blender")
-    if not blender:
-        return {"status": "skipped", "reason": "blender_missing"}
+def _obj_material_colors(mtl_path: Path) -> dict[str, tuple[float, float, float, float]]:
+    if not mtl_path.exists():
+        return {}
+    metadata = mtl_path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise ValueError("mtl_not_regular")
+    if metadata.st_size > GLB_MAX_MTL_BYTES:
+        raise ValueError("mtl_too_large")
+
+    colors: dict[str, tuple[float, float, float, float]] = {}
+    current_material = ""
+    for line_number, raw_line in enumerate(mtl_path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.partition("#")[0].strip()
+        if not line:
+            continue
+        keyword, _separator, remainder = line.partition(" ")
+        if keyword == "newmtl":
+            current_material = remainder.strip()
+            if not current_material or len(current_material) > 128:
+                raise ValueError(f"invalid_material_name:{line_number}")
+            colors.setdefault(current_material, (0.8, 0.8, 0.8, 1.0))
+            continue
+        if keyword != "Kd" or not current_material:
+            continue
+        values = remainder.split()
+        if len(values) != 3:
+            raise ValueError(f"invalid_material_color:{line_number}")
+        color = tuple(float(value) for value in values)
+        if not all(math.isfinite(value) for value in color):
+            raise ValueError(f"invalid_material_color:{line_number}")
+        colors[current_material] = (
+            _clamp_float(color[0], 0.0, 1.0),
+            _clamp_float(color[1], 0.0, 1.0),
+            _clamp_float(color[2], 0.0, 1.0),
+            1.0,
+        )
+    return colors
+
+
+def _triangulated_obj(
+    obj_path: Path,
+) -> tuple[
+    list[tuple[float, float, float]],
+    dict[str, list[tuple[int, int, int]]],
+]:
+    metadata = obj_path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        raise ValueError("obj_not_regular")
+    if metadata.st_size > GLB_MAX_OBJ_BYTES:
+        raise ValueError("obj_too_large")
+
+    vertices: list[tuple[float, float, float]] = []
+    triangles_by_material: dict[str, list[tuple[int, int, int]]] = {}
+    current_material = "default"
+    triangle_count = 0
+    for line_number, raw_line in enumerate(obj_path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.partition("#")[0].strip()
+        if not line:
+            continue
+        keyword, _separator, remainder = line.partition(" ")
+        if keyword == "v":
+            values = remainder.split()
+            if len(values) != 3:
+                raise ValueError(f"invalid_vertex:{line_number}")
+            vertex = tuple(float(value) for value in values)
+            if not all(math.isfinite(value) for value in vertex):
+                raise ValueError(f"invalid_vertex:{line_number}")
+            vertices.append((vertex[0], vertex[1], vertex[2]))
+            if len(vertices) > GLB_MAX_SOURCE_VERTICES:
+                raise ValueError("too_many_vertices")
+            continue
+        if keyword == "usemtl":
+            current_material = remainder.strip()
+            if not current_material or len(current_material) > 128:
+                raise ValueError(f"invalid_material_name:{line_number}")
+            continue
+        if keyword != "f":
+            continue
+        face_tokens = remainder.split()
+        if len(face_tokens) < 3:
+            raise ValueError(f"invalid_face:{line_number}")
+        indexes: list[int] = []
+        for token in face_tokens:
+            vertex_token = token.partition("/")[0]
+            try:
+                raw_index = int(vertex_token)
+            except ValueError as exc:
+                raise ValueError(f"invalid_face_index:{line_number}") from exc
+            if raw_index == 0:
+                raise ValueError(f"invalid_face_index:{line_number}")
+            index = raw_index - 1 if raw_index > 0 else len(vertices) + raw_index
+            if index < 0 or index >= len(vertices):
+                raise ValueError(f"face_index_out_of_range:{line_number}")
+            indexes.append(index)
+        material_triangles = triangles_by_material.setdefault(current_material, [])
+        for offset in range(1, len(indexes) - 1):
+            material_triangles.append((indexes[0], indexes[offset], indexes[offset + 1]))
+            triangle_count += 1
+            if triangle_count > GLB_MAX_TRIANGLES:
+                raise ValueError("too_many_triangles")
+    if not vertices:
+        raise ValueError("obj_has_no_vertices")
+    if not triangle_count:
+        raise ValueError("obj_has_no_faces")
+    return vertices, triangles_by_material
+
+
+def _triangle_normal(
+    first: tuple[float, float, float],
+    second: tuple[float, float, float],
+    third: tuple[float, float, float],
+) -> tuple[float, float, float] | None:
+    edge_a = (
+        second[0] - first[0],
+        second[1] - first[1],
+        second[2] - first[2],
+    )
+    edge_b = (
+        third[0] - first[0],
+        third[1] - first[1],
+        third[2] - first[2],
+    )
+    cross = (
+        (edge_a[1] * edge_b[2]) - (edge_a[2] * edge_b[1]),
+        (edge_a[2] * edge_b[0]) - (edge_a[0] * edge_b[2]),
+        (edge_a[0] * edge_b[1]) - (edge_a[1] * edge_b[0]),
+    )
+    magnitude = math.sqrt(sum(component * component for component in cross))
+    if magnitude <= 1e-12:
+        return None
+    return (
+        cross[0] / magnitude,
+        cross[1] / magnitude,
+        cross[2] / magnitude,
+    )
+
+
+def _write_glb_in_process(target_dir: Path) -> dict[str, object]:
     obj_path = target_dir / "model.obj"
     glb_path = target_dir / "model.glb"
     if not obj_path.is_file():
         return {"status": "skipped", "reason": "obj_missing"}
-    with tempfile.TemporaryDirectory(prefix="propertyquarry-blender-export-") as tempdir:
-        script_path = Path(tempdir) / "export_glb.py"
-        script_path.write_text(
-            "\n".join(
-                [
-                    "import bpy",
-                    "import sys",
-                    "from pathlib import Path",
-                    f"obj_path = Path({str(obj_path)!r})",
-                    f"glb_path = Path({str(glb_path)!r})",
-                    "bpy.ops.object.select_all(action='SELECT')",
-                    "bpy.ops.object.delete()",
-                    "if hasattr(bpy.ops.wm, 'obj_import'):",
-                    "    bpy.ops.wm.obj_import(filepath=str(obj_path))",
-                    "else:",
-                    "    bpy.ops.import_scene.obj(filepath=str(obj_path))",
-                    "for obj in bpy.context.scene.objects:",
-                    "    obj.select_set(True)",
-                    "bpy.ops.export_scene.gltf(filepath=str(glb_path), export_format='GLB', export_yup=True)",
-                ]
+    temporary_path: Path | None = None
+    try:
+        try:
+            glb_path.unlink()
+        except FileNotFoundError:
+            pass
+        vertices, triangles_by_material = _triangulated_obj(obj_path)
+        material_colors = _obj_material_colors(target_dir / "model.mtl")
+        binary = bytearray()
+        buffer_views: list[dict[str, object]] = []
+        accessors: list[dict[str, object]] = []
+        materials: list[dict[str, object]] = []
+        primitives: list[dict[str, object]] = []
+        generated_triangle_count = 0
+        generated_vertex_count = 0
+
+        def append_buffer_view(payload: bytes, *, target: int) -> int:
+            while len(binary) % 4:
+                binary.append(0)
+            offset = len(binary)
+            binary.extend(payload)
+            buffer_views.append(
+                {
+                    "buffer": 0,
+                    "byteLength": len(payload),
+                    "byteOffset": offset,
+                    "target": target,
+                }
             )
-            + "\n",
-            encoding="utf-8",
+            return len(buffer_views) - 1
+
+        for material_name, triangles in triangles_by_material.items():
+            positions: list[tuple[float, float, float]] = []
+            normals: list[tuple[float, float, float]] = []
+            for triangle in triangles:
+                first, second, third = (vertices[index] for index in triangle)
+                normal = _triangle_normal(first, second, third)
+                if normal is None:
+                    continue
+                positions.extend((first, second, third))
+                normals.extend((normal, normal, normal))
+            if not positions:
+                continue
+
+            flat_positions = [coordinate for vertex in positions for coordinate in vertex]
+            flat_normals = [coordinate for normal in normals for coordinate in normal]
+            position_view = append_buffer_view(
+                struct.pack(f"<{len(flat_positions)}f", *flat_positions),
+                target=34962,
+            )
+            normal_view = append_buffer_view(
+                struct.pack(f"<{len(flat_normals)}f", *flat_normals),
+                target=34962,
+            )
+            max_index = len(positions) - 1
+            index_component_type = 5123 if max_index <= 65_535 else 5125
+            index_format = "H" if index_component_type == 5123 else "I"
+            indexes = list(range(len(positions)))
+            index_view = append_buffer_view(
+                struct.pack(f"<{len(indexes)}{index_format}", *indexes),
+                target=34963,
+            )
+
+            position_accessor = len(accessors)
+            accessors.append(
+                {
+                    "bufferView": position_view,
+                    "componentType": 5126,
+                    "count": len(positions),
+                    "max": [max(vertex[axis] for vertex in positions) for axis in range(3)],
+                    "min": [min(vertex[axis] for vertex in positions) for axis in range(3)],
+                    "type": "VEC3",
+                }
+            )
+            normal_accessor = len(accessors)
+            accessors.append(
+                {
+                    "bufferView": normal_view,
+                    "componentType": 5126,
+                    "count": len(normals),
+                    "type": "VEC3",
+                }
+            )
+            index_accessor = len(accessors)
+            accessors.append(
+                {
+                    "bufferView": index_view,
+                    "componentType": index_component_type,
+                    "count": len(indexes),
+                    "type": "SCALAR",
+                }
+            )
+            material_index = len(materials)
+            materials.append(
+                {
+                    "doubleSided": True,
+                    "name": material_name,
+                    "pbrMetallicRoughness": {
+                        "baseColorFactor": list(
+                            material_colors.get(material_name, (0.8, 0.8, 0.8, 1.0))
+                        ),
+                        "metallicFactor": 0.0,
+                        "roughnessFactor": 0.9,
+                    },
+                }
+            )
+            primitives.append(
+                {
+                    "attributes": {
+                        "NORMAL": normal_accessor,
+                        "POSITION": position_accessor,
+                    },
+                    "indices": index_accessor,
+                    "material": material_index,
+                    "mode": 4,
+                }
+            )
+            generated_vertex_count += len(positions)
+            generated_triangle_count += len(positions) // 3
+
+        if not primitives:
+            raise ValueError("obj_has_no_nondegenerate_faces")
+        binary_length = len(binary)
+        document = {
+            "accessors": accessors,
+            "asset": {
+                "generator": GLB_EXPORTER_VERSION,
+                "version": "2.0",
+            },
+            "bufferViews": buffer_views,
+            "buffers": [{"byteLength": binary_length}],
+            "materials": materials,
+            "meshes": [
+                {
+                    "name": "propertyquarry_generated_layout",
+                    "primitives": primitives,
+                }
+            ],
+            "nodes": [
+                {
+                    "mesh": 0,
+                    "name": "propertyquarry_generated_layout",
+                }
+            ],
+            "scene": 0,
+            "scenes": [{"nodes": [0]}],
+        }
+        json_chunk = json.dumps(
+            document,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        json_chunk += b" " * ((-len(json_chunk)) % 4)
+        binary_chunk = bytes(binary) + (b"\0" * ((-len(binary)) % 4))
+        total_length = 12 + 8 + len(json_chunk) + 8 + len(binary_chunk)
+        if total_length > 0xFFFFFFFF:
+            raise ValueError("glb_too_large")
+        glb_bytes = b"".join(
+            (
+                struct.pack("<4sII", b"glTF", 2, total_length),
+                struct.pack("<I4s", len(json_chunk), b"JSON"),
+                json_chunk,
+                struct.pack("<I4s", len(binary_chunk), b"BIN\0"),
+                binary_chunk,
+            )
         )
-        result = subprocess.run(
-            [blender, "--background", "--factory-startup", "--python", str(script_path)],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    if result.returncode != 0 or not glb_path.is_file():
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=target_dir,
+            prefix=".model.glb.",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            os.fchmod(handle.fileno(), 0o644)
+            handle.write(glb_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, glb_path)
+        temporary_path = None
+    except (OSError, UnicodeError, ValueError, struct.error) as exc:
+        try:
+            glb_path.unlink()
+        except FileNotFoundError:
+            pass
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
         return {
             "status": "failed",
-            "reason": "blender_glb_export_failed",
-            "stdout_tail": (result.stdout or "")[-500:],
-            "stderr_tail": (result.stderr or "")[-500:],
+            "reason": "in_process_glb_export_failed",
+            "detail": str(exc)[:240],
         }
     return {
         "status": "generated",
+        "exporter": GLB_EXPORTER_VERSION,
         "glb_relpath": glb_path.name,
         "glb_sha256": _sha256(glb_path),
         "glb_size_bytes": glb_path.stat().st_size,
+        "material_count": len(materials),
+        "source_obj_sha256": _sha256(obj_path),
+        "triangle_count": generated_triangle_count,
+        "vertex_count": generated_vertex_count,
     }
 
 
@@ -4401,6 +4747,10 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xe8eeeb);
 scene.fog = new THREE.Fog(0xe8eeeb, 13, 34);
 let renderFrameCount = 0;
+let animationFrameId = 0;
+let viewerDisposed = false;
+let contextLost = false;
+let resizeObserver = null;
 
 const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
 let renderer = null;
@@ -4416,7 +4766,13 @@ if (!renderer) {{
 }}
 if (renderer) {{
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
+const constrainedDevice =
+  Number(navigator.deviceMemory || 8) <= 4
+  || window.matchMedia("(max-width: 520px)").matches;
+const renderQualityTier = constrainedDevice ? "balanced" : "high";
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, constrainedDevice ? 1.5 : 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.domElement.setAttribute("role", "img");
@@ -4436,11 +4792,20 @@ scene.add(hemisphereLight);
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.05);
 keyLight.position.set(roomWidth * 0.7, roomHeight * 3.2, roomDepth * 0.9);
 keyLight.castShadow = true;
-keyLight.shadow.mapSize.width = 2048;
-keyLight.shadow.mapSize.height = 2048;
+keyLight.shadow.mapSize.width = constrainedDevice ? 1024 : 2048;
+keyLight.shadow.mapSize.height = constrainedDevice ? 1024 : 2048;
 keyLight.shadow.camera.near = 0.1;
 keyLight.shadow.camera.far = 40;
+keyLight.shadow.bias = -0.00015;
+keyLight.shadow.normalBias = 0.025;
 scene.add(keyLight);
+const windowLight = new THREE.DirectionalLight(0xffead1, 0.62);
+windowLight.position.set(-roomWidth * 0.8, roomHeight * 1.8, -roomDepth * 0.65);
+scene.add(windowLight);
+const interiorFill = new THREE.PointLight(0xfff3df, 0.72, Math.max(roomWidth, roomDepth) * 1.8, 1.8);
+interiorFill.position.set(0, roomHeight * 0.82, 0);
+interiorFill.castShadow = false;
+scene.add(interiorFill);
 
 const textureLoader = new THREE.TextureLoader();
 const floorTexture = textureLoader.load({json.dumps(str(dict(manifest.get("floorplan") or {}).get("relpath") or "source-floorplan.jpg"))});
@@ -4462,11 +4827,27 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
+const apartmentPlinth = new THREE.Mesh(
+  new THREE.BoxGeometry(roomWidth * 1.015, 0.12, roomDepth * 1.015),
+  new THREE.MeshPhysicalMaterial({{
+    color: 0xd8c8b3,
+    roughness: 0.76,
+    metalness: 0.0,
+    clearcoat: 0.08,
+    clearcoatRoughness: 0.8,
+  }})
+);
+apartmentPlinth.position.y = -0.065;
+apartmentPlinth.castShadow = true;
+apartmentPlinth.receiveShadow = true;
+scene.add(apartmentPlinth);
 
-const wallMaterial = new THREE.MeshStandardMaterial({{
+const wallMaterial = new THREE.MeshPhysicalMaterial({{
   color: 0xf4efe4,
   roughness: 0.88,
   metalness: 0.02,
+  clearcoat: 0.08,
+  clearcoatRoughness: 0.82,
   side: THREE.DoubleSide,
   transparent: true,
   opacity: 1.0,
@@ -4578,13 +4959,16 @@ if (routeLinePoints.length >= 2) {{
 const stagingGroup = new THREE.Group();
 scene.add(stagingGroup);
 const stagingObjects = [];
+const stagingDetailObjects = [];
 const stagingMaterials = {{
-  textile: new THREE.MeshStandardMaterial({{ color: 0xb58f73, roughness: 0.86, metalness: 0.0 }}),
-  paleTextile: new THREE.MeshStandardMaterial({{ color: 0xe4dacd, roughness: 0.9, metalness: 0.0 }}),
-  timber: new THREE.MeshStandardMaterial({{ color: 0x9b7650, roughness: 0.72, metalness: 0.02 }}),
-  stone: new THREE.MeshStandardMaterial({{ color: 0xd7d0c3, roughness: 0.82, metalness: 0.01 }}),
-  accent: new THREE.MeshStandardMaterial({{ color: 0xa77c2b, roughness: 0.58, metalness: 0.03 }}),
+  textile: new THREE.MeshPhysicalMaterial({{ color: 0xb58f73, roughness: 0.86, metalness: 0.0, sheen: 0.28, sheenColor: new THREE.Color(0xf0d8c6) }}),
+  paleTextile: new THREE.MeshPhysicalMaterial({{ color: 0xe4dacd, roughness: 0.9, metalness: 0.0, sheen: 0.22, sheenColor: new THREE.Color(0xffffff) }}),
+  timber: new THREE.MeshPhysicalMaterial({{ color: 0x9b7650, roughness: 0.64, metalness: 0.01, clearcoat: 0.16, clearcoatRoughness: 0.72 }}),
+  stone: new THREE.MeshPhysicalMaterial({{ color: 0xd7d0c3, roughness: 0.66, metalness: 0.01, clearcoat: 0.28, clearcoatRoughness: 0.5 }}),
+  accent: new THREE.MeshPhysicalMaterial({{ color: 0xa77c2b, roughness: 0.5, metalness: 0.08, clearcoat: 0.18 }}),
   foliage: new THREE.MeshStandardMaterial({{ color: 0x6f8561, roughness: 0.92, metalness: 0.0 }}),
+  darkMetal: new THREE.MeshStandardMaterial({{ color: 0x302d29, roughness: 0.38, metalness: 0.64 }}),
+  glass: new THREE.MeshPhysicalMaterial({{ color: 0xdce9e7, roughness: 0.08, metalness: 0.0, transmission: 0.72, transparent: true, opacity: 0.72 }}),
 }};
 
 function stagingKind(stop) {{
@@ -4632,6 +5016,21 @@ function addStagingRug(group, dimensions, position, material) {{
   return rug;
 }}
 
+function addStagingDetail(group, name, geometry, position, material, rotation = null) {{
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = String(name || "generated-staging-detail");
+  mesh.position.set(Number(position.x || 0), Number(position.y || 0), Number(position.z || 0));
+  if (rotation) {{
+    mesh.rotation.set(Number(rotation.x || 0), Number(rotation.y || 0), Number(rotation.z || 0));
+  }}
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+  stagingObjects.push(mesh);
+  stagingDetailObjects.push(mesh);
+  return mesh;
+}}
+
 function addGeneratedStagingForStop(stop, index) {{
   const focus = stop?.focus && typeof stop.focus === "object" ? stop.focus : null;
   if (!focus) return null;
@@ -4645,32 +5044,60 @@ function addGeneratedStagingForStop(stop, index) {{
     addStagingRug(group, {{ x: 1.62, z: 1.1 }}, {{ x: 0.05, z: 0.02 }}, stagingMaterials.paleTextile);
     addStagingBox(group, "generated-sofa-seat", {{ x: 1.24, y: 0.28, z: 0.52 }}, {{ x: -0.22, y: 0.14, z: -0.22 }}, stagingMaterials.textile);
     addStagingBox(group, "generated-sofa-back", {{ x: 1.24, y: 0.48, z: 0.12 }}, {{ x: -0.22, y: 0.38, z: -0.53 }}, stagingMaterials.textile);
+    addStagingBox(group, "generated-sofa-arm-left", {{ x: 0.12, y: 0.38, z: 0.58 }}, {{ x: -0.84, y: 0.25, z: -0.22 }}, stagingMaterials.textile);
+    addStagingBox(group, "generated-sofa-arm-right", {{ x: 0.12, y: 0.38, z: 0.58 }}, {{ x: 0.40, y: 0.25, z: -0.22 }}, stagingMaterials.textile);
+    addStagingDetail(group, "generated-sofa-cushion-left", new THREE.SphereGeometry(0.22, 20, 14), {{ x: -0.52, y: 0.38, z: -0.24 }}, stagingMaterials.paleTextile, {{ x: 0, y: 0, z: -0.12 }});
+    addStagingDetail(group, "generated-sofa-cushion-right", new THREE.SphereGeometry(0.22, 20, 14), {{ x: 0.08, y: 0.38, z: -0.24 }}, stagingMaterials.paleTextile, {{ x: 0, y: 0, z: 0.12 }});
     addStagingBox(group, "generated-coffee-table", {{ x: 0.72, y: 0.2, z: 0.42 }}, {{ x: 0.26, y: 0.1, z: 0.34 }}, stagingMaterials.timber);
+    for (const [legX, legZ] of [[-0.28, -0.13], [0.28, -0.13], [-0.28, 0.13], [0.28, 0.13]]) {{
+      addStagingDetail(group, "generated-coffee-table-leg", new THREE.CylinderGeometry(0.025, 0.025, 0.28, 12), {{ x: 0.26 + legX, y: 0.14, z: 0.34 + legZ }}, stagingMaterials.darkMetal);
+    }}
+    addStagingDetail(group, "generated-floor-lamp", new THREE.CylinderGeometry(0.035, 0.055, 1.05, 16), {{ x: 0.66, y: 0.525, z: -0.42 }}, stagingMaterials.darkMetal);
+    addStagingDetail(group, "generated-floor-lamp-shade", new THREE.CylinderGeometry(0.16, 0.25, 0.28, 24), {{ x: 0.66, y: 1.08, z: -0.42 }}, stagingMaterials.paleTextile);
   }} else if (kind === "bedroom") {{
     addStagingRug(group, {{ x: 1.74, z: 1.22 }}, {{ x: 0.02, z: 0.02 }}, stagingMaterials.paleTextile);
     addStagingBox(group, "generated-bed-base", {{ x: 1.42, y: 0.34, z: 1.02 }}, {{ x: 0, y: 0.17, z: -0.02 }}, stagingMaterials.paleTextile);
     addStagingBox(group, "generated-bed-headboard", {{ x: 1.48, y: 0.72, z: 0.12 }}, {{ x: 0, y: 0.44, z: -0.62 }}, stagingMaterials.timber);
     addStagingBox(group, "generated-bed-pillow", {{ x: 0.64, y: 0.16, z: 0.22 }}, {{ x: -0.26, y: 0.44, z: -0.42 }}, stagingMaterials.stone);
+    addStagingBox(group, "generated-bed-pillow-right", {{ x: 0.64, y: 0.16, z: 0.22 }}, {{ x: 0.38, y: 0.44, z: -0.42 }}, stagingMaterials.stone);
+    addStagingBox(group, "generated-bed-throw", {{ x: 1.28, y: 0.055, z: 0.3 }}, {{ x: 0, y: 0.385, z: 0.28 }}, stagingMaterials.textile);
+    addStagingBox(group, "generated-nightstand", {{ x: 0.34, y: 0.38, z: 0.34 }}, {{ x: -0.9, y: 0.19, z: -0.34 }}, stagingMaterials.timber);
+    addStagingDetail(group, "generated-bedside-lamp", new THREE.CylinderGeometry(0.08, 0.12, 0.26, 18), {{ x: -0.9, y: 0.51, z: -0.34 }}, stagingMaterials.paleTextile);
   }} else if (kind === "kitchen" || kind === "dining") {{
     addStagingBox(group, "generated-kitchen-counter", {{ x: 1.48, y: 0.68, z: 0.42 }}, {{ x: -0.08, y: 0.34, z: -0.38 }}, stagingMaterials.stone);
     addStagingBox(group, "generated-kitchen-island", {{ x: 0.9, y: 0.42, z: 0.5 }}, {{ x: 0.28, y: 0.21, z: 0.28 }}, stagingMaterials.timber);
     addStagingBox(group, "generated-dining-surface", {{ x: 0.86, y: 0.18, z: 0.58 }}, {{ x: -0.48, y: 0.46, z: 0.36 }}, stagingMaterials.timber);
+    addStagingBox(group, "generated-counter-splash", {{ x: 1.48, y: 0.42, z: 0.05 }}, {{ x: -0.08, y: 0.76, z: -0.59 }}, stagingMaterials.glass);
+    addStagingDetail(group, "generated-kitchen-pendant", new THREE.CylinderGeometry(0.1, 0.18, 0.24, 20), {{ x: 0.28, y: 1.28, z: 0.28 }}, stagingMaterials.darkMetal);
+    for (const chairZ of [0.1, 0.62]) {{
+      addStagingBox(group, "generated-dining-chair-seat", {{ x: 0.34, y: 0.12, z: 0.34 }}, {{ x: -0.96, y: 0.34, z: chairZ }}, stagingMaterials.timber);
+      addStagingBox(group, "generated-dining-chair-back", {{ x: 0.34, y: 0.52, z: 0.08 }}, {{ x: -1.1, y: 0.58, z: chairZ }}, stagingMaterials.timber);
+    }}
   }} else if (kind === "bath") {{
     addStagingBox(group, "generated-bath-vanity", {{ x: 0.72, y: 0.52, z: 0.36 }}, {{ x: -0.22, y: 0.26, z: -0.18 }}, stagingMaterials.stone);
     addStagingBox(group, "generated-bath-tub", {{ x: 1.08, y: 0.36, z: 0.54 }}, {{ x: 0.28, y: 0.18, z: 0.28 }}, stagingMaterials.paleTextile);
+    addStagingDetail(group, "generated-bath-basin", new THREE.CylinderGeometry(0.2, 0.24, 0.12, 24), {{ x: -0.22, y: 0.58, z: -0.18 }}, stagingMaterials.paleTextile);
+    addStagingDetail(group, "generated-bath-mirror", new THREE.CircleGeometry(0.34, 32), {{ x: -0.22, y: 1.08, z: -0.39 }}, stagingMaterials.glass);
+    addStagingDetail(group, "generated-bath-tap", new THREE.CylinderGeometry(0.025, 0.025, 0.28, 12), {{ x: -0.02, y: 0.72, z: -0.18 }}, stagingMaterials.darkMetal, {{ x: 0, y: 0, z: Math.PI * 0.5 }});
   }} else if (kind === "entry") {{
     addStagingBox(group, "generated-entry-bench", {{ x: 1.0, y: 0.28, z: 0.34 }}, {{ x: -0.1, y: 0.14, z: -0.18 }}, stagingMaterials.timber);
     addStagingBox(group, "generated-entry-console", {{ x: 0.78, y: 0.64, z: 0.22 }}, {{ x: 0.34, y: 0.32, z: 0.24 }}, stagingMaterials.stone);
+    addStagingDetail(group, "generated-entry-mirror", new THREE.CircleGeometry(0.31, 32), {{ x: 0.34, y: 1.08, z: 0.12 }}, stagingMaterials.glass);
+    addStagingDetail(group, "generated-entry-vase", new THREE.CylinderGeometry(0.08, 0.12, 0.3, 18), {{ x: 0.5, y: 0.79, z: 0.24 }}, stagingMaterials.accent);
   }} else if (kind === "outdoor") {{
     addStagingBox(group, "generated-outdoor-table", {{ x: 0.72, y: 0.26, z: 0.56 }}, {{ x: 0.0, y: 0.13, z: 0.08 }}, stagingMaterials.timber);
     addStagingBox(group, "generated-planter", {{ x: 0.34, y: 0.4, z: 0.34 }}, {{ x: -0.52, y: 0.2, z: -0.28 }}, stagingMaterials.accent);
-    addStagingBox(group, "generated-foliage", {{ x: 0.42, y: 0.42, z: 0.42 }}, {{ x: -0.52, y: 0.56, z: -0.28 }}, stagingMaterials.foliage);
+    addStagingDetail(group, "generated-foliage", new THREE.IcosahedronGeometry(0.34, 2), {{ x: -0.52, y: 0.62, z: -0.28 }}, stagingMaterials.foliage);
+    addStagingBox(group, "generated-outdoor-chair", {{ x: 0.42, y: 0.14, z: 0.42 }}, {{ x: 0.58, y: 0.28, z: 0.08 }}, stagingMaterials.timber);
+    addStagingBox(group, "generated-outdoor-chair-back", {{ x: 0.42, y: 0.5, z: 0.1 }}, {{ x: 0.74, y: 0.53, z: 0.08 }}, stagingMaterials.timber);
   }}
   stagingGroup.add(group);
   return group;
 }}
 
-routeStops.forEach((stop, index) => addGeneratedStagingForStop(stop, index));
+const maxStagedRouteStops = 12;
+const stagedRouteStops = routeStops.slice(0, maxStagedRouteStops);
+stagedRouteStops.forEach((stop, index) => addGeneratedStagingForStop(stop, index));
 
 function buildPanelLabelTexture(label) {{
   const canvas = document.createElement("canvas");
@@ -5636,6 +6063,10 @@ function renderCaptureFrame(payload = {{}}) {{
 }}
 
 window.addEventListener("resize", resize);
+if (typeof ResizeObserver === "function") {{
+  resizeObserver = new ResizeObserver(() => resize());
+  resizeObserver.observe(viewport);
+}}
 resize();
 setOverviewView();
 if (routeStops.length) {{
@@ -5842,6 +6273,8 @@ function getRenderMetrics(options = {{}}) {{
       const obstructionMetrics = latestObstructionMetrics;
       return {{
         ready: true,
+        contextLost: Boolean(contextLost),
+        viewerDisposed: Boolean(viewerDisposed),
         frameCount: Number(renderFrameCount || 0),
         wallRectCount: Number(wallRectangles.length || 0),
         wallMeshCount: Number(wallMeshes.length || 0),
@@ -5875,7 +6308,17 @@ function getRenderMetrics(options = {{}}) {{
       captureOverlayVisible: Boolean(captureRouteCard && !captureRouteCard.hidden),
       captureRouteLabel: String(captureRouteLabel?.textContent || "").trim(),
       stagingObjectCount: Number(stagingObjects.length || 0),
+      stagingDetailObjectCount: Number(stagingDetailObjects.length || 0),
+      stagedRouteStopCount: Number(stagedRouteStops.length || 0),
+      maxStagedRouteStops: Number(maxStagedRouteStops),
       visibleStagingObjectCount: Number(visibleStagingObjectCount || 0),
+      lightCount: Number(scene.children.filter((child) => Boolean(child && child.isLight)).length || 0),
+      physicallyBasedToneMapping: renderer.toneMapping === THREE.ACESFilmicToneMapping,
+      shadowMapEnabled: Boolean(renderer.shadowMap.enabled),
+      renderQualityTier: String(renderQualityTier),
+      rendererPixelRatio: Number(renderer.getPixelRatio().toFixed(2)),
+      shadowMapSize: Number(keyLight.shadow.mapSize.width || 0),
+      apartmentPlinthVisible: Boolean(apartmentPlinth.visible),
       photoPanelCount: Number(photoPanelSpecs.length || 0),
       loadedPhotoTextureCount: Number(loadedPhotoTextureCount || 0),
       visiblePhotoPanelCount: Number(visiblePhotoPanelCount || 0),
@@ -5914,7 +6357,66 @@ window.__pqReconstructionDebug = {{
   getVisibleHotspotLabelBounds,
 }};
 
+    function handleWebGLContextLost(event) {{
+      event?.preventDefault?.();
+      contextLost = true;
+      if (animationFrameId) {{
+        window.cancelAnimationFrame(animationFrameId);
+        animationFrameId = 0;
+      }}
+      stopGuidedRoute();
+      showViewerFallback();
+      announceViewerState("The interactive 3D preview stopped unexpectedly. Reload the page or use the floorplan and listing photos.");
+    }}
+
+    function disposeViewer() {{
+      if (viewerDisposed) return;
+      viewerDisposed = true;
+      if (animationFrameId) {{
+        window.cancelAnimationFrame(animationFrameId);
+        animationFrameId = 0;
+      }}
+      resizeObserver?.disconnect?.();
+      stopGuidedRoute();
+      controls.dispose();
+      scene.traverse((object) => {{
+        object.geometry?.dispose?.();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {{
+          if (!material) continue;
+          for (const value of Object.values(material)) {{
+            if (value && typeof value === "object" && value.isTexture && typeof value.dispose === "function") {{
+              value.dispose();
+            }}
+          }}
+          material.dispose?.();
+        }}
+      }});
+      renderer.dispose();
+    }}
+
+    renderer.domElement.addEventListener("webglcontextlost", handleWebGLContextLost, false);
+    renderer.domElement.addEventListener("webglcontextrestored", () => {{
+      if (!viewerDisposed) window.location.reload();
+    }}, false);
+    window.addEventListener("pagehide", disposeViewer, {{ once: true }});
+    document.addEventListener("visibilitychange", () => {{
+      if (
+        document.visibilityState === "visible"
+        && !viewerDisposed
+        && !contextLost
+        && !animationFrameId
+        && !(shellProbeMode && renderFrameCount > 12)
+      ) {{
+        animationFrameId = window.requestAnimationFrame(renderFrame);
+      }}
+    }});
+    window.__pqReconstructionDebug.simulateContextLoss = () => handleWebGLContextLost({{ preventDefault() {{}} }});
+    window.__pqReconstructionDebug.disposeViewer = disposeViewer;
+
     function renderFrame(now = 0) {{
+      animationFrameId = 0;
+      if (viewerDisposed || contextLost) return;
       const transitioned = stepCameraTransition(now);
       if (!transitioned) {{
         controls.update();
@@ -5937,10 +6439,12 @@ window.__pqReconstructionDebug = {{
       if (shellProbeMode && !routeCameraTransition.active && renderFrameCount > 12) {{
         return;
       }}
-      window.requestAnimationFrame(renderFrame);
+      if (document.visibilityState === "visible") {{
+        animationFrameId = window.requestAnimationFrame(renderFrame);
+      }}
     }}
 
-    renderFrame(performance.now());
+    animationFrameId = window.requestAnimationFrame(renderFrame);
 }}
 </script>
 </body>
@@ -6637,7 +7141,7 @@ def main() -> int:
         height_m=height_m,
         wall_rectangles=wall_rectangles,
     )
-    glb_export = _write_glb_with_blender(output_dir)
+    glb_export = _write_glb_in_process(output_dir)
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise SystemExit("invalid_tour_manifest")

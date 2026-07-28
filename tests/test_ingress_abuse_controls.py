@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 import json
 import threading
+from dataclasses import replace
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
 import pytest
-
 from app.api.dependencies import RequestContext
 from app.api.errors import install_error_handlers
 from app.api.ingress import (
@@ -19,12 +15,19 @@ from app.api.ingress import (
     parse_trusted_proxy_cidrs,
     resolve_client_ip,
 )
+from app.api.ingress_admission import (
+    AdmissionRequest,
+    InMemoryIngressAdmissionStore,
+)
 from app.api.routes.product_api_contracts import (
     PropertyMagicFitReferenceUploadIn,
     PropertyMagicFitSceneCreateIn,
     PropertySearchRunStartIn,
 )
 from app.observability import RuntimeMetrics
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 
 def _policy(**overrides: object) -> IngressPolicy:
@@ -177,6 +180,178 @@ async def _body_reader_asgi_app(scope, receive, send) -> None:  # type: ignore[n
     await send({"type": "http.response.body", "body": b""})
 
 
+async def _body_ignoring_asgi_app(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+    await send({"type": "http.response.start", "status": 204, "headers": []})
+    await send({"type": "http.response.body", "body": b""})
+
+
+class _OrderingAdmissionStore(InMemoryIngressAdmissionStore):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(clock=lambda: 1.0)
+        self.events = events
+
+    def consume_ip_request(
+        self,
+        *,
+        subject: str,
+        units: int,
+        limit: int,
+        window_seconds: int,
+    ):  # type: ignore[no-untyped-def]
+        self.events.append("ip-admission")
+        return super().consume_ip_request(
+            subject=subject,
+            units=units,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+
+    def admit(self, request: AdmissionRequest):  # type: ignore[no-untyped-def]
+        self.events.append("cost-admission")
+        return super().admit(request)
+
+
+async def _raw_metered_body_request(
+    *,
+    headers: list[tuple[bytes, bytes]],
+    body: bytes,
+    asgi_app=_body_reader_asgi_app,  # type: ignore[no-untyped-def]
+    method: str = "POST",
+    admission_store=None,  # type: ignore[no-untyped-def]
+    events: list[str] | None = None,
+) -> tuple[int, dict[str, object]]:
+    middleware = IngressAbuseMiddleware(
+        asgi_app,
+        policy=_policy(),
+        context_resolver=lambda request: None,
+        admission_store=admission_store,
+    )
+    messages = iter(
+        [{"type": "http.request", "body": body, "more_body": False}]
+    )
+    sent: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        if events is not None:
+            events.append("body-read")
+        return next(messages)
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    await middleware(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "2",
+            "method": method,
+            "scheme": "https",
+            "path": "/app/api/property/decision-copilot",
+            "raw_path": b"/app/api/property/decision-copilot",
+            "query_string": b"",
+            "headers": headers,
+            "client": ("203.0.113.5", 1234),
+            "server": ("testserver", 443),
+            "state": {},
+        },
+        receive,
+        send,
+    )
+    status = int(
+        next(
+            message["status"]
+            for message in sent
+            if message["type"] == "http.response.start"
+        )
+    )
+    response_body = b"".join(
+        bytes(message.get("body") or b"")
+        for message in sent
+        if message["type"] == "http.response.body"
+    )
+    return (
+        status,
+        json.loads(response_body.decode("utf-8"))
+        if response_body
+        else {},
+    )
+
+
+def test_metered_body_requires_exact_non_streaming_content_length() -> None:
+    missing_status, missing = asyncio.run(
+        _raw_metered_body_request(headers=[], body=b"1234")
+    )
+    understated_status, understated = asyncio.run(
+        _raw_metered_body_request(
+            headers=[(b"content-length", b"1")],
+            body=b"1234",
+        )
+    )
+    transfer_status, transfer = asyncio.run(
+        _raw_metered_body_request(
+            headers=[
+                (b"content-length", b"4"),
+                (b"transfer-encoding", b"chunked"),
+            ],
+            body=b"1234",
+        )
+    )
+
+    assert missing_status == 411
+    assert missing["error"]["code"] == "content_length_required"  # type: ignore[index]
+    assert understated_status == 400
+    assert understated["error"]["code"] == "request_body_length_mismatch"  # type: ignore[index]
+    assert transfer_status == 400
+    assert (
+        transfer["error"]["code"]  # type: ignore[index]
+        == "request_transfer_encoding_unsupported"
+    )
+
+
+def test_metered_body_is_reconciled_before_a_no_read_endpoint_responds() -> None:
+    status, payload = asyncio.run(
+        _raw_metered_body_request(
+            headers=[(b"content-length", b"1")],
+            body=b"x" * 64,
+            asgi_app=_body_ignoring_asgi_app,
+        )
+    )
+
+    assert status == 400
+    assert payload["error"]["code"] == "request_body_length_mismatch"  # type: ignore[index]
+
+
+def test_metered_delete_body_is_reconciled_before_route_dispatch() -> None:
+    status, payload = asyncio.run(
+        _raw_metered_body_request(
+            headers=[(b"content-length", b"1")],
+            body=b"x" * 64,
+            asgi_app=_body_ignoring_asgi_app,
+            method="DELETE",
+        )
+    )
+
+    assert status == 400
+    assert payload["error"]["code"] == "request_body_length_mismatch"  # type: ignore[index]
+
+
+def test_body_is_buffered_only_after_distributed_ip_admission() -> None:
+    events: list[str] = []
+    status, payload = asyncio.run(
+        _raw_metered_body_request(
+            headers=[(b"content-length", b"64")],
+            body=b"x" * 64,
+            asgi_app=_body_ignoring_asgi_app,
+            admission_store=_OrderingAdmissionStore(events),
+            events=events,
+        )
+    )
+
+    assert status == 204
+    assert payload == {}
+    assert events == ["ip-admission", "body-read", "cost-admission"]
+
+
 def test_ingress_rate_limit_has_retry_after_envelope_and_health_bypass() -> None:
     app = _app_with_ingress(policy=_policy(ip_request_limit=2))
     client = TestClient(app)
@@ -273,6 +448,48 @@ def test_identity_resolution_fails_closed_without_replacing_auth_errors() -> Non
     # The middleware preserves IP controls but delegates canonical auth handling
     # to the application instead of converting a caller error into a 503.
     assert auth_response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "principal_id",
+    (
+        "",
+        "x" * 1_025,
+        "verified-account\nforged",
+        " verified-account",
+    ),
+)
+def test_malformed_authenticated_principal_fails_closed_without_disclosure(
+    principal_id: str,
+) -> None:
+    context = RequestContext(
+        principal_id=principal_id,
+        authenticated=True,
+        auth_source="test",
+    )
+    app = _app_with_ingress(
+        policy=_policy(),
+        context_resolver=lambda request: context,
+    )
+
+    response = TestClient(app).post(
+        "/app/api/property/decision-copilot",
+        json={},
+    )
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "5"
+    assert response.json()["error"]["code"] == "ingress_identity_invalid"
+    metrics = app.state.runtime_metrics.render_prometheus(
+        readiness_ready=False
+    )
+    assert (
+        "propertyquarry_ingress_rejections_total"
+        '{reason="ingress_identity_invalid",dimension="account"} 1'
+    ) in metrics
+    if principal_id:
+        assert principal_id not in response.text
+        assert principal_id not in metrics
 
 
 def test_high_cost_account_concurrency_is_shed() -> None:

@@ -23,11 +23,16 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   property-security-posture:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -41,6 +46,7 @@ jobs:
         with:
           # Release hygiene audits every commit between the manifest candidate and HEAD.
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -49,8 +55,10 @@ jobs:
           PYTHONPATH=ea python scripts/check_property_release_hygiene.py
           PYTHONPATH=ea python scripts/check_property_repo_isolation.py
 
+  # Legacy candidate-executed image scan. The installed v2 controller must
+  # independently rebuild and run this policy before admission.
   propertyquarry-flagship-security:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ false }}
     environment:
       name: propertyquarry-production
     permissions:
@@ -122,12 +130,13 @@ jobs:
           retention-days: 30
 
   smoke-runtime-api:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -136,14 +145,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
           python -m pip install -r ea/requirements.txt -c ea/requirements.lock httpx==0.28.1 opencv-python-headless==4.13.0.92 pytest==9.0.2
-          python -m playwright install --with-deps chromium
       - name: Prepare canonical repository path
         run: |
           sudo mkdir -p /docker
           sudo chown "$USER":"$USER" /docker
-          ln -sfn "$GITHUB_WORKSPACE" /docker/property
-      - name: Run core CI gates
-        run: make ci-gates
+          test ! -e /docker/property
+          install -d -m 0755 /docker/property
+          cp -a "$GITHUB_WORKSPACE/." /docker/property/
+      - name: Bootstrap hash-locked release verifier
+        working-directory: /docker/property
+        run: ./scripts/bootstrap_propertyquarry_release_python.sh
+      - name: Install Chromium in canonical release cache
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /docker/property/.propertyquarry_release_tools/ms-playwright
+        run: python -m playwright install --with-deps chromium
+      - name: Reproduce canonical release receipts in disposable checkout
+        working-directory: /docker/property
+        run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py materialize-release-assets-authenticated
+      - name: Verify reproduced release receipts match HEAD
+        working-directory: /docker/property
+        run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py verify-generated-release-artifacts-clean-authenticated
+      - name: Run read-only authenticated core CI gates
+        working-directory: /docker/property
+        run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated
 
   propertyquarry-browser-contracts:
     permissions:
@@ -434,12 +458,74 @@ jobs:
           print("ok: all ordinary PropertyQuarry CI lanes passed")
           PY
 
+  propertyquarry-release-v2:
+    needs:
+      - propertyquarry-ordinary-ci-success
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.run_launch_authority == true && needs['propertyquarry-ordinary-ci-success'].result == 'success' }}
+    timeout-minutes: 180
+    concurrency:
+      group: propertyquarry-release-lifecycle-v2
+      cancel-in-progress: false
+    environment:
+      name: propertyquarry-production
+    permissions:
+      contents: none
+      id-token: write
+    runs-on: [self-hosted, propertyquarry-release-controller-v2]
+    steps:
+      - name: Request non-authorizing release preflight from the installed supervisor
+        shell: /bin/bash --noprofile --norc -p -euo pipefail {0}
+        run: |
+          exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          exec /usr/bin/env -i \
+            PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            HOME=/nonexistent \
+            LANG=C \
+            LC_ALL=C \
+            ACTIONS_ID_TOKEN_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}" \
+            PROPERTYQUARRY_OIDC_TOKEN_FD=9 \
+            GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            GITHUB_REF="${GITHUB_REF}" \
+            GITHUB_SHA="${GITHUB_SHA}" \
+            GITHUB_WORKFLOW_REF="${GITHUB_WORKFLOW_REF}" \
+            GITHUB_WORKFLOW_SHA="${GITHUB_WORKFLOW_SHA}" \
+            GITHUB_RUN_ID="${GITHUB_RUN_ID}" \
+            GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
+            GITHUB_JOB="${GITHUB_JOB}" \
+            /usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2 \
+              release-preflight
+      - name: Request the atomic release lifecycle from the installed supervisor
+        shell: /bin/bash --noprofile --norc -p -euo pipefail {0}
+        run: |
+          exec 9<<<"${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?missing GitHub OIDC bearer}"
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          exec /usr/bin/env -i \
+            PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            HOME=/nonexistent \
+            LANG=C \
+            LC_ALL=C \
+            ACTIONS_ID_TOKEN_REQUEST_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}" \
+            PROPERTYQUARRY_OIDC_TOKEN_FD=9 \
+            GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            GITHUB_REF="${GITHUB_REF}" \
+            GITHUB_SHA="${GITHUB_SHA}" \
+            GITHUB_WORKFLOW_REF="${GITHUB_WORKFLOW_REF}" \
+            GITHUB_WORKFLOW_SHA="${GITHUB_WORKFLOW_SHA}" \
+            GITHUB_RUN_ID="${GITHUB_RUN_ID}" \
+            GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT}" \
+            GITHUB_JOB="${GITHUB_JOB}" \
+            /usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2 \
+              release-run
+
+  # Legacy candidate-executed production jobs are retained only as inert
+  # migration history. The installed v2 supervisor above is the sole release path.
   propertyquarry-live-release-gates:
     needs:
       - propertyquarry-ordinary-ci-success
       - propertyquarry-flagship-security
       - propertyquarry-continuous-ux
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && needs['propertyquarry-ordinary-ci-success'].result == 'success' && needs['propertyquarry-flagship-security'].result == 'success' && needs['propertyquarry-continuous-ux'].result == 'success' }}
+    if: ${{ false }}
     environment:
       name: propertyquarry-production
     permissions:
@@ -598,7 +684,7 @@ jobs:
           PROPERTYQUARRY_EXPECTED_RELEASE_BRANCH: main
           PROPERTYQUARRY_LIVE_MOBILE_REQUIRED_BROWSER_ENGINES: chromium,firefox,webkit
           PROPERTYQUARRY_AXE_CORE_PATH: node_modules/axe-core/axe.min.js
-        run: bash scripts/propertyquarry_live_release_gates.sh
+        run: ./scripts/propertyquarry_live_release_gates.sh
       - name: Preserve protected PropertyQuarry live release evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -620,7 +706,7 @@ jobs:
 
   propertyquarry-live-activation-to-value:
     needs: propertyquarry-live-release-gates
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.run_activation_journey == true && needs['propertyquarry-live-release-gates'].result == 'success' }}
+    if: ${{ false }}
     concurrency:
       group: propertyquarry-live-activation-${{ inputs.activation_run_key }}
       cancel-in-progress: false
@@ -734,7 +820,7 @@ jobs:
     needs:
       - propertyquarry-live-release-gates
       - propertyquarry-live-activation-to-value
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.run_launch_authority == true }}
+    if: ${{ false }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -768,7 +854,7 @@ jobs:
 
   propertyquarry-launch-gold:
     needs: propertyquarry-launch-controller-preflight
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.run_launch_authority == true && needs['propertyquarry-launch-controller-preflight'].result == 'success' }}
+    if: ${{ false }}
     concurrency:
       group: propertyquarry-launch-authority
       cancel-in-progress: false
@@ -788,6 +874,9 @@ jobs:
       PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT: ${{ vars.PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT }}
       PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE: ${{ vars.PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE }}
       PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT: ${{ vars.PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT }}
+      PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT: ${{ vars.PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT }}
+      PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT: ${{ vars.PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT }}
+      PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT: ${{ vars.PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT }}
       PROPERTYQUARRY_FAILURE_STATE_RECEIPT: ${{ vars.PROPERTYQUARRY_FAILURE_STATE_RECEIPT }}
       PROPERTYQUARRY_PROVIDER_CATALOG_RECEIPT: ${{ vars.PROPERTYQUARRY_PROVIDER_CATALOG_RECEIPT }}
       PROPERTYQUARRY_CONTINUOUS_UX_RECEIPT: _completion/smoke/propertyquarry-continuous-ux-${{ github.sha }}.json
@@ -887,7 +976,7 @@ jobs:
           PROPERTYQUARRY_LIVE_PRINCIPAL_ID: ${{ secrets.PROPERTYQUARRY_LIVE_PRINCIPAL_ID }}
           PROPERTYQUARRY_LIVE_TELEGRAM_BOT_TOKEN: ${{ secrets.PROPERTYQUARRY_LIVE_TELEGRAM_BOT_TOKEN }}
           PROPERTYQUARRY_LIVE_TELEGRAM_CHAT_ID: ${{ secrets.PROPERTYQUARRY_LIVE_TELEGRAM_CHAT_ID }}
-        run: bash scripts/property_release_gates.sh
+        run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates
       - name: Atomically activate the Gold overlay and issue final launch authority
         env:
           DATABASE_URL: ${{ secrets.PROPERTYQUARRY_RELEASE_DATABASE_URL }}
@@ -933,6 +1022,9 @@ jobs:
             --expected-rybbit-analytics-origin "${PROPERTYQUARRY_RYBBIT_ORIGIN}" \
             --expected-rybbit-site-id-sha256 "${PROPERTYQUARRY_RYBBIT_SITE_ID_SHA256}" \
             --rybbit-receipt "${PROPERTYQUARRY_RYBBIT_EVIDENCE_RECEIPT}" \
+            --dashboard-render-receipt "${PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT}" \
+            --structured-log-query-receipt "${PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT}" \
+            --distributed-trace-query-receipt "${PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT}" \
             --security-receipt "${PROPERTYQUARRY_RELEASE_SECURITY_RECEIPT}" \
             --security-workflow-binding "${PROPERTYQUARRY_RELEASE_SECURITY_WORKFLOW_BINDING}" \
             --controller-bundle "${PROPERTYQUARRY_RELEASE_CONTROLLER_BUNDLE_PATH}" \
@@ -985,6 +1077,9 @@ jobs:
             --expected-rybbit-analytics-origin "${PROPERTYQUARRY_RYBBIT_ORIGIN}" \
             --expected-rybbit-site-id-sha256 "${PROPERTYQUARRY_RYBBIT_SITE_ID_SHA256}" \
             --rybbit-receipt "${PROPERTYQUARRY_RYBBIT_EVIDENCE_RECEIPT}" \
+            --dashboard-render-receipt "${PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT}" \
+            --structured-log-query-receipt "${PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT}" \
+            --distributed-trace-query-receipt "${PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT}" \
             --security-receipt "${PROPERTYQUARRY_RELEASE_SECURITY_RECEIPT}" \
             --security-workflow-binding "${PROPERTYQUARRY_RELEASE_SECURITY_WORKFLOW_BINDING}" \
             --controller-bundle "${PROPERTYQUARRY_RELEASE_CONTROLLER_BUNDLE_PATH}" \
@@ -1019,6 +1114,8 @@ jobs:
       POSTGRES_PASSWORD: propertyquarry-ci-${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Prepare external smoke volume
         run: docker volume create property_propertyquarry_public_tours >/dev/null
       - name: Run Postgres runtime smoke
@@ -1033,6 +1130,8 @@ jobs:
       POSTGRES_PASSWORD: propertyquarry-ci-${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"

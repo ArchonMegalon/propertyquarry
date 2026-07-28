@@ -1,0 +1,67 @@
+name: propertyquarry-release-control-v2
+
+x-propertyquarry-release-control-self-test: &propertyquarry-release-control-self-test
+  image: ${PROPERTYQUARRY_RELEASE_CONTROL_IMAGE:?Set PROPERTYQUARRY_RELEASE_CONTROL_IMAGE to the verified local image ID sha256:<64 lowercase hex>}
+  pull_policy: never
+  network_mode: none
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 32
+  mem_limit: 64m
+  mem_reservation: 16m
+  memswap_limit: 64m
+  user: ${PROPERTYQUARRY_RELEASE_CONTROL_USER:?Set PROPERTYQUARRY_RELEASE_CONTROL_USER to numeric uid:gid from the materialization receipt}
+  working_dir: /
+  environment: []
+  stdin_open: false
+  tty: false
+  init: false
+  restart: "no"
+
+services:
+  controller-self-test:
+    <<: *propertyquarry-release-control-self-test
+    profiles: [self-test]
+    entrypoint:
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-controller-v2
+    command: [--self-test]
+
+  supervisor-self-test:
+    <<: *propertyquarry-release-control-self-test
+    profiles: [self-test]
+    entrypoint:
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2
+    command: [--self-test]
+
+  watchdog-self-test:
+    <<: *propertyquarry-release-control-self-test
+    profiles: [self-test]
+    entrypoint:
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-watchdog-v2
+    command: [--self-test]
+
+  controller-refusal-test:
+    <<: *propertyquarry-release-control-self-test
+    profiles: [refusal-test]
+    entrypoint:
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-controller-v2
+    command: []
+
+  supervisor-refusal-test:
+    <<: *propertyquarry-release-control-self-test
+    profiles: [refusal-test]
+    entrypoint:
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2
+    command: []
+
+  watchdog-refusal-test:
+    <<: *propertyquarry-release-control-self-test
+    profiles: [refusal-test]
+    entrypoint:
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-watchdog-v2
+    command:
+      - --config
+      - /etc/propertyquarry-release-control/watchdog-v2.json

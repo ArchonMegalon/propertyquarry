@@ -1636,6 +1636,23 @@
     .pqx-top-actions {
       display: flex;
     }
+    .pqx-top-launch-status {
+      max-width: min(30vw, 320px);
+      color: var(--pq-green);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.25;
+      text-align: right;
+    }
+    .pqx-top-launch-status:empty {
+      display: none;
+    }
+    .pqx-top-launch-status[data-pq-tone="pending"] {
+      color: var(--pq-muted);
+    }
+    .pqx-top-launch-status[data-pq-tone="error"] {
+      color: var(--pq-red);
+    }
     .pqx-button,
     .pqx-link-button,
     .pqx-mode-button {
@@ -4846,6 +4863,7 @@
         min-height: 0;
         max-height: 100%;
         overflow-y: auto;
+        scroll-behavior: auto;
         overscroll-behavior: contain;
         overflow-anchor: none;
         -webkit-overflow-scrolling: touch;
@@ -10763,6 +10781,125 @@
       color: inherit;
     }
     {% endif %}
+    /* PQ_FLAGSHIP_MINIMAL_WORKBENCH_V1 */
+    .pqx-shell {
+      --pq-shadow: 0 2px 10px rgba(38, 32, 22, 0.06);
+      --pq-shadow-soft: 0 1px 4px rgba(38, 32, 22, 0.05);
+      --pq-hover-shadow: 0 4px 14px rgba(38, 32, 22, 0.08);
+      background: var(--pq-bg);
+    }
+    .pqx-skip-link {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 1000;
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 12px;
+      border: 1px solid var(--pq-line-strong);
+      border-radius: 8px;
+      background: var(--pq-paper);
+      color: var(--pq-ink);
+      font-weight: 800;
+      transform: translateY(calc(-100% - 16px));
+      transition: transform 120ms ease;
+    }
+    .pqx-skip-link:focus {
+      transform: translateY(0);
+      outline: var(--pq-focus-ring);
+      outline-offset: 2px;
+    }
+    #pqx-main-content:focus { outline: none; }
+    .pqx-topbar {
+      border-bottom-color: var(--pq-line);
+      background: color-mix(in srgb, var(--pq-paper) 96%, transparent);
+      box-shadow: none;
+    }
+    .pqx-mark,
+    .pqx-primary-nav :is(a, span),
+    .pqx-button,
+    .pqx-link-button,
+    .pqx-mode-button,
+    .pqx-account-menu summary,
+    .pqx-context-tools summary {
+      border-radius: 8px;
+      box-shadow: none;
+    }
+    .pqx-primary-nav :is(a, span) {
+      transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+    }
+    .pqx-shell :is(
+      .pqx-card,
+      .pqx-panel,
+      .pqx-command,
+      .pqx-run-hero,
+      .pqx-result-panel,
+      .pqx-review,
+      .pqx-result,
+      .pqx-account-action-card,
+      .pqx-billing-card,
+      .pqx-billing-summary-card,
+      .pqx-automation-card,
+      .pqx-research-task,
+      .pqx-progress-board
+    ) {
+      border-radius: 10px;
+      background-image: none;
+      box-shadow: none;
+    }
+    .pqx-shell :is(.pqx-result, .pqx-account-action-card, .pqx-billing-card, .pqx-automation-card):hover {
+      transform: none;
+      box-shadow: none;
+    }
+    .pqx-thumb,
+    .pqx-result-diorama,
+    .pqx-inline-map-preview,
+    .pqx-evidence-atlas-stage {
+      border-radius: 8px;
+    }
+    .pqx-result-diorama-empty-label {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+      color: var(--pq-muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama.is-placeholder {
+      min-height: 96px;
+      height: 96px;
+      aspect-ratio: auto;
+      background: var(--pq-panel);
+    }
+    .pqx-shell :is(a, button, summary, input, select, textarea):focus-visible {
+      outline: var(--pq-focus-ring);
+      outline-offset: 2px;
+    }
+    @media (min-width: 761px) {
+      .pqx-topbar { min-height: 58px; }
+      .pqx-main { padding-top: 18px; }
+    }
+    @media (max-width: 760px) {
+      .pqx-topbar {
+        border-radius: 0;
+        background: var(--pq-paper);
+      }
+      .pqx-primary-nav :is(a, span) { border-radius: 8px; }
+      .pqx-main {
+        width: min(100%, 760px);
+        padding-inline: 8px;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama.is-placeholder {
+        width: 100%;
+        min-height: 96px !important;
+        height: 96px !important;
+      }
+    }
     @media (max-width: 760px), (pointer: coarse) {
       .pqx-shell[data-pqx-surface] :is(
         button,
@@ -10810,6 +10947,7 @@
   <link rel="stylesheet" href="{{ property_workbench_css_asset_url(static_surface=static_surface) }}">
 </head>
 <body>
+  <a class="pqx-skip-link" href="#pqx-main-content">Skip to content</a>
   {% set workbench_client = {
     'results': workbench.get('client_results') or results,
     'selected': workbench.get('client_selected') or selected,
@@ -10891,10 +11029,79 @@
         {% endif %}
         <span class="pqx-context-actions" data-pw-top-actions></span>
         {% if show_top_search_action %}
+        <span class="pqx-top-launch-status" data-property-top-launch-status role="status" aria-live="assertive" aria-atomic="true"></span>
         <button class="pqx-button primary" type="button" data-property-start-top aria-label="{{ console_form.get('submit_label') or 'Launch search' }}">
           <span class="pqx-top-start-label-full">{{ console_form.get('submit_label') or 'Launch search' }}</span>
           <span class="pqx-top-start-label-short">Search</span>
         </button>
+        <script>
+          /* PQ_SEARCH_LAUNCH_BOOT_GUARD_START */
+          (() => {
+            const script = document.currentScript;
+            const button = script?.previousElementSibling;
+            const root = button?.closest?.('[data-property-decision-workbench]');
+            const status = root?.querySelector?.('[data-property-top-launch-status]');
+            if (!(button instanceof HTMLButtonElement) || !(root instanceof HTMLElement)) return;
+            const idleLabel = String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search';
+            let timeoutId = 0;
+            const setStatus = (message, tone = '') => {
+              if (!(status instanceof HTMLElement)) return;
+              status.textContent = String(message || '');
+              if (tone) status.dataset.pqTone = tone;
+              else delete status.dataset.pqTone;
+            };
+            const restoreButton = () => {
+              button.disabled = false;
+              button.setAttribute('aria-disabled', 'false');
+              button.setAttribute('aria-busy', 'false');
+              button.textContent = idleLabel;
+            };
+            const releaseGuard = () => {
+              window.clearTimeout(timeoutId);
+              root.dataset.pqLaunchBootstrap = 'ready';
+              button.removeEventListener('click', guard, true);
+            };
+            const guard = (event) => {
+              if (
+                root.dataset.pqWorkbenchController === 'loaded'
+                || root.dataset.pqLaunchBootstrap === 'ready'
+              ) {
+                releaseGuard();
+                return;
+              }
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              if (button.dataset.pqLaunchBootstrapTimedOut === 'true') {
+                setStatus('Reloading the search controls…', 'pending');
+                const retryUrl = new URL(window.location.href);
+                retryUrl.searchParams.set('launch_retry', String(Date.now()));
+                window.location.assign(retryUrl);
+                return;
+              }
+              if (button.dataset.pqLaunchQueued === 'true') return;
+              button.dataset.pqLaunchQueued = 'true';
+              button.disabled = true;
+              button.setAttribute('aria-disabled', 'true');
+              button.setAttribute('aria-busy', 'true');
+              button.textContent = 'Preparing…';
+              setStatus('Preparing search controls…', 'pending');
+              timeoutId = window.setTimeout(() => {
+                if (
+                  root.dataset.pqLaunchBootstrap === 'ready'
+                  || root.dataset.pqWorkbenchController === 'loaded'
+                ) return;
+                delete button.dataset.pqLaunchQueued;
+                button.dataset.pqLaunchBootstrapTimedOut = 'true';
+                restoreButton();
+                setStatus('Search controls took too long to load. Select Launch search to retry.', 'error');
+              }, 6000);
+            };
+            button.addEventListener('click', guard, true);
+            root.addEventListener('propertyquarry:launch-bootstrap-ready', releaseGuard, { once: true });
+            root.dataset.pqLaunchBootGuard = 'ready';
+          })();
+          /* PQ_SEARCH_LAUNCH_BOOT_GUARD_END */
+        </script>
         {% endif %}
         {% if run_active and run.get('run_id') %}
         <button class="pqx-link-button subtle" type="button" data-pqx-delete-run="{{ run.get('run_id') }}" data-pqx-delete-run-label="Stop this live search?">Stop</button>
@@ -11022,7 +11229,7 @@
       })();
     </script>
 
-    <main class="pqx-main">
+    <main class="pqx-main" id="pqx-main-content" tabindex="-1">
       {% if route_recovery %}
       <aside class="pqx-recovery-banner" data-pqx-route-recovery data-pq-failure-state="stale" role="status" aria-live="polite">
         <div>

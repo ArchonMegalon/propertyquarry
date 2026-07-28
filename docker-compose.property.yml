@@ -6,7 +6,9 @@ services:
     image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"
     container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
-    restart: unless-stopped
+    restart: "${PROPERTYQUARRY_API_RESTART_POLICY:-unless-stopped}"
+    init: true
+    stop_grace_period: 20s
     env_file:
       - path: ./state/runtime/property_scene_video_shared.env
         required: false
@@ -15,16 +17,26 @@ services:
       EA_ROLE: api
       EA_PORT: "8090"
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
+      # Desktop registration stays host-scoped.  Explicit blanks prevent the
+      # broad env_file from leaking reusable vendor credentials into the API.
+      THREEDVISTA_LOGIN_EMAIL: ""
+      THREEDVISTA_LOGIN_PASSWORD: ""
+      THREEDVISTA_LICENSE_EMAIL: ""
+      PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"
       EA_ALLOW_LOOPBACK_NO_AUTH: "${EA_ALLOW_LOOPBACK_NO_AUTH:-0}"
       EA_ARTIFACTS_DIR: /data/artifacts
       EA_PUBLIC_TOUR_DIR: /data/public_property_tours
+      PROPERTYQUARRY_TOUR_MIN_FREE_BYTES: "${PROPERTYQUARRY_TOUR_MIN_FREE_BYTES:-10737418240}"
+      PROPERTYQUARRY_TOUR_LOCK_DIR: /data/artifacts/propertyquarry-tour-locks
       PROPERTYQUARRY_TOUR_EXPORT_DROP_DIR: /data/incoming_property_tours
       PROPERTYQUARRY_TOUR_EXPORT_INCOMING_DIR: /data/incoming_property_tours
       EA_RESPONSES_PROVIDER_LEDGER_DIR: /data/provider-ledger
       EA_SCHEDULER_HEARTBEAT_PATH: /data/artifacts/propertyquarry-scheduler-heartbeat.json
       EA_SCHEDULER_HEARTBEAT_MAX_AGE_SECONDS: "${EA_SCHEDULER_HEARTBEAT_MAX_AGE_SECONDS:-900}"
-      PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED: "0"
-      PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED: "1"
+      EA_WORKER_HEARTBEAT_PATH: /data/artifacts/propertyquarry-worker-heartbeat.json
+      EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS: "${EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-120}"
+      PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED: "${PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED:-1}"
+      PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED: "${PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED:-1}"
       PROPERTYQUARRY_EXPECTED_API_REPLICAS: "${PROPERTYQUARRY_EXPECTED_API_REPLICAS:-1}"
       PROPERTYQUARRY_SEARCH_SCHEMA_READINESS_REQUIRED: "1"
       PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_URL: "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_URL:-http://propertyquarry-render-tools:8091/generate-reconstruction}"
@@ -79,6 +91,18 @@ services:
       - "${EA_HOST_PORT:-8090}:8090"
     cpu_shares: ${PROPERTYQUARRY_API_CPU_SHARES:-1024}
     cpus: ${PROPERTYQUARRY_API_CPUS:-2.0}
+    mem_limit: "${PROPERTYQUARRY_API_MEMORY_LIMIT:-1536m}"
+    mem_reservation: "${PROPERTYQUARRY_API_MEMORY_RESERVATION:-256m}"
+    memswap_limit: "${PROPERTYQUARRY_API_MEMORY_LIMIT:-1536m}"
+    pids_limit: ${PROPERTYQUARRY_API_PIDS_LIMIT:-128}
+    oom_score_adj: 300
+    tmpfs:
+      - /tmp:size=${PROPERTYQUARRY_API_TMPFS_LIMIT:-128m},mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - ./config:/config:ro
       - ./config:/app/config:ro
@@ -97,23 +121,115 @@ services:
     container_name: "${PROPERTYQUARRY_MIGRATE_CONTAINER_NAME:-propertyquarry-migrate}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
     restart: "no"
+    init: true
+    stop_grace_period: 20s
     environment:
       EA_ROLE: property-search-migrate
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
+      PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"
       DATABASE_URL: "${DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for property compose}@propertyquarry-db:5432/postgres}"
       PROPERTYQUARRY_RELEASE_COMMIT_SHA: "${PROPERTYQUARRY_RELEASE_COMMIT_SHA:-}"
       HOME: /home/ea
       TZ: Europe/Vienna
     command: ["python", "-m", "app.product.property_search_schema", "migrate"]
+    cpu_shares: ${PROPERTYQUARRY_MIGRATE_CPU_SHARES:-256}
+    cpus: ${PROPERTYQUARRY_MIGRATE_CPUS:-0.5}
+    mem_limit: "${PROPERTYQUARRY_MIGRATE_MEMORY_LIMIT:-768m}"
+    mem_reservation: "${PROPERTYQUARRY_MIGRATE_MEMORY_RESERVATION:-128m}"
+    memswap_limit: "${PROPERTYQUARRY_MIGRATE_MEMORY_LIMIT:-768m}"
+    pids_limit: ${PROPERTYQUARRY_MIGRATE_PIDS_LIMIT:-64}
+    oom_score_adj: 500
+    tmpfs:
+      - /tmp:size=${PROPERTYQUARRY_MIGRATE_TMPFS_LIMIT:-64m},mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       propertyquarry-db:
         condition: service_healthy
+
+  propertyquarry-worker:
+    image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"
+    container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker}"
+    cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    restart: "${PROPERTYQUARRY_WORKER_RESTART_POLICY:-unless-stopped}"
+    init: true
+    stop_grace_period: 45s
+    env_file:
+      - .env
+    environment:
+      EA_ROLE: worker
+      EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
+      EA_STORAGE_BACKEND: "postgres"
+      # This consumer is limited to durable property-search work. It neither
+      # receives the optional advanced-visual env bundle nor runs the generic
+      # scheduler queue.
+      THREEDVISTA_LOGIN_EMAIL: ""
+      THREEDVISTA_LOGIN_PASSWORD: ""
+      THREEDVISTA_LICENSE_EMAIL: ""
+      PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"
+      PROPERTYQUARRY_WORKER_PROFILE: "property_only"
+      PROPERTYQUARRY_SEARCH_SCHEMA_READINESS_REQUIRED: "1"
+      EA_ARTIFACTS_DIR: /data/artifacts
+      EA_RESPONSES_PROVIDER_LEDGER_DIR: /data/provider-ledger
+      EA_WORKER_HEARTBEAT_PATH: /data/artifacts/propertyquarry-worker-heartbeat.json
+      EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS: "${EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS:-120}"
+      PROPERTYQUARRY_SEARCH_WORK_LEASE_SECONDS: "${PROPERTYQUARRY_SEARCH_WORK_LEASE_SECONDS:-300}"
+      PROPERTYQUARRY_SEARCH_WORK_HEARTBEAT_SECONDS: "${PROPERTYQUARRY_SEARCH_WORK_HEARTBEAT_SECONDS:-30}"
+      PROPERTYQUARRY_SEARCH_WORK_MAX_ATTEMPTS: "${PROPERTYQUARRY_SEARCH_WORK_MAX_ATTEMPTS:-3}"
+      PROPERTYQUARRY_SEARCH_WORK_BACKOFF_BASE_SECONDS: "${PROPERTYQUARRY_SEARCH_WORK_BACKOFF_BASE_SECONDS:-15}"
+      PROPERTYQUARRY_SEARCH_WORK_BACKOFF_MAX_SECONDS: "${PROPERTYQUARRY_SEARCH_WORK_BACKOFF_MAX_SECONDS:-300}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for property compose}@propertyquarry-db:5432/postgres}"
+      PROPERTYQUARRY_RELEASE_COMMIT_SHA: "${PROPERTYQUARRY_RELEASE_COMMIT_SHA:-}"
+      PROPERTYQUARRY_RELEASE_IMAGE_DIGEST: "${PROPERTYQUARRY_RELEASE_IMAGE_DIGEST:-}"
+      PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID: "${PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID:-}"
+      HOME: /home/ea
+      TZ: Europe/Vienna
+    cpu_shares: ${PROPERTYQUARRY_WORKER_CPU_SHARES:-512}
+    cpus: ${PROPERTYQUARRY_WORKER_CPUS:-1.0}
+    mem_limit: "${PROPERTYQUARRY_WORKER_MEMORY_LIMIT:-1536m}"
+    mem_reservation: "${PROPERTYQUARRY_WORKER_MEMORY_RESERVATION:-256m}"
+    memswap_limit: "${PROPERTYQUARRY_WORKER_MEMORY_LIMIT:-1536m}"
+    pids_limit: ${PROPERTYQUARRY_WORKER_PIDS_LIMIT:-128}
+    oom_score_adj: 500
+    tmpfs:
+      - /tmp:size=${PROPERTYQUARRY_WORKER_TMPFS_LIMIT:-128m},mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - ./config:/config:ro
+      - ./config:/app/config:ro
+      - propertyquarry_artifacts:/data/artifacts
+      - propertyquarry_provider_ledger:/data/provider-ledger
+    depends_on:
+      propertyquarry-db:
+        condition: service_healthy
+      propertyquarry-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/python", "-m", "app.scheduler_healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 5
 
   propertyquarry-scheduler:
     image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-web-runtime:latest}"
     container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
-    restart: unless-stopped
+    restart: "${PROPERTYQUARRY_SCHEDULER_RESTART_POLICY:-unless-stopped}"
+    init: true
+    stop_grace_period: 20s
     env_file:
       - path: ./state/runtime/property_scene_video_shared.env
         required: false
@@ -121,9 +237,20 @@ services:
     environment:
       EA_ROLE: scheduler
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
+      # The scheduler never registers desktop vendor software.
+      THREEDVISTA_LOGIN_EMAIL: ""
+      THREEDVISTA_LOGIN_PASSWORD: ""
+      THREEDVISTA_LICENSE_EMAIL: ""
+      PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"
       PROPERTYQUARRY_SCHEDULER_PROFILE: "${PROPERTYQUARRY_SCHEDULER_PROFILE:-property_only}"
+      EA_SCHEDULER_STEP_CONCURRENCY_LIMIT: "1"
       EA_ARTIFACTS_DIR: /data/artifacts
       EA_PUBLIC_TOUR_DIR: /data/public_property_tours
+      PROPERTYQUARRY_TOUR_MIN_FREE_BYTES: "${PROPERTYQUARRY_TOUR_MIN_FREE_BYTES:-10737418240}"
+      PROPERTYQUARRY_TOUR_LOCK_DIR: /data/artifacts/propertyquarry-tour-locks
+      PROPERTYQUARRY_MAGICFIT_RENDER_MIN_FREE_BYTES: "${PROPERTYQUARRY_MAGICFIT_RENDER_MIN_FREE_BYTES:-10737418240}"
+      PROPERTYQUARRY_MAGICFIT_RENDER_MAX_RETRIES: "${PROPERTYQUARRY_MAGICFIT_RENDER_MAX_RETRIES:-3}"
+      PROPERTYQUARRY_MAGICFIT_RENDER_MAX_TIMEOUT_MINUTES: "${PROPERTYQUARRY_MAGICFIT_RENDER_MAX_TIMEOUT_MINUTES:-30}"
       PROPERTYQUARRY_TOUR_EXPORT_DROP_DIR: /data/incoming_property_tours
       PROPERTYQUARRY_TOUR_EXPORT_INCOMING_DIR: /data/incoming_property_tours
       EA_RESPONSES_PROVIDER_LEDGER_DIR: /data/provider-ledger
@@ -171,6 +298,18 @@ services:
       TZ: Europe/Vienna
     cpu_shares: ${PROPERTYQUARRY_SCHEDULER_CPU_SHARES:-512}
     cpus: ${PROPERTYQUARRY_SCHEDULER_CPUS:-1.0}
+    mem_limit: "${PROPERTYQUARRY_SCHEDULER_MEMORY_LIMIT:-1536m}"
+    mem_reservation: "${PROPERTYQUARRY_SCHEDULER_MEMORY_RESERVATION:-256m}"
+    memswap_limit: "${PROPERTYQUARRY_SCHEDULER_MEMORY_LIMIT:-1536m}"
+    pids_limit: ${PROPERTYQUARRY_SCHEDULER_PIDS_LIMIT:-128}
+    oom_score_adj: 500
+    tmpfs:
+      - /tmp:size=${PROPERTYQUARRY_SCHEDULER_TMPFS_LIMIT:-128m},mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - ./config:/config:ro
       - ./config:/app/config:ro
@@ -195,68 +334,92 @@ services:
   propertyquarry-render-tools:
     build:
       context: .
-      dockerfile: ea/Dockerfile.property
+      dockerfile: ea/Dockerfile.property-render
     image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-render-runtime:latest}"
     container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-tools}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
-    restart: unless-stopped
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    restart: "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-on-failure:3}"
+    init: true
     # The bridge reads the same numeric seconds value and reserves 30s for process close.
     stop_grace_period: "${PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS:-1860}s"
-    env_file:
-      - path: ./state/runtime/property_scene_video_shared.env
-        required: false
-      - .env
     environment:
       EA_ROLE: render-tools
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
-      EA_ARTIFACTS_DIR: /data/artifacts
+      # Long-lived render bridges do not receive reusable desktop-login
+      # credentials; a future activation/export job needs a one-shot scope.
+      THREEDVISTA_LOGIN_EMAIL: ""
+      THREEDVISTA_LOGIN_PASSWORD: ""
+      THREEDVISTA_LICENSE_EMAIL: ""
       EA_PUBLIC_TOUR_DIR: /data/public_property_tours
-      PROPERTYQUARRY_TOUR_EXPORT_DROP_DIR: /data/incoming_property_tours
-      PROPERTYQUARRY_TOUR_EXPORT_INCOMING_DIR: /data/incoming_property_tours
-      EA_RESPONSES_PROVIDER_LEDGER_DIR: /data/provider-ledger
-      TEABLE_BASE_URL: "${TEABLE_BASE_URL:-https://app.teable.ai}"
-      TEABLE_TABLE_SYNC_CONFIG_JSON: "${TEABLE_TABLE_SYNC_CONFIG_JSON:-}"
-      PROPERTYQUARRY_TEABLE_BASE_ID: "${PROPERTYQUARRY_TEABLE_BASE_ID:-}"
-      PROPERTYQUARRY_TEABLE_TENANT_KEY: "${PROPERTYQUARRY_TEABLE_TENANT_KEY:-propertyquarry}"
-      PROPERTYQUARRY_TEABLE_TENANT_NAME: "${PROPERTYQUARRY_TEABLE_TENANT_NAME:-PropertyQuarry}"
-      PROPERTYQUARRY_TEABLE_TABLE_SYNC_CONFIG_JSON: "${PROPERTYQUARRY_TEABLE_TABLE_SYNC_CONFIG_JSON:-}"
-      PROPERTYQUARRY_TEABLE_AUTO_SYNC: "${PROPERTYQUARRY_TEABLE_AUTO_SYNC:-0}"
+      PROPERTYQUARRY_TOUR_MIN_FREE_BYTES: "${PROPERTYQUARRY_TOUR_MIN_FREE_BYTES:-10737418240}"
+      PROPERTYQUARRY_TOUR_LOCK_DIR: /data/artifacts/propertyquarry-tour-locks
+      PROPERTYQUARRY_MAGICFIT_RENDER_MIN_FREE_BYTES: "${PROPERTYQUARRY_MAGICFIT_RENDER_MIN_FREE_BYTES:-10737418240}"
+      PROPERTYQUARRY_MAGICFIT_RENDER_MAX_RETRIES: "${PROPERTYQUARRY_MAGICFIT_RENDER_MAX_RETRIES:-3}"
+      PROPERTYQUARRY_MAGICFIT_RENDER_MAX_TIMEOUT_MINUTES: "${PROPERTYQUARRY_MAGICFIT_RENDER_MAX_TIMEOUT_MINUTES:-30}"
       PROPERTYQUARRY_RECONSTRUCTION_RENDER_HOST: "0.0.0.0"
       PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN: "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN:?Set PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN for the render bridge}"
+      # The current render bridge has no database-backed admission runtime.
+      # Override the broad env_file so it cannot become an implicit writer.
+      DATABASE_URL: ""
+      PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: ""
       PROPERTYQUARRY_RECONSTRUCTION_RENDER_REQUEST_TIMEOUT_SECONDS: "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_REQUEST_TIMEOUT_SECONDS:-30}"
       PROPERTYQUARRY_RECONSTRUCTION_RENDER_MAX_GENERATION_SECONDS: "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_MAX_GENERATION_SECONDS:-1800}"
       PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS: "${PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS:-1860}"
-      HOME: /home/ea
+      HOME: /tmp/home
+      XDG_CACHE_HOME: /tmp/cache
+      XDG_CONFIG_HOME: /tmp/config
+      TMPDIR: /tmp
+      BLENDER_USER_CONFIG: /tmp/blender/config
+      BLENDER_USER_SCRIPTS: /tmp/blender/scripts
+      BLENDER_USER_DATAFILES: /tmp/blender/datafiles
       TZ: Europe/Vienna
-    command: ["python", "/app/scripts/property_reconstruction_render_bridge.py"]
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "command -v ffmpeg >/dev/null && command -v blender >/dev/null && command -v colmap >/dev/null && command -v exiftool >/dev/null && command -v convert >/dev/null && python -c 'import numpy' && curl -fsS --connect-timeout 2 --max-time 10 http://127.0.0.1:8091/health >/dev/null",
-        ]
-      interval: 30s
-      timeout: 15s
-      start_period: 30s
-      retries: 5
     cpu_shares: ${PROPERTYQUARRY_RENDER_CPU_SHARES:-512}
     cpus: ${PROPERTYQUARRY_RENDER_CPUS:-1.0}
-    # Memory, PID, and shared-memory limits require measured Blender/COLMAP peaks; do not guess them here.
+    # Fail closed within a bounded local-host envelope; operators may lower these
+    # measured ceilings but release evidence must never omit them.
+    mem_limit: "${PROPERTYQUARRY_RENDER_MEMORY_LIMIT:-4g}"
+    mem_reservation: "${PROPERTYQUARRY_RENDER_MEMORY_RESERVATION:-512m}"
+    memswap_limit: "${PROPERTYQUARRY_RENDER_MEMORY_LIMIT:-4g}"
+    pids_limit: ${PROPERTYQUARRY_RENDER_PIDS_LIMIT:-256}
+    oom_score_adj: 500
+    shm_size: "${PROPERTYQUARRY_RENDER_SHM_LIMIT:-512m}"
+    tmpfs:
+      - /tmp:size=${PROPERTYQUARRY_RENDER_TMPFS_LIMIT:-512m},mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
-      - ./config:/config:ro
-      - ./config:/app/config:ro
-      - ./state/incoming_property_tours:/data/incoming_property_tours
       - propertyquarry_artifacts:/data/artifacts
       - propertyquarry_public_tours:/data/public_property_tours
-      - propertyquarry_provider_ledger:/data/provider-ledger
 
   propertyquarry-db:
     image: postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
     container_name: "${PROPERTYQUARRY_DB_CONTAINER_NAME:-propertyquarry-db-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
-    restart: unless-stopped
+    restart: "${PROPERTYQUARRY_DB_RESTART_POLICY:-unless-stopped}"
+    init: true
+    stop_grace_period: 30s
     cpu_shares: ${PROPERTYQUARRY_DB_CPU_SHARES:-512}
     cpus: ${PROPERTYQUARRY_DB_CPUS:-1.0}
+    mem_limit: "${PROPERTYQUARRY_DB_MEMORY_LIMIT:-1536m}"
+    mem_reservation: "${PROPERTYQUARRY_DB_MEMORY_RESERVATION:-256m}"
+    memswap_limit: "${PROPERTYQUARRY_DB_MEMORY_LIMIT:-1536m}"
+    pids_limit: ${PROPERTYQUARRY_DB_PIDS_LIMIT:-128}
+    oom_score_adj: 200
+    shm_size: "${PROPERTYQUARRY_DB_SHM_LIMIT:-256m}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for property compose}"
     volumes:

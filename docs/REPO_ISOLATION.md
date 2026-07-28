@@ -28,4 +28,4 @@ If one of these directories is needed for future work, move that work to the own
 
 Host-level recovery scripts are quarantined operator artifacts. `scripts/harden_propertyquarry_docker.sh` and `scripts/recover_host_after_reboot.sh` must stay explicitly guarded behind `PROPERTYQUARRY_HOST_RECOVERY_ALLOW=1`, support dry runs, and must not be treated as normal release/runtime entrypoints.
 
-Use `python3 scripts/check_property_repo_isolation.py` or `make property-release-gates` before a public deploy.
+Use `python3 scripts/check_property_repo_isolation.py` for a local diagnostic or `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates` for authenticated release evidence before a public deploy.

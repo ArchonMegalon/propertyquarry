@@ -73,18 +73,22 @@ identity.
 - PostgreSQL schema, migration, scheduler, delivery-outbox, concurrency,
   backup/restore, host recovery, and rollback contracts remain fail closed.
 - Dependency audit, SBOM, image scan, secret posture, and release provenance bind
-  to immutable candidate images on the protected security runner.
+  to immutable candidate images in the installed controller's protected
+  security lane.
 
 ## Automated and live gates
 
-- `make property-release-gates` passes.
+- `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates` passes.
 - `make ci-gates` passes, including runtime API and release-asset verification.
 - PropertyQuarry browser, activation, accessibility, failure-state, security,
   continuous-UX, PostgreSQL, and product E2E jobs pass on the exact candidate.
 - `make verify-flagship-release-readiness` passes against current generated
   receipts rather than hand-edited evidence.
-- The protected flagship-security job passes with immutable web and render
-  images; skipped protected jobs are not a green production result.
+- The installed v2 controller's flagship security admission passes with
+  immutable web and render images. The disabled legacy
+  `propertyquarry-flagship-security` workflow job is migration history, not
+  release evidence; a skipped or missing controller security phase is not a
+  green production result.
 - Controller preflight, migration, observability, disaster recovery, live
   activation-to-value, Gold, and rollback evidence all bind to the promoted
   candidate before public traffic changes.

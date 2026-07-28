@@ -316,6 +316,61 @@ def _propertyquarry_telegram_bot_public_profile() -> dict[str, object]:
     }
 
 
+PROPERTY_SEARCH_RAW_PREFERENCES_MAX_DEPTH = 256
+
+
+def flatten_property_search_preferences_snapshot(
+    value: dict[str, object] | None,
+    *,
+    max_depth: int = PROPERTY_SEARCH_RAW_PREFERENCES_MAX_DEPTH,
+) -> dict[str, object]:
+    """Flatten bounded legacy ``raw_preferences`` snapshots.
+
+    Older full-state saves nested the preceding snapshot once per write.  Walk
+    that chain iteratively, merge deepest-to-outermost so newer values win, and
+    never return the structural key itself.  The depth bound and identity set
+    keep malformed in-process inputs from causing unbounded work; JSON-backed
+    production values cannot contain object cycles.
+    """
+
+    outer = dict(value or {})
+    nested: object = outer.pop("raw_preferences", None)
+    layers: list[dict[str, object]] = [outer]
+    seen: set[int] = set()
+    bounded_depth = max(0, int(max_depth or 0))
+    depth = 0
+    while isinstance(nested, dict) and depth < bounded_depth:
+        object_id = id(nested)
+        if object_id in seen:
+            raise ValueError("property_search_raw_preferences_object_cycle")
+        seen.add(object_id)
+        layer = dict(nested)
+        nested = layer.pop("raw_preferences", None)
+        layers.append(layer)
+        depth += 1
+    if isinstance(nested, dict):
+        raise ValueError("property_search_raw_preferences_depth_limit_exceeded")
+    flattened: dict[str, object] = {}
+    for layer in reversed(layers):
+        flattened.update(layer)
+    flattened.pop("raw_preferences", None)
+    return flattened
+
+
+def strip_client_property_commercial_authority(
+    value: dict[str, object] | None,
+) -> dict[str, object]:
+    """Remove billing authority from a client-controlled preference payload.
+
+    ``raw_preferences`` is flattened first so a caller cannot smuggle an
+    entitlement through a nested legacy snapshot.
+    """
+
+    sanitized = flatten_property_search_preferences_snapshot(value)
+    sanitized.pop("property_commercial", None)
+    return sanitized
+
+
 class OnboardingService(AssistantOnboardingService):
     def __init__(
         self,
@@ -475,10 +530,16 @@ class OnboardingService(AssistantOnboardingService):
         *,
         principal_id: str,
         property_search_preferences_json: dict[str, object],
+        trusted_commercial_update: bool = False,
     ) -> dict[str, object]:
         state = self._ensure_state(principal_id)
-        normalized_preferences = self._normalize_property_search_preferences(property_search_preferences_json)
-        raw_incoming_preferences = dict(property_search_preferences_json or {})
+        incoming_preferences = dict(property_search_preferences_json or {})
+        if not trusted_commercial_update:
+            incoming_preferences = strip_client_property_commercial_authority(
+                incoming_preferences
+            )
+        normalized_preferences = self._normalize_property_search_preferences(incoming_preferences)
+        raw_incoming_preferences = dict(incoming_preferences)
         if "language_code" not in raw_incoming_preferences and "language" not in raw_incoming_preferences:
             normalized_preferences["language_code"] = normalize_language_code(
                 None,
@@ -587,6 +648,7 @@ class OnboardingService(AssistantOnboardingService):
         agents = self._normalize_property_search_agents(
             preferences,
             active_agent_id=str(preferences.get("active_search_agent_id") or "").strip(),
+            enforce_plan_limit=False,
         )
         normalized_agent_id = str(agent_id or "").strip()
         if normalized_agent_id in {"", "current"}:
@@ -1944,7 +2006,12 @@ class OnboardingService(AssistantOnboardingService):
 
     @staticmethod
     def _normalize_property_search_preferences(value: dict[str, object] | None) -> dict[str, object]:
-        raw = dict(value or {})
+        raw = flatten_property_search_preferences_snapshot(value)
+        # ``raw_preferences`` is an internal snapshot, not a user preference.
+        # Full-state updates may feed the normalized payload back into this
+        # method, so retaining the prior snapshot here would nest the entire
+        # document once more on every save.
+        raw.pop("raw_preferences", None)
         raw = {
             **raw,
             **normalize_property_search_preferences_contract(raw),
@@ -1999,7 +2066,16 @@ class OnboardingService(AssistantOnboardingService):
         listing_mode = normalize_listing_mode(raw.get("listing_mode"))
         property_type = normalize_property_type_values(raw.get("property_type"))
         cleaned_raw = dict(raw)
-        cleaned_raw.pop("min_match_score", None)
+        for internal_key in (
+            "min_match_score",
+            "raw_preferences",
+            # These collections have canonical top-level fields. Keeping a
+            # second copy in the raw snapshot doubles the largest account
+            # payloads and makes every authenticated page pay to de-TOAST it.
+            "saved_shortlist_candidates",
+            "search_agents",
+        ):
+            cleaned_raw.pop(internal_key, None)
         selected_platforms, removed_platform_details = filter_selectable_property_platform_details(
             selected_platforms,
             country_code=country_code,
@@ -2199,8 +2275,16 @@ class OnboardingService(AssistantOnboardingService):
         explicit_agents = isinstance(raw.get("search_agents"), (list, tuple))
         if explicit_agents:
             normalized_preferences["search_agents"] = OnboardingService._normalize_property_search_agents(
-                {**cleaned_raw, **normalized_preferences},
+                {
+                    **cleaned_raw,
+                    **normalized_preferences,
+                    # ``search_agents`` is deliberately removed from the raw
+                    # snapshot above, but it remains a canonical top-level
+                    # collection and must still be normalized from this write.
+                    "search_agents": list(raw.get("search_agents") or []),
+                },
                 active_agent_id=str(normalized_preferences.get("active_search_agent_id") or "").strip(),
+                enforce_plan_limit=False,
             )
             if normalized_preferences["search_agents"] and not normalized_preferences["active_search_agent_id"]:
                 normalized_preferences["active_search_agent_id"] = str(normalized_preferences["search_agents"][0].get("agent_id") or "")

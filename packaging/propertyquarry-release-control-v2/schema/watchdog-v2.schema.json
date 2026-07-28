@@ -1,0 +1,56 @@
+{
+  "$id": "urn:propertyquarry:release-control:watchdog-config:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "environment": {"const": "propertyquarry-production"},
+    "lifecycle_cas": {
+      "additionalProperties": false,
+      "properties": {
+        "credential_name": {"const": "watchdog-takeover-client"},
+        "endpoint": {"$ref": "#/$defs/httpsEndpoint"},
+        "trust_root_path": {"const": "/etc/propertyquarry-release-control/trust.d/lifecycle-cas-v2.pem"}
+      },
+      "required": ["endpoint", "trust_root_path", "credential_name"],
+      "type": "object"
+    },
+    "limits": {
+      "additionalProperties": false,
+      "properties": {
+        "callback_timeout_seconds": {"maximum": 60, "minimum": 1, "type": "integer"},
+        "poll_interval_seconds": {"maximum": 30, "minimum": 1, "type": "integer"},
+        "reconciliation_timeout_seconds": {"maximum": 3600, "minimum": 30, "type": "integer"}
+      },
+      "required": ["poll_interval_seconds", "callback_timeout_seconds", "reconciliation_timeout_seconds"],
+      "type": "object"
+    },
+    "resource_kinds": {"const": ["database", "launch-authority", "monitoring-delivery", "overlay", "public-tour", "runtime", "traffic"]},
+    "resource_recovery": {
+      "additionalProperties": false,
+      "properties": {
+        "credential_name": {"const": "resource-recovery-client"},
+        "endpoint": {"$ref": "#/$defs/httpsEndpoint"},
+        "trust_root_path": {"const": "/etc/propertyquarry-release-control/trust.d/resource-mediator-v2.pem"}
+      },
+      "required": ["endpoint", "trust_root_path", "credential_name"],
+      "type": "object"
+    },
+    "root_policy_path": {"const": "/etc/propertyquarry-release-control/policy-v2.json"},
+    "schema": {"const": "propertyquarry.release-control.watchdog-config.v2"},
+    "state": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_path": {"const": "/var/lib/propertyquarry-release-watchdog-v2/cache"}
+      },
+      "required": ["cache_path"],
+      "type": "object"
+    },
+    "version": {"const": 2}
+  },
+  "required": ["schema", "version", "environment", "root_policy_path", "lifecycle_cas", "resource_recovery", "resource_kinds", "state", "limits"],
+  "title": "PropertyQuarry release watchdog v2 configuration",
+  "type": "object",
+  "$defs": {
+    "httpsEndpoint": {"format": "uri", "maxLength": 2048, "pattern": "^https://(?![^/?#]*@)(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\\[[0-9A-Fa-f:.]+\\])(?:/[^\\s?#]*)?$", "type": "string"}
+  }
+}

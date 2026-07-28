@@ -1,24 +1,38 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
-import hashlib
 import ipaddress
+import logging
 import math
 import os
 import threading
 import time
 import uuid
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import RequestContext, get_request_context
+from app.api.ingress_admission import (
+    AdmissionBackend,
+    AdmissionDimension,
+    AdmissionOperation,
+    AdmissionOutcome,
+    AdmissionRequest,
+    AdmissionResult,
+    IngressAdmissionError,
+    IngressAdmissionStore,
+    InMemoryIngressAdmissionStore,
+    LeaseScope,
+    QuotaCharge,
+    QuotaKind,
+)
 from app.observability import get_runtime_metrics
 from app.product.service import build_product_service
-
 
 _MUTATION_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _BYPASS_PATHS = {
@@ -30,9 +44,38 @@ _BYPASS_PATHS = {
     "/metrics",
 }
 _DEFAULT_TRUSTED_PROXY_CIDRS = ("127.0.0.0/8", "::1/128")
+_DEFAULT_TRUSTED_PROXY_NETWORKS = tuple(
+    ipaddress.ip_network(value, strict=False)
+    for value in _DEFAULT_TRUSTED_PROXY_CIDRS
+)
+_MAX_ACCOUNT_SUBJECT_BYTES = 1_024
+INGRESS_POLICY_CONTRACT_VERSION = 1
+_PRODUCTION_INGRESS_POLICY_V1 = {
+    "max_body_bytes": 8_388_608,
+    "max_upload_body_bytes": 40_000_000,
+    "window_seconds": 60,
+    "ip_request_limit": 600,
+    "account_request_limit": 240,
+    "ip_cost_limit": 1_000,
+    "account_cost_limit": 300,
+    "high_cost_ip_concurrency": 8,
+    "high_cost_account_concurrency": 2,
+    "active_search_limit": 1,
+    "lease_seconds": 30,
+    "trusted_proxy_cidrs": _DEFAULT_TRUSTED_PROXY_NETWORKS,
+}
+_LOG = logging.getLogger("ea.ingress")
 
 
 class RequestBodyLimitExceeded(RuntimeError):
+    pass
+
+
+class RequestBodyLengthMismatch(RuntimeError):
+    pass
+
+
+class IngressLeaseLost(RuntimeError):
     pass
 
 
@@ -174,7 +217,7 @@ def _bounded_env_int(
 def parse_trusted_proxy_cidrs(raw: str | None) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
     values = [part.strip() for part in str(raw or "").split(",") if part.strip()]
     if not values:
-        values = list(_DEFAULT_TRUSTED_PROXY_CIDRS)
+        return _DEFAULT_TRUSTED_PROXY_NETWORKS
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     for value in values:
         try:
@@ -197,6 +240,7 @@ class IngressPolicy:
     high_cost_ip_concurrency: int = 8
     high_cost_account_concurrency: int = 2
     active_search_limit: int = 1
+    lease_seconds: int = 30
     trusted_proxy_cidrs: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = ()
 
     @classmethod
@@ -207,12 +251,20 @@ class IngressPolicy:
         environ: Mapping[str, str] | None = None,
     ) -> IngressPolicy:
         env = environ if environ is not None else os.environ
-        production_default = str(runtime_mode or "").strip().lower() == "prod"
-        return cls(
-            quotas_enabled=_optional_bool(
-                env.get("PROPERTYQUARRY_INGRESS_QUOTAS_ENABLED"),
-                default=production_default,
-            ),
+        production_default = (
+            str(runtime_mode or "").strip().lower()
+            in {"prod", "production"}
+        )
+        quotas_enabled = _optional_bool(
+            env.get("PROPERTYQUARRY_INGRESS_QUOTAS_ENABLED"),
+            default=production_default,
+        )
+        if production_default and not quotas_enabled:
+            raise RuntimeError(
+                "propertyquarry_prod_requires_ingress_quotas"
+            )
+        policy = cls(
+            quotas_enabled=quotas_enabled,
             max_body_bytes=_bounded_env_int(
                 env,
                 "PROPERTYQUARRY_INGRESS_MAX_BODY_BYTES",
@@ -283,10 +335,25 @@ class IngressPolicy:
                 minimum=1,
                 maximum=20,
             ),
+            lease_seconds=_bounded_env_int(
+                env,
+                "PROPERTYQUARRY_INGRESS_LEASE_SECONDS",
+                default=30,
+                minimum=3,
+                maximum=3_600,
+            ),
             trusted_proxy_cidrs=parse_trusted_proxy_cidrs(
                 env.get("PROPERTYQUARRY_TRUSTED_PROXY_CIDRS")
             ),
         )
+        if production_default:
+            for field_name, expected in _PRODUCTION_INGRESS_POLICY_V1.items():
+                if getattr(policy, field_name) != expected:
+                    raise RuntimeError(
+                        "propertyquarry_prod_ingress_policy_v1_mismatch:"
+                        + field_name
+                    )
+        return policy
 
 
 def _parse_ip(value: object) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -454,11 +521,26 @@ def _route_rule(method: str, path: str, *, policy: IngressPolicy) -> IngressRout
     )
 
 
-def _hashed_account_key(context: RequestContext | None) -> str:
-    principal_id = str(getattr(context, "principal_id", "") or "").strip()
-    if not principal_id:
+def _account_subject(context: RequestContext | None) -> str:
+    if context is None or not bool(getattr(context, "authenticated", False)):
         return ""
-    return hashlib.sha256(principal_id.encode("utf-8")).hexdigest()
+    principal_id = str(getattr(context, "principal_id", "") or "")
+    if not principal_id:
+        raise ValueError("ingress_account_subject_invalid")
+    try:
+        encoded_principal = principal_id.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("ingress_account_subject_invalid") from exc
+    if (
+        principal_id != principal_id.strip()
+        or len(encoded_principal) > _MAX_ACCOUNT_SUBJECT_BYTES
+        or any(
+            ord(character) < 32 or ord(character) == 127
+            for character in principal_id
+        )
+    ):
+        raise ValueError("ingress_account_subject_invalid")
+    return principal_id
 
 
 def _request_context_sync(request: Request) -> RequestContext | None:
@@ -513,11 +595,13 @@ class IngressAbuseMiddleware:
         clock: Callable[[], float] = time.monotonic,
         context_resolver: Callable[[Request], RequestContext | None] | None = None,
         active_search_counter: Callable[[Request, RequestContext, int], int] | None = None,
+        admission_store: IngressAdmissionStore | None = None,
     ) -> None:
         self.app = app
         self.policy = policy
-        self._quota = FixedWindowQuota(window_seconds=policy.window_seconds, clock=clock)
-        self._inflight = InflightGate()
+        self._admission_store = admission_store or InMemoryIngressAdmissionStore(
+            clock=clock,
+        )
         self._context_resolver = context_resolver or _request_context_sync
         self._active_search_counter = active_search_counter
 
@@ -559,6 +643,156 @@ class IngressAbuseMiddleware:
             get_runtime_metrics(app).record_ingress_rejection(reason=code, dimension=dimension)
         await response(scope, receive, send)
 
+    def _admission_backend(self) -> AdmissionBackend:
+        if isinstance(self._admission_store, InMemoryIngressAdmissionStore):
+            return AdmissionBackend.MEMORY
+        return AdmissionBackend.POSTGRES
+
+    @staticmethod
+    def _record_admission_result(
+        scope: dict[str, Any],
+        result: AdmissionResult,
+    ) -> None:
+        app = scope.get("app")
+        if app is None:
+            return
+        get_runtime_metrics(app).record_ingress_admission_operation(
+            backend=result.backend.value,
+            operation=result.operation.value,
+            outcome=result.outcome.value,
+        )
+
+    @staticmethod
+    def _record_admission_error(
+        scope: dict[str, Any],
+        exc: IngressAdmissionError,
+    ) -> None:
+        app = scope.get("app")
+        if app is None:
+            return
+        get_runtime_metrics(app).record_ingress_admission_operation(
+            backend=exc.backend.value,
+            operation=exc.operation.value,
+            outcome=exc.outcome.value,
+        )
+
+    def _record_unexpected_admission_error(
+        self,
+        scope: dict[str, Any],
+        *,
+        operation: AdmissionOperation,
+    ) -> None:
+        app = scope.get("app")
+        if app is None:
+            return
+        get_runtime_metrics(app).record_ingress_admission_operation(
+            backend=self._admission_backend().value,
+            operation=operation.value,
+            outcome=AdmissionOutcome.BACKEND_UNAVAILABLE.value,
+        )
+
+    async def _renew_lease(
+        self,
+        *,
+        scope: dict[str, Any],
+        lease_token: str,
+    ) -> None:
+        renewal_interval = max(
+            0.25,
+            min(float(self.policy.lease_seconds) / 3.0, 10.0),
+        )
+        while True:
+            await asyncio.sleep(renewal_interval)
+            try:
+                renewed = await asyncio.to_thread(
+                    self._admission_store.renew_lease,
+                    lease_token,
+                    lease_seconds=self.policy.lease_seconds,
+                )
+            except IngressAdmissionError as exc:
+                self._record_admission_error(scope, exc)
+                raise IngressLeaseLost("ingress_admission_lease_renewal_failed") from exc
+            except Exception as exc:
+                self._record_unexpected_admission_error(
+                    scope,
+                    operation=AdmissionOperation.RENEW,
+                )
+                raise IngressLeaseLost("ingress_admission_lease_renewal_failed") from exc
+            app = scope.get("app")
+            if app is not None:
+                get_runtime_metrics(app).record_ingress_admission_operation(
+                    backend=self._admission_backend().value,
+                    operation=AdmissionOperation.RENEW.value,
+                    outcome=(
+                        AdmissionOutcome.ALLOWED.value
+                        if renewed
+                        else AdmissionOutcome.LEASE_LIMITED.value
+                    ),
+                )
+            if not renewed:
+                raise IngressLeaseLost("ingress_admission_lease_lost")
+
+    async def _run_with_lease(
+        self,
+        *,
+        scope: dict[str, Any],
+        receive: Callable[..., Awaitable[dict[str, Any]]],
+        send: Callable[..., Awaitable[None]],
+        lease_token: str,
+        run_protected: Callable[
+            [Callable[..., Awaitable[None]]],
+            Awaitable[None],
+        ],
+    ) -> None:
+        response_started = False
+
+        async def tracked_send(message: dict[str, Any]) -> None:
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        downstream = asyncio.create_task(
+            run_protected(tracked_send),
+            name="propertyquarry-ingress-downstream",
+        )
+        renewal = asyncio.create_task(
+            self._renew_lease(scope=scope, lease_token=lease_token),
+            name="propertyquarry-ingress-lease-renewal",
+        )
+        try:
+            done, _pending = await asyncio.wait(
+                {downstream, renewal},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if renewal in done:
+                renewal_error = renewal.exception()
+                if renewal_error is not None:
+                    downstream.cancel()
+                    # Downstream cancellation/cleanup must not mask the
+                    # authoritative lease-loss failure.
+                    with suppress(asyncio.CancelledError, Exception):
+                        await asyncio.wait_for(downstream, timeout=1.0)
+                    if response_started:
+                        raise renewal_error
+                    await self._send_error(
+                        scope=scope,
+                        receive=receive,
+                        send=send,
+                        status_code=503,
+                        code="ingress_admission_lease_lost",
+                        message="distributed request capacity lease was lost",
+                        dimension="lease",
+                        retry_after=1,
+                    )
+                    return
+            await downstream
+        finally:
+            for task in (renewal, downstream):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(renewal, downstream, return_exceptions=True)
+
     async def __call__(
         self,
         scope: dict[str, Any],
@@ -578,9 +812,15 @@ class IngressAbuseMiddleware:
         raw_content_length = str(headers.get("content-length") or "").strip()
         content_length = 0
         if raw_content_length:
-            try:
-                content_length = int(raw_content_length)
-            except ValueError:
+            if (
+                not raw_content_length.isascii()
+                or not raw_content_length.isdecimal()
+                or len(raw_content_length) > 20
+                or (
+                    raw_content_length != "0"
+                    and raw_content_length.startswith("0")
+                )
+            ):
                 await self._send_error(
                     scope=scope,
                     receive=receive,
@@ -591,17 +831,37 @@ class IngressAbuseMiddleware:
                     dimension="body",
                 )
                 return
-            if content_length < 0:
-                await self._send_error(
-                    scope=scope,
-                    receive=receive,
-                    send=send,
-                    status_code=400,
-                    code="invalid_content_length",
-                    message="request Content-Length is invalid",
-                    dimension="body",
-                )
-                return
+            content_length = int(raw_content_length)
+        elif (
+            self.policy.quotas_enabled
+            and rule is not None
+            and method in {"POST", "PUT", "PATCH"}
+        ):
+            await self._send_error(
+                scope=scope,
+                receive=receive,
+                send=send,
+                status_code=411,
+                code="content_length_required",
+                message="Content-Length is required for metered request bodies",
+                dimension="body",
+            )
+            return
+        if (
+            self.policy.quotas_enabled
+            and rule is not None
+            and headers.get("transfer-encoding")
+        ):
+            await self._send_error(
+                scope=scope,
+                receive=receive,
+                send=send,
+                status_code=400,
+                code="request_transfer_encoding_unsupported",
+                message="transfer-encoded request bodies are not accepted",
+                dimension="body",
+            )
+            return
         if content_length > body_limit:
             await self._send_error(
                 scope=scope,
@@ -627,15 +887,36 @@ class IngressAbuseMiddleware:
             return
 
         received_bytes = 0
+        replay_body: bytes | None = None
 
-        async def limited_receive() -> dict[str, Any]:
+        async def validated_receive() -> dict[str, Any]:
             nonlocal received_bytes
             message = await receive()
             if message.get("type") == "http.request":
                 received_bytes += len(message.get("body") or b"")
                 if received_bytes > body_limit:
                     raise RequestBodyLimitExceeded("request_body_too_large")
+                if (
+                    self.policy.quotas_enabled
+                    and raw_content_length
+                    and received_bytes > content_length
+                ):
+                    raise RequestBodyLengthMismatch(
+                        "request_body_length_mismatch"
+                    )
             return message
+
+        async def limited_receive() -> dict[str, Any]:
+            nonlocal replay_body
+            if replay_body is not None:
+                body = replay_body
+                replay_body = None
+                return {
+                    "type": "http.request",
+                    "body": body,
+                    "more_body": False,
+                }
+            return await validated_receive()
 
         bypass = method == "OPTIONS" or normalized_path in _BYPASS_PATHS
         if not self.policy.quotas_enabled or bypass:
@@ -652,6 +933,16 @@ class IngressAbuseMiddleware:
                     dimension="body",
                     details={"max_body_bytes": body_limit},
                 )
+            except RequestBodyLengthMismatch:
+                await self._send_error(
+                    scope=scope,
+                    receive=receive,
+                    send=send,
+                    status_code=400,
+                    code="request_body_length_mismatch",
+                    message="request body does not match its declared Content-Length",
+                    dimension="body",
+                )
             return
 
         peer = (scope.get("client") or ("", 0))[0]
@@ -661,26 +952,115 @@ class IngressAbuseMiddleware:
             trusted_proxy_cidrs=self.policy.trusted_proxy_cidrs,
         )
         scope.setdefault("state", {})["client_ip"] = client_ip
-        allowed, retry_after = self._quota.consume(
-            f"request:ip:{client_ip}",
-            units=1,
-            limit=self.policy.ip_request_limit,
-        )
-        if not allowed:
+        try:
+            ip_admission = await asyncio.to_thread(
+                self._admission_store.consume_ip_request,
+                subject=client_ip,
+                units=1,
+                limit=self.policy.ip_request_limit,
+                window_seconds=self.policy.window_seconds,
+            )
+        except IngressAdmissionError as exc:
+            self._record_admission_error(scope, exc)
             await self._send_error(
                 scope=scope,
                 receive=receive,
                 send=send,
-                status_code=429,
-                code="ingress_rate_limit_exceeded",
-                message="request rate limit exceeded",
-                dimension="ip",
-                retry_after=retry_after,
+                status_code=503,
+                code="ingress_admission_unavailable",
+                message="distributed request admission is unavailable",
+                dimension="backend",
+                retry_after=5,
+            )
+            return
+        except Exception:
+            self._record_unexpected_admission_error(
+                scope,
+                operation=AdmissionOperation.IP_REQUEST,
+            )
+            await self._send_error(
+                scope=scope,
+                receive=receive,
+                send=send,
+                status_code=503,
+                code="ingress_admission_unavailable",
+                message="distributed request admission is unavailable",
+                dimension="backend",
+                retry_after=5,
+            )
+            return
+        self._record_admission_result(scope, ip_admission)
+        if not ip_admission.allowed:
+            capacity_exhausted = (
+                ip_admission.outcome is AdmissionOutcome.CAPACITY_EXHAUSTED
+            )
+            await self._send_error(
+                scope=scope,
+                receive=receive,
+                send=send,
+                status_code=503 if capacity_exhausted else 429,
+                code=(
+                    "ingress_admission_capacity_exhausted"
+                    if capacity_exhausted
+                    else "ingress_rate_limit_exceeded"
+                ),
+                message=(
+                    "distributed request admission capacity is exhausted"
+                    if capacity_exhausted
+                    else "request rate limit exceeded"
+                ),
+                dimension=(
+                    ip_admission.capacity_key.value
+                    if ip_admission.capacity_key is not None
+                    else "ip"
+                ),
+                retry_after=ip_admission.retry_after_seconds,
             )
             return
 
+        if rule is not None and method in _MUTATION_METHODS:
+            try:
+                body_chunks: list[bytes] = []
+                while True:
+                    message = await validated_receive()
+                    if message.get("type") != "http.request":
+                        raise RequestBodyLengthMismatch(
+                            "request_body_length_mismatch"
+                        )
+                    body_chunks.append(bytes(message.get("body") or b""))
+                    if not message.get("more_body"):
+                        break
+                if received_bytes != content_length:
+                    raise RequestBodyLengthMismatch(
+                        "request_body_length_mismatch"
+                    )
+                replay_body = b"".join(body_chunks)
+            except RequestBodyLimitExceeded:
+                await self._send_error(
+                    scope=scope,
+                    receive=receive,
+                    send=send,
+                    status_code=413,
+                    code="request_body_too_large",
+                    message="request body exceeds the configured limit",
+                    dimension="body",
+                    details={"max_body_bytes": body_limit},
+                )
+                return
+            except RequestBodyLengthMismatch:
+                await self._send_error(
+                    scope=scope,
+                    receive=receive,
+                    send=send,
+                    status_code=400,
+                    code="request_body_length_mismatch",
+                    message="request body does not match its declared Content-Length",
+                    dimension="body",
+                )
+                return
+
         context: RequestContext | None = None
-        account_key = ""
+        account_subject = ""
         if rule is not None:
             request = Request(scope, receive=limited_receive)
             try:
@@ -701,73 +1081,60 @@ class IngressAbuseMiddleware:
                     retry_after=5,
                 )
                 return
-            account_key = _hashed_account_key(context)
-            if account_key:
-                allowed, retry_after = self._quota.consume(
-                    f"request:account:{account_key}",
-                    units=1,
-                    limit=self.policy.account_request_limit,
-                )
-                if not allowed:
-                    await self._send_error(
-                        scope=scope,
-                        receive=receive,
-                        send=send,
-                        status_code=429,
-                        code="ingress_rate_limit_exceeded",
-                        message="account request rate limit exceeded",
-                        dimension="account",
-                        retry_after=retry_after,
-                    )
-                    return
-
-        cost_units = int(rule.cost_units if rule is not None else 0)
-        if content_length > 0:
-            cost_units += max(0, int(math.ceil(content_length / 262_144)) - 1)
-        if cost_units > 0:
-            allowed, retry_after = self._quota.consume(
-                f"cost:ip:{client_ip}",
-                units=cost_units,
-                limit=self.policy.ip_cost_limit,
-            )
-            if not allowed:
+            try:
+                account_subject = _account_subject(context)
+            except ValueError:
                 await self._send_error(
                     scope=scope,
                     receive=receive,
                     send=send,
-                    status_code=429,
-                    code="ingress_cost_quota_exceeded",
-                    message="request cost quota exceeded",
-                    dimension="ip",
-                    retry_after=retry_after,
+                    status_code=503,
+                    code="ingress_identity_invalid",
+                    message="request identity is not valid for admission",
+                    dimension="account",
+                    retry_after=5,
                 )
                 return
-            if account_key:
-                allowed, retry_after = self._quota.consume(
-                    f"cost:account:{account_key}",
-                    units=cost_units,
-                    limit=self.policy.account_cost_limit,
+
+        cost_units = int(rule.cost_units if rule is not None else 0)
+        if content_length > 0:
+            cost_units += max(0, int(math.ceil(content_length / 262_144)) - 1)
+        quota_charges: list[QuotaCharge] = []
+        if account_subject:
+            quota_charges.append(
+                QuotaCharge(
+                    kind=QuotaKind.REQUEST,
+                    dimension=AdmissionDimension.ACCOUNT,
+                    subject=account_subject,
+                    units=1,
+                    limit=self.policy.account_request_limit,
+                    window_seconds=self.policy.window_seconds,
                 )
-                if not allowed:
-                    await self._send_error(
-                        scope=scope,
-                        receive=receive,
-                        send=send,
-                        status_code=429,
-                        code="ingress_cost_quota_exceeded",
-                        message="account request cost quota exceeded",
-                        dimension="account",
-                        retry_after=retry_after,
+            )
+        if cost_units > 0:
+            quota_charges.append(
+                QuotaCharge(
+                    kind=QuotaKind.COST,
+                    dimension=AdmissionDimension.IP,
+                    subject=client_ip,
+                    units=cost_units,
+                    limit=self.policy.ip_cost_limit,
+                    window_seconds=self.policy.window_seconds,
+                )
+            )
+            if account_subject:
+                quota_charges.append(
+                    QuotaCharge(
+                        kind=QuotaKind.COST,
+                        dimension=AdmissionDimension.ACCOUNT,
+                        subject=account_subject,
+                        units=cost_units,
+                        limit=self.policy.account_cost_limit,
+                        window_seconds=self.policy.window_seconds,
                     )
-                    return
-            app = scope.get("app")
-            if app is not None:
-                get_runtime_metrics(app).record_ingress_cost(
-                    route_class=rule.name if rule is not None else "mutation",
-                    cost_units=cost_units,
                 )
 
-        acquired = False
+        lease_scopes: list[LeaseScope] = []
         if rule is not None and rule.high_cost:
             account_concurrency = (
                 min(
@@ -777,24 +1144,118 @@ class IngressAbuseMiddleware:
                 if rule.active_search
                 else self.policy.high_cost_account_concurrency
             )
-            acquired, dimension = self._inflight.acquire(
-                ip_key=client_ip,
-                account_key=account_key,
-                ip_limit=self.policy.high_cost_ip_concurrency,
-                account_limit=account_concurrency,
+            lease_scopes.append(
+                LeaseScope(
+                    dimension=AdmissionDimension.IP,
+                    subject=client_ip,
+                    limit=self.policy.high_cost_ip_concurrency,
+                )
             )
-            if not acquired:
+            if account_subject:
+                lease_scopes.append(
+                    LeaseScope(
+                        dimension=AdmissionDimension.ACCOUNT,
+                        subject=account_subject,
+                        limit=account_concurrency,
+                    )
+                )
+
+        lease_token = ""
+        if quota_charges or lease_scopes:
+            try:
+                admission = await asyncio.to_thread(
+                    self._admission_store.admit,
+                    AdmissionRequest(
+                        quota_charges=tuple(quota_charges),
+                        lease_scopes=tuple(lease_scopes),
+                        lease_seconds=self.policy.lease_seconds,
+                    ),
+                )
+            except IngressAdmissionError as exc:
+                self._record_admission_error(scope, exc)
                 await self._send_error(
                     scope=scope,
                     receive=receive,
                     send=send,
-                    status_code=429,
-                    code="ingress_concurrency_limit_exceeded",
-                    message="too many high-cost requests are already active",
-                    dimension=dimension,
-                    retry_after=1,
+                    status_code=503,
+                    code="ingress_admission_unavailable",
+                    message="distributed request admission is unavailable",
+                    dimension="backend",
+                    retry_after=5,
                 )
                 return
+            except Exception:
+                self._record_unexpected_admission_error(
+                    scope,
+                    operation=AdmissionOperation.ADMIT,
+                )
+                await self._send_error(
+                    scope=scope,
+                    receive=receive,
+                    send=send,
+                    status_code=503,
+                    code="ingress_admission_unavailable",
+                    message="distributed request admission is unavailable",
+                    dimension="backend",
+                    retry_after=5,
+                )
+                return
+            self._record_admission_result(scope, admission)
+            if not admission.allowed:
+                dimension = (
+                    admission.rejected_dimension.value
+                    if admission.rejected_dimension is not None
+                    else (
+                        admission.capacity_key.value
+                        if admission.capacity_key is not None
+                        else "backend"
+                    )
+                )
+                if admission.outcome is AdmissionOutcome.QUOTA_LIMITED:
+                    cost_limited = admission.rejected_kind is QuotaKind.COST
+                    status_code = 429
+                    code = (
+                        "ingress_cost_quota_exceeded"
+                        if cost_limited
+                        else "ingress_rate_limit_exceeded"
+                    )
+                    message = (
+                        "request cost quota exceeded"
+                        if cost_limited
+                        else "request rate limit exceeded"
+                    )
+                elif admission.outcome is AdmissionOutcome.LEASE_LIMITED:
+                    status_code = 429
+                    code = "ingress_concurrency_limit_exceeded"
+                    message = "too many high-cost requests are already active"
+                    retry_after = 1
+                else:
+                    status_code = 503
+                    code = "ingress_admission_capacity_exhausted"
+                    message = "distributed request admission capacity is exhausted"
+                    retry_after = admission.retry_after_seconds
+                if admission.outcome is AdmissionOutcome.QUOTA_LIMITED:
+                    retry_after = admission.retry_after_seconds
+                await self._send_error(
+                    scope=scope,
+                    receive=receive,
+                    send=send,
+                    status_code=status_code,
+                    code=code,
+                    message=message,
+                    dimension=dimension,
+                    retry_after=retry_after,
+                )
+                return
+            lease_token = admission.lease_token
+        if cost_units > 0:
+            app = scope.get("app")
+            if app is not None:
+                get_runtime_metrics(app).record_ingress_cost(
+                    route_class=rule.name if rule is not None else "mutation",
+                    cost_units=cost_units,
+                )
+        if lease_token and rule is not None:
             app = scope.get("app")
             if app is not None:
                 get_runtime_metrics(app).adjust_ingress_inflight(
@@ -802,9 +1263,15 @@ class IngressAbuseMiddleware:
                     delta=1,
                 )
 
-        request_for_active_check: Request | None = None
-        try:
-            if rule is not None and rule.active_search and context is not None and account_key:
+        async def run_after_admission(
+            response_send: Callable[..., Awaitable[None]],
+        ) -> None:
+            if (
+                rule is not None
+                and rule.active_search
+                and context is not None
+                and account_subject
+            ):
                 request_for_active_check = Request(scope, receive=limited_receive)
                 try:
                     if self._active_search_counter is not None:
@@ -825,7 +1292,7 @@ class IngressAbuseMiddleware:
                     await self._send_error(
                         scope=scope,
                         receive=receive,
-                        send=send,
+                        send=response_send,
                         status_code=503,
                         code="active_search_check_unavailable",
                         message="active search capacity could not be checked",
@@ -837,7 +1304,7 @@ class IngressAbuseMiddleware:
                     await self._send_error(
                         scope=scope,
                         receive=receive,
-                        send=send,
+                        send=response_send,
                         status_code=429,
                         code="active_search_limit_exceeded",
                         message="an active property search is already running",
@@ -846,8 +1313,20 @@ class IngressAbuseMiddleware:
                         details={"active_search_limit": self.policy.active_search_limit},
                     )
                     return
+            await self.app(scope, limited_receive, response_send)
+
+        try:
             try:
-                await self.app(scope, limited_receive, send)
+                if lease_token:
+                    await self._run_with_lease(
+                        scope=scope,
+                        receive=limited_receive,
+                        send=send,
+                        lease_token=lease_token,
+                        run_protected=run_after_admission,
+                    )
+                else:
+                    await run_after_admission(send)
             except RequestBodyLimitExceeded:
                 await self._send_error(
                     scope=scope,
@@ -859,11 +1338,52 @@ class IngressAbuseMiddleware:
                     dimension="body",
                     details={"max_body_bytes": body_limit},
                 )
+            except RequestBodyLengthMismatch:
+                await self._send_error(
+                    scope=scope,
+                    receive=receive,
+                    send=send,
+                    status_code=400,
+                    code="request_body_length_mismatch",
+                    message="request body does not match its declared Content-Length",
+                    dimension="body",
+                )
         finally:
-            if acquired and rule is not None:
-                self._inflight.release(ip_key=client_ip, account_key=account_key)
+            if lease_token:
+                try:
+                    released = await asyncio.to_thread(
+                        self._admission_store.release_lease,
+                        lease_token,
+                    )
+                except IngressAdmissionError as exc:
+                    self._record_admission_error(scope, exc)
+                    _LOG.warning(
+                        "distributed ingress lease release failed backend=%s",
+                        exc.backend.value,
+                    )
+                except Exception:
+                    self._record_unexpected_admission_error(
+                        scope,
+                        operation=AdmissionOperation.RELEASE,
+                    )
+                    _LOG.warning(
+                        "distributed ingress lease release failed backend=%s",
+                        self._admission_backend().value,
+                    )
+                else:
+                    app = scope.get("app")
+                    if app is not None:
+                        get_runtime_metrics(app).record_ingress_admission_operation(
+                            backend=self._admission_backend().value,
+                            operation=AdmissionOperation.RELEASE.value,
+                            outcome=(
+                                AdmissionOutcome.ALLOWED.value
+                                if released
+                                else AdmissionOutcome.LEASE_LIMITED.value
+                            ),
+                        )
                 app = scope.get("app")
-                if app is not None:
+                if app is not None and rule is not None:
                     get_runtime_metrics(app).adjust_ingress_inflight(
                         route_class=rule.name,
                         delta=-1,

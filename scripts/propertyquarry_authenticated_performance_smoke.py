@@ -851,8 +851,9 @@ def _measure_route(client: TestClient, path: str, *, budget_ms: int) -> dict[str
                     "name": "agent_cards",
                     "ok": (
                         "Leopoldstadt rent watch" in body
+                        and "Hietzing buy watch" in body
                         and "1 active" in visible_body
-                        and "1 saved" in visible_body
+                        and "2 saved" in visible_body
                     ),
                 },
                 {"name": "map_only_thumbnails", "ok": "osm_district_overlay" in body and "Map preview unavailable" not in body},
@@ -1090,6 +1091,7 @@ def build_authenticated_performance_receipt(*, route_budget_ms: int = 1200) -> d
     # Keep prod-mode startup valid even when this smoke runs outside the live container.
     os.environ["EA_RUNTIME_MODE"] = "dev"
     os.environ["EA_API_TOKEN"] = "performance-smoke-local-token"
+    os.environ["PROPERTYQUARRY_MAP_TILE_NETWORK_ENABLED"] = "0"
     os.environ["PROPERTYQUARRY_ENABLE_LEGACY_RUNTIME_SURFACES"] = "1"
     os.environ["EA_TRUST_AUTHENTICATED_PRINCIPAL_HEADER"] = "1"
     os.environ["PROPERTYQUARRY_BRILLIANT_DIRECTORIES_ENABLED"] = "1"

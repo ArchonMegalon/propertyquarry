@@ -13,11 +13,8 @@ import hashlib
 import ipaddress
 import json
 import math
-import os
 import re
-import stat
 import sys
-import tempfile
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,8 +22,10 @@ from typing import Any, Mapping, Sequence
 
 if __package__:
     from scripts import propertyquarry_evidence_contract as evidence_contract
+    from scripts import propertyquarry_secure_file_io as secure_file_io
 else:
     import propertyquarry_evidence_contract as evidence_contract
+    import propertyquarry_secure_file_io as secure_file_io
 
 
 MONITORING_SCHEMA = "propertyquarry.monitoring-runtime-proof.v2"
@@ -37,6 +36,17 @@ ALERT_SCHEMA = evidence_contract.OPERATOR_GATEWAY_ACK_SCHEMA
 ALERT_PRODUCER = evidence_contract.OPERATOR_GATEWAY_ACK_PRODUCER
 VERIFICATION_SCHEMA = "propertyquarry.observability-receipt-verification.v2"
 VERIFICATION_PRODUCER = "propertyquarry-observability-receipt-verifier"
+OPERATIONS_VERIFICATION_SCHEMA = (
+    "propertyquarry.flagship-operations-evidence-verification.v1"
+)
+OPERATIONS_VERIFICATION_PRODUCER = (
+    "propertyquarry-flagship-operations-evidence-verifier"
+)
+OPERATIONS_SHARED_INPUT_NAMES = (
+    "dashboard_render_receipt",
+    "structured_log_query_receipt",
+    "distributed_trace_query_receipt",
+)
 GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -49,6 +59,37 @@ MIN_RANGE_SECONDS = evidence_contract.RANGE_WINDOW_SECONDS
 
 class ReceiptValidationError(RuntimeError):
     """A receipt is malformed, tampered, stale, or bound to another release."""
+
+
+def verify_operations_evidence(
+    *,
+    release_commit_sha: str,
+    release_image_digest: str,
+    dashboard_render_receipt_path: Path,
+    structured_log_query_receipt_path: Path,
+    distributed_trace_query_receipt_path: Path,
+    now: datetime | None = None,
+    expected_input_hashes: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Invoke the standalone verifier without creating an import cycle."""
+
+    if __package__:
+        from scripts import propertyquarry_flagship_operations_evidence as verifier
+    else:
+        import propertyquarry_flagship_operations_evidence as verifier
+
+    try:
+        return verifier.verify_operations_evidence(
+            release_commit_sha=release_commit_sha,
+            release_image_digest=release_image_digest,
+            dashboard_render_receipt_path=dashboard_render_receipt_path,
+            structured_log_query_receipt_path=structured_log_query_receipt_path,
+            distributed_trace_query_receipt_path=distributed_trace_query_receipt_path,
+            now=now,
+            expected_input_hashes=expected_input_hashes,
+        )
+    except verifier.OperationsEvidenceValidationError as exc:
+        raise ReceiptValidationError(str(exc)) from exc
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -1057,6 +1098,9 @@ def verify_receipt_bundle(
     prometheus_range_receipt_path: Path,
     prometheus_range_response_path: Path,
     alert_delivery_receipt_path: Path,
+    dashboard_render_receipt_path: Path,
+    structured_log_query_receipt_path: Path,
+    distributed_trace_query_receipt_path: Path,
     now: datetime | None = None,
     expected_input_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
@@ -1103,8 +1147,87 @@ def verify_receipt_bundle(
     }
     if metrics_probe_raw is not None:
         shared_input_hashes["metrics_probe"] = sha256_bytes(metrics_probe_raw)
+    expected_operations_hashes = None
+    if expected_input_hashes is not None:
+        expected_operations_hashes = {
+            name: str(expected_input_hashes[name])
+            for name in OPERATIONS_SHARED_INPUT_NAMES
+            if name in expected_input_hashes
+        }
+    operations_evidence_raw = verify_operations_evidence(
+        release_commit_sha=commit_sha,
+        release_image_digest=image_digest,
+        dashboard_render_receipt_path=dashboard_render_receipt_path,
+        structured_log_query_receipt_path=structured_log_query_receipt_path,
+        distributed_trace_query_receipt_path=distributed_trace_query_receipt_path,
+        now=checked_at,
+        expected_input_hashes=expected_operations_hashes,
+    )
+    if not isinstance(operations_evidence_raw, Mapping):
+        raise ReceiptValidationError(
+            "flagship operations verifier did not return a receipt object"
+        )
+    operations_evidence = dict(operations_evidence_raw)
+    operations_input_hashes = _mapping(
+        operations_evidence.get("shared_input_hashes"),
+        field="flagship operations shared input hashes",
+    )
+    if set(operations_input_hashes) != set(OPERATIONS_SHARED_INPUT_NAMES):
+        raise ReceiptValidationError(
+            "flagship operations shared input hash set is not canonical"
+        )
+    for name in OPERATIONS_SHARED_INPUT_NAMES:
+        value = operations_input_hashes.get(name)
+        if not isinstance(value, str) or SHA256_RE.fullmatch(value) is None:
+            raise ReceiptValidationError(
+                f"flagship operations shared input hash is invalid: {name}"
+            )
+        if name in shared_input_hashes:
+            raise ReceiptValidationError(
+                f"flagship operations shared input hash overlaps: {name}"
+            )
+        shared_input_hashes[name] = value
     if expected_input_hashes is not None and shared_input_hashes != dict(expected_input_hashes):
         raise ReceiptValidationError("observability shared launch input hash set differs")
+    if (
+        operations_evidence.get("schema_version") != OPERATIONS_VERIFICATION_SCHEMA
+        or operations_evidence.get("producer")
+        != OPERATIONS_VERIFICATION_PRODUCER
+        or operations_evidence.get("status") != "verified"
+        or operations_evidence.get("source_contract_status")
+        != "defined_not_live_evidence"
+        or operations_evidence.get("cross_receipt_links_verified") is not True
+    ):
+        raise ReceiptValidationError(
+            "flagship operations verifier receipt is not canonical and verified"
+        )
+    if operations_evidence.get("release") != {
+        "commit_sha": commit_sha,
+        "image_digest": image_digest,
+    }:
+        raise ReceiptValidationError(
+            "flagship operations verifier release differs"
+        )
+    if operations_evidence.get("deployment_id") != challenge.deployment_id:
+        raise ReceiptValidationError(
+            "flagship operations verifier deployment differs"
+        )
+    if operations_evidence.get("challenge_sha256") != challenge.artifact_sha256:
+        raise ReceiptValidationError(
+            "flagship operations verifier challenge differs"
+        )
+    if operations_evidence.get("policy_sha256") != challenge.policy_hashes.get(
+        "flagship_operations_sha256"
+    ):
+        raise ReceiptValidationError(
+            "flagship operations verifier policy differs"
+        )
+    if operations_evidence.get("payload_sha256") != compute_payload_sha256(
+        operations_evidence
+    ):
+        raise ReceiptValidationError(
+            "flagship operations verifier payload hash differs"
+        )
     monitoring = validate_monitoring_runtime_receipt(
         monitoring_payload,
         expected_commit_sha=commit_sha,
@@ -1117,6 +1240,25 @@ def verify_receipt_bundle(
         challenge=challenge,
         now=checked_at,
     )
+    operations_replica_ids = operations_evidence.get("replica_ids")
+    if (
+        not isinstance(operations_replica_ids, list)
+        or not operations_replica_ids
+        or any(
+            not isinstance(replica_id, str)
+            or REPLICA_ID_RE.fullmatch(replica_id) is None
+            or replica_id == "UNCONFIGURED"
+            for replica_id in operations_replica_ids
+        )
+        or operations_replica_ids != sorted(set(operations_replica_ids))
+    ):
+        raise ReceiptValidationError(
+            "flagship operations verifier replica_ids are not a sorted unique valid list"
+        )
+    if operations_replica_ids != monitoring["expected_replica_ids"]:
+        raise ReceiptValidationError(
+            "flagship operations and monitoring replica sets differ"
+        )
     range_result = validate_prometheus_range_receipt(
         range_payload,
         expected_commit_sha=commit_sha,
@@ -1172,6 +1314,7 @@ def verify_receipt_bundle(
         ),
         "monitoring_tools": dict(canonical_monitoring_identity["monitoring_tools"]),
         "shared_input_hashes": shared_input_hashes,
+        "operations_evidence": operations_evidence,
         "snapshot_bundle_sha256": snapshot_sha256,
         "status": "verified",
         "replica_ids": monitoring["expected_replica_ids"],
@@ -1196,23 +1339,29 @@ def verify_receipt_bundle(
 
 
 def atomic_write_json(path: Path, payload: Mapping[str, object], *, overwrite: bool) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if path.exists() and not overwrite:
-        raise ReceiptValidationError(f"output already exists: {path}; use --overwrite to replace it")
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = Path(temporary_name)
     try:
-        os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False).encode("utf-8"))
-            handle.write(b"\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-    finally:
-        if temporary.exists():
-            temporary.unlink()
+        encoded = (
+            json.dumps(
+                payload,
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ReceiptValidationError("output payload is not finite JSON") from exc
+    try:
+        secure_file_io.atomic_write_bytes(path, encoded, overwrite=overwrite)
+    except secure_file_io.OutputExistsError as exc:
+        raise ReceiptValidationError(
+            "output cannot be published safely: output already exists; "
+            "use --overwrite to replace it"
+        ) from exc
+    except secure_file_io.SecureFileIOError as exc:
+        raise ReceiptValidationError(
+            f"output cannot be published safely: {exc}"
+        ) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1227,6 +1376,9 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--prometheus-range-receipt", type=Path, required=True)
     verify.add_argument("--prometheus-range-response", type=Path, required=True)
     verify.add_argument("--alert-delivery-receipt", type=Path, required=True)
+    verify.add_argument("--dashboard-render-receipt", type=Path, required=True)
+    verify.add_argument("--structured-log-query-receipt", type=Path, required=True)
+    verify.add_argument("--distributed-trace-query-receipt", type=Path, required=True)
     verify.add_argument("--output", type=Path, required=True)
     verify.add_argument("--overwrite", action="store_true")
     return parser
@@ -1244,6 +1396,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             prometheus_range_receipt_path=args.prometheus_range_receipt,
             prometheus_range_response_path=args.prometheus_range_response,
             alert_delivery_receipt_path=args.alert_delivery_receipt,
+            dashboard_render_receipt_path=args.dashboard_render_receipt,
+            structured_log_query_receipt_path=args.structured_log_query_receipt,
+            distributed_trace_query_receipt_path=args.distributed_trace_query_receipt,
         )
         atomic_write_json(args.output, receipt, overwrite=args.overwrite)
     except ReceiptValidationError as exc:

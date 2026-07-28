@@ -10,6 +10,7 @@ from typing import Any, Callable
 import pytest
 
 import scripts.check_property_release_hygiene as release_hygiene
+import scripts.verify_generated_release_artifacts_clean as generated_release_artifacts
 from scripts.materialize_ea_browser_workflow_proof import build_receipt as build_browser_receipt
 from scripts.materialize_ea_flagship_release_gate import build_receipt as build_flagship_receipt
 from scripts.propertyquarry_release_receipt_binding import (
@@ -47,6 +48,7 @@ BROWSER_CASES = [
     "test_propertyquarry_greenfield_workspace_in_real_browser",
     "test_propertyquarry_greenfield_workspace_is_mobile_usable",
     "test_propertyquarry_expired_session_next_action_moves_keyboard_focus_to_sign_in_options",
+    "test_propertyquarry_workbench_candidate_history_stays_in_place",
     "test_propertyquarry_flagship_operating_loop_in_browser",
     "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
     "test_propertyquarry_packet_tracks_followup_state_in_browser",
@@ -195,7 +197,8 @@ def _seed() -> dict[str, Any]:
                         {
                             "file": BROWSER_FILE,
                             "cases": [
-                                "test_propertyquarry_greenfield_workspace_is_mobile_usable"
+                                "test_propertyquarry_greenfield_workspace_is_mobile_usable",
+                                "test_propertyquarry_workbench_candidate_history_stays_in_place",
                             ],
                         },
                     ],
@@ -374,12 +377,31 @@ def _canonical_receipt_repo(
     _git(root, "commit", "-q", "-m", "canonical release receipt metadata")
     receipt_commit = _git(root, "rev-parse", "HEAD")
     assert _git(root, "rev-parse", "HEAD^") == code_parent
+    manifest_values = dict(generated_release_artifacts.RELEASE_MANIFEST_STATIC_VALUES)
+    manifest_values.update({
+        "release_commit_sha": receipt_commit,
+        "release_artifact_set": (
+            "propertyquarry-generated-release-artifacts-v1@sha256:" + "a" * 64
+        ),
+        "release_label": "synthetic-canonical-release-envelope",
+        "release_generated_at": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "release_deployment_id": "pending-synthetic-verified-deploy",
+    })
     manifest = f"""# PropertyQuarry Release Manifest
 
 | Field | Value |
 | --- | --- |
 | Product | PropertyQuarry |
 | Runtime commit SHA | `{receipt_commit}` |
+
+{generated_release_artifacts.RELEASE_MANIFEST_JSON_START}
+```json
+{json.dumps(manifest_values, indent=2, sort_keys=True)}
+```
+{generated_release_artifacts.RELEASE_MANIFEST_JSON_END}
 """
     _write_text(root / CANONICAL_RELEASE_MANIFEST, manifest)
     flagship_bytes = (root / CANONICAL_FLAGSHIP_RECEIPT).read_bytes()

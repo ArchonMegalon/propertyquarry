@@ -26,6 +26,11 @@ _SENSITIVE_INLINE_RE = re.compile(
 _STRUCTURED_FIELDS = {
     "event",
     "correlation_id",
+    "trace_id",
+    "span_id",
+    "release_commit_sha",
+    "release_image_digest",
+    "replica_id",
     "method",
     "route",
     "status_code",
@@ -37,6 +42,14 @@ _STRUCTURED_FIELDS = {
     "exception_type",
     "exception_message",
     "exception_stack",
+}
+_TELEMETRY_BOUND_FIELDS = {
+    "correlation_id",
+    "trace_id",
+    "span_id",
+    "release_commit_sha",
+    "release_image_digest",
+    "replica_id",
 }
 
 
@@ -83,10 +96,41 @@ class RedactingJsonFormatter(logging.Formatter):
             "service": "propertyquarry",
         }
         fields = getattr(record, "propertyquarry_fields", {})
+        bound_telemetry_fields = (
+            {
+                key: fields[key]
+                for key in _TELEMETRY_BOUND_FIELDS
+            }
+            if isinstance(fields, Mapping)
+            and all(key in fields for key in _TELEMETRY_BOUND_FIELDS)
+            else {}
+        )
+        if bound_telemetry_fields:
+            telemetry_fields = bound_telemetry_fields
+        else:
+            try:
+                from app.telemetry import current_telemetry_log_fields
+
+                telemetry_fields = current_telemetry_log_fields()
+            except Exception:
+                telemetry_fields = {}
+        for key in _TELEMETRY_BOUND_FIELDS:
+            if key in telemetry_fields:
+                payload[key] = redact_log_value(
+                    telemetry_fields[key],
+                    key=key,
+                )
         if isinstance(fields, Mapping):
             for key, value in fields.items():
                 normalized_key = str(key or "").strip()
-                if normalized_key in _STRUCTURED_FIELDS and not normalized_key.startswith("exception_"):
+                if (
+                    normalized_key in _STRUCTURED_FIELDS
+                    and not normalized_key.startswith("exception_")
+                    and not (
+                        normalized_key in _TELEMETRY_BOUND_FIELDS
+                        and normalized_key in payload
+                    )
+                ):
                     payload[normalized_key] = redact_log_value(value, key=normalized_key)
             structured_exception_type = str(fields.get("exception_type") or "").strip()
             structured_exception_stack = str(fields.get("exception_stack") or "").strip()
@@ -132,6 +176,12 @@ def log_event(
     **fields: Any,
 ) -> None:
     structured_fields = {"event": str(event or "runtime_event"), **fields}
+    try:
+        from app.telemetry import current_telemetry_log_fields
+
+        structured_fields.update(current_telemetry_log_fields())
+    except Exception:
+        pass
     logger.log(
         level,
         str(event or "runtime_event"),

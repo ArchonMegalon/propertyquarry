@@ -1,20 +1,41 @@
-FROM python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203
+FROM python:3.12-slim@sha256:cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464 AS build
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl python3-numpy && \
-    rm -rf /var/lib/apt/lists/* && \
-    adduser --system --uid 10001 --group --home /home/ea --shell /bin/sh ea
+RUN adduser --system --uid 10001 --group --home /home/ea --shell /bin/sh ea
+
+RUN set -eu; \
+    runtime_overlay=/runtime-overlay; \
+    mkdir -p "${runtime_overlay}/var/lib/dpkg/status.d"; \
+    for package in libbz2-1.0 libcrypt1 libffi8 liblzma5 libsqlite3-0; do \
+      dpkg-query --status "${package}" >"${runtime_overlay}/var/lib/dpkg/status.d/${package}"; \
+      dpkg-query --listfiles "${package}" \
+        | while IFS= read -r package_path; do \
+            if { [ -e "${package_path}" ] || [ -L "${package_path}" ]; } \
+              && [ "${package_path}" != "/." ]; then \
+              printf '%s\n' "${package_path#/}"; \
+            fi; \
+          done \
+        | tar --create --no-recursion --file - --directory / --files-from - \
+        | tar --extract --file - --directory "${runtime_overlay}"; \
+    done
 
 WORKDIR /app
 
 COPY ea/requirements.txt /app/requirements.txt
 COPY ea/requirements.lock /app/requirements.lock
+COPY ea/requirements.wheelhouse.lock /app/requirements.wheelhouse.lock
+COPY vendor/propertyquarry-wheelhouse/cp312-linux-x86_64 /wheelhouse
 
-RUN python -m pip install --no-cache-dir --upgrade pip==26.1.2 && \
-    pip install --no-cache-dir -r requirements.txt -c requirements.lock
+RUN python -m pip install \
+      --no-cache-dir \
+      --no-index \
+      --find-links=/wheelhouse \
+      --require-hashes \
+      --requirement /app/requirements.wheelhouse.lock && \
+    python -m pip uninstall --yes pip && \
+    rm -rf /wheelhouse
 
 RUN mkdir -p /app/scripts /app/docs /data/artifacts /data/public_property_tours /data/provider-ledger /home/ea
 COPY scripts/willhaben_property_packet.py /app/scripts/willhaben_property_packet.py
@@ -42,22 +63,38 @@ COPY scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_p
 COPY scripts/generate_property_reconstruction.py /app/scripts/generate_property_reconstruction.py
 COPY scripts/import_magicfit_walkthrough.py /app/scripts/import_magicfit_walkthrough.py
 COPY scripts/verify_property_tour_controls.py /app/scripts/verify_property_tour_controls.py
+COPY scripts/property_tour_3dvista_provenance.py /app/scripts/property_tour_3dvista_provenance.py
+COPY scripts/property_tour_panorama_provenance.py /app/scripts/property_tour_panorama_provenance.py
+COPY scripts/property_tour_host_safety.py /app/scripts/property_tour_host_safety.py
 COPY scripts/intake_3dvista_gold_artifact.py /app/scripts/intake_3dvista_gold_artifact.py
 COPY vendor/three /app/vendor/three
 COPY ea/app /app/app
 COPY docs/PROPERTYQUARRY_RELEASE_MANIFEST.md /app/docs/PROPERTYQUARRY_RELEASE_MANIFEST.md
-COPY ea/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY LTDs.md /app/LTDs.md
 
 RUN set -eu; \
     mkdir -p /data/artifacts /data/public_property_tours /data/provider-ledger /home/ea; \
-    chown -R ea:ea /app /data /home/ea /usr/local/bin/docker-entrypoint.sh; \
-    chmod +x /usr/local/bin/docker-entrypoint.sh
+    chown -R ea:ea /app /data /home/ea
 
-USER ea
+FROM gcr.io/distroless/cc-debian13@sha256:d0b79eb697888ecb8ef019bbb7192e4f41974830ea95f0543123eaaeb2d5fd2c AS runtime
+
+ENV HOME=/home/ea \
+    PATH=/usr/local/bin:/usr/bin \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY --from=build /etc/passwd /etc/passwd
+COPY --from=build /etc/group /etc/group
+COPY --from=build /usr/local /usr/local
+COPY --from=build /runtime-overlay/ /
+COPY --from=build --chown=10001:10001 /app /app
+COPY --from=build --chown=10001:10001 /data /data
+COPY --from=build --chown=10001:10001 /home/ea /home/ea
+
+WORKDIR /app
+USER 10001:10001
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=5 \
-  CMD ["/bin/sh", "-ec", "role=${EA_ROLE:-api}; case \"$role\" in worker|scheduler|render-tools) exit 0 ;; *) curl -fsS --connect-timeout 2 --max-time 10 http://127.0.0.1:8090/health/live >/dev/null ;; esac"]
+  CMD ["python", "-c", "import os, urllib.request; role = os.environ.get('EA_ROLE', 'api'); role in {'worker', 'scheduler', 'render-tools'} or urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8090/health/live', timeout=10).read(1)"]
 
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "-m", "app.runner"]

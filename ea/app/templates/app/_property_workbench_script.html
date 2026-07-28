@@ -1,6 +1,8 @@
   (() => {
     const root = document.querySelector('[data-property-decision-workbench]');
     if (!root) return;
+    if (root.dataset.pqWorkbenchController === 'loaded') return;
+    root.dataset.pqWorkbenchController = 'initializing';
     const initialSurface = String(root.getAttribute('data-pqx-surface') || '').trim().toLowerCase();
     const shortlistSurface = initialSurface === 'shortlist';
     if (shortlistSurface) {
@@ -3872,6 +3874,18 @@
     };
     initializeMobileFoldAccordions();
     window.addEventListener('resize', initializeMobileFoldAccordions);
+    const syncWhatMattersNativeAccordion = () => {
+      const panel = root.querySelector('[data-property-what-matters-panel]');
+      if (!(panel instanceof HTMLElement)) return;
+      const mobile = window.matchMedia('(max-width: 760px)').matches;
+      panel.querySelectorAll('details[data-what-matters-group]').forEach((details) => {
+        if (!(details instanceof HTMLDetailsElement)) return;
+        if (mobile) details.setAttribute('name', 'property-what-matters-mobile');
+        else if (details.getAttribute('name') === 'property-what-matters-mobile') details.removeAttribute('name');
+      });
+    };
+    syncWhatMattersNativeAccordion();
+    window.addEventListener('resize', syncWhatMattersNativeAccordion);
     bindMobileAccordionPanels({ selector: 'details[data-what-matters-group]', container: root });
     const preferredWhatMattersAccordionPanel = (container) => {
       if (!(container instanceof HTMLElement)) return null;
@@ -4095,9 +4109,13 @@
         }
         if (actions) actions.hidden = current !== visibleSteps.length - 1;
         if (!silent && stepNav && typeof stepNav.scrollIntoView === 'function') {
-          window.requestAnimationFrame(() => {
-            stepNav.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
-          });
+          if (isMobileSearch || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            stepNav.scrollIntoView({ behavior: 'auto', block: 'start', inline: 'nearest' });
+          } else {
+            window.requestAnimationFrame(() => {
+              stepNav.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+            });
+          }
         }
         if (!silent) {
           form.dispatchEvent(new CustomEvent('propertyquarry:stepchange', { detail: { step: stepKey } }));
@@ -4907,6 +4925,30 @@
         const group = target?.closest?.('details[data-what-matters-group]');
         return group instanceof HTMLDetailsElement ? group : null;
       };
+      const currentWhatMattersWindowScrollY = () => Number(
+        window.scrollY
+        || window.pageYOffset
+        || document.documentElement.scrollTop
+        || document.body.scrollTop
+        || 0
+      );
+      const captureWhatMattersScrollOwners = (row) => {
+        const owners = [];
+        let node = row instanceof HTMLElement ? row.parentElement : null;
+        while (node instanceof HTMLElement && node !== document.body && node !== document.documentElement) {
+          const style = window.getComputedStyle(node);
+          const overflowY = String(style.overflowY || '').toLowerCase();
+          if (/(auto|scroll|overlay)/.test(overflowY) && node.scrollHeight > node.clientHeight + 1) {
+            owners.push({
+              node,
+              scrollTop: Number(node.scrollTop || 0),
+              scrollLeft: Number(node.scrollLeft || 0),
+            });
+          }
+          node = node.parentElement;
+        }
+        return owners;
+      };
       const captureWhatMattersInteractionSnapshot = (target, { restoreFocus = true, preserveScroll = true } = {}) => {
         const row = target?.closest?.('[data-keyword-priority-row], [data-school-priority-row]');
         const group = resolveWhatMattersGroup(target);
@@ -4924,7 +4966,8 @@
           row,
           group,
           rowTop: Number(rect.top || 0),
-          scrollY: Number(window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0),
+          scrollY: currentWhatMattersWindowScrollY(),
+          scrollOwners: captureWhatMattersScrollOwners(row),
           target: target instanceof HTMLElement ? target : null,
           restoreFocus: restoreFocus !== false,
           preserveScroll: preserveScroll !== false,
@@ -4984,11 +5027,21 @@
         }
         if (snapshot.preserveScroll === true) {
           const nextRect = snapshot.row.getBoundingClientRect();
-          const delta = Number(nextRect.top || 0) - Number(snapshot.rowTop || 0);
+          let delta = Number(nextRect.top || 0) - Number(snapshot.rowTop || 0);
+          const scrollOwners = Array.isArray(snapshot.scrollOwners) ? snapshot.scrollOwners : [];
           if (Number.isFinite(delta) && Math.abs(delta) > 1 && Math.abs(delta) < Math.max(window.innerHeight || 0, 320)) {
-            window.scrollBy({ top: delta, left: 0, behavior: 'auto' });
+            for (const entry of scrollOwners) {
+              if (!(entry?.node instanceof HTMLElement) || !entry.node.isConnected) continue;
+              if (entry.node.scrollHeight <= entry.node.clientHeight + 1) continue;
+              entry.node.scrollTop = Number(entry.node.scrollTop || 0) + delta;
+              delta = Number(snapshot.row.getBoundingClientRect().top || 0) - Number(snapshot.rowTop || 0);
+              if (!Number.isFinite(delta) || Math.abs(delta) <= 1) break;
+            }
+            if (Number.isFinite(delta) && Math.abs(delta) > 1) {
+              window.scrollBy({ top: delta, left: 0, behavior: 'auto' });
+            }
           } else {
-            const currentY = Number(window.scrollY || window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0);
+            const currentY = currentWhatMattersWindowScrollY();
             if (Math.abs(currentY - Number(snapshot.scrollY || 0)) > 96) {
               window.scrollTo(0, Number(snapshot.scrollY || 0));
             }
@@ -5008,6 +5061,7 @@
       let whatMattersInteractionRestoreFollowupFrame = 0;
       let whatMattersInteractionRestoreTimeout = 0;
       let whatMattersInteractionRestoreLateTimeout = 0;
+      let whatMattersInteractionRestoreGeneration = 0;
       let suppressWhatMattersInteractionStabilization = false;
       let lastWhatMattersInteractionSnapshot = null;
       const refreshLastWhatMattersInteractionSnapshot = (snapshot) => {
@@ -5018,6 +5072,7 @@
         });
       };
       const cancelPendingWhatMattersInteractionRestore = () => {
+        whatMattersInteractionRestoreGeneration += 1;
         if (whatMattersInteractionRestoreFrame) {
           window.cancelAnimationFrame(whatMattersInteractionRestoreFrame);
           whatMattersInteractionRestoreFrame = 0;
@@ -5035,35 +5090,68 @@
           whatMattersInteractionRestoreLateTimeout = 0;
         }
       };
-      const applyWhatMattersInteractionRestore = (snapshot) => {
+      const captureWhatMattersAppliedViewport = (snapshot) => ({
+        scrollY: currentWhatMattersWindowScrollY(),
+        scrollOwners: (Array.isArray(snapshot?.scrollOwners) ? snapshot.scrollOwners : [])
+          .filter((entry) => entry?.node instanceof HTMLElement && entry.node.isConnected)
+          .map((entry) => ({
+            node: entry.node,
+            scrollTop: Number(entry.node.scrollTop || 0),
+            scrollLeft: Number(entry.node.scrollLeft || 0),
+          })),
+      });
+      const whatMattersAppliedViewportIsCurrent = (snapshot) => {
+        const expected = snapshot?.lastAppliedViewport;
+        if (!expected) return true;
+        const tolerance = 2;
+        if (Math.abs(currentWhatMattersWindowScrollY() - Number(expected.scrollY || 0)) > tolerance) return false;
+        const expectedOwners = Array.isArray(expected.scrollOwners) ? expected.scrollOwners : [];
+        return expectedOwners.every((entry) => (
+          entry?.node instanceof HTMLElement
+          && entry.node.isConnected
+          && Math.abs(Number(entry.node.scrollTop || 0) - Number(entry.scrollTop || 0)) <= tolerance
+          && Math.abs(Number(entry.node.scrollLeft || 0) - Number(entry.scrollLeft || 0)) <= tolerance
+        ));
+      };
+      const applyWhatMattersInteractionRestore = (
+        snapshot,
+        { generation = whatMattersInteractionRestoreGeneration, guardViewport = false } = {},
+      ) => {
+        if (generation !== whatMattersInteractionRestoreGeneration) return false;
+        if (guardViewport && !whatMattersAppliedViewportIsCurrent(snapshot)) {
+          cancelPendingWhatMattersInteractionRestore();
+          return false;
+        }
         if (!restoreWhatMattersInteractionSnapshot(snapshot)) {
           cancelPendingWhatMattersInteractionRestore();
           return false;
         }
+        snapshot.lastAppliedViewport = captureWhatMattersAppliedViewport(snapshot);
         refreshLastWhatMattersInteractionSnapshot(snapshot);
         return true;
       };
       const stabilizeWhatMattersInteraction = (target, callback, { restoreFocus = true, snapshotOverride = null, preserveScroll = true } = {}) => {
         cancelPendingWhatMattersInteractionRestore();
+        const restoreGeneration = whatMattersInteractionRestoreGeneration;
         const snapshot = snapshotOverride
           ? { ...snapshotOverride, restoreFocus: restoreFocus !== false, preserveScroll: preserveScroll !== false }
           : captureWhatMattersInteractionSnapshot(target, { restoreFocus, preserveScroll });
         callback();
         if (!snapshot) return;
-        if (!applyWhatMattersInteractionRestore(snapshot)) return;
+        if (!applyWhatMattersInteractionRestore(snapshot, { generation: restoreGeneration })) return;
         whatMattersInteractionRestoreFrame = window.requestAnimationFrame(() => {
           whatMattersInteractionRestoreFrame = 0;
-          if (!applyWhatMattersInteractionRestore(snapshot)) return;
+          if (!applyWhatMattersInteractionRestore(snapshot, { generation: restoreGeneration, guardViewport: true })) return;
           whatMattersInteractionRestoreFollowupFrame = window.requestAnimationFrame(() => {
             whatMattersInteractionRestoreFollowupFrame = 0;
-            if (!applyWhatMattersInteractionRestore(snapshot)) return;
+            if (!applyWhatMattersInteractionRestore(snapshot, { generation: restoreGeneration, guardViewport: true })) return;
             whatMattersInteractionRestoreTimeout = window.setTimeout(() => {
               whatMattersInteractionRestoreTimeout = 0;
-              if (!applyWhatMattersInteractionRestore(snapshot)) return;
+              if (!applyWhatMattersInteractionRestore(snapshot, { generation: restoreGeneration, guardViewport: true })) return;
             }, 0);
             whatMattersInteractionRestoreLateTimeout = window.setTimeout(() => {
               whatMattersInteractionRestoreLateTimeout = 0;
-              if (!applyWhatMattersInteractionRestore(snapshot)) return;
+              if (!applyWhatMattersInteractionRestore(snapshot, { generation: restoreGeneration, guardViewport: true })) return;
             }, 64);
           });
         });
@@ -6235,11 +6323,13 @@
       applyBrowserAndIpDefaults().finally(finalizeInitialFormState);
     }
     const propertyInlineStatuses = () => [
-      ...root.querySelectorAll('[data-property-inline-status], [data-property-launch-status]'),
+      ...root.querySelectorAll('[data-property-inline-status], [data-property-launch-status], [data-property-top-launch-status]'),
     ];
     const setPropertyInlineStatus = (message) => {
       propertyInlineStatuses().forEach((node) => {
         node.textContent = String(message || '');
+        if (message) node.dataset.pqTone = 'pending';
+        else delete node.dataset.pqTone;
       });
     };
     const setPropertyInlineError = (message) => {
@@ -6247,6 +6337,14 @@
       nodes.forEach((node) => {
         node.textContent = String(message || '');
       });
+      const topStatus = root.querySelector('[data-property-top-launch-status]');
+      if (topStatus && message) {
+        topStatus.textContent = String(message);
+        topStatus.dataset.pqTone = 'error';
+      } else if (topStatus?.dataset.pqTone === 'error') {
+        topStatus.textContent = '';
+        delete topStatus.dataset.pqTone;
+      }
     };
     const savePreferences = async () => {
       if (!form) return;
@@ -6273,7 +6371,7 @@
         if (!button) return;
         const isBusy = Boolean(busy);
         if (!button.dataset.pqxIdleLabel) {
-          button.dataset.pqxIdleLabel = String(button.textContent || '').trim() || 'Launch search';
+          button.dataset.pqxIdleLabel = String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search';
         }
         button.toggleAttribute('disabled', isBusy);
         button.setAttribute('aria-disabled', isBusy ? 'true' : 'false');
@@ -6322,8 +6420,8 @@
         }
         pollRun(String(runBody.status_url || ''));
       } catch (err) {
-        setPropertyInlineError(calmNetworkError(err, 'Could not start property search.'));
         setPropertyInlineStatus('');
+        setPropertyInlineError(calmNetworkError(err, 'Could not start property search.'));
         searchLaunchInFlight = false;
         setSearchLaunchBusy(false);
       }
@@ -7489,4 +7587,6 @@
       if (clippyStatusNode && presetPrompt) clippyStatusNode.textContent = 'Question loaded from the email or shared link.';
     }
     initPreferenceManager();
+    root.dataset.pqWorkbenchController = 'loaded';
+    root.dispatchEvent(new CustomEvent('propertyquarry:workbench-ready'));
   })();

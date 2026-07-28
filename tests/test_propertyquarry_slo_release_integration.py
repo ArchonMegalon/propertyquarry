@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from scripts import propertyquarry_observability_receipts as observability_receipts
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,15 +38,47 @@ def test_property_release_bundle_fails_closed_on_release_bound_slo_evidence_befo
     script = _read("scripts/property_release_gates.sh")
     slo_gate = script.index("scripts/propertyquarry_slo_evidence.py")
     observability_gate = script.index("scripts/propertyquarry_observability_receipts.py verify")
+    observability_gate_end = script.index(
+        "scene_video_shared_env_file=",
+        observability_gate,
+    )
     gold_gate = script.index("scripts/propertyquarry_gold_status.py")
+    observability_command = script[observability_gate:observability_gate_end]
+
+    parser = observability_receipts.build_parser()
+    command_action = next(
+        action for action in parser._actions if action.dest == "command"
+    )
+    verify_parser = command_action.choices["verify"]
+    required_verify_options = {
+        option
+        for action in verify_parser._actions
+        if action.required
+        for option in action.option_strings
+    }
 
     assert "PROPERTYQUARRY_SLO_METRICS_SNAPSHOT" in script
     assert "PROPERTYQUARRY_SLO_METRICS_PROBE_RECEIPT" in script
+    assert required_verify_options
+    for option in required_verify_options:
+        assert option in observability_command
     assert "--flagship" in script[slo_gate:gold_gate]
     assert '--release-sha "${dr_release_commit_sha}"' in script[slo_gate:gold_gate]
     assert '--image-digest "${dr_release_image_digest}"' in script[slo_gate:gold_gate]
     assert '--metrics-snapshot "${slo_metrics_snapshot}"' in script[observability_gate:gold_gate]
     assert '--metrics-probe "${slo_metrics_probe_receipt}"' in script[observability_gate:gold_gate]
+    assert (
+        '--dashboard-render-receipt "${dashboard_render_receipt}"'
+        in script[observability_gate:gold_gate]
+    )
+    assert (
+        '--structured-log-query-receipt "${structured_log_query_receipt}"'
+        in script[observability_gate:gold_gate]
+    )
+    assert (
+        '--distributed-trace-query-receipt "${distributed_trace_query_receipt}"'
+        in script[observability_gate:gold_gate]
+    )
     assert '--slo-evidence-receipt "${slo_evidence_receipt}"' in script[gold_gate:]
     assert '--expected-release-sha "${dr_release_commit_sha}"' in script[gold_gate:]
     assert '--expected-image-digest "${dr_release_image_digest}"' in script[gold_gate:]
@@ -95,6 +129,9 @@ def test_slo_release_operator_environment_and_runbook_are_source_controlled() ->
         "PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT",
         "PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE",
         "PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT",
+        "PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT",
+        "PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT",
+        "PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT",
     ):
         assert key in env_example
         assert key in runbook or key in checklist

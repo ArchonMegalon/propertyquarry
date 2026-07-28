@@ -10,6 +10,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_env_int,
+        bounded_lane_lock,
+        require_bounded_file,
+        run_bounded_subprocess,
+        tour_manifest_max_bytes,
+    )
+except ModuleNotFoundError:
+    from scripts.property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_env_int,
+        bounded_lane_lock,
+        require_bounded_file,
+        run_bounded_subprocess,
+        tour_manifest_max_bytes,
+    )
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_BY_PROVIDER = {
@@ -44,12 +63,28 @@ def _safe_slug(value: object) -> str:
 
 def _load_manifest(path: Path) -> list[dict[str, Any]]:
     try:
+        require_bounded_file(
+            path,
+            reason_prefix="import_manifest",
+            maximum_bytes=tour_manifest_max_bytes(),
+        )
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
+    try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise SystemExit(f"import_manifest_invalid:{type(exc).__name__}") from exc
     rows = payload.get("imports") if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
         raise SystemExit("import_manifest_missing_imports")
+    maximum_rows = bounded_env_int(
+        "PROPERTYQUARRY_TOUR_IMPORT_MAX_ROWS",
+        default=64,
+        minimum=1,
+        maximum=256,
+    )
+    if len(rows) > maximum_rows:
+        raise SystemExit("import_manifest_row_limit")
     return [dict(row) for row in rows if isinstance(row, dict)]
 
 
@@ -193,15 +228,29 @@ def _run_import(row: dict[str, Any], *, env: dict[str, str]) -> dict[str, Any]:
     target_relpath = str(row.get("target_relpath") or "").strip()
     if target_relpath and provider == "magicfit":
         cmd.extend(["--target-relpath", target_relpath])
-    completed = subprocess.run(
-        cmd,
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=int(os.getenv("PROPERTYQUARRY_TOUR_IMPORT_TIMEOUT_SECONDS") or "120"),
-        check=False,
+    timeout_seconds = bounded_env_int(
+        "PROPERTYQUARRY_TOUR_IMPORT_TIMEOUT_SECONDS",
+        default=120,
+        minimum=5,
+        maximum=900,
     )
+    maximum_output_bytes = bounded_env_int(
+        "PROPERTYQUARRY_TOUR_IMPORT_MAX_OUTPUT_BYTES",
+        default=1024 * 1024,
+        minimum=16 * 1024,
+        maximum=8 * 1024 * 1024,
+    )
+    try:
+        completed = run_bounded_subprocess(
+            cmd,
+            cwd=ROOT,
+            env=env,
+            timeout_seconds=timeout_seconds,
+            maximum_output_bytes=maximum_output_bytes,
+        )
+    except TourHostSafetyError as exc:
+        result["error"] = str(exc)
+        return result
     result["returncode"] = completed.returncode
     if completed.returncode != 0:
         result["error"] = (completed.stderr or completed.stdout or "import_failed").strip().splitlines()[-1][:240]
@@ -223,7 +272,21 @@ def build_import_receipt(manifest_path: Path, *, public_tour_dir: Path | None = 
     env = dict(os.environ)
     if public_tour_dir is not None:
         env["EA_PUBLIC_TOUR_DIR"] = str(public_tour_dir.expanduser().resolve())
-    rows = [_run_import(row, env=env) for row in imports]
+    try:
+        with bounded_lane_lock("batch-import"):
+            # Deliberately sequential: one provider subprocess at a time bounds
+            # CPU, memory and disk amplification regardless of manifest size.
+            rows = [_run_import(row, env=env) for row in imports]
+    except TourHostSafetyError as exc:
+        rows = [
+            {
+                "provider": _safe_provider(row.get("provider")) or str(row.get("provider") or "").strip(),
+                "slug": _safe_slug(row.get("slug")) or str(row.get("slug") or "").strip(),
+                "status": "failed",
+                "error": str(exc),
+            }
+            for row in imports
+        ]
     failed = [row for row in rows if row.get("status") != "imported"]
     return {
         "status": "pass" if not failed else "fail",
@@ -233,6 +296,22 @@ def build_import_receipt(manifest_path: Path, *, public_tour_dir: Path | None = 
         "import_count": len(rows),
         "imported_count": len(rows) - len(failed),
         "failed_count": len(failed),
+        "host_safety": {
+            "concurrency_limit": 1,
+            "retry_limit": 0,
+            "subprocess_timeout_seconds": bounded_env_int(
+                "PROPERTYQUARRY_TOUR_IMPORT_TIMEOUT_SECONDS",
+                default=120,
+                minimum=5,
+                maximum=900,
+            ),
+            "subprocess_output_max_bytes": bounded_env_int(
+                "PROPERTYQUARRY_TOUR_IMPORT_MAX_OUTPUT_BYTES",
+                default=1024 * 1024,
+                minimum=16 * 1024,
+                maximum=8 * 1024 * 1024,
+            ),
+        },
         "imports": rows,
         "notes": [
             "Each row delegates to the hardened single-export or asset importer for its provider.",

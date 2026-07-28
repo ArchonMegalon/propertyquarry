@@ -32,10 +32,11 @@ container names, and Cloudflare disabled. Use a disposable restore of the
 production backup for compatibility checks. Do not point the candidate at the
 production database and do not run production migrations from the checkout.
 
-Retain target health, version, authentication, scheduler, SLO, monitoring, and
-Gold evidence. Release control binds those artifacts, the current/target
-identities, server-derived database identity, current schema epoch, route,
-nonce, and expiry into one signed rollback authorization.
+Retain target health, version, authentication, dedicated-worker heartbeat,
+scheduler, SLO, monitoring, and Gold evidence. Release control binds those
+artifacts, the current/target identities, server-derived database identity,
+current schema epoch, route, nonce, and expiry into one signed rollback
+authorization.
 
 ## 3. Dry-run
 
@@ -79,6 +80,7 @@ authority.
 ## 5. Failure handling
 
 Any missing, expired, mismatched, replayed, or rejected authorization leaves
-ingress and writers in the controller's fail-safe state. Preserve the local
-receipt and the controller's signed journal/seal receipts. Never retry a
-traffic switch from a checkout command and never lower the schema epoch.
+ingress, API, dedicated worker, scheduler, and dependent render runtime in the
+controller's fail-safe state. Preserve the local receipt and the controller's
+signed journal/seal receipts. Never retry a traffic switch from a checkout
+command and never lower the schema epoch.

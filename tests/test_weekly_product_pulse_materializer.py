@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import importlib.util
 import json
 import subprocess
@@ -24,6 +25,19 @@ def _load_materializer_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def test_weekly_product_pulse_json_loader_rejects_ambiguous_input(
+    tmp_path: Path,
+) -> None:
+    module = _load_materializer_module()
+    path = tmp_path / "receipt.json"
+    path.write_text(
+        '{"status":"blocked","status":"pass"}\n',
+        encoding="utf-8",
+    )
+
+    assert module._load_json(path) is None
 
 
 def _seed_truth_sources(root: Path) -> None:
@@ -375,6 +389,453 @@ def test_weekly_product_pulse_rewrites_when_disallowed_provenance_head_change_la
     module._write_json_stable(pulse_path, fresh)
 
     assert json.loads(pulse_path.read_text(encoding="utf-8")) == fresh
+
+
+def test_weekly_product_pulse_rewrites_changed_release_truth_digest(
+    tmp_path: Path,
+) -> None:
+    module = _load_materializer_module()
+    pulse_path = tmp_path / "pulse.json"
+    stale = {
+        "contract_name": "ea.weekly_product_pulse",
+        "summary": "same",
+        "release_truth_provenance": {
+            "git_head": "a" * 40,
+            "sha256": "b" * 64,
+        },
+    }
+    fresh = {
+        "contract_name": "ea.weekly_product_pulse",
+        "summary": "same",
+        "release_truth_provenance": {
+            "git_head": "a" * 40,
+            "sha256": "c" * 64,
+        },
+    }
+    pulse_path.write_text(json.dumps(stale, indent=2) + "\n", encoding="utf-8")
+
+    module._write_json_stable(pulse_path, fresh)
+
+    assert json.loads(pulse_path.read_text(encoding="utf-8")) == fresh
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    (Path("../outside.json"), Path("/tmp/propertyquarry-pulse-outside.json")),
+)
+def test_weekly_product_pulse_writer_rejects_output_escape(
+    tmp_path: Path,
+    relative_path: Path,
+) -> None:
+    module = _load_materializer_module()
+    with pytest.raises(ValueError, match="safe repository-relative path"):
+        module._write_json_stable(
+            relative_path,
+            {"status": "blocked"},
+            root=tmp_path,
+        )
+
+
+def test_weekly_product_pulse_writer_rejects_symlinks_and_repairs_ambiguous_json(
+    tmp_path: Path,
+) -> None:
+    module = _load_materializer_module()
+    victim = tmp_path / "victim.json"
+    victim.write_text('{"preserve":true}\n', encoding="utf-8")
+    destination = tmp_path / "pulse.json"
+    destination.symlink_to(victim.name)
+    with pytest.raises(ValueError, match="symlinked or unreadable"):
+        module._write_json_stable(
+            Path("pulse.json"),
+            {"status": "blocked"},
+            root=tmp_path,
+        )
+    assert victim.read_text(encoding="utf-8") == '{"preserve":true}\n'
+
+    destination.unlink()
+    destination.write_text(
+        '{"status":"blocked","status":"pass"}\n',
+        encoding="utf-8",
+    )
+    module._write_json_stable(
+        Path("pulse.json"),
+        {"status": "pass"},
+        root=tmp_path,
+    )
+    assert destination.read_text(encoding="utf-8").count('"status"') == 1
+
+    external_parent = tmp_path / "external-parent"
+    external_parent.mkdir()
+    (tmp_path / "linked-parent").symlink_to(
+        external_parent.name,
+        target_is_directory=True,
+    )
+    with pytest.raises(ValueError, match="parent is symlinked"):
+        module._write_json_stable(
+            Path("linked-parent/pulse.json"),
+            {"status": "blocked"},
+            root=tmp_path,
+        )
+    assert not (external_parent / "pulse.json").exists()
+
+    (tmp_path / "directory-output").mkdir()
+    with pytest.raises(ValueError, match="not a regular file"):
+        module._write_json_stable(
+            Path("directory-output"),
+            {"status": "blocked"},
+            root=tmp_path,
+        )
+    (tmp_path / "file-parent").write_text("not a directory\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="parent is symlinked or not a directory"):
+        module._write_json_stable(
+            Path("file-parent/pulse.json"),
+            {"status": "blocked"},
+            root=tmp_path,
+        )
+
+    module._write_json_stable(
+        Path("new/canonical/pulse.json"),
+        {"status": "blocked"},
+        root=tmp_path,
+    )
+    created = tmp_path / "new/canonical/pulse.json"
+    assert json.loads(created.read_text(encoding="utf-8")) == {
+        "status": "blocked"
+    }
+    assert created.stat().st_mode & 0o777 == 0o644
+
+
+def test_weekly_product_pulse_writer_repairs_equal_payload_mode_with_cas(
+    tmp_path: Path,
+) -> None:
+    module = _load_materializer_module()
+    destination = tmp_path / "pulse.json"
+    payload = {"status": "pass"}
+    destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    destination.chmod(0o777)
+
+    module._write_json_stable(
+        Path("pulse.json"),
+        payload,
+        root=tmp_path,
+    )
+
+    assert json.loads(destination.read_text(encoding="utf-8")) == payload
+    assert destination.stat().st_mode & 0o777 == 0o644
+
+
+@pytest.mark.parametrize("mutation", ("in_place", "replacement"))
+def test_weekly_product_pulse_writer_preserves_final_window_destination_edit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    module = _load_materializer_module()
+    destination = tmp_path / "pulse.json"
+    destination.write_bytes(b'{"status":"approved"}\n')
+    concurrent_bytes = b'{"status":"concurrent-operator-edit"}\n'
+    original_exchange = module._rename_exchange
+    exchange_calls = 0
+
+    def exchange_with_destination_edit(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal exchange_calls
+        exchange_calls += 1
+        if exchange_calls == 1:
+            if mutation == "in_place":
+                destination.write_bytes(concurrent_bytes)
+            else:
+                replacement = tmp_path / "operator-replacement.json"
+                replacement.write_bytes(concurrent_bytes)
+                replacement.replace(destination)
+        original_exchange(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(module, "_rename_exchange", exchange_with_destination_edit)
+
+    with pytest.raises(RuntimeError, match="changed before publication"):
+        module._write_json_stable(
+            Path("pulse.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    assert destination.read_bytes() == concurrent_bytes
+
+
+@pytest.mark.parametrize("destination_exists", (True, False))
+def test_weekly_product_pulse_writer_detects_staged_path_substitution_at_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    destination_exists: bool,
+) -> None:
+    module = _load_materializer_module()
+    destination = tmp_path / "pulse.json"
+    approved_bytes = b'{"status":"approved"}\n'
+    substituted_bytes = b'{"status":"substituted-staging-path"}\n'
+    if destination_exists:
+        destination.write_bytes(approved_bytes)
+        helper_name = "_rename_exchange"
+    else:
+        helper_name = "_rename_noreplace"
+    original_rename = getattr(module, helper_name)
+    rename_calls = 0
+
+    def rename_with_staged_substitution(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal rename_calls
+        rename_calls += 1
+        if rename_calls == 1:
+            replacement = tmp_path / "staging-substitute.json"
+            replacement.write_bytes(substituted_bytes)
+            replacement.replace(tmp_path / source)
+        original_rename(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(module, helper_name, rename_with_staged_substitution)
+
+    with pytest.raises(
+        module._PreserveStagedOutputError,
+        match="staging path changed",
+    ):
+        module._write_json_stable(
+            Path("pulse.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    if destination_exists:
+        assert destination.read_bytes() == approved_bytes
+        recovery = [
+            path
+            for path in tmp_path.iterdir()
+            if path.name.startswith(".pulse.json.release-write-")
+        ]
+        assert [path.read_bytes() for path in recovery] == [substituted_bytes]
+    else:
+        assert not destination.exists()
+        recovery = [
+            path
+            for path in tmp_path.iterdir()
+            if path.name.startswith(".pulse.json.release-write-")
+        ]
+        assert [path.read_bytes() for path in recovery] == [substituted_bytes]
+
+
+def test_weekly_product_pulse_writer_preserves_displaced_data_if_rollback_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_materializer_module()
+    destination = tmp_path / "pulse.json"
+    destination.write_bytes(b'{"status":"approved"}\n')
+    concurrent_bytes = b'{"status":"concurrent-before-failed-rollback"}\n'
+    original_exchange = module._rename_exchange
+    exchange_calls = 0
+
+    def exchange_with_failed_rollback(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal exchange_calls
+        exchange_calls += 1
+        if exchange_calls == 1:
+            destination.write_bytes(concurrent_bytes)
+            original_exchange(parent_fd, source, destination_name)
+            return
+        raise OSError(errno.EIO, "injected exchange rollback failure")
+
+    monkeypatch.setattr(module, "_rename_exchange", exchange_with_failed_rollback)
+
+    with pytest.raises(
+        module._PreserveStagedOutputError,
+        match="rollback failed",
+    ):
+        module._write_json_stable(
+            Path("pulse.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    assert json.loads(destination.read_text(encoding="utf-8")) == {"status": "fresh"}
+    recovery = [
+        path
+        for path in tmp_path.iterdir()
+        if path.name.startswith(".pulse.json.release-write-")
+    ]
+    assert [path.read_bytes() for path in recovery] == [concurrent_bytes]
+
+
+@pytest.mark.parametrize("destination_exists", (True, False))
+def test_weekly_product_pulse_writer_rolls_back_staged_symlink_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    destination_exists: bool,
+) -> None:
+    module = _load_materializer_module()
+    destination = tmp_path / "pulse.json"
+    approved_bytes = b'{"status":"approved"}\n'
+    victim = tmp_path / "symlink-victim.json"
+    victim_bytes = b'{"preserve":"symlink-victim"}\n'
+    victim.write_bytes(victim_bytes)
+    if destination_exists:
+        destination.write_bytes(approved_bytes)
+        helper_name = "_rename_exchange"
+    else:
+        helper_name = "_rename_noreplace"
+    original_rename = getattr(module, helper_name)
+    rename_calls = 0
+
+    def rename_with_staged_symlink(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal rename_calls
+        rename_calls += 1
+        if rename_calls == 1:
+            staged_path = tmp_path / source
+            staged_path.unlink()
+            staged_path.symlink_to(victim.name)
+        original_rename(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(module, helper_name, rename_with_staged_symlink)
+
+    with pytest.raises(module._PreserveStagedOutputError):
+        module._write_json_stable(
+            Path("pulse.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    if destination_exists:
+        assert not destination.is_symlink()
+        assert destination.read_bytes() == approved_bytes
+    else:
+        assert not destination.exists()
+        assert not destination.is_symlink()
+    assert victim.read_bytes() == victim_bytes
+    recovery = [
+        path
+        for path in tmp_path.iterdir()
+        if path.name.startswith(".pulse.json.release-write-")
+    ]
+    assert len(recovery) == 1
+    assert recovery[0].is_symlink()
+    assert recovery[0].readlink() == Path(victim.name)
+
+
+def test_weekly_product_pulse_writer_preserves_quarantine_after_identity_eio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_materializer_module()
+    destination = tmp_path / "pulse.json"
+    concurrent_bytes = b'{"status":"concurrent-staged-entry"}\n'
+    original_noreplace = module._rename_noreplace
+    rename_calls = 0
+
+    def noreplace_with_staged_replacement(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        nonlocal rename_calls
+        rename_calls += 1
+        if rename_calls == 1:
+            replacement = tmp_path / "concurrent-staged-entry.json"
+            replacement.write_bytes(concurrent_bytes)
+            replacement.replace(tmp_path / source)
+        original_noreplace(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(module, "_rename_noreplace", noreplace_with_staged_replacement)
+    monkeypatch.setattr(
+        module,
+        "_entry_identity_no_follow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError(errno.EIO, "injected post-quarantine identity failure")
+        ),
+    )
+
+    with pytest.raises(module._PreserveStagedOutputError):
+        module._write_json_stable(
+            Path("pulse.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    assert not destination.exists()
+    recovery = [
+        path
+        for path in tmp_path.iterdir()
+        if path.name.startswith(".pulse.json.release-write-")
+    ]
+    assert [path.read_bytes() for path in recovery] == [concurrent_bytes]
+
+
+def test_weekly_product_pulse_writer_preserves_new_destination_racing_noreplace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_materializer_module()
+    destination = tmp_path / "pulse.json"
+    concurrent_bytes = b'{"status":"concurrent-new-destination"}\n'
+    original_noreplace = module._rename_noreplace
+
+    def noreplace_after_destination_appears(
+        parent_fd: int,
+        source: str,
+        destination_name: str,
+    ) -> None:
+        destination.write_bytes(concurrent_bytes)
+        original_noreplace(parent_fd, source, destination_name)
+
+    monkeypatch.setattr(
+        module,
+        "_rename_noreplace",
+        noreplace_after_destination_appears,
+    )
+
+    with pytest.raises(RuntimeError, match="appeared during publication"):
+        module._write_json_stable(
+            Path("pulse.json"),
+            {"status": "fresh"},
+            root=tmp_path,
+        )
+
+    assert destination.read_bytes() == concurrent_bytes
+
+
+def test_weekly_product_pulse_blocks_malformed_nested_flagship_receipt(
+    tmp_path: Path,
+) -> None:
+    module = _load_materializer_module()
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "truth_plane": 1,
+                "browser_workflow_proof": {},
+                "live_readiness": {"status": "pass"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    observed = module._flagship_receipt_source(tmp_path, Path("receipt.json"))
+
+    assert observed["status"] == "blocked"
+    assert (
+        "flagship receipt contains invalid nested release evidence"
+        in observed["limitations"]
+    )
 
 
 def test_weekly_product_pulse_does_not_claim_missing_browser_proof_after_pass_receipt(tmp_path: Path) -> None:

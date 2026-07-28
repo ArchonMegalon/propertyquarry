@@ -1,0 +1,211 @@
+{
+  "schema_version": "propertyquarry.flagship-operations.v1",
+  "service": "propertyquarry",
+  "source_contract_status": "defined_not_live_evidence",
+  "dashboard_id": "propertyquarry-global-flagship",
+  "title": "PropertyQuarry Global Flagship Operations",
+  "editable": false,
+  "default_window": "6h",
+  "release_filters": [
+    "release_commit_sha",
+    "release_image_digest",
+    "replica_id"
+  ],
+  "required_live_receipts": {
+    "max_age_seconds": 900,
+    "kinds": [
+      "dashboard_render",
+      "structured_log_query",
+      "distributed_trace_query",
+      "alert_delivery"
+    ],
+    "exact_release_binding": true,
+    "independent_authentication": true
+  },
+  "panels": [
+    {
+      "id": "availability_error_budget",
+      "title": "Availability and error budget",
+      "source": "prometheus",
+      "queries": [
+        "1 - propertyquarry:http_error_ratio5m",
+        "propertyquarry:http_error_ratio5m"
+      ],
+      "thresholds": {
+        "availability_minimum": 0.999,
+        "error_ratio_maximum": 0.001
+      },
+      "runbook": "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#availability-error-rate"
+    },
+    {
+      "id": "latency",
+      "title": "Customer request latency",
+      "source": "prometheus",
+      "queries": [
+        "propertyquarry:http_latency_p95_seconds5m",
+        "propertyquarry:http_latency_p99_seconds5m"
+      ],
+      "thresholds": {
+        "p95_seconds_maximum": 1.0,
+        "p99_seconds_maximum": 2.5
+      },
+      "runbook": "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#latency"
+    },
+    {
+      "id": "release_replica_readiness",
+      "title": "Exact release, replicas, and readiness",
+      "source": "prometheus",
+      "queries": [
+        "propertyquarry_runtime_build_info",
+        "propertyquarry_expected_api_replicas",
+        "propertyquarry_readiness",
+        "up{job=\"propertyquarry\"}"
+      ],
+      "thresholds": {
+        "all_expected_replicas_present": true,
+        "mixed_release_series_allowed": false,
+        "readiness_minimum": 1
+      },
+      "runbook": "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#replica-coverage"
+    },
+    {
+      "id": "runtime_roles",
+      "title": "Worker and scheduler continuity",
+      "source": "prometheus",
+      "queries": [
+        "propertyquarry_runtime_heartbeat_present",
+        "propertyquarry_runtime_heartbeat_stale",
+        "propertyquarry_runtime_heartbeat_age_seconds"
+      ],
+      "thresholds": {
+        "required_role_stale_maximum": 0
+      },
+      "runbook": "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#runtime-heartbeats"
+    },
+    {
+      "id": "distributed_admission",
+      "title": "Distributed admission and overload protection",
+      "source": "prometheus",
+      "queries": [
+        "sum by (backend, operation, outcome) (rate(propertyquarry_ingress_admission_operations_total[5m]))",
+        "sum by (reason, dimension) (rate(propertyquarry_ingress_rejections_total[5m]))",
+        "propertyquarry_ingress_high_cost_inflight",
+        "sum by (route_class) (rate(propertyquarry_ingress_cost_units_total[5m]))"
+      ],
+      "thresholds": {
+        "backend_unavailable_rate_maximum": 0,
+        "unbounded_backend_allowed": false
+      },
+      "runbook": "docs/PROPERTYQUARRY_OBSERVABILITY_OPERATIONS.md#distributed-admission"
+    },
+    {
+      "id": "admission_capacity",
+      "title": "Shared admission capacity and hard-limit headroom",
+      "source": "prometheus",
+      "queries": [
+        "min(propertyquarry_admission_capacity_contract_valid{backend=\"postgres\"})",
+        "max by (capacity_key) (propertyquarry_admission_capacity_row_count{backend=\"postgres\"})",
+        "max by (capacity_key) (propertyquarry_admission_capacity_limit{backend=\"postgres\"})",
+        "max by (capacity_key) (propertyquarry_admission_capacity_row_count{backend=\"postgres\"}) / clamp_min(max by (capacity_key) (propertyquarry_admission_capacity_limit{backend=\"postgres\"}), 1)"
+      ],
+      "thresholds": {
+        "contract_valid_minimum": 1,
+        "required_capacity_keys": ["lease", "quota"],
+        "hard_limits": {
+          "quota": 1000000,
+          "lease": 100000
+        },
+        "warning_utilization_ratio": 0.8,
+        "critical_utilization_ratio": 0.95
+      },
+      "runbook": "docs/PROPERTYQUARRY_OBSERVABILITY_OPERATIONS.md#admission-capacity"
+    },
+    {
+      "id": "durable_work_queues",
+      "title": "Durable search and delivery queues",
+      "source": "prometheus",
+      "queries": [
+        "propertyquarry_queue_depth{queue=\"property_search\"}",
+        "propertyquarry_queue_oldest_item_age_seconds{queue=\"property_search\"}",
+        "increase(propertyquarry_scheduler_delivery_outbox_events_total[5m])"
+      ],
+      "thresholds": {
+        "telemetry_required": true,
+        "queue_depth_warning": 100,
+        "queue_depth_critical": 500,
+        "oldest_item_age_seconds_maximum": 300
+      },
+      "runbook": "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#queue-backlog"
+    },
+    {
+      "id": "provider_health",
+      "title": "Provider, quota, and billing boundaries",
+      "source": "prometheus",
+      "queries": [
+        "sum by (route, status_class) (rate(propertyquarry_http_request_errors_total{route=~\".*(provider|quota|balance|billing).*\"}[5m]))"
+      ],
+      "thresholds": {
+        "failure_rate_maximum": 0
+      },
+      "runbook": "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#provider-and-quota-failures"
+    },
+    {
+      "id": "content_and_delivery_integrity",
+      "title": "Content ledger and delivery integrity",
+      "source": "prometheus",
+      "queries": [
+        "increase(propertyquarry_content_ledger_events_total{outcome=~\"replay_conflict|failed|corruption\"}[5m])",
+        "increase(propertyquarry_scheduler_delivery_outbox_events_total{outcome=~\"dead_lettered|failed|claim_conflicts\"}[5m])"
+      ],
+      "thresholds": {
+        "corruption_maximum": 0,
+        "terminal_delivery_failures_maximum": 0
+      },
+      "runbook": "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#content-ledger-integrity"
+    },
+    {
+      "id": "correlated_logs",
+      "title": "Structured logs by request correlation",
+      "source": "logs",
+      "query_contract": {
+        "required_fields": [
+          "timestamp",
+          "service",
+          "event",
+          "correlation_id",
+          "trace_id",
+          "span_id",
+          "release_commit_sha",
+          "release_image_digest",
+          "replica_id"
+        ],
+        "filter_fields": [
+          "correlation_id",
+          "trace_id",
+          "release_commit_sha",
+          "release_image_digest"
+        ],
+        "private_payload_allowed": false
+      },
+      "runbook": "docs/PROPERTYQUARRY_OBSERVABILITY_OPERATIONS.md#log-correlation"
+    },
+    {
+      "id": "distributed_trace_continuity",
+      "title": "API to durable worker and provider trace continuity",
+      "source": "traces",
+      "query_contract": {
+        "propagation_format": "W3C traceparent v00",
+        "required_boundaries": [
+          "customer_api",
+          "durable_search_worker",
+          "provider_or_render_boundary"
+        ],
+        "same_trace_id_required": true,
+        "distinct_nonzero_span_ids_required": true,
+        "release_attributes_required": true,
+        "parent_chain_required": true
+      },
+      "runbook": "docs/PROPERTYQUARRY_OBSERVABILITY_OPERATIONS.md#trace-continuity"
+    }
+  ]
+}

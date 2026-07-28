@@ -43,6 +43,7 @@ TUNNEL_COMPOSE = APP_ROOT / "docker-compose.cloudflared.yml"
 SERVICE_CONTAINER = {
     "propertyquarry-db": "propertyquarry-db-live",
     "propertyquarry-api": "propertyquarry-api",
+    "propertyquarry-worker": "propertyquarry-worker",
     "propertyquarry-scheduler": "propertyquarry-scheduler",
     "propertyquarry-render-tools": "propertyquarry-render-tools",
     "propertyquarry-cloudflared": "propertyquarry-cloudflared",
@@ -55,6 +56,7 @@ START_ORDER = tuple(SERVICE_CONTAINER)
 CONTAINER_ENV = {
     "PROPERTYQUARRY_DB_CONTAINER_NAME": "propertyquarry-db-live",
     "PROPERTYQUARRY_API_CONTAINER_NAME": "propertyquarry-api",
+    "PROPERTYQUARRY_WORKER_CONTAINER_NAME": "propertyquarry-worker",
     "PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME": "propertyquarry-scheduler",
     "PROPERTYQUARRY_RENDER_CONTAINER_NAME": "propertyquarry-render-tools",
     "PROPERTYQUARRY_MIGRATE_CONTAINER_NAME": "propertyquarry-migrate",
@@ -68,6 +70,8 @@ STEP_NAMES = (
     "api_start",
     "api_ready",
     "local_version",
+    "worker_start",
+    "worker_ready",
     "scheduler_start",
     "scheduler_ready",
     "render_start",
@@ -429,6 +433,42 @@ def validate_static_compose_contract() -> None:
         raise RecoveryValidationError(
             "dedicated Compose contract is missing the ephemeral migration service"
         )
+    worker_marker = "  propertyquarry-worker:\n"
+    scheduler_marker = "  propertyquarry-scheduler:\n"
+    worker_start = property_content.find(worker_marker)
+    scheduler_start = property_content.find(
+        scheduler_marker, worker_start + len(worker_marker)
+    )
+    if worker_start < 0 or scheduler_start < 0:
+        raise RecoveryValidationError(
+            "dedicated Compose contract is missing the durable worker boundary"
+        )
+    worker_contract = property_content[worker_start:scheduler_start]
+    for required_fragment in (
+        "EA_ROLE: worker",
+        'EA_STORAGE_BACKEND: "postgres"',
+        'PROPERTYQUARRY_WORKER_PROFILE: "property_only"',
+        'PROPERTYQUARRY_SEARCH_SCHEMA_READINESS_REQUIRED: "1"',
+        "propertyquarry_artifacts:/data/artifacts",
+        "propertyquarry-migrate:",
+        "condition: service_completed_successfully",
+        'test: ["CMD", "/usr/local/bin/python", "-m", "app.scheduler_healthcheck"]',
+        "read_only: true",
+    ):
+        if required_fragment not in worker_contract:
+            raise RecoveryValidationError(
+                "durable worker Compose contract is incomplete"
+            )
+    if any(
+        forbidden in worker_contract
+        for forbidden in (
+            "property_scene_video_shared.env",
+            "propertyquarry_render_internal",
+        )
+    ):
+        raise RecoveryValidationError(
+            "durable worker must remain outside the optional advanced-visual boundary"
+        )
     if (
         'command: ["python", "-m", "app.product.property_search_schema", "migrate"]'
         not in property_content
@@ -436,9 +476,9 @@ def validate_static_compose_contract() -> None:
         raise RecoveryValidationError(
             "ephemeral migration service does not run the governed migration command"
         )
-    if property_content.count("condition: service_completed_successfully") < 2:
+    if property_content.count("condition: service_completed_successfully") < 3:
         raise RecoveryValidationError(
-            "API and scheduler must require successful schema migration"
+            "API, worker, and scheduler must require successful schema migration"
         )
     if "  propertyquarry-cloudflared:" not in tunnel_content:
         raise RecoveryValidationError("dedicated tunnel Compose contract is missing cloudflared")
@@ -540,6 +580,7 @@ def blank_receipt(*, execute: bool) -> dict[str, object]:
             "migration": False,
             "api": False,
             "local_version": False,
+            "worker": False,
             "scheduler": False,
             "render": False,
             "tunnel": False,

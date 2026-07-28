@@ -1102,6 +1102,36 @@
       padding-right: 84px;
     }
   }
+  /* PQ_FLAGSHIP_MINIMAL_OBJECT_V1 */
+  .object-panel,
+  .object-section,
+  .object-meta-card,
+  .object-media-highlight,
+  .object-visual-style-card,
+  .object-visual-style-option {
+    border-radius: var(--radius);
+    background-image: none;
+    box-shadow: none;
+  }
+  .object-media-frame-inner,
+  .object-media-carousel-main,
+  .object-media-toolbar,
+  .object-media-carousel-nav,
+  .object-media-carousel-count {
+    border-radius: var(--radius);
+    box-shadow: none;
+  }
+  .object-actions :is(a, button),
+  .object-feedback-button,
+  .object-feedback-chip {
+    border-radius: var(--radius);
+  }
+  @media (max-width: 760px) {
+    .object-grid { gap: 8px; }
+    .object-panel,
+    .object-section,
+    .object-meta-card { border-radius: var(--radius); }
+  }
 </style>
 
 {% if object_media %}

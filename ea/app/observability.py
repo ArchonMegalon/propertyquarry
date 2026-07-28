@@ -16,6 +16,8 @@ from typing import Mapping
 _LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
 _KNOWN_METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 _MAX_HEARTBEAT_BYTES = 64 * 1024
+_MAX_PROPERTY_SEARCH_QUEUE_DEPTH = (2**63) - 1
+_MAX_PROPERTY_SEARCH_QUEUE_AGE_SECONDS = 10 * 365 * 24 * 60 * 60
 _DELIVERY_OUTBOX_METRIC_OUTCOMES = (
     "queued",
     "claimed",
@@ -35,6 +37,26 @@ _CONTENT_LEDGER_METRIC_OUTCOMES = (
     "corruption",
 )
 _INGRESS_LABEL_RE = re.compile(r"[^a-z0-9_]+")
+_INGRESS_ADMISSION_BACKENDS = ("memory", "postgres")
+_INGRESS_ADMISSION_OPERATIONS = (
+    "ip_request",
+    "admit",
+    "renew",
+    "release",
+    "cleanup",
+    "snapshot",
+)
+_INGRESS_ADMISSION_OUTCOMES = (
+    "allowed",
+    "quota_limited",
+    "lease_limited",
+    "capacity_exhausted",
+    "backend_unavailable",
+)
+_INGRESS_ADMISSION_CAPACITY_LIMITS = {
+    "lease": 100_000,
+    "quota": 1_000_000,
+}
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _REPLICA_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -105,6 +127,12 @@ class RuntimeMetrics:
         self._ingress_rejections: dict[tuple[str, str], int] = defaultdict(int)
         self._ingress_cost: dict[str, int] = defaultdict(int)
         self._ingress_inflight: dict[str, int] = defaultdict(int)
+        self._ingress_admission_operations: dict[tuple[str, str, str], int] = (
+            defaultdict(int)
+        )
+        self._ingress_admission_capacity_backend = ""
+        self._ingress_admission_capacity_contract_valid: bool | None = None
+        self._ingress_admission_capacity_rows: dict[str, tuple[int, int]] = {}
         self._content_ledger_events: dict[str, int] = defaultdict(int)
 
     def record_request(
@@ -149,6 +177,82 @@ class RuntimeMetrics:
             updated = self._ingress_inflight.get(safe_route_class, 0) + int(delta or 0)
             self._ingress_inflight[safe_route_class] = max(0, updated)
 
+    def record_ingress_admission_operation(
+        self,
+        *,
+        backend: str,
+        operation: str,
+        outcome: str,
+    ) -> None:
+        normalized_backend = str(backend or "").strip().lower()
+        normalized_operation = str(operation or "").strip().lower()
+        normalized_outcome = str(outcome or "").strip().lower()
+        if normalized_backend not in _INGRESS_ADMISSION_BACKENDS:
+            raise ValueError("ingress_admission_metric_backend_invalid")
+        if normalized_operation not in _INGRESS_ADMISSION_OPERATIONS:
+            raise ValueError("ingress_admission_metric_operation_invalid")
+        if normalized_outcome not in _INGRESS_ADMISSION_OUTCOMES:
+            raise ValueError("ingress_admission_metric_outcome_invalid")
+        with self._lock:
+            self._ingress_admission_operations[
+                (
+                    normalized_backend,
+                    normalized_operation,
+                    normalized_outcome,
+                )
+            ] += 1
+
+    def record_ingress_admission_capacity(
+        self,
+        *,
+        backend: str,
+        contract_valid: bool,
+        rows: Mapping[str, tuple[int, int]],
+    ) -> None:
+        normalized_backend = str(backend or "").strip().lower()
+        if normalized_backend not in _INGRESS_ADMISSION_BACKENDS:
+            raise ValueError("ingress_admission_metric_backend_invalid")
+        if not isinstance(contract_valid, bool):
+            raise ValueError("ingress_admission_metric_contract_valid_invalid")
+        normalized_rows: dict[str, tuple[int, int]] = {}
+        for raw_key, raw_values in dict(rows).items():
+            capacity_key = str(raw_key or "").strip().lower()
+            if capacity_key not in _INGRESS_ADMISSION_CAPACITY_LIMITS:
+                raise ValueError("ingress_admission_metric_capacity_key_invalid")
+            if (
+                not isinstance(raw_values, tuple)
+                or len(raw_values) != 2
+                or isinstance(raw_values[0], bool)
+                or isinstance(raw_values[1], bool)
+            ):
+                raise ValueError("ingress_admission_metric_capacity_row_invalid")
+            row_count = int(raw_values[0])
+            hard_limit = int(raw_values[1])
+            expected_limit = _INGRESS_ADMISSION_CAPACITY_LIMITS[capacity_key]
+            if (
+                row_count < 0
+                or hard_limit < 1
+                or row_count > hard_limit
+                or (
+                    normalized_backend == "postgres"
+                    and hard_limit != expected_limit
+                )
+                or (
+                    normalized_backend == "memory"
+                    and hard_limit > expected_limit
+                )
+            ):
+                raise ValueError("ingress_admission_metric_capacity_row_invalid")
+            normalized_rows[capacity_key] = (row_count, hard_limit)
+        if contract_valid and set(normalized_rows) != set(
+            _INGRESS_ADMISSION_CAPACITY_LIMITS
+        ):
+            raise ValueError("ingress_admission_metric_capacity_contract_incomplete")
+        with self._lock:
+            self._ingress_admission_capacity_backend = normalized_backend
+            self._ingress_admission_capacity_contract_valid = contract_valid
+            self._ingress_admission_capacity_rows = normalized_rows
+
     def record_content_ledger_event(self, *, outcome: str) -> None:
         safe_outcome = _ingress_label(outcome, fallback="failed")
         if safe_outcome not in _CONTENT_LEDGER_METRIC_OUTCOMES:
@@ -172,7 +276,22 @@ class RuntimeMetrics:
             ingress_rejections = dict(self._ingress_rejections)
             ingress_cost = dict(self._ingress_cost)
             ingress_inflight = dict(self._ingress_inflight)
+            ingress_admission_operations = dict(
+                self._ingress_admission_operations
+            )
+            ingress_admission_capacity_backend = (
+                self._ingress_admission_capacity_backend
+            )
+            ingress_admission_capacity_contract_valid = (
+                self._ingress_admission_capacity_contract_valid
+            )
+            ingress_admission_capacity_rows = dict(
+                self._ingress_admission_capacity_rows
+            )
             content_ledger_events = dict(self._content_ledger_events)
+        from app.telemetry import span_export_health_snapshot
+
+        span_export_health = span_export_health_snapshot()
 
         lines = [
             "# HELP propertyquarry_http_requests_total HTTP requests completed by bounded route template.",
@@ -254,6 +373,81 @@ class RuntimeMetrics:
                 'propertyquarry_ingress_high_cost_inflight{route_class="%s"} %d'
                 % (_label_value(route_class), count)
             )
+        admission_backends = {
+            backend for backend, _operation, _outcome in ingress_admission_operations
+        }
+        if ingress_admission_capacity_backend:
+            admission_backends.add(ingress_admission_capacity_backend)
+        lines.extend(
+            [
+                "# HELP propertyquarry_ingress_admission_operations_total Authoritative ingress admission outcomes by closed backend and operation.",
+                "# TYPE propertyquarry_ingress_admission_operations_total counter",
+            ]
+        )
+        for backend in sorted(admission_backends):
+            for operation in _INGRESS_ADMISSION_OPERATIONS:
+                for outcome in _INGRESS_ADMISSION_OUTCOMES:
+                    count = ingress_admission_operations.get(
+                        (backend, operation, outcome),
+                        0,
+                    )
+                    lines.append(
+                        (
+                            "propertyquarry_ingress_admission_operations_total"
+                            '{backend="%s",operation="%s",outcome="%s"} %d'
+                        )
+                        % (
+                            _label_value(backend),
+                            _label_value(operation),
+                            _label_value(outcome),
+                            count,
+                        )
+                    )
+        lines.extend(
+            [
+                "# HELP propertyquarry_admission_capacity_contract_valid Whether the observed admission capacity contract is exact and valid.",
+                "# TYPE propertyquarry_admission_capacity_contract_valid gauge",
+                "# HELP propertyquarry_admission_capacity_row_count Authoritative admission rows tracked by the PostgreSQL capacity contract.",
+                "# TYPE propertyquarry_admission_capacity_row_count gauge",
+                "# HELP propertyquarry_admission_capacity_limit Hard admission row cap enforced by the PostgreSQL capacity contract.",
+                "# TYPE propertyquarry_admission_capacity_limit gauge",
+            ]
+        )
+        if (
+            ingress_admission_capacity_backend
+            and ingress_admission_capacity_contract_valid is not None
+        ):
+            lines.append(
+                (
+                    "propertyquarry_admission_capacity_contract_valid"
+                    '{backend="%s"} %d'
+                )
+                % (
+                    _label_value(ingress_admission_capacity_backend),
+                    1 if ingress_admission_capacity_contract_valid else 0,
+                )
+            )
+            for capacity_key, (row_count, hard_limit) in sorted(
+                ingress_admission_capacity_rows.items()
+            ):
+                labels = (
+                    _label_value(ingress_admission_capacity_backend),
+                    _label_value(capacity_key),
+                )
+                lines.append(
+                    (
+                        "propertyquarry_admission_capacity_row_count"
+                        '{backend="%s",capacity_key="%s"} %d'
+                    )
+                    % (*labels, row_count)
+                )
+                lines.append(
+                    (
+                        "propertyquarry_admission_capacity_limit"
+                        '{backend="%s",capacity_key="%s"} %d'
+                    )
+                    % (*labels, hard_limit)
+                )
 
         lines.extend(
             [
@@ -266,6 +460,18 @@ class RuntimeMetrics:
                 'propertyquarry_content_ledger_events_total{outcome="%s"} %d'
                 % (_label_value(outcome), max(0, int(content_ledger_events.get(outcome, 0))))
             )
+        lines.extend(
+            [
+                "# HELP propertyquarry_local_span_export_failures_total Local span export failures observed by this process.",
+                "# TYPE propertyquarry_local_span_export_failures_total counter",
+                "propertyquarry_local_span_export_failures_total %d"
+                % max(0, int(span_export_health["failure_count"])),
+                "# HELP propertyquarry_local_span_export_recoveries_total Crash-truncated local span tails recovered by this process.",
+                "# TYPE propertyquarry_local_span_export_recoveries_total counter",
+                "propertyquarry_local_span_export_recoveries_total %d"
+                % max(0, int(span_export_health["recovery_count"])),
+            ]
+        )
 
         lines.extend(
             [
@@ -348,6 +554,43 @@ class RuntimeMetrics:
                 'propertyquarry_runtime_heartbeat_stale{role="%s"} %d'
                 % (_label_value(sample.role), 1 if sample.stale else 0)
             )
+        lines.extend(
+            [
+                "# HELP propertyquarry_queue_observed Whether a fresh valid bounded queue snapshot was observed.",
+                "# TYPE propertyquarry_queue_observed gauge",
+                "# HELP propertyquarry_queue_depth Current active work items in a bounded queue.",
+                "# TYPE propertyquarry_queue_depth gauge",
+                "# HELP propertyquarry_queue_oldest_item_age_seconds Age of the oldest active work item in a bounded queue.",
+                "# TYPE propertyquarry_queue_oldest_item_age_seconds gauge",
+            ]
+        )
+        worker_sample = next(sample for sample in samples if sample.role == "worker")
+        property_search_queue_observed = (
+            not worker_sample.stale
+            and worker_sample.property_search_queue_depth is not None
+            and worker_sample.property_search_queue_oldest_item_age_seconds is not None
+        )
+        lines.append(
+            'propertyquarry_queue_observed{queue="property_search"} %d'
+            % (1 if property_search_queue_observed else 0)
+        )
+        if property_search_queue_observed:
+            oldest_item_age_seconds = (
+                0.0
+                if worker_sample.property_search_queue_depth == 0
+                else (
+                    worker_sample.property_search_queue_oldest_item_age_seconds
+                    + worker_sample.age_seconds
+                )
+            )
+            lines.append(
+                'propertyquarry_queue_depth{queue="property_search"} %d'
+                % worker_sample.property_search_queue_depth
+            )
+            lines.append(
+                'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} %s'
+                % _metric_float(oldest_item_age_seconds)
+            )
         scheduler_sample = next(sample for sample in samples if sample.role == "scheduler")
         delivery_totals = dict(scheduler_sample.delivery_outbox_totals)
         lines.extend(
@@ -380,6 +623,8 @@ class HeartbeatSample:
     age_seconds: float
     stale: bool
     delivery_outbox_totals: tuple[tuple[str, int], ...] = ()
+    property_search_queue_depth: int | None = None
+    property_search_queue_oldest_item_age_seconds: float | None = None
 
 
 def _positive_float(raw: str, default: float) -> float:
@@ -440,10 +685,66 @@ def _heartbeat_sample(role: str, environ: Mapping[str, str], now_epoch: float) -
             except (TypeError, ValueError):
                 value = 0
             delivery_totals.append((outcome, value))
+    property_search_queue_depth: int | None = None
+    property_search_queue_oldest_item_age_seconds: float | None = None
+    raw_property_search_queue = payload.get("property_search_work_queue")
+    if (
+        normalized_role == "worker"
+        and isinstance(raw_property_search_queue, dict)
+        and raw_property_search_queue.get("observed") is True
+    ):
+        raw_depth = raw_property_search_queue.get("depth")
+        raw_oldest_age = raw_property_search_queue.get(
+            "oldest_item_age_seconds"
+        )
+        if (
+            type(raw_depth) is int
+            and 0 <= raw_depth <= _MAX_PROPERTY_SEARCH_QUEUE_DEPTH
+            and not isinstance(raw_oldest_age, bool)
+            and isinstance(raw_oldest_age, (int, float))
+        ):
+            oldest_age = float(raw_oldest_age)
+            if (
+                math.isfinite(oldest_age)
+                and 0.0
+                <= oldest_age
+                <= _MAX_PROPERTY_SEARCH_QUEUE_AGE_SECONDS
+                and not (raw_depth == 0 and oldest_age != 0.0)
+            ):
+                property_search_queue_depth = raw_depth
+                property_search_queue_oldest_item_age_seconds = oldest_age
     return HeartbeatSample(
         normalized_role,
         True,
         age,
         age > max_age,
         tuple(delivery_totals),
+        property_search_queue_depth,
+        property_search_queue_oldest_item_age_seconds,
     )
+
+
+def runtime_heartbeat_readiness(
+    role: str,
+    environ: Mapping[str, str] | None = None,
+    *,
+    now_epoch: float | None = None,
+) -> tuple[bool, str]:
+    """Evaluate one required role heartbeat through the metrics parser."""
+
+    normalized_role = str(role or "").strip().lower()
+    if normalized_role not in {"worker", "scheduler"}:
+        return False, "runtime_heartbeat_role_invalid"
+    env = environ if environ is not None else os.environ
+    if not _heartbeat_required(normalized_role, env):
+        return True, f"{normalized_role}_heartbeat_not_required"
+    sample = _heartbeat_sample(
+        normalized_role,
+        env,
+        float(now_epoch if now_epoch is not None else time.time()),
+    )
+    if not sample.present:
+        return False, f"{normalized_role}_heartbeat_missing_or_invalid"
+    if sample.stale:
+        return False, f"{normalized_role}_heartbeat_stale_or_invalid"
+    return True, f"{normalized_role}_heartbeat_ready"

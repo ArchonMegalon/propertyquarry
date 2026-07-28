@@ -16,6 +16,7 @@ def _run_promotion_scenario(
     scenario: str,
     initial_ingress: str = "running",
     initial_api: str = "running",
+    initial_worker: str = "running",
     initial_scheduler: str = "running",
     initial_render: str = "running",
     initial_migrate: str = "stopped",
@@ -32,6 +33,7 @@ set -euo pipefail
 declare -A SERVICE_STATE=(
   [ingress]="${INITIAL_INGRESS}"
   [api]="${INITIAL_API}"
+  [worker]="${INITIAL_WORKER}"
   [scheduler]="${INITIAL_SCHEDULER}"
   [render]="${INITIAL_RENDER}"
   [migrate]="${INITIAL_MIGRATE}"
@@ -88,7 +90,7 @@ fake_compose() {
 
 DC=(fake_compose)
 source "${QUIESCE_HELPER}"
-PROPERTYQUARRY_ALLOWED_DATABASE_WRITER_CONTAINER_NAMES=(api scheduler migrate)
+PROPERTYQUARRY_ALLOWED_DATABASE_WRITER_CONTAINER_NAMES=(api worker scheduler migrate)
 EXTERNAL_ACTIVE=0
 if [[ "${ALLOWED_EXTERNAL_WRITER}" == "1" ]]; then
   PROPERTYQUARRY_ALLOWED_DATABASE_WRITER_CONTAINER_NAMES+=(cross-stack-writer)
@@ -98,6 +100,9 @@ fi
 database_writer_inventory_lines() {
   if [[ "${SERVICE_STATE[api]}" != "stopped" && "${SERVICE_STATE[api]}" != "missing" ]]; then
     printf 'cid-api|api\n'
+  fi
+  if [[ "${SERVICE_STATE[worker]}" != "stopped" && "${SERVICE_STATE[worker]}" != "missing" ]]; then
+    printf 'cid-worker|worker\n'
   fi
   if [[ "${SERVICE_STATE[scheduler]}" != "stopped" && "${SERVICE_STATE[scheduler]}" != "missing" ]]; then
     printf 'cid-scheduler|scheduler\n'
@@ -137,7 +142,7 @@ PROPERTYQUARRY_SCHEMA_QUIESCE_TIMEOUT_SECONDS=30
 propertyquarry_register_public_ingress_hold ingress ingress
 if [[ "${SCENARIO}" == "crash-reconcile" || "${SCENARIO}" == "crash-reconcile-stale-receipt" ]]; then
   propertyquarry_reconcile_incomplete_deploy_runtime \
-    api api scheduler scheduler render render migrate migrate 30
+    api api worker worker scheduler scheduler render render migrate migrate 30
   event external-journal-reconciled
   propertyquarry_complete_crash_reconciliation
   event crash-reconciliation-complete
@@ -150,7 +155,8 @@ if [[ "${SCENARIO}" == "crash-reconcile" || "${SCENARIO}" == "crash-reconcile-st
   exit 0
 fi
 propertyquarry_hold_public_ingress_stopped
-propertyquarry_quiesce_schema_writers api api scheduler scheduler render render migrate migrate 30 2
+propertyquarry_quiesce_schema_writers \
+  api api worker worker scheduler scheduler render render migrate migrate 30 2
 
 case "${SCENARIO}" in
   first-deploy-failure|precommit-failure)
@@ -162,6 +168,7 @@ case "${SCENARIO}" in
     event migration-committed
     propertyquarry_mark_schema_migration_committed
     SERVICE_STATE[api]="running"
+    SERVICE_STATE[worker]="running"
     SERVICE_STATE[scheduler]="running"
     SERVICE_STATE[render]="running"
     event candidate-services-ready
@@ -172,6 +179,7 @@ case "${SCENARIO}" in
     event migration-committed
     propertyquarry_mark_schema_migration_committed
     SERVICE_STATE[api]="running"
+    SERVICE_STATE[worker]="running"
     SERVICE_STATE[scheduler]="running"
     SERVICE_STATE[render]="running"
     event canonical-gates-green
@@ -182,6 +190,7 @@ case "${SCENARIO}" in
     event migration-committed
     propertyquarry_mark_schema_migration_committed
     SERVICE_STATE[api]="running"
+    SERVICE_STATE[worker]="running"
     SERVICE_STATE[scheduler]="running"
     SERVICE_STATE[render]="running"
     event canonical-gates-green
@@ -204,6 +213,7 @@ esac
             "SCENARIO": scenario,
             "INITIAL_INGRESS": initial_ingress,
             "INITIAL_API": initial_api,
+            "INITIAL_WORKER": initial_worker,
             "INITIAL_SCHEDULER": initial_scheduler,
             "INITIAL_RENDER": initial_render,
             "INITIAL_MIGRATE": initial_migrate,
@@ -227,6 +237,7 @@ def test_first_deploy_failure_keeps_absent_ingress_and_writers_inactive(tmp_path
         scenario="first-deploy-failure",
         initial_ingress="missing",
         initial_api="missing",
+        initial_worker="missing",
         initial_scheduler="missing",
         initial_render="missing",
     )
@@ -234,7 +245,7 @@ def test_first_deploy_failure_keeps_absent_ingress_and_writers_inactive(tmp_path
     assert completed.returncode != 0
     assert events == [
         "compose stop --timeout 30 ingress",
-        "compose stop --timeout 30 api scheduler render",
+        "compose stop --timeout 30 api worker scheduler render",
         "migration-failed",
         "compose stop --timeout 30 ingress",
         "compose stop --timeout 30 migrate",
@@ -248,18 +259,19 @@ def test_precommit_failure_holds_ingress_then_restores_only_prior_writers(tmp_pa
     assert completed.returncode != 0
     assert events == [
         "compose stop --timeout 30 ingress",
-        "compose stop --timeout 30 api scheduler render",
+        "compose stop --timeout 30 api worker scheduler render",
         "migration-failed",
         "compose stop --timeout 30 ingress",
         "compose stop --timeout 30 migrate",
         "compose start api",
+        "compose start worker",
         "compose start scheduler",
         "compose start render",
     ]
 
 
 @pytest.mark.parametrize("scenario", ["postcommit-failure", "slo-failure", "replay"])
-def test_every_postcommit_gate_failure_holds_ingress_api_scheduler_and_render(
+def test_every_postcommit_gate_failure_holds_ingress_api_worker_scheduler_and_render(
     tmp_path: Path,
     scenario: str,
 ) -> None:
@@ -267,10 +279,10 @@ def test_every_postcommit_gate_failure_holds_ingress_api_scheduler_and_render(
 
     assert completed.returncode != 0
     assert events[0] == "compose stop --timeout 30 ingress"
-    assert events[1] == "compose stop --timeout 30 api scheduler render"
+    assert events[1] == "compose stop --timeout 30 api worker scheduler render"
     assert events[-3:] == [
         "compose stop --timeout 30 ingress",
-        "compose stop --timeout 30 api scheduler render",
+        "compose stop --timeout 30 api worker scheduler render",
         "journal-contained",
     ]
     assert "compose up -d --no-deps --force-recreate ingress" not in events
@@ -283,7 +295,7 @@ def test_success_consumes_receipt_only_after_gates_and_before_ingress_start(tmp_
     assert completed.returncode == 0, completed.stderr
     assert events == [
         "compose stop --timeout 30 ingress",
-        "compose stop --timeout 30 api scheduler render",
+        "compose stop --timeout 30 api worker scheduler render",
         "migration-committed",
         "canonical-gates-green",
         "drain-consumed",
@@ -304,7 +316,7 @@ def test_active_render_is_stopped_and_verified_before_migration(
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert events.index("compose stop --timeout 30 api scheduler render") < events.index(
+    assert events.index("compose stop --timeout 30 api worker scheduler render") < events.index(
         "migration-committed"
     )
 
@@ -342,7 +354,7 @@ def test_writer_appearing_after_snapshot_is_caught_by_immediate_pre_ddl_revalida
 
     assert completed.returncode != 0
     assert "migration-committed" not in events
-    assert "compose stop --timeout 30 api scheduler render" in events
+    assert "compose stop --timeout 30 api worker scheduler render" in events
     assert events.count("compose stop --timeout 30 ingress") >= 2
 
 
@@ -371,7 +383,7 @@ def test_startup_crash_reconciliation_contains_every_writer_before_completion(
     assert completed.returncode == 0, completed.stderr
     assert events == [
         "compose stop --timeout 30 ingress",
-        "compose stop --timeout 30 api scheduler render migrate",
+        "compose stop --timeout 30 api worker scheduler render migrate",
         "docker stop --time 30 cid-cross",
         "external-journal-reconciled",
         "crash-reconciliation-complete",
@@ -390,7 +402,7 @@ def test_crash_reconciliation_session_recheck_failure_recontains_and_journals(
     assert completed.returncode != 0
     assert events[-3:] == [
         "compose stop --timeout 30 ingress",
-        "compose stop --timeout 30 api scheduler render",
+        "compose stop --timeout 30 api worker scheduler render",
         "journal-contained",
     ]
     assert "crash-reconciliation-complete" not in events
@@ -408,7 +420,7 @@ def test_containment_journal_failure_never_releases_postcommit_runtime(
     assert completed.returncode != 0
     assert events[-3:] == [
         "compose stop --timeout 30 ingress",
-        "compose stop --timeout 30 api scheduler render",
+        "compose stop --timeout 30 api worker scheduler render",
         "journal-contained",
     ]
     assert "compose up -d --no-deps --force-recreate ingress" not in events
@@ -424,7 +436,9 @@ def test_stale_new_receipt_cannot_prevent_crash_containment_of_live_migrator(
     )
 
     assert completed.returncode != 0
-    first_runtime_stop = events.index("compose stop --timeout 30 api scheduler render migrate")
+    first_runtime_stop = events.index(
+        "compose stop --timeout 30 api worker scheduler render migrate"
+    )
     journal_reconciled = events.index("external-journal-reconciled")
     reconciliation_complete = events.index("crash-reconciliation-complete")
     stale_receipt = events.index("drain-receipt-stale")

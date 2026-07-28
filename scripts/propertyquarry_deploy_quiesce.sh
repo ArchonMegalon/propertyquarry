@@ -225,8 +225,13 @@ propertyquarry_database_writer_name_is_allowed() {
 }
 
 propertyquarry_capture_database_writer_inventory() {
+  if [[ $# -ne 3 ]]; then
+    echo "Database writer inventory requires the pinned API, worker, and scheduler container names." >&2
+    return 2
+  fi
   local api_container_name="$1"
-  local scheduler_container_name="$2"
+  local worker_container_name="$2"
+  local scheduler_container_name="$3"
   local inventory=""
   local line=""
   local cid=""
@@ -261,6 +266,7 @@ propertyquarry_capture_database_writer_inventory() {
       return 1
     fi
     if [[ "${container_name}" != "${api_container_name}" && \
+      "${container_name}" != "${worker_container_name}" && \
       "${container_name}" != "${scheduler_container_name}" ]]; then
       PROPERTYQUARRY_EXTERNAL_DATABASE_WRITER_IDS+=("${cid}")
       PROPERTYQUARRY_EXTERNAL_DATABASE_WRITER_NAMES+=("${container_name}")
@@ -320,15 +326,21 @@ propertyquarry_assert_database_writer_inventory_empty() {
 }
 
 propertyquarry_reconcile_incomplete_deploy_runtime() {
+  if [[ $# -ne 11 ]]; then
+    echo "Crash reconciliation requires the complete pinned API, worker, scheduler, render, and migration topology." >&2
+    return 2
+  fi
   local api_service="$1"
   local api_container_name="$2"
-  local scheduler_service="$3"
-  local scheduler_container_name="$4"
-  local render_service="$5"
-  local render_container_name="$6"
-  local migration_service="$7"
-  local migration_container_name="$8"
-  local timeout_seconds="$9"
+  local worker_service="$3"
+  local worker_container_name="$4"
+  local scheduler_service="$5"
+  local scheduler_container_name="$6"
+  local render_service="$7"
+  local render_container_name="$8"
+  local migration_service="$9"
+  local migration_container_name="${10}"
+  local timeout_seconds="${11}"
   local index=0
   if [[ "${PROPERTYQUARRY_PUBLIC_INGRESS_HOLD_ARMED}" != "1" ]]; then
     echo "Crash reconciliation requires the public ingress hold to be armed first." >&2
@@ -344,6 +356,7 @@ propertyquarry_reconcile_incomplete_deploy_runtime() {
   PROPERTYQUARRY_POSTCOMMIT_HOLD_SERVICES=()
   PROPERTYQUARRY_POSTCOMMIT_HOLD_CONTAINER_NAMES=()
   propertyquarry_append_unique_postcommit_hold_target "${api_service}" "${api_container_name}"
+  propertyquarry_append_unique_postcommit_hold_target "${worker_service}" "${worker_container_name}"
   propertyquarry_append_unique_postcommit_hold_target "${scheduler_service}" "${scheduler_container_name}"
   propertyquarry_append_unique_postcommit_hold_target "${render_service}" "${render_container_name}"
   PROPERTYQUARRY_SCHEMA_QUIESCE_ARMED=1
@@ -353,12 +366,14 @@ propertyquarry_reconcile_incomplete_deploy_runtime() {
   # controller crash can leave the pinned migrator active; inventory-first
   # would misclassify it or allow it to continue DDL while recovery aborted.
   if ! "${DC[@]}" stop --timeout "${timeout_seconds}" \
-    "${api_service}" "${scheduler_service}" "${render_service}" "${migration_service}"; then
+    "${api_service}" "${worker_service}" "${scheduler_service}" \
+    "${render_service}" "${migration_service}"; then
     echo "Crash reconciliation could not stop every known runtime writer and migrator." >&2
     return 1
   fi
   propertyquarry_capture_database_writer_inventory \
-    "${api_container_name}" "${scheduler_container_name}" || return $?
+    "${api_container_name}" "${worker_container_name}" \
+    "${scheduler_container_name}" || return $?
   propertyquarry_stop_external_database_writers || return $?
   for ((index = 0; index < ${#PROPERTYQUARRY_POSTCOMMIT_HOLD_SERVICES[@]}; index++)); do
     propertyquarry_schema_assert_service_inactive \
@@ -405,16 +420,22 @@ propertyquarry_schema_assert_service_inactive() {
 }
 
 propertyquarry_quiesce_schema_writers() {
+  if [[ $# -ne 12 ]]; then
+    echo "Schema quiesce requires the complete pinned API, worker, scheduler, render, and migration topology." >&2
+    return 2
+  fi
   local api_service="$1"
   local api_container_name="$2"
-  local scheduler_service="$3"
-  local scheduler_container_name="$4"
-  local render_service="$5"
-  local render_container_name="$6"
-  local migration_service="$7"
-  local migration_container_name="$8"
-  local quiesce_timeout_seconds="$9"
-  local restore_timeout_seconds="${10}"
+  local worker_service="$3"
+  local worker_container_name="$4"
+  local scheduler_service="$5"
+  local scheduler_container_name="$6"
+  local render_service="$7"
+  local render_container_name="$8"
+  local migration_service="$9"
+  local migration_container_name="${10}"
+  local quiesce_timeout_seconds="${11}"
+  local restore_timeout_seconds="${12}"
   local index=0
 
   if [[ "${PROPERTYQUARRY_SCHEMA_QUIESCE_ARMED}" == "1" ]]; then
@@ -447,18 +468,27 @@ propertyquarry_quiesce_schema_writers() {
   PROPERTYQUARRY_SCHEMA_MIGRATION_CONTAINER_NAME="${migration_container_name}"
 
   propertyquarry_schema_append_unique_target "${api_service}" "${api_container_name}"
+  propertyquarry_schema_append_unique_target "${worker_service}" "${worker_container_name}"
   propertyquarry_schema_append_unique_target "${scheduler_service}" "${scheduler_container_name}"
   propertyquarry_schema_append_unique_target "${render_service}" "${render_container_name}"
   propertyquarry_append_unique_postcommit_hold_target "${api_service}" "${api_container_name}"
+  propertyquarry_append_unique_postcommit_hold_target "${worker_service}" "${worker_container_name}"
   propertyquarry_append_unique_postcommit_hold_target "${scheduler_service}" "${scheduler_container_name}"
   propertyquarry_append_unique_postcommit_hold_target "${render_service}" "${render_container_name}"
   propertyquarry_capture_database_writer_inventory \
-    "${api_container_name}" "${scheduler_container_name}" || return $?
+    "${api_container_name}" "${worker_container_name}" \
+    "${scheduler_container_name}" || return $?
   propertyquarry_schema_capture_active_service "${api_service}" "${api_container_name}" || return $?
-  if [[ "${scheduler_service}" != "${api_service}" ]]; then
+  if [[ "${worker_service}" != "${api_service}" ]]; then
+    propertyquarry_schema_capture_active_service "${worker_service}" "${worker_container_name}" || return $?
+  fi
+  if [[ "${scheduler_service}" != "${api_service}" && \
+    "${scheduler_service}" != "${worker_service}" ]]; then
     propertyquarry_schema_capture_active_service "${scheduler_service}" "${scheduler_container_name}" || return $?
   fi
-  if [[ "${render_service}" != "${api_service}" && "${render_service}" != "${scheduler_service}" ]]; then
+  if [[ "${render_service}" != "${api_service}" && \
+    "${render_service}" != "${worker_service}" && \
+    "${render_service}" != "${scheduler_service}" ]]; then
     propertyquarry_schema_capture_active_service "${render_service}" "${render_container_name}" || return $?
   fi
 
@@ -466,9 +496,9 @@ propertyquarry_quiesce_schema_writers() {
   # the EXIT handler restores the complete pre-migration state.
   PROPERTYQUARRY_SCHEMA_QUIESCE_ARMED=1
   if (( ${#PROPERTYQUARRY_SCHEMA_QUIESCE_PREVIOUS_SERVICES[@]} == 0 )); then
-    echo "No target API, scheduler, or render containers were active before schema migration quiesce." >&2
+    echo "No target API, worker, scheduler, or render containers were active before schema migration quiesce." >&2
   else
-    echo "Quiescing target API, scheduler, render, and allowed cross-stack writers before governed schema migration." >&2
+    echo "Quiescing target API, worker, scheduler, render, and allowed cross-stack writers before governed schema migration." >&2
   fi
 
   # Stop the complete target set, including a role that was absent during the
@@ -558,11 +588,11 @@ propertyquarry_restore_pre_migration_schema_writers() {
     return 1
   fi
   if (( ${#PROPERTYQUARRY_SCHEMA_QUIESCE_PREVIOUS_SERVICES[@]} == 0 )); then
-    echo "Migration failed before commit; this target had no prior API, scheduler, or render containers to restore." >&2
+    echo "Migration failed before commit; this target had no prior API, worker, scheduler, or render containers to restore." >&2
     return 0
   fi
 
-  echo "Migration did not commit; restoring only API, scheduler, and render containers that were running before quiesce." >&2
+  echo "Migration did not commit; restoring only API, worker, scheduler, and render containers that were running before quiesce." >&2
   for ((index = 0; index < ${#PROPERTYQUARRY_SCHEMA_QUIESCE_PREVIOUS_SERVICES[@]}; index++)); do
     if [[ "${PROPERTYQUARRY_SCHEMA_QUIESCE_PREVIOUS_STATUSES[index]}" != "running" && \
       "${PROPERTYQUARRY_SCHEMA_QUIESCE_PREVIOUS_STATUSES[index]}" != "restarting" ]]; then
@@ -621,13 +651,14 @@ propertyquarry_finish_schema_quiesce() {
   fi
   PROPERTYQUARRY_SCHEMA_QUIESCE_ARMED=0
   PROPERTYQUARRY_PUBLIC_INGRESS_HOLD_ARMED=0
-  trap - EXIT INT TERM
+  trap - EXIT HUP INT TERM
 }
 
 propertyquarry_schema_quiesce_exit_handler() {
+  trap '' HUP INT TERM
   local exit_code="${1:-1}"
   local recovery_failed=0
-  trap - EXIT INT TERM
+  trap - EXIT
   if [[ "${PROPERTYQUARRY_SCHEMA_QUIESCE_ARMED}" != "1" && \
     "${PROPERTYQUARRY_PUBLIC_INGRESS_HOLD_ARMED}" != "1" ]]; then
     exit "${exit_code}"
@@ -659,6 +690,7 @@ propertyquarry_schema_quiesce_exit_handler() {
 
 propertyquarry_install_schema_quiesce_traps() {
   trap 'propertyquarry_schema_quiesce_exit_handler $?' EXIT
+  trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
 }

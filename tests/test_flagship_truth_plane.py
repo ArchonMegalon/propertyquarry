@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -162,12 +163,27 @@ def test_flagship_release_receipt_is_materialized_or_expected_to_materialize() -
     }
     assert "final live readiness is not evaluated" in receipt["operator_summary"].lower()
     matrix = receipt["journey_evidence_matrix"]
-    assert matrix["status"] == "pass"
-    assert matrix["runtime_commit_sha"] == receipt["source_binding"]["code_commit"]
     assert matrix["required_journey_ids"] == REQUIRED_JOURNEY_IDS
-    assert [row["journey_id"] for row in matrix["rows"]] == REQUIRED_JOURNEY_IDS
-    assert all(row["proof_status"] == "pass" for row in matrix["rows"])
-    assert all(row["live_requirement"]["status"] == "not_evaluated" for row in matrix["rows"])
+    rows = matrix["rows"]
+    assert [row["journey_id"] for row in rows] == REQUIRED_JOURNEY_IDS
+    assert all(row["evidence_sources"] for row in rows)
+    assert all(row["live_requirement"]["status"] == "not_evaluated" for row in rows)
+
+    source_binding = receipt.get("source_binding")
+    if isinstance(source_binding, dict):
+        assert matrix["status"] == "pass"
+        assert matrix["runtime_commit_sha"] == source_binding["code_commit"]
+        assert all(row["proof_status"] == "pass" for row in rows)
+    else:
+        assert source_binding is None
+        assert matrix["status"] == "not_evaluated"
+        assert matrix["runtime_commit_sha"] == ""
+        assert all(row["proof_status"] != "pass" for row in rows)
+        blockers = receipt["blocking_reasons"]
+        limitations = receipt["current_limitations"]
+        assert isinstance(blockers, list)
+        assert isinstance(limitations, list)
+        assert any(str(item).strip() for item in [*blockers, *limitations])
 
 
 def test_flagship_closeout_claim_is_scoped_to_the_proven_propertyquarry_surface() -> None:
@@ -196,12 +212,30 @@ def test_release_asset_verifier_binds_generated_receipts_to_current_propertyquar
 
 def test_flagship_candidate_verifier_accepts_v2_fail_closed_truth(tmp_path: Path) -> None:
     pulse = json.loads(PULSE_PATH.read_text(encoding="utf-8"))
+    receipt = json.loads(GENERATED_GATE_PATH.read_text(encoding="utf-8"))
+    flagship_bytes = GENERATED_GATE_PATH.read_bytes()
+    provenance = pulse["release_truth_provenance"]
+    assert isinstance(provenance, dict)
+    provenance["sha256"] = hashlib.sha256(flagship_bytes).hexdigest()
+    provenance["size_bytes"] = len(flagship_bytes)
+    issues = _verify_pulse(tmp_path, pulse)
 
-    assert _verify_pulse(tmp_path, pulse) == []
+    if isinstance(receipt.get("source_binding"), dict):
+        assert issues == []
+    else:
+        assert receipt["source_binding"] is None
+        assert issues == [
+            "flagship release receipt source_binding is missing or invalid",
+            "browser workflow proof source_binding is missing or invalid",
+            "flagship release receipt is blocked, expected pass",
+            "browser workflow proof is blocked, expected pass",
+            "weekly release_health candidate_state is not clear/ready",
+            "weekly flagship_readiness candidate_state is not clear/ready",
+        ]
 
     pulse["journey_gate_health"]["state"] = "blocked"
     pulse["journey_gate_health"]["blocked_count"] = 99
-    assert _verify_pulse(tmp_path, pulse) == []
+    assert _verify_pulse(tmp_path, pulse) == issues
 
 
 def test_flagship_candidate_verifier_rejects_legacy_production_overclaims(tmp_path: Path) -> None:

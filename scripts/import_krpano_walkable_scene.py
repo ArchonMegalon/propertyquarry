@@ -5,11 +5,32 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from PIL import Image
+
+try:
+    from property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_env_int,
+        bounded_lane_lock,
+        require_bounded_file,
+        require_free_disk,
+        tour_asset_max_bytes,
+        tour_manifest_max_bytes,
+    )
+except ModuleNotFoundError:
+    from scripts.property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_env_int,
+        bounded_lane_lock,
+        require_bounded_file,
+        require_free_disk,
+        tour_asset_max_bytes,
+        tour_manifest_max_bytes,
+    )
 
 
 PANORAMA_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -44,10 +65,33 @@ def _image_dimensions(path: Path) -> tuple[int, int]:
         return (0, 0)
 
 
+def _require_image_budget(path: Path, *, reason_prefix: str) -> None:
+    try:
+        require_bounded_file(
+            path,
+            reason_prefix=reason_prefix,
+            maximum_bytes=tour_asset_max_bytes(),
+        )
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def _validate_pixel_budget(width: int, height: int) -> None:
+    maximum_pixels = bounded_env_int(
+        "PROPERTYQUARRY_TOUR_IMAGE_MAX_PIXELS",
+        default=100_000_000,
+        minimum=1_048_576,
+        maximum=250_000_000,
+    )
+    if width <= 0 or height <= 0 or width * height > maximum_pixels:
+        raise SystemExit("krpano_image_pixel_limit")
+
+
 def _validate_equirectangular(path: Path) -> tuple[int, int]:
     if path.suffix.lower() not in PANORAMA_IMAGE_EXTENSIONS:
         raise SystemExit("krpano_panorama_extension_invalid")
     width, height = _image_dimensions(path)
+    _validate_pixel_budget(width, height)
     if width < 1024 or height < 512:
         raise SystemExit("krpano_panorama_too_small")
     ratio = width / height if height else 0
@@ -60,6 +104,7 @@ def _validate_cube_face(path: Path) -> tuple[int, int]:
     if path.suffix.lower() not in PANORAMA_IMAGE_EXTENSIONS:
         raise SystemExit("krpano_cube_face_extension_invalid")
     width, height = _image_dimensions(path)
+    _validate_pixel_budget(width, height)
     if width < 512 or height < 512:
         raise SystemExit("krpano_cube_face_too_small")
     ratio = width / height if height else 0
@@ -76,7 +121,46 @@ def _copy_asset(source: Path, *, bundle_dir: Path, target_relpath: str) -> tuple
     if bundle_dir.resolve() not in target.parents:
         raise SystemExit("invalid_krpano_target")
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
+    maximum_bytes = tour_asset_max_bytes()
+    _require_image_budget(source, reason_prefix="krpano_asset")
+    try:
+        require_free_disk(
+            target.parent,
+            reason_prefix="krpano_import",
+            expected_write_bytes=int(source.stat(follow_symlinks=False).st_size),
+        )
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
+    temporary_path: Path | None = None
+    total = 0
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output:
+            temporary_path = Path(output.name)
+            with source.open("rb") as input_handle:
+                while True:
+                    chunk = input_handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > maximum_bytes:
+                        raise TourHostSafetyError("krpano_asset_too_large")
+                    output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary_path.chmod(0o644)
+        os.replace(temporary_path, target)
+        temporary_path = None
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     return relpath, {
         "relpath": relpath,
         "sha256": _sha256(target),
@@ -117,8 +201,10 @@ def _license_runtime_config() -> dict[str, str]:
     return {"domain": domain}
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Import a real 360 walkable scene for licensed krpano control.")
+def _main_unlocked() -> int:
+    parser = argparse.ArgumentParser(
+        description="Import one real 360 panorama or cubemap for licensed krpano control."
+    )
     parser.add_argument("--slug", required=True, help="Existing PropertyQuarry public tour slug.")
     parser.add_argument("--panorama", default="", help="Readable 2:1 equirectangular panorama image.")
     parser.add_argument("--cube-face", action="append", default=[], help="Square cube-face image. Provide exactly six.")
@@ -148,6 +234,14 @@ def main() -> int:
     manifest_path = bundle_dir / "tour.json"
     if not manifest_path.is_file():
         raise SystemExit("tour_manifest_missing")
+    try:
+        require_bounded_file(
+            manifest_path,
+            reason_prefix="tour_manifest",
+            maximum_bytes=tour_manifest_max_bytes(),
+        )
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
     target_subdir = _safe_relpath(args.target_subdir or "krpano") or "krpano"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -169,6 +263,7 @@ def main() -> int:
     if panorama_path:
         if not panorama_path.is_file():
             raise SystemExit("krpano_panorama_missing")
+        _require_image_budget(panorama_path, reason_prefix="krpano_panorama")
         width, height = _validate_equirectangular(panorama_path)
         suffix = panorama_path.suffix.lower()
         relpath, metadata = _copy_asset(
@@ -184,7 +279,8 @@ def main() -> int:
             "width": width,
             "height": height,
         }
-        scene_strategy = "walkable_panorama"
+        scene_strategy = "single_panorama"
+        creation_mode = "hosted_panorama_360"
     else:
         if len(cube_paths) != 6:
             raise SystemExit("krpano_requires_six_cube_faces")
@@ -192,6 +288,7 @@ def main() -> int:
         for index, source in enumerate(cube_paths, start=1):
             if not source.is_file():
                 raise SystemExit(f"krpano_cube_face_missing:{index}")
+            _require_image_budget(source, reason_prefix="krpano_cube_face")
             width, height = _validate_cube_face(source)
             suffix = source.suffix.lower()
             relpath, metadata = _copy_asset(
@@ -207,15 +304,16 @@ def main() -> int:
             "type": "cube",
             "cube_faces": cube_faces,
         }
-        scene_strategy = "walkable_cube"
+        scene_strategy = "single_cubemap"
+        creation_mode = "hosted_cubemap_360"
 
     payload["control_mode"] = "krpano"
     payload["viewer_provider"] = "krpano"
     payload["scene_strategy"] = scene_strategy
-    payload["creation_mode"] = "hosted_walkable_360"
+    payload["creation_mode"] = creation_mode
     payload["walkable_scene"] = walkable_scene
     payload["krpano_import"] = {
-        "source": "verified_walkable_360_assets",
+        "source": "verified_single_scene_360_assets",
         "imported_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "target_subdir": target_subdir,
         "license_domain": license_config.get("domain") or "",
@@ -237,6 +335,14 @@ def main() -> int:
         )
     )
     return 0
+
+
+def main() -> int:
+    try:
+        with bounded_lane_lock("krpano-import"):
+            return _main_unlocked()
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":

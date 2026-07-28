@@ -155,11 +155,24 @@ def test_runtime_mode_prod_rejects_whitespace_api_token() -> None:
         _ = get_settings()
 
 
-def test_runtime_mode_unknown_defaults_to_dev() -> None:
+@pytest.mark.parametrize(
+    "runtime_mode",
+    ("unknown-mode", "production", "prdo"),
+)
+def test_runtime_mode_unknown_fails_closed(runtime_mode: str) -> None:
     _clear_env()
-    os.environ["EA_RUNTIME_MODE"] = "unknown-mode"
-    s = get_settings()
-    assert s.runtime.mode == "dev"
+    os.environ["EA_RUNTIME_MODE"] = runtime_mode
+    with pytest.raises(
+        RuntimeError,
+        match="EA_RUNTIME_MODE must be one of: dev, test, prod",
+    ):
+        _ = get_settings()
+
+
+def test_runtime_mode_whitespace_defaults_to_dev() -> None:
+    _clear_env()
+    os.environ["EA_RUNTIME_MODE"] = " \t\n"
+    assert get_settings().runtime.mode == "dev"
 
 
 def test_default_principal_override() -> None:

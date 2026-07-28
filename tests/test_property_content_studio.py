@@ -9,6 +9,13 @@ from app.services.property_content_validation import validate_property_content_s
 from tests.product_test_helpers import build_property_operator_client
 
 
+_SYSTEM_OWNERSHIP = {
+    "principal_id": "propertyquarry:system:content-studio",
+    "ownership_scope": "system",
+    "search_run_id": "",
+}
+
+
 def _studio(tmp_path: Path) -> PropertyContentStudio:
     return PropertyContentStudio(ledger=PropertyContentJobLedger(path=tmp_path / "content-ledger.json"))
 
@@ -18,14 +25,14 @@ def test_content_studio_prepares_packet_and_does_not_call_disabled_provider(monk
     packet = build_product_tutorial_source_packet(title="How to Read a PropertyQuarry Dossier")
     studio = _studio(tmp_path)
 
-    prepared = studio.prepare_source_packet(packet)
-    requested = studio.request_subscribr_script(packet)
+    prepared = studio.prepare_source_packet(packet, **_SYSTEM_OWNERSHIP)
+    requested = studio.request_subscribr_script(packet, **_SYSTEM_OWNERSHIP)
 
     assert prepared["status"] == "SOURCE_PACKET_APPROVED"
     assert requested["status"] == "SOURCE_PACKET_APPROVED"
     assert requested["provider_status"] == "disabled"
     assert requested["publication_allowed"] is False
-    assert studio.ledger.get_job(packet["packet_id"])["source_packet_json"]["packet_id"] == packet["packet_id"]
+    assert studio.ledger.get_job(packet["packet_id"], **_SYSTEM_OWNERSHIP)["source_packet_json"]["packet_id"] == packet["packet_id"]
 
 
 def test_content_studio_validation_route_and_admin_surface(monkeypatch, tmp_path: Path) -> None:
@@ -69,7 +76,7 @@ def test_invalid_packet_is_rejected_before_subscribr_job(tmp_path: Path) -> None
     packet["user_email"] = "buyer@example.com"
     studio = _studio(tmp_path)
 
-    job = studio.request_subscribr_script(packet)
+    job = studio.request_subscribr_script(packet, **_SYSTEM_OWNERSHIP)
 
     assert validate_property_content_source_packet(packet)["status"] == "fail"
     assert job["status"] == "SOURCE_REJECTED"

@@ -50,8 +50,13 @@ def _record(*, principal_id: str, run_id: str) -> dict[str, object]:
 def _cleanup(database_url: str, *, principal_ids: tuple[str, ...]) -> None:
     import psycopg
 
+    from app.product.property_search_storage import (
+        _set_property_search_writer_contract,
+    )
+
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
+            _set_property_search_writer_contract(cur)
             cur.execute(
                 "DELETE FROM property_search_work_jobs WHERE principal_id = ANY(%s)",
                 (list(principal_ids),),
@@ -213,3 +218,36 @@ def test_postgres_retry_budget_requeues_then_fails_terminally() -> None:
         assert repository.claim(lease_owner="worker-c", lease_seconds=60) is None
     finally:
         _cleanup(database_url, principal_ids=(principal_id,))
+
+
+def test_postgres_observability_snapshot_tracks_active_jobs_without_identity() -> None:
+    database_url = _db_url()
+    repository = PostgresPropertySearchWorkQueue(database_url)
+    suffix = uuid4().hex
+    principals = (
+        f"queue-observability-a-{suffix}",
+        f"queue-observability-b-{suffix}",
+    )
+    baseline = repository.observability_snapshot()
+    try:
+        for index, principal_id in enumerate(principals):
+            repository.enqueue_run(
+                run_record=_record(
+                    principal_id=principal_id,
+                    run_id=f"run-observability-{suffix}-{index}",
+                ),
+                payload_json={"private_marker": f"must-not-escape-{index}"},
+                idempotency_key=f"queue-observability-{suffix}-{index}",
+                max_attempts=1,
+            )
+
+        queued = repository.observability_snapshot()
+
+        assert queued.depth == baseline.depth + 2
+        assert queued.oldest_item_age_seconds >= 0.0
+        assert set(vars(queued)) == {
+            "depth",
+            "oldest_item_age_seconds",
+        }
+    finally:
+        _cleanup(database_url, principal_ids=principals)

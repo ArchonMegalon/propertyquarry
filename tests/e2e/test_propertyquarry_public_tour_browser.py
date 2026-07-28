@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator
+from contextlib import ExitStack
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,6 +29,10 @@ Server = uvicorn.Server
 
 from app.api.app import create_app
 from scripts import generate_property_reconstruction as reconstruction_script
+from scripts.property_tour_3dvista_provenance import (
+    THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
+    export_tree_sha256,
+)
 from scripts.propertyquarry_playwright_runtime import playwright_engine_launch_browser
 
 
@@ -61,6 +66,51 @@ def _wait_for_url(url: str, *, timeout_seconds: float = 15.0) -> None:
         except Exception:
             time.sleep(0.1)
     raise AssertionError(f"url {url} did not become ready in time")
+
+
+def _stop_uvicorn_server(*, server: Server, thread: threading.Thread, label: str) -> None:
+    server.should_exit = True
+    thread.join(timeout=10.0)
+    if thread.is_alive():
+        server.force_exit = True
+        thread.join(timeout=5.0)
+    assert not thread.is_alive(), f"{label} uvicorn thread did not stop"
+
+
+def _stop_http_server(
+    *,
+    server: ThreadingHTTPServer,
+    thread: threading.Thread,
+    label: str,
+) -> None:
+    shutdown_errors: list[str] = []
+
+    def _shutdown() -> None:
+        try:
+            server.shutdown()
+        except BaseException as exc:  # pragma: no cover - defensive teardown receipt
+            shutdown_errors.append(f"shutdown raised {type(exc).__name__}: {exc}")
+
+    shutdown_thread = threading.Thread(
+        target=_shutdown,
+        name=f"{label} shutdown",
+        daemon=True,
+    )
+    shutdown_thread.start()
+    shutdown_thread.join(timeout=5.0)
+    try:
+        server.server_close()
+    except BaseException as exc:  # pragma: no cover - defensive teardown receipt
+        shutdown_errors.append(f"server_close raised {type(exc).__name__}: {exc}")
+    thread.join(timeout=10.0)
+    shutdown_thread.join(timeout=1.0)
+    shutdown_alive = shutdown_thread.is_alive()
+    issues = list(shutdown_errors)
+    if shutdown_alive:
+        issues.append("shutdown call did not finish during bounded teardown")
+    if thread.is_alive():
+        issues.append("HTTP serving thread did not stop within 10 seconds")
+    assert not issues, f"{label} HTTP teardown failed: {'; '.join(issues)}"
 
 
 def _play_tour_video_without_waiting(page) -> bool:
@@ -481,7 +531,15 @@ def _canvas_visual_metrics(page, selector: str) -> dict[str, object]:
         "hotspot_count": float(metrics.get("hotspotCount") or 0),
         "visible_hotspot_count": float(metrics.get("visibleHotspotCount") or 0),
         "staging_object_count": float(metrics.get("stagingObjectCount") or 0),
+        "staging_detail_object_count": float(metrics.get("stagingDetailObjectCount") or 0),
+        "staged_route_stop_count": float(metrics.get("stagedRouteStopCount") or 0),
+        "max_staged_route_stops": float(metrics.get("maxStagedRouteStops") or 0),
         "visible_staging_object_count": float(metrics.get("visibleStagingObjectCount") or 0),
+        "light_count": float(metrics.get("lightCount") or 0),
+        "physically_based_tone_mapping": bool(metrics.get("physicallyBasedToneMapping")),
+        "shadow_map_enabled": bool(metrics.get("shadowMapEnabled")),
+        "render_quality_tier": str(metrics.get("renderQualityTier") or ""),
+        "apartment_plinth_visible": bool(metrics.get("apartmentPlinthVisible")),
         "photo_panel_count": float(metrics.get("photoPanelCount") or 0),
         "loaded_photo_texture_count": float(metrics.get("loadedPhotoTextureCount") or 0),
         "visible_photo_panel_count": float(metrics.get("visiblePhotoPanelCount") or 0),
@@ -641,7 +699,15 @@ def _normalized_metrics(metrics):
         "hotspot_count": float(metrics.get("hotspotCount") or 0),
         "visible_hotspot_count": float(metrics.get("visibleHotspotCount") or 0),
         "staging_object_count": float(metrics.get("stagingObjectCount") or 0),
+        "staging_detail_object_count": float(metrics.get("stagingDetailObjectCount") or 0),
+        "staged_route_stop_count": float(metrics.get("stagedRouteStopCount") or 0),
+        "max_staged_route_stops": float(metrics.get("maxStagedRouteStops") or 0),
         "visible_staging_object_count": float(metrics.get("visibleStagingObjectCount") or 0),
+        "light_count": float(metrics.get("lightCount") or 0),
+        "physically_based_tone_mapping": bool(metrics.get("physicallyBasedToneMapping")),
+        "shadow_map_enabled": bool(metrics.get("shadowMapEnabled")),
+        "render_quality_tier": str(metrics.get("renderQualityTier") or ""),
+        "apartment_plinth_visible": bool(metrics.get("apartmentPlinthVisible")),
         "photo_panel_count": float(metrics.get("photoPanelCount") or 0),
         "loaded_photo_texture_count": float(metrics.get("loadedPhotoTextureCount") or 0),
         "visible_photo_panel_count": float(metrics.get("visiblePhotoPanelCount") or 0),
@@ -787,6 +853,24 @@ with sync_playwright() as playwright:
         and str(metrics.get("viewMode") or "") == "room"
         and not bool(metrics.get("isTransitioning")),
     )
+    context_loss_state = dict(
+        page.evaluate(
+            '''() => {
+                window.__pqReconstructionDebug?.simulateContextLoss?.();
+                const fallback = document.getElementById("viewer-fallback");
+                const viewport = document.getElementById("viewport");
+                return {
+                    viewerStatus: document.documentElement.dataset.viewerStatus || "",
+                    renderStatus: viewport?.dataset.renderStatus || "",
+                    fallbackVisible: Boolean(fallback && !fallback.hidden),
+                    controlsDisabled: Array.from(
+                        document.querySelectorAll(".viewer-chip, .route-button, .floorplan-stop")
+                    ).every((node) => Boolean(node.disabled)),
+                };
+            }'''
+        )
+        or {}
+    )
 
 payload = {
     "initial_dom": initial_dom,
@@ -801,6 +885,7 @@ payload = {
     if route2_transition_raw_metrics is None
     else _normalized_metrics(route2_transition_raw_metrics),
     "route2_metrics": _normalized_metrics(route2_raw_metrics),
+    "context_loss_state": context_loss_state,
     "page_errors": list(page_errors),
     "unexpected_console_errors": [
         message
@@ -838,7 +923,13 @@ os._exit(0)
 
 
 @pytest.fixture()
-def public_tour_browser_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
+def public_tour_browser_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> Iterator[dict[str, str]]:
+    cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
     bundle_root = tmp_path / "public_tours"
     slug = "real-browser-floorplan-tour"
     bundle_dir = bundle_root / slug
@@ -904,6 +995,16 @@ def public_tour_browser_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             "public_url": f"https://propertyquarry.com/tours/{provider_slug}",
             "three_d_vista_entry_relpath": "3dvista/index.htm",
             "three_d_vista_import": {"source_project": "propertyquarry"},
+        }
+    )
+    (provider_bundle_dir / "tour.json").write_text(
+        json.dumps(provider_manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (provider_bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "slug": provider_slug,
             "three_d_vista_white_label_proof": {
                 "source_project": "propertyquarry",
                 "private_viewer_verified": True,
@@ -917,10 +1018,32 @@ def public_tour_browser_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
                 "status": "pass",
                 "rendered_viewer": True,
             },
-        }
-    )
-    (provider_bundle_dir / "tour.json").write_text(
-        json.dumps(provider_manifest, ensure_ascii=False, indent=2),
+                "three_d_vista_target_provenance": {
+                    "schema": THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
+                    "status": "pass",
+                    "provider": "3dvista",
+                    "target_slug": provider_slug,
+                    "artifact": {
+                        "kind": "local_export",
+                        "sha256": export_tree_sha256(three_d_vista_dir),
+                        "entry_relpath": "index.htm",
+                    },
+                    "authorization": {
+                        "status": "approved",
+                        "reference": f"fixture-authorization:{provider_slug}",
+                    },
+                    "review": {
+                        "property_match": "pass",
+                        "visual_match": "pass",
+                        "reviewed_by": "propertyquarry-browser-test-reviewer",
+                        "reviewed_at": "2026-07-18T00:00:00+00:00",
+                    },
+                    "target_subdir": "3dvista",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     video_slug = "real-browser-video-tour"
@@ -980,6 +1103,12 @@ def public_tour_browser_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    cleanup.callback(
+        _stop_uvicorn_server,
+        server=server,
+        thread=thread,
+        label="public tour browser fixture",
+    )
     local_base_url = f"http://127.0.0.1:{port}"
     browser_base_url = f"http://propertyquarry.com:{port}"
     _wait_for_http(local_base_url)
@@ -988,34 +1117,38 @@ def public_tour_browser_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         ("127.0.0.1", raw_port),
         partial(_SilentStaticHandler, directory=str(bundle_root)),
     )
+    static_server.daemon_threads = True
+    static_server.block_on_close = False
     static_thread = threading.Thread(target=static_server.serve_forever, daemon=True)
     static_thread.start()
+    cleanup.callback(
+        _stop_http_server,
+        server=static_server,
+        thread=static_thread,
+        label="public tour static fixture",
+    )
     generated_reconstruction_viewer_url = (
         f"http://127.0.0.1:{raw_port}/{generated_reconstruction_slug}/generated-reconstruction/viewer.html"
     )
     _wait_for_url(generated_reconstruction_viewer_url)
-    try:
-        yield {
-            "base_url": browser_base_url,
-            "slug": slug,
-            "provider_slug": provider_slug,
-            "video_slug": video_slug,
-            "generated_reconstruction_slug": generated_reconstruction_slug,
-            "generated_reconstruction_viewer_url": generated_reconstruction_viewer_url,
-        }
-    finally:
-        static_server.shutdown()
-        static_server.server_close()
-        static_thread.join(timeout=10.0)
-        server.should_exit = True
-        thread.join(timeout=10.0)
+    yield {
+        "base_url": browser_base_url,
+        "slug": slug,
+        "provider_slug": provider_slug,
+        "video_slug": video_slug,
+        "generated_reconstruction_slug": generated_reconstruction_slug,
+        "generated_reconstruction_viewer_url": generated_reconstruction_viewer_url,
+    }
 
 
 @pytest.fixture()
 def generated_reconstruction_walkthrough_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> Iterator[dict[str, str]]:
+    cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
     bundle_root = tmp_path / "public_tours"
     slug = "generated-reconstruction-walkthrough-browser-tour"
     _generate_reconstruction_bundle(bundle_root=bundle_root, slug=slug, skip_video=False)
@@ -1033,17 +1166,19 @@ def generated_reconstruction_walkthrough_server(
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    cleanup.callback(
+        _stop_uvicorn_server,
+        server=server,
+        thread=thread,
+        label="generated reconstruction browser fixture",
+    )
     local_base_url = f"http://127.0.0.1:{port}"
     browser_base_url = f"http://propertyquarry.com:{port}"
     _wait_for_http(local_base_url)
-    try:
-        yield {
-            "base_url": browser_base_url,
-            "slug": slug,
-        }
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10.0)
+    yield {
+        "base_url": browser_base_url,
+        "slug": slug,
+    }
 
 
 def _write_generated_reconstruction_public_shell_bundle(
@@ -1247,7 +1382,10 @@ def _write_generated_reconstruction_public_shell_bundle(
 @pytest.fixture()
 def generated_reconstruction_viewer_server(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> Iterator[dict[str, str]]:
+    cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
     bundle_root = tmp_path / "public_tours"
     slug = "generated-reconstruction-viewer-browser-tour"
     bundle_dir = bundle_root / slug
@@ -1342,26 +1480,32 @@ def generated_reconstruction_viewer_server(
         ("127.0.0.1", raw_port),
         partial(_SilentStaticHandler, directory=str(bundle_root)),
     )
+    static_server.daemon_threads = True
+    static_server.block_on_close = False
     static_thread = threading.Thread(target=static_server.serve_forever, daemon=True)
     static_thread.start()
+    cleanup.callback(
+        _stop_http_server,
+        server=static_server,
+        thread=static_thread,
+        label="generated reconstruction viewer fixture",
+    )
     viewer_url = f"http://127.0.0.1:{raw_port}/{slug}/generated-reconstruction/viewer.html"
     _wait_for_url(viewer_url)
-    try:
-        yield {
-            "slug": slug,
-            "viewer_url": viewer_url,
-        }
-    finally:
-        static_server.shutdown()
-        static_server.server_close()
-        static_thread.join(timeout=10.0)
+    yield {
+        "slug": slug,
+        "viewer_url": viewer_url,
+    }
 
 
 @pytest.fixture()
 def generated_reconstruction_shell_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> Iterator[dict[str, str]]:
+    cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
     bundle_root = tmp_path / "public_tours"
     slug = "generated-reconstruction-shell-browser-tour"
     bundle_dir = bundle_root / slug
@@ -1643,26 +1787,31 @@ def generated_reconstruction_shell_server(
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    cleanup.callback(
+        _stop_uvicorn_server,
+        server=server,
+        thread=thread,
+        label="generated reconstruction browser fixture",
+    )
     local_base_url = f"http://127.0.0.1:{port}"
     browser_base_url = f"http://propertyquarry.com:{port}"
     _wait_for_http(local_base_url)
-    try:
-        yield {
-            "base_url": browser_base_url,
-            "bundle_root": str(bundle_root),
-            "local_base_url": local_base_url,
-            "slug": slug,
-        }
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10.0)
+    yield {
+        "base_url": browser_base_url,
+        "bundle_root": str(bundle_root),
+        "local_base_url": local_base_url,
+        "slug": slug,
+    }
 
 
 @pytest.fixture()
 def generated_reconstruction_matterport_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> Iterator[dict[str, str]]:
+    cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
     bundle_root = tmp_path / "public_tours"
     slug = "generated-reconstruction-matterport-browser-tour"
     _generate_reconstruction_bundle(bundle_root=bundle_root, slug=slug, skip_video=True)
@@ -1684,24 +1833,29 @@ def generated_reconstruction_matterport_server(
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    cleanup.callback(
+        _stop_uvicorn_server,
+        server=server,
+        thread=thread,
+        label="generated reconstruction browser fixture",
+    )
     local_base_url = f"http://127.0.0.1:{port}"
     browser_base_url = f"http://propertyquarry.com:{port}"
     _wait_for_http(local_base_url)
-    try:
-        yield {
-            "base_url": browser_base_url,
-            "slug": slug,
-        }
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10.0)
+    yield {
+        "base_url": browser_base_url,
+        "slug": slug,
+    }
 
 
 @pytest.fixture()
 def generated_reconstruction_expanded_walkthrough_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> Iterator[dict[str, str]]:
+    cleanup = ExitStack()
+    request.addfinalizer(cleanup.close)
     bundle_root = tmp_path / "public_tours"
     slug = "generated-reconstruction-expanded-walkthrough-browser-tour"
     route_labels = ["entry/hall", "living room", "bedroom", "balcony"]
@@ -1818,17 +1972,19 @@ def generated_reconstruction_expanded_walkthrough_server(
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    cleanup.callback(
+        _stop_uvicorn_server,
+        server=server,
+        thread=thread,
+        label="generated reconstruction browser fixture",
+    )
     local_base_url = f"http://127.0.0.1:{port}"
     browser_base_url = f"http://propertyquarry.com:{port}"
     _wait_for_http(local_base_url)
-    try:
-        yield {
-            "base_url": browser_base_url,
-            "slug": slug,
-        }
-    finally:
-        server.should_exit = True
-        thread.join(timeout=10.0)
+    yield {
+        "base_url": browser_base_url,
+        "slug": slug,
+    }
 
 
 @pytest.fixture()
@@ -2706,7 +2862,15 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     assert overview_metrics["hotspot_count"] == 3
     assert overview_metrics["visible_hotspot_count"] >= 1
     assert overview_metrics["staging_object_count"] >= overview_metrics["route_stop_count"] * 2
+    assert overview_metrics["staging_detail_object_count"] >= overview_metrics["route_stop_count"] * 2
+    assert overview_metrics["staged_route_stop_count"] == overview_metrics["route_stop_count"]
+    assert overview_metrics["staged_route_stop_count"] <= overview_metrics["max_staged_route_stops"] == 12
     assert overview_metrics["visible_staging_object_count"] >= overview_metrics["route_stop_count"]
+    assert overview_metrics["light_count"] >= 4
+    assert overview_metrics["physically_based_tone_mapping"] is True
+    assert overview_metrics["shadow_map_enabled"] is True
+    assert overview_metrics["render_quality_tier"] == "high"
+    assert overview_metrics["apartment_plinth_visible"] is True
     assert overview_metrics["photo_panel_count"] == 2
     assert overview_metrics["loaded_photo_texture_count"] == overview_metrics["photo_panel_count"]
     assert overview_metrics["visible_photo_panel_count"] >= 1
@@ -2782,6 +2946,14 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     assert route2_metrics["camera_position"] != route1_metrics["camera_position"]
     assert route2_metrics["projected_coverage_pct"] >= 0.5
 
+    context_loss_state = dict(probe["context_loss_state"])
+    assert context_loss_state == {
+        "viewerStatus": "unavailable",
+        "renderStatus": "unavailable",
+        "fallbackVisible": True,
+        "controlsDisabled": True,
+    }
+
     assert not probe["page_errors"]
     assert not probe["unexpected_console_errors"]
 
@@ -2842,6 +3014,56 @@ def test_generated_reconstruction_ready_viewer_route_renders_in_real_browser(
     assert updated_metrics["activeRouteIndex"] == 2
     assert external_requests == []
     context.close()
+
+
+def test_generated_reconstruction_viewer_uses_balanced_mobile_render_budget(
+    generated_reconstruction_viewer_server: dict[str, str],
+    browser: Browser,
+) -> None:
+    context = browser.new_context(
+        viewport={"width": 390, "height": 844},
+        device_scale_factor=2,
+        is_mobile=True,
+        has_touch=True,
+    )
+    page = context.new_page()
+    try:
+        response = page.goto(
+            str(generated_reconstruction_viewer_server["viewer_url"]),
+            wait_until="domcontentloaded",
+        )
+        assert response is not None and response.ok
+        page.wait_for_function(
+            """() => Boolean(window.__pqReconstructionDebug?.getRenderMetrics?.()?.ready)"""
+        )
+        metrics = dict(
+            page.evaluate(
+                """() => window.__pqReconstructionDebug?.getRenderMetrics?.() || {}"""
+            )
+            or {}
+        )
+        assert metrics["renderQualityTier"] == "balanced"
+        assert float(metrics["rendererPixelRatio"]) <= 1.5
+        assert int(metrics["shadowMapSize"]) == 1024
+        assert int(metrics["stagedRouteStopCount"]) <= int(metrics["maxStagedRouteStops"]) == 12
+        _assert_no_horizontal_overflow(page)
+        disposed_state = page.evaluate(
+            """() => {
+                const debug = window.__pqReconstructionDebug;
+                const before = debug?.getRenderMetrics?.() || {};
+                debug?.disposeViewer?.();
+                const after = debug?.getRenderMetrics?.() || {};
+                return {
+                    beforeFrameCount: Number(before.frameCount || 0),
+                    afterFrameCount: Number(after.frameCount || 0),
+                    viewerDisposed: Boolean(after.viewerDisposed),
+                };
+            }"""
+        )
+        assert disposed_state["viewerDisposed"] is True
+        assert disposed_state["afterFrameCount"] == disposed_state["beforeFrameCount"]
+    finally:
+        context.close()
 
 
 def test_generated_reconstruction_preview_route_rejects_symlinks_traversal_and_external_urls(

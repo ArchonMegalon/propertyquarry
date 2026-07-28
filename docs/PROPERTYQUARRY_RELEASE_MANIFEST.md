@@ -34,7 +34,7 @@ The marked JSON object is the single canonical release authority consumed by the
   "release_public_origin": "https://propertyquarry.com",
   "release_repository": "ArchonMegalon/property",
   "release_repository_origin": "https://github.com/ArchonMegalon/property.git",
-  "release_verification_commands": "bash scripts/verify_release_assets.sh && python3 scripts/verify_flagship_release_readiness.py && python3 scripts/verify_generated_release_artifacts_clean.py"
+  "release_verification_commands": "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight"
 }
 ```
 <!-- propertyquarry-release-manifest-json:end -->

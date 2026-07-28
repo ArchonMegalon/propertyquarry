@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from scripts import propertyquarry_playwright_runtime as runtime
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_playwright_runtime_normalizes_only_supported_engines() -> None:
@@ -134,3 +138,68 @@ def test_playwright_runtime_does_not_relaunch_unrelated_failures(error: Exceptio
     with pytest.raises(type(error)):
         runtime.playwright_engine_launch_browser(playwright)
     assert launches == 1
+
+
+def test_greenfield_browser_fixture_honors_requested_core_engine(monkeypatch) -> None:
+    from tests.e2e import test_propertyquarry_greenfield_browser as greenfield
+
+    observed: dict[str, object] = {}
+    browser = SimpleNamespace(close=lambda: observed.__setitem__("closed", True))
+    playwright = SimpleNamespace()
+
+    class _PlaywrightContext:
+        def __enter__(self) -> object:
+            return playwright
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    def _launch(
+        observed_playwright: object,
+        *,
+        engine: str,
+        args: list[str] | None = None,
+    ) -> object:
+        observed["playwright"] = observed_playwright
+        observed["engine"] = engine
+        observed["args"] = list(args or ())
+        return browser
+
+    monkeypatch.setenv("PROPERTYQUARRY_CORE_BROWSER_ENGINE", " Firefox ")
+    monkeypatch.setattr(greenfield, "sync_playwright", _PlaywrightContext)
+    monkeypatch.setattr(greenfield, "playwright_engine_launch_browser", _launch)
+
+    fixture = greenfield.browser.__wrapped__()
+    assert next(fixture) is browser
+    fixture.close()
+
+    assert observed["playwright"] is playwright
+    assert observed["engine"] == "firefox"
+    assert observed["closed"] is True
+    assert "--no-sandbox" in observed["args"]
+
+
+def test_smoke_runtime_matrix_installs_and_selects_every_core_browser_engine() -> None:
+    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "browser-engine: [chromium, firefox, webkit]" in workflow
+    assert (
+        'python -m playwright install --with-deps "${{ matrix.browser-engine }}"'
+        in workflow
+    )
+    assert (
+        "PROPERTYQUARRY_CORE_BROWSER_ENGINE: ${{ matrix.browser-engine }}"
+        in workflow
+    )
+    assert (
+        "tests/e2e/test_propertyquarry_greenfield_browser.py::"
+        "test_propertyquarry_workbench_candidate_history_stays_in_place"
+        in workflow
+    )
+    assert (
+        "tests/e2e/test_propertyquarry_greenfield_browser.py::"
+        "test_propertyquarry_flagship_operating_loop_in_browser"
+        in workflow
+    )

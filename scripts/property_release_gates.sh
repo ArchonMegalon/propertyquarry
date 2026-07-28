@@ -1,20 +1,30 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
 
-EA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-}"
-if [[ -z "${PYTHON_BIN}" ]]; then
-  if [[ -x "${EA_ROOT}/.venv/bin/python" ]]; then
-    PYTHON_BIN="${EA_ROOT}/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+PATH=/usr/bin:/bin
+export PATH
+readonly PATH
+unset BASH_ENV ENV CDPATH GLOBIGNORE
+IFS=$' \t\n'
+
+script_source="${BASH_SOURCE[0]}"
+[[ "${script_source}" == */* ]] || {
+  printf '%s\n' "error: release gate must be invoked with an explicit path" >&2
+  exit 2
+}
+EA_ROOT="$(cd -P -- "${script_source%/*}/.." && pwd -P)"
+if [[ -v PYTHON_BIN || -v PYTEST_PYTHON_BIN ]]; then
+  echo "error: release interpreter override forbidden" >&2
+  exit 2
 fi
+unset PYTHON_BIN PYTEST_PYTHON_BIN
+PYTHON_BIN="${EA_ROOT}/scripts/propertyquarry_release_python.sh"
+readonly PYTHON_BIN
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   cat <<'EOF'
 Usage:
-  bash scripts/property_release_gates.sh
+  ./scripts/property_release_gates.sh
 
 Runs the focused PropertyQuarry release bundle:
   - property workspace redesign browser contracts
@@ -73,6 +83,9 @@ monitoring_runtime_receipt="${PROPERTYQUARRY_MONITORING_RUNTIME_RECEIPT:-}"
 prometheus_range_receipt="${PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT:-}"
 prometheus_range_response="${PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE:-}"
 alert_delivery_receipt="${PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT:-}"
+dashboard_render_receipt="${PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT:-}"
+structured_log_query_receipt="${PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT:-}"
+distributed_trace_query_receipt="${PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT:-}"
 continuous_ux_receipt="${PROPERTYQUARRY_CONTINUOUS_UX_RECEIPT:-}"
 failure_state_receipt="${PROPERTYQUARRY_FAILURE_STATE_RECEIPT:-}"
 activation_to_value_receipt="${PROPERTYQUARRY_ACTIVATION_TO_VALUE_RECEIPT:-}"
@@ -84,6 +97,28 @@ expected_teable_origin="${PROPERTYQUARRY_EXPECTED_TEABLE_ORIGIN:-}"
 expected_teable_base_id_sha256="${PROPERTYQUARRY_EXPECTED_TEABLE_BASE_ID_SHA256:-}"
 expected_rybbit_origin="${PROPERTYQUARRY_RYBBIT_ORIGIN:-}"
 expected_rybbit_site_id_sha256="${PROPERTYQUARRY_RYBBIT_SITE_ID_SHA256:-}"
+gold_receipt="_completion/property_gold_status/release-gate.json"
+gold_latest_receipt="_completion/property_gold_status/latest.json"
+gold_root_latest_receipt="_completion/propertyquarry-gold-status-latest.json"
+gold_notification_report="_completion/property_gold_status/telegram-notify-report.json"
+
+clear_gold_publication() {
+  local target=""
+  for target in \
+    "${gold_receipt}" \
+    "${gold_latest_receipt}" \
+    "${gold_root_latest_receipt}" \
+    "${gold_notification_report}"; do
+    if [[ -e "${target}" || -L "${target}" ]]; then
+      if [[ ! -f "${target}" && ! -L "${target}" ]]; then
+        echo "error: refusing to replace non-file Gold publication target ${target}." >&2
+        return 1
+      fi
+      rm -f -- "${target}"
+    fi
+  done
+}
+
 if [[ -z "${dr_backup_receipt}" || -z "${dr_restore_receipt}" ]]; then
   echo "error: PROPERTYQUARRY_DR_BACKUP_RECEIPT and PROPERTYQUARRY_DR_RESTORE_RECEIPT are required." >&2
   exit 2
@@ -97,12 +132,23 @@ if [[ -z "${slo_metrics_snapshot}" || -z "${slo_metrics_probe_receipt}" ]]; then
   echo "Capture them from the authenticated private /internal/metrics route with scripts/propertyquarry_slo_capture.py." >&2
   exit 2
 fi
-if [[ -z "${monitoring_runtime_receipt}" || -z "${prometheus_range_receipt}" || \
-  -z "${prometheus_range_response}" || -z "${alert_delivery_receipt}" ]]; then
-  echo "error: PROPERTYQUARRY_MONITORING_RUNTIME_RECEIPT, PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT," >&2
-  echo "PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE, and PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT are required." >&2
-  exit 2
-fi
+for required_monitoring_input in \
+  "${monitoring_runtime_receipt}" \
+  "${prometheus_range_receipt}" \
+  "${prometheus_range_response}" \
+  "${alert_delivery_receipt}" \
+  "${dashboard_render_receipt}" \
+  "${structured_log_query_receipt}" \
+  "${distributed_trace_query_receipt}"; do
+  if [[ -z "${required_monitoring_input}" || ! -f "${required_monitoring_input}" || ! -r "${required_monitoring_input}" ]]; then
+    echo "error: monitoring and operations evidence inputs must be explicit readable regular files." >&2
+    echo "Set PROPERTYQUARRY_MONITORING_RUNTIME_RECEIPT, PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT," >&2
+    echo "PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE, PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT," >&2
+    echo "PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT, PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT," >&2
+    echo "and PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT." >&2
+    exit 2
+  fi
+done
 for required_launch_receipt in \
   "${continuous_ux_receipt}" \
   "${failure_state_receipt}" \
@@ -124,6 +170,10 @@ if [[ -z "${expected_public_origin}" || -z "${expected_teable_origin}" || -z "${
   echo "PROPERTYQUARRY_RYBBIT_SITE_ID_SHA256 are required for launch-bound Rybbit evidence." >&2
   exit 2
 fi
+# Once a fully specified gate run starts, no previous passing Gold publication
+# may survive a later failure. The Gold generator republishes all aliases
+# atomically only after every deterministic and optional configured gate passes.
+clear_gold_publication
 mkdir -p _completion/disaster_recovery
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_postgres_dr.py release-gate \
   --backup-receipt "${dr_backup_receipt}" \
@@ -153,6 +203,9 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_observability_receipts.py v
   --prometheus-range-receipt "${prometheus_range_receipt}" \
   --prometheus-range-response "${prometheus_range_response}" \
   --alert-delivery-receipt "${alert_delivery_receipt}" \
+  --dashboard-render-receipt "${dashboard_render_receipt}" \
+  --structured-log-query-receipt "${structured_log_query_receipt}" \
+  --distributed-trace-query-receipt "${distributed_trace_query_receipt}" \
   --metrics-snapshot "${slo_metrics_snapshot}" \
   --metrics-probe "${slo_metrics_probe_receipt}" \
   --output _completion/propertyquarry_observability/release-gate.json \
@@ -160,7 +213,8 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_observability_receipts.py v
   > /dev/null
 scene_video_shared_env_file="${PROPERTYQUARRY_SCENE_VIDEO_SHARED_ENV_FILE:-state/runtime/property_scene_video_shared.env}"
 scene_video_shared_env_runtime_file="${PROPERTYQUARRY_SCENE_VIDEO_SHARED_ENV_RUNTIME_FILE:-/home/ea/property_scene_video_shared.env}"
-python3 scripts/property_scene_video_shared_env.py --output "${scene_video_shared_env_file}" >/dev/null
+PYTHONPATH=ea "${PYTHON_BIN}" scripts/property_scene_video_shared_env.py \
+  --output "${scene_video_shared_env_file}" >/dev/null
 tour_export_incoming_dir="${PROPERTYQUARRY_TOUR_EXPORT_INCOMING_DIR:-${PROPERTYQUARRY_TOUR_EXPORT_DROP_DIR:-${EA_ROOT}/state/incoming_property_tours}}"
 
 copy_scene_video_shared_env_to_container() {
@@ -211,6 +265,7 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_bts_methodology_contract.py
   --write _completion/bts_methodology/property-bts-methodology-contract-release-gate.json
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/verify_property_tour_controls.py \
   --require-all-provider-modes \
+  --fail-on-blocked \
   --write _completion/property_tour_controls/release-gate.json \
   --summary-only
 property_api_container="${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api}"
@@ -321,7 +376,7 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/verify_id_austria_provider.py
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_authenticated_performance_smoke.py \
   --write _completion/smoke/property-auth-performance-release-gate.json >/dev/null
 live_mobile_base_url="${PROPERTYQUARRY_LIVE_MOBILE_BASE_URL:-${PROPERTYQUARRY_LIVE_SMOKE_BASE_URL:-}}"
-PYTHON_BIN="${PYTHON_BIN}" bash scripts/propertyquarry_live_release_gates.sh
+/bin/bash -p scripts/propertyquarry_live_release_gates.sh
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_map_preview_flagship_gate.py \
   --base-url "${live_mobile_base_url}" \
   --host-header "${PROPERTYQUARRY_LIVE_HOST_HEADER:-propertyquarry.com}" \
@@ -438,88 +493,17 @@ case "${scene_video_refresh_notification_enabled,,}" in
     ;;
 esac
 
-PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_gold_status.py \
-  --profile launch \
-  --performance-receipt _completion/smoke/property-auth-performance-release-gate.json \
-  --continuous-ux-receipt "${continuous_ux_receipt}" \
-  --accessibility-receipt _completion/smoke/property-live-accessibility-release-gate.json \
-  --failure-state-receipt "${failure_state_receipt}" \
-  --activation-to-value-receipt "${activation_to_value_receipt}" \
-  --tour-control-receipt _completion/property_tour_controls/release-gate.json \
-  --export-discovery-receipt _completion/property_tour_exports/release-gate-discovery.json \
-  --import-manifest-receipt _completion/property_tour_exports/release-gate-import-manifest.json \
-  --repair-canary-receipt _completion/repair/propertyquarry-repair-canary-release-gate.json \
-  --provider-matrix-receipt _completion/provider_smoke/release-gate-provider-matrix.json \
-  --live-mobile-receipt _completion/smoke/property-live-mobile-release-gate.json \
-  --public-smoke-receipt _completion/smoke/property-live-public-release-gate.json \
-  --authenticated-smoke-receipt _completion/smoke/property-live-authenticated-release-gate.json \
-  --billing-receipt _completion/brilliant_directories/BRILLIANT_DIRECTORIES_PROVIDER_VERIFICATION.generated.json \
-  --map-preview-flagship-receipt _completion/smoke/property-live-map-preview-flagship-release-gate.json \
-  --tour-provider-ownership-receipt _completion/property_tour_ownership/release-gate.json \
-  --vendor-tooling-receipt _completion/tours/property-tour-vendor-tooling-current.json \
-  --whole-project-scope-receipt _completion/whole_project_scope/property-whole-project-scope-release-gate.json \
-  --security-posture-receipt _completion/security/property-security-posture-release-gate.json \
-  --release-hygiene-receipt _completion/release_hygiene/property-release-hygiene-release-gate.json \
-  --furniture-style-contract-receipt _completion/furniture_styles/property-furniture-style-contract-release-gate.json \
-  --bts-methodology-contract-receipt _completion/bts_methodology/property-bts-methodology-contract-release-gate.json \
-  --tour-delivery-contract-receipt _completion/tour_delivery/property-tour-delivery-contract-release-gate.json \
-  --browser-3d-gate-receipt _completion/smoke/property-live-3d-browser-gate-release-gate.json \
-  --runtime-reconstruction-receipt _completion/tours/property-runtime-reconstruction-release-gate.json \
-  --service-generated-reconstruction-receipt _completion/tours/property-service-generated-reconstruction-release-gate.json \
-  --walkthrough-quality-receipt _completion/smoke/property-live-walkthrough-quality-release-gate.json \
-  --walkthrough-provider-proof-receipt _completion/smoke/property-live-walkthrough-provider-proof-release-gate.json \
-  --scene-video-readiness-receipt _completion/scene_video_readiness/release-gate.json \
-  --scene-video-readiness-verifier-receipt _completion/scene_video_readiness/release-gate-verifier.json \
-  --scene-video-runtime-status-receipt _completion/scene_video_readiness/runtime-status.json \
-  --scene-video-provider-refresh-packet _completion/scene_video_readiness/provider-refresh-packet.json \
-  --scene-video-provider-refresh-packet-verifier-receipt _completion/scene_video_readiness/provider-refresh-packet-verifier.json \
-  --slo-evidence-receipt "${slo_evidence_receipt}" \
-  --slo-metrics-snapshot "${slo_metrics_snapshot}" \
-  --slo-metrics-probe "${slo_metrics_probe_receipt}" \
-  --monitoring-runtime-receipt "${monitoring_runtime_receipt}" \
-  --prometheus-range-receipt "${prometheus_range_receipt}" \
-  --prometheus-range-response "${prometheus_range_response}" \
-  --alert-delivery-receipt "${alert_delivery_receipt}" \
-  --id-austria-receipt _completion/id_austria/ID_AUSTRIA_PROVIDER_VERIFICATION.generated.json \
-  --provider-catalog-receipt "${provider_catalog_receipt}" \
-  --evidence-overlay-receipt "${evidence_overlay_receipt}" \
-  --rybbit-evidence-receipt "${rybbit_evidence_receipt}" \
-  --require-launch-evidence \
-  --expected-release-sha "${dr_release_commit_sha}" \
-  --expected-image-digest "${dr_release_image_digest}" \
-  --expected-public-origin "${expected_public_origin}" \
-  --expected-teable-origin "${expected_teable_origin}" \
-  --expected-teable-base-id-sha256 "${expected_teable_base_id_sha256}" \
-  --expected-evidence-overlay-phase staged \
-  --expected-rybbit-origin "${expected_rybbit_origin}" \
-  --expected-rybbit-site-id-sha256 "${expected_rybbit_site_id_sha256}" \
-  --write _completion/property_gold_status/release-gate.json \
-  --fail-on-blocked
-gold_notification_principal_id="${PROPERTYQUARRY_GOLD_NOTIFICATION_PRINCIPAL_ID:-${EA_PRINCIPAL_ID:-propertyquarry-operator}}"
-gold_notification_base_url="${PROPERTYQUARRY_GOLD_NOTIFICATION_BASE_URL:-${live_mobile_base_url}}"
-gold_notification_state="${PROPERTYQUARRY_GOLD_NOTIFICATION_STATE:-_completion/propertyquarry-gold-notification-state.json}"
-gold_notification_report="_completion/property_gold_status/telegram-notify-report.json"
-gold_notification_enabled="${PROPERTYQUARRY_GOLD_NOTIFICATION_ENABLED:-0}"
-case "${gold_notification_enabled,,}" in
-  1|true|yes|y|on|enabled)
-    if ! PROPERTYQUARRY_NOTIFICATION_PREFER_CONTAINER_RUNTIME="${notification_prefer_container_runtime}" \
-      PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_notify_gold_status.py \
-      --receipt _completion/property_gold_status/release-gate.json \
-      --state-file "${gold_notification_state}" \
-      --principal-id "${gold_notification_principal_id}" \
-      --base-url "${gold_notification_base_url}" \
-      --write "${gold_notification_report}" >/dev/null; then
-      echo "warning: PropertyQuarry gold notification script failed." >&2
-      cat "${gold_notification_report}" >&2 2>/dev/null || true
-    fi
-    ;;
-  *)
-    mkdir -p "$(dirname "${gold_notification_report}")"
-    printf '{"status":"skipped","reason":"PROPERTYQUARRY_GOLD_NOTIFICATION_ENABLED_not_set"}\n' > "${gold_notification_report}"
-    ;;
-esac
 PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
+  tests/test_property_release_protocol_contracts.py \
+  tests/test_property_deploy_handoff_adversarial.py \
   tests/test_property_deploy_operator_contracts.py \
+  tests/test_propertyquarry_release_authority_receipts.py \
+  tests/test_propertyquarry_release_request_signature.py \
+  tests/test_propertyquarry_flagship_operations_evidence.py \
+  tests/test_propertyquarry_release_evidence.py \
+  tests/test_propertyquarry_launch_gold_validation.py \
+  tests/test_propertyquarry_launch_authority.py \
+  tests/test_propertyquarry_release_gate_entrypoints.py \
   tests/test_propertyquarry_slo_capture.py \
   tests/test_propertyquarry_slo_evidence.py \
   tests/test_propertyquarry_slo_release_integration.py \
@@ -643,3 +627,94 @@ if [[ -n "${PROPERTYQUARRY_VISUAL_WATCH_URL:-}" ]]; then
     --viewport "${PROPERTYQUARRY_VISUAL_WATCH_MOBILE_VIEWPORT:-390x844}" \
     --output-dir "${visual_watch_out}/mobile"
 fi
+
+# The pinned native suite is the final deterministic publication boundary.
+# Any nonzero result aborts under `set -e` before Gold or notification writes.
+PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_native_release_control_gates.py
+
+# Gold is a publication, not an intermediate checkpoint. Every preceding
+# deterministic test and every explicitly configured visual gate must succeed
+# before the canonical receipt, aliases, or notification can be produced.
+PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_gold_status.py \
+  --profile launch \
+  --performance-receipt _completion/smoke/property-auth-performance-release-gate.json \
+  --continuous-ux-receipt "${continuous_ux_receipt}" \
+  --accessibility-receipt _completion/smoke/property-live-accessibility-release-gate.json \
+  --failure-state-receipt "${failure_state_receipt}" \
+  --activation-to-value-receipt "${activation_to_value_receipt}" \
+  --tour-control-receipt _completion/property_tour_controls/release-gate.json \
+  --export-discovery-receipt _completion/property_tour_exports/release-gate-discovery.json \
+  --import-manifest-receipt _completion/property_tour_exports/release-gate-import-manifest.json \
+  --repair-canary-receipt _completion/repair/propertyquarry-repair-canary-release-gate.json \
+  --provider-matrix-receipt _completion/provider_smoke/release-gate-provider-matrix.json \
+  --live-mobile-receipt _completion/smoke/property-live-mobile-release-gate.json \
+  --public-smoke-receipt _completion/smoke/property-live-public-release-gate.json \
+  --authenticated-smoke-receipt _completion/smoke/property-live-authenticated-release-gate.json \
+  --billing-receipt _completion/brilliant_directories/BRILLIANT_DIRECTORIES_PROVIDER_VERIFICATION.generated.json \
+  --map-preview-flagship-receipt _completion/smoke/property-live-map-preview-flagship-release-gate.json \
+  --tour-provider-ownership-receipt _completion/property_tour_ownership/release-gate.json \
+  --vendor-tooling-receipt _completion/tours/property-tour-vendor-tooling-current.json \
+  --whole-project-scope-receipt _completion/whole_project_scope/property-whole-project-scope-release-gate.json \
+  --security-posture-receipt _completion/security/property-security-posture-release-gate.json \
+  --release-hygiene-receipt _completion/release_hygiene/property-release-hygiene-release-gate.json \
+  --furniture-style-contract-receipt _completion/furniture_styles/property-furniture-style-contract-release-gate.json \
+  --bts-methodology-contract-receipt _completion/bts_methodology/property-bts-methodology-contract-release-gate.json \
+  --tour-delivery-contract-receipt _completion/tour_delivery/property-tour-delivery-contract-release-gate.json \
+  --browser-3d-gate-receipt _completion/smoke/property-live-3d-browser-gate-release-gate.json \
+  --runtime-reconstruction-receipt _completion/tours/property-runtime-reconstruction-release-gate.json \
+  --service-generated-reconstruction-receipt _completion/tours/property-service-generated-reconstruction-release-gate.json \
+  --walkthrough-quality-receipt _completion/smoke/property-live-walkthrough-quality-release-gate.json \
+  --walkthrough-provider-proof-receipt _completion/smoke/property-live-walkthrough-provider-proof-release-gate.json \
+  --scene-video-readiness-receipt _completion/scene_video_readiness/release-gate.json \
+  --scene-video-readiness-verifier-receipt _completion/scene_video_readiness/release-gate-verifier.json \
+  --scene-video-runtime-status-receipt _completion/scene_video_readiness/runtime-status.json \
+  --scene-video-provider-refresh-packet _completion/scene_video_readiness/provider-refresh-packet.json \
+  --scene-video-provider-refresh-packet-verifier-receipt _completion/scene_video_readiness/provider-refresh-packet-verifier.json \
+  --slo-evidence-receipt "${slo_evidence_receipt}" \
+  --slo-metrics-snapshot "${slo_metrics_snapshot}" \
+  --slo-metrics-probe "${slo_metrics_probe_receipt}" \
+  --monitoring-runtime-receipt "${monitoring_runtime_receipt}" \
+  --prometheus-range-receipt "${prometheus_range_receipt}" \
+  --prometheus-range-response "${prometheus_range_response}" \
+  --alert-delivery-receipt "${alert_delivery_receipt}" \
+  --dashboard-render-receipt "${dashboard_render_receipt}" \
+  --structured-log-query-receipt "${structured_log_query_receipt}" \
+  --distributed-trace-query-receipt "${distributed_trace_query_receipt}" \
+  --id-austria-receipt _completion/id_austria/ID_AUSTRIA_PROVIDER_VERIFICATION.generated.json \
+  --provider-catalog-receipt "${provider_catalog_receipt}" \
+  --evidence-overlay-receipt "${evidence_overlay_receipt}" \
+  --rybbit-evidence-receipt "${rybbit_evidence_receipt}" \
+  --require-launch-evidence \
+  --expected-release-sha "${dr_release_commit_sha}" \
+  --expected-image-digest "${dr_release_image_digest}" \
+  --expected-public-origin "${expected_public_origin}" \
+  --expected-teable-origin "${expected_teable_origin}" \
+  --expected-teable-base-id-sha256 "${expected_teable_base_id_sha256}" \
+  --expected-evidence-overlay-phase staged \
+  --expected-rybbit-origin "${expected_rybbit_origin}" \
+  --expected-rybbit-site-id-sha256 "${expected_rybbit_site_id_sha256}" \
+  --write "${gold_receipt}" \
+  --fail-on-blocked
+
+gold_notification_principal_id="${PROPERTYQUARRY_GOLD_NOTIFICATION_PRINCIPAL_ID:-${EA_PRINCIPAL_ID:-propertyquarry-operator}}"
+gold_notification_base_url="${PROPERTYQUARRY_GOLD_NOTIFICATION_BASE_URL:-${live_mobile_base_url}}"
+gold_notification_state="${PROPERTYQUARRY_GOLD_NOTIFICATION_STATE:-_completion/propertyquarry-gold-notification-state.json}"
+gold_notification_enabled="${PROPERTYQUARRY_GOLD_NOTIFICATION_ENABLED:-0}"
+case "${gold_notification_enabled,,}" in
+  1|true|yes|y|on|enabled)
+    if ! PROPERTYQUARRY_NOTIFICATION_PREFER_CONTAINER_RUNTIME="${notification_prefer_container_runtime}" \
+      PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_notify_gold_status.py \
+      --receipt "${gold_receipt}" \
+      --state-file "${gold_notification_state}" \
+      --principal-id "${gold_notification_principal_id}" \
+      --base-url "${gold_notification_base_url}" \
+      --write "${gold_notification_report}" >/dev/null; then
+      echo "warning: PropertyQuarry gold notification script failed." >&2
+      cat "${gold_notification_report}" >&2 2>/dev/null || true
+    fi
+    ;;
+  *)
+    mkdir -p "$(dirname "${gold_notification_report}")"
+    printf '{"status":"skipped","reason":"PROPERTYQUARRY_GOLD_NOTIFICATION_ENABLED_not_set"}\n' > "${gold_notification_report}"
+    ;;
+esac

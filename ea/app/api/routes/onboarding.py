@@ -23,16 +23,14 @@ from app.services.google_oauth import (
 )
 from app.services.property_market_catalog import default_timezone_for_country
 from app.services.registration_email import send_registration_email
+from app.settings import resolve_signing_secret
 
 router = APIRouter(prefix="/v1/onboarding", tags=["onboarding"])
 register_router = APIRouter(prefix="/v1/register", tags=["registration"])
 
 
 def _registration_secret(container: AppContainer) -> str:
-    runtime_mode = str(getattr(getattr(container.settings, "runtime", None), "mode", "dev") or "dev").strip().lower()
-    api_token = str(getattr(getattr(container.settings, "auth", None), "api_token", "") or "").strip()
-    default_principal = str(getattr(getattr(container.settings, "auth", None), "default_principal_id", "") or "").strip()
-    return f"register:{runtime_mode}:{api_token or default_principal or 'local-user'}"
+    return resolve_signing_secret(container.settings, purpose="registration")
 
 
 def _urlsafe_b64encode(value: bytes) -> str:

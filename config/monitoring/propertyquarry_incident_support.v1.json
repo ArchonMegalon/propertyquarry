@@ -1,0 +1,157 @@
+{
+  "schema": "propertyquarry.incident_support.v1",
+  "service": "propertyquarry",
+  "version": 1,
+  "source_contract_status": "defined",
+  "live_readiness_rule": "independently_attested_staffing_and_drills_required",
+  "required_launch_markets": [
+    {
+      "country_code": "AT",
+      "timezone": "Europe/Vienna",
+      "required_languages": [
+        "de-AT",
+        "en"
+      ]
+    },
+    {
+      "country_code": "DE",
+      "timezone": "Europe/Berlin",
+      "required_languages": [
+        "de-DE",
+        "en"
+      ]
+    },
+    {
+      "country_code": "CR",
+      "timezone": "America/Costa_Rica",
+      "required_languages": [
+        "es-CR",
+        "en"
+      ]
+    }
+  ],
+  "live_evidence_policy": {
+    "maximum_age_hours": 24,
+    "independent_attestation_authority": "independent_release_controller",
+    "require_exact_release_identity": true,
+    "require_attested_payload_digest": true,
+    "require_workflow_references": true
+  },
+  "severity_policy": {
+    "SEV0": {
+      "definition": "Confirmed active compromise, destructive data loss, or safety-critical integrity failure",
+      "acknowledge_minutes_max": 5,
+      "incident_commander_minutes_max": 10,
+      "customer_update_minutes_max": 20,
+      "update_interval_minutes_max": 30
+    },
+    "SEV1": {
+      "definition": "Broad outage, severe customer-impacting corruption, or likely reportable privacy incident",
+      "acknowledge_minutes_max": 10,
+      "incident_commander_minutes_max": 15,
+      "customer_update_minutes_max": 30,
+      "update_interval_minutes_max": 60
+    },
+    "SEV2": {
+      "definition": "Material partial outage or degraded critical customer journey with a safe workaround",
+      "acknowledge_minutes_max": 30,
+      "incident_commander_minutes_max": 60,
+      "customer_update_minutes_max": 120,
+      "update_interval_minutes_max": 240
+    },
+    "SEV3": {
+      "definition": "Limited defect or operational risk without material current customer impact",
+      "acknowledge_minutes_max": 240,
+      "incident_commander_minutes_max": 480,
+      "customer_update_minutes_max": 1440,
+      "update_interval_minutes_max": 1440
+    }
+  },
+  "required_roles": [
+    "incident_commander",
+    "operations_lead",
+    "communications_lead",
+    "customer_support_lead",
+    "security_privacy_lead"
+  ],
+  "required_endpoints": [
+    "paging",
+    "status_page",
+    "support_case_system",
+    "security_intake"
+  ],
+  "required_drills": [
+    "alert_delivery_and_acknowledgement",
+    "customer_status_update",
+    "support_case_round_trip",
+    "privacy_breach_tabletop",
+    "rollback_recovery_coordination"
+  ],
+  "required_approvals": [
+    "incident_owner",
+    "support_owner",
+    "security_owner",
+    "privacy_legal_owner"
+  ],
+  "privacy_security": {
+    "internal_breach_assessment_hours_max": 24,
+    "regulatory_notification_clock_hours": 72,
+    "notification_rule": "where_required_by_applicable_law_after_controller_assessment",
+    "preserve": [
+      "release_identity",
+      "alert_and_metric_snapshots",
+      "bounded_correlation_ids",
+      "access_and_audit_events",
+      "provider_and_delivery_receipts",
+      "decision_timeline"
+    ],
+    "prohibit": [
+      "copying_secrets_into_incident_records",
+      "deleting_or_rewriting_primary_evidence",
+      "disabling_security_or_privacy_controls_to_restore_service"
+    ]
+  },
+  "support_policy": {
+    "launch_markets_require_staffed_windows": true,
+    "case_system_must_enforce_least_privilege_and_retention": true,
+    "priority_targets": {
+      "P0": {
+        "initial_response_minutes_max": 15,
+        "escalate_to_severity": "SEV1"
+      },
+      "P1": {
+        "initial_response_minutes_max": 60,
+        "escalate_to_severity": "SEV2"
+      },
+      "P2": {
+        "initial_response_minutes_max": 480,
+        "escalate_to_severity": "SEV3"
+      },
+      "P3": {
+        "initial_response_minutes_max": 1440,
+        "escalate_to_severity": "SEV3"
+      }
+    }
+  },
+  "closure_policy": {
+    "required": [
+      "customer_impact_and_timeline_recorded",
+      "alert_and_service_health_restored",
+      "release_identity_reverified",
+      "follow_up_owner_and_due_date_recorded",
+      "customer_and_regulatory_follow_up_completed_where_required"
+    ],
+    "postmortem_required_severities": [
+      "SEV0",
+      "SEV1",
+      "SEV2"
+    ],
+    "postmortem_business_days_max": 5
+  },
+  "runbooks": [
+    "docs/PROPERTYQUARRY_INCIDENT_AND_SUPPORT_OPERATIONS.md",
+    "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md",
+    "docs/PROPERTYQUARRY_ROLLBACK.md",
+    "docs/PROPERTYQUARRY_POSTGRES_DISASTER_RECOVERY.md"
+  ]
+}

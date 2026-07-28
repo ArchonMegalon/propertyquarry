@@ -17,8 +17,66 @@ EOF
   exit 0
 fi
 
+OPERATOR_PYTHONPATH="${EA_ROOT}/ea:${EA_ROOT}"
+
+operator_python_usable() {
+  local candidate="$1"
+
+  if [[ "${candidate}" == */* ]]; then
+    [[ -x "${candidate}" ]] || return 1
+  else
+    command -v "${candidate}" >/dev/null 2>&1 || return 1
+  fi
+
+  PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
+    PYTHONSAFEPATH=1 \
+    PYTHONPATH="${OPERATOR_PYTHONPATH}" \
+    "${candidate}" -B -c \
+      'import yaml; from app.product.service import _public_guide_freshness_projection; from app.api.routes.responses import _codex_governance_payload, _codex_profiles' \
+      >/dev/null 2>&1
+}
+
+select_operator_python() {
+  local explicit="${PROPERTYQUARRY_OPERATOR_PYTHON:-}"
+  local candidate
+
+  if [[ -n "${explicit}" ]]; then
+    if ! operator_python_usable "${explicit}"; then
+      echo "operator summary: PROPERTYQUARRY_OPERATOR_PYTHON is not a usable application interpreter: ${explicit}" >&2
+      return 1
+    fi
+    printf '%s\n' "${explicit}"
+    return 0
+  fi
+
+  for candidate in \
+    "${EA_ROOT}/.venv/bin/python" \
+    "${EA_ROOT}/scripts/propertyquarry_release_python.sh" \
+    python3
+  do
+    if operator_python_usable "${candidate}"; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  echo "operator summary: no usable application Python interpreter found" >&2
+  return 1
+}
+
+OPERATOR_PYTHON="$(select_operator_python)"
+
+run_operator_python() {
+  PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
+    PYTHONSAFEPATH=1 \
+    PYTHONPATH="${OPERATOR_PYTHONPATH}" \
+    "${OPERATOR_PYTHON}" -B "$@"
+}
+
 print_product_control_summary() {
-  python3 - <<'PY'
+  run_operator_python - <<'PY'
 from __future__ import annotations
 
 import json
@@ -82,7 +140,7 @@ PY
 }
 
 print_grounding_summary() {
-  python3 - <<'PY'
+  run_operator_python - <<'PY'
 from __future__ import annotations
 
 from pathlib import Path
@@ -134,7 +192,7 @@ PY
 }
 
 print_codex_governance_summary() {
-  python3 - <<'PY'
+  run_operator_python - <<'PY'
 from __future__ import annotations
 
 import sys
@@ -193,18 +251,19 @@ echo "smoke pg legacy:   make smoke-postgres-legacy"
 echo "pg contracts:      make test-postgres-contracts"
 echo "release smoke:     make release-smoke"
 echo "ci gates:          make ci-gates"
+echo "ci gates auth:     ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated"
 echo "ci gates pg:       make ci-gates-postgres"
 echo "ci gates pg leg:   make ci-gates-postgres-legacy"
 echo "runtime hard gate: make runtime-hard-exit-gates"
 echo "full hard gates:   make hard-exit-gates"
-echo "ltd gates:         make ltd-release-gates"
-echo "ltd critical:      make verify-ltd-critical-entries"
-echo "ltd flagship:      make verify-ltd-flagship-subset"
+echo "ltd gates auth:    ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ltd-release-gates"
+echo "ltd critical auth: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py verify-ltd-critical-entries-authenticated"
+echo "ltd flagship auth: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py verify-ltd-flagship-subset-authenticated"
 echo "all local:         make all-local"
 echo "verify assets:     make verify-release-assets"
 echo "flagship ready:    make verify-flagship-release-readiness"
 echo "release docs:      make release-docs"
-echo "release preflight: make release-preflight"
+echo "release prefl auth: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight"
 echo "operator help:     make operator-help"
 echo "provider ready:    make provider-readiness"
 echo "overlay vision:    make overlay-vision-check"

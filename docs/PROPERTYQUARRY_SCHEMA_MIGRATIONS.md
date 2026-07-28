@@ -14,6 +14,16 @@ queue, source-cache, delivery-outbox, or property-content ledger schema.
 3. `property_source_listing_cache`
 4. `replica_safe_delivery_outbox`
 5. `durable_property_content_job_ledger`
+6. `bounded_run_delivery_projection`
+7. `tenant_scoped_delivery_outbox_idempotency`
+8. `property_evidence_overlay_cached_read_model`
+9. `property_evidence_overlay_staged_snapshot_activation`
+10. `tenant_scoped_property_research_packet_links`
+11. `durable_property_search_erasure_fences`
+12. `property_content_account_ownership_fence`
+13. `property_content_polymorphic_authority_trigger_fix`
+14. `property_research_packet_erasure_trigger_split`
+15. `authoritative_distributed_ingress_admission`
 
 Each immutable migration has a SHA-256 checksum. Applied versions are recorded
 in `propertyquarry_schema_migrations` under component `property_search`. The
@@ -51,6 +61,48 @@ production `DATABASE_URL`,
 `POSTGRES_PASSWORD`, owner/migrator credential, or traffic credential to the
 checkout. Direct Compose and Python migration commands are not a production
 fallback and their output is not release evidence.
+
+### Mandatory contained cutover for schema v11 and admission schema v15
+
+Writer contract 3 and schema v11 are deliberately not rolling-compatible.
+Current schema v15 remains incompatible with contract-2 processes, and the
+authoritative ingress runtime must not start before v15 is committed. The
+installed controller must execute this exact fail-closed sequence when upgrading
+a v9 or v10 deployment:
+
+1. Pin one high-entropy, at-least-32-byte
+   `PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET` in the external secret store.
+   The migration role and every API, worker, scheduler, and publication role
+   must receive the same value. Render-only processes that cannot commit a
+   publication do not receive it. The database stores only its key ID; a missing or different key
+   is rejected as `property_search_erasure_key_required` or
+   `property_search_erasure_key_mismatch`; a shorter production secret is
+   rejected as `property_search_erasure_secret_too_short`.
+2. Contain ingress, stop new queue claims, drain current work, and stop every
+   API, worker, scheduler, and render/publication writer. A merely healthy old
+   replica is not safe evidence that the drain completed.
+3. While all writers remain stopped, take the controller-governed backup and
+   apply the ordered pending migrations. From live schema v9 this applies v10
+   and v11 in the same migration transaction, then continues through v12 and
+   v13 before that transaction commits; partial application is forbidden.
+   The migration runner sets contract 2 only inside that transaction while v11
+   backfills legacy principal keys, before v11 replaces the write guards with
+   contract 3. This is migration authority, never runtime writer authority.
+   Schema v13 then replaces the polymorphic property-content trigger so event
+   rows without a `row_json` column are validated without unsafe field access.
+   Schema v14 installs the table-specific packet-erasure guards, and schema v15
+   installs the bounded quota, lease, and immutable capacity-counter contract.
+4. Schema v11 first established the homogeneous schema-v11/contract-3 fleet
+   boundary. For current schema v15, start only the immutable, homogeneous
+   schema-v15/contract-3 fleet with ingress-policy contract v1. Require current
+   readiness plus fresh per-instance heartbeats for the complete expected role
+   manifest before reopening ingress.
+
+Never start current contract-3 code before every migration through v15 commits,
+and never restart a contract-2 binary after v11. A failed step leaves ingress and writers contained for
+forward repair. Changing the erasure secret is a separately designed key
+migration, not an environment-variable rotation; without that migration the
+database intentionally fails closed.
 
 ## Disposable development and test targets
 
@@ -94,6 +146,20 @@ version. `/health/ready` returns `503` with a bounded
 `property_search_schema_not_ready:<reason>` until the ledger, checksums,
 versions, tables, and indexes pass. Application repositories enforce the same
 read-only boundary before issuing run or queue queries.
+
+Hot readiness verifies the v15 ledger, relations, functions, enabled triggers,
+fixed capacity rows, and the database-bound erasure key ID with bounded
+connection, statement, and lock timeouts. It does not scan the quota or lease
+tables. API startup performs the deeper physical counter reconciliation in one
+PostgreSQL statement/snapshot before accepting traffic. A counter mismatch,
+missing guard, or erasure-key mismatch fails startup; do not reset counters or
+rotate the secret to clear it.
+
+Production API readiness also requires the dedicated durable worker heartbeat
+to be present and fresh. A missing, malformed, or stale worker heartbeat keeps
+`/health/ready` at `503`; do not disable that requirement to reopen ingress.
+The worker runs only the fixed `property_only` profile and is part of the
+writer fleet, database fence, drain receipt, and contained cutover.
 
 Migration 4 is also the scheduler delivery-safety boundary. Morning memo and
 assistant-nudge sends are inserted under a stable daily idempotency key before

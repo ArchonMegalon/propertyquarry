@@ -5,12 +5,11 @@ import logging
 import sys
 from pathlib import Path
 
+import pytest
+from app.logging_utils import RedactingJsonFormatter
+from app.observability import RuntimeMetrics, runtime_heartbeat_readiness
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-import pytest
-
-from app.logging_utils import RedactingJsonFormatter
-from app.observability import RuntimeMetrics
 
 
 def _app(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
@@ -112,6 +111,64 @@ def test_registry_exports_bounded_request_error_latency_and_readiness_metrics(tm
     assert "propertyquarry_expected_api_replicas 1" in metrics
 
 
+def test_registry_exports_closed_authoritative_admission_metrics() -> None:
+    registry = RuntimeMetrics()
+    registry.record_ingress_admission_operation(
+        backend="postgres",
+        operation="admit",
+        outcome="allowed",
+    )
+    registry.record_ingress_admission_capacity(
+        backend="postgres",
+        contract_valid=True,
+        rows={
+            "lease": (7, 100_000),
+            "quota": (19, 1_000_000),
+        },
+    )
+
+    metrics = registry.render_prometheus(readiness_ready=True)
+
+    assert (
+        "propertyquarry_ingress_admission_operations_total"
+        '{backend="postgres",operation="admit",outcome="allowed"} 1'
+    ) in metrics
+    assert (
+        "propertyquarry_ingress_admission_operations_total"
+        '{backend="postgres",operation="renew",outcome="backend_unavailable"} 0'
+    ) in metrics
+    assert (
+        'propertyquarry_admission_capacity_contract_valid{backend="postgres"} 1'
+        in metrics
+    )
+    assert (
+        "propertyquarry_admission_capacity_row_count"
+        '{backend="postgres",capacity_key="lease"} 7'
+    ) in metrics
+    assert (
+        "propertyquarry_admission_capacity_limit"
+        '{backend="postgres",capacity_key="quota"} 1000000'
+    ) in metrics
+    with pytest.raises(
+        ValueError,
+        match="ingress_admission_metric_operation_invalid",
+    ):
+        registry.record_ingress_admission_operation(
+            backend="postgres",
+            operation="raw_route_name",
+            outcome="allowed",
+        )
+    with pytest.raises(
+        ValueError,
+        match="ingress_admission_metric_capacity_contract_incomplete",
+    ):
+        registry.record_ingress_admission_capacity(
+            backend="postgres",
+            contract_valid=True,
+            rows={"lease": (0, 100_000)},
+        )
+
+
 def test_metrics_endpoint_requires_system_auth_and_reuses_correlation_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -137,6 +194,45 @@ def test_metrics_endpoint_requires_system_auth_and_reuses_correlation_id(
     assert 'propertyquarry_http_requests_total{method="GET",route="/health",status_class="2xx"} 1' in scrape.text
     assert "propertyquarry_readiness 1" in scrape.text
     assert "/internal/metrics" not in client.get("/openapi.json").json()["paths"]
+
+
+def test_metrics_readiness_fails_closed_when_admission_snapshot_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.ingress_admission import (
+        AdmissionBackend,
+        AdmissionOperation,
+        IngressAdmissionUnavailable,
+    )
+
+    class _UnavailableAdmissionStore:
+        @staticmethod
+        def capacity_snapshot():  # type: ignore[no-untyped-def]
+            raise IngressAdmissionUnavailable(
+                "test_admission_unavailable",
+                backend=AdmissionBackend.POSTGRES,
+                operation=AdmissionOperation.SNAPSHOT,
+            )
+
+    app = _app(monkeypatch)
+    app.state.ingress_admission_store = _UnavailableAdmissionStore()
+
+    scrape = TestClient(app).get(
+        "/internal/metrics",
+        headers=_metrics_headers(),
+    )
+
+    assert scrape.status_code == 200
+    assert "propertyquarry_readiness 0" in scrape.text
+    assert (
+        "propertyquarry_ingress_admission_operations_total"
+        '{backend="postgres",operation="snapshot",'
+        'outcome="backend_unavailable"} 1'
+    ) in scrape.text
+    assert (
+        'propertyquarry_admission_capacity_contract_valid{backend="postgres"} 0'
+        in scrape.text
+    )
 
 
 def test_error_counter_and_latency_are_recorded_by_real_request_middleware(
@@ -277,3 +373,220 @@ def test_stale_and_missing_role_heartbeat_metrics_fail_closed(tmp_path: Path) ->
     assert 'propertyquarry_runtime_heartbeat_present{role="scheduler"} 0' in missing
     assert 'propertyquarry_runtime_heartbeat_age_seconds{role="scheduler"} NaN' in missing
     assert 'propertyquarry_runtime_heartbeat_stale{role="scheduler"} 1' in missing
+
+
+def test_optional_worker_heartbeat_remains_advisory_but_observable(
+    tmp_path: Path,
+) -> None:
+    environ = {
+        "PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED": "0",
+        "EA_WORKER_HEARTBEAT_PATH": str(tmp_path / "missing-worker.json"),
+        "EA_SCHEDULER_HEARTBEAT_PATH": str(tmp_path / "missing-scheduler.json"),
+    }
+
+    ready, reason = runtime_heartbeat_readiness(
+        "worker",
+        environ,
+        now_epoch=1_000.0,
+    )
+    metrics = RuntimeMetrics().render_prometheus(
+        readiness_ready=True,
+        environ=environ,
+        now_epoch=1_000.0,
+    )
+
+    assert ready is True
+    assert reason == "worker_heartbeat_not_required"
+    assert 'propertyquarry_runtime_heartbeat_required{role="worker"} 0' in metrics
+    assert 'propertyquarry_runtime_heartbeat_present{role="worker"} 0' in metrics
+    assert 'propertyquarry_runtime_heartbeat_stale{role="worker"} 1' in metrics
+
+
+def test_fresh_worker_heartbeat_exports_property_search_queue_metrics(
+    tmp_path: Path,
+) -> None:
+    worker_path = tmp_path / "worker.json"
+    worker_path.write_text(
+        json.dumps(
+            {
+                "role": "worker",
+                "epoch": 995.0,
+                "property_search_work_queue": {
+                    "observed": True,
+                    "depth": 7,
+                    "oldest_item_age_seconds": 12.5,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = RuntimeMetrics().render_prometheus(
+        readiness_ready=True,
+        environ={
+            "EA_WORKER_HEARTBEAT_PATH": str(worker_path),
+            "EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS": "30",
+            "EA_SCHEDULER_HEARTBEAT_PATH": str(
+                tmp_path / "missing-scheduler.json"
+            ),
+        },
+        now_epoch=1_000.0,
+    )
+
+    assert "# TYPE propertyquarry_queue_depth gauge" in metrics
+    assert "# TYPE propertyquarry_queue_oldest_item_age_seconds gauge" in metrics
+    assert (
+        'propertyquarry_queue_observed{queue="property_search"} 1'
+        in metrics
+    )
+    assert 'propertyquarry_queue_depth{queue="property_search"} 7' in metrics
+    assert (
+        'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} 17.5'
+        in metrics
+    )
+
+
+def test_empty_property_search_queue_age_remains_zero_between_heartbeats(
+    tmp_path: Path,
+) -> None:
+    worker_path = tmp_path / "worker.json"
+    worker_path.write_text(
+        json.dumps(
+            {
+                "role": "worker",
+                "epoch": 995.0,
+                "property_search_work_queue": {
+                    "observed": True,
+                    "depth": 0,
+                    "oldest_item_age_seconds": 0.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = RuntimeMetrics().render_prometheus(
+        readiness_ready=True,
+        environ={
+            "EA_WORKER_HEARTBEAT_PATH": str(worker_path),
+            "EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS": "30",
+            "EA_SCHEDULER_HEARTBEAT_PATH": str(
+                tmp_path / "missing-scheduler.json"
+            ),
+        },
+        now_epoch=1_000.0,
+    )
+
+    assert 'propertyquarry_queue_depth{queue="property_search"} 0' in metrics
+    assert (
+        'propertyquarry_queue_observed{queue="property_search"} 1'
+        in metrics
+    )
+    assert (
+        'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} 0'
+        in metrics
+    )
+
+
+@pytest.mark.parametrize(
+    ("queue_payload", "heartbeat_epoch"),
+    (
+        ({"observed": False}, 995.0),
+        (
+            {
+                "observed": True,
+                "depth": True,
+                "oldest_item_age_seconds": 1.0,
+            },
+            995.0,
+        ),
+        (
+            {
+                "observed": True,
+                "depth": -1,
+                "oldest_item_age_seconds": 1.0,
+            },
+            995.0,
+        ),
+        (
+            {
+                "observed": True,
+                "depth": 2**63,
+                "oldest_item_age_seconds": 1.0,
+            },
+            995.0,
+        ),
+        (
+            {
+                "observed": True,
+                "depth": 0,
+                "oldest_item_age_seconds": 1.0,
+            },
+            995.0,
+        ),
+        (
+            {
+                "observed": True,
+                "depth": 1,
+                "oldest_item_age_seconds": float("nan"),
+            },
+            995.0,
+        ),
+        (
+            {
+                "observed": True,
+                "depth": 1,
+                "oldest_item_age_seconds": (10 * 365 * 24 * 60 * 60) + 1,
+            },
+            995.0,
+        ),
+        (
+            {
+                "observed": True,
+                "depth": 1,
+                "oldest_item_age_seconds": 1.0,
+            },
+            900.0,
+        ),
+    ),
+)
+def test_invalid_or_stale_worker_queue_snapshot_emits_no_queue_samples(
+    tmp_path: Path,
+    queue_payload: dict[str, object],
+    heartbeat_epoch: float,
+) -> None:
+    worker_path = tmp_path / "worker.json"
+    worker_path.write_text(
+        json.dumps(
+            {
+                "role": "worker",
+                "epoch": heartbeat_epoch,
+                "property_search_work_queue": queue_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = RuntimeMetrics().render_prometheus(
+        readiness_ready=True,
+        environ={
+            "EA_WORKER_HEARTBEAT_PATH": str(worker_path),
+            "EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS": "30",
+            "EA_SCHEDULER_HEARTBEAT_PATH": str(
+                tmp_path / "missing-scheduler.json"
+            ),
+        },
+        now_epoch=1_000.0,
+    )
+
+    assert "# TYPE propertyquarry_queue_depth gauge" in metrics
+    assert "# TYPE propertyquarry_queue_oldest_item_age_seconds gauge" in metrics
+    assert (
+        'propertyquarry_queue_observed{queue="property_search"} 0'
+        in metrics
+    )
+    assert 'propertyquarry_queue_depth{queue="property_search"}' not in metrics
+    assert (
+        'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"}'
+        not in metrics
+    )

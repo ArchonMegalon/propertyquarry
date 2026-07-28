@@ -1,0 +1,98 @@
+name: propertyquarry-release-runtime-v2
+
+x-propertyquarry-release-runtime: &propertyquarry-release-runtime
+  image: ${PROPERTYQUARRY_RELEASE_RUNTIME_IMAGE:?Set PROPERTYQUARRY_RELEASE_RUNTIME_IMAGE to the verified local image ID sha256:<64 lowercase hex>}
+  pull_policy: never
+  working_dir: /
+  network_mode: none
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 32
+  mem_limit: 256m
+  mem_reservation: 16m
+  memswap_limit: 256m
+  environment: []
+  stdin_open: false
+  tty: false
+  init: false
+  restart: "on-failure:3"
+  stop_signal: SIGTERM
+  stop_grace_period: 10s
+  labels:
+    propertyquarry.release-control.runtime-gate: ${PROPERTYQUARRY_RELEASE_RUNTIME_GATE:?Set PROPERTYQUARRY_RELEASE_RUNTIME_GATE to the validated gate project}
+  healthcheck:
+    test:
+      - CMD
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-watchdog-v2
+      - --installed-local-authority
+      - --health-json
+    interval: 2s
+    timeout: 2s
+    retries: 5
+    start_period: 2s
+
+services:
+  release-supervisor:
+    <<: *propertyquarry-release-runtime
+    container_name: ${PROPERTYQUARRY_RELEASE_RUNTIME_SUPERVISOR_NAME:?Set PROPERTYQUARRY_RELEASE_RUNTIME_SUPERVISOR_NAME to the validated gate-specific name}
+    user: ${PROPERTYQUARRY_RELEASE_RUNTIME_AUTHORITY_USER:?Set PROPERTYQUARRY_RELEASE_RUNTIME_AUTHORITY_USER to the numeric authority uid:gid from the materialization receipt}
+    entrypoint:
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2
+    command:
+      - --installed-local-authority
+      - --docker-broker
+    volumes:
+      - type: bind
+        source: ${PROPERTYQUARRY_RELEASE_RUNTIME_ANCHOR:?Set PROPERTYQUARRY_RELEASE_RUNTIME_ANCHOR to the absolute root-owned public anchor}
+        target: /run/secrets/propertyquarry-package-authority-v2.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: runtime-socket
+        target: /run/propertyquarry-release-control-v2
+        volume:
+          nocopy: true
+      - type: volume
+        source: authority-replay-state-v1
+        target: /var/lib/propertyquarry-release-control-v2
+
+  release-watchdog:
+    <<: *propertyquarry-release-runtime
+    container_name: ${PROPERTYQUARRY_RELEASE_RUNTIME_WATCHDOG_NAME:?Set PROPERTYQUARRY_RELEASE_RUNTIME_WATCHDOG_NAME to the validated gate-specific name}
+    user: ${PROPERTYQUARRY_RELEASE_RUNTIME_CALLER_USER:?Set PROPERTYQUARRY_RELEASE_RUNTIME_CALLER_USER to the numeric caller uid:gid from the materialization receipt}
+    entrypoint:
+      - /usr/libexec/propertyquarry-release-control/propertyquarry-release-watchdog-v2
+    command:
+      - --installed-local-authority
+      - --docker-watchdog
+    depends_on:
+      release-supervisor:
+        condition: service_healthy
+        restart: true
+    volumes:
+      - type: bind
+        source: ${PROPERTYQUARRY_RELEASE_RUNTIME_ANCHOR:?Set PROPERTYQUARRY_RELEASE_RUNTIME_ANCHOR to the absolute root-owned public anchor}
+        target: /run/secrets/propertyquarry-package-authority-v2.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: runtime-socket
+        target: /run/propertyquarry-release-control-v2
+        volume:
+          nocopy: true
+
+volumes:
+  runtime-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=65532,gid=${PROPERTYQUARRY_RELEASE_RUNTIME_GID:?Set PROPERTYQUARRY_RELEASE_RUNTIME_GID to the validated service gid},mode=0750,nosuid,nodev,noexec,size=1048576
+
+  authority-replay-state-v1:
+    driver: local

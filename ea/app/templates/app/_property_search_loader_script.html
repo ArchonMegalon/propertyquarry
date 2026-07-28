@@ -9,6 +9,7 @@
   const eagerWorkbenchSurface = Boolean((surface && surface !== 'search') || eagerWorkbenchRoute);
   const urlParams = new URLSearchParams(window.location.search);
   const deferredSavedSearchIntent = Boolean(String(urlParams.get('load_agent') || urlParams.get('run_agent') || '').trim());
+  const launchReloadRecovery = Boolean(String(urlParams.get('launch_retry') || '').trim());
   const networkState = root.querySelector('[data-pq-network-state]');
   const syncNetworkState = () => {
     const offline = navigator.onLine === false;
@@ -20,6 +21,8 @@
   syncNetworkState();
 
   let loadPromise = null;
+  let loadAttempt = 0;
+  const workbenchReadyEvent = 'propertyquarry:workbench-ready';
   const actionSelector = [
     '[data-property-step-next]',
     '[data-property-step-back]',
@@ -42,7 +45,7 @@
   const setBusy = (target, busy) => {
     if (!(target instanceof HTMLElement)) return;
     if (!target.dataset.pqHydrationLabel) {
-      target.dataset.pqHydrationLabel = String(target.textContent || '').trim();
+      target.dataset.pqHydrationLabel = String(target.getAttribute('aria-label') || target.textContent || '').trim();
     }
     target.toggleAttribute('disabled', Boolean(busy));
     target.setAttribute('aria-busy', busy ? 'true' : 'false');
@@ -53,37 +56,80 @@
   const loadWorkbench = () => {
     if (root.dataset.pqWorkbenchController === 'loaded') return Promise.resolve();
     if (loadPromise) return loadPromise;
-    loadPromise = new Promise((resolve, reject) => {
+    const attempt = ++loadAttempt;
+    const pending = new Promise((resolve, reject) => {
       const existing = [...document.querySelectorAll('script[data-pq-workbench-main]')]
-        .find((node) => String(node.getAttribute('src') || '') === fullScriptSrc);
+        .find((node) => String(node.dataset.pqWorkbenchSource || '') === fullScriptSrc);
       if (existing) {
-        if (
-          root.dataset.pqWorkbenchController === 'loaded'
-          || existing.dataset.pqWorkbenchLoaded === 'true'
-        ) {
+        if (root.dataset.pqWorkbenchController === 'loaded') {
           root.dataset.pqWorkbenchController = 'loaded';
           resolve();
           return;
         }
-        existing.addEventListener('load', () => {
-          existing.dataset.pqWorkbenchLoaded = 'true';
-          root.dataset.pqWorkbenchController = 'loaded';
-          resolve();
-        }, { once: true });
-        existing.addEventListener('error', reject, { once: true });
-        return;
+        existing.remove();
       }
       const script = document.createElement('script');
-      script.src = fullScriptSrc;
+      const scriptUrl = new URL(fullScriptSrc, window.location.href);
+      if (attempt > 1) scriptUrl.searchParams.set('pq_retry', String(attempt));
+      script.src = scriptUrl.toString();
       script.async = true;
       script.dataset.pqWorkbenchMain = 'true';
-      script.addEventListener('load', () => {
+      script.dataset.pqWorkbenchSource = fullScriptSrc;
+      let settled = false;
+      let handoffTimer = 0;
+      const cleanup = () => {
+        window.clearTimeout(handoffTimer);
+        root.removeEventListener(workbenchReadyEvent, ready);
+      };
+      const ready = () => {
+        if (settled || root.dataset.pqWorkbenchController !== 'loaded') return;
+        settled = true;
+        cleanup();
+        delete root.dataset.pqWorkbenchRetryMode;
         script.dataset.pqWorkbenchLoaded = 'true';
-        root.dataset.pqWorkbenchController = 'loaded';
         resolve();
+      };
+      const failed = (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        const retryMode = String(error?.pqRetryMode || 'reload');
+        script.dataset.pqWorkbenchFailed = 'true';
+        root.dataset.pqWorkbenchRetryMode = retryMode;
+        if (retryMode === 'reinject') {
+          script.remove();
+          delete root.dataset.pqWorkbenchController;
+        } else {
+          root.dataset.pqWorkbenchController = 'failed';
+        }
+        reject(error instanceof Error ? error : new Error('property_workbench_initializer_failed'));
+      };
+      const loadError = (code, retryMode) => {
+        const error = new Error(code);
+        error.pqRetryMode = retryMode;
+        return error;
+      };
+      root.addEventListener(workbenchReadyEvent, ready);
+      script.addEventListener('load', () => {
+        window.setTimeout(() => {
+          if (root.dataset.pqWorkbenchController === 'loaded') ready();
+          else failed(loadError('property_workbench_initializer_handoff_missing', 'reload'));
+        }, 0);
       }, { once: true });
-      script.addEventListener('error', reject, { once: true });
+      script.addEventListener(
+        'error',
+        () => failed(loadError('property_workbench_script_load_failed', 'reinject')),
+        { once: true },
+      );
+      handoffTimer = window.setTimeout(
+        () => failed(loadError('property_workbench_initializer_timeout', 'reload')),
+        8000,
+      );
       document.head.appendChild(script);
+    });
+    loadPromise = pending.catch((error) => {
+      if (String(error?.pqRetryMode || '') === 'reinject') loadPromise = null;
+      throw error;
     });
     return loadPromise;
   };
@@ -638,23 +684,61 @@
   installCriticalLocationMap();
   installCriticalScopeLightbox();
 
+  const setLaunchStatus = (message, tone = '') => {
+    root.querySelectorAll('[data-property-top-launch-status], [data-property-launch-status]').forEach((node) => {
+      node.textContent = String(message || '');
+      if (tone) node.dataset.pqTone = tone;
+      else delete node.dataset.pqTone;
+    });
+  };
+  const hydrateAndReplay = (target) => {
+    if (!(target instanceof HTMLElement) || target.dataset.pqHydrationPending === 'true') return;
+    if (root.dataset.pqWorkbenchRetryMode === 'reload') {
+      target.dataset.pqHydrationPending = 'true';
+      setBusy(target, true);
+      setLaunchStatus('Reloading search controls safely…', 'pending');
+      const retryUrl = new URL(window.location.href);
+      retryUrl.searchParams.set('launch_retry', String(Date.now()));
+      window.location.assign(retryUrl);
+      return;
+    }
+    target.dataset.pqHydrationPending = 'true';
+    setBusy(target, true);
+    setLaunchStatus('Preparing search controls…', 'pending');
+    loadWorkbench()
+      .then(() => {
+        delete target.dataset.pqHydrationPending;
+        delete target.dataset.pqLaunchQueued;
+        delete target.dataset.pqLaunchBootstrapTimedOut;
+        setBusy(target, false);
+        setLaunchStatus('');
+        window.requestAnimationFrame(() => target.click());
+      })
+      .catch(() => {
+        delete target.dataset.pqHydrationPending;
+        delete target.dataset.pqLaunchQueued;
+        setBusy(target, false);
+        const reloadRequired = root.dataset.pqWorkbenchRetryMode === 'reload';
+        const message = reloadRequired
+          ? 'Search controls stopped while loading. Select Launch search to reload safely.'
+          : 'Search controls did not load. Select Launch search to retry.';
+        setLaunchStatus(message, 'error');
+        const errorNode = root.querySelector('[data-property-inline-error]');
+        if (errorNode) errorNode.textContent = message;
+      });
+  };
+
   root.addEventListener('click', (event) => {
     const target = event.target?.closest?.(actionSelector);
     if (!target || !root.contains(target) || root.dataset.pqWorkbenchController === 'loaded') return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    setBusy(target, true);
-    loadWorkbench()
-      .then(() => {
-        setBusy(target, false);
-        window.requestAnimationFrame(() => target.click());
-      })
-      .catch(() => {
-        setBusy(target, false);
-        const errorNode = root.querySelector('[data-property-inline-error]');
-        if (errorNode) errorNode.textContent = 'Could not prepare the search controls. Please reload.';
-      });
+    hydrateAndReplay(target);
   }, true);
+  root.dataset.pqLaunchBootstrap = 'ready';
+  root.dispatchEvent(new CustomEvent('propertyquarry:launch-bootstrap-ready'));
+  const queuedLaunch = root.querySelector('[data-property-start-top][data-pq-launch-queued="true"]');
+  if (queuedLaunch) hydrateAndReplay(queuedLaunch);
 
   const warmOnIntent = (event) => {
     if (root.dataset.pqWorkbenchController === 'loaded') return;
@@ -679,6 +763,13 @@
       const errorNode = root.querySelector('[data-property-inline-error]');
       if (errorNode) errorNode.textContent = 'Could not load the saved search controls. Please reload.';
     });
+    return;
+  }
+  if (launchReloadRecovery) {
+    setLaunchStatus('Reloading search controls…', 'pending');
+    loadWorkbench()
+      .then(() => setLaunchStatus('Search controls are ready. Review your search, then launch again.'))
+      .catch(() => setLaunchStatus('Search controls still could not load. Reload the page and try again.', 'error'));
     return;
   }
   if (eagerWorkbenchSurface) {

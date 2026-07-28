@@ -1906,6 +1906,149 @@ def test_gold_status_write_syncs_other_latest_alias_only(tmp_path: Path, monkeyp
     assert synced == [str(legacy_path)]
 
 
+def test_gold_status_write_replaces_final_symlink_without_touching_its_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    output_path = tmp_path / "_completion" / "property_gold_status" / "release-gate.json"
+    output_path.parent.mkdir(parents=True)
+    symlink_target = tmp_path / "must-not-change.json"
+    symlink_target.write_text('{"status":"keep"}\n', encoding="utf-8")
+    output_path.symlink_to(symlink_target)
+    payload = json.dumps({"status": "pass", "generated_at": "2026-06-27T11:05:53+00:00"})
+
+    synced = gold_status._write_gold_status_output(output_path, payload)
+
+    assert symlink_target.read_text(encoding="utf-8") == '{"status":"keep"}\n'
+    assert not output_path.is_symlink()
+    assert json.loads(output_path.read_text(encoding="utf-8"))["status"] == "pass"
+    assert synced == [
+        str(tmp_path / "_completion" / "property_gold_status" / "latest.json"),
+        str(tmp_path / "_completion" / "propertyquarry-gold-status-latest.json"),
+    ]
+
+
+def test_gold_status_write_rejects_symlinked_output_parent(
+    tmp_path: Path,
+) -> None:
+    redirected_parent = tmp_path / "redirected"
+    redirected_parent.mkdir()
+    unsafe_parent = tmp_path / "output"
+    unsafe_parent.symlink_to(redirected_parent, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="Unsafe Gold status output parent"):
+        gold_status._write_gold_status_output(
+            unsafe_parent / "status.json",
+            '{"status":"pass"}',
+        )
+
+    assert not (redirected_parent / "status.json").exists()
+
+
+def test_gold_status_write_rejects_peer_writable_ancestor_before_creating_output(
+    tmp_path: Path,
+) -> None:
+    unsafe_parent = tmp_path / "unsafe"
+    unsafe_parent.mkdir()
+    unsafe_parent.chmod(0o777)
+    descendant = unsafe_parent / "must-not-be-created"
+    try:
+        with pytest.raises(
+            ValueError,
+            match="Unsafe Gold status output directory chain",
+        ):
+            gold_status._write_gold_status_output(
+                descendant / "status.json",
+                '{"status":"pass"}',
+            )
+    finally:
+        unsafe_parent.chmod(0o700)
+
+    assert not descendant.exists()
+
+
+def test_gold_status_write_detects_parent_swap_without_redirecting_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_parent = tmp_path / "trusted"
+    attacker_parent = tmp_path / "attacker"
+    detached_parent = tmp_path / "detached-trusted"
+    original_parent.mkdir()
+    attacker_parent.mkdir()
+    attacker_output = attacker_parent / "status.json"
+    attacker_output.write_text("attacker-sentinel\n", encoding="utf-8")
+    output_path = original_parent / "status.json"
+    swapped = False
+
+    def swap_parent_before_staging(_byte_count: int | None = None) -> str:
+        nonlocal swapped
+        if not swapped:
+            original_parent.rename(detached_parent)
+            attacker_parent.rename(original_parent)
+            swapped = True
+        return "0" * 32
+
+    monkeypatch.setattr(gold_status.secrets, "token_hex", swap_parent_before_staging)
+
+    with pytest.raises(RuntimeError, match="output parent changed"):
+        gold_status._write_gold_status_output(output_path, '{"status":"pass"}')
+
+    assert (original_parent / "status.json").read_text(encoding="utf-8") == (
+        "attacker-sentinel\n"
+    )
+    assert not (detached_parent / "status.json").exists()
+    assert list(detached_parent.glob(".propertyquarry-gold-*.tmp")) == []
+
+
+@pytest.mark.parametrize("failure_after", (1, 2, 3))
+def test_gold_status_write_clears_all_canonical_outputs_after_partial_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_after: int,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    release_gate_path = (
+        tmp_path / "_completion" / "property_gold_status" / "release-gate.json"
+    )
+    latest_path = tmp_path / "_completion" / "property_gold_status" / "latest.json"
+    legacy_path = tmp_path / "_completion" / "propertyquarry-gold-status-latest.json"
+    canonical_paths = (release_gate_path, latest_path, legacy_path)
+    for path in canonical_paths:
+        _write_json(path, {"status": "previous-pass"})
+
+    real_publish = gold_status._publish_private_text_at
+    publication_count = 0
+
+    def publish_then_fail(
+        output_path: Path,
+        rendered: str,
+        directory_chain: gold_status._GoldStatusDirectoryChain,
+    ) -> tuple[int, int]:
+        nonlocal publication_count
+        identity = real_publish(output_path, rendered, directory_chain)
+        publication_count += 1
+        if publication_count == failure_after:
+            raise OSError(f"injected failure after publication {failure_after}")
+        return identity
+
+    monkeypatch.setattr(gold_status, "_publish_private_text_at", publish_then_fail)
+
+    with pytest.raises(
+        OSError,
+        match=f"injected failure after publication {failure_after}",
+    ):
+        gold_status._write_gold_status_output(
+            release_gate_path,
+            '{"status":"pass"}',
+        )
+
+    assert publication_count == failure_after
+    assert all(not path.exists() for path in canonical_paths)
+    assert list(tmp_path.rglob(".propertyquarry-gold-*.tmp")) == []
+
+
 def _provider_matrix_payload(*, status: str = "pass", executed: bool = True) -> dict[str, object]:
     return {
         "status": status,
@@ -5166,6 +5309,65 @@ def test_gold_status_blocks_when_receipts_are_stale_even_if_checks_pass(tmp_path
             "max_age_hours": 1,
         }
     ]
+
+
+def test_gold_status_receipt_freshness_rejects_future_timestamps_beyond_skew() -> None:
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    within_tolerance = now + timedelta(
+        seconds=gold_status.DEFAULT_RECEIPT_FUTURE_TOLERANCE_SECONDS
+    )
+    beyond_tolerance = within_tolerance + timedelta(seconds=1)
+
+    within_ok, within_rows = gold_status._receipt_freshness_status(
+        {"within_skew": {"generated_at": within_tolerance.isoformat()}},
+        now=now,
+        max_age_hours=1,
+    )
+    future_ok, future_rows = gold_status._receipt_freshness_status(
+        {"future": {"generated_at": beyond_tolerance.isoformat()}},
+        now=now,
+        max_age_hours=1,
+    )
+
+    assert within_ok is True
+    assert within_rows == []
+    assert future_ok is False
+    assert future_rows == [
+        {
+            "area": "future",
+            "status": "timestamp_in_future",
+            "generated_at": beyond_tolerance.isoformat(),
+            "timestamp_source": "generated_at",
+            "raw_generated_at": beyond_tolerance.isoformat(),
+            "future_seconds": 301.0,
+            "max_future_seconds": 300.0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "invalid_max_age",
+    (float("nan"), float("inf"), float("-inf")),
+)
+def test_gold_status_direct_api_rejects_nonfinite_receipt_age(
+    tmp_path: Path,
+    invalid_max_age: float,
+) -> None:
+    missing = tmp_path / "unused.json"
+
+    with pytest.raises(
+        ValueError,
+        match="max_receipt_age_hours must be a finite number",
+    ):
+        build_gold_status_receipt(
+            performance_receipt_path=missing,
+            tour_control_receipt_path=missing,
+            export_discovery_receipt_path=missing,
+            repair_canary_receipt_path=missing,
+            provider_matrix_receipt_path=missing,
+            max_receipt_age_hours=invalid_max_age,
+            now=datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc),
+        )
 
 
 def test_gold_status_accepts_repair_summary_timestamp_for_freshness(tmp_path: Path) -> None:

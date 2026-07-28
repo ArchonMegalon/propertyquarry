@@ -27,6 +27,8 @@ fault, not evidence that fewer replicas are acceptable. Keep an unready
 replica out of traffic and stop promotion whenever discovered, exported, or
 expected coverage is short.
 
+<a id="availability-error-rate"></a>
+
 ## Availability / error rate
 
 Compare 5xx rate by bounded route template with the release timestamp and
@@ -34,6 +36,26 @@ structured error logs using correlation IDs. Contain a single failing
 provider or route before scaling broadly. If the new release introduced the
 error budget burn, follow the guarded rollback runbook; do not mask the alert
 or reclassify 5xx responses.
+
+## Ingress admission backend
+
+Group `propertyquarry_ingress_admission_operations_total` only by its bounded
+`backend`, `operation`, and `outcome` labels. For `backend_unavailable`, confirm
+the affected operation and PostgreSQL readiness before changing traffic.
+Preserve correlation IDs and database errors, stop promotion, and keep the
+admission path fail closed. Do not switch to process-local admission or reset
+quota or lease state to clear the alert.
+
+## Ingress admission capacity
+
+The PostgreSQL contract must emit exactly one valid contract and both closed
+capacity keys per ready API replica: `lease` with limit `100000`, and `quota`
+with limit `1000000`. Treat a missing series, a zero contract-valid gauge, or
+any different limit as schema or exporter drift and stop promotion. At 80
+percent utilization, investigate expired-row cleanup and sustained producers;
+at 95 percent, contain new admission load before capacity is exhausted. Never
+delete governed rows, alter the fixed limits, or bypass the database capacity
+trigger during recovery.
 
 ## Latency
 
@@ -53,9 +75,10 @@ restart or bypass readiness.
 
 Act only on roles where `propertyquarry_runtime_heartbeat_required{role}=1`.
 Confirm heartbeat presence, age, stale state, process/container health, and
-the configured maximum age. The standalone PropertyQuarry scheduler is
-required; the legacy worker is conditional and becomes required only when its
-profile is deliberately enabled. Do not fabricate or touch heartbeat files.
+the configured maximum age. The dedicated PropertyQuarry durable worker and
+standalone scheduler are both required baseline roles. A missing or stale
+worker heartbeat also keeps API readiness closed. Do not fabricate or touch
+heartbeat files.
 
 ## Database saturation
 
@@ -66,10 +89,13 @@ disaster-recovery runbook for integrity or restore concerns.
 
 ## Queue backlog
 
-This alert is active only when both queue depth and oldest-item age are
-exposed. Identify the oldest governed work class, scheduler health, provider
-availability, and retry loops. Stop uncontrolled producers or retries before
-adding consumers. Preserve queued work and idempotency evidence.
+Treat `propertyquarry_queue_observed{queue="property_search"}=0` with a fresh
+required worker heartbeat as an instrumentation or database-snapshot failure,
+not as an empty queue. Preserve the worker heartbeat and error logs, verify the
+authoritative queue query, and stop promotion until the observed gauge returns
+to `1`. When observed, identify the oldest governed work class, scheduler
+health, provider availability, and retry loops. Stop uncontrolled producers or
+retries before adding consumers. Preserve queued work and idempotency evidence.
 
 ## Provider and quota failures
 

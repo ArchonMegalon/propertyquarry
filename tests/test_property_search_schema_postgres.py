@@ -110,9 +110,38 @@ def test_postgres_legacy_run_upgrade_queue_install_and_idempotency() -> None:
             connect=isolated_connect,
         )
 
-        assert first.applied_versions == (1, 2, 3, 4, 5)
+        assert first.applied_versions == tuple(range(1, 14))
         assert second.applied_versions == ()
         assert status.ready is True
+
+        with isolated_connect(database_url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    ALTER TABLE property_search_work_jobs
+                    ENABLE REPLICA TRIGGER property_search_work_jobs_erasure_fence_guard
+                    """
+                )
+        replica_only = schema.inspect_property_search_schema(
+            database_url,
+            connect=isolated_connect,
+        )
+        assert replica_only.ready is False
+        assert replica_only.reason == (
+            "required_trigger_missing:property_search_work_jobs_erasure_fence_guard"
+        )
+        with isolated_connect(database_url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    ALTER TABLE property_search_work_jobs
+                    ENABLE ALWAYS TRIGGER property_search_work_jobs_erasure_fence_guard
+                    """
+                )
+        assert schema.inspect_property_search_schema(
+            database_url,
+            connect=isolated_connect,
+        ).ready is True
 
         with isolated_connect(database_url, autocommit=True) as conn:
             with conn.cursor() as cur:
@@ -145,6 +174,49 @@ def test_postgres_legacy_run_upgrade_queue_install_and_idempotency() -> None:
                     "property_content_job_events",
                     "property_content_webhook_events",
                 )
+                cur.execute(
+                    """
+                    SELECT to_regclass('property_search_erasure_fences'),
+                           EXISTS (
+                               SELECT 1 FROM pg_trigger
+                               WHERE tgrelid = 'property_search_runs'::regclass
+                                 AND tgname = 'property_search_runs_writer_contract_guard'
+                                 AND NOT tgisinternal
+                           ),
+                           EXISTS (
+                               SELECT 1 FROM pg_trigger
+                               WHERE tgrelid = 'property_search_work_jobs'::regclass
+                                 AND tgname = 'property_search_work_jobs_erasure_fence_guard'
+                                 AND NOT tgisinternal
+                           )
+                    """
+                )
+                assert cur.fetchone() == (
+                    "property_search_erasure_fences",
+                    True,
+                    True,
+                )
+                from app.product.property_search_storage import (
+                    _property_search_erasure_key_id,
+                )
+
+                cur.execute(
+                    "SELECT key_id FROM property_search_erasure_key_state WHERE singleton = TRUE"
+                )
+                assert cur.fetchone() == (_property_search_erasure_key_id(),)
+                with pytest.raises(psycopg.Error) as immutable_key_state:
+                    cur.execute(
+                        "UPDATE property_search_erasure_key_state SET key_id = %s WHERE singleton = TRUE",
+                        ("0" * 64,),
+                    )
+                assert immutable_key_state.value.sqlstate == "23514"
+                assert "property_search_erasure_key_state_immutable" in str(
+                    immutable_key_state.value
+                )
+                cur.execute(
+                    "SELECT key_id FROM property_search_erasure_key_state WHERE singleton = TRUE"
+                )
+                assert cur.fetchone() == (_property_search_erasure_key_id(),)
                 cur.execute(
                     """
                     SELECT version, checksum_sha256

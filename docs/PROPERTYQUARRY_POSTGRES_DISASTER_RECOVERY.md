@@ -73,6 +73,13 @@ Only configure hook executables installed in the active operator environment. Ea
 
 The drill rejects checksum changes, missing or changed exported-snapshot evidence, missing release identity, a different release/image, missing or mutable off-host identity, failure to retrieve the claimed immutable provider version, stale backups, unencrypted artifacts, missing confirmation, source/target equality, non-disposable database names, unexpected connected database identity, empty restored schemas, migration-name/checksum drift, critical-data row-count, chunk, row-bound, or Merkle-root drift, failed supplementary checks, failed hooks, and RTO overruns. The release-controlled contract requires retained data in `property_search_runs` and allows legitimate zero rows in `property_search_work_jobs`, `delivery_outbox`, and the content job/event/webhook ledgers. `PROPERTYQUARRY_RESTORE_REQUIRED_TABLES`, `PROPERTYQUARRY_RESTORE_REQUIRED_NON_EMPTY_TABLES`, and the scalar integrity SQL remain optional operator diagnostics; changing them cannot replace or weaken the canonical data contract and they have no independent launch authority. After `pg_restore`, the release-specific migration hook upgrades the disposable target; the drill then requires its migration ledger to match the current release and every canonical critical-data count, chunk list, and recomputed Merkle root to exactly match the snapshot-bound backup source. `pg_restore` uses `--clean --if-exists --single-transaction` against the guarded target and never uses `--create`. RTO timing begins before provider retrieval and therefore includes retrieval, decryption, archive validation, restore, migrations, data checks, and readiness verification.
 
+A production host recovery is a separate release-control operation. After the
+database and one-shot migration phase succeed, it restores the API, dedicated
+durable worker, scheduler, and render dependency in the canonical order and
+keeps ingress closed until API readiness proves a fresh worker heartbeat.
+Database restore-drill evidence alone does not authorize those runtime starts
+or traffic.
+
 ## Launch evidence
 
 A flagship release requires:

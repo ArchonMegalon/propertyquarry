@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 from app.services.property_customer_copy import (
@@ -964,6 +964,7 @@ def _map_preview_cache_root() -> Path:
 def _map_preview_cache_path_for_key(cache_key: dict[str, object]) -> Path:
     versioned_key = dict(cache_key)
     versioned_key.setdefault("style_version", _PROPERTY_MAP_PREVIEW_STYLE_VERSION)
+    versioned_key["_tile_network_mode"] = "enabled" if _property_map_tile_network_enabled() else "disabled"
     normalized_key = json.dumps(versioned_key, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     digest = hashlib.sha1(normalized_key.encode("utf-8")).hexdigest()
     return _map_preview_cache_root() / f"{digest}.png"
@@ -1143,6 +1144,7 @@ def _cached_local_map_overview_png_path(
     overlay_rows: list[dict[str, object]] | None = None,
     boundary_paths: list[str] | None = None,
     pin: tuple[float, float] | None = None,
+    focus_label: object = None,
     width: int = 640,
     height: int = 368,
 ) -> Path:
@@ -1217,14 +1219,13 @@ def _cached_local_map_overview_png_path(
         _draw_flagship_preview_polygon(draw, points, fill=fill)
     if pin:
         marker_x, marker_y = pin
-        if not draw_overlay:
-            _draw_flagship_preview_focus_card(
-                draw,
-                pin=pin,
-                label=cache_key.get("query") or cache_key.get("label") or cache_key.get("kind"),
-                width=width,
-                height=height,
-            )
+        _draw_flagship_preview_focus_card(
+            draw,
+            pin=pin,
+            label=focus_label,
+            width=width,
+            height=height,
+        )
         draw.ellipse((marker_x - 18, marker_y - 18, marker_x + 18, marker_y + 18), fill=(207, 53, 53, 58))
         draw.polygon(
             [
@@ -1241,6 +1242,29 @@ def _cached_local_map_overview_png_path(
     image.save(tmp_path, format="PNG", optimize=True)
     tmp_path.replace(cache_path)
     return cache_path
+
+
+def _property_map_tile_network_enabled() -> bool:
+    return str(os.environ.get("PROPERTYQUARRY_MAP_TILE_NETWORK_ENABLED") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def _fetch_property_map_tile(
+    url: str,
+    *,
+    timeout_seconds: float = 6.0,
+    opener: Callable[..., Any] | None = None,
+) -> bytes:
+    if not _property_map_tile_network_enabled():
+        raise urllib.error.URLError("property_map_tile_network_disabled")
+    request = urllib.request.Request(url, headers={"User-Agent": "PropertyQuarry/1.0"})
+    open_url = opener or urllib.request.urlopen
+    with open_url(request, timeout=timeout_seconds) as response:
+        return response.read()
 
 
 def _schedule_cached_preview_render(
@@ -1264,6 +1288,7 @@ def _schedule_cached_preview_render(
         if cache_id in _PROPERTY_MAP_PREVIEW_RENDER_IN_FLIGHT:
             return cache_path
         _PROPERTY_MAP_PREVIEW_RENDER_IN_FLIGHT.add(cache_id)
+    tile_fetcher = _fetch_property_map_tile
 
     def _render() -> None:
         try:
@@ -1278,6 +1303,7 @@ def _schedule_cached_preview_render(
                 draw_overlay=draw_overlay,
                 width=width,
                 height=height,
+                tile_fetcher=tile_fetcher,
             )
         finally:
             with _PROPERTY_MAP_PREVIEW_RENDER_LOCK:
@@ -1351,6 +1377,7 @@ def _cached_preview_png_path(
     draw_overlay: bool = True,
     width: int = 640,
     height: int = 368,
+    tile_fetcher: Callable[..., bytes] | None = None,
 ) -> Path:
     cache_path = _map_preview_cache_path_for_key(cache_key)
     if cache_path.exists():
@@ -1362,15 +1389,14 @@ def _cached_preview_png_path(
     tile_origin_x = int(math.floor(tile_x)) - (tile_span // 2)
     tile_origin_y = int(math.floor(tile_y)) - (tile_span // 2)
     canvas = Image.new("RGB", (tile_size * tile_span, tile_size * tile_span), color=(242, 236, 225))
+    fetch_tile = tile_fetcher or _fetch_property_map_tile
     for dx in range(tile_span):
         for dy in range(tile_span):
             x_index = tile_origin_x + dx
             y_index = tile_origin_y + dy
             url = f"https://tile.openstreetmap.org/{zoom}/{x_index}/{y_index}.png"
-            request = urllib.request.Request(url, headers={"User-Agent": "PropertyQuarry/1.0"})
             try:
-                with urllib.request.urlopen(request, timeout=6.0) as response:
-                    tile_bytes = response.read()
+                tile_bytes = fetch_tile(url, timeout_seconds=6.0)
                 tile_image = Image.open(io.BytesIO(tile_bytes)).convert("RGB")
             except (urllib.error.URLError, TimeoutError, OSError, ValueError):
                 tile_image = Image.new("RGB", (tile_size, tile_size), color=(242, 236, 225))

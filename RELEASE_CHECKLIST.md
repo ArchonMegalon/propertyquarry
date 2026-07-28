@@ -3,21 +3,46 @@
 ## Preflight
 
 - [ ] `git status` is clean on release branch.
+- [ ] Fetch the intended release upstream immediately before reconciliation and
+  record its immutable commit. Cached remote-tracking refs are planning evidence
+  only; they cannot establish that the candidate includes the current upstream.
+  Follow `docs/PROPERTYQUARRY_CACHED_UPSTREAM_RECONCILIATION.md` and revalidate
+  its pinned findings against the freshly fetched commit before resolving
+  source, schema, controller, or generated-evidence conflicts.
+- [ ] Regenerate
+  `config/propertyquarry_release_verifier_requirements.lock` from
+  `config/propertyquarry_release_verifier_requirements.in` with the recorded
+  `uv pip compile --python-version 3.12 --generate-hashes` contract. Do not
+  hand-edit the hash lock. Update its authenticated bootstrap/pin digests and
+  rebuild the private verifier through the controlled release-environment
+  recovery lane, then require the protocol suites and JSON Schema format checks
+  to pass. The v3 pin binds the canonical input, its included
+  `ea/requirements.lock`, and the compiled hash lock by path and SHA-256.
+  Bootstrap and the authenticated launcher must reject stale base or direct-pin
+  parity before environment creation, installation, or test collection. The
+  current authenticated verifier includes
+  `jsonschema[format-nongpl]==4.26.0`; its format checks and the 373-test
+  release-protocol suite pass. The cached-upstream reconciliation probe
+  produced no authoritative replacement lock, performed no download, and
+  requires explicit operator approval before any networked recovery.
 - [ ] For a PropertyQuarry release, do not export checkout-local database, traffic, owner, migrator, or controller credentials. The independently installed release controller owns its root-managed secret store and canonical runtime configuration.
 - [ ] If separately validating the legacy EA stack, keep its `.env`, `EA_STORAGE_BACKEND`, and `DATABASE_URL` work outside the PropertyQuarry release path and do not treat it as PropertyQuarry deployment evidence.
 - [ ] `PRODUCT_RELEASE_CHECKLIST.md` is fully satisfied for the current product wedge.
 - [ ] `.codex-design/repo/IMPLEMENTATION_SCOPE.md`, `.codex-design/ea/START_HERE.md`, `docs/PRODUCT_BRIEF.md`, and `docs/PROPERTY_DECISION_WORKBENCH_GUIDE.md` still match the shipped public/app surface.
 - [ ] `.codex-design/repo/EA_FLAGSHIP_TRUTH_PLANE.md`, `.codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json`, and `.codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json` agree with the PropertyQuarry browser workflow proof and exact candidate identity.
-- [ ] `make verify-flagship-release-readiness` passes, confirming the weekly pulse, browser proof, flagship receipt, and Fleet journey gate are all clear for wider release claims.
+- [ ] When refreshing release evidence is intended, explicitly run `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py materialize-release-assets-authenticated` and review the resulting diff.
+- [ ] `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py verify-flagship-release-readiness-authenticated` passes as read-only validation that the already-materialized weekly pulse, browser proof, flagship receipt, and Fleet journey gate are all clear for wider release claims, and that the browser -> flagship -> weekly digest/size chain matches the canonical bytes.
+- [ ] The authenticated `release-preflight` target leaves the already-materialized weekly pulse, browser proof, and flagship receipt byte-for-byte unchanged; any refresh uses the explicit materialization target above.
 - [ ] Product boundary reviewed: non-core public utility routes are disabled unless intentionally required (`EA_ENABLE_PUBLIC_RESULTS`, `EA_ENABLE_PUBLIC_TOURS`).
 - [ ] CI smoke workflow is green.
-- [ ] CI gate bundle (`make smoke-help`, `make ci-local`, runtime smoke API tests, `make verify-release-assets`) is green.
-- [ ] Optional local parity run completed: `make ci-gates`.
+- [ ] The smoke workflow explicitly reproduces browser -> flagship -> weekly receipts after Chromium installation in its disposable canonical checkout, immediately verifies an exact `HEAD` match, and then runs the read-only authenticated CI gates. Treat this as reproduction evidence only, not publication or release authority.
+- [ ] Source-tree read-only authenticated CI gate bundle (`./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated`) is green, leaves all three canonical receipt bytes unchanged, disables repository pytest/bytecode caches, and routes nested exit-gate evidence through a cleaned private temporary directory.
+- [ ] Optional read-only local parity run completed: `make ci-gates`.
 - [ ] Optional local parity run including Postgres smoke completed: `make ci-gates-postgres`.
 - [ ] Optional local parity run including legacy migration smoke completed: `make ci-gates-postgres-legacy`.
 - [ ] Optional docs parity run completed: `make docs-verify`.
 - [ ] Optional docs+usage parity run completed: `make release-docs`.
-- [ ] `make propertyquarry-release-protocol-contracts` passes. Treat this only as offline protocol and handoff conformance evidence, never as signature verification, authorization, controller attestation, or a live-release claim.
+- [ ] `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py propertyquarry-release-protocol-contracts` passes. Treat this only as offline protocol and handoff conformance evidence, never as signature verification, authorization, controller attestation, or a live-release claim.
 - [ ] Docs parity confirms the EA canon, flagship truth plane, gate seed, and generated receipt are present and the browser proof is still green. For PropertyQuarry, those assets must remain current, exact-candidate-bound, and scoped to the standalone product.
 
 ## Build & Deploy
@@ -25,14 +50,14 @@
 - [ ] Follow `docs/PROPERTYQUARRY_SLO_RELEASE_EVIDENCE.md`; production remains blocked while the tracked external-controller manifest or digest pin is `UNCONFIGURED`. Release control—not the deploy actor—must install the root-owned fixed controller/manifest/pin, canonical Compose plan, v2 keyring, dedicated database policy, monitoring topology/tool pins, secret store, signed genesis, and external monotonic compare-and-swap authority.
 - [ ] Confirm the independent controller implements `docs/PROPERTYQUARRY_RELEASE_CONTROL_PROTOCOL_V1.md`; the repository validator is a conformance aid and has no authentication or deployment authority.
 - [ ] Treat source tests as fail-closed/FD-handoff evidence only. Do not claim containment, fencing, receipt, Gold, or traffic semantics until the installed native controller is independently attested in the target environment.
-- [ ] Confirm the fixed controller lock is acquired and ingress, API, scheduler, render, and any live migrator are contained before journal reads, host-port/provenance checks, or stale/new receipt validation.
+- [ ] Confirm the fixed controller lock is acquired and ingress, API, dedicated worker, scheduler, render, and any live migrator are contained before journal reads, host-port/provenance checks, or stale/new receipt validation.
 - [ ] Confirm the dedicated target is not the default `postgres` database; control, NOLOGIN owner, migrator, and per-epoch runtime roles are distinct non-superusers, `PUBLIC CONNECT` is revoked, applications have no owner/control/migrator credentials, restart is controller-owned, and zero target backends/prepared transactions/logical writers are proved under the durable fence.
 - [ ] Obtain independent signed pre-migration authorization bound to release/image, server-derived cluster/database/target identity, observed inventory, drain challenge, exact plan, actor, nonce, and TTL. Configure only the external receipt path, target ID, and actor ID.
 - [ ] Confirm the external controller commits DDL, migration ledger, challenge/plan link, and migration-result digest in one transaction while the fence remains active; it must activate a new runtime-role epoch only after the exact result is sealed.
 - [ ] Confirm promotion authorization binds the sealed migration result and exact candidate Gold/observability evidence, then is atomically consumed once immediately before Cloudflared promotion. Require public `/health/ready` and `/version` to expose the exact candidate SHA and image digest.
 - [ ] Confirm the controller's canonical plan binds Cloudflared by immutable image digest and reviewed config hash; mutable tags such as `latest` have no release authority.
 - [ ] Confirm drain-key rotation enforces monotonic epochs, activation, explicit old/new overlap, and revocation; local journal or ledger deletion/restoration must fail against the external generation/hash chain.
-- [ ] On any post-migration or promotion failure, confirm public ingress and candidate API/scheduler/render remain stopped. A consumed receipt cannot be reused.
+- [ ] On any post-migration or promotion failure, confirm public ingress and candidate API/worker/scheduler/render remain stopped. A consumed receipt cannot be reused.
 - [ ] As an unprivileged operator, run read-only disposition first: `EA_RUNTIME_MODE=prod PROPERTYQUARRY_DEPLOY_SIGNED_REQUEST=/run/user/$(id -u)/propertyquarry-deploy-preflight-request.json ./scripts/deploy_propertyquarry.sh --preflight-only`. The request file is private untrusted transport; only the installed controller authenticates it. It must bind `deploy-preflight`, cannot authorize mutation, and is never reused for deployment.
 - [ ] After reviewing a `READY` disposition, obtain a distinct fresh `deploy-run` request and run the same handoff without `--preflight-only`: `EA_RUNTIME_MODE=prod PROPERTYQUARRY_DEPLOY_SIGNED_REQUEST=/run/user/$(id -u)/propertyquarry-deploy-run-request.json ./scripts/deploy_propertyquarry.sh`. Verify the checkout replaces itself with the installed controller and performs no local Docker, database, receipt, or traffic action.
 
@@ -50,12 +75,12 @@
 
 ## Smoke
 
-- [ ] Optional one-command release bundle: `make release-preflight` (includes flagship release-readiness verification)
+- [ ] Optional authenticated read-only repository preflight: `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight` (includes flagship release-readiness verification)
 - [ ] `make release-smoke`
 - [ ] The product proves one durable brief -> search dispatch -> ranked results -> property dossier -> shortlist or feedback -> revisit loop.
 - [ ] Browser surface contract tests confirm no product-surface links to experimental routes in product mode.
 - [ ] `make operator-help` (manual spot-check of script usage contracts)
-- [ ] Optional combined local mirror: `make ci-gates`
+- [ ] Optional combined read-only local mirror: `make ci-gates`
 - [ ] Confirm blocked-policy path returns `403`.
 - [ ] Confirm delayed, partial, failed, and offline search states retain customer-safe recovery and candidate-bound evidence without contacting a real provider during release tests.
 
@@ -84,9 +109,36 @@
 ## Dependency, image, and SBOM security
 
 - [ ] Follow `docs/PROPERTYQUARRY_RELEASE_SECURITY.md`; use a full release SHA and digest-pinned PropertyQuarry web/render image references.
-- [ ] Confirm the protected security runner has reviewed preinstalled `pip-audit`, Syft, and Trivy versions, current pre-provisioned Trivy databases, and both exact images already loaded locally.
-- [ ] Require the focused `propertyquarry-flagship-security` job to pass before the live release job; missing scanners, images, databases, SBOMs, or scanner JSON must fail closed.
-- [ ] Review the atomic receipt, dependency audit, both CycloneDX SBOMs, both Trivy results, scanner versions, artifact hashes, and explicit severity threshold.
+- [ ] Build the web image from its two immutable stages and require
+  `tests/test_propertyquarry_web_image_contract.py` to pass. Confirm both bases
+  are pinned to reviewed exact `linux/amd64` child manifests, the shipped
+  Distroless stage runs as `10001:10001`, has no shell entrypoint, `apt`, `curl`,
+  or `pip`, and exposes every copied native-library package through
+  `/var/lib/dpkg/status.d`.
+- [ ] Require `tests/test_propertyquarry_wheelhouse_contract.py` to pass.
+  Confirm the exact 37-file CPython 3.12 Linux x86-64 wheelhouse matches
+  `ea/requirements.lock` plus the pinned installer and
+  `ea/requirements.wheelhouse.lock`, and prove a forced no-cache build succeeds
+  with `--network none --pull=false`.
+- [ ] Authenticate candidate construction before publication: bind the full
+  source SHA, release-manifest semantic hash, base manifests, Dockerfile,
+  context inventory, local OCI manifest, image configuration, and rootfs
+  diff-IDs in a private canonical receipt. Require a direct Registry v2 digest
+  observation, pull by repository digest, post-pull identity match, and runtime
+  health proof.
+- [ ] Treat a `propertyquarry.loopback_registry_publication.v1` receipt as local
+  construction-path evidence only. It does not establish durable production
+  publication, controller admission, deployment, traffic promotion, or launch
+  authority. Require the current web and render images to repeat immutable
+  publication and pull verification in the controller-owned release registry.
+- [ ] Confirm the protected lane uses `pip-audit==2.10.1` from the authenticated release-Python tree; root-owned checksum-pinned Syft `1.44.0` and Trivy `0.72.0` binaries; root-owned hash-pinned empty YAML scanner configurations; the root-owned security runtime manifest; fresh hash-bound vulnerability and Java databases; and both exact images already loaded locally.
+- [ ] Confirm every Trivy invocation uses a fresh private cache root whose
+  audited `db` and `java-db` symlinks point only to the root-owned canonical
+  databases, and whose writable `fanal` cache satisfies the fixed ownership,
+  type, mode, link-count, member-count, and aggregate-size bounds before and
+  after scanning.
+- [ ] Require the controller-run flagship security phase and its atomic receipt to pass before promotion; missing scanners, images, databases, SBOMs, or scanner JSON must fail closed. The disabled legacy `propertyquarry-flagship-security` workflow job is inert migration history and has no release authority.
+- [ ] Review the atomic receipt, authenticated scanner execution paths/digests, run-consistent pre/post runtime-manifest and database identities/freshness, the descriptor-captured dependency-lock identity and private audit snapshot contract, both CycloneDX SBOMs, both Trivy results, artifact hashes, and explicit severity threshold. Without explicit overwrite, require output-bundle preflight to preserve every prior receipt and artifact byte.
 - [ ] Treat dependency findings with unknown normalized severity as blocking-critical for flagship release decisions.
 - [ ] Require every waiver to match the documented exact source/immutable target/vulnerability/package/severity/release schema and expire within 30 days; reject expired or cross-release waivers.
 - [ ] Preserve the complete private CI artifact and do not replace flagship evidence with the advisory local mode.
@@ -101,12 +153,12 @@
 - [ ] Run the candidate migration command only against the disposable restore; confirm the preserved source prefix matches between receipts and the post-migration restored ledger exactly matches the current release source contract.
 - [ ] Confirm the restore target name begins `propertyquarry_restore_drill_` and is not the source database.
 - [ ] Run `propertyquarry_postgres_dr.py release-gate` with `PROPERTYQUARRY_DR_BACKUP_RECEIPT`, `PROPERTYQUARRY_DR_RESTORE_RECEIPT`, `PROPERTYQUARRY_RELEASE_COMMIT_SHA`, and `PROPERTYQUARRY_RELEASE_IMAGE_DIGEST`; retain the passing `_completion/disaster_recovery/release-gate.json`.
-- [ ] Require deploy preflight to pass before build and require the rebuilt web image ID/repository digest to match the DR-bound image digest before any database, migration, API, or scheduler start.
+- [ ] Require deploy preflight to pass before build and require the rebuilt web image ID/repository digest to match the DR-bound image digest before any database, migration, API, worker, or scheduler start.
 
 ## Property-search schema boundary
 
 - [ ] Follow `docs/PROPERTYQUARRY_SCHEMA_MIGRATIONS.md`; never grant API, worker, or scheduler startup authority to create or alter the property-search schema.
-- [ ] Require the one-shot `propertyquarry-migrate` deploy phase to finish before API or scheduler startup.
+- [ ] Require the one-shot `propertyquarry-migrate` deploy phase to finish before API, worker, or scheduler startup.
 - [ ] Preserve the ordered migration names and SHA-256 checksums in `propertyquarry_schema_migrations`; treat checksum drift, gaps, or future versions as blocking.
 - [ ] Require `/health/ready` to report the current property-search schema version before traffic promotion.
 - [ ] Confirm schema v4 includes `delivery_outbox` claim/lease indexes and that runtime outbox repositories contain no `CREATE` or `ALTER` statements.
@@ -133,6 +185,6 @@
 - [ ] Follow `docs/PROPERTYQUARRY_HOST_RECOVERY.md`; do not use the legacy EA Compose stack or a generic host-wide restart command.
 - [ ] Record the immutable 40-character release SHA, dedicated `propertyquarry-*` Compose/tunnel identities, and `propertyquarry.com` route; keep tunnel/database credentials only in the installed controller's root-owned store.
 - [ ] Run the command-free recovery dry-run and review its private atomic receipt before execution.
-- [ ] Deliver the signed recovery authorization directly to the installed-controller service. Confirm source `propertyquarry_host_recovery.py --execute` fails before Compose inspection; require exactly five steady-state services and one declared ephemeral migration service in controller-owned evidence.
+- [ ] Deliver the signed recovery authorization directly to the installed-controller service. Confirm source `propertyquarry_host_recovery.py --execute` fails before Compose inspection; require exactly six steady-state services and one declared ephemeral migration service in controller-owned evidence.
 - [ ] Require the installed controller to reconcile the fixed lock, external journal, unconditional containment, database role fence, schema epoch, compatible runtime, private proofs, and public promotion; candidate Compose commands have no fallback authority.
 - [ ] Preserve the `0600` receipt; on failure, do not run `up`, `down`, `restart`, `--remove-orphans`, candidate migrations, or an automatic rollback.

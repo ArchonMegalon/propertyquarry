@@ -7301,15 +7301,18 @@ def test_responses_provider_health_fallback_counts_manifest_backed_onemin_slots(
     ]
 
 
-def test_responses_provider_health_exposes_gemini_vortex(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = _client(principal_id="codex-gemini-health")
-
+def test_responses_provider_health_exposes_gemini_vortex(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("EA_RESPONSES_PROVIDER_LEDGER_DIR", str(tmp_path / "provider-ledger"))
     monkeypatch.setenv("EA_GEMINI_VORTEX_COMMAND", "sh")
     monkeypatch.setenv("EA_GEMINI_VORTEX_MODEL", "gemini-2.5-flash")
     monkeypatch.setenv("GOOGLE_API_KEY_FALLBACK_1", "vertex-fallback")
     monkeypatch.setenv("EA_GEMINI_VORTEX_SELECTION_MODE", "round_robin")
     monkeypatch.setenv("EA_GEMINI_VORTEX_SLOT_DEFAULT_OWNER", "fleet-primary")
     monkeypatch.setenv("EA_GEMINI_VORTEX_SLOT_FALLBACK_1_OWNER", "fleet-shadow")
+    client = _client(principal_id="codex-gemini-health")
 
     response = client.get("/v1/responses/_provider_health")
     assert response.status_code == 200

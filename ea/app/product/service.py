@@ -4,6 +4,8 @@ import base64
 import concurrent.futures
 import contextlib
 import csv
+import errno
+import fcntl
 import hashlib
 import hmac
 import html
@@ -21,6 +23,7 @@ import tempfile
 import time
 import threading
 import statistics
+import stat
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,7 +35,7 @@ from functools import lru_cache
 from html import escape as html_escape
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Iterator
 from uuid import uuid4
 
 import requests
@@ -67,7 +70,11 @@ from app.mootion_remote_asset_fetch import (
     _mootion_remote_asset_target_path,
     _mootion_remote_asset_timeout_seconds,
 )
-from app.services.onboarding import normalize_property_notification_channel, normalize_property_notification_channels
+from app.services.onboarding import (
+    flatten_property_search_preferences_snapshot,
+    normalize_property_notification_channel,
+    normalize_property_notification_channels,
+)
 from app.services.property_decision_loop import PropertyDecisionLoopSnapshot, build_property_decision_loop_snapshot
 from app.services.property_media_factory import (
     MediaRequirement,
@@ -76,6 +83,10 @@ from app.services.property_media_factory import (
 )
 from app.services.property_customer_copy import normalize_property_fit_note
 from app.product import property_search_storage as _property_search_storage
+from app.product.property_diorama_preview import (
+    DIORAMA_PREVIEW_RENDERER_VERSION,
+    render_bright_apartment_diorama,
+)
 from app.product.property_worker_queues import property_worker_queue_spec
 from app.product.property_listing_extractors import (
     _property_area_text_to_sqm,
@@ -190,10 +201,14 @@ from app.product.property_tour_hosting import (
 from app.product.property_search_storage import (
     _compact_pruned_property_search_run_record,
     _delete_property_search_run_record as _delete_property_search_run_record_storage,
+    _erase_property_search_account_data as _erase_property_search_account_data_storage,
+    _export_property_research_packet_data_for_principal as _export_property_research_packet_data_storage,
     _require_property_search_run_schema,
     _list_property_search_run_records as _list_property_search_run_records_storage,
+    _load_property_research_packet_link as _load_property_research_packet_link_storage,
     _load_property_search_run_compact_record as _load_property_search_run_compact_record_storage,
     _load_property_search_run_record as _load_property_search_run_record_storage,
+    _property_research_packet_index_coverage_complete as _property_research_packet_index_coverage_complete_storage,
     _property_search_run_database_url,
     _mark_property_search_run_delivery_checked,
     _property_source_listing_cache_get as _property_source_listing_cache_get_storage,
@@ -683,6 +698,31 @@ _PROPERTY_SEARCH_DEFAULT_SCAN_CAP_PER_SOURCE = 80
 _PROPERTY_SEARCH_TERMINAL_STATUSES = {"processed", "completed", "completed_partial", "failed", "cancelled", "noop"}
 _PROPERTY_SEARCH_DELIVERABLE_TERMINAL_STATUSES = {"processed", "completed", "completed_partial"}
 _PROPERTY_MARKET_BOOTSTRAP_OPERATOR_ID = "property-market-codex"
+
+
+class PropertySearchRunErasedError(RuntimeError):
+    """An active search lost authority because its account or run was erased."""
+
+
+class PropertySearchAliasDiscoveryIncompleteError(RuntimeError):
+    """Irreversible erasure could not prove the complete principal alias set."""
+
+
+def _discard_property_search_run_registry_state(
+    *,
+    run_id: str,
+    principal_id: str,
+) -> bool:
+    normalized_run_id = str(run_id or "").strip()
+    normalized_principal = str(principal_id or "").strip()
+    if not normalized_run_id or not normalized_principal:
+        return False
+    with _PROPERTY_SEARCH_RUN_LOCK:
+        current = _PROPERTY_SEARCH_RUN_REGISTRY.get(normalized_run_id)
+        if str(dict(current or {}).get("principal_id") or "").strip() != normalized_principal:
+            return False
+        _PROPERTY_SEARCH_RUN_REGISTRY.pop(normalized_run_id, None)
+    return True
 _PROPERTY_SCHOOLATLAS_SOURCE_URL = "https://www.statistik.at/atlas/schulen/"
 
 _PROPERTY_SEARCH_RAW_RUN_INPUT_KEYS = frozenset(
@@ -789,10 +829,35 @@ _PROPERTY_SEARCH_RAW_RUN_INPUT_KEYS = frozenset(
     }
 )
 
+_PROPERTY_SEARCH_PROVIDER_SELECTION_AUDIT_KEYS = frozenset(
+    {
+        "provider_selection_filter_applied",
+        "provider_selection_filter_removed",
+        "provider_selection_filter_removed_details",
+    }
+)
+
+_PROPERTY_SEARCH_DERIVED_RUN_INPUT_KEYS = frozenset(
+    {
+        "force_refresh",
+        "min_match_score",
+        "provider_country_filter_applied",
+        "provider_country_filter_removed",
+        "provider_country_filter_removed_details",
+        "provider_selection_filter_applied",
+        "provider_selection_filter_removed",
+        "provider_selection_filter_removed_details",
+    }
+)
+
 
 def _property_search_raw_run_input_key_allowed(value: object) -> bool:
     key = str(value or "").strip()
-    return key in _PROPERTY_SEARCH_RAW_RUN_INPUT_KEYS or (
+    return key in _PROPERTY_SEARCH_RAW_RUN_INPUT_KEYS or key in {
+        "adjacent_area_radius_m",
+        "adjacent_area_radius_unit",
+        "adjacent_area_radius_value",
+    } or (
         key.startswith("max_distance_to_")
         and (key.endswith("_m") or key.endswith("_importance"))
     )
@@ -807,29 +872,20 @@ def _property_search_run_preferences_projection(
     preferences: dict[str, object] | None,
 ) -> dict[str, object]:
     """Return only search-run inputs plus a privacy-safe entitlement marker."""
-    projected = dict(preferences or {})
-    raw_preferences = (
-        dict(projected.get("raw_preferences") or {})
-        if isinstance(projected.get("raw_preferences"), dict)
-        else {}
-    )
-    for raw_key in raw_preferences:
-        if not _property_search_raw_run_input_key_allowed(raw_key):
-            projected.pop(str(raw_key or "").strip(), None)
+    source = dict(preferences or {})
     raw_commercial = (
-        dict(projected.get("property_commercial") or {})
-        if isinstance(projected.get("property_commercial"), dict)
+        dict(source.get("property_commercial") or {})
+        if isinstance(source.get("property_commercial"), dict)
         else {}
     )
     active_plan_key = str(raw_commercial.get("active_plan_key") or "").strip().lower()
-    for workspace_only_key in (
-        "search_agents",
-        "raw_preferences",
-        "property_commercial",
-        "saved_shortlist_candidates",
-        "saved_shortlist_share_slug",
-    ):
-        projected.pop(workspace_only_key, None)
+    projected = {
+        key: value
+        for key, value in source.items()
+        if _property_search_raw_run_input_key_allowed(key)
+        or key in _PROPERTY_SEARCH_DERIVED_RUN_INPUT_KEYS
+    }
+    projected.pop("property_commercial", None)
     if active_plan_key:
         safe_commercial: dict[str, object] = {
             "active_plan_key": active_plan_key,
@@ -1301,11 +1357,14 @@ def _property_search_brief_fingerprint_source(preferences: dict[str, object] | N
     )
     normalized["listing_mode"] = normalize_listing_mode(normalized.get("listing_mode"))
     normalized["property_type"] = list(normalize_property_type_values(normalized.get("property_type")))
+    normalized["adjacent_area_radius_m"] = _property_search_adjacent_area_radius_m(normalized)
+    normalized.pop("adjacent_area_radius_value", None)
+    normalized.pop("adjacent_area_radius_unit", None)
 
     def _is_search_brief_key(key: str) -> bool:
         if key in _PROPERTY_SEARCH_BRIEF_FINGERPRINT_DROP_KEYS:
             return False
-        if key in _PROPERTY_SEARCH_BRIEF_ALWAYS_KEYS:
+        if key in _PROPERTY_SEARCH_BRIEF_ALWAYS_KEYS or key == "adjacent_area_radius_m":
             return True
         if key.startswith("max_distance_to_"):
             return True
@@ -2826,6 +2885,84 @@ def _property_nonempty_sequence(value: object) -> list[str]:
     return [text] if text else []
 
 
+def _property_public_preview_value_present(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _property_merge_public_preview(
+    *,
+    current: dict[str, object],
+    cached: dict[str, object],
+    property_url: str,
+) -> dict[str, object]:
+    """Augment current listing data with cached evidence without replacing fresher facts."""
+    merged = dict(cached or {})
+    sequence_keys = {"media_urls_json", "floorplan_urls_json"}
+    for key, value in dict(current or {}).items():
+        if key == "property_facts_json":
+            continue
+        if key in sequence_keys:
+            combined = _property_nonempty_sequence(value)
+            combined.extend(
+                item
+                for item in _property_nonempty_sequence(merged.get(key))
+                if item not in combined
+            )
+            if combined:
+                merged[key] = combined
+            elif key not in merged:
+                merged[key] = value
+            continue
+        current_text = str(value or "").strip()
+        if (
+            key in {"listing_id", "title"}
+            and current_text == str(property_url or "").strip()
+            and _property_public_preview_value_present(merged.get(key))
+        ):
+            continue
+        if _property_public_preview_value_present(value) or key not in merged:
+            merged[key] = value
+
+    cached_facts = (
+        dict(cached.get("property_facts_json") or {})
+        if isinstance(cached.get("property_facts_json"), dict)
+        else {}
+    )
+    current_facts = (
+        dict(current.get("property_facts_json") or {})
+        if isinstance(current.get("property_facts_json"), dict)
+        else {}
+    )
+    for key, value in current_facts.items():
+        # A fast provider preview commonly reports zero/false when it has not
+        # inspected the full gallery.  Do not let that absence erase positive,
+        # URL-backed floorplan evidence from the detailed preview cache.  Other
+        # current facts (including explicit availability and price changes)
+        # remain authoritative.
+        if (
+            key == "has_floorplan"
+            and _property_truthy_flag(cached_facts.get(key))
+            and not _property_truthy_flag(value)
+        ):
+            continue
+        if key == "floorplan_count":
+            cached_count = _float_or_none(cached_facts.get(key)) or 0.0
+            current_count = _float_or_none(value) or 0.0
+            if cached_count > 0.0 and current_count <= 0.0:
+                continue
+        if _property_public_preview_value_present(value) or key not in cached_facts:
+            cached_facts[key] = value
+    if cached_facts or "property_facts_json" in current or "property_facts_json" in cached:
+        merged["property_facts_json"] = cached_facts
+    return merged
+
+
 def _property_facts_have_floorplan(
     facts: dict[str, object] | None,
     *,
@@ -4053,54 +4190,71 @@ def _normalize_property_visual_request_kind(request_kind: object) -> str:
     return normalized_kind if normalized_kind in {"tour", "flythrough"} else "tour"
 
 
+def _property_visual_url_is_auth_surface(value: object) -> bool:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(normalized)
+    except Exception:
+        return True
+    host = str(parsed.hostname or "").strip().lower().rstrip(".")
+    host_prefix = host.split(".", 1)[0] if host else ""
+    path_parts = {
+        part.strip().lower()
+        for part in str(parsed.path or "").split("/")
+        if part.strip()
+    }
+    return bool(
+        host_prefix in {"account", "accounts", "auth", "login", "signin", "sso"}
+        or path_parts.intersection(
+            {
+                "account",
+                "accounts",
+                "auth",
+                "login",
+                "sign-in",
+                "signin",
+                "oauth",
+                "authorize",
+            }
+        )
+    )
+
+
+def _property_visual_verified_public_tour_url(
+    value: object,
+    *,
+    principal_id: object = "",
+) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or _property_visual_url_is_auth_surface(normalized):
+        return ""
+    resolved = str(
+        _hosted_property_tour_verified_open_url(
+            normalized,
+            principal_id=principal_id,
+        )
+        or ""
+    ).strip()
+    if not resolved or _property_visual_url_is_auth_surface(resolved):
+        return ""
+    return resolved
+
+
 def _property_visual_ready_tour_url(
     *,
     tour_url: object = "",
     open_tour_url: object = "",
     principal_id: object = "",
 ) -> str:
-    normalized_tour_url = str(tour_url or "").strip()
-    normalized_open_tour_url = str(open_tour_url or "").strip()
-    if normalized_tour_url:
-        if _is_branded_public_tour_url(normalized_tour_url):
-            resolved_open_tour_url = str(
-                _hosted_property_tour_verified_open_url(
-                    normalized_tour_url,
-                    principal_id=principal_id,
-                )
-                or ""
-            ).strip()
-            if resolved_open_tour_url:
-                return resolved_open_tour_url
-            resolved_first_party_open_url = str(
-                _hosted_property_tour_first_party_open_url(
-                    normalized_tour_url,
-                    principal_id=principal_id,
-                )
-                or ""
-            ).strip()
-            if resolved_first_party_open_url:
-                return resolved_first_party_open_url
-        elif (
-            normalized_tour_url.startswith(("http://", "https://", "/"))
-            and not _property_visual_generated_reconstruction_bundle_url(normalized_tour_url)
-        ):
-            return normalized_tour_url
-    if normalized_open_tour_url.startswith(("http://", "https://", "/")):
-        generated_reconstruction_bundle_url = _property_visual_generated_reconstruction_bundle_url(normalized_open_tour_url)
-        if generated_reconstruction_bundle_url:
-            return ""
-        if not _is_branded_public_tour_url(normalized_open_tour_url):
-            return normalized_open_tour_url
-        resolved_first_party_open_url = str(
-            _hosted_property_tour_first_party_open_url(
-                normalized_open_tour_url,
-                principal_id=principal_id,
-            )
-            or ""
-        ).strip()
-        if resolved_first_party_open_url:
-            return resolved_first_party_open_url
+    for candidate in (tour_url, open_tour_url):
+        verified = _property_visual_verified_public_tour_url(
+            candidate,
+            principal_id=principal_id,
+        )
+        if verified:
+            return verified
     return ""
 
 
@@ -4132,6 +4286,151 @@ def _property_visual_sanitize_tour_url(
         preferred = str(generated_reconstruction_url or "").strip()
         return preferred or generated_bundle_url
     return str(tour_url or "").strip()
+
+
+def _property_visual_layout_preview_url(
+    value: object,
+    *,
+    principal_id: object = "",
+) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or _property_visual_url_is_auth_surface(normalized):
+        return ""
+    generated_bundle_url = _property_visual_generated_reconstruction_bundle_url(normalized)
+    candidate_url = generated_bundle_url or normalized
+    if _property_visual_verified_public_tour_url(candidate_url, principal_id=principal_id):
+        return ""
+    first_party_url = str(
+        _hosted_property_tour_first_party_open_url(
+            candidate_url,
+            principal_id=principal_id,
+        )
+        or ""
+    ).strip()
+    if not first_party_url or _property_visual_url_is_auth_surface(first_party_url):
+        return ""
+    if _property_visual_verified_public_tour_url(first_party_url, principal_id=principal_id):
+        return ""
+    return first_party_url
+
+
+def _normalize_property_candidate_visual_truth(
+    candidate: dict[str, object],
+    *,
+    principal_id: object = "",
+) -> dict[str, object]:
+    normalized = dict(candidate or {})
+    fact_keys = [
+        key
+        for key in ("property_facts", "property_facts_json")
+        if isinstance(normalized.get(key), dict)
+    ]
+    fact_payloads = [dict(normalized.get(key) or {}) for key in fact_keys]
+
+    raw_source_urls = [str(normalized.get("source_virtual_tour_url") or "").strip()]
+    raw_source_urls.extend(
+        str(facts.get("source_virtual_tour_url") or "").strip()
+        for facts in fact_payloads
+    )
+    safe_source_url = ""
+    for raw_source_url in raw_source_urls:
+        safe_candidate = _safe_provider_live_360_url(raw_source_url)
+        verified_candidate = _property_visual_verified_public_tour_url(
+            safe_candidate,
+            principal_id=principal_id,
+        )
+        if verified_candidate:
+            safe_source_url = verified_candidate
+            break
+
+    tour_url = str(normalized.get("tour_url") or "").strip()
+    open_tour_url = str(normalized.get("open_tour_url") or "").strip()
+    vendor_tour_url = str(normalized.get("vendor_tour_url") or "").strip()
+    verified_tour_url = ""
+    for candidate_url in (tour_url, open_tour_url, vendor_tour_url, safe_source_url):
+        verified_tour_url = _property_visual_verified_public_tour_url(
+            candidate_url,
+            principal_id=principal_id,
+        )
+        if verified_tour_url:
+            break
+
+    panorama_urls: list[str] = []
+    for payload in (normalized, *fact_payloads):
+        values = payload.get("panorama_media_urls_json")
+        if isinstance(values, (list, tuple)):
+            panorama_urls.extend(
+                str(value or "").strip()
+                for value in values
+                if str(value or "").strip()
+            )
+        assets = payload.get("media_assets_json")
+        if isinstance(assets, list):
+            panorama_urls.extend(
+                str(asset.get("url") or "").strip()
+                for asset in assets
+                if isinstance(asset, dict)
+                and bool(asset.get("panorama_candidate"))
+                and str(asset.get("url") or "").strip()
+            )
+    has_live_360 = bool(panorama_urls or safe_source_url or verified_tour_url)
+    normalized["source_virtual_tour_url"] = safe_source_url
+    normalized["has_360"] = has_live_360
+    if not has_live_360:
+        normalized["panorama_source"] = ""
+    for key, facts in zip(fact_keys, fact_payloads):
+        facts["source_virtual_tour_url"] = safe_source_url
+        facts["has_360"] = has_live_360
+        if not has_live_360:
+            facts["panorama_source"] = ""
+        normalized[key] = facts
+
+    generated_reconstruction_url = str(normalized.get("generated_reconstruction_url") or "").strip()
+    layout_preview_url = ""
+    for candidate_url in (generated_reconstruction_url, tour_url, open_tour_url):
+        layout_preview_url = _property_visual_layout_preview_url(
+            candidate_url,
+            principal_id=principal_id,
+        )
+        if layout_preview_url:
+            if not generated_reconstruction_url:
+                generated_reconstruction_url = (
+                    _property_visual_generated_reconstruction_bundle_url(candidate_url)
+                    or str(candidate_url or "").strip()
+                )
+            break
+    normalized["generated_reconstruction_url"] = generated_reconstruction_url
+    normalized["layout_preview_url"] = layout_preview_url
+    existing_layout_preview_status = str(
+        normalized.get("layout_preview_status") or ""
+    ).strip().lower()
+    if layout_preview_url:
+        normalized["layout_preview_status"] = "ready"
+    elif existing_layout_preview_status == "ready":
+        normalized["layout_preview_status"] = "blocked"
+    else:
+        normalized["layout_preview_status"] = existing_layout_preview_status
+
+    if _property_visual_url_is_auth_surface(vendor_tour_url):
+        normalized["vendor_tour_url"] = ""
+    if str(normalized.get("tour_status") or "").strip().lower() == "ready" and not verified_tour_url:
+        normalized["tour_status"] = "blocked"
+        normalized["tour_url"] = ""
+        normalized["open_tour_url"] = ""
+        normalized["vendor_tour_url"] = ""
+        normalized["blocked_reason"] = str(
+            normalized.get("blocked_reason")
+            or (
+                "listing_360_media_missing"
+                if layout_preview_url or not has_live_360
+                else "provider_export_missing"
+            )
+        ).strip()
+    elif verified_tour_url:
+        normalized["open_tour_url"] = verified_tour_url
+    elif open_tour_url:
+        normalized["open_tour_url"] = ""
+    return normalized
 
 
 def _property_visual_initial_eta_minutes(*, status: object, eta_minutes: object = "") -> int:
@@ -6732,6 +7031,27 @@ def _property_apply_location_hint_research(
     return enriched
 
 
+def _property_scout_floorplan_media_urls(
+    image_urls: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Keep only media references that explicitly identify a floorplan.
+
+    Generic listing photos still support address/OCR research, but they are not
+    layout evidence.  Unlabelled plans must pass the gallery visual classifier
+    in the detail extractor before they enter ``floorplan_urls_json``.
+    """
+
+    floorplans: list[str] = []
+    for value in image_urls:
+        normalized = str(value or "").strip()
+        if not normalized:
+            continue
+        marker_text = urllib.parse.unquote(normalized).lower()
+        if any(marker in marker_text for marker in _PROPERTY_SCOUT_FLOORPLAN_MARKERS):
+            floorplans.append(normalized)
+    return tuple(dict.fromkeys(floorplans))
+
+
 @lru_cache(maxsize=256)
 def _property_source_research_snapshot(property_url: str, image_urls: tuple[str, ...] = ()) -> dict[str, object]:
     normalized = urllib.parse.urldefrag(str(property_url or "").strip())[0]
@@ -6755,8 +7075,9 @@ def _property_source_research_snapshot(property_url: str, image_urls: tuple[str,
             )
         except Exception:
             facts = dict(facts or {})
-    if image_urls and "floorplan_urls_json" not in facts:
-        facts["floorplan_urls_json"] = [value for value in image_urls if str(value or "").strip()]
+    labelled_floorplan_urls = _property_scout_floorplan_media_urls(image_urls)
+    if labelled_floorplan_urls and "floorplan_urls_json" not in facts:
+        facts["floorplan_urls_json"] = list(labelled_floorplan_urls)
     try:
         source_html = _property_scout_fetch_html_compat(normalized, timeout_seconds=4.0)
     except Exception:
@@ -6967,10 +7288,13 @@ def _merge_property_facts_with_source_research(
             research_meta.setdefault("strategy", "provider_html_plus_geo")
             merged["listing_research_meta"] = research_meta
     merged = _property_enrich_official_risk_evidence(merged)
+    known_floorplan_urls = tuple(
+        _property_nonempty_sequence(merged.get("floorplan_urls_json"))
+    )
     return _property_enrich_missing_fact_research(
         facts=merged,
         property_url=property_url,
-        floorplan_urls=tuple(_property_nonempty_sequence(merged.get("floorplan_urls_json"))) or image_urls,
+        floorplan_urls=known_floorplan_urls,
     )
 
 
@@ -10314,10 +10638,18 @@ def _property_private_showcase_searches_brigittenau(preferences: dict[str, objec
     return False
 
 
-def _property_private_showcase_candidate(*, run_id: str = "") -> dict[str, object]:
-    tour_url = f"/tours/{_PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG}/control/3dvista"
-    walkthrough_url = f"/tours/files/{_PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG}/generated-reconstruction/generated-walkthrough.mp4"
-    floorplan_url = f"/tours/files/{_PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG}/generated-reconstruction/source-floorplan.jpg"
+def _property_private_showcase_candidate(
+    *,
+    run_id: str = "",
+    principal_id: str = "",
+) -> dict[str, object]:
+    tour_url = _hosted_property_tour_first_party_open_url(
+        f"/tours/{_PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG}",
+        principal_id=principal_id,
+    )
+    if not tour_url:
+        return {}
+    walkthrough_url = _hosted_property_tour_walkthrough_asset_url(tour_url)
     facts: dict[str, object] = {
         "private_showcase": True,
         "visibility": "private_principal_only",
@@ -10341,9 +10673,9 @@ def _property_private_showcase_candidate(*, run_id: str = "") -> dict[str, objec
         "lift": _property_private_showcase_env_bool("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_LIFT"),
         "has_balcony": _property_private_showcase_env_bool("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_BALCONY"),
         "has_terrace": _property_private_showcase_env_bool("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_TERRACE"),
-        "has_floorplan": True,
-        "floorplan_count": 1,
-        "floorplan_urls_json": [floorplan_url],
+        "has_floorplan": False,
+        "floorplan_count": 0,
+        "floorplan_urls_json": [],
         "floorplan_detection_method": "operator_provided_floorplan_pending_import",
         "brightness_signal": "very_bright",
         "quiet_layout_signal": "very_quiet",
@@ -10359,8 +10691,6 @@ def _property_private_showcase_candidate(*, run_id: str = "") -> dict[str, objec
         "source_virtual_tour_url": tour_url,
         "flythrough_url": walkthrough_url,
         "walkthrough_url": walkthrough_url,
-        "tour_provider": "3dvista_showcase_shell",
-        "flythrough_provider": "propertyquarry_generated_reconstruction",
         "nearest_flowing_water_m": _property_private_showcase_env_int("PROPERTYQUARRY_PRIVATE_SHOWCASE_NEAREST_WATER_M"),
         "nearest_flowing_water_name": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_NEAREST_WATER_NAME") or "").strip(),
         "cooling_corridor_signal": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_COOLING_SIGNAL") or "").strip(),
@@ -10410,8 +10740,7 @@ def _property_private_showcase_candidate(*, run_id: str = "") -> dict[str, objec
         "tour_url": tour_url,
         "tour_status": "ready",
         "flythrough_url": walkthrough_url,
-        "flythrough_status": "ready",
-        "flythrough_provider": "propertyquarry_generated_reconstruction",
+        "flythrough_status": "ready" if walkthrough_url else "unavailable",
         "source_platform": "propertyquarry_private_showcase",
         "source_family": "private_showcase",
         "source_trust_tier": "operator_confirmed",
@@ -10442,7 +10771,12 @@ def _property_search_snapshot_with_private_showcase(
     if not _property_private_showcase_searches_brigittenau(preferences):
         return snapshot
     run_id = str(snapshot.get("run_id") or summary.get("run_id") or "").strip()
-    candidate = _property_private_showcase_candidate(run_id=run_id)
+    candidate = _property_private_showcase_candidate(
+        run_id=run_id,
+        principal_id=principal_id,
+    )
+    if not candidate:
+        return snapshot
     sources = [dict(row) for row in list(summary.get("sources") or []) if isinstance(row, dict)]
     for source in sources:
         candidates = [
@@ -10639,9 +10973,14 @@ def _property_candidate_has_floorplan(
         for key, value in {**preview_facts, **facts}.items()
         if str(key or "").strip()
         not in {
+            "floorplan_research_status",
             "floorplan_recovery_diagnostics",
+            "floorplan_requirement_mode",
             "missing_floorplan_diagnostics",
+            "missing_fact_research",
+            "missing_facts_json",
             "provider_recovery_diagnostics",
+            "unknowns_json",
         }
     }
     text = " ".join(
@@ -15343,6 +15682,8 @@ def _property_tour_followup_is_customer_actionable(blocked_reason: str) -> bool:
         "browseract_connector_unconfigured",
         "listing_expired",
         "listing_360_media_missing",
+        "property_packet_generation_failed",
+        "property_packet_temporarily_unavailable",
         "property_tour_execution_failed",
         "property_tour_delivery_failed",
         "property_tour_video_delivery_failed",
@@ -15359,6 +15700,10 @@ def _property_visual_unavailable_detail(*, request_kind: str, reason: str = "") 
     normalized_reason = str(reason or "").strip().lower()
     if normalized_reason == "listing_expired":
         return "This listing has expired and its source page is no longer available."
+    if normalized_reason == "property_packet_temporarily_unavailable":
+        return "The source listing is temporarily unavailable. Try the 3D request again shortly."
+    if normalized_reason == "property_packet_generation_failed":
+        return "The source listing could not be prepared for a 3D request yet."
     if normalized_reason in {
         "",
         "none",
@@ -16837,12 +17182,18 @@ def _repo_root() -> Path:
 
 
 def _runtime_python_executable() -> str:
-    venv_python = (_repo_root() / ".venv" / "bin" / "python").resolve()
+    # A generator subprocess must inherit the dependency set of the running
+    # service when an explicit repository runtime is configured. Otherwise,
+    # return the canonical interpreter target so a container-style deployment
+    # cannot inherit an ambient checkout's venv symlink.
+    sys_python = Path(os.path.abspath(sys.executable))
+    if sys_python.exists():
+        if str(os.getenv("EA_REPO_ROOT") or "").strip():
+            return str(sys_python)
+        return str(sys_python.resolve())
+    venv_python = _repo_root() / ".venv" / "bin" / "python"
     if venv_python.exists():
         return str(venv_python)
-    sys_python = Path(sys.executable).resolve()
-    if sys_python.exists():
-        return str(sys_python)
     which_python3 = shutil.which("python3")
     if which_python3:
         return which_python3
@@ -17182,7 +17533,7 @@ def _run_property_reconstruction_render_bridge(
     return loaded
 
 
-def _write_generated_reconstruction_property_tour_bundle(
+def _write_generated_reconstruction_property_tour_bundle_unchecked(
     *,
     principal_id: str,
     title: str,
@@ -17197,10 +17548,12 @@ def _write_generated_reconstruction_property_tour_bundle(
     external_id: str = "",
     recipient_email: str = "",
     diorama_style_hint: str = "",
+    search_run_id: object = "",
 ) -> dict[str, object]:
     normalized_principal = str(principal_id or "").strip()
     if not normalized_principal:
         raise RuntimeError("hosted_property_tour_principal_required")
+    normalized_search_run_id = str(search_run_id or "").strip()
     normalized_floorplans = [
         _safe_live_property_tour_url(value)
         for value in list(floorplan_urls or [])
@@ -17286,6 +17639,7 @@ def _write_generated_reconstruction_property_tour_bundle(
             "hosted_url": tour_url,
             "public_url": tour_url,
             "principal_id": normalized_principal,
+            "search_run_id": normalized_search_run_id,
             "listing_url": property_url,
             "property_url": property_url,
             "source_ref": str(source_ref or "").strip(),
@@ -17312,6 +17666,7 @@ def _write_generated_reconstruction_property_tour_bundle(
             "scenes": payload.get("scenes") or [],
             "generated_at": _now_iso(),
             "creation_mode": "generated_reconstruction_tour",
+            "publication_status": "generating",
         }
     )
     manifest_path = bundle_dir / "tour.json"
@@ -17448,6 +17803,349 @@ def _write_generated_reconstruction_property_tour_bundle(
         bundle_dir,
         principal_id=normalized_principal,
     )
+
+
+def _property_reconstruction_publication_lock_timeout_seconds() -> float:
+    raw = str(os.getenv("PROPERTYQUARRY_RECONSTRUCTION_PUBLICATION_LOCK_TIMEOUT_SECONDS") or "").strip()
+    try:
+        parsed = float(raw or "30")
+    except (TypeError, ValueError):
+        parsed = 30.0
+    if not math.isfinite(parsed):
+        parsed = 30.0
+    return max(0.05, min(parsed, 300.0))
+
+
+def _property_reconstruction_publication_lock_directory(public_dir: Path) -> Path:
+    return public_dir.parent / ".propertyquarry-tour-publication-locks"
+
+
+def _property_reconstruction_publication_lock_name(*, slug: str) -> str:
+    digest = hashlib.sha256(str(slug or "").strip().encode("utf-8")).hexdigest()
+    return f"{digest}.lock"
+
+
+@contextlib.contextmanager
+def _property_reconstruction_publication_lock(
+    *,
+    public_dir: Path,
+    slug: str,
+    timeout_seconds: float | None = None,
+) -> Iterator[None]:
+    lock_dir = _property_reconstruction_publication_lock_directory(public_dir)
+    created_lock_dir = False
+    try:
+        lock_dir.mkdir(mode=0o700)
+        created_lock_dir = True
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise RuntimeError("property_reconstruction_publication_lock_directory_unavailable") from exc
+    if created_lock_dir:
+        try:
+            lock_dir.chmod(0o700)
+        except OSError as exc:
+            raise RuntimeError("property_reconstruction_publication_lock_directory_unsafe") from exc
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        lock_dir_fd = os.open(lock_dir, directory_flags)
+    except OSError as exc:
+        raise RuntimeError("property_reconstruction_publication_lock_directory_unsafe") from exc
+    lock_fd: int | None = None
+    acquired = False
+    try:
+        lock_dir_stat = os.fstat(lock_dir_fd)
+        if (
+            not stat.S_ISDIR(lock_dir_stat.st_mode)
+            or lock_dir_stat.st_uid != os.geteuid()
+            or stat.S_IMODE(lock_dir_stat.st_mode) != 0o700
+        ):
+            raise RuntimeError("property_reconstruction_publication_lock_directory_unsafe")
+
+        lock_name = _property_reconstruction_publication_lock_name(slug=slug)
+        lock_flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        created_lock_file = False
+        try:
+            lock_fd = os.open(
+                lock_name,
+                lock_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=lock_dir_fd,
+            )
+            created_lock_file = True
+        except FileExistsError:
+            try:
+                lock_fd = os.open(lock_name, lock_flags, dir_fd=lock_dir_fd)
+            except OSError as exc:
+                raise RuntimeError("property_reconstruction_publication_lock_file_unsafe") from exc
+        except OSError as exc:
+            raise RuntimeError("property_reconstruction_publication_lock_file_unavailable") from exc
+        if created_lock_file:
+            try:
+                os.fchmod(lock_fd, 0o600)
+            except OSError as exc:
+                raise RuntimeError("property_reconstruction_publication_lock_file_unsafe") from exc
+        lock_stat = os.fstat(lock_fd)
+        if (
+            not stat.S_ISREG(lock_stat.st_mode)
+            or lock_stat.st_uid != os.geteuid()
+            or stat.S_IMODE(lock_stat.st_mode) != 0o600
+            or lock_stat.st_nlink != 1
+        ):
+            raise RuntimeError("property_reconstruction_publication_lock_file_unsafe")
+
+        timeout = (
+            _property_reconstruction_publication_lock_timeout_seconds()
+            if timeout_seconds is None
+            else max(0.0, min(float(timeout_seconds), 300.0))
+        )
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError as exc:
+                if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                    raise RuntimeError("property_reconstruction_publication_lock_failed") from exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    raise RuntimeError("property_reconstruction_publication_lock_timeout") from exc
+                time.sleep(min(0.01, remaining))
+        yield
+    finally:
+        if lock_fd is not None:
+            if acquired:
+                with contextlib.suppress(OSError):
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            with contextlib.suppress(OSError):
+                os.close(lock_fd)
+        with contextlib.suppress(OSError):
+            os.close(lock_dir_fd)
+
+
+def _write_generated_reconstruction_property_tour_bundle_with_lock_held(
+    *,
+    principal_id: str,
+    title: str,
+    listing_id: str,
+    property_url: str,
+    variant_key: str,
+    media_urls: list[str] | tuple[str, ...],
+    floorplan_urls: list[str] | tuple[str, ...],
+    property_facts_json: dict[str, object],
+    source_host: str,
+    source_ref: str = "",
+    external_id: str = "",
+    recipient_email: str = "",
+    diorama_style_hint: str = "",
+    search_run_id: object = "",
+) -> dict[str, object]:
+    """Publish a generated reconstruction transactionally for catchable exits.
+
+    The renderer needs the canonical bundle path while it works.  Keep that
+    in-progress manifest fail-closed, preserve any prior owned bundle by
+    rename, and either finalize a ready publication or restore the exact
+    previous tree.  Directory fsyncs make the rename intent durable where the
+    platform supports them; this does not claim power-loss or SIGKILL recovery.
+    """
+
+    normalized_principal = str(principal_id or "").strip()
+    if not normalized_principal:
+        raise RuntimeError("hosted_property_tour_principal_required")
+    normalized_search_run_id = str(search_run_id or "").strip()
+    public_dir = _public_tour_dir()
+    public_dir.mkdir(parents=True, exist_ok=True)
+    slug = _make_hosted_property_tour_slug(
+        title=title,
+        listing_id=listing_id,
+        property_url=property_url,
+        variant_key=variant_key,
+        principal_id=normalized_principal,
+    )
+    bundle_dir = public_dir / slug
+    tour_url = f"{_hosted_property_tour_public_base_url()}/{slug}"
+    transaction_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{slug}.publication-transaction-",
+            dir=str(public_dir),
+        )
+    )
+    backup_dir = transaction_dir / "previous-bundle"
+    failed_dir = transaction_dir / "failed-bundle"
+    bundle_existed = bundle_dir.exists()
+
+    def _fsync_directory(path: Path) -> None:
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            os.fsync(descriptor)
+        except OSError:
+            # Some supported filesystems do not permit directory fsync.  The
+            # publication still retains catchable-interruption rollback.
+            pass
+        finally:
+            if descriptor is not None:
+                with contextlib.suppress(OSError):
+                    os.close(descriptor)
+
+    def _remove_path(path: Path) -> None:
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.exists():
+            shutil.rmtree(path)
+
+    def _move_failed_bundle_out_of_public_path() -> None:
+        if not (bundle_dir.exists() or bundle_dir.is_symlink()):
+            return
+        try:
+            os.replace(bundle_dir, failed_dir)
+        except OSError:
+            _remove_path(bundle_dir)
+        _fsync_directory(public_dir)
+
+    def _restore_previous_bundle() -> None:
+        if bundle_existed:
+            # backup_dir existing is the filesystem evidence that the prior
+            # bundle was moved successfully, including when an interruption
+            # is raised immediately after os.replace performs the rename.
+            if backup_dir.exists() or backup_dir.is_symlink():
+                _move_failed_bundle_out_of_public_path()
+                os.replace(backup_dir, bundle_dir)
+                _fsync_directory(transaction_dir)
+                _fsync_directory(public_dir)
+            # Without a backup, the initial rename did not take effect; the
+            # original canonical tree remains authoritative and untouched.
+            return
+        _move_failed_bundle_out_of_public_path()
+
+    transaction_resolved = False
+    try:
+        if bundle_existed:
+            # Keep the original directory itself as the rollback authority.
+            # The working copy preserves the unchecked writer's existing
+            # payload/cache semantics while it mutates the canonical path.
+            os.replace(bundle_dir, backup_dir)
+            _fsync_directory(public_dir)
+            _fsync_directory(transaction_dir)
+            shutil.copytree(backup_dir, bundle_dir, symlinks=True)
+            _fsync_directory(public_dir)
+        _write_generated_reconstruction_property_tour_bundle_unchecked(
+            principal_id=normalized_principal,
+            title=title,
+            listing_id=listing_id,
+            property_url=property_url,
+            variant_key=variant_key,
+            media_urls=media_urls,
+            floorplan_urls=floorplan_urls,
+            property_facts_json=property_facts_json,
+            source_host=source_host,
+            source_ref=source_ref,
+            external_id=external_id,
+            recipient_email=recipient_email,
+            diorama_style_hint=diorama_style_hint,
+            search_run_id=normalized_search_run_id,
+        )
+        manifest_path = bundle_dir / "tour.json"
+        try:
+            finalized_payload_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError("property_reconstruction_publication_manifest_invalid") from exc
+        if not isinstance(finalized_payload_raw, dict):
+            raise RuntimeError("property_reconstruction_publication_manifest_invalid")
+        finalized_payload = dict(finalized_payload_raw)
+        # Rendering can outlive an account-erasure sweep and recreate files in
+        # the canonical bundle path. Reacquire the same durable account
+        # authority immediately before promotion; a recorded fence raises into
+        # the existing rollback path, which removes the recreated render tree.
+        with _property_search_storage.property_account_publication_authority(
+            normalized_principal,
+            run_id=normalized_search_run_id,
+        ):
+            finalized_payload["publication_status"] = "ready"
+            pending_manifest_path = bundle_dir / f".tour.json.{uuid4().hex}.tmp"
+            try:
+                with pending_manifest_path.open("w", encoding="utf-8") as handle:
+                    json.dump(finalized_payload, handle, ensure_ascii=False, indent=2)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                pending_manifest_path.chmod(0o644)
+                os.replace(pending_manifest_path, manifest_path)
+                _fsync_directory(bundle_dir)
+            finally:
+                pending_manifest_path.unlink(missing_ok=True)
+            if not _hosted_property_tour_generated_reconstruction_bundle_ready(tour_url):
+                raise RuntimeError("property_reconstruction_publication_not_ready")
+            published_payload = _load_hosted_property_tour_payload(
+                bundle_dir,
+                principal_id=normalized_principal,
+            )
+            if published_payload.get("publication_status") != "ready":
+                raise RuntimeError("property_reconstruction_publication_status_invalid")
+        transaction_resolved = True
+        return published_payload
+    except BaseException:
+        _restore_previous_bundle()
+        transaction_resolved = True
+        raise
+    finally:
+        # If reconciliation itself fails, retain the private transaction tree
+        # and its authoritative backup for recovery instead of deleting the
+        # only intact prior copy.
+        if transaction_resolved:
+            shutil.rmtree(transaction_dir, ignore_errors=True)
+            _fsync_directory(public_dir)
+
+
+def _write_generated_reconstruction_property_tour_bundle(
+    *,
+    principal_id: str,
+    title: str,
+    listing_id: str,
+    property_url: str,
+    variant_key: str,
+    media_urls: list[str] | tuple[str, ...],
+    floorplan_urls: list[str] | tuple[str, ...],
+    property_facts_json: dict[str, object],
+    source_host: str,
+    source_ref: str = "",
+    external_id: str = "",
+    recipient_email: str = "",
+    diorama_style_hint: str = "",
+    search_run_id: object = "",
+) -> dict[str, object]:
+    normalized_principal = str(principal_id or "").strip()
+    if not normalized_principal:
+        raise RuntimeError("hosted_property_tour_principal_required")
+    normalized_search_run_id = str(search_run_id or "").strip()
+    public_dir = _public_tour_dir()
+    public_dir.mkdir(parents=True, exist_ok=True)
+    slug = _make_hosted_property_tour_slug(
+        title=title,
+        listing_id=listing_id,
+        property_url=property_url,
+        variant_key=variant_key,
+        principal_id=normalized_principal,
+    )
+    with _property_reconstruction_publication_lock(public_dir=public_dir, slug=slug):
+        return _write_generated_reconstruction_property_tour_bundle_with_lock_held(
+            principal_id=normalized_principal,
+            title=title,
+            listing_id=listing_id,
+            property_url=property_url,
+            variant_key=variant_key,
+            media_urls=media_urls,
+            floorplan_urls=floorplan_urls,
+            property_facts_json=property_facts_json,
+            source_host=source_host,
+            source_ref=source_ref,
+            external_id=external_id,
+            recipient_email=recipient_email,
+            diorama_style_hint=diorama_style_hint,
+            search_run_id=normalized_search_run_id,
+        )
 
 
 def _feelestate_json_rpc(method: str, params: list[object]) -> dict[str, object]:
@@ -20990,6 +21688,12 @@ def _hosted_property_tour_register_generated_preview_assets(
             if str(payload.get(key) or "").strip() != normalized_diorama:
                 payload[key] = normalized_diorama
                 updated = True
+        if (
+            str(payload.get("diorama_preview_renderer_version") or "").strip()
+            != DIORAMA_PREVIEW_RENDERER_VERSION
+        ):
+            payload["diorama_preview_renderer_version"] = DIORAMA_PREVIEW_RENDERER_VERSION
+            updated = True
     if normalized_telegram == "telegram-preview.png" and str(payload.get("telegram_preview_relpath") or "").strip() != normalized_telegram:
         payload["telegram_preview_relpath"] = normalized_telegram
         updated = True
@@ -21203,7 +21907,11 @@ def _generated_reconstruction_preview_upgrade_required(payload: dict[str, object
     generated_reconstruction = payload.get("generated_reconstruction")
     if not isinstance(generated_reconstruction, dict) or not generated_reconstruction:
         return False
-    return not str(payload.get("diorama_preview_relpath") or "").strip()
+    return (
+        not str(payload.get("diorama_preview_relpath") or "").strip()
+        or str(payload.get("diorama_preview_renderer_version") or "").strip()
+        != DIORAMA_PREVIEW_RENDERER_VERSION
+    )
 
 
 def _write_hosted_property_tour_diorama_preview(
@@ -21224,6 +21932,25 @@ def _write_hosted_property_tour_diorama_preview(
         input_paths.append(floorplan_path)
     if not force_refresh and not _hosted_property_tour_diorama_needs_refresh(output_path, input_paths):
         return output_path.exists()
+    if floorplan_path is not None:
+        try:
+            palette = _generated_reconstruction_preview_palette(style_hint)
+            rendered_diorama = render_bright_apartment_diorama(
+                floorplan_path=floorplan_path,
+                walkable_scene=dict(walkable_scene or {}),
+                palette=palette,
+                hero_path=hero_path,
+                source_photo_count=1 + len(supporting_paths),
+                canvas_size=(1600, 1100),
+            )
+            if rendered_diorama is not None:
+                canvas, composition = rendered_diorama
+                if all(dict(composition.get("checks") or {}).values()):
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    canvas.save(output_path, format="PNG", optimize=True)
+                    return True
+        except Exception:
+            pass
     try:
         palette = _generated_reconstruction_preview_palette(style_hint)
         with Image.open(hero_path) as hero_image:
@@ -23002,6 +23729,81 @@ def _crezlo_property_tour_bootstrap_metadata() -> dict[str, object]:
     return metadata
 
 
+class _PropertyTourExecutionFailure(RuntimeError):
+    def __init__(
+        self,
+        *,
+        stage: str,
+        error_code: str,
+        diagnostic_sha256: str,
+        retryable: bool = False,
+    ) -> None:
+        self.stage = (
+            str(stage or "property_tour_execution").strip()
+            or "property_tour_execution"
+        )
+        self.error_code = (
+            str(error_code or "property_tour_execution_failed").strip()
+            or "property_tour_execution_failed"
+        )
+        self.diagnostic_sha256 = str(diagnostic_sha256 or "").strip().lower()
+        self.retryable = bool(retryable)
+        super().__init__(f"{self.stage}:{self.error_code}:{self.diagnostic_sha256}")
+
+
+def _property_tour_failure_hash(detail: object) -> str:
+    payload = f"{type(detail).__name__}:{str(detail or '')}".encode("utf-8", "replace")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _willhaben_packet_failure(detail: object, *, timeout: bool = False) -> _PropertyTourExecutionFailure:
+    normalized_detail = str(detail or "").strip().lower()
+    transient_markers = (
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "temporary failure",
+        "remote disconnected",
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "http error 408",
+        "http error 425",
+        "http error 429",
+        "http error 500",
+        "http error 502",
+        "http error 503",
+        "http error 504",
+        "name or service not known",
+    )
+    retryable = bool(timeout or any(marker in normalized_detail for marker in transient_markers))
+    error_code = "willhaben_packet_transient_failure" if retryable else "willhaben_packet_process_failed"
+    return _PropertyTourExecutionFailure(
+        stage="willhaben_property_packet",
+        error_code=error_code,
+        diagnostic_sha256=_property_tour_failure_hash(detail),
+        retryable=retryable,
+    )
+
+
+def _property_tour_execution_failure_metadata(exc: Exception) -> dict[str, object]:
+    if isinstance(exc, _PropertyTourExecutionFailure):
+        return {
+            "failure_stage": exc.stage,
+            "error_code": exc.error_code,
+            "diagnostic_sha256": exc.diagnostic_sha256,
+            "retryable": exc.retryable,
+        }
+    return {
+        "failure_stage": "property_tour_execution",
+        "error_code": "property_tour_execution_failed",
+        "diagnostic_sha256": _property_tour_failure_hash(
+            f"{type(exc).__name__}:{str(exc or '')}"
+        ),
+        "retryable": False,
+    }
+
+
 def _load_willhaben_property_packet(property_url: str, *, timeout_seconds: int = 180) -> dict[str, object]:
     from .outbound_url_security import OutboundUrlRejected, validate_outbound_url
 
@@ -23014,28 +23816,64 @@ def _load_willhaben_property_packet(property_url: str, *, timeout_seconds: int =
         raise RuntimeError("willhaben_property_url_unsafe") from exc
     script_path = _willhaben_property_packet_script_path()
     if not script_path.exists():
-        raise RuntimeError(f"willhaben_property_packet_script_missing:{script_path}")
-    try:
-        completed = subprocess.run(
-            ["python3", str(script_path), normalized_url],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=max(1, int(timeout_seconds)),
+        raise _PropertyTourExecutionFailure(
+            stage="willhaben_property_packet",
+            error_code="willhaben_packet_script_missing",
+            diagnostic_sha256=_property_tour_failure_hash(script_path.name),
         )
-    except FileNotFoundError as exc:
-        raise RuntimeError("python3_missing:willhaben_property_packet") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("willhaben_property_packet_timeout") from exc
-    if completed.returncode != 0:
+    subprocess_env = dict(os.environ)
+    ea_source_root = str(Path(__file__).resolve().parents[2])
+    python_path_entries = [ea_source_root]
+    for entry in str(subprocess_env.get("PYTHONPATH") or "").split(os.pathsep):
+        normalized_entry = str(entry or "").strip()
+        if normalized_entry and normalized_entry not in python_path_entries:
+            python_path_entries.append(normalized_entry)
+    subprocess_env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
+    completed = None
+    for attempt in range(2):
+        try:
+            completed = subprocess.run(
+                [sys.executable or "python3", str(script_path), normalized_url],
+                check=False,
+                capture_output=True,
+                env=subprocess_env,
+                text=True,
+                timeout=max(1, int(timeout_seconds)),
+            )
+        except FileNotFoundError as exc:
+            raise _PropertyTourExecutionFailure(
+                stage="willhaben_property_packet",
+                error_code="willhaben_packet_runtime_missing",
+                diagnostic_sha256=_property_tour_failure_hash(type(exc).__name__),
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            failure = _willhaben_packet_failure(type(exc).__name__, timeout=True)
+            if attempt == 0:
+                continue
+            raise failure from exc
+        if completed.returncode == 0:
+            break
         detail = (completed.stderr or completed.stdout or "").strip()
-        raise RuntimeError(f"willhaben_property_packet_failed:{detail[:400]}")
+        failure = _willhaben_packet_failure(detail)
+        if failure.retryable and attempt == 0:
+            continue
+        raise failure
+    if completed is None or completed.returncode != 0:
+        raise _willhaben_packet_failure("packet process did not complete")
     try:
         payload = json.loads(str(completed.stdout or "").strip() or "[]")
     except json.JSONDecodeError as exc:
-        raise RuntimeError("willhaben_property_packet_invalid") from exc
+        raise _PropertyTourExecutionFailure(
+            stage="willhaben_property_packet",
+            error_code="willhaben_packet_invalid_json",
+            diagnostic_sha256=_property_tour_failure_hash(completed.stdout),
+        ) from exc
     if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
-        raise RuntimeError("willhaben_property_packet_invalid")
+        raise _PropertyTourExecutionFailure(
+            stage="willhaben_property_packet",
+            error_code="willhaben_packet_invalid_payload",
+            diagnostic_sha256=_property_tour_failure_hash(completed.stdout),
+        )
     return dict(payload[0])
 
 
@@ -32017,6 +32855,12 @@ class ProductService:
         return str(created.binding_id or "").strip()
 
     def _property_tour_execution_error_reason(self, exc: Exception) -> str:
+        if isinstance(exc, _PropertyTourExecutionFailure) and exc.stage == "willhaben_property_packet":
+            return (
+                "property_packet_temporarily_unavailable"
+                if exc.retryable
+                else "property_packet_generation_failed"
+            )
         detail = str(exc or "").strip().lower()
         if "willhaben_listing_expired" in detail:
             return "listing_expired"
@@ -32055,6 +32899,7 @@ class ProductService:
         external_id: str = "",
         variant_key: str = "layout_first",
         diorama_style_hint: str = "",
+        search_run_id: object = "",
     ) -> str:
         normalized_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
         if not normalized_url or not _property_scout_is_supported_listing_url(normalized_url):
@@ -32062,6 +32907,7 @@ class ProductService:
         resolved_variant_key = str(variant_key or "layout_first").strip() or "layout_first"
         resolved_source_ref = str(source_ref or normalized_url).strip()
         resolved_external_id = str(external_id or normalized_url).strip()
+        normalized_search_run_id = str(search_run_id or "").strip()
         resolved_recipient_email = str(_principal_email_hint(principal_id)).strip().lower()
         source_host = urllib.parse.urlparse(normalized_url).netloc.lower()
         title = normalized_url
@@ -32137,6 +32983,7 @@ class ProductService:
                 external_id=resolved_external_id,
                 recipient_email=resolved_recipient_email,
                 diorama_style_hint=diorama_style_hint,
+                search_run_id=normalized_search_run_id,
             )
         except Exception:
             return ""
@@ -33086,9 +33933,14 @@ class ProductService:
             _PROPERTY_SEARCH_RUN_REGISTRY[normalized_run_id] = dict(state)
             persisted_state = dict(state)
         try:
-            _store_property_search_run_record(persisted_state)
+            stored = _store_property_search_run_record(persisted_state)
         except Exception:
-            pass
+            return
+        if stored is False:
+            _discard_property_search_run_registry_state(
+                run_id=normalized_run_id,
+                principal_id=normalized_principal,
+            )
 
     def _apply_property_search_run_repair_receipts(
         self,
@@ -33585,9 +34437,15 @@ class ProductService:
                     persisted_state = {}
             if persisted_state:
                 try:
-                    _store_property_search_run_record(persisted_state)
+                    stored = _store_property_search_run_record(persisted_state)
                 except Exception:
-                    pass
+                    return {}
+                if stored is False:
+                    _discard_property_search_run_registry_state(
+                        run_id=replacement_run_id,
+                        principal_id=principal_id,
+                    )
+                    return {}
         return replacement
 
     def _property_provider_repair_retry_budget_seconds(self) -> int:
@@ -33843,8 +34701,10 @@ class ProductService:
         suppress_human_followup: bool = False,
         walkthrough_provider_key: str = "",
         diorama_style_hint: str = "",
+        search_run_id: object = "",
     ) -> dict[str, object]:
         normalized_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
+        normalized_search_run_id = str(search_run_id or "").strip()
         property_preferences = dict(self._container.onboarding.status(principal_id=principal_id).get("property_search_preferences") or {})
         self._enforce_property_visual_quota(
             principal_id=principal_id,
@@ -33867,6 +34727,7 @@ class ProductService:
                 enforce_360_media=enforce_360_media,
                 suppress_human_followup=suppress_human_followup,
                 diorama_style_hint=diorama_style_hint,
+                search_run_id=normalized_search_run_id,
             )
         packet = _load_willhaben_property_packet(normalized_url)
         variant = self._selected_willhaben_tour_variant(packet=packet, variant_key=variant_key)
@@ -34004,6 +34865,7 @@ class ProductService:
                         source_ref=resolved_source_ref,
                         external_id=resolved_external_id,
                         recipient_email=resolved_recipient_email,
+                        search_run_id=normalized_search_run_id,
                     )
                     tour_url, vendor_tour_url = _resolve_property_tour_urls(structured_output, allow_unverified_branded=True)
                     payload = {
@@ -34192,6 +35054,7 @@ class ProductService:
                         source_ref=resolved_source_ref,
                         external_id=resolved_external_id,
                         recipient_email=resolved_recipient_email,
+                        search_run_id=normalized_search_run_id,
                     )
                     tour_url, vendor_tour_url = _resolve_property_tour_urls(structured_output, allow_unverified_branded=True)
                     payload = {
@@ -34669,8 +35532,10 @@ class ProductService:
         enforce_360_media: bool = True,
         suppress_human_followup: bool = False,
         diorama_style_hint: str = "",
+        search_run_id: object = "",
     ) -> dict[str, object]:
         normalized_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
+        normalized_search_run_id = str(search_run_id or "").strip()
         property_preferences = dict(self._container.onboarding.status(principal_id=principal_id).get("property_search_preferences") or {})
         self._enforce_property_visual_quota(
             principal_id=principal_id,
@@ -34808,6 +35673,7 @@ class ProductService:
                         source_ref=resolved_source_ref,
                         external_id=resolved_external_id,
                         recipient_email=resolved_recipient_email,
+                        search_run_id=normalized_search_run_id,
                     )
                     tour_url, vendor_tour_url = _resolve_property_tour_urls(structured_output, allow_unverified_branded=True)
                     payload = {
@@ -34862,6 +35728,7 @@ class ProductService:
                         source_ref=resolved_source_ref,
                         external_id=resolved_external_id,
                         recipient_email=resolved_recipient_email,
+                        search_run_id=normalized_search_run_id,
                     )
                     tour_url, vendor_tour_url = _resolve_property_tour_urls(structured_output, allow_unverified_branded=True)
                     payload = {
@@ -34915,6 +35782,7 @@ class ProductService:
                         source_ref=resolved_source_ref,
                         external_id=resolved_external_id,
                         recipient_email=resolved_recipient_email,
+                        search_run_id=normalized_search_run_id,
                     )
                     tour_url, vendor_tour_url = _resolve_property_tour_urls(structured_output, allow_unverified_branded=True)
                     payload = {
@@ -35057,6 +35925,7 @@ class ProductService:
                         source_ref=resolved_source_ref,
                         external_id=resolved_external_id,
                         recipient_email=resolved_recipient_email,
+                        search_run_id=normalized_search_run_id,
                     )
                     tour_url, vendor_tour_url = _resolve_property_tour_urls(structured_output, allow_unverified_branded=True)
                     payload = {
@@ -35118,6 +35987,7 @@ class ProductService:
                         source_ref=resolved_source_ref,
                         external_id=resolved_external_id,
                         recipient_email=resolved_recipient_email,
+                        search_run_id=normalized_search_run_id,
                     )
                     tour_url, vendor_tour_url = _resolve_property_tour_urls(structured_output, allow_unverified_branded=True)
                     payload = {
@@ -35178,6 +36048,7 @@ class ProductService:
                         source_ref=resolved_source_ref,
                         external_id=resolved_external_id,
                         recipient_email=resolved_recipient_email,
+                        search_run_id=normalized_search_run_id,
                     )
                     tour_url, vendor_tour_url = _resolve_property_tour_urls(structured_output, allow_unverified_branded=True)
                     payload = {
@@ -36733,7 +37604,7 @@ class ProductService:
                 dict(state),
                 stale_seconds=stale_seconds,
             )
-            self._record_property_search_run_event(
+            stale_event_stored = self._record_property_search_run_event(
                 run_id=normalized_run_id,
                 principal_id=normalized_principal,
                 step=str(stale_failure.get("step") or "run_interrupted"),
@@ -36743,6 +37614,8 @@ class ProductService:
                 summary_updates=dict(stale_failure.get("summary_updates") or {}),
                 force_status=str(stale_failure.get("force_status") or "failed"),
             )
+            if not stale_event_stored:
+                return None
             with _PROPERTY_SEARCH_RUN_LOCK:
                 state = dict(_PROPERTY_SEARCH_RUN_REGISTRY.get(normalized_run_id) or state)
             repair_task = self._open_property_search_run_interruption_repair(
@@ -36793,7 +37666,7 @@ class ProductService:
                             "customer_status_message": "A fresh search is checking your saved brief.",
                         }
                     )
-                self._record_property_search_run_event(
+                repair_event_stored = self._record_property_search_run_event(
                     run_id=normalized_run_id,
                     principal_id=normalized_principal,
                     step="run_repair_queued",
@@ -36803,14 +37676,19 @@ class ProductService:
                     summary_updates=repair_summary_updates,
                     force_status=str(stale_failure.get("force_status") or "failed"),
                 )
+                if not repair_event_stored:
+                    return None
                 with _PROPERTY_SEARCH_RUN_LOCK:
                     state = dict(_PROPERTY_SEARCH_RUN_REGISTRY.get(normalized_run_id) or state)
-        state = self._maybe_advance_property_search_run_finalization(
+        finalized_state = self._maybe_advance_property_search_run_finalization(
             principal_id=normalized_principal,
             run_id=normalized_run_id,
             state=dict(state),
             allow_notifications=allow_finalization_notifications,
         )
+        if not isinstance(finalized_state, dict):
+            return None
+        state = finalized_state
         summary = dict(state.get("summary") or {})
         summary = _state_property_search_run_sync_summary(
             state=dict(state),
@@ -36862,17 +37740,17 @@ class ProductService:
         summary_updates: dict[str, object] | None = None,
         force_status: str = "",
         stages_total_override: int | None = None,
-    ) -> None:
+    ) -> bool:
         normalized_run_id = str(run_id or "").strip()
         normalized_principal = str(principal_id or "").strip()
         if not normalized_run_id or not normalized_principal:
-            return
+            return False
         with _PROPERTY_SEARCH_RUN_LOCK:
             state = _PROPERTY_SEARCH_RUN_REGISTRY.get(normalized_run_id)
             if not isinstance(state, dict):
-                return
+                return False
             if str(state.get("principal_id") or "").strip() != normalized_principal:
-                return
+                return False
             state = _state_property_search_run_apply_event(
                 state=state,
                 step=step,
@@ -36896,10 +37774,17 @@ class ProductService:
             _PROPERTY_SEARCH_RUN_REGISTRY[normalized_run_id] = dict(state)
             persisted_state = dict(state)
         try:
-            _store_property_search_run_record(persisted_state)
+            stored = _store_property_search_run_record(persisted_state)
+            if stored is False:
+                _discard_property_search_run_registry_state(
+                    run_id=normalized_run_id,
+                    principal_id=normalized_principal,
+                )
+                return False
         except Exception:
             if _property_search_durable_work_required():
                 raise
+        return True
 
     def _open_property_search_run_interruption_repair(
         self,
@@ -36994,12 +37879,16 @@ class ProductService:
             for key in ("keywords", "custom_keywords")
             if key in merged_preferences and str(merged_preferences.get(key) or "").strip() == ""
         }
+        trusted_selection_audit: dict[str, object] = {}
         try:
             onboarding_state = self._container.onboarding.status(principal_id=principal_id)
-            onboarding_preferences_payload = dict(onboarding_state.get("property_search_preferences") or {})
-            onboarding_preferences = {
-                **dict(onboarding_preferences_payload.get("raw_preferences") or {}),
-                **{key: value for key, value in onboarding_preferences_payload.items() if key != "raw_preferences"},
+            onboarding_preferences = flatten_property_search_preferences_snapshot(
+                dict(onboarding_state.get("property_search_preferences") or {})
+            )
+            trusted_selection_audit = {
+                key: onboarding_preferences[key]
+                for key in _PROPERTY_SEARCH_PROVIDER_SELECTION_AUDIT_KEYS
+                if key in onboarding_preferences
             }
             for key, value in onboarding_preferences.items():
                 if key in explicit_clearable_text_keys:
@@ -37008,6 +37897,12 @@ class ProductService:
                     merged_preferences[key] = value
         except Exception:
             pass
+        for audit_key in _PROPERTY_SEARCH_PROVIDER_SELECTION_AUDIT_KEYS:
+            if audit_key in trusted_selection_audit:
+                merged_preferences[audit_key] = trusted_selection_audit[audit_key]
+            else:
+                merged_preferences.pop(audit_key, None)
+        merged_preferences.pop("raw_preferences", None)
         return merged_preferences
 
     def _prepare_property_search_request_preferences(
@@ -37795,6 +38690,10 @@ class ProductService:
                     elif normalized_property_url:
                         matches_candidate = candidate_property_url == normalized_property_url
                     if matches_candidate:
+                        candidate_row = _normalize_property_candidate_visual_truth(
+                            candidate_row,
+                            principal_id=normalized_principal,
+                        )
                         candidate_row.setdefault(
                             "candidate_ref",
                             normalized_candidate_ref
@@ -37810,11 +38709,13 @@ class ProductService:
                                 ).encode("utf-8")
                             ).hexdigest()[:16],
                         )
-                        if str(visual_state.get("tour_url") or "").strip():
+                        if "tour_url" in visual_state:
                             candidate_row["tour_url"] = str(visual_state.get("tour_url") or "").strip()
+                        if "vendor_tour_url" in visual_state:
                             vendor_tour_url = str(visual_state.get("vendor_tour_url") or "").strip()
-                            if vendor_tour_url:
-                                candidate_row["vendor_tour_url"] = vendor_tour_url
+                            candidate_row["vendor_tour_url"] = vendor_tour_url
+                        if "open_tour_url" in visual_state:
+                            candidate_row["open_tour_url"] = str(visual_state.get("open_tour_url") or "").strip()
                         if str(visual_state.get("tour_status") or "").strip():
                             candidate_row["tour_status"] = str(visual_state.get("tour_status") or "").strip()
                         if "tour_eta_minutes" in visual_state:
@@ -37829,6 +38730,13 @@ class ProductService:
                             candidate_row["generated_reconstruction_url"] = str(
                                 visual_state.get("generated_reconstruction_url") or ""
                             ).strip()
+                        if "layout_preview_url" in visual_state:
+                            candidate_row["layout_preview_url"] = str(visual_state.get("layout_preview_url") or "").strip()
+                        if "layout_preview_status" in visual_state:
+                            candidate_row["layout_preview_status"] = str(visual_state.get("layout_preview_status") or "").strip().lower()
+                        for failure_key in ("failure_stage", "error_code", "diagnostic_sha256"):
+                            if failure_key in visual_state:
+                                candidate_row[failure_key] = str(visual_state.get(failure_key) or "").strip()
                         if "blocked_reason" in visual_state:
                             candidate_row["blocked_reason"] = str(visual_state.get("blocked_reason") or "").strip()
                         if str(visual_state.get("flythrough_url") or "").strip():
@@ -37858,6 +38766,10 @@ class ProductService:
                                 str(visual_state.get("diorama_style_hint") or ""),
                                 max_length=180,
                             )
+                        candidate_row = _normalize_property_candidate_visual_truth(
+                            candidate_row,
+                            principal_id=normalized_principal,
+                        )
                         mutated = True
                     updated_candidates.append(candidate_row)
                 source[key] = updated_candidates
@@ -37871,9 +38783,14 @@ class ProductService:
             _PROPERTY_SEARCH_RUN_REGISTRY[normalized_run_id] = dict(snapshot)
             persisted_state = dict(_PROPERTY_SEARCH_RUN_REGISTRY[normalized_run_id])
         try:
-            _store_property_search_run_record(persisted_state)
+            stored = _store_property_search_run_record(persisted_state)
         except Exception:
-            pass
+            return
+        if stored is False:
+            _discard_property_search_run_registry_state(
+                run_id=normalized_run_id,
+                principal_id=normalized_principal,
+            )
 
     def _current_property_search_visual_state(
         self,
@@ -37915,6 +38832,10 @@ class ProductService:
             ).hexdigest()[:16]
 
         def _matching_state(candidate_row: dict[str, object], source_label: str) -> dict[str, str]:
+            candidate_row = _normalize_property_candidate_visual_truth(
+                candidate_row,
+                principal_id=normalized_principal,
+            )
             candidate_source_ref = str(candidate_row.get("source_ref") or "").strip()
             candidate_property_url = urllib.parse.urldefrag(str(candidate_row.get("property_url") or "").strip())[0]
             candidate_identity = _candidate_identity(candidate_row, source_label)
@@ -37953,11 +38874,14 @@ class ProductService:
             return {
                 "tour_url": tour_url,
                 "vendor_tour_url": vendor_tour_url,
+                "open_tour_url": str(candidate_row.get("open_tour_url") or "").strip(),
                 "tour_requested_at": str(candidate_row.get("tour_requested_at") or "").strip(),
                 "tour_status_updated_at": str(candidate_row.get("tour_status_updated_at") or "").strip(),
                 "tour_eta_minutes": str(candidate_row.get("tour_eta_minutes") or "").strip(),
                 "tour_progress_pct": str(candidate_row.get("tour_progress_pct") or "").strip(),
                 "generated_reconstruction_url": str(candidate_row.get("generated_reconstruction_url") or "").strip(),
+                "layout_preview_url": str(candidate_row.get("layout_preview_url") or "").strip(),
+                "layout_preview_status": str(candidate_row.get("layout_preview_status") or "").strip().lower(),
                 "tour_repair_queued_at": str(candidate_row.get("tour_repair_queued_at") or "").strip(),
                 "tour_repair_started_at": str(candidate_row.get("tour_repair_started_at") or "").strip(),
                 "flythrough_url": str(candidate_row.get("flythrough_url") or "").strip(),
@@ -37971,6 +38895,9 @@ class ProductService:
                 "flythrough_status": str(candidate_row.get("flythrough_status") or "").strip().lower(),
                 "flythrough_reason": str(candidate_row.get("flythrough_reason") or "").strip(),
                 "blocked_reason": str(candidate_row.get("blocked_reason") or "").strip(),
+                "failure_stage": str(candidate_row.get("failure_stage") or "").strip(),
+                "error_code": str(candidate_row.get("error_code") or "").strip(),
+                "diagnostic_sha256": str(candidate_row.get("diagnostic_sha256") or "").strip(),
                 "diorama_style_hint": _compact_diorama_style_hint(
                     str(candidate_row.get("diorama_style_hint") or ""),
                     max_length=180,
@@ -38282,8 +39209,13 @@ class ProductService:
                 "tour_url": str(result_payload.get("tour_url") or "").strip(),
                 "open_tour_url": str(result_payload.get("open_tour_url") or "").strip(),
                 "generated_reconstruction_url": str(result_payload.get("generated_reconstruction_url") or "").strip(),
+                "layout_preview_url": str(result_payload.get("layout_preview_url") or "").strip(),
+                "layout_preview_status": str(result_payload.get("layout_preview_status") or "").strip().lower(),
                 "vendor_tour_url": str(result_payload.get("vendor_tour_url") or "").strip(),
                 "flythrough_url": str(result_payload.get("flythrough_url") or "").strip(),
+                "failure_stage": str(result_payload.get("failure_stage") or "").strip(),
+                "error_code": str(result_payload.get("error_code") or "").strip(),
+                "diagnostic_sha256": str(result_payload.get("diagnostic_sha256") or "").strip(),
             }
             if normalized_kind == "flythrough":
                 payload["flythrough_status"] = str(
@@ -38357,7 +39289,7 @@ class ProductService:
             existing_ready_url = (
                 str(existing_visual_state.get("flythrough_url") or "").strip()
                 if request_kind == "flythrough"
-                else _hosted_property_tour_first_party_open_url(
+                else _property_visual_verified_public_tour_url(
                     existing_visual_state.get("tour_url"),
                     principal_id=normalized_principal,
                 )
@@ -38539,8 +39471,12 @@ class ProductService:
                 )
             except Exception as exc:
                 blocked_reason = self._property_tour_execution_error_reason(exc)
+                failure_metadata = _property_tour_execution_failure_metadata(exc)
                 blocked_total += 1
-                blocked_state = {"blocked_reason": blocked_reason}
+                blocked_state = {
+                    "blocked_reason": blocked_reason,
+                    **failure_metadata,
+                }
                 if request_kind == "flythrough":
                     blocked_state.update(
                         {
@@ -38579,7 +39515,7 @@ class ProductService:
                         "request_kind": request_kind,
                         "source_ref": source_ref,
                         "blocked_reason": blocked_reason,
-                        "error": compact_text(str(exc or "property tour followup auto failed"), fallback="property tour followup auto failed", limit=240),
+                        **failure_metadata,
                     },
                     source_id=source_ref or property_url,
                     dedupe_key=f"{normalized_principal}|{task.human_task_id}|property-tour-followup-auto-failed",
@@ -38600,6 +39536,7 @@ class ProductService:
                         run_id=run_id,
                         candidate_ref=candidate_ref,
                         diorama_style_hint=diorama_style_hint,
+                        result=failure_metadata,
                         blocked_reason=blocked_reason,
                     ),
                 )
@@ -38614,6 +39551,7 @@ class ProductService:
                         "status_label": "",
                         "tour_url": "",
                         "flythrough_url": "",
+                        **failure_metadata,
                         "returned": completed is not None,
                     }
                 )
@@ -38688,8 +39626,10 @@ class ProductService:
             resolved_tour_url = (
                 requested_url
                 if request_kind != "flythrough" and requested_url
-                else str(result.get("tour_url") or "").strip()
+                else (str(result.get("tour_url") or "").strip() if request_kind == "flythrough" else "")
             )
+            resolved_layout_preview_url = str(result.get("layout_preview_url") or "").strip()
+            resolved_layout_preview_status = str(result.get("layout_preview_status") or "").strip().lower()
             resolved_flythrough_url = (
                 str(result.get("flythrough_url") or "").strip()
                 if request_kind == "flythrough"
@@ -38715,6 +39655,8 @@ class ProductService:
                         **dict(result or {}),
                         "tour_url": resolved_tour_url,
                         "open_tour_url": requested_open_tour_url if request_kind != "flythrough" else "",
+                        "layout_preview_url": resolved_layout_preview_url,
+                        "layout_preview_status": resolved_layout_preview_status,
                         "flythrough_url": resolved_flythrough_url,
                     },
                     blocked_reason=requested_reason,
@@ -38732,6 +39674,8 @@ class ProductService:
                     "status_label": str(result.get("status_label") or "").strip(),
                     "tour_url": resolved_tour_url,
                     "open_tour_url": requested_open_tour_url if request_kind != "flythrough" else "",
+                    "layout_preview_url": resolved_layout_preview_url,
+                    "layout_preview_status": resolved_layout_preview_status,
                     "flythrough_url": resolved_flythrough_url,
                 },
                 source_id=source_ref or property_url,
@@ -38747,6 +39691,8 @@ class ProductService:
                     "status": str(result.get("status") or "").strip().lower() or resolution,
                     "status_label": str(result.get("status_label") or "").strip(),
                     "tour_url": resolved_tour_url,
+                    "layout_preview_url": resolved_layout_preview_url,
+                    "layout_preview_status": resolved_layout_preview_status,
                     "flythrough_url": resolved_flythrough_url,
                     "returned": completed is not None,
                 }
@@ -38784,6 +39730,7 @@ class ProductService:
         normalized_kind = _normalize_property_visual_request_kind(request_kind)
         normalized_property_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
         normalized_source_ref = str(source_ref or normalized_property_url).strip()
+        normalized_search_run_id = str(run_id or "").strip()
         resolved_style_hint = _compact_diorama_style_hint(str(diorama_style_hint or ""), max_length=180)
         existing_visual_state = self._current_property_search_visual_state(
             principal_id=principal_id,
@@ -38842,6 +39789,8 @@ class ProductService:
                     "flythrough_url": str(existing_walkthrough_url or "").strip(),
                     "blocked_reason": "",
                     "generated_reconstruction_url": str(existing_visual_state.get("generated_reconstruction_url") or "").strip(),
+                    "layout_preview_url": str(existing_visual_state.get("layout_preview_url") or "").strip(),
+                    "layout_preview_status": str(existing_visual_state.get("layout_preview_status") or "").strip().lower(),
                     "diorama_style_hint": resolved_style_hint,
                 },
             )
@@ -38858,6 +39807,8 @@ class ProductService:
                 "tour_url": str(existing_hosted_tour_url or existing_open_tour_url).strip(),
                 "verified_tour_url": str(existing_verified_tour_url or "").strip(),
                 "generated_reconstruction_url": str(existing_visual_state.get("generated_reconstruction_url") or "").strip(),
+                "layout_preview_url": str(existing_visual_state.get("layout_preview_url") or "").strip(),
+                "layout_preview_status": str(existing_visual_state.get("layout_preview_status") or "").strip().lower(),
                 "open_tour_url": str(existing_open_tour_url).strip(),
                 "vendor_tour_url": str(existing_verified_tour_url or "").strip(),
                 "editor_url": "",
@@ -39224,6 +40175,7 @@ class ProductService:
             suppress_human_followup=suppress_human_followup,
             walkthrough_provider_key=walkthrough_provider_key,
             diorama_style_hint=resolved_style_hint,
+            search_run_id=normalized_search_run_id,
         )
         payload = dict(base_result or {})
         payload["request_kind"] = normalized_kind
@@ -39322,18 +40274,23 @@ class ProductService:
                 external_id=str(external_id or normalized_property_url).strip(),
                 variant_key=str(payload.get("variant_key") or variant_key or "layout_first").strip() or "layout_first",
                 diorama_style_hint=resolved_style_hint,
+                search_run_id=normalized_search_run_id,
             )
         if generated_reconstruction_url:
             payload["generated_reconstruction_url"] = generated_reconstruction_url
         generated_reconstruction_open_url = ""
         if normalized_kind == "tour" and effective_allow_floorplan_only:
-            generated_reconstruction_open_url = _hosted_property_tour_first_party_open_url(
+            generated_reconstruction_open_url = _property_visual_layout_preview_url(
                 generated_reconstruction_url or payload.get("tour_url"),
                 principal_id=principal_id,
             )
             if generated_reconstruction_open_url:
-                payload["tour_url"] = str(generated_reconstruction_url or payload.get("tour_url") or "").strip()
-                payload["open_tour_url"] = generated_reconstruction_open_url
+                payload["layout_preview_url"] = generated_reconstruction_open_url
+                payload["layout_preview_status"] = "ready"
+                if not verified_tour_url:
+                    payload["tour_url"] = ""
+                    payload["vendor_tour_url"] = ""
+                    payload.pop("open_tour_url", None)
         title = str(payload.get("title") or normalized_property_url or "Property").strip()
         tour_status = str(payload.get("status") or "").strip().lower()
         flythrough_status = ""
@@ -39463,7 +40420,7 @@ class ProductService:
         payload["progress_pct"] = _property_visual_progress_pct(
             request_kind=normalized_kind,
             status=normalized_poll_status,
-            ready_url=payload.get("flythrough_url") if normalized_kind == "flythrough" else payload.get("tour_url"),
+            ready_url=payload.get("flythrough_url") if normalized_kind == "flythrough" else payload.get("open_tour_url"),
             eta_minutes=eta_minutes,
             requested_at=payload.get("flythrough_requested_at") if normalized_kind == "flythrough" else payload.get("tour_requested_at"),
             status_updated_at=payload.get("flythrough_status_updated_at") if normalized_kind == "flythrough" else payload.get("tour_status_updated_at"),
@@ -39537,6 +40494,11 @@ class ProductService:
                 "flythrough_reason": str(payload.get("flythrough_reason") or "").strip(),
                 "blocked_reason": str(payload.get("blocked_reason") or "").strip(),
                 "generated_reconstruction_url": str(payload.get("generated_reconstruction_url") or "").strip(),
+                "layout_preview_url": str(payload.get("layout_preview_url") or "").strip(),
+                "layout_preview_status": str(payload.get("layout_preview_status") or "").strip().lower(),
+                "failure_stage": str(payload.get("failure_stage") or "").strip(),
+                "error_code": str(payload.get("error_code") or "").strip(),
+                "diagnostic_sha256": str(payload.get("diagnostic_sha256") or "").strip(),
                 "diorama_style_hint": resolved_style_hint,
             },
         )
@@ -39635,7 +40597,10 @@ class ProductService:
         for candidate in list(summary.get("ranked_candidates") or []):
             if not isinstance(candidate, dict):
                 continue
-            candidate_row = dict(candidate)
+            candidate_row = _normalize_property_candidate_visual_truth(
+                dict(candidate),
+                principal_id=normalized_principal,
+            )
             source_label = str(candidate_row.get("source_label") or candidate_row.get("source_url") or "Source").strip()
             candidate_row.setdefault("source_label", source_label)
             _append_if_match(candidate_row, source_label)
@@ -39645,7 +40610,10 @@ class ProductService:
                 for candidate in list(source.get(key) or []):
                     if not isinstance(candidate, dict):
                         continue
-                    candidate_row = dict(candidate)
+                    candidate_row = _normalize_property_candidate_visual_truth(
+                        dict(candidate),
+                        principal_id=normalized_principal,
+                    )
                     candidate_row.setdefault("source_label", source_label)
                     _append_if_match(candidate_row, source_label)
         if matched_candidates:
@@ -39684,6 +40652,8 @@ class ProductService:
                 "tour_url": str(followup_payload.get("tour_url") or "").strip(),
                 "open_tour_url": str(followup_payload.get("open_tour_url") or "").strip(),
                 "generated_reconstruction_url": str(followup_payload.get("generated_reconstruction_url") or "").strip(),
+                "layout_preview_url": str(followup_payload.get("layout_preview_url") or "").strip(),
+                "layout_preview_status": str(followup_payload.get("layout_preview_status") or "").strip().lower(),
                 "vendor_tour_url": str(followup_payload.get("vendor_tour_url") or "").strip(),
                 "tour_status": str(
                     followup_payload.get("tour_status")
@@ -39712,6 +40682,9 @@ class ProductService:
                     or followup_payload.get("detail")
                     or ""
                 ).strip(),
+                "failure_stage": str(followup_payload.get("failure_stage") or "").strip(),
+                "error_code": str(followup_payload.get("error_code") or "").strip(),
+                "diagnostic_sha256": str(followup_payload.get("diagnostic_sha256") or "").strip(),
                 "flythrough_reason": str(
                     followup_payload.get("flythrough_reason")
                     or followup_payload.get("reason")
@@ -39732,12 +40705,24 @@ class ProductService:
         )
         if normalized_generated_reconstruction_tour_url != tour_url and normalized_generated_reconstruction_tour_url:
             generated_reconstruction_url = normalized_generated_reconstruction_tour_url
-            tour_url = normalized_generated_reconstruction_tour_url
+            tour_url = ""
+        layout_preview_url = str(matched_candidate.get("layout_preview_url") or "").strip()
+        if not layout_preview_url:
+            layout_preview_url = _property_visual_layout_preview_url(
+                generated_reconstruction_url or tour_url,
+                principal_id=normalized_principal,
+            )
+        layout_preview_status = "ready" if layout_preview_url else str(
+            matched_candidate.get("layout_preview_status") or ""
+        ).strip().lower()
         open_tour_url = str(matched_candidate.get("open_tour_url") or "").strip()
         flythrough_url = str(matched_candidate.get("flythrough_url") or "").strip()
         tour_status = str(matched_candidate.get("tour_status") or "").strip().lower()
         flythrough_status = str(matched_candidate.get("flythrough_status") or "").strip().lower()
         blocked_reason = str(matched_candidate.get("blocked_reason") or "").strip()
+        failure_stage = str(matched_candidate.get("failure_stage") or "").strip()
+        error_code = str(matched_candidate.get("error_code") or "").strip()
+        diagnostic_sha256 = str(matched_candidate.get("diagnostic_sha256") or "").strip()
         title = str(matched_candidate.get("title") or "Selected property").strip() or "Selected property"
         source_ref_value = str(matched_candidate.get("source_ref") or normalized_source_ref or normalized_property_url).strip()
         status_value = flythrough_status if normalized_kind == "flythrough" else tour_status
@@ -39826,6 +40811,11 @@ class ProductService:
                 if isinstance(getattr(latest_followup, "input_json", None), dict)
                 else {}
             )
+            failure_stage = str(followup_payload.get("failure_stage") or failure_stage).strip()
+            error_code = str(followup_payload.get("error_code") or error_code).strip()
+            diagnostic_sha256 = str(
+                followup_payload.get("diagnostic_sha256") or diagnostic_sha256
+            ).strip()
             if not visual_style_hint:
                 visual_style_hint = _compact_diorama_style_hint(
                     str(followup_payload.get("diorama_style_hint") or followup_input.get("diorama_style_hint") or ""),
@@ -39850,6 +40840,7 @@ class ProductService:
                     followup_tour_url = str(followup_payload.get("tour_url") or "").strip()
                     followup_open_tour_url = str(followup_payload.get("open_tour_url") or "").strip()
                     followup_generated_reconstruction_url = str(followup_payload.get("generated_reconstruction_url") or "").strip()
+                    followup_layout_preview_url = str(followup_payload.get("layout_preview_url") or "").strip()
                     followup_tour_url = _property_visual_sanitize_tour_url(
                         followup_tour_url,
                         generated_reconstruction_url=followup_generated_reconstruction_url or generated_reconstruction_url,
@@ -39861,6 +40852,20 @@ class ProductService:
                         open_tour_url = followup_open_tour_url
                     if followup_generated_reconstruction_url:
                         generated_reconstruction_url = followup_generated_reconstruction_url
+                    if followup_layout_preview_url:
+                        layout_preview_url = followup_layout_preview_url
+                        layout_preview_status = "ready"
+                    elif generated_reconstruction_url:
+                        layout_preview_url = _property_visual_layout_preview_url(
+                            generated_reconstruction_url,
+                            principal_id=normalized_principal,
+                        )
+                        layout_preview_status = "ready" if layout_preview_url else layout_preview_status
+                    failure_stage = str(followup_payload.get("failure_stage") or failure_stage).strip()
+                    error_code = str(followup_payload.get("error_code") or error_code).strip()
+                    diagnostic_sha256 = str(
+                        followup_payload.get("diagnostic_sha256") or diagnostic_sha256
+                    ).strip()
                     if normalized_kind == "flythrough" and followup_flythrough_url:
                         flythrough_url = followup_flythrough_url
                     ready_url = _resolved_ready_url()
@@ -39870,6 +40875,11 @@ class ProductService:
                     status_value = followup_resolution
             elif str(followup_payload.get("generated_reconstruction_url") or "").strip():
                 generated_reconstruction_url = str(followup_payload.get("generated_reconstruction_url") or "").strip()
+                layout_preview_url = _property_visual_layout_preview_url(
+                    generated_reconstruction_url,
+                    principal_id=normalized_principal,
+                )
+                layout_preview_status = "ready" if layout_preview_url else layout_preview_status
             elif followup_status == "pending":
                 status_value = "processing" if normalized_kind == "tour" else "queued"
         if status_value == "ready" and not ready_url:
@@ -39947,15 +40957,18 @@ class ProductService:
                 }
             else:
                 persisted_ready_state = {
-                    "tour_url": str(tour_url or generated_reconstruction_url or "").strip(),
+                    "tour_url": str(tour_url or "").strip(),
                     "open_tour_url": str(ready_url).strip(),
                     "vendor_tour_url": str(
-                        _hosted_property_tour_verified_open_url(
+                        _property_visual_verified_public_tour_url(
                             tour_url,
                             principal_id=normalized_principal,
                         )
                         or ""
                     ).strip(),
+                    "generated_reconstruction_url": generated_reconstruction_url,
+                    "layout_preview_url": layout_preview_url,
+                    "layout_preview_status": layout_preview_status,
                     "tour_status": "ready",
                     "tour_eta_minutes": "",
                     "tour_requested_at": request_requested_at,
@@ -40076,6 +41089,11 @@ class ProductService:
                 f"{state_prefix}_repair_queued_at": "",
                 f"{state_prefix}_repair_started_at": "",
                 "generated_reconstruction_url": generated_reconstruction_url,
+                "layout_preview_url": layout_preview_url,
+                "layout_preview_status": layout_preview_status,
+                "failure_stage": failure_stage,
+                "error_code": error_code,
+                "diagnostic_sha256": diagnostic_sha256,
             }
             if normalized_kind == "flythrough":
                 visual_state["flythrough_reason"] = reason
@@ -40114,14 +41132,21 @@ class ProductService:
             "request_kind": normalized_kind,
             "run_id": normalized_run_id,
             "candidate_ref": normalized_candidate_ref,
-            "tour_url": str(tour_url or generated_reconstruction_url or "").strip() if normalized_kind == "tour" else tour_url,
+            "tour_url": str(tour_url or "").strip() if normalized_kind == "tour" and ready_url else (
+                tour_url if normalized_kind != "tour" else ""
+            ),
             "open_tour_url": ready_url if normalized_kind == "tour" else "",
             "generated_reconstruction_url": generated_reconstruction_url,
+            "layout_preview_url": layout_preview_url,
+            "layout_preview_status": layout_preview_status,
             "flythrough_url": ready_url if normalized_kind == "flythrough" else _published_walkthrough_asset_url(flythrough_url),
             "tour_status": status_value if normalized_kind == "tour" else tour_status,
             "flythrough_status": status_value if normalized_kind == "flythrough" else flythrough_status,
             "flythrough_reason": response_flythrough_reason,
             "blocked_reason": blocked_reason,
+            "failure_stage": failure_stage,
+            "error_code": error_code,
+            "diagnostic_sha256": diagnostic_sha256,
             "status_label": status_label,
             "status_detail": status_detail,
             "eta_label": eta_label,
@@ -40140,7 +41165,7 @@ class ProductService:
         state: dict[str, object],
         allow_notifications: bool = True,
         tour_events_by_source: dict[str, list[dict[str, object]]] | None = None,
-    ) -> dict[str, object]:
+    ) -> dict[str, object] | None:
         normalized_status = str(state.get("status") or "").strip().lower()
         if normalized_status not in _PROPERTY_SEARCH_DELIVERABLE_TERMINAL_STATUSES:
             return dict(state)
@@ -40154,7 +41179,7 @@ class ProductService:
         if refreshed_summary != summary:
             persisted_summary = dict(refreshed_summary)
             persisted_summary.pop("_delivery_candidates", None)
-            self._record_property_search_run_event(
+            finalizing_event_stored = self._record_property_search_run_event(
                 run_id=run_id,
                 principal_id=principal_id,
                 step="results_finalizing",
@@ -40168,6 +41193,8 @@ class ProductService:
                 summary_updates=persisted_summary,
                 force_status=delivery_status,
             )
+            if not finalizing_event_stored:
+                return None
             refreshed_state = self._snapshot_property_search_run(
                 run_id=run_id,
                 principal_id=principal_id,
@@ -40176,7 +41203,7 @@ class ProductService:
             if isinstance(refreshed_state, dict):
                 state = refreshed_state
             else:
-                state = {**dict(state), "summary": refreshed_summary}
+                return None
         else:
             state = {**dict(state), "summary": refreshed_summary}
         if self._property_search_results_delivery_pending(result=refreshed_summary):
@@ -40187,13 +41214,24 @@ class ProductService:
             source_id=str(run_id or "").strip(),
             dedupe_key=f"{principal_id}|{run_id}|property-search-results-ready-email",
         ):
+            email_gate_stored = self._record_property_search_run_event(
+                run_id=run_id,
+                principal_id=principal_id,
+                step="results_email_sending",
+                message="The final results are ready. Sending the completion email.",
+                status=delivery_status,
+                steps_delta=0,
+                force_status=delivery_status,
+            )
+            if not email_gate_stored:
+                return None
             try:
                 self._notify_property_search_results_ready(
                     principal_id=principal_id,
                     run_id=run_id,
                     result=refreshed_summary,
                 )
-                self._record_property_search_run_event(
+                email_sent_stored = self._record_property_search_run_event(
                     run_id=run_id,
                     principal_id=principal_id,
                     step="results_email_sent",
@@ -40202,12 +41240,25 @@ class ProductService:
                     steps_delta=0,
                     force_status=delivery_status,
                 )
+                if not email_sent_stored:
+                    return None
             except Exception as exc:
                 error_message = compact_text(
                     str(exc or "property search results email failed"),
                     fallback="property search results email failed",
                     limit=280,
                 )
+                email_failed_stored = self._record_property_search_run_event(
+                    run_id=run_id,
+                    principal_id=principal_id,
+                    step="results_email_failed",
+                    message=f"The result page is ready, but the final email could not be sent: {error_message}",
+                    status=delivery_status,
+                    steps_delta=0,
+                    force_status=delivery_status,
+                )
+                if not email_failed_stored:
+                    return None
                 self._record_product_event(
                     principal_id=principal_id,
                     event_type="property_search_results_ready_email_failed",
@@ -40217,15 +41268,6 @@ class ProductService:
                     },
                     source_id=run_id,
                     dedupe_key=f"{principal_id}|{run_id}|property-search-results-ready-email-failed",
-                )
-                self._record_property_search_run_event(
-                    run_id=run_id,
-                    principal_id=principal_id,
-                    step="results_email_failed",
-                    message=f"The result page is ready, but the final email could not be sent: {error_message}",
-                    status=delivery_status,
-                    steps_delta=0,
-                    force_status=delivery_status,
                 )
         with _PROPERTY_SEARCH_RUN_LOCK:
             latest_state = _PROPERTY_SEARCH_RUN_REGISTRY.get(str(run_id or "").strip())
@@ -40270,7 +41312,7 @@ class ProductService:
             delivery_status = _property_search_delivery_terminal_status(
                 latest_result.get("status") or delivery_status
             )
-            self._record_property_search_run_event(
+            finalizing_event_stored = self._record_property_search_run_event(
                 run_id=run_id,
                 principal_id=principal_id,
                 step="results_finalizing",
@@ -40286,6 +41328,8 @@ class ProductService:
                 summary_updates=latest_result,
                 force_status=delivery_status,
             )
+            if not finalizing_event_stored:
+                return
             if not self._property_search_results_delivery_pending(result=latest_result):
                 try:
                     self._notify_property_search_results_ready(
@@ -40299,14 +41343,7 @@ class ProductService:
                         fallback="property search results email failed",
                         limit=280,
                     )
-                    self._record_product_event(
-                        principal_id=principal_id,
-                        event_type="property_search_results_ready_email_failed",
-                        payload={"run_id": run_id, "error": error_message},
-                        source_id=str(run_id or "").strip(),
-                        dedupe_key=f"{principal_id}|{run_id}|property-search-results-ready-email-failed",
-                    )
-                    self._record_property_search_run_event(
+                    email_failed_stored = self._record_property_search_run_event(
                         run_id=run_id,
                         principal_id=principal_id,
                         step="results_email_failed",
@@ -40315,8 +41352,17 @@ class ProductService:
                         steps_delta=0,
                         force_status=delivery_status,
                     )
+                    if not email_failed_stored:
+                        return
+                    self._record_product_event(
+                        principal_id=principal_id,
+                        event_type="property_search_results_ready_email_failed",
+                        payload={"run_id": run_id, "error": error_message},
+                        source_id=str(run_id or "").strip(),
+                        dedupe_key=f"{principal_id}|{run_id}|property-search-results-ready-email-failed",
+                    )
                     return
-                self._record_property_search_run_event(
+                email_sent_stored = self._record_property_search_run_event(
                     run_id=run_id,
                     principal_id=principal_id,
                     step="results_email_sent",
@@ -40325,12 +41371,25 @@ class ProductService:
                     steps_delta=0,
                     force_status=delivery_status,
                 )
+                if not email_sent_stored:
+                    return
                 return
             waiting_recorded = True
             if time.time() >= deadline:
                 break
             time.sleep(interval)
         if waiting_recorded:
+            deferred_event_stored = self._record_property_search_run_event(
+                run_id=run_id,
+                principal_id=principal_id,
+                step="results_email_deferred",
+                message="The final results email is deferred until hosted tours finish.",
+                status=delivery_status,
+                steps_delta=0,
+                force_status=delivery_status,
+            )
+            if not deferred_event_stored:
+                return
             self._record_product_event(
                 principal_id=principal_id,
                 event_type="property_search_results_ready_email_deferred",
@@ -40358,6 +41417,11 @@ class ProductService:
             principal_id=principal_id,
             property_preferences=property_preferences,
         )
+        untrusted_derived_keys = (
+            _PROPERTY_SEARCH_DERIVED_RUN_INPUT_KEYS - _PROPERTY_SEARCH_PROVIDER_SELECTION_AUDIT_KEYS
+        )
+        for derived_key in untrusted_derived_keys:
+            merged_preferences.pop(derived_key, None)
         merged_preferences = normalize_property_search_preferences(merged_preferences)
         merged_preferences["country_code"] = normalize_country_code(
             resolve_country_code(merged_preferences.get("country_code")) or merged_preferences.get("country_code")
@@ -40480,15 +41544,25 @@ class ProductService:
                 run_id=run_id,
                 requested_key=idempotency_key,
             )
+            from app.telemetry import (
+                TELEMETRY_PARENT_KEY,
+                serialize_current_trace_parent,
+            )
+
+            work_payload: dict[str, object] = {
+                "run_id": run_id,
+                "principal_id": normalized_principal,
+                "actor": str(actor or "property_search_worker").strip()
+                or "property_search_worker",
+                "force_refresh": bool(force_refresh),
+            }
+            telemetry_parent = serialize_current_trace_parent()
+            if telemetry_parent:
+                work_payload[TELEMETRY_PARENT_KEY] = telemetry_parent
             try:
                 enqueue_result = _property_search_work_queue_repository().enqueue_run(
                     run_record=persisted_state,
-                    payload_json={
-                        "run_id": run_id,
-                        "principal_id": normalized_principal,
-                        "actor": str(actor or "property_search_worker").strip() or "property_search_worker",
-                        "force_refresh": bool(force_refresh),
-                    },
+                    payload_json=work_payload,
                     idempotency_key=queue_key,
                     max_attempts=property_search_work_max_attempts(),
                 )
@@ -40511,16 +41585,22 @@ class ProductService:
                 return dict(existing_state)
         elif durable_work_required:
             try:
-                _store_property_search_run_record(persisted_state)
+                if _store_property_search_run_record(persisted_state) is False:
+                    raise RuntimeError("property_search_account_erased")
             except Exception as exc:
                 with _PROPERTY_SEARCH_RUN_LOCK:
                     _PROPERTY_SEARCH_RUN_REGISTRY.pop(run_id, None)
                 raise RuntimeError("property_search_run_persistence_failed") from exc
         else:
+            stored = True
             try:
-                _store_property_search_run_record(persisted_state)
+                stored = _store_property_search_run_record(persisted_state)
             except Exception:
                 pass
+            if stored is False:
+                with _PROPERTY_SEARCH_RUN_LOCK:
+                    _PROPERTY_SEARCH_RUN_REGISTRY.pop(run_id, None)
+                raise RuntimeError("property_search_account_erased")
         _prune_property_search_runs()
         if not dispatch_only:
             self._best_effort_propertyquarry_teable_sync(
@@ -40538,7 +41618,7 @@ class ProductService:
             summary_updates: dict[str, object] | None = None,
             stages_total_override: int | None = None,
         ) -> None:
-            self._record_property_search_run_event(
+            if not self._record_property_search_run_event(
                 run_id=run_id,
                 principal_id=normalized_principal,
                 step=step,
@@ -40548,7 +41628,8 @@ class ProductService:
                 summary_updates=summary_updates,
                 force_status=status,
                 stages_total_override=stages_total_override,
-            )
+            ):
+                raise PropertySearchRunErasedError("property_search_run_erased")
 
         def _worker() -> None:
             try:
@@ -40619,7 +41700,7 @@ class ProductService:
                             result["repair_status_label"] = "Partial coverage"
                     except Exception:
                         pass
-                self._record_property_search_run_event(
+                if not self._record_property_search_run_event(
                     run_id=run_id,
                     principal_id=normalized_principal,
                     step="completed",
@@ -40628,7 +41709,8 @@ class ProductService:
                     steps_delta=max(0, _PROPERTY_SEARCH_RUN_STAGES),
                     summary_updates=result,
                     force_status=final_status,
-                )
+                ):
+                    raise PropertySearchRunErasedError("property_search_run_erased")
                 if final_status in {"processed", "completed_partial"}:
                     try:
                         threading.Thread(
@@ -40656,7 +41738,7 @@ class ProductService:
                             principal_id=normalized_principal,
                             result=dict(result or {}),
                         )
-                        self._record_property_search_run_event(
+                        if not self._record_property_search_run_event(
                             run_id=run_id,
                             principal_id=normalized_principal,
                             step="results_finalizing",
@@ -40669,7 +41751,12 @@ class ProductService:
                             steps_delta=0,
                             summary_updates=refreshed_result,
                             force_status=final_status,
-                        )
+                        ):
+                            raise PropertySearchRunErasedError(
+                                "property_search_run_erased"
+                            )
+                    except PropertySearchRunErasedError:
+                        raise
                     except Exception as exc:
                         self._record_product_event(
                             principal_id=normalized_principal,
@@ -40686,6 +41773,8 @@ class ProductService:
                     run_id=run_id,
                     reason="property_search_run_completed",
                 )
+            except PropertySearchRunErasedError:
+                return
             except Exception as exc:
                 error_message = compact_text(str(exc or "search run failed"), fallback="search run failed", limit=320)
                 repair_task: dict[str, object] = {}
@@ -41789,15 +42878,18 @@ class ProductService:
         *,
         principal_id: str,
         account_email: str = "",
+        refresh: bool = False,
+        exhaustive: bool = False,
     ) -> tuple[str, ...]:
         normalized_principal = str(principal_id or "").strip()
         normalized_account_email = str(account_email or "").strip().lower()
         cache_key = (normalized_principal, normalized_account_email)
         now_monotonic = time.monotonic()
-        with _PROPERTY_SEARCH_RUN_PRINCIPAL_CACHE_LOCK:
-            cached_at, cached_value = _PROPERTY_SEARCH_RUN_PRINCIPAL_CACHE.get(cache_key, (0.0, ()))
-            if cached_value and now_monotonic - cached_at <= _PROPERTY_SEARCH_RUN_PRINCIPAL_CACHE_TTL_SECONDS:
-                return tuple(cached_value)
+        if not refresh and not exhaustive:
+            with _PROPERTY_SEARCH_RUN_PRINCIPAL_CACHE_LOCK:
+                cached_at, cached_value = _PROPERTY_SEARCH_RUN_PRINCIPAL_CACHE.get(cache_key, (0.0, ()))
+                if cached_value and now_monotonic - cached_at <= _PROPERTY_SEARCH_RUN_PRINCIPAL_CACHE_TTL_SECONDS:
+                    return tuple(cached_value)
         ordered: list[str] = []
 
         def _add(value: object) -> None:
@@ -41814,12 +42906,32 @@ class ProductService:
         for email in email_candidates:
             _add(f"cf-email:{email}")
             _add(_registration_principal_id_for_email(email))
-            with contextlib.suppress(Exception):
-                for candidate in self._workspace_sign_in_candidates(
-                    email=email,
-                    observation_limit=500,
-                    per_principal_limit=100,
-                ):
+            discovery_windows = (
+                (
+                    (500, 100),
+                    (1_000, 500),
+                    (2_000, 1_000),
+                    (4_000, 2_000),
+                    (5_000, 5_000),
+                )
+                if exhaustive
+                else ((500, 100),)
+            )
+            for observation_limit, per_principal_limit in discovery_windows:
+                try:
+                    candidates = self._workspace_sign_in_candidates(
+                        email=email,
+                        observation_limit=observation_limit,
+                        per_principal_limit=per_principal_limit,
+                        require_complete=(
+                            exhaustive and observation_limit == 5_000
+                        ),
+                    )
+                except Exception:
+                    if exhaustive:
+                        raise
+                    continue
+                for candidate in candidates:
                     _add(candidate.get("principal_id"))
         resolved = tuple(ordered)
         with _PROPERTY_SEARCH_RUN_PRINCIPAL_CACHE_LOCK:
@@ -41911,6 +43023,111 @@ class ProductService:
             if len(runs) >= max(int(limit or 0), 1):
                 break
         return runs
+
+    def get_property_research_packet_link(
+        self,
+        *,
+        principal_id: str,
+        candidate_ref: str,
+        account_email: str = "",
+    ) -> dict[str, object] | None:
+        """Resolve one packet through the tenant/ref primary key, never a run JSON scan."""
+        normalized_principal = str(principal_id or "").strip()
+        normalized_candidate_ref = str(candidate_ref or "").strip()
+        if not normalized_candidate_ref:
+            return None
+        principal_candidates = self._property_search_run_principal_ids(
+            principal_id=normalized_principal,
+            account_email=account_email,
+        )
+        for candidate_principal_id in principal_candidates or (
+            (normalized_principal,) if normalized_principal else ()
+        ):
+            link = _load_property_research_packet_link_storage(
+                principal_id=candidate_principal_id,
+                candidate_ref=normalized_candidate_ref,
+            )
+            if isinstance(link, dict):
+                return {**link, "principal_id": candidate_principal_id}
+        return None
+
+    def property_research_packet_index_coverage_complete(self) -> bool:
+        """Expose only the durable, current-contract global coverage gate."""
+
+        return _property_research_packet_index_coverage_complete_storage()
+
+    def export_property_research_packet_data(
+        self,
+        *,
+        principal_id: str,
+        account_email: str = "",
+    ) -> tuple[dict[str, object], ...]:
+        """DSAR export across the caller's authorized historical tenant aliases."""
+
+        normalized_principal = str(principal_id or "").strip()
+        if not normalized_principal:
+            return ()
+        exported: list[dict[str, object]] = []
+        for candidate_principal_id in self._property_search_run_principal_ids(
+            principal_id=normalized_principal,
+            account_email=account_email,
+        ):
+            exported.extend(
+                _export_property_research_packet_data_storage(
+                    principal_id=candidate_principal_id,
+                )
+            )
+        exported.sort(
+            key=lambda row: (
+                str(row.get("principal_id") or ""),
+                str(row.get("candidate_ref") or ""),
+            )
+        )
+        return tuple(exported)
+
+    def erase_property_search_account_data(
+        self,
+        *,
+        principal_id: str,
+        account_email: str = "",
+    ) -> dict[str, object]:
+        """Exact account-erasure boundary for runs, memberships, and packets."""
+
+        normalized_principal = str(principal_id or "").strip()
+        if not normalized_principal:
+            return {
+                "principal_count": 0,
+                "runs_deleted": 0,
+                "work_jobs_deleted": 0,
+                "packet_links_deleted": 0,
+                "packet_links_legal_hold_retained": 0,
+            }
+        aliases = self._property_search_run_principal_ids(
+            principal_id=normalized_principal,
+            account_email=account_email,
+            refresh=True,
+            exhaustive=True,
+        )
+        result = _erase_property_search_account_data_storage(
+            principal_ids=aliases,
+        )
+        runs_deleted = int(result.get("runs_deleted") or 0)
+        work_jobs_deleted = int(result.get("work_jobs_deleted") or 0)
+        packet_links_deleted = int(result.get("packet_links_deleted") or 0)
+        packet_links_legal_hold_retained = int(
+            result.get("packet_links_legal_hold_retained") or 0
+        )
+        with _PROPERTY_SEARCH_RUN_LOCK:
+            for run_id, state in list(_PROPERTY_SEARCH_RUN_REGISTRY.items()):
+                if str(dict(state or {}).get("principal_id") or "").strip() in aliases:
+                    _PROPERTY_SEARCH_RUN_REGISTRY.pop(run_id, None)
+        return {
+            "principal_count": len(aliases),
+            "runs_deleted": runs_deleted,
+            "work_jobs_deleted": work_jobs_deleted,
+            "packet_links_deleted": packet_links_deleted,
+            "packet_links_legal_hold_retained": packet_links_legal_hold_retained,
+        }
 
     def find_active_property_search_run(
         self,
@@ -42283,9 +43500,15 @@ class ProductService:
             state["updated_at"] = _now_iso()
             persisted_state = dict(state)
         try:
-            _store_property_search_run_record(persisted_state)
+            stored = _store_property_search_run_record(persisted_state)
         except Exception:
-            pass
+            return None
+        if stored is False:
+            _discard_property_search_run_registry_state(
+                run_id=normalized_run_id,
+                principal_id=normalized_principal,
+            )
+            return None
         self._record_property_search_run_event(
             run_id=normalized_run_id,
             principal_id=normalized_principal,
@@ -42461,6 +43684,8 @@ class ProductService:
                 allow_notifications=allow_notifications,
                 tour_events_by_source=tour_events_by_source,
             )
+            if not isinstance(updated, dict):
+                continue
             pending_after = self._property_search_results_delivery_pending(result=dict(updated.get("summary") or {}))
             if pending_after:
                 pending += 1
@@ -42660,7 +43885,21 @@ class ProductService:
             summary_updates["repair_parent_run_id"] = parent_refs[0]
             summary_updates["repair_parent_run_ids"] = list(parent_refs)
 
-        self._record_property_search_run_event(
+        def _erased_result() -> dict[str, object]:
+            _discard_property_search_run_registry_state(
+                run_id=run_id,
+                principal_id=principal_id,
+            )
+            return {
+                "status": "erased",
+                "run_id": run_id,
+                "principal_id": principal_id,
+                "reason": "property_search_run_erased",
+                "recovery_reason": reason,
+                "parent_run_ids": list(parent_refs),
+            }
+
+        pickup_event_stored = self._record_property_search_run_event(
             run_id=run_id,
             principal_id=principal_id,
             step="recovery_pickup_started",
@@ -42674,6 +43913,8 @@ class ProductService:
             summary_updates=summary_updates,
             force_status="in_progress",
         )
+        if not pickup_event_stored:
+            return _erased_result()
 
         def _progress(
             *,
@@ -42684,7 +43925,7 @@ class ProductService:
             summary_updates: dict[str, object] | None = None,
             stages_total_override: int | None = None,
         ) -> None:
-            self._record_property_search_run_event(
+            progress_stored = self._record_property_search_run_event(
                 run_id=run_id,
                 principal_id=principal_id,
                 step=step,
@@ -42695,8 +43936,10 @@ class ProductService:
                 force_status=status,
                 stages_total_override=stages_total_override,
             )
+            if not progress_stored:
+                raise PropertySearchRunErasedError("property_search_run_erased")
 
-        def _worker() -> None:
+        def _worker() -> dict[str, object]:
             try:
                 _progress(
                     step="starting",
@@ -42725,21 +43968,27 @@ class ProductService:
                     "execution_pickup_status": "completed",
                     "execution_pickup_reason": reason,
                 }
-                self._record_property_search_run_event(
-                    run_id=run_id,
-                    principal_id=principal_id,
+                _progress(
                     step="completed",
                     message=f"Search run completed with status {final_status}.",
                     status=final_status,
                     steps_delta=max(0, _PROPERTY_SEARCH_RUN_STAGES),
                     summary_updates=result,
-                    force_status=final_status,
                 )
                 self._best_effort_propertyquarry_teable_sync(
                     principal_id=principal_id,
                     run_id=run_id,
                     reason="property_search_run_recovery_completed",
                 )
+                return {
+                    "status": "completed",
+                    "run_id": run_id,
+                    "principal_id": principal_id,
+                    "reason": reason,
+                    "parent_run_ids": list(parent_refs),
+                }
+            except PropertySearchRunErasedError:
+                return _erased_result()
             except Exception as exc:
                 error_message = compact_text(str(exc or "search run pickup failed"), fallback="search run pickup failed", limit=320)
                 repair_summary_updates: dict[str, object] = {}
@@ -42851,17 +44100,17 @@ class ProductService:
 
                 if synchronous:
                     raise
+                return {
+                    "status": "failed" if terminal_on_failure else "retry_queued",
+                    "run_id": run_id,
+                    "principal_id": principal_id,
+                    "reason": reason,
+                    "parent_run_ids": list(parent_refs),
+                }
 
         if synchronous:
             with _PROPERTY_SEARCH_RUN_WORKER_SEMAPHORE:
-                _worker()
-            return {
-                "status": "completed",
-                "run_id": run_id,
-                "principal_id": principal_id,
-                "reason": reason,
-                "parent_run_ids": list(parent_refs),
-            }
+                return _worker()
         threading.Thread(target=_worker, daemon=True, name=f"property-search-pickup-{run_id[:8]}").start()
         return {
             "status": "started",
@@ -43047,6 +44296,8 @@ class ProductService:
                     summary_updates=summary_updates or {},
                     stages_total_override=stages_total_override,
                 )
+            except PropertySearchRunErasedError:
+                raise
             except Exception:
                 pass
 
@@ -45097,38 +46348,57 @@ class ProductService:
                     "summary": str(row.get("summary") or "").strip(),
                     "property_facts_json": dict(row.get("property_facts") or {}) if isinstance(row.get("property_facts"), dict) else {},
                 }
-                if str(preview.get("title") or "").strip() == property_url:
-                    try:
-                        cached_preview = self._property_public_preview_cache_lookup(
-                            cache_index=public_preview_cache,
+                try:
+                    cached_preview = self._property_public_preview_cache_lookup(
+                        cache_index=public_preview_cache,
+                        property_url=property_url,
+                    )
+                    if cached_preview:
+                        merged_preview = _property_merge_public_preview(
+                            current=preview,
+                            cached=dict(cached_preview),
                             property_url=property_url,
                         )
-                        if cached_preview and dict(cached_preview.get("property_facts_json") or {}):
-                            detailed_preview = dict(cached_preview)
+                        if merged_preview != preview:
+                            preview = merged_preview
                             public_property_cache_hit_total += 1
-                        else:
-                            _report(
-                                step="source_detail_check",
-                                message=f"Recovering listing details for candidate {ordinal} of {enrichment_limit} for {source_label}.",
-                                status="in_progress",
-                                steps_delta=0,
-                                summary_updates={
-                                    "reviewed_listing_total": reviewed_listing_total,
-                                    "current_source_reviewed_total": max(0, ordinal - 1),
-                                    "current_source_candidate_total": enrichment_limit,
-                                },
-                            )
-                            detailed_preview = _property_scout_page_preview_with_timeout(property_url, prefer_fast=False)
-                            self._property_public_preview_cache_store(
-                                cache_index=public_preview_cache,
-                                property_url=property_url,
-                                preview=detailed_preview,
-                            )
-                            public_property_cache_refresh_total += 1
+
+                    preview_needs_floorplan_detail = (
+                        bool(require_floorplan or enforce_floorplan_filter)
+                        and not _property_candidate_has_floorplan(
+                            property_url=property_url,
+                            title=str(preview.get("title") or ""),
+                            summary=str(preview.get("summary") or ""),
+                            property_facts=dict(preview.get("property_facts_json") or {}),
+                            preview=preview,
+                        )
+                    )
+                    if (
+                        str(preview.get("title") or "").strip() == property_url
+                        or preview_needs_floorplan_detail
+                    ):
+                        _report(
+                            step="source_detail_check",
+                            message=f"Recovering listing details for candidate {ordinal} of {enrichment_limit} for {source_label}.",
+                            status="in_progress",
+                            steps_delta=0,
+                            summary_updates={
+                                "reviewed_listing_total": reviewed_listing_total,
+                                "current_source_reviewed_total": max(0, ordinal - 1),
+                                "current_source_candidate_total": enrichment_limit,
+                            },
+                        )
+                        detailed_preview = _property_scout_page_preview_with_timeout(property_url, prefer_fast=False)
+                        self._property_public_preview_cache_store(
+                            cache_index=public_preview_cache,
+                            property_url=property_url,
+                            preview=detailed_preview,
+                        )
+                        public_property_cache_refresh_total += 1
                         if isinstance(detailed_preview, dict) and detailed_preview:
                             preview = detailed_preview
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
                 detailed_facts = dict(preview.get("property_facts_json") or {}) if isinstance(preview.get("property_facts_json"), dict) else {}
                 detailed_facts = _property_facts_with_source_scope(
                     facts=detailed_facts,
@@ -53913,13 +55183,23 @@ class ProductService:
         email: str,
         observation_limit: int = 5000,
         per_principal_limit: int = 200,
+        require_complete: bool = False,
     ) -> tuple[dict[str, object], ...]:
         normalized_email = str(email or "").strip().lower()
         if not normalized_email:
             return ()
         principal_last_seen: dict[str, str] = {}
         connector_principals: set[str] = set()
-        for row in self._container.channel_runtime.list_recent_observations(limit=max(int(observation_limit), 100)):
+        recent_observations = tuple(
+            self._container.channel_runtime.list_recent_observations(
+                limit=max(int(observation_limit), 100)
+            )
+        )
+        if require_complete and len(recent_observations) >= 5_000:
+            raise PropertySearchAliasDiscoveryIncompleteError(
+                "property_search_alias_discovery_incomplete"
+            )
+        for row in recent_observations:
             payload = dict(row.payload or {})
             email_values = (
                 str(payload.get("email") or "").strip().lower(),
@@ -53934,10 +55214,17 @@ class ProductService:
             previous = str(principal_last_seen.get(principal_id) or "").strip()
             if not previous or created_at > previous:
                 principal_last_seen[principal_id] = created_at
-        for binding in self._container.tool_runtime.list_connector_bindings_for_connector(
-            google_oauth_service.GOOGLE_CONNECTOR_NAME,
-            limit=max(int(observation_limit), 200),
-        ):
+        connector_bindings = tuple(
+            self._container.tool_runtime.list_connector_bindings_for_connector(
+                google_oauth_service.GOOGLE_CONNECTOR_NAME,
+                limit=max(int(observation_limit), 200),
+            )
+        )
+        if require_complete and len(connector_bindings) >= 500:
+            raise PropertySearchAliasDiscoveryIncompleteError(
+                "property_search_alias_discovery_incomplete"
+            )
+        for binding in connector_bindings:
             if str(binding.status or "").strip().lower() != "enabled":
                 continue
             principal_id = str(binding.principal_id or "").strip()

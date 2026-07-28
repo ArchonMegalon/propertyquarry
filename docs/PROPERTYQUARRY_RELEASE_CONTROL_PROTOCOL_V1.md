@@ -292,8 +292,9 @@ responsible for all privileged and security-sensitive checks, including:
   bytes;
 - server-derived database identity and signed allowed-target enforcement;
 - containment before candidate validation, canonical Compose enforcement,
-  immutable Cloudflared image/config binding, migration fencing, health gates,
-  promotion, crash reconciliation, and verified rollback; and
+  dedicated durable-worker fencing and heartbeat readiness, immutable
+  Cloudflared image/config binding, migration fencing, health gates, promotion,
+  crash reconciliation, and verified rollback; and
 - independently verifiable, content-addressed receipts and monitoring evidence.
 
 The production canonical Compose plan must include the public-tour volume, and

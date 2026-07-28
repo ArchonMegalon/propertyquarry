@@ -1,0 +1,125 @@
+{
+  "$id": "urn:propertyquarry:release-control:controller-config:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authorities": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_store": {
+          "additionalProperties": false,
+          "properties": {
+            "credential_name": {"const": "evidence-store-client"},
+            "endpoint": {"$ref": "#/$defs/httpsEndpoint"},
+            "trust_root_path": {"const": "/etc/propertyquarry-release-control/trust.d/evidence-authority-v2.pem"}
+          },
+          "required": ["endpoint", "trust_root_path", "credential_name"],
+          "type": "object"
+        },
+        "lifecycle_cas": {
+          "additionalProperties": false,
+          "properties": {
+            "credential_name": {"const": "lifecycle-cas-client"},
+            "endpoint": {"$ref": "#/$defs/httpsEndpoint"},
+            "trust_root_path": {"const": "/etc/propertyquarry-release-control/trust.d/lifecycle-cas-v2.pem"}
+          },
+          "required": ["endpoint", "trust_root_path", "credential_name"],
+          "type": "object"
+        },
+        "request": {
+          "additionalProperties": false,
+          "properties": {
+            "credential_name": {"const": "request-authority-client"},
+            "endpoint": {"$ref": "#/$defs/httpsEndpoint"},
+            "request_trust_root_path": {"const": "/etc/propertyquarry-release-control/trust.d/request-authority-v2.pem"},
+            "response_trust_root_path": {"const": "/etc/propertyquarry-release-control/trust.d/response-authority-v2.pem"}
+          },
+          "required": ["endpoint", "request_trust_root_path", "response_trust_root_path", "credential_name"],
+          "type": "object"
+        }
+      },
+      "required": ["request", "lifecycle_cas", "evidence_store"],
+      "type": "object"
+    },
+    "environment": {"const": "propertyquarry-production"},
+    "identity_policy": {
+      "additionalProperties": false,
+      "properties": {
+        "environment": {"const": "propertyquarry-production"},
+        "job": {"const": "propertyquarry-release-v2"},
+        "ref": {"const": "refs/heads/main"},
+        "repository": {"const": "ArchonMegalon/property"},
+        "workflow_ref": {"const": "ArchonMegalon/property/.github/workflows/smoke-runtime.yml@refs/heads/main"},
+        "workflow_sha": {"pattern": "^[0-9a-f]{40}$", "type": "string"}
+      },
+      "required": ["repository", "ref", "workflow_ref", "workflow_sha", "job", "environment"],
+      "type": "object"
+    },
+    "limits": {
+      "additionalProperties": false,
+      "properties": {
+        "callback_timeout_seconds": {"maximum": 60, "minimum": 1, "type": "integer"},
+        "diagnostic_limit_bytes": {"maximum": 65536, "minimum": 0, "type": "integer"},
+        "identity_token_limit_bytes": {"maximum": 16384, "minimum": 256, "type": "integer"},
+        "operation_timeout_seconds": {"maximum": 9600, "minimum": 60, "type": "integer"},
+        "request_limit_bytes": {"maximum": 1048576, "minimum": 256, "type": "integer"},
+        "response_limit_bytes": {"maximum": 1048576, "minimum": 1, "type": "integer"}
+      },
+      "required": ["identity_token_limit_bytes", "request_limit_bytes", "response_limit_bytes", "diagnostic_limit_bytes", "callback_timeout_seconds", "operation_timeout_seconds"],
+      "type": "object"
+    },
+    "oidc": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_request_url_origin": {"const": "https://vstoken.actions.githubusercontent.com"},
+        "audience": {"const": "propertyquarry-release-control-v2"}
+      },
+      "required": ["allowed_request_url_origin", "audience"],
+      "type": "object"
+    },
+    "package_trust_root_path": {"const": "/etc/propertyquarry-release-control/trust.d/package-authority-v2.pem"},
+    "resource_mediators": {
+      "additionalProperties": false,
+      "properties": {
+        "database": {"$ref": "#/$defs/mediator"},
+        "launch_authority": {"$ref": "#/$defs/mediator"},
+        "monitoring_delivery": {"$ref": "#/$defs/mediator"},
+        "overlay": {"$ref": "#/$defs/mediator"},
+        "public_tour": {"$ref": "#/$defs/mediator"},
+        "runtime": {"$ref": "#/$defs/mediator"},
+        "traffic": {"$ref": "#/$defs/mediator"}
+      },
+      "required": ["database", "launch_authority", "monitoring_delivery", "overlay", "public_tour", "runtime", "traffic"],
+      "type": "object"
+    },
+    "root_policy_path": {"const": "/etc/propertyquarry-release-control/policy-v2.json"},
+    "schema": {"const": "propertyquarry.release-control.controller-config.v2"},
+    "state": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_path": {"const": "/var/lib/propertyquarry-release-control-v2/cache"},
+        "journal_path": {"const": "/var/lib/propertyquarry-release-control-v2/journal"},
+        "receipt_path": {"const": "/var/lib/propertyquarry-release-control-v2/receipts"}
+      },
+      "required": ["cache_path", "journal_path", "receipt_path"],
+      "type": "object"
+    },
+    "version": {"const": 2}
+  },
+  "required": ["schema", "version", "environment", "identity_policy", "oidc", "root_policy_path", "package_trust_root_path", "authorities", "resource_mediators", "state", "limits"],
+  "title": "PropertyQuarry release controller v2 configuration",
+  "type": "object",
+  "$defs": {
+    "httpsEndpoint": {"format": "uri", "maxLength": 2048, "pattern": "^https://(?![^/?#]*@)(?:(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*|\\[[0-9A-Fa-f:.]+\\])(?:/[^\\s?#]*)?$", "type": "string"},
+    "mediator": {
+      "additionalProperties": false,
+      "properties": {
+        "credential_name": {"const": "resource-mediator-client"},
+        "endpoint": {"$ref": "#/$defs/httpsEndpoint"},
+        "trust_root_path": {"const": "/etc/propertyquarry-release-control/trust.d/resource-mediator-v2.pem"}
+      },
+      "required": ["endpoint", "trust_root_path", "credential_name"],
+      "type": "object"
+    }
+  }
+}

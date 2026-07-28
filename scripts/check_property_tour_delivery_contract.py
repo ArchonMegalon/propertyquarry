@@ -11,8 +11,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_MODES = ("matterport", "3dvista", "pano2vr", "krpano", "magicfit")
-PUBLIC_REQUIRED_PROVIDER_MODES = ("matterport", "3dvista", "magicfit")
-OPTIONAL_PROVIDER_MODES = tuple(provider for provider in PROVIDER_MODES if provider not in PUBLIC_REQUIRED_PROVIDER_MODES)
+PUBLIC_REQUIRED_PROVIDER_MODES = ("3dvista", "magicfit")
+RETIRED_PROVIDER_MODES = ("matterport",)
+OPTIONAL_PROVIDER_MODES = ("pano2vr", "krpano")
 REQUIRED_CONTRACT_KEYS = (
     "schema",
     "provider",
@@ -126,7 +127,12 @@ def _check_ready_contract(provider: str, contract: dict[str, Any], failures: lis
         return
     if ready_payload.get("provider") != provider:
         failures.append(f"{provider} ready_payload provider mismatch")
-    if int(ready_payload.get("ready_count") or 0) <= 0:
+    ready_count = ready_payload.get("ready_count")
+    if (
+        isinstance(ready_count, bool)
+        or not isinstance(ready_count, int)
+        or ready_count <= 0
+    ):
         failures.append(f"{provider} ready_payload must prove at least one ready control")
     sample_controls = [row for row in list(ready_payload.get("sample_controls") or []) if isinstance(row, dict)]
     if not sample_controls:
@@ -149,6 +155,36 @@ def _check_blocked_contract(provider: str, contract: dict[str, Any], failures: l
         failures.append(f"{provider} blocked contract must expose blocked_reason")
     if not list(contract.get("required_to_send") or []):
         failures.append(f"{provider} blocked contract must expose required_to_send")
+
+
+def _check_retired_matterport_contract(
+    contract: dict[str, Any],
+    *,
+    ready_modes: set[str],
+    failures: list[str],
+) -> int:
+    if "matterport" in ready_modes:
+        failures.append("Matterport retired provider mode must not be ready")
+    _check_blocked_contract("matterport", contract, failures)
+    if contract.get("blocked_reason") != "matterport_public_control_retired":
+        failures.append(
+            "Matterport retired contract must expose matterport_public_control_retired"
+        )
+    ready_payload = contract.get("ready_payload")
+    if not isinstance(ready_payload, dict):
+        failures.append("Matterport retired contract must expose ready_payload")
+        return 0
+    raw_ready_count = ready_payload.get("ready_count")
+    if isinstance(raw_ready_count, bool) or not isinstance(raw_ready_count, int):
+        failures.append("Matterport retired contract ready_count must be integer 0")
+        ready_count = 0
+    else:
+        ready_count = raw_ready_count
+    if ready_count != 0:
+        failures.append("Matterport retired contract must have ready_count=0")
+    if list(ready_payload.get("sample_controls") or []):
+        failures.append("Matterport retired contract must not expose sample controls")
+    return ready_count
 
 
 def build_tour_delivery_contract_receipt(tour_control_receipt_path: Path | None = None) -> dict[str, object]:
@@ -195,12 +231,16 @@ def build_tour_delivery_contract_receipt(tour_control_receipt_path: Path | None 
         if provider in missing_modes:
             _check_blocked_contract(provider, contract, failures)
 
-    matterport = contracts.get("matterport") if isinstance(contracts.get("matterport"), dict) else {}
-    matterport_payload = matterport.get("ready_payload") if isinstance(matterport, dict) else {}
-    if "matterport" not in ready_modes:
-        failures.append("Matterport must remain a first-class ready provider mode")
-    elif int(dict(matterport_payload or {}).get("ready_count") or 0) <= 0:
-        failures.append("Matterport must prove at least one ready hosted control")
+    matterport = (
+        contracts.get("matterport")
+        if isinstance(contracts.get("matterport"), dict)
+        else {}
+    )
+    matterport_ready_count = _check_retired_matterport_contract(
+        dict(matterport),
+        ready_modes=ready_modes,
+        failures=failures,
+    )
 
     return {
         "schema": "propertyquarry.tour_delivery_contract_shape_receipt.v1",
@@ -209,13 +249,14 @@ def build_tour_delivery_contract_receipt(tour_control_receipt_path: Path | None 
         "tour_control_receipt_path": str(receipt_path),
         "required_provider_modes": list(PUBLIC_REQUIRED_PROVIDER_MODES),
         "optional_provider_modes": list(OPTIONAL_PROVIDER_MODES),
+        "retired_provider_modes": list(RETIRED_PROVIDER_MODES),
         "required_providers": list(PUBLIC_REQUIRED_PROVIDER_MODES),
         "ready_provider_modes": sorted(ready_modes),
         "missing_provider_modes": sorted(missing_modes),
-        "matterport_ready_count": int(dict(matterport_payload or {}).get("ready_count") or 0),
+        "matterport_ready_count": matterport_ready_count,
         "failure_count": len(failures),
         "failures": failures,
-        "note": "Verifies public-safe tour delivery contracts, Chummer-derived ready/blocker vocabulary, white-label separation, and first-class Matterport readiness.",
+        "note": "Verifies public-safe tour delivery contracts, Chummer-derived ready/blocker vocabulary, white-label separation, and fail-closed Matterport retirement.",
     }
 
 

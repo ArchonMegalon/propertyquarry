@@ -1,13 +1,17 @@
 from pathlib import Path
 
+import json
+
 from scripts.render_magicfit_property_flythrough import (
     ASPECT_CURRENT_OPTIONS,
     extension_output_contract_matches,
     option_label_candidates,
     output_contract_matches,
+    operator_safe_render_summary,
     persist_storage_state,
     provider_asset_path,
     wait_for_submit_ready,
+    write_private_state_receipt,
 )
 
 
@@ -25,6 +29,65 @@ def test_persist_storage_state_keeps_provider_session_private(tmp_path: Path) ->
 
     assert target.is_file()
     assert target.stat().st_mode & 0o777 == 0o600
+
+
+def test_full_render_receipt_stays_private_and_stdout_summary_is_provider_safe(
+    tmp_path: Path,
+) -> None:
+    provider_url = "https://media.powlcdn.com/magicfit/private.mp4?token=url-secret"
+    secret_canary = "sk-provider-secret-canary"
+    page_url = "https://magicfit.example/session/private-page"
+    payload = {
+        "provider": "magicfit",
+        "render_status": "completed",
+        "target_slug": "safe-tour",
+        "video_output_url": provider_url,
+        "hosted_walkthrough_video_url": provider_url,
+        "page_url": page_url,
+        "prompt": secret_canary,
+        "events_tail": [
+            {
+                "url": provider_url,
+                "authorization": secret_canary,
+            }
+        ],
+        "output_contract_ok": True,
+        "output_metadata": {
+            "duration_seconds": 15.02,
+            "width": 1920,
+            "height": 1080,
+            "size_bytes": 123_456,
+        },
+    }
+    state_path = tmp_path / "private" / "render-state.json"
+
+    write_private_state_receipt(state_path, payload)
+    stdout = json.dumps(
+        operator_safe_render_summary(payload, private_receipt_written=True),
+        sort_keys=True,
+    )
+
+    assert state_path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(state_path.read_text(encoding="utf-8")) == payload
+    assert provider_url not in stdout
+    assert "powlcdn" not in stdout
+    assert page_url not in stdout
+    assert secret_canary not in stdout
+    assert "events_tail" not in stdout
+    assert "prompt" not in stdout
+    assert "video_output_url" not in stdout
+    assert json.loads(stdout) == {
+        "artifact_kind": "continuous_walkthrough",
+        "duration_seconds": 15.02,
+        "height": 1080,
+        "output_contract_ok": True,
+        "private_receipt_written": True,
+        "schema": "ea.governed_spatial_render_stdout.v1",
+        "size_bytes": 123_456,
+        "status": "completed",
+        "target_bound": True,
+        "width": 1920,
+    }
 
 
 def test_option_label_candidates_include_magicfit_ratio_shorthand() -> None:

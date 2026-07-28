@@ -372,7 +372,7 @@ def test_propertyquarry_mobile_flagship_flow_runs_search_opens_research_map_and_
         )
         family_row = page.locator("[data-workbench-row]", has_text="Family flat near Tiergarten").first
         expect(family_row).to_be_visible()
-        family_row.locator(".pqx-result-title").click()
+        family_row.get_by_role("link", name="Open property", exact=True).click()
         page.wait_for_url(re.compile(r".*/app/research/[^?]+.*"), wait_until="commit", timeout=5_000)
         expect(page.locator("[data-property-research-detail]")).to_be_visible()
         expect(page.locator(".prd-media-frame")).to_be_visible()

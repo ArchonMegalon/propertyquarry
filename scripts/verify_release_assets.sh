@@ -1,21 +1,217 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
 
-EA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PATH="/usr/bin:/bin"
+export PATH
+readonly PATH
+unset BASH_ENV ENV CDPATH GLOBIGNORE
+IFS=$' \t\n'
+
+script_source="${BASH_SOURCE[0]}"
+[[ "${script_source}" == */* ]] || {
+  printf '%s\n' "error: release asset verifier must be invoked with an explicit path" >&2
+  exit 2
+}
+EA_ROOT="$(cd -P -- "${script_source%/*}/.." && pwd -P)"
+readonly EA_ROOT
 cd "${EA_ROOT}"
+
+verification_mode="authority"
+if [[ "${1:-}" == "--developer" ]]; then
+  verification_mode="developer"
+  shift
+fi
+if [[ "${verification_mode}" == "authority" ]] && \
+  { [[ -v PYTHON_BIN ]] || [[ -v PYTEST_PYTHON_BIN ]]; }; then
+  echo "error: release interpreter override forbidden" >&2
+  exit 2
+fi
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   cat <<'EOF'
 Usage:
-  bash scripts/verify_release_assets.sh
+  ./scripts/verify_release_assets.sh
+  PYTHON_BIN=python3 ./scripts/verify_release_assets.sh --developer
 
 Validates presence of required runtime docs, scripts, and schema files.
+The default mode uses the authenticated release interpreter. The explicit
+developer mode is a non-authoritative local parity check.
 Exits non-zero when any required asset is missing.
 EOF
   exit 0
 fi
 
+release_python_candidate="${PYTHON_BIN:-python3}"
+unset \
+  LD_AUDIT \
+  LD_LIBRARY_PATH \
+  LD_PRELOAD \
+  PYTHONBREAKPOINT \
+  PYTHONCASEOK \
+  PYTHONDEBUG \
+  PYTHONDEVMODE \
+  PYTHONFAULTHANDLER \
+  PYTHONHOME \
+  PYTHONINSPECT \
+  PYTHONMALLOC \
+  PYTHONMALLOCSTATS \
+  PYTHONOPTIMIZE \
+  PYTHONPATH \
+  PYTHONPLATLIBDIR \
+  PYTHONPROFILEIMPORTTIME \
+  PYTHONSTARTUP \
+  PYTHONTRACEMALLOC \
+  PYTHONUSERBASE \
+  PYTHONWARNDEFAULTENCODING \
+  PYTHONWARNINGS \
+  PYTEST_ADDOPTS \
+  PYTEST_PLUGINS
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONHASHSEED=0
+export PYTHONNOUSERSITE=1
+export PYTHONSAFEPATH=1
+
+if [[ "${verification_mode}" == "developer" ]]; then
+  if [[ "${release_python_candidate}" != */* ]]; then
+    release_python_candidate="$(command -v -- "${release_python_candidate}")" || {
+      echo "error: developer Python interpreter is unavailable" >&2
+      exit 2
+    }
+  fi
+  [[ -x "${release_python_candidate}" && ! -d "${release_python_candidate}" ]] || {
+    echo "error: developer Python interpreter is not executable" >&2
+    exit 2
+  }
+  developer_probe="$(
+    "${release_python_candidate}" -I -c \
+      'import sys; print("propertyquarry-developer-python-v1" if sys.version_info >= (3, 12) else "")'
+  )" || {
+    echo "error: developer Python interpreter probe failed" >&2
+    exit 2
+  }
+  [[ "${developer_probe}" == "propertyquarry-developer-python-v1" ]] || {
+    echo "error: developer Python 3.12 or newer is required" >&2
+    exit 2
+  }
+  RELEASE_PYTHON="${release_python_candidate}"
+  echo "warning: developer release-asset verification is non-authoritative" >&2
+else
+  release_python_launcher="${EA_ROOT}/scripts/propertyquarry_release_python.sh"
+  RELEASE_PYTHON="$("${release_python_launcher}" --print-interpreter)" || exit $?
+  [[ "${RELEASE_PYTHON}" == \
+    "${EA_ROOT}/.propertyquarry_release_tools/release-venv/bin/python" ]] || {
+    echo "error: authenticated release interpreter path is invalid" >&2
+    exit 2
+  }
+fi
+unset PYTHON_BIN PYTEST_PYTHON_BIN
+export PYTHONPATH="${EA_ROOT}/scripts:${EA_ROOT}/ea:${EA_ROOT}"
+readonly RELEASE_PYTHON
+
 missing=0
+RELEASE_ASSETS_TMP_DIR=""
+RELEASE_ASSETS_TMP_IDENTITY=""
+
+create_release_assets_tmp_dir() {
+  local candidate=""
+  local candidate_identity=""
+  local candidate_metadata=""
+  umask 077
+  candidate="$(
+    /usr/bin/mktemp -d -- \
+      "/tmp/propertyquarry-release-assets.${BASHPID}.XXXXXXXX"
+  )" || {
+    echo "error: release asset temporary directory cannot be created" >&2
+    return 1
+  }
+  candidate_metadata="$(
+    /usr/bin/stat -c '%d:%i:%u:%a' -- "${candidate}" 2>/dev/null
+  )" || {
+    echo "error: release asset temporary directory cannot be inspected" >&2
+    return 1
+  }
+  candidate_identity="${candidate_metadata%:*:*}"
+  if [[ ! -d "${candidate}" || -L "${candidate}" ||
+        "${candidate_metadata}" != \
+          "${candidate_identity}:$(/usr/bin/id -u):700" ]]; then
+    echo "error: release asset temporary directory is not private" >&2
+    return 1
+  fi
+  RELEASE_ASSETS_TMP_DIR="${candidate}"
+  RELEASE_ASSETS_TMP_IDENTITY="${candidate_identity}"
+}
+
+cleanup_release_assets_tmp() {
+  local current_identity=""
+  case "${RELEASE_ASSETS_TMP_DIR:-}" in
+    /tmp/propertyquarry-release-assets.*)
+      if [[ ! -e "${RELEASE_ASSETS_TMP_DIR}" &&
+            ! -L "${RELEASE_ASSETS_TMP_DIR}" ]]; then
+        RELEASE_ASSETS_TMP_DIR=""
+        RELEASE_ASSETS_TMP_IDENTITY=""
+        return 0
+      fi
+      if [[ ! -d "${RELEASE_ASSETS_TMP_DIR}" ||
+            -L "${RELEASE_ASSETS_TMP_DIR}" ]]; then
+        echo \
+          "error: refusing cleanup of replaced release asset temporary directory" \
+          >&2
+        return 1
+      fi
+      current_identity="$(
+        /usr/bin/stat -c '%d:%i' -- "${RELEASE_ASSETS_TMP_DIR}" 2>/dev/null
+      )" || {
+        echo \
+          "error: release asset temporary directory cannot be identified for cleanup" \
+          >&2
+        return 1
+      }
+      if [[ -z "${RELEASE_ASSETS_TMP_IDENTITY}" ||
+            "${current_identity}" != "${RELEASE_ASSETS_TMP_IDENTITY}" ]]; then
+        echo \
+          "error: refusing cleanup of replaced release asset temporary directory" \
+          >&2
+        return 1
+      fi
+      /usr/bin/rm -rf --one-file-system -- "${RELEASE_ASSETS_TMP_DIR}" || {
+        echo "error: release asset temporary directory cleanup failed" >&2
+        return 1
+      }
+      RELEASE_ASSETS_TMP_DIR=""
+      RELEASE_ASSETS_TMP_IDENTITY=""
+      ;;
+    "")
+      ;;
+    *)
+      echo "error: refusing unsafe release asset temporary cleanup target" >&2
+      return 1
+      ;;
+  esac
+}
+
+release_assets_cleanup_on_exit() {
+  local status="$1"
+  trap '' HUP INT TERM
+  trap - EXIT
+  if ! cleanup_release_assets_tmp && [[ "${status}" -eq 0 ]]; then
+    status=1
+  fi
+  exit "${status}"
+}
+
+release_assets_terminate_from_signal() {
+  trap '' HUP INT TERM
+  local status="$1"
+  trap - EXIT
+  cleanup_release_assets_tmp || true
+  exit "${status}"
+}
+
+trap 'release_assets_cleanup_on_exit "$?"' EXIT
+trap 'release_assets_terminate_from_signal 129' HUP
+trap 'release_assets_terminate_from_signal 130' INT
+trap 'release_assets_terminate_from_signal 143' TERM
+create_release_assets_tmp_dir
 
 SMOKE_RUNTIME_GUARD_FILES=(
   "tests/smoke_runtime_api.py"
@@ -24,9 +220,12 @@ SMOKE_RUNTIME_GUARD_FILES=(
   "tests/smoke_runtime_api_suite_3.py"
   "tests/smoke_runtime_api_suite_4.py"
 )
-SMOKE_RUNTIME_GUARD_TARGET="$(mktemp)"
-trap 'rm -f "${SMOKE_RUNTIME_GUARD_TARGET}"' EXIT
+SMOKE_RUNTIME_GUARD_TARGET="${RELEASE_ASSETS_TMP_DIR}/smoke-runtime-guard.py"
 cat "${SMOKE_RUNTIME_GUARD_FILES[@]}" > "${SMOKE_RUNTIME_GUARD_TARGET}"
+DESIGN_MIRROR_STDOUT="${RELEASE_ASSETS_TMP_DIR}/design-mirror.stdout"
+DESIGN_MIRROR_STDERR="${RELEASE_ASSETS_TMP_DIR}/design-mirror.stderr"
+FULL_MIRROR_STDOUT="${RELEASE_ASSETS_TMP_DIR}/full-mirror.stdout"
+FULL_MIRROR_STDERR="${RELEASE_ASSETS_TMP_DIR}/full-mirror.stderr"
 
 required_files=(
   "README.md"
@@ -71,6 +270,9 @@ required_files=(
   "scripts/materialize_ea_flagship_release_gate.py"
   "scripts/materialize_ea_browser_workflow_proof.py"
   "scripts/materialize_weekly_product_pulse.py"
+  "scripts/bootstrap_propertyquarry_release_python.sh"
+  "scripts/propertyquarry_release_python.sh"
+  "scripts/propertyquarry_release_python_verify.py"
   "scripts/verify_generated_release_artifacts_clean.py"
   "scripts/verify_flagship_release_readiness.py"
   "scripts/verify_design_mirror_bundle.py"
@@ -79,6 +281,9 @@ required_files=(
   "scripts/refresh_ltds_from_inventory.sh"
   "scripts/refresh_ltds_via_api.py"
   "scripts/refresh_ltds_via_api.sh"
+  "config/propertyquarry_release_python_pin.json"
+  "config/propertyquarry_release_verifier_requirements.in"
+  "config/propertyquarry_release_verifier_requirements.lock"
   "ea/schema/20260305_v0_2_execution_ledger_kernel.sql"
   "ea/schema/20260305_v0_3_channel_runtime_kernel.sql"
   "ea/schema/20260305_v0_4_policy_decisions_kernel.sql"
@@ -121,25 +326,27 @@ if [[ -f "${f}" ]]; then
   fi
 done
 
-if python3 scripts/verify_design_mirror_bundle.py >/tmp/ea_design_mirror_verify.out 2>/tmp/ea_design_mirror_verify.err; then
+if "${RELEASE_PYTHON}" scripts/verify_design_mirror_bundle.py \
+  >"${DESIGN_MIRROR_STDOUT}" 2>"${DESIGN_MIRROR_STDERR}"; then
   echo "ok: bounded design mirror bundle parity"
 else
-  cat /tmp/ea_design_mirror_verify.out
-  cat /tmp/ea_design_mirror_verify.err >&2
+  cat "${DESIGN_MIRROR_STDOUT}"
+  cat "${DESIGN_MIRROR_STDERR}" >&2
   echo "missing: bounded design mirror bundle parity" >&2
   missing=1
 fi
 
-if python3 scripts/verify_full_design_mirror_parity.py >/tmp/ea_design_mirror_full_verify.out 2>/tmp/ea_design_mirror_full_verify.err; then
+if "${RELEASE_PYTHON}" scripts/verify_full_design_mirror_parity.py \
+  >"${FULL_MIRROR_STDOUT}" 2>"${FULL_MIRROR_STDERR}"; then
   echo "ok: full design mirror parity"
 else
-  cat /tmp/ea_design_mirror_full_verify.out
-  cat /tmp/ea_design_mirror_full_verify.err >&2
+  cat "${FULL_MIRROR_STDOUT}"
+  cat "${FULL_MIRROR_STDERR}" >&2
   echo "missing: full design mirror parity" >&2
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 import subprocess
 from pathlib import Path
@@ -286,9 +493,10 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from scripts.verify_generated_release_artifacts_clean import _normalize
@@ -313,13 +521,19 @@ paths = (
     ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
     ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json",
 )
+drift = []
 for path in paths:
-    assert _normalize(_head_json(path)) == _normalize(_worktree_json(path)), path
+    if _normalize(_head_json(path)) != _normalize(_worktree_json(path)):
+        drift.append(path)
+if drift:
+    for path in drift:
+        print(f"{path}: semantic drift from HEAD", file=sys.stderr)
+    raise SystemExit(1)
 PY
 then
-  echo "ok: generated release artifacts stay semantically aligned after materialization"
+  echo "ok: generated release artifacts stay semantically aligned with HEAD"
 else
-  echo "missing: generated release artifacts drift semantically after materialization" >&2
+  echo "missing: generated release artifacts drift semantically from HEAD" >&2
   git diff -- \
     .codex-design/product/WEEKLY_PRODUCT_PULSE.generated.json \
     .codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json \
@@ -370,7 +584,9 @@ else
   missing=1
 fi
 
-if grep -Fq "make release-preflight" "README.md"; then
+if grep -Fq \
+  "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight" \
+  "README.md"; then
   echo "ok: README release-preflight reference"
 else
   echo "missing: README release-preflight reference" >&2
@@ -445,7 +661,7 @@ if grep -Fq "/v1/policy/evaluate" "README.md" && \
    grep -Fq "connector_call|execute|manager" "scripts/smoke_api.sh" && \
    grep -Fq "test_policy_requires_approval_for_connector_dispatch_step_even_without_explicit_send_action" "tests/test_policy.py" && \
    grep -Fq "/v1/policy/evaluate" "scripts/smoke_api.sh"; then
-  if python3 - <<'PY'
+  if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -464,7 +680,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -494,7 +710,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -517,7 +733,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -549,7 +765,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -572,7 +788,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -601,7 +817,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -662,7 +878,10 @@ else
   missing=1
 fi
 
-if grep -Fq 'Recommended sequencing: run `make release-docs` before `make release-preflight`.' "README.md"; then
+if grep -Fq \
+  "Recommended sequencing: run \`make release-docs\` before dispatching the" \
+  "README.md" && \
+   grep -Fq "authenticated \`release-preflight\` target." "README.md"; then
   echo "ok: README release-docs sequencing note"
 else
   echo "missing: README release-docs sequencing note" >&2
@@ -832,10 +1051,56 @@ else
   missing=1
 fi
 
-if grep -Fq "make release-preflight" "RUNBOOK.md"; then
-  echo "ok: RUNBOOK release-preflight reference"
+if grep -Fq \
+  "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight" \
+  "RUNBOOK.md"; then
+  echo "ok: RUNBOOK authenticated release-preflight reference"
 else
-  echo "missing: RUNBOOK release-preflight reference" >&2
+  echo "missing: RUNBOOK authenticated release-preflight reference" >&2
+  missing=1
+fi
+
+if grep -Fq "bash scripts/property_release_gates.sh" \
+     "README.md" \
+     "RUNBOOK.md" \
+     "docs/PROPERTYQUARRY_SLO_RELEASE_EVIDENCE.md"; then
+  echo "stale: release guidance bypasses the privileged PropertyQuarry gate shebang" >&2
+  missing=1
+else
+  echo "ok: release guidance preserves the privileged PropertyQuarry gate shebang"
+fi
+
+if grep -Fq "bash scripts/verify_release_assets.sh" \
+     "RUNBOOK.md" \
+     "docs/PROPERTYQUARRY_RELEASE_MANIFEST.md"; then
+  echo "stale: release guidance bypasses the privileged asset-verifier shebang" >&2
+  missing=1
+else
+  echo "ok: release guidance preserves the privileged asset-verifier shebang"
+fi
+
+if grep -Fq "run: bash scripts/propertyquarry_live_release_gates.sh" \
+     ".github/workflows/smoke-runtime.yml"; then
+  echo "stale: live release workflow bypasses the privileged gate shebang" >&2
+  missing=1
+elif grep -Fq "run: ./scripts/propertyquarry_live_release_gates.sh" \
+       ".github/workflows/smoke-runtime.yml"; then
+  echo "ok: live release workflow preserves the privileged gate shebang"
+else
+  echo "missing: live release workflow direct privileged gate invocation" >&2
+  missing=1
+fi
+
+if grep -Fq "run: bash scripts/property_release_gates.sh" \
+     ".github/workflows/smoke-runtime.yml"; then
+  echo "stale: release workflow bypasses the authenticated PropertyQuarry dispatcher" >&2
+  missing=1
+elif grep -Fq \
+       "run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates" \
+       ".github/workflows/smoke-runtime.yml"; then
+  echo "ok: release workflow uses the authenticated PropertyQuarry dispatcher"
+else
+  echo "missing: release workflow authenticated PropertyQuarry dispatcher" >&2
   missing=1
 fi
 
@@ -924,11 +1189,18 @@ else
   missing=1
 fi
 
-if grep -Fq "make release-preflight" "RELEASE_CHECKLIST.md"; then
-  echo "ok: RELEASE_CHECKLIST release-preflight line"
+if grep -Fq "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight" "RELEASE_CHECKLIST.md"; then
+  echo "ok: RELEASE_CHECKLIST authenticated release-preflight line"
 else
-  echo "missing: RELEASE_CHECKLIST release-preflight line" >&2
+  echo "missing: RELEASE_CHECKLIST authenticated release-preflight line" >&2
   missing=1
+fi
+
+if grep -Fq 'make release-preflight' "RELEASE_CHECKLIST.md"; then
+  echo "stale: RELEASE_CHECKLIST direct release-preflight Make invocation" >&2
+  missing=1
+else
+  echo "ok: RELEASE_CHECKLIST excludes direct release-preflight Make invocation"
 fi
 
 if grep -Fq "make ci-gates" "RELEASE_CHECKLIST.md"; then
@@ -984,6 +1256,15 @@ if grep -Fq "EA_FLAGSHIP_RELEASE_GATE.generated.json" "PRODUCT_RELEASE_CHECKLIST
   echo "ok: PRODUCT_RELEASE_CHECKLIST EA flagship receipt line"
 else
   echo "missing: PRODUCT_RELEASE_CHECKLIST EA flagship receipt line" >&2
+  missing=1
+fi
+
+if grep -Fq \
+  "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates" \
+  "PRODUCT_RELEASE_CHECKLIST.md"; then
+  echo "ok: PRODUCT_RELEASE_CHECKLIST authenticated PropertyQuarry release gate"
+else
+  echo "missing: PRODUCT_RELEASE_CHECKLIST authenticated PropertyQuarry release gate" >&2
   missing=1
 fi
 
@@ -1107,7 +1388,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1151,7 +1432,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1181,8 +1462,9 @@ else
   missing=1
 fi
 
-if grep -Fq "make ci-gates" ".github/workflows/smoke-runtime.yml"; then
-  echo "ok: smoke-runtime workflow uses ci-gates"
+if grep -Fq "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated" ".github/workflows/smoke-runtime.yml" && \
+   grep -Fq "ci-gates-authenticated:" "Makefile"; then
+  echo "ok: smoke-runtime workflow uses authenticated ci-gates"
 else
   echo "missing: smoke-runtime workflow ci-gates usage" >&2
   missing=1
@@ -1224,7 +1506,7 @@ if grep -Fq "make smoke-postgres-legacy" "scripts/operator_summary.sh" && \
    grep -Fq "make ci-gates-postgres-legacy" "scripts/operator_summary.sh" && \
    grep -Fq "make provider-readiness" "scripts/operator_summary.sh" && \
    grep -Fq "make verify-flagship-release-readiness" "scripts/operator_summary.sh" && \
-   grep -Fq "make release-preflight" "scripts/operator_summary.sh" && \
+   grep -Fq "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight" "scripts/operator_summary.sh" && \
    grep -Fq "make support-bundle" "scripts/operator_summary.sh" && \
    grep -Fq "make tasks-archive" "scripts/operator_summary.sh" && \
    grep -Fq "make tasks-archive-dry-run" "scripts/operator_summary.sh" && \
@@ -1377,7 +1659,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1418,7 +1700,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1433,7 +1715,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1462,7 +1744,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1496,7 +1778,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1523,7 +1805,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1547,7 +1829,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1582,7 +1864,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1609,7 +1891,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1636,7 +1918,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1664,7 +1946,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1699,7 +1981,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1724,7 +2006,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1752,7 +2034,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1782,7 +2064,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1807,7 +2089,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1838,7 +2120,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1862,7 +2144,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1889,7 +2171,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1914,7 +2196,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1938,7 +2220,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1963,7 +2245,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -1990,7 +2272,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2013,7 +2295,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2053,7 +2335,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2077,7 +2359,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2107,7 +2389,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2136,7 +2418,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2162,7 +2444,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2188,7 +2470,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2221,7 +2503,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2254,7 +2536,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2286,7 +2568,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2317,7 +2599,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2347,7 +2629,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2378,7 +2660,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2462,7 +2744,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2497,7 +2779,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2529,7 +2811,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2563,7 +2845,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2592,7 +2874,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2622,7 +2904,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2654,7 +2936,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2690,7 +2972,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2716,7 +2998,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2742,7 +3024,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2771,7 +3053,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2806,7 +3088,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2837,7 +3119,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2865,7 +3147,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2894,7 +3176,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2921,7 +3203,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2951,7 +3233,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -2980,7 +3262,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3010,7 +3292,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3038,7 +3320,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3069,7 +3351,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3094,7 +3376,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3120,7 +3402,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3148,7 +3430,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3178,7 +3460,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3203,7 +3485,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3235,7 +3517,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3264,7 +3546,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3291,7 +3573,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3318,7 +3600,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3345,7 +3627,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3373,7 +3655,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3402,7 +3684,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3434,7 +3716,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3466,7 +3748,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3495,7 +3777,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3523,7 +3805,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3556,7 +3838,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3591,7 +3873,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3621,7 +3903,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3654,7 +3936,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3682,7 +3964,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3711,7 +3993,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3740,7 +4022,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3769,7 +4051,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3794,7 +4076,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3819,7 +4101,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3846,7 +4128,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3879,7 +4161,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3910,7 +4192,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3937,7 +4219,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3965,7 +4247,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -3997,7 +4279,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4025,7 +4307,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4054,7 +4336,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4083,7 +4365,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4116,7 +4398,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4149,7 +4431,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4179,7 +4461,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4206,7 +4488,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4232,7 +4514,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4260,7 +4542,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4290,7 +4572,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4318,7 +4600,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4350,7 +4632,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4377,7 +4659,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4409,7 +4691,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4439,7 +4721,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4470,7 +4752,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4500,7 +4782,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4533,7 +4815,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4562,7 +4844,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4592,7 +4874,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4623,7 +4905,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4650,7 +4932,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4681,7 +4963,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4710,7 +4992,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 
@@ -4744,7 +5026,7 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
 import json
 from pathlib import Path
 

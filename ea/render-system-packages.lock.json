@@ -1,0 +1,39 @@
+{
+  "schema": "propertyquarry.render_system_packages.v1",
+  "architecture": "x86_64",
+  "base_image": {
+    "name": "docker.io/library/python:3.12-alpine",
+    "manifest_digest": "sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df",
+    "os": "alpine",
+    "suite": "3.24",
+    "version": "3.24.1"
+  },
+  "acquisition": {
+    "date_utc": "2026-07-26",
+    "repository_uris": [
+      "https://dl-cdn.alpinelinux.org/alpine/v3.24/main",
+      "https://dl-cdn.alpinelinux.org/alpine/v3.24/community"
+    ],
+    "repository_metadata_authentication": "/etc/apk/keys",
+    "requested_packages": {
+      "ffmpeg": "8.1.2-r0"
+    },
+    "inherited_base_packages": {
+      "apk-tools": "3.0.6-r0",
+      "busybox": "1.37.0-r31",
+      "ca-certificates-bundle": "20260611-r0",
+      "musl": "1.2.6-r2",
+      "python": "3.12.13"
+    },
+    "apk_policy": [
+      "fetch --recursive",
+      "add --no-network --no-cache"
+    ]
+  },
+  "artifacts": {
+    "count": 114,
+    "aggregate_bytes": 53557077,
+    "directory": "vendor/propertyquarry-render-apks/alpine-3.24-x86_64",
+    "sha256_lock": "ea/render-system-packages.sha256"
+  }
+}

@@ -90,6 +90,7 @@ def test_scheduler_heartbeat_file_is_healthchecked(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("EA_ROLE", "scheduler")
     monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_PROFILE", "property_only")
     monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_PATH", str(heartbeat_path))
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_WRITER_HEARTBEAT_DIR", str(tmp_path / "fleet"))
     monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_MAX_AGE_SECONDS", "60")
 
     runner._write_scheduler_heartbeat(role="scheduler", status="idle")
@@ -114,6 +115,7 @@ def test_worker_heartbeat_is_role_aware_and_fails_closed(
     heartbeat_path = tmp_path / "worker-heartbeat.json"
     monkeypatch.setenv("EA_ROLE", "worker")
     monkeypatch.setenv("EA_WORKER_HEARTBEAT_PATH", str(heartbeat_path))
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_WRITER_HEARTBEAT_DIR", str(tmp_path / "fleet"))
     monkeypatch.setenv("EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS", "60")
 
     runner._write_scheduler_heartbeat(role="worker", status="loop")
@@ -122,6 +124,7 @@ def test_worker_heartbeat_is_role_aware_and_fails_closed(
     assert payload["role"] == "worker"
     assert payload["status"] == "loop"
     assert payload["profile"] == ""
+    assert payload["property_search_work_queue"] == {"observed": False}
     assert int(payload["pid"]) > 0
     assert scheduler_healthcheck.main() == 0
 
@@ -138,18 +141,99 @@ def test_worker_heartbeat_is_role_aware_and_fails_closed(
     assert scheduler_healthcheck.main() == 1
 
 
+def test_worker_loop_heartbeat_carries_live_property_search_queue_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from app.product import property_search_work_queue as queue_module
+
+    heartbeat_path = tmp_path / "worker-heartbeat.json"
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused-in-unit-test")
+    monkeypatch.setenv("EA_WORKER_HEARTBEAT_PATH", str(heartbeat_path))
+    monkeypatch.setenv(
+        "EA_PROPERTY_SEARCH_WRITER_HEARTBEAT_DIR",
+        str(tmp_path / "fleet"),
+    )
+
+    class _Repository:
+        def __init__(self, _database_url: str) -> None:
+            pass
+
+        def observability_snapshot(self):  # type: ignore[no-untyped-def]
+            return queue_module.PropertySearchWorkQueueSnapshot(
+                depth=4,
+                oldest_item_age_seconds=17.25,
+            )
+
+        def claim(self, **_kwargs):  # type: ignore[no-untyped-def]
+            return None
+
+    monkeypatch.setattr(
+        queue_module,
+        "PostgresPropertySearchWorkQueue",
+        _Repository,
+    )
+
+    result = runner._run_property_search_work_once(
+        SimpleNamespace(),
+        role="worker",
+        log=logging.getLogger("test.property-search-worker-queue-snapshot"),
+    )
+
+    payload = json.loads(heartbeat_path.read_text(encoding="utf-8"))
+    assert result == {"claimed": False}
+    assert payload["property_search_work_queue"] == {
+        "observed": True,
+        "depth": 4,
+        "oldest_item_age_seconds": 17.25,
+    }
+
+
 def test_execution_worker_refreshes_heartbeat_before_role_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = _load_runner_module(monkeypatch)
 
     source = inspect.getsource(runner._run_execution_worker)
-    loop = source.index('while not stop["flag"]:')
+    readiness = source.index("_require_property_search_writer_readiness")
+    started = source.index('_write_scheduler_heartbeat(role=role, status="started")')
+    loop = source.index("while not stop_event.is_set():")
     heartbeat = source.index('_write_scheduler_heartbeat(role=role, status="loop")', loop)
     scheduler_branch = source.index('if role == "scheduler":', loop)
     queue_execution = source.index("container.orchestrator.run_next_queue_item", loop)
 
-    assert loop < heartbeat < scheduler_branch < queue_execution
+    assert readiness < started < loop < heartbeat < scheduler_branch < queue_execution
+
+
+def test_execution_writer_readiness_fails_before_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    failed = SimpleNamespace(
+        readiness=SimpleNamespace(
+            _probe_database=lambda: (
+                False,
+                "property_search_erasure_key_not_ready:key_id_mismatch",
+            )
+        )
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "property_search_writer_not_ready:"
+            "property_search_erasure_key_not_ready:key_id_mismatch"
+        ),
+    ):
+        runner._require_property_search_writer_readiness(
+            failed, role="scheduler"
+        )
+
+    ready = SimpleNamespace(
+        readiness=SimpleNamespace(_probe_database=lambda: (True, "ready"))
+    )
+    runner._require_property_search_writer_readiness(ready, role="worker")
 
 
 def test_scheduler_step_watchdog_keeps_heartbeat_and_avoids_duplicate_launches(
@@ -164,6 +248,7 @@ def test_scheduler_step_watchdog_keeps_heartbeat_and_avoids_duplicate_launches(
     monkeypatch.setenv("EA_ROLE", "scheduler")
     monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_PROFILE", "property_only")
     monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_PATH", str(heartbeat_path))
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_WRITER_HEARTBEAT_DIR", str(tmp_path / "fleet"))
 
     def slow_step() -> dict[str, object]:
         calls["count"] += 1
@@ -208,6 +293,97 @@ def test_scheduler_step_watchdog_keeps_heartbeat_and_avoids_duplicate_launches(
     )
     assert completed == {"ran": True, "attempted": 1, "errors": 0}
     assert calls["count"] == 1
+    runner._SCHEDULER_STEP_THREADS.clear()
+
+
+def test_scheduler_step_watchdog_yields_promptly_for_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    heartbeat_path = tmp_path / "scheduler-heartbeat.json"
+    release = threading.Event()
+    stop_event = threading.Event()
+    runner._SCHEDULER_STEP_THREADS.clear()
+    monkeypatch.setenv("EA_ROLE", "scheduler")
+    monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_PROFILE", "property_only")
+    monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_PATH", str(heartbeat_path))
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_WRITER_HEARTBEAT_DIR", str(tmp_path / "fleet"))
+
+    def slow_step() -> dict[str, object]:
+        release.wait(timeout=2.0)
+        return {"ran": True, "errors": 0}
+
+    timer = threading.Timer(0.05, stop_event.set)
+    timer.start()
+    started = time.monotonic()
+    result = runner._run_scheduler_step_with_heartbeat(
+        role="scheduler",
+        step_name="property_results_finalize",
+        timeout_seconds=5.0,
+        heartbeat_interval_seconds=1.0,
+        timeout_result={"ran": True, "errors": 1},
+        log=logging.getLogger("test.runner"),
+        fn=slow_step,
+        stop_event=stop_event,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result["shutdown"] is True
+    assert result["timeout"] is False
+    assert result["running"] is True
+    assert elapsed < 0.75
+
+    release.set()
+    timer.join(timeout=1.0)
+    runner._SCHEDULER_STEP_THREADS["property_results_finalize"]["thread"].join(timeout=1.0)
+    runner._SCHEDULER_STEP_THREADS.clear()
+
+
+def test_scheduler_step_watchdog_enforces_global_single_flight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    release = threading.Event()
+    calls: list[str] = []
+    runner._SCHEDULER_STEP_THREADS.clear()
+    monkeypatch.setenv("EA_SCHEDULER_STEP_CONCURRENCY_LIMIT", "1")
+    monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_PATH", str(tmp_path / "scheduler-heartbeat.json"))
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_WRITER_HEARTBEAT_DIR", str(tmp_path / "fleet"))
+
+    def slow_step() -> dict[str, object]:
+        calls.append("slow")
+        release.wait(timeout=2.0)
+        return {"ran": True, "errors": 0}
+
+    first = runner._run_scheduler_step_with_heartbeat(
+        role="scheduler",
+        step_name="property_search_recovery",
+        timeout_seconds=0.05,
+        heartbeat_interval_seconds=0.01,
+        timeout_result={"ran": True, "errors": 1},
+        log=logging.getLogger("test.runner"),
+        fn=slow_step,
+    )
+    second = runner._run_scheduler_step_with_heartbeat(
+        role="scheduler",
+        step_name="property_results_finalize",
+        timeout_seconds=0.05,
+        heartbeat_interval_seconds=0.01,
+        timeout_result={"ran": True, "errors": 1},
+        log=logging.getLogger("test.runner"),
+        fn=lambda: calls.append("second") or {"ran": True, "errors": 0},
+    )
+
+    assert first["timeout"] is True
+    assert second["deferred"] is True
+    assert second["concurrency_limit"] == 1
+    assert second["active_steps"] == ("property_search_recovery",)
+    assert calls == ["slow"]
+
+    release.set()
+    runner._SCHEDULER_STEP_THREADS["property_search_recovery"]["thread"].join(timeout=1.0)
     runner._SCHEDULER_STEP_THREADS.clear()
 
 

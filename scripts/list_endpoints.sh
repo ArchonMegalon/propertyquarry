@@ -21,7 +21,7 @@ fi
 HOST_PORT="${HOST_PORT:-8090}"
 BASE="http://localhost:${HOST_PORT}"
 
-curl -fsS "${BASE}/openapi.json" | python3 - <<'PY'
+curl -fsS "${BASE}/openapi.json" | python3 -c '
 import json
 import sys
 
@@ -35,4 +35,4 @@ for path, ops in (doc.get("paths") or {}).items():
 
 for method, path in sorted(rows, key=lambda r: (r[1], r[0])):
     print(f"{method:7} {path}")
-PY
+'

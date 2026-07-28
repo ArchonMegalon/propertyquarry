@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -127,9 +128,17 @@ def test_docs_explain_pgdata_volume_usage() -> None:
 def test_operator_summary_lists_ltd_release_gates() -> None:
     operator_summary = (ROOT / "scripts/operator_summary.sh").read_text(encoding="utf-8")
 
-    assert "ltd gates:         make ltd-release-gates" in operator_summary
-    assert "ltd critical:      make verify-ltd-critical-entries" in operator_summary
-    assert "ltd flagship:      make verify-ltd-flagship-subset" in operator_summary
+    assert "propertyquarry_release_make_dispatch.py ltd-release-gates" in operator_summary
+    assert (
+        "propertyquarry_release_make_dispatch.py "
+        "verify-ltd-critical-entries-authenticated"
+        in operator_summary
+    )
+    assert (
+        "propertyquarry_release_make_dispatch.py "
+        "verify-ltd-flagship-subset-authenticated"
+        in operator_summary
+    )
 
 
 def test_local_env_rotation_slots_and_gitignore_cover_browseract_and_onemin_keys() -> None:
@@ -221,7 +230,13 @@ def test_makefile_selects_a_pytest_capable_python_for_local_tests() -> None:
     assert "PYTEST_PYTHON_BIN ?= $(shell if" in makefile
     assert ".venv/bin/python -c 'import pytest'" in makefile
     assert "python3 -c 'import pytest'" in makefile
+    assert (
+        "scripts/propertyquarry_release_python.sh -c 'import pytest'"
+        in makefile
+    )
     assert "PYTHONPATH=ea EA_STORAGE_BACKEND=memory $(PYTEST_PYTHON_BIN) -m pytest -q tests" in makefile
+    assert "override PYTHONDONTWRITEBYTECODE := 1" in makefile
+    assert "export PYTHONDONTWRITEBYTECODE" in makefile
     planned = subprocess.run(
         ["make", "--no-print-directory", "-n", "test-all"],
         cwd=ROOT,
@@ -239,8 +254,16 @@ def test_makefile_selects_a_pytest_capable_python_for_local_tests() -> None:
         capture_output=True,
         text=True,
     )
-    assert "$(PYTHON_BIN) -m compileall -q ea/app" in makefile
-    assert "$(PYTHON_BIN) -m compileall -q tests" in makefile
+    assert (
+        "$(PYTHON_BIN) scripts/propertyquarry_compileall_clean.py"
+        in makefile
+    )
+    assert (
+        "./scripts/propertyquarry_release_python.sh "
+        "scripts/propertyquarry_compileall_clean.py"
+        in makefile
+    )
+    assert " -m compileall " not in makefile
 
 
 def test_core_ci_gate_is_bounded_and_reports_slow_tests_without_reducing_coverage() -> None:
@@ -252,15 +275,109 @@ def test_core_ci_gate_is_bounded_and_reports_slow_tests_without_reducing_coverag
     job = workflow["jobs"]["smoke-runtime-api"]
     assert job["timeout-minutes"] == 120
     assert [
-        step for step in job["steps"] if step.get("name") == "Run core CI gates"
-    ] == [{"name": "Run core CI gates", "run": "make ci-gates"}]
+        step
+        for step in job["steps"]
+        if step.get("name")
+        == "Reproduce canonical release receipts in disposable checkout"
+    ] == [
+        {
+            "name": "Reproduce canonical release receipts in disposable checkout",
+            "working-directory": "/docker/property",
+            "run": (
+                "./scripts/propertyquarry_release_python.sh "
+                "scripts/propertyquarry_release_make_dispatch.py "
+                "materialize-release-assets-authenticated"
+            ),
+        }
+    ]
+    assert [
+        step
+        for step in job["steps"]
+        if step.get("name") == "Verify reproduced release receipts match HEAD"
+    ] == [
+        {
+            "name": "Verify reproduced release receipts match HEAD",
+            "working-directory": "/docker/property",
+            "run": (
+                "./scripts/propertyquarry_release_python.sh "
+                "scripts/propertyquarry_release_make_dispatch.py "
+                "verify-generated-release-artifacts-clean-authenticated"
+            ),
+        }
+    ]
+    assert [
+        step
+        for step in job["steps"]
+        if step.get("name") == "Run read-only authenticated core CI gates"
+    ] == [
+        {
+            "name": "Run read-only authenticated core CI gates",
+            "working-directory": "/docker/property",
+            "run": (
+                "./scripts/propertyquarry_release_python.sh "
+                "scripts/propertyquarry_release_make_dispatch.py "
+                "ci-gates-authenticated"
+            ),
+        }
+    ]
+    step_names = [step.get("name") for step in job["steps"]]
+    assert step_names.index(
+        "Install Chromium in canonical release cache"
+    ) < step_names.index(
+        "Reproduce canonical release receipts in disposable checkout"
+    ) < step_names.index(
+        "Verify reproduced release receipts match HEAD"
+    ) < step_names.index(
+        "Run read-only authenticated core CI gates"
+    )
 
+    isolated_test_prefix = [
+        "\t@set -eu; \\",
+        (
+            '\tpropertyquarry_ci_temp="$$(/usr/bin/mktemp -d '
+            '/tmp/propertyquarry-ci-test.XXXXXXXX)"; \\'
+        ),
+        "\tcleanup_propertyquarry_ci_temp() { \\",
+        '\t  case "$$propertyquarry_ci_temp" in \\',
+        (
+            "\t    /tmp/propertyquarry-ci-test.*) /bin/rm -rf -- "
+            '"$$propertyquarry_ci_temp" ;; \\'
+        ),
+        (
+            '\t    *) echo "refusing unsafe CI temp cleanup: '
+            '$$propertyquarry_ci_temp" >&2; return 70 ;; \\'
+        ),
+        "\t  esac; \\",
+        "\t}; \\",
+        "\ttrap cleanup_propertyquarry_ci_temp EXIT; \\",
+    ]
     test_api_body = makefile.split("test-api:\n", 1)[1].split("\n\n", 1)[0]
-    assert (
-        "PYTHONPATH=ea EA_STORAGE_BACKEND=memory $(PYTEST_PYTHON_BIN) -m pytest -q "
-        "tests --durations=25 --durations-min=1.0 "
-        "$(TEST_API_PYTEST_IGNORE) $(TEST_API_PYTEST_DESELECT)"
-    ) in test_api_body
+    assert test_api_body.splitlines() == [
+        *isolated_test_prefix,
+        (
+            '\tPROPERTYQUARRY_GATE_RECEIPT_DIR="'
+            '$$propertyquarry_ci_temp/exit-gate" PYTHONPATH=ea '
+            "EA_STORAGE_BACKEND=memory $(PYTEST_PYTHON_BIN) -m pytest "
+            "-q tests -p no:cacheprovider --durations=25 "
+            "--durations-min=1.0 $(TEST_API_PYTEST_IGNORE) "
+            "$(TEST_API_PYTEST_DESELECT)"
+        ),
+    ]
+    authenticated_test_api_body = makefile.split(
+        "test-api-authenticated:\n", 1
+    )[1].split("\n\n", 1)[0]
+    assert authenticated_test_api_body.splitlines() == [
+        *isolated_test_prefix,
+        (
+            '\tPROPERTYQUARRY_GATE_RECEIPT_DIR="'
+            '$$propertyquarry_ci_temp/exit-gate" '
+            "/usr/bin/env -u PROPERTYQUARRY_RELEASE_DISPATCH "
+            "EA_STORAGE_BACKEND=memory "
+            "./scripts/propertyquarry_release_python.sh -m pytest -q tests "
+            "-p no:cacheprovider --durations=25 --durations-min=1.0 "
+            "$(TEST_API_PYTEST_IGNORE) $(TEST_API_PYTEST_DESELECT)"
+        )
+    ]
 
     ci_gates_body = makefile.split("ci-gates:\n", 1)[1].split("\n\n", 1)[0]
     assert [
@@ -272,6 +389,22 @@ def test_core_ci_gate_is_bounded_and_reports_slow_tests_without_reducing_coverag
         "$(MAKE) verify-release-assets",
         "$(MAKE) verify-flagship-release-readiness",
         "$(MAKE) verify-generated-release-artifacts-clean",
+    ]
+
+    authenticated_body = makefile.split(
+        "ci-gates-authenticated:\n", 1
+    )[1].split("\n\n", 1)[0]
+    assert [
+        line.strip()
+        for line in authenticated_body.splitlines()
+        if line.startswith("\t$(MAKE) ")
+    ] == [
+        "$(MAKE) smoke-help-authenticated",
+        "$(MAKE) ci-local-authenticated",
+        "$(MAKE) test-api-authenticated",
+        "$(MAKE) verify-release-assets-authenticated",
+        "$(MAKE) verify-flagship-release-readiness-authenticated",
+        "$(MAKE) verify-generated-release-artifacts-clean-authenticated",
     ]
 
 
@@ -738,8 +871,11 @@ def test_db_operator_scripts_support_propertyquarry_service_aliases() -> None:
     db_size = (ROOT / "scripts/db_size.sh").read_text(encoding="utf-8")
 
     assert "PROPERTYQUARRY_API_SERVICE=propertyquarry-api" in env_example
-    assert "PROPERTYQUARRY_WORKER_SERVICE=" in env_example
-    assert "No standalone worker is started by docker-compose.property.yml." in env_example
+    assert (
+        "PROPERTYQUARRY_WORKER_SERVICE=propertyquarry-worker"
+        in env_example
+    )
+    assert "PROPERTYQUARRY_WORKER_PROFILE=property_only" in env_example
     assert "PROPERTYQUARRY_SCHEDULER_SERVICE=propertyquarry-scheduler" in env_example
     assert "PROPERTYQUARRY_DB_SERVICE=propertyquarry-db" in env_example
 
@@ -886,7 +1022,7 @@ def test_property_repair_fleet_canary_script_emits_receipt() -> None:
     env["EA_API_TOKEN"] = "inherited-release-gate-token"
     env.pop("DATABASE_URL", None)
     result = subprocess.run(
-        ["python3", "scripts/propertyquarry_repair_fleet_canary.py"],
+        [sys.executable, "scripts/propertyquarry_repair_fleet_canary.py"],
         cwd=ROOT,
         env=env,
         capture_output=True,

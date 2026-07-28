@@ -16,7 +16,7 @@ from scripts import ensure_propertyquarry_render_bridge_runtime as runtime
 from scripts import property_reconstruction_render_bridge as bridge
 
 
-def test_property_compose_wires_protected_restart_resilient_render_bridge() -> None:
+def test_property_compose_wires_protected_bounded_restart_render_bridge() -> None:
     compose = yaml.safe_load(Path("docker-compose.property.yml").read_text(encoding="utf-8"))
     services = compose["services"]
     api = services["propertyquarry-api"]
@@ -30,7 +30,9 @@ def test_property_compose_wires_protected_restart_resilient_render_bridge() -> N
         "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN:?"
         "Set PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN for the render bridge}"
     )
-    assert render["restart"] == "unless-stopped"
+    assert render["restart"] == (
+        "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-on-failure:3}"
+    )
     assert render["stop_grace_period"] == "${PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS:-1860}s"
     assert render["environment"]["PROPERTYQUARRY_RECONSTRUCTION_RENDER_REQUEST_TIMEOUT_SECONDS"] == (
         "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_REQUEST_TIMEOUT_SECONDS:-30}"

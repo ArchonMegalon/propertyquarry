@@ -70,6 +70,10 @@ def test_default_dry_run_is_command_free_atomic_and_non_authoritative(
     }
     assert receipt["candidate_observations"]["authoritative"] is False
     assert receipt["candidate_observations"]["compose_contract"]["status"] == "observed"
+    assert "propertyquarry-worker" in receipt["dedicated_boundary"]["steady_state_services"]
+    assert recovery.CONTAINER_ENV["PROPERTYQUARRY_WORKER_CONTAINER_NAME"] == (
+        "propertyquarry-worker"
+    )
     assert receipt["steps"] == [
         {
             "name": "external_controller.recovery-run",
@@ -114,6 +118,36 @@ def test_candidate_compose_observation_is_advisory(
     }
     assert receipt["steps"][0]["name"] == "external_controller.recovery-run"
     assert runner.calls == []
+
+
+def test_candidate_compose_worker_boundary_fails_closed_when_missing_or_generic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = recovery.PROPERTY_COMPOSE.read_text(encoding="utf-8")
+    worker_marker = "  propertyquarry-worker:\n"
+    scheduler_marker = "  propertyquarry-scheduler:\n"
+    prefix, worker_and_rest = original.split(worker_marker, 1)
+    _worker, suffix = worker_and_rest.split(scheduler_marker, 1)
+
+    missing = tmp_path / "missing-worker.yml"
+    missing.write_text(prefix + scheduler_marker + suffix, encoding="utf-8")
+    monkeypatch.setattr(recovery, "PROPERTY_COMPOSE", missing)
+    with pytest.raises(recovery.RecoveryValidationError, match="propertyquarry-worker"):
+        recovery.validate_static_compose_contract()
+
+    generic = tmp_path / "generic-worker.yml"
+    generic.write_text(
+        original.replace(
+            'PROPERTYQUARRY_WORKER_PROFILE: "property_only"',
+            'PROPERTYQUARRY_WORKER_PROFILE: "generic"',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(recovery, "PROPERTY_COMPOSE", generic)
+    with pytest.raises(recovery.RecoveryValidationError, match="worker Compose contract"):
+        recovery.validate_static_compose_contract()
 
 
 @pytest.mark.parametrize(

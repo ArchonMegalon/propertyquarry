@@ -14,6 +14,7 @@ import zipfile
 from pathlib import Path
 
 from app.product.projections import compact_text
+from app.telemetry import inject_traceparent, start_span
 
 try:
     from PIL import Image, ImageFilter, ImageStat
@@ -164,7 +165,17 @@ def _property_scout_image_looks_like_floorplan(payload: bytes) -> tuple[bool, di
         )
         if marker in normalized_ocr
     )
-    plan_like_geometry = edge_mean >= 10.0 and light_ratio >= 0.42 and 0.01 <= dark_ratio <= 0.42 and avg_saturation <= 62.0
+    # Tiny broker marks and wordmark logos can have the same high-contrast,
+    # low-saturation geometry as a plan.  Gallery floorplans are expected to
+    # retain enough spatial resolution for review; keep the OCR path below as
+    # the escape hatch for genuinely labelled small plan thumbnails.
+    plan_like_geometry = (
+        min(width, height) >= 240
+        and edge_mean >= 10.0
+        and light_ratio >= 0.42
+        and 0.01 <= dark_ratio <= 0.42
+        and avg_saturation <= 62.0
+    )
     light_scan_like_plan = (
         edge_mean >= 13.0
         and light_ratio >= 0.78
@@ -183,7 +194,7 @@ def _property_scout_image_looks_like_floorplan(payload: bytes) -> tuple[bool, di
         "avg_saturation": round(avg_saturation, 2),
         "room_word_hits": room_word_hits,
         "ocr_used": bool(ocr_text),
-        "classifier": "geometry_or_ocr_floorplan_v1",
+        "classifier": "geometry_or_ocr_floorplan_v2",
     }
 
 
@@ -705,24 +716,27 @@ def _property_scout_download_bytes(
     timeout_seconds: float = 12.0,
     max_bytes: int = _PROPERTY_SCOUT_FLOORPLAN_ARCHIVE_MAX_BYTES,
 ) -> tuple[bytes, str]:
-    request = urllib.request.Request(
-        str(url or "").strip(),
-        headers={
+    with start_span("provider_or_render_boundary") as telemetry_context:
+        headers = {
             "User-Agent": _PROPERTY_SCOUT_USER_AGENT,
             "Accept": "application/zip,application/octet-stream,*/*;q=0.8",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=float(timeout_seconds)) as response:
-        try:
-            content_length = int(str(response.headers.get("Content-Length") or "0").strip() or "0")
-        except Exception:
-            content_length = 0
-        if content_length and content_length > max_bytes:
-            raise ValueError("property_floorplan_archive_too_large")
-        payload = response.read(max_bytes + 1)
-        if len(payload) > max_bytes:
-            raise ValueError("property_floorplan_archive_too_large")
-        return payload, str(response.headers.get("Content-Type") or "").strip()
+        }
+        inject_traceparent(headers, telemetry_context)
+        request = urllib.request.Request(
+            str(url or "").strip(),
+            headers=headers,
+        )
+        with urllib.request.urlopen(request, timeout=float(timeout_seconds)) as response:
+            try:
+                content_length = int(str(response.headers.get("Content-Length") or "0").strip() or "0")
+            except Exception:
+                content_length = 0
+            if content_length and content_length > max_bytes:
+                raise ValueError("property_floorplan_archive_too_large")
+            payload = response.read(max_bytes + 1)
+            if len(payload) > max_bytes:
+                raise ValueError("property_floorplan_archive_too_large")
+            return payload, str(response.headers.get("Content-Type") or "").strip()
 
 def _property_scout_public_asset_slug(*, source_url: str, archive_url: str) -> str:
     digest = hashlib.sha256(f"{source_url}|{archive_url}".encode("utf-8")).hexdigest()[:16]

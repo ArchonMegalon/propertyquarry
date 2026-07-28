@@ -1,0 +1,81 @@
+FROM python:3.12-alpine@sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df AS assembly
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY ea/render-system-packages.lock.json /usr/share/propertyquarry/render-system-packages.lock.json
+COPY ea/render-system-packages.sha256 /usr/share/propertyquarry/render-system-packages.sha256
+COPY vendor/propertyquarry-render-apks/alpine-3.24-x86_64 /tmp/render-packages
+
+RUN set -eu; \
+    cd /tmp/render-packages; \
+    sha256sum -cs /usr/share/propertyquarry/render-system-packages.sha256; \
+    : > /etc/apk/repositories; \
+    apk --no-network --no-cache add /tmp/render-packages/*.apk >/tmp/apk-install.log; \
+    test "$(apk list --installed ffmpeg | cut -d' ' -f1)" = 'ffmpeg-8.1.2-r0'; \
+    command -v ffmpeg >/dev/null; \
+    command -v ffprobe >/dev/null; \
+    test -z "$(command -v blender || true)"; \
+    rm -rf /tmp/render-packages /tmp/apk-install.log /var/cache/apk/*
+
+COPY ea/requirements.render.lock /usr/share/propertyquarry/requirements.render.lock
+COPY vendor/propertyquarry-wheelhouse/cp312-musllinux-x86_64/pillow-12.3.0-cp312-cp312-musllinux_1_2_x86_64.whl /tmp/render-wheelhouse/
+
+RUN python -m pip install \
+      --no-cache-dir \
+      --no-index \
+      --find-links=/tmp/render-wheelhouse \
+      --require-hashes \
+      --requirement /usr/share/propertyquarry/requirements.render.lock && \
+    python -m pip uninstall --yes pip && \
+    rm -rf /tmp/render-wheelhouse /usr/local/lib/python3.12/ensurepip && \
+    python -c "import importlib.util; from PIL import Image; assert importlib.util.find_spec('pip') is None; assert importlib.util.find_spec('playwright') is None"
+
+RUN set -eu; \
+    addgroup -S -g 10001 ea; \
+    adduser -S -D -H -u 10001 -G ea -s /sbin/nologin ea; \
+    mkdir -p /app/scripts /app/vendor/three/0.167.1/examples/jsm/controls /data/artifacts /data/public_property_tours; \
+    chown -R 10001:10001 /app /data/artifacts /data/public_property_tours
+
+COPY --chown=10001:10001 scripts/property_reconstruction_render_bridge.py /app/scripts/property_reconstruction_render_bridge.py
+COPY --chown=10001:10001 scripts/generate_property_reconstruction.py /app/scripts/generate_property_reconstruction.py
+COPY --chown=10001:10001 scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_paths.py
+COPY --chown=10001:10001 scripts/propertyquarry_playwright_runtime.py /app/scripts/propertyquarry_playwright_runtime.py
+COPY --chown=10001:10001 ea/app/product/property_diorama_preview.py /app/app/product/property_diorama_preview.py
+COPY --chown=10001:10001 vendor/three/0.167.1/three.module.js /app/vendor/three/0.167.1/three.module.js
+COPY --chown=10001:10001 vendor/three/0.167.1/LICENSE /app/vendor/three/0.167.1/LICENSE
+COPY --chown=10001:10001 vendor/three/0.167.1/examples/jsm/controls/OrbitControls.js /app/vendor/three/0.167.1/examples/jsm/controls/OrbitControls.js
+
+RUN set -eu; \
+    rm -f /sbin/apk; \
+    rm -rf /etc/apk /var/cache/apk; \
+    python -m compileall -q /app/scripts /app/app; \
+    chown -R 10001:10001 /app
+
+FROM scratch AS runtime
+
+LABEL org.opencontainers.image.title="PropertyQuarry reconstruction render bridge" \
+      org.opencontainers.image.base.name="docker.io/library/python:3.12-alpine" \
+      org.opencontainers.image.base.digest="sha256:6d43704baacd1bfbe7c295d7f13079d5d8104ed33568873133f8fc69980419df"
+
+ENV HOME=/tmp/home \
+    XDG_CACHE_HOME=/tmp/cache \
+    XDG_CONFIG_HOME=/tmp/config \
+    TMPDIR=/tmp \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY --from=assembly / /
+
+WORKDIR /app
+USER 10001:10001
+EXPOSE 8091
+STOPSIGNAL SIGTERM
+
+HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=5 \
+  CMD ["/usr/local/bin/python", "-c", "import shutil, urllib.request; from PIL import Image; assert all(shutil.which(name) for name in ('ffmpeg', 'ffprobe')); assert shutil.which('blender') is None; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8091/health/ready', timeout=10).read(1)"]
+
+CMD ["/usr/local/bin/python", "/app/scripts/property_reconstruction_render_bridge.py"]

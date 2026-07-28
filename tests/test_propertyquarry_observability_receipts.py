@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -50,6 +51,75 @@ def _authenticated_authority(
     CANONICAL = install_test_canonical_monitoring_identity(
         monkeypatch,
         directory=tmp_path / "canonical-monitoring",
+    )
+
+    def fake_operations_verifier(**kwargs):  # type: ignore[no-untyped-def]
+        input_paths = {
+            "dashboard_render_receipt": kwargs["dashboard_render_receipt_path"],
+            "structured_log_query_receipt": kwargs[
+                "structured_log_query_receipt_path"
+            ],
+            "distributed_trace_query_receipt": kwargs[
+                "distributed_trace_query_receipt_path"
+            ],
+        }
+        shared_input_hashes = {
+            name: receipts.sha256_bytes(path.read_bytes())
+            for name, path in input_paths.items()
+        }
+        if (
+            kwargs["expected_input_hashes"] is not None
+            and shared_input_hashes != dict(kwargs["expected_input_hashes"])
+        ):
+            raise receipts.ReceiptValidationError(
+                "flagship operations shared launch input hash set differs"
+            )
+        return receipts.add_payload_sha256(
+            {
+                "schema_version": receipts.OPERATIONS_VERIFICATION_SCHEMA,
+                "producer": receipts.OPERATIONS_VERIFICATION_PRODUCER,
+                "verified_at": receipts.isoformat(kwargs["now"]),
+                "release": {
+                    "commit_sha": kwargs["release_commit_sha"],
+                    "image_digest": kwargs["release_image_digest"],
+                },
+                "deployment_id": AUTHORITY.challenge.deployment_id,
+                "challenge_sha256": AUTHORITY.challenge.artifact_sha256,
+                "policy_sha256": AUTHORITY.challenge.policy_hashes[
+                    "flagship_operations_sha256"
+                ],
+                "source_contract_status": "defined_not_live_evidence",
+                "shared_input_hashes": shared_input_hashes,
+                "replica_ids": list(REPLICA_IDS),
+                "status": "verified",
+                "receipts": {
+                    "dashboard_render": {
+                        "file_sha256": shared_input_hashes[
+                            "dashboard_render_receipt"
+                        ],
+                        "payload_sha256": "1" * 64,
+                    },
+                    "structured_log_query": {
+                        "file_sha256": shared_input_hashes[
+                            "structured_log_query_receipt"
+                        ],
+                        "payload_sha256": "2" * 64,
+                    },
+                    "distributed_trace_query": {
+                        "file_sha256": shared_input_hashes[
+                            "distributed_trace_query_receipt"
+                        ],
+                        "payload_sha256": "3" * 64,
+                    },
+                },
+                "cross_receipt_links_verified": True,
+            }
+        )
+
+    monkeypatch.setattr(
+        receipts,
+        "verify_operations_evidence",
+        fake_operations_verifier,
     )
 
 
@@ -276,18 +346,50 @@ def _bundle(tmp_path: Path) -> dict[str, Path]:
         monitoring_path,
         _monitoring(alert_raw, snapshot_sha256=snapshot_sha256),
     )
+    dashboard_path = tmp_path / "dashboard.json"
+    _write(dashboard_path, {"kind": "dashboard"})
+    logs_path = tmp_path / "structured-logs.json"
+    _write(logs_path, {"kind": "structured-logs"})
+    trace_path = tmp_path / "distributed-trace.json"
+    _write(trace_path, {"kind": "distributed-trace"})
     return {
         "snapshot": snapshot_path,
         "alert": alert_path,
         "response": response_path,
         "range": range_path,
         "monitoring": monitoring_path,
+        "dashboard": dashboard_path,
+        "logs": logs_path,
+        "trace": trace_path,
     }
+
+
+def _verify(paths: dict[str, Path], **kwargs):  # type: ignore[no-untyped-def]
+    return receipts.verify_receipt_bundle(
+        dashboard_render_receipt_path=paths["dashboard"],
+        structured_log_query_receipt_path=paths["logs"],
+        distributed_trace_query_receipt_path=paths["trace"],
+        **kwargs,
+    )
 
 
 def test_verifier_recomputes_and_cross_links_all_raw_receipts(tmp_path: Path) -> None:
     paths = _bundle(tmp_path)
-    result = receipts.verify_receipt_bundle(
+    expected_input_hashes = {
+        name: receipts.sha256_bytes(paths[path_name].read_bytes())
+        for name, path_name in {
+            "metrics_snapshot": "snapshot",
+            "monitoring_receipt": "monitoring",
+            "prometheus_range_receipt": "range",
+            "prometheus_range_response": "response",
+            "alert_delivery_receipt": "alert",
+            "dashboard_render_receipt": "dashboard",
+            "structured_log_query_receipt": "logs",
+            "distributed_trace_query_receipt": "trace",
+        }.items()
+    }
+    result = _verify(
+        paths,
         release_commit_sha=RELEASE_SHA,
         release_image_digest=IMAGE_DIGEST,
         monitoring_receipt_path=paths["monitoring"],
@@ -296,12 +398,72 @@ def test_verifier_recomputes_and_cross_links_all_raw_receipts(tmp_path: Path) ->
         prometheus_range_response_path=paths["response"],
         alert_delivery_receipt_path=paths["alert"],
         now=NOW + timedelta(minutes=1),
+        expected_input_hashes=expected_input_hashes,
     )
 
     assert result["status"] == "verified"
     assert result["replica_ids"] == REPLICA_IDS
     assert result["cross_receipt_links_verified"] is True
+    assert result["shared_input_hashes"] == expected_input_hashes
+    assert (
+        result["operations_evidence"]["producer"]
+        == receipts.OPERATIONS_VERIFICATION_PRODUCER
+    )
+    assert (
+        result["operations_evidence"]["source_contract_status"]
+        == "defined_not_live_evidence"
+    )
+    assert result["operations_evidence"]["replica_ids"] == result["replica_ids"]
+    assert (
+        result["operations_evidence"]["shared_input_hashes"]
+        == {
+            name: expected_input_hashes[name]
+            for name in receipts.OPERATIONS_SHARED_INPUT_NAMES
+        }
+    )
     assert result["payload_sha256"] == receipts.compute_payload_sha256(result)
+
+
+@pytest.mark.parametrize(
+    ("operations_replica_ids", "error"),
+    (
+        (["api-a", "api-c"], "replica sets differ"),
+        (["api-b", "api-a"], "sorted unique valid list"),
+        (["api-a", "api-a"], "sorted unique valid list"),
+    ),
+)
+def test_verifier_rejects_operations_replica_binding_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operations_replica_ids: list[str],
+    error: str,
+) -> None:
+    paths = _bundle(tmp_path)
+    verifier = receipts.verify_operations_evidence
+
+    def mismatched_operations_verifier(**kwargs):  # type: ignore[no-untyped-def]
+        result = copy.deepcopy(verifier(**kwargs))
+        result["replica_ids"] = operations_replica_ids
+        result.pop("payload_sha256", None)
+        return receipts.add_payload_sha256(result)
+
+    monkeypatch.setattr(
+        receipts,
+        "verify_operations_evidence",
+        mismatched_operations_verifier,
+    )
+    with pytest.raises(receipts.ReceiptValidationError, match=error):
+        _verify(
+            paths,
+            release_commit_sha=RELEASE_SHA,
+            release_image_digest=IMAGE_DIGEST,
+            monitoring_receipt_path=paths["monitoring"],
+            metrics_snapshot_path=paths["snapshot"],
+            prometheus_range_receipt_path=paths["range"],
+            prometheus_range_response_path=paths["response"],
+            alert_delivery_receipt_path=paths["alert"],
+            now=NOW + timedelta(minutes=1),
+        )
 
 
 def test_verifier_rejects_arbitrary_signed_monitoring_identity_hashes(
@@ -315,7 +477,8 @@ def test_verifier_rejects_arbitrary_signed_monitoring_identity_hashes(
         AUTHORITY.resign(payload, domain=contract.MONITORING_DOMAIN),
     )
     with pytest.raises(receipts.ReceiptValidationError, match="canonical topology"):
-        receipts.verify_receipt_bundle(
+        _verify(
+            paths,
             release_commit_sha=RELEASE_SHA,
             release_image_digest=IMAGE_DIGEST,
             monitoring_receipt_path=paths["monitoring"],
@@ -342,7 +505,8 @@ def test_verifier_rejects_gateway_ack_with_minimal_alert_labels(
     )
     _write(paths["alert"], GATEWAY.sign_ack(acknowledgement))
     with pytest.raises(receipts.ReceiptValidationError, match="canonical proof route"):
-        receipts.verify_receipt_bundle(
+        _verify(
+            paths,
             release_commit_sha=RELEASE_SHA,
             release_image_digest=IMAGE_DIGEST,
             monitoring_receipt_path=paths["monitoring"],
@@ -367,7 +531,8 @@ def test_verifier_rejects_tampered_raw_or_receipt_bytes(tmp_path: Path, target: 
     _write(paths[target], payload)
 
     with pytest.raises(receipts.ReceiptValidationError):
-        receipts.verify_receipt_bundle(
+        _verify(
+            paths,
             release_commit_sha=RELEASE_SHA,
             release_image_digest=IMAGE_DIGEST,
             monitoring_receipt_path=paths["monitoring"],
@@ -409,7 +574,8 @@ def test_verifier_rejects_receipt_signed_by_swapped_authority(
     )
     assert trusted.anchor.key_id != attacker.anchor.key_id
     with pytest.raises(receipts.ReceiptValidationError, match="signer|signature"):
-        receipts.verify_receipt_bundle(
+        _verify(
+            paths,
             release_commit_sha=RELEASE_SHA,
             release_image_digest=IMAGE_DIGEST,
             monitoring_receipt_path=paths["monitoring"],
@@ -463,7 +629,8 @@ def test_verifier_rejects_dense_cadence_and_interior_reset_bypasses(
     _rebind_range_response(paths, response)
 
     with pytest.raises(receipts.ReceiptValidationError, match=expected):
-        receipts.verify_receipt_bundle(
+        _verify(
+            paths,
             release_commit_sha=RELEASE_SHA,
             release_image_digest=IMAGE_DIGEST,
             monitoring_receipt_path=paths["monitoring"],
@@ -489,7 +656,8 @@ def test_verifier_rejects_float_step_even_when_rehashed_and_resigned(tmp_path: P
 
     _rewrite_signed_range(paths, mutate)
     with pytest.raises(receipts.ReceiptValidationError, match="JSON integer"):
-        receipts.verify_receipt_bundle(
+        _verify(
+            paths,
             release_commit_sha=RELEASE_SHA,
             release_image_digest=IMAGE_DIGEST,
             monitoring_receipt_path=paths["monitoring"],
@@ -510,7 +678,8 @@ def test_verifier_rejects_replaced_container_binding_even_when_resigned(tmp_path
         AUTHORITY.resign(payload, domain=contract.MONITORING_DOMAIN),
     )
     with pytest.raises(receipts.ReceiptValidationError, match="fresh container"):
-        receipts.verify_receipt_bundle(
+        _verify(
+            paths,
             release_commit_sha=RELEASE_SHA,
             release_image_digest=IMAGE_DIGEST,
             monitoring_receipt_path=paths["monitoring"],
@@ -525,7 +694,8 @@ def test_verifier_rejects_replaced_container_binding_even_when_resigned(tmp_path
 def test_verifier_rejects_expired_challenge_before_reading_receipts(tmp_path: Path) -> None:
     paths = _bundle(tmp_path)
     with pytest.raises(receipts.ReceiptValidationError, match="stale or expired"):
-        receipts.verify_receipt_bundle(
+        _verify(
+            paths,
             release_commit_sha=RELEASE_SHA,
             release_image_digest=IMAGE_DIGEST,
             monitoring_receipt_path=paths["monitoring"],
@@ -545,3 +715,161 @@ def test_verification_output_is_atomic_private_and_non_overwriting(tmp_path: Pat
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     with pytest.raises(receipts.ReceiptValidationError):
         receipts.atomic_write_json(output, payload, overwrite=False)
+
+
+def test_atomic_no_overwrite_rejects_symlink_without_touching_target(
+    tmp_path: Path,
+) -> None:
+    victim = tmp_path / "victim.json"
+    victim.write_text("do not replace\n", encoding="utf-8")
+    output = tmp_path / "verification.json"
+    output.symlink_to(victim)
+
+    with pytest.raises(receipts.ReceiptValidationError, match="already exists"):
+        receipts.atomic_write_json(
+            output,
+            {"status": "verified"},
+            overwrite=False,
+        )
+
+    assert output.is_symlink()
+    assert victim.read_text(encoding="utf-8") == "do not replace\n"
+
+
+def test_atomic_no_overwrite_preserves_concurrent_creator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "verification.json"
+    concurrent_payload = b'{"owner":"concurrent"}\n'
+    real_link = receipts.secure_file_io.os.link
+
+    def racing_link(
+        source: str,
+        destination: str,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        assert dst_dir_fd is not None
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=dst_dir_fd,
+        )
+        try:
+            os.write(descriptor, concurrent_payload)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        real_link(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
+
+    monkeypatch.setattr(receipts.secure_file_io.os, "link", racing_link)
+    with pytest.raises(receipts.ReceiptValidationError, match="already exists"):
+        receipts.atomic_write_json(
+            output,
+            {"status": "verified"},
+            overwrite=False,
+        )
+
+    assert output.read_bytes() == concurrent_payload
+
+
+def test_atomic_output_parent_swap_cannot_redirect_no_overwrite_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "evidence"
+    parent.mkdir()
+    moved_parent = tmp_path / "original-evidence"
+    redirected_parent = tmp_path / "redirected"
+    redirected_parent.mkdir()
+    output = parent / "verification.json"
+    real_link = receipts.secure_file_io.os.link
+    swapped = False
+
+    def swapping_link(
+        source: str,
+        destination: str,
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> None:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            parent.rename(moved_parent)
+            parent.symlink_to(redirected_parent, target_is_directory=True)
+        real_link(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
+
+    monkeypatch.setattr(receipts.secure_file_io.os, "link", swapping_link)
+    with pytest.raises(
+        receipts.ReceiptValidationError,
+        match="directory chain changed",
+    ):
+        receipts.atomic_write_json(
+            output,
+            {"status": "verified"},
+            overwrite=False,
+        )
+
+    assert not (redirected_parent / output.name).exists()
+    assert (moved_parent / output.name).is_file()
+
+
+def test_cli_requires_exact_flagship_operations_receipt_flags(
+    tmp_path: Path,
+) -> None:
+    common = [
+        "verify",
+        "--release-sha",
+        RELEASE_SHA,
+        "--image-digest",
+        IMAGE_DIGEST,
+        "--monitoring-receipt",
+        str(tmp_path / "monitoring.json"),
+        "--metrics-snapshot",
+        str(tmp_path / "metrics.json"),
+        "--metrics-probe",
+        str(tmp_path / "probe.json"),
+        "--prometheus-range-receipt",
+        str(tmp_path / "range-receipt.json"),
+        "--prometheus-range-response",
+        str(tmp_path / "range-response.json"),
+        "--alert-delivery-receipt",
+        str(tmp_path / "alert.json"),
+        "--output",
+        str(tmp_path / "verified.json"),
+    ]
+    operations = [
+        "--dashboard-render-receipt",
+        str(tmp_path / "dashboard.json"),
+        "--structured-log-query-receipt",
+        str(tmp_path / "logs.json"),
+        "--distributed-trace-query-receipt",
+        str(tmp_path / "trace.json"),
+    ]
+    parsed = receipts.build_parser().parse_args([*common, *operations])
+
+    assert parsed.dashboard_render_receipt == tmp_path / "dashboard.json"
+    assert parsed.structured_log_query_receipt == tmp_path / "logs.json"
+    assert parsed.distributed_trace_query_receipt == tmp_path / "trace.json"
+
+    with pytest.raises(SystemExit) as exc_info:
+        receipts.build_parser().parse_args([*common, *operations[:-2]])
+    assert exc_info.value.code == 2

@@ -17,6 +17,13 @@ from app.services.property_content_packet_builder import build_product_tutorial_
 from app.services.property_content_studio import PropertyContentStudio
 
 
+_SYSTEM_OWNERSHIP = {
+    "principal_id": "propertyquarry:system:content-studio",
+    "ownership_scope": "system",
+    "search_run_id": "",
+}
+
+
 def _packet(packet_id: str) -> dict[str, object]:
     return {
         "packet_id": packet_id,
@@ -33,9 +40,9 @@ def test_file_ledger_preserves_corrupt_source_instead_of_resetting(tmp_path) -> 
     ledger = PropertyContentJobLedger(path=path)
 
     with pytest.raises(PropertyContentLedgerCorruptionError, match="property_content_ledger_corrupt"):
-        ledger.get_job("partial")
+        ledger.get_job("partial", **_SYSTEM_OWNERSHIP)
     with pytest.raises(PropertyContentLedgerCorruptionError, match="property_content_ledger_corrupt"):
-        ledger.upsert_job(_packet("new"), status="QUEUED")
+        ledger.upsert_job(_packet("new"), **_SYSTEM_OWNERSHIP, status="QUEUED")
 
     assert path.read_bytes() == original
 
@@ -50,7 +57,7 @@ def test_file_ledger_serializes_parallel_writers_and_orders_events(tmp_path) -> 
         barrier.wait(timeout=5)
         for index in range(20):
             packet_id = f"{prefix}-{index}"
-            ledger.upsert_job(_packet(packet_id), status="QUEUED")
+            ledger.upsert_job(_packet(packet_id), **_SYSTEM_OWNERSHIP, status="QUEUED")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(write_batch, "a", ledger_a)
@@ -74,12 +81,15 @@ def test_webhook_claim_is_atomic_and_replay_conflicts_are_fail_closed(tmp_path) 
     barrier = threading.Barrier(2)
     payload = {"id": "evt-race", "type": "script.started", "packet_id": "packet-1"}
     observed = datetime(2026, 7, 13, 9, 0, tzinfo=timezone.utc)
+    ledger_a.upsert_job(_packet("packet-1"), **_SYSTEM_OWNERSHIP, status="QUEUED")
 
     def claim(ledger: PropertyContentJobLedger, owner: str) -> dict[str, object]:
         barrier.wait(timeout=5)
         return ledger.claim_webhook_event(
             event_id="evt-race",
             payload=payload,
+            packet_id="packet-1",
+            **_SYSTEM_OWNERSHIP,
             extra={"signature_status": "verified"},
             claim_owner=owner,
             lease_seconds=60,
@@ -100,6 +110,7 @@ def test_webhook_claim_is_atomic_and_replay_conflicts_are_fail_closed(tmp_path) 
     winner_owner = str(dict(winner["row"])["lease_owner"])
     ledger_a.complete_webhook_event(
         event_id="evt-race",
+        **_SYSTEM_OWNERSHIP,
         claim_owner=winner_owner,
         status="received",
     )
@@ -107,6 +118,8 @@ def test_webhook_claim_is_atomic_and_replay_conflicts_are_fail_closed(tmp_path) 
     duplicate = ledger_b.claim_webhook_event(
         event_id="evt-race",
         payload=payload,
+        packet_id="packet-1",
+        **_SYSTEM_OWNERSHIP,
         extra={},
         claim_owner="worker-c",
         lease_seconds=60,
@@ -115,6 +128,8 @@ def test_webhook_claim_is_atomic_and_replay_conflicts_are_fail_closed(tmp_path) 
     conflict = ledger_b.claim_webhook_event(
         event_id="evt-race",
         payload={**payload, "packet_id": "tampered"},
+        packet_id="packet-1",
+        **_SYSTEM_OWNERSHIP,
         extra={},
         claim_owner="worker-d",
         lease_seconds=60,
@@ -133,11 +148,12 @@ def test_webhook_claim_is_atomic_and_replay_conflicts_are_fail_closed(tmp_path) 
 def test_expired_job_and_webhook_claims_recover_without_stale_owner_updates(tmp_path) -> None:
     ledger = PropertyContentJobLedger(path=tmp_path / "content-jobs.json")
     packet = _packet("packet-recovery")
-    ledger.upsert_job(packet, status="QUEUED")
+    ledger.upsert_job(packet, **_SYSTEM_OWNERSHIP, status="QUEUED")
     observed = datetime(2026, 7, 13, 10, 0, tzinfo=timezone.utc)
 
     first_job = ledger.claim_job(
         "packet-recovery",
+        **_SYSTEM_OWNERSHIP,
         lease_owner="worker-a",
         lease_seconds=30,
         now=observed,
@@ -145,12 +161,14 @@ def test_expired_job_and_webhook_claims_recover_without_stale_owner_updates(tmp_
     assert first_job is not None
     assert ledger.claim_job(
         "packet-recovery",
+        **_SYSTEM_OWNERSHIP,
         lease_owner="worker-b",
         lease_seconds=30,
         now=observed + timedelta(seconds=10),
     ) is None
     recovered_job = ledger.claim_job(
         "packet-recovery",
+        **_SYSTEM_OWNERSHIP,
         lease_owner="worker-b",
         lease_seconds=30,
         now=observed + timedelta(seconds=31),
@@ -160,11 +178,13 @@ def test_expired_job_and_webhook_claims_recover_without_stale_owner_updates(tmp_
     with pytest.raises(PropertyContentJobClaimLostError, match="property_content_job_claim_lost"):
         ledger.update_claimed_job(
             "packet-recovery",
+            **_SYSTEM_OWNERSHIP,
             lease_owner="worker-a",
             status="STALE",
         )
     completed_job = ledger.update_claimed_job(
         "packet-recovery",
+        **_SYSTEM_OWNERSHIP,
         lease_owner="worker-b",
         status="RECOVERED",
     )
@@ -175,6 +195,8 @@ def test_expired_job_and_webhook_claims_recover_without_stale_owner_updates(tmp_
     first_webhook = ledger.claim_webhook_event(
         event_id="evt-recovery",
         payload=webhook_payload,
+        packet_id="packet-recovery",
+        **_SYSTEM_OWNERSHIP,
         extra={},
         claim_owner="webhook-a",
         lease_seconds=30,
@@ -184,6 +206,8 @@ def test_expired_job_and_webhook_claims_recover_without_stale_owner_updates(tmp_
     recovered_webhook = ledger.claim_webhook_event(
         event_id="evt-recovery",
         payload=webhook_payload,
+        packet_id="packet-recovery",
+        **_SYSTEM_OWNERSHIP,
         extra={},
         claim_owner="webhook-b",
         lease_seconds=30,
@@ -194,17 +218,21 @@ def test_expired_job_and_webhook_claims_recover_without_stale_owner_updates(tmp_
     with pytest.raises(PropertyContentJobClaimLostError, match="subscribr_webhook_claim_lost"):
         ledger.complete_webhook_event(
             event_id="evt-recovery",
+            **_SYSTEM_OWNERSHIP,
             claim_owner="webhook-a",
             status="review_required",
         )
     ledger.complete_webhook_event(
         event_id="evt-recovery",
+        **_SYSTEM_OWNERSHIP,
         claim_owner="webhook-b",
         status="review_required",
     )
     duplicate = ledger.claim_webhook_event(
         event_id="evt-recovery",
         payload=webhook_payload,
+        packet_id="packet-recovery",
+        **_SYSTEM_OWNERSHIP,
         extra={},
         claim_owner="webhook-c",
         lease_seconds=30,
@@ -219,9 +247,12 @@ def test_conflicting_replay_revokes_an_active_webhook_claim(tmp_path) -> None:
     ledger = PropertyContentJobLedger(path=tmp_path / "content-jobs.json")
     payload = {"id": "evt-active-conflict", "type": "script.started", "packet_id": "packet-1"}
     observed = datetime(2026, 7, 13, 10, 30, tzinfo=timezone.utc)
+    ledger.upsert_job(_packet("packet-1"), **_SYSTEM_OWNERSHIP, status="QUEUED")
     claimed = ledger.claim_webhook_event(
         event_id="evt-active-conflict",
         payload=payload,
+        packet_id="packet-1",
+        **_SYSTEM_OWNERSHIP,
         extra={},
         claim_owner="worker-a",
         lease_seconds=60,
@@ -232,6 +263,8 @@ def test_conflicting_replay_revokes_an_active_webhook_claim(tmp_path) -> None:
     conflict = ledger.claim_webhook_event(
         event_id="evt-active-conflict",
         payload={**payload, "packet_id": "tampered"},
+        packet_id="packet-1",
+        **_SYSTEM_OWNERSHIP,
         extra={},
         claim_owner="worker-b",
         lease_seconds=60,
@@ -243,12 +276,15 @@ def test_conflicting_replay_revokes_an_active_webhook_claim(tmp_path) -> None:
     with pytest.raises(PropertyContentJobClaimLostError, match="subscribr_webhook_claim_lost"):
         ledger.complete_webhook_event(
             event_id="evt-active-conflict",
+            **_SYSTEM_OWNERSHIP,
             claim_owner="worker-a",
             status="received",
         )
     original_replay = ledger.claim_webhook_event(
         event_id="evt-active-conflict",
         payload=payload,
+        packet_id="packet-1",
+        **_SYSTEM_OWNERSHIP,
         extra={},
         claim_owner="worker-c",
         lease_seconds=60,
@@ -326,11 +362,18 @@ def test_provider_dispatch_crash_recovers_to_reconciliation_without_resend(
         jurisdiction="GLOBAL",
     )
     packet_id = str(packet["packet_id"])
-    ledger.upsert_job(packet, status="PROVIDER_REQUEST_QUEUED")
+    ledger.upsert_job(packet, **_SYSTEM_OWNERSHIP, status="PROVIDER_REQUEST_QUEUED")
     old_time = datetime.now(timezone.utc) - timedelta(hours=2)
-    ledger.claim_job(packet_id, lease_owner="crashed-worker", lease_seconds=30, now=old_time)
+    ledger.claim_job(
+        packet_id,
+        **_SYSTEM_OWNERSHIP,
+        lease_owner="crashed-worker",
+        lease_seconds=30,
+        now=old_time,
+    )
     ledger.update_claimed_job(
         packet_id,
+        **_SYSTEM_OWNERSHIP,
         lease_owner="crashed-worker",
         status="PROVIDER_DISPATCHING",
         extra={"provider_dispatch_started_at": old_time.isoformat()},
@@ -338,7 +381,10 @@ def test_provider_dispatch_crash_recovers_to_reconciliation_without_resend(
     )
     client = _NeverCalledSubscribrClient()
 
-    result = PropertyContentStudio(ledger=ledger, client=client).request_subscribr_script(packet)
+    result = PropertyContentStudio(ledger=ledger, client=client).request_subscribr_script(
+        packet,
+        **_SYSTEM_OWNERSHIP,
+    )
 
     assert result["status"] == "PROVIDER_RECONCILIATION_REQUIRED"
     assert result["claim_status"] == "recovered_without_resend"
@@ -363,8 +409,11 @@ def test_provider_progress_is_persisted_before_later_provider_failure(
     result = PropertyContentStudio(
         ledger=ledger,
         client=client,
-    ).request_subscribr_script(packet)
-    retried = PropertyContentStudio(ledger=ledger, client=client).request_subscribr_script(packet)
+    ).request_subscribr_script(packet, **_SYSTEM_OWNERSHIP)
+    retried = PropertyContentStudio(ledger=ledger, client=client).request_subscribr_script(
+        packet,
+        **_SYSTEM_OWNERSHIP,
+    )
 
     assert result["status"] == "PROVIDER_RECONCILIATION_REQUIRED"
     assert result["provider_status"] == "outcome_unknown"
@@ -397,7 +446,7 @@ def test_parallel_provider_requests_dispatch_only_once(
 
     def request(studio: PropertyContentStudio) -> dict[str, object]:
         barrier.wait(timeout=5)
-        return studio.request_subscribr_script(packet)
+        return studio.request_subscribr_script(packet, **_SYSTEM_OWNERSHIP)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = [
@@ -408,7 +457,7 @@ def test_parallel_provider_requests_dispatch_only_once(
     assert client.idea_calls == 1
     assert client.script_calls == 1
     assert client.generate_calls == 1
-    final_job = studios[0].ledger.get_job(str(packet["packet_id"]))
+    final_job = studios[0].ledger.get_job(str(packet["packet_id"]), **_SYSTEM_OWNERSHIP)
     assert final_job is not None
     assert final_job["provider_script_id"] == "script-once"
     assert any(bool(result.get("idempotent")) for result in results)

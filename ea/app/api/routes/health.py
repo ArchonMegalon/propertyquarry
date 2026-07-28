@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from functools import lru_cache
+import asyncio
 import hashlib
 import json
 import os
 import pathlib
 import re
+from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.dependencies import get_container
 from app.container import AppContainer
-from app.observability import runtime_build_identity
+from app.observability import runtime_build_identity, runtime_heartbeat_readiness
 from app.product.property_search_schema import LATEST_PROPERTY_SEARCH_SCHEMA_VERSION
 from app.product.property_search_storage import property_search_run_retention_policy
 from app.services.id_austria_oidc import id_austria_provider_readiness
@@ -210,9 +211,19 @@ async def health_live() -> dict[str, str]:
 async def health_ready(
     container: AppContainer = Depends(get_container),
 ) -> dict[str, str | int]:
-    ready, reason = container.readiness.check()
+    ready, reason = await asyncio.to_thread(container.readiness.check)
     if not ready:
         raise HTTPException(status_code=503, detail=f"not_ready:{reason}")
+    for heartbeat_role in ("worker", "scheduler"):
+        heartbeat_ready, heartbeat_reason = await asyncio.to_thread(
+            runtime_heartbeat_readiness,
+            heartbeat_role,
+        )
+        if not heartbeat_ready:
+            raise HTTPException(
+                status_code=503,
+                detail=f"not_ready:{heartbeat_reason}",
+            )
     return {
         "status": "ready",
         "reason": reason,

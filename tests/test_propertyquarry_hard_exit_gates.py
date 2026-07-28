@@ -261,19 +261,17 @@ def test_3d_browser_gate_requires_explicit_persistence_target() -> None:
     assert persistence["host_result"]["status"] == "public_tour_root_not_configured"
 
 
-def test_3d_browser_gate_explicit_candidate_container_excludes_live_roots(monkeypatch, tmp_path: Path) -> None:
+def test_3d_browser_gate_host_roots_are_explicit_and_not_derived_from_runtime_container(
+    tmp_path: Path,
+) -> None:
     from scripts import propertyquarry_3d_browser_gate as gate
 
     candidate_volume = tmp_path / "candidate-volume"
     candidate_volume.mkdir()
-    monkeypatch.setattr(
-        gate,
-        "running_container_public_tour_dir",
-        lambda container: candidate_volume if container == "propertyquarry-api-candidate" else None,
-    )
 
-    roots = gate._candidate_public_tour_roots(runtime_container="propertyquarry-api-candidate")
+    assert gate._candidate_public_tour_roots() == []
 
+    roots = gate._candidate_public_tour_roots(public_roots=(candidate_volume,))
     assert roots == [candidate_volume.resolve()]
 
 

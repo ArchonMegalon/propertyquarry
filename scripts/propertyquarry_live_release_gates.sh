@@ -1,15 +1,25 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
 
-EA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-}"
-if [[ -z "${PYTHON_BIN}" ]]; then
-  if [[ -x "${EA_ROOT}/.venv/bin/python" ]]; then
-    PYTHON_BIN="${EA_ROOT}/.venv/bin/python"
-  else
-    PYTHON_BIN="python3"
-  fi
+PATH=/usr/bin:/bin
+export PATH
+readonly PATH
+unset BASH_ENV ENV CDPATH GLOBIGNORE
+IFS=$' \t\n'
+
+script_source="${BASH_SOURCE[0]}"
+[[ "${script_source}" == */* ]] || {
+  printf '%s\n' "error: live release gate must be invoked with an explicit path" >&2
+  exit 2
+}
+EA_ROOT="$(cd -P -- "${script_source%/*}/.." && pwd -P)"
+if [[ -v PYTHON_BIN || -v PYTEST_PYTHON_BIN ]]; then
+  echo "error: release interpreter override forbidden" >&2
+  exit 2
 fi
+unset PYTHON_BIN PYTEST_PYTHON_BIN
+PYTHON_BIN="${EA_ROOT}/scripts/propertyquarry_release_python.sh"
+readonly PYTHON_BIN
 
 cd "${EA_ROOT}"
 live_base_url="${PROPERTYQUARRY_LIVE_MOBILE_BASE_URL:-${PROPERTYQUARRY_LIVE_SMOKE_BASE_URL:-}}"

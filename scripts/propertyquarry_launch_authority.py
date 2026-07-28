@@ -27,12 +27,20 @@ else:
 
 
 SCHEMA = "propertyquarry.launch_authority_envelope.v1"
+OPERATIONS_VERIFICATION_SCHEMA = (
+    "propertyquarry.flagship-operations-evidence-verification.v1"
+)
+OPERATIONS_VERIFICATION_PRODUCER = (
+    "propertyquarry-flagship-operations-evidence-verifier"
+)
+OPERATIONS_SOURCE_CONTRACT_STATUS = "defined_not_live_evidence"
 SECURITY_SCHEMA = "propertyquarry.release_security_receipt.v1"
 SECURITY_BINDING_CONTRACT = "propertyquarry.workflow_runtime_binding"
 OVERLAY_SCHEMA = "propertyquarry.evidence_overlay_read_model_receipt.v2"
 RYBBIT_SCHEMA = "propertyquarry.rybbit_delivery_receipt.v1"
 FULL_GIT_SHA = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
+REPLICA_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 POSITIVE_DECIMAL = re.compile(r"[1-9][0-9]{0,19}")
 MAX_JSON_INPUT_BYTES = 16 * 1024 * 1024
 MAX_CONTROLLER_BUNDLE_BYTES = 256 * 1024 * 1024
@@ -302,6 +310,113 @@ def _same_input_path(recorded: object, actual: Path) -> bool:
         return False
 
 
+def _operations_payload_sha256(payload: dict[str, Any]) -> str:
+    unhashed = dict(payload)
+    unhashed.pop("payload_sha256", None)
+    try:
+        canonical = json.dumps(
+            unhashed,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return ""
+    return _sha256(canonical)
+
+
+def _configured_replica_ids(value: object) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    if any(
+        not isinstance(replica_id, str)
+        or REPLICA_ID.fullmatch(replica_id) is None
+        or replica_id == "UNCONFIGURED"
+        for replica_id in value
+    ):
+        return False
+    return value == sorted(set(value))
+
+
+def _operations_evidence_bindings_ok(
+    observability: dict[str, Any],
+    *,
+    dashboard_render_receipt_sha256: str,
+    structured_log_query_receipt_sha256: str,
+    distributed_trace_query_receipt_sha256: str,
+) -> bool:
+    operations = _object(observability.get("operations_evidence"))
+    policy_hashes = _object(observability.get("policy_hashes"))
+    observability_input_hashes = _object(observability.get("shared_input_hashes"))
+    operations_input_hashes = _object(operations.get("shared_input_hashes"))
+    operations_receipts = _object(operations.get("receipts"))
+    operations_release = _object(operations.get("release"))
+    observability_release = _object(observability.get("release"))
+    operations_replica_ids = operations.get("replica_ids")
+    expected_inputs = {
+        "dashboard_render_receipt": (
+            "dashboard_render",
+            dashboard_render_receipt_sha256,
+        ),
+        "structured_log_query_receipt": (
+            "structured_log_query",
+            structured_log_query_receipt_sha256,
+        ),
+        "distributed_trace_query_receipt": (
+            "distributed_trace_query",
+            distributed_trace_query_receipt_sha256,
+        ),
+    }
+    expected_policy_sha256 = _text(
+        policy_hashes.get("flagship_operations_sha256")
+    )
+    operations_challenge_sha256 = _text(operations.get("challenge_sha256"))
+    operations_payload_sha256 = _text(operations.get("payload_sha256"))
+    if (
+        operations.get("schema_version") != OPERATIONS_VERIFICATION_SCHEMA
+        or operations.get("producer") != OPERATIONS_VERIFICATION_PRODUCER
+        or operations.get("source_contract_status")
+        != OPERATIONS_SOURCE_CONTRACT_STATUS
+        or operations.get("status") != "verified"
+        or operations.get("cross_receipt_links_verified") is not True
+        or not _configured_replica_ids(operations_replica_ids)
+        or operations_replica_ids != observability.get("replica_ids")
+        or not operations_release
+        or operations_release != observability_release
+        or not _text(operations.get("deployment_id"))
+        or operations.get("deployment_id") != observability.get("deployment_id")
+        or SHA256.fullmatch(operations_challenge_sha256) is None
+        or operations.get("challenge_sha256")
+        != observability.get("challenge_sha256")
+        or SHA256.fullmatch(expected_policy_sha256) is None
+        or _text(operations.get("policy_sha256")) != expected_policy_sha256
+        or SHA256.fullmatch(operations_payload_sha256) is None
+        or operations_payload_sha256 != _operations_payload_sha256(operations)
+        or operations_input_hashes
+        != {
+            input_name: expected_sha256
+            for input_name, (
+                _receipt_name,
+                expected_sha256,
+            ) in expected_inputs.items()
+        }
+    ):
+        return False
+    for input_name, (
+        receipt_name,
+        expected_sha256,
+    ) in expected_inputs.items():
+        receipt = _object(operations_receipts.get(receipt_name))
+        if (
+            SHA256.fullmatch(expected_sha256) is None
+            or _text(observability_input_hashes.get(input_name)) != expected_sha256
+            or _text(receipt.get("file_sha256")) != expected_sha256
+        ):
+            return False
+    return True
+
+
 def _release_hygiene_binding_ok(
     payload: dict[str, Any],
     *,
@@ -320,8 +435,6 @@ def _release_hygiene_binding_ok(
         "manifest_metadata_only_ancestor",
     }
     projected_fields = ancestry_fields.intersection(payload)
-    if not projected_fields:
-        return True
     if projected_fields != ancestry_fields:
         return False
     parent_commit = _text(payload.get("parent_commit")).lower()
@@ -355,6 +468,9 @@ def _validate_gold(
     overlay_path: Path,
     overlay_snapshot_id: str,
     rybbit_path: Path,
+    dashboard_render_receipt_sha256: str,
+    structured_log_query_receipt_sha256: str,
+    distributed_trace_query_receipt_sha256: str,
     expected_teable_origin: str,
     expected_teable_base_id_sha256: str,
     expected_overlay_phase: str,
@@ -419,13 +535,27 @@ def _validate_gold(
         ok=product_data_ok,
         failure="gold_product_data_not_ready",
     )
+    operations_evidence_ok = _operations_evidence_bindings_ok(
+        canonical_observability,
+        dashboard_render_receipt_sha256=dashboard_render_receipt_sha256,
+        structured_log_query_receipt_sha256=structured_log_query_receipt_sha256,
+        distributed_trace_query_receipt_sha256=distributed_trace_query_receipt_sha256,
+    )
+    _record_check(
+        checks,
+        failures,
+        name="gold_operations_evidence_exact_inputs",
+        ok=operations_evidence_ok,
+        failure="gold_operations_evidence_input_mismatch",
+    )
     canonical_ok = (
         canonical.get("required") is True
         and canonical.get("status") == "pass"
         and canonical.get("validation_errors") == []
         and canonical_slo.get("status") == "pass"
-        and canonical_observability.get("status") == "pass"
+        and canonical_observability.get("status") == "verified"
         and canonical_observability.get("cross_receipt_links_verified") is True
+        and operations_evidence_ok
     )
     _record_check(
         checks,
@@ -800,6 +930,9 @@ def build_launch_authority_envelope(
     activation_receipt_path: Path,
     overlay_receipt_path: Path,
     rybbit_receipt_path: Path,
+    dashboard_render_receipt_path: Path,
+    structured_log_query_receipt_path: Path,
+    distributed_trace_query_receipt_path: Path,
     security_receipt_path: Path,
     security_workflow_binding_path: Path,
     controller_bundle_path: Path,
@@ -886,6 +1019,9 @@ def build_launch_authority_envelope(
         "activation": activation_receipt_path,
         "overlay": overlay_receipt_path,
         "rybbit": rybbit_receipt_path,
+        "dashboard_render_receipt": dashboard_render_receipt_path,
+        "structured_log_query_receipt": structured_log_query_receipt_path,
+        "distributed_trace_query_receipt": distributed_trace_query_receipt_path,
         "security": security_receipt_path,
         "security_workflow_binding": security_workflow_binding_path,
     }
@@ -977,6 +1113,15 @@ def build_launch_authority_envelope(
             overlay_path=overlay_receipt_path,
             overlay_snapshot_id=_text(payloads["overlay"].get("snapshot_id")),
             rybbit_path=rybbit_receipt_path,
+            dashboard_render_receipt_sha256=_sha256(
+                raw_inputs["dashboard_render_receipt"]
+            ),
+            structured_log_query_receipt_sha256=_sha256(
+                raw_inputs["structured_log_query_receipt"]
+            ),
+            distributed_trace_query_receipt_sha256=_sha256(
+                raw_inputs["distributed_trace_query_receipt"]
+            ),
             expected_teable_origin=teable_origin,
             expected_teable_base_id_sha256=teable_base_id_sha256,
             expected_overlay_phase="staged",
@@ -1219,6 +1364,9 @@ def main() -> int:
     parser.add_argument("--activation-receipt", required=True)
     parser.add_argument("--overlay-receipt", required=True)
     parser.add_argument("--rybbit-receipt", required=True)
+    parser.add_argument("--dashboard-render-receipt", required=True)
+    parser.add_argument("--structured-log-query-receipt", required=True)
+    parser.add_argument("--distributed-trace-query-receipt", required=True)
     parser.add_argument("--security-receipt", required=True)
     parser.add_argument("--security-workflow-binding", required=True)
     parser.add_argument("--controller-bundle", required=True)
@@ -1247,6 +1395,11 @@ def main() -> int:
         activation_receipt_path=Path(args.activation_receipt),
         overlay_receipt_path=Path(args.overlay_receipt),
         rybbit_receipt_path=Path(args.rybbit_receipt),
+        dashboard_render_receipt_path=Path(args.dashboard_render_receipt),
+        structured_log_query_receipt_path=Path(args.structured_log_query_receipt),
+        distributed_trace_query_receipt_path=Path(
+            args.distributed_trace_query_receipt
+        ),
         security_receipt_path=Path(args.security_receipt),
         security_workflow_binding_path=Path(args.security_workflow_binding),
         controller_bundle_path=Path(args.controller_bundle),

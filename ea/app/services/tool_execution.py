@@ -25,6 +25,7 @@ from app.services.tool_execution_magixai_module import MagixaiToolExecutionModul
 from app.services.tool_execution_onemin_module import OneminToolExecutionModule
 from app.services.tool_execution_comfyui_module import ComfyUIToolExecutionModule
 from app.services.tool_execution_teable_module import TeableToolExecutionModule
+from app.services.tool_execution_workllm_module import WorkllmToolExecutionModule
 from app.services.telegram_delivery import (
     resolve_primary_telegram_binding,
     send_telegram_audio_for_principal,
@@ -72,6 +73,9 @@ class ToolExecutionService:
         self._teable_module = TeableToolExecutionModule(
             tool_runtime=tool_runtime,
         )
+        self._workllm_module = WorkllmToolExecutionModule(
+            tool_runtime=tool_runtime,
+        )
         self._artifact_module = ArtifactToolExecutionModule(
             tool_runtime=tool_runtime,
             artifacts=artifacts,
@@ -100,6 +104,7 @@ class ToolExecutionService:
             ("onemin", "property_walkthrough_video"): self._register_builtin_onemin_property_walkthrough_video,
             ("ea", "scene_video_generate"): self._register_builtin_scene_video_generate,
             ("teable", "table_sync"): self._register_builtin_teable_table_sync,
+            ("workllm", "real_estate_advisory"): self._register_builtin_workllm_real_estate_advisory,
         }
         for ui_service in browseract_ui_service_definitions():
             self._builtin_capability_registrars[("browseract", ui_service.capability_key)] = (
@@ -1948,6 +1953,9 @@ class ToolExecutionService:
 
     def _register_builtin_teable_table_sync(self) -> None:
         self._teable_module.register_table_sync(self.register_handler)
+
+    def _register_builtin_workllm_real_estate_advisory(self) -> None:
+        self._workllm_module.register_real_estate_advisory(self.register_handler)
 
     def _register_builtin_brain_router_structured_generate(self) -> None:
         self._register_builtin_brain_router_tool(

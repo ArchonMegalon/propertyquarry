@@ -39,11 +39,15 @@ This runtime still carries the EA flagship release-readiness and operator gate c
 
 Operator parity and release gate shortcuts:
 
-- `make verify-flagship-release-readiness` for flagship release-readiness verification
-- `make verify-generated-release-artifacts-clean` for generated release artifact cleanliness
+- `make materialize-release-assets` to explicitly refresh the three generated
+  release receipts with the selected development Python
+- `make verify-flagship-release-readiness` for non-authoritative, read-only
+  flagship release-readiness verification of the already-materialized receipts
+- `make verify-generated-release-artifacts-clean` for non-authoritative,
+  read-only generated release artifact cleanliness against `HEAD`
 - `make runtime-hard-exit-gates`
 - `make hard-exit-gates`
-- `make ltd-release-gates`
+- `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ltd-release-gates`
 - `make verify-ltd-critical-entries`
 - `make verify-ltd-flagship-subset`
 
@@ -52,7 +56,28 @@ These hard-exit and LTD verifier scripts remain part of the operator contract ev
 Release preflight now keys off the EA flagship truth plane, gate seed, generated release receipt, and weekly pulse; `MILESTONE.json` remains supporting delivery history.
 The weekly pulse lives at `.codex-design/product/WEEKLY_PRODUCT_PULSE.generated.json` and is refreshed with `scripts/materialize_weekly_product_pulse.py`.
 Release preflight checklist includes the EA flagship truth-plane contract in `RELEASE_CHECKLIST.md`.
-Recommended sequencing: run `make release-docs` before `make release-preflight`.
+Recommended sequencing: run `make release-docs` before dispatching the
+authenticated `release-preflight` target.
+Local and CI-parity targets use the selected development Python. Before an
+authenticated repository preflight, use the real `/docker/property` checkout
+on the pinned Linux host, run
+`./scripts/bootstrap_propertyquarry_release_python.sh`, and then run
+`./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight`.
+The v3 runtime pin authenticates both the requirements input and compiled lock.
+If their exact direct pins disagree, bootstrap and the authenticated launcher
+stop before environment creation, package installation, or test collection.
+The current authenticated requirements input and compiled lock include
+`jsonschema[format-nongpl]==4.26.0`; bootstrap verifies that exact pin before
+the release interpreter can collect tests.
+That authenticated preflight validates the already-materialized generated
+receipts without refreshing or restoring their canonical files.
+When a standalone authenticated evidence refresh is intentional, dispatch
+`materialize-release-assets-authenticated` explicitly before dispatching the
+read-only `verify-flagship-release-readiness-authenticated` target.
+The closed dispatcher constructs the only accepted Make invocation; direct
+Make targets remain non-authoritative developer facades because GNU Make
+parses caller-provided startup files, eval expressions, and alternate
+makefiles before this checkout's Makefile can inspect them.
 `scripts/version_info.sh` still prints milestone capability-status counts and release tags from `MILESTONE.json` as delivery history, but EA flagship release claims now come from `EA_FLAGSHIP_TRUTH_PLANE.md`, `EA_FLAGSHIP_RELEASE_GATE.json`, and `EA_FLAGSHIP_RELEASE_GATE.generated.json`.
 
 The inherited operator command surface remains available for release and support parity:
@@ -63,10 +88,17 @@ The inherited operator command surface remains available for release and support
 - `make smoke-postgres-legacy` exercises the legacy Postgres migration fixture.
 - `make test-postgres-contracts` runs the focused Postgres contract matrix.
 - `make ci-gates-postgres-legacy` keeps local parity with the legacy Postgres CI job.
-- `make docs-verify` is the documentation-verification alias.
+- `make docs-verify` is the non-authoritative local
+  documentation-verification alias.
 - `make release-docs` runs the documentation and usage checks that precede release preflight.
-- `make all-local` is the lighter local readiness pass; `make release-preflight` is the source/local preflight and does not make a live-runtime or disaster-recovery claim.
-- `make propertyquarry-release-preflight` is the explicit full operator gate. It runs the source/local preflight and then the PropertyQuarry release gates, which require release-bound DR receipts and authenticated live-runtime inputs and write verification receipts under `_completion/`.
+- `make all-local` is the lighter local readiness pass with a configurable
+  interpreter; the dispatcher's `release-preflight` mode is the authenticated
+  repository preflight. It does not make a live-runtime or disaster-recovery claim.
+- `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py propertyquarry-release-preflight`
+  is the explicit full operator gate. It runs the source/local preflight and
+  then the PropertyQuarry release gates, which require release-bound DR
+  receipts and authenticated live-runtime inputs and write verification
+  receipts under `_completion/`.
 - `bash scripts/operator_summary.sh --help` documents smoke, readiness, CI parity, release/support, and task-archive shortcuts.
 
 Endpoint/version/OpenAPI helper scripts also expose `--help`: `scripts/list_endpoints.sh`, `scripts/version_info.sh`, `scripts/export_openapi.sh`, `scripts/diff_openapi.sh`, and `scripts/prune_openapi.sh`.
@@ -111,12 +143,19 @@ budget above the reconstruction generation ceiling; adjust both budgets together
 if that ceiling changes.
 
 The disposable topology runs `propertyquarry-migrate` as an ephemeral phase,
-then starts `propertyquarry-api`, `propertyquarry-scheduler`,
+then starts `propertyquarry-api`, the dedicated durable
+`propertyquarry-worker`, `propertyquarry-scheduler`,
 `propertyquarry-render-tools`, and `propertyquarry-db`. The migration container
 must exit `0`; it is never counted as a running or healthy runtime service. See
 `docs/PROPERTYQUARRY_SCHEMA_MIGRATIONS.md`.
-The API and scheduler build `ea/Dockerfile.property-web`, a lightweight web runtime without Blender, COLMAP, MeshLab, or bundled Playwright browser payloads.
-Native 3D reconstruction and vendor tooling stay in the explicit `render-tools` profile, which builds `ea/Dockerfile.property`.
+The API, worker, and scheduler build `ea/Dockerfile.property-web`, a
+lightweight web runtime without Blender, COLMAP, MeshLab, or bundled
+Playwright browser payloads. The `render-tools` profile builds the dedicated
+`ea/Dockerfile.property-render`: a pinned Alpine runtime with an offline,
+hash-locked FFmpeg closure and Pillow wheel. Its OBJ-to-GLB conversion is
+deterministic in-process, so the service image also has no Blender or NumPy
+runtime dependency. Broader native reconstruction and vendor tooling remain
+separate operator workflows; they are not authority granted to this bridge.
 Browser-backed PDF/render fallbacks must use MarkupGo or an explicit helper/render lane rather than adding Chromium to the request-serving image.
 Both images omit Docker CLI tooling and run the app process as the non-root `ea` user.
 
@@ -148,7 +187,7 @@ to deploy. After reviewing a `READY` disposition, obtain a distinct, fresh
 ```bash
 EA_RUNTIME_MODE=prod \
 PROPERTYQUARRY_DEPLOY_SIGNED_REQUEST=/run/user/$(id -u)/propertyquarry-deploy-run-request.json \
-  make deploy
+  ./scripts/deploy_propertyquarry.sh
 ```
 
 The caller must remain unprivileged, have no Docker daemon authority, and must
@@ -161,8 +200,10 @@ configuration; checkout environment overrides have no production authority.
 
 The closed v1 wire contract is documented in
 [`docs/PROPERTYQUARRY_RELEASE_CONTROL_PROTOCOL_V1.md`](docs/PROPERTYQUARRY_RELEASE_CONTROL_PROTOCOL_V1.md).
-Run `make propertyquarry-release-protocol-contracts` for its offline schema,
-binding, and handoff checks. The validator proves document conformance only; it
+Run
+`./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py propertyquarry-release-protocol-contracts`
+for its offline schema, binding, and handoff checks. The validator proves
+document conformance only; it
 does not verify signatures, establish trust, authorize an operation, or contact
 the release controller.
 
@@ -237,8 +278,7 @@ Supported controls include:
 
 Use the product-only release bundle when validating the standalone PropertyQuarry surface:
 
-- `make property-release-gates`
-- `bash scripts/property_release_gates.sh`
+- `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates`
 
 This bundle includes docs links, runtime security posture, repo-isolation checks, browser contracts, and property run/catalog contracts.
 

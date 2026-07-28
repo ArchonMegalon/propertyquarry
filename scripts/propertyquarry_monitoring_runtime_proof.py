@@ -49,6 +49,9 @@ DEFAULT_PROMETHEUS_CONFIG_PATH = MONITORING_ROOT / "propertyquarry_prometheus.v1
 DEFAULT_ALERTMANAGER_CONFIG_PATH = MONITORING_ROOT / "propertyquarry_alertmanager.v1.yml"
 DEFAULT_ALERT_RULES_PATH = MONITORING_ROOT / "propertyquarry_alert_rules.v1.yml"
 DEFAULT_ALERT_RULE_TESTS_PATH = MONITORING_ROOT / "propertyquarry_alert_rule_tests.v1.yml"
+DEFAULT_FLAGSHIP_OPERATIONS_PATH = evidence_contract.CANONICAL_POLICY_PATHS[
+    "flagship_operations_sha256"
+]
 TOPOLOGY_SCHEMA = "propertyquarry.monitoring-topology.v1"
 TOOL_SCHEMA = "propertyquarry.monitoring-tools.v1"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -737,6 +740,39 @@ def validate_rule_config(rules: Mapping[str, object], required_alerts: Sequence[
         raise MonitoringProofError("expected-replica missing-gauge alert is not fail-closed")
     if "count_values" not in alert_expressions.get("PropertyQuarryExpectedReplicaConfigurationDivergent", ""):
         raise MonitoringProofError("expected-replica divergence alert is missing")
+    queue_telemetry_expression = " ".join(
+        alert_expressions.get(
+            "PropertyQuarryQueueTelemetryUnobserved",
+            "",
+        ).split()
+    )
+    expected_queue_telemetry_expression = " ".join(
+        """
+        (
+          count(
+            (propertyquarry_queue_observed{queue="property_search"} == 1)
+            and on (job, instance)
+            (
+              (propertyquarry_runtime_heartbeat_required{role="worker"} == 1)
+              and on (job, instance) (propertyquarry_runtime_heartbeat_present{role="worker"} == 1)
+              and on (job, instance) (propertyquarry_runtime_heartbeat_stale{role="worker"} == 0)
+            )
+          ) or vector(0)
+        )
+        !=
+        (
+          count(
+            (propertyquarry_runtime_heartbeat_required{role="worker"} == 1)
+            and on (job, instance) (propertyquarry_runtime_heartbeat_present{role="worker"} == 1)
+            and on (job, instance) (propertyquarry_runtime_heartbeat_stale{role="worker"} == 0)
+          ) or vector(0)
+        )
+        """.split()
+    )
+    if queue_telemetry_expression != expected_queue_telemetry_expression:
+        raise MonitoringProofError(
+            "queue-telemetry unobserved alert is not fail-closed"
+        )
 
 
 def validate_static_monitoring_contract(
@@ -908,7 +944,16 @@ def run_tool_validation(
     commands = [
         ("promtool", [str(tools["promtool"].path), "--version"]),
         ("amtool", [str(tools["amtool"].path), "--version"]),
-        ("promtool", [str(tools["promtool"].path), "check", "config", str(prometheus_config_path)]),
+        (
+            "promtool",
+            [
+                str(tools["promtool"].path),
+                "check",
+                "config",
+                "--syntax-only",
+                str(prometheus_config_path),
+            ],
+        ),
         ("promtool", [str(tools["promtool"].path), "check", "rules", str(alert_rules_path)]),
         ("promtool", [str(tools["promtool"].path), "test", "rules", str(alert_rule_tests_path)]),
         ("amtool", [str(tools["amtool"].path), "check-config", str(alertmanager_config_path)]),
@@ -1237,6 +1282,7 @@ class ProofConfig:
     alertmanager_config_path: Path = DEFAULT_ALERTMANAGER_CONFIG_PATH
     alert_rules_path: Path = DEFAULT_ALERT_RULES_PATH
     alert_rule_tests_path: Path = DEFAULT_ALERT_RULE_TESTS_PATH
+    flagship_operations_path: Path = DEFAULT_FLAGSHIP_OPERATIONS_PATH
     command_timeout_seconds: int = 120
     delivery_timeout_seconds: int = 60
     overwrite: bool = False
@@ -1253,16 +1299,26 @@ def _normalize_release(config: ProofConfig) -> tuple[str, str]:
         raise MonitoringProofError("monitoring and alert-delivery receipt paths must differ")
     if config.delivery_timeout_seconds < 1 or config.delivery_timeout_seconds > 60:
         raise MonitoringProofError("delivery timeout must be between 1 and 60 seconds")
-    selected_policy_paths = {
-        config.slo_path: DEFAULT_SLO_PATH,
-        config.prometheus_config_path: DEFAULT_PROMETHEUS_CONFIG_PATH,
-        config.alertmanager_config_path: DEFAULT_ALERTMANAGER_CONFIG_PATH,
-        config.alert_rules_path: DEFAULT_ALERT_RULES_PATH,
-        config.alert_rule_tests_path: DEFAULT_ALERT_RULE_TESTS_PATH,
-    }
+    selected_policy_paths = (
+        (config.slo_path, DEFAULT_SLO_PATH),
+        (config.prometheus_config_path, DEFAULT_PROMETHEUS_CONFIG_PATH),
+        (
+            config.alertmanager_config_path,
+            DEFAULT_ALERTMANAGER_CONFIG_PATH,
+        ),
+        (config.alert_rules_path, DEFAULT_ALERT_RULES_PATH),
+        (
+            config.alert_rule_tests_path,
+            DEFAULT_ALERT_RULE_TESTS_PATH,
+        ),
+        (
+            config.flagship_operations_path,
+            DEFAULT_FLAGSHIP_OPERATIONS_PATH,
+        ),
+    )
     if any(
         selected.resolve() != canonical.resolve()
-        for selected, canonical in selected_policy_paths.items()
+        for selected, canonical in selected_policy_paths
     ):
         raise MonitoringProofError("monitoring launch policy path override is forbidden")
     return commit_sha, image_digest
@@ -1386,6 +1442,7 @@ def run_monitoring_proof(
         "alertmanager_config_sha256": sha256_file(config.alertmanager_config_path),
         "alert_rules_sha256": sha256_file(config.alert_rules_path),
         "alert_rule_tests_sha256": sha256_file(config.alert_rule_tests_path),
+        "flagship_operations_sha256": sha256_file(config.flagship_operations_path),
     }
     if runtime_policy_hashes != dict(challenge.policy_hashes):
         raise MonitoringProofError(
@@ -1620,6 +1677,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--alert-delivery-receipt", type=Path, required=True)
     parser.add_argument("--metrics-snapshot", type=Path, required=True)
+    parser.add_argument(
+        "--flagship-operations-policy",
+        type=Path,
+        default=DEFAULT_FLAGSHIP_OPERATIONS_PATH,
+    )
     parser.add_argument("--command-timeout-seconds", type=lambda value: _positive_int(value, field="command timeout", maximum=300), default=120)
     parser.add_argument("--delivery-timeout-seconds", type=lambda value: _positive_int(value, field="delivery timeout", maximum=60), default=60)
     parser.add_argument("--overwrite", action="store_true")
@@ -1637,6 +1699,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         receipt_path=args.receipt,
         alert_delivery_receipt_path=args.alert_delivery_receipt,
         metrics_snapshot_path=args.metrics_snapshot,
+        flagship_operations_path=args.flagship_operations_policy,
         command_timeout_seconds=args.command_timeout_seconds,
         delivery_timeout_seconds=args.delivery_timeout_seconds,
         overwrite=args.overwrite,

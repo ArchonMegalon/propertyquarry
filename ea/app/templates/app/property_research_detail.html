@@ -3069,6 +3069,43 @@
       grid-template-columns: 1fr;
     }
   }
+  /* PQ_FLAGSHIP_MINIMAL_RESEARCH_V1 */
+  .prd-topbar {
+    min-height: 58px;
+    border-bottom-color: var(--line);
+    background: color-mix(in srgb, var(--panel) 96%, transparent);
+    box-shadow: none;
+  }
+  .prd-brand-mark {
+    border-radius: var(--radius);
+    background: var(--text);
+    color: var(--panel);
+    box-shadow: none;
+  }
+  .prd-primary-nav :is(a, span),
+  .prd-run-chip,
+  .prd-route-recovery-pill,
+  .prd-chip,
+  .prd-tag,
+  .prd-status-badge,
+  .prd-actions .console-action {
+    border-radius: var(--radius);
+  }
+  .prd-route-recovery,
+  .prd-shell :is(.prd-panel, .prd-band, .prd-visual-card, .prd-map-card, .prd-meta-card, .prd-media-frame) {
+    border-radius: var(--radius);
+    background-image: none;
+    box-shadow: none;
+  }
+  [data-property-research-detail] :is(a, button, summary, input, select, textarea):focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  @media (max-width: 760px) {
+    .prd-topbar { background: var(--panel); }
+    .prd-primary-nav :is(a, span) { border-radius: var(--radius); }
+    .prd-shell { width: calc(100vw - 16px); }
+  }
 </style>
 
 {% set research_query_suffix = ('?run_id=' ~ (research_run_id|urlencode)) if research_run_id else '' %}

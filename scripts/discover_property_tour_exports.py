@@ -13,6 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+try:
+    from property_tour_host_safety import TourHostSafetyError, safe_extract_tour_zip
+except ModuleNotFoundError:
+    from scripts.property_tour_host_safety import TourHostSafetyError, safe_extract_tour_zip
+
 if __package__:
     from .property_tour_3dvista_provenance import (
         find_3dvista_provenance_receipt,
@@ -178,22 +183,14 @@ def _verified_entry(export_dir: Path, provider: str) -> tuple[Path | None, str]:
 def _safe_extract_zip(zip_path: Path, target_dir: Path) -> Path:
     if not zip_path.is_file() or zip_path.suffix.lower() not in EXPORT_ARCHIVE_SUFFIXES:
         return target_dir
-    target_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(zip_path) as archive:
-        for member in archive.infolist():
-            name = str(member.filename or "").replace("\\", "/").lstrip("/")
-            raw_parts = [part for part in name.split("/") if part]
-            parts = [part for part in raw_parts if part not in {".", ".."}]
-            if not parts or len(parts) != len(raw_parts):
-                raise ValueError("unsafe_zip_path")
-            destination = (target_dir / "/".join(parts)).resolve()
-            if target_dir.resolve() not in destination.parents and destination != target_dir.resolve():
-                raise ValueError("unsafe_zip_path")
-        archive.extractall(target_dir)
-    children = [path for path in target_dir.iterdir() if path.name != "__MACOSX"]
-    if len(children) == 1 and children[0].is_dir():
-        return children[0].resolve()
-    return target_dir.resolve()
+    try:
+        return safe_extract_tour_zip(
+            zip_path,
+            target_dir,
+            reason_prefix="property_tour_discovery_zip",
+        )
+    except TourHostSafetyError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _verified_zip_entry(zip_path: Path, provider: str) -> tuple[str, str, str]:

@@ -233,8 +233,12 @@ class HandoffNoteOut(BaseModel):
     variant_key: str = ""
     blocked_reason: str = ""
     tour_url: str = ""
+    open_tour_url: str = ""
     vendor_tour_url: str = ""
     source_virtual_tour_url: str = ""
+    generated_reconstruction_url: str = ""
+    layout_preview_url: str = ""
+    layout_preview_status: str = ""
     editor_url: str = ""
     connector_binding_id: str = ""
     source_ref: str = ""
@@ -1611,8 +1615,12 @@ class WillhabenPropertyTourOut(BaseModel):
     connector_binding_id: str = ""
     diorama_style_hint: str = ""
     tour_url: str = ""
+    open_tour_url: str = ""
     vendor_tour_url: str = ""
     source_virtual_tour_url: str = ""
+    generated_reconstruction_url: str = ""
+    layout_preview_url: str = ""
+    layout_preview_status: str = ""
     editor_url: str = ""
     delivery_email: str = ""
     delivery_status: str = ""
@@ -1626,6 +1634,9 @@ class WillhabenPropertyTourOut(BaseModel):
     telegram_video_url: str = ""
     telegram_video_followup_ref: str = ""
     blocked_reason: str = ""
+    failure_stage: str = ""
+    error_code: str = ""
+    diagnostic_sha256: str = ""
     human_task_id: str = ""
     source_ref: str = ""
     external_id: str = ""
@@ -2014,7 +2025,42 @@ class PropertySearchRunStartIn(StrictMutationIn):
                 raise ValueError(f"{key}_invalid") from exc
             if not math.isfinite(parsed) or parsed < minimum or parsed > maximum:
                 raise ValueError(f"{key}_out_of_range")
-        return value
+
+        validated = dict(value)
+        raw_radius_unit = value.get("adjacent_area_radius_unit")
+        if raw_radius_unit is None or raw_radius_unit == "":
+            radius_unit = "m"
+        else:
+            if not isinstance(raw_radius_unit, str):
+                raise ValueError("adjacent_area_radius_unit_invalid")
+            radius_unit = raw_radius_unit.strip().lower()
+            if radius_unit not in {"m", "km"}:
+                raise ValueError("adjacent_area_radius_unit_invalid")
+            validated["adjacent_area_radius_unit"] = radius_unit
+
+        maximum_radius_m = 1_000_000.0
+        for key, multiplier in (
+            ("adjacent_area_radius_m", 1.0),
+            ("adjacent_area_radius_value", 1_000.0 if radius_unit == "km" else 1.0),
+        ):
+            raw = value.get(key)
+            if raw is None or raw == "":
+                continue
+            if isinstance(raw, bool):
+                raise ValueError(f"{key}_invalid")
+            try:
+                parsed = float(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{key}_invalid") from exc
+            radius_m = parsed * multiplier
+            if (
+                not math.isfinite(parsed)
+                or not math.isfinite(radius_m)
+                or radius_m < 0.0
+                or radius_m > maximum_radius_m
+            ):
+                raise ValueError(f"{key}_out_of_range")
+        return validated
 
 
 class PropertySearchResearchTaskUpdateIn(BaseModel):

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+curl() {
+  # shellcheck disable=SC2317
+  command curl -q "$@"
+}
+
 EA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then

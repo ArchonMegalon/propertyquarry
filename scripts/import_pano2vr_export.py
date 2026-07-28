@@ -7,8 +7,29 @@ import json
 import os
 import shutil
 import tempfile
-import zipfile
 from pathlib import Path
+from uuid import uuid4
+
+try:
+    from property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_lane_lock,
+        require_bounded_file,
+        require_bounded_tree,
+        require_free_disk,
+        safe_extract_tour_zip,
+        tour_manifest_max_bytes,
+    )
+except ModuleNotFoundError:
+    from scripts.property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_lane_lock,
+        require_bounded_file,
+        require_bounded_tree,
+        require_free_disk,
+        safe_extract_tour_zip,
+        tour_manifest_max_bytes,
+    )
 
 _PANO2VR_EXPORT_MARKERS = ("ggpkg", "ggskin", "pano.xml", "tour.js")
 _TEXT_RUNTIME_SUFFIXES = {".html", ".htm", ".js", ".mjs", ".json", ".xml"}
@@ -77,41 +98,76 @@ def _entry_has_pano2vr_markers(export_dir: Path, entry: Path) -> bool:
 
 
 def _copy_export(export_dir: Path, target_dir: Path) -> None:
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for item in export_dir.iterdir():
-        target = target_dir / item.name
-        if item.is_dir():
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(item, target)
-        elif item.is_file():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, target)
+    source_budget = require_bounded_tree(
+        export_dir,
+        reason_prefix="pano2vr_export",
+    )
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    require_free_disk(
+        target_dir.parent,
+        reason_prefix="pano2vr_import",
+        expected_write_bytes=int(source_budget["total_bytes"]),
+    )
+    staging_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{target_dir.name}.import-",
+            dir=target_dir.parent,
+        )
+    )
+    backup_dir = target_dir.parent / f".{target_dir.name}.backup-{uuid4().hex}"
+    target_moved = False
+    staging_published = False
+    try:
+        for item in export_dir.iterdir():
+            target = staging_dir / item.name
+            if item.is_dir():
+                shutil.copytree(item, target)
+            elif item.is_file():
+                shutil.copy2(item, target)
+        require_bounded_tree(staging_dir, reason_prefix="pano2vr_export")
+        for root, directory_names, filenames in os.walk(staging_dir, followlinks=False):
+            Path(root).chmod(0o755)
+            for directory_name in directory_names:
+                (Path(root) / directory_name).chmod(0o755)
+            for filename in filenames:
+                (Path(root) / filename).chmod(0o644)
+        if target_dir.exists() or target_dir.is_symlink():
+            os.replace(target_dir, backup_dir)
+            target_moved = True
+        os.replace(staging_dir, target_dir)
+        staging_published = True
+        require_bounded_tree(target_dir, reason_prefix="pano2vr_export")
+        if target_moved:
+            shutil.rmtree(backup_dir)
+            target_moved = False
+    except Exception:
+        if staging_published and target_dir.exists():
+            shutil.rmtree(target_dir)
+        if target_moved and backup_dir.exists():
+            os.replace(backup_dir, target_dir)
+            target_moved = False
+        raise
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        if backup_dir.exists() and not target_moved:
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def _safe_extract_zip(zip_path: Path, target_dir: Path) -> Path:
-    if not zip_path.is_file():
-        raise SystemExit("pano2vr_export_zip_missing")
     if zip_path.suffix.lower() != ".zip":
         raise SystemExit("pano2vr_export_zip_invalid")
-    target_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(zip_path) as archive:
-        for member in archive.infolist():
-            name = str(member.filename or "").replace("\\", "/").lstrip("/")
-            parts = [part for part in name.split("/") if part and part not in {".", ".."}]
-            if not parts or len(parts) != len([part for part in name.split("/") if part]):
-                raise SystemExit("pano2vr_export_zip_unsafe_path")
-            destination = (target_dir / "/".join(parts)).resolve()
-            if target_dir.resolve() not in destination.parents and destination != target_dir.resolve():
-                raise SystemExit("pano2vr_export_zip_unsafe_path")
-        archive.extractall(target_dir)
-    children = [path for path in target_dir.iterdir() if path.name != "__MACOSX"]
-    if len(children) == 1 and children[0].is_dir():
-        return children[0].resolve()
-    return target_dir.resolve()
+    try:
+        return safe_extract_tour_zip(
+            zip_path,
+            target_dir,
+            reason_prefix="pano2vr_export_zip",
+        )
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
-def main() -> int:
+def _main_unlocked() -> int:
     parser = argparse.ArgumentParser(description="Import a Pano2VR export into a PropertyQuarry public tour bundle.")
     parser.add_argument("--slug", required=True, help="Existing PropertyQuarry public tour slug.")
     parser.add_argument("--export-dir", default="", help="Directory exported by Pano2VR.")
@@ -130,6 +186,14 @@ def main() -> int:
     manifest_path = bundle_dir / "tour.json"
     if not manifest_path.is_file():
         raise SystemExit("tour_manifest_missing")
+    try:
+        require_bounded_file(
+            manifest_path,
+            reason_prefix="tour_manifest",
+            maximum_bytes=tour_manifest_max_bytes(),
+        )
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
     target_subdir = _safe_relpath(args.target_subdir or "pano2vr") or "pano2vr"
     target_dir = (bundle_dir / target_subdir).resolve()
     if bundle_dir.resolve() not in target_dir.parents:
@@ -143,6 +207,10 @@ def main() -> int:
             export_dir = Path(args.export_dir).expanduser().resolve()
         if not export_dir.is_dir():
             raise SystemExit("pano2vr_export_dir_missing")
+        try:
+            require_bounded_tree(export_dir, reason_prefix="pano2vr_export")
+        except TourHostSafetyError as exc:
+            raise SystemExit(str(exc)) from exc
         entry = _find_entry(export_dir, args.entry)
         if not _entry_has_pano2vr_markers(export_dir, entry):
             raise SystemExit("pano2vr_export_entry_unverified")
@@ -172,6 +240,14 @@ def main() -> int:
         )
     )
     return 0
+
+
+def main() -> int:
+    try:
+        with bounded_lane_lock("pano2vr-import"):
+            return _main_unlocked()
+    except TourHostSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":

@@ -2,15 +2,34 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import hashlib
 import json
 import os
+import secrets
+import stat
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+if __package__:
+    from .propertyquarry_release_receipt_binding import (
+        ReleaseBindingError,
+        StableFileSnapshot,
+        read_stable_regular_file,
+        sha256_bytes,
+    )
+else:
+    from propertyquarry_release_receipt_binding import (
+        ReleaseBindingError,
+        StableFileSnapshot,
+        read_stable_regular_file,
+        sha256_bytes,
+    )
 
 
 DEFAULT_OUTPUT = Path(".codex-design/product/WEEKLY_PRODUCT_PULSE.generated.json")
@@ -64,6 +83,12 @@ _PROVENANCE_REFRESH_ALLOWED_EXACT = {
     "tests/smoke_runtime_api_suite_3.py",
     "tests/test_weekly_product_pulse_materializer.py",
 }
+RENAME_NOREPLACE = 1
+RENAME_EXCHANGE = 2
+
+
+class _PreserveStagedOutputError(RuntimeError):
+    pass
 
 
 def _utcnow() -> datetime:
@@ -74,11 +99,29 @@ def _format_utc(value: datetime) -> str:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate JSON key: {key}")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
 def _load_json(path: Path) -> dict[str, Any] | None:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
     except Exception:
         return None
+    return dict(payload) if type(payload) is dict else None
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -87,6 +130,14 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     except Exception:
         return {}
     return dict(payload or {}) if isinstance(payload, dict) else {}
+
+
+def _object(value: object) -> dict[str, Any]:
+    return value if type(value) is dict else {}
+
+
+def _items(value: object) -> list[Any]:
+    return value if type(value) is list else []
 
 
 def _normalize_release_value(value: Any) -> Any:
@@ -99,7 +150,6 @@ def _normalize_release_value(value: Any) -> Any:
                 "created_at",
                 "mtime_utc",
                 "size_bytes",
-                "sha256",
                 "duration_seconds",
                 "git_branch",
                 "git_head",
@@ -183,20 +233,532 @@ def _provenance_refresh_required(existing_heads: dict[str, str], payload_heads: 
     return any(not _allowed_provenance_refresh_path(path) for path in changed_paths)
 
 
-def _write_json_stable(path: Path, payload: dict[str, Any]) -> None:
-    serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    if path.exists():
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            existing = None
-        if (
-            isinstance(existing, dict)
-            and _normalize_release_value(existing) == _normalize_release_value(payload)
-            and not _provenance_refresh_required(_provenance_heads(existing), _provenance_heads(payload))
+def _safe_output_path(root: Path, relative_path: Path) -> tuple[Path, Path]:
+    if (
+        relative_path.is_absolute()
+        or not relative_path.parts
+        or any(part in {"", ".", ".."} for part in relative_path.parts)
+    ):
+        raise ValueError(
+            f"release artifact output is not a safe repository-relative path: {relative_path}"
+        )
+    resolved_root = root.resolve(strict=True)
+    if not stat.S_ISDIR(resolved_root.lstat().st_mode):
+        raise ValueError(f"release artifact root is not a directory: {root}")
+    return resolved_root, relative_path
+
+
+def _open_output_parent(root: Path, relative_path: Path) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    current_fd = os.open(root, flags)
+    try:
+        for part in relative_path.parts[:-1]:
+            try:
+                os.mkdir(part, mode=0o755, dir_fd=current_fd)
+            except FileExistsError:
+                pass
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except OSError as exc:
+                raise ValueError(
+                    f"release artifact output parent is symlinked or not a directory: {relative_path}"
+                ) from exc
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
+
+
+def _read_regular_output(
+    parent_fd: int,
+    name: str,
+) -> tuple[tuple[int, int, int, int, int, int], bytes] | None:
+    try:
+        fd = os.open(
+            name,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(
+            f"release artifact output is symlinked or unreadable: {name}"
+        ) from exc
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"release artifact output is not a regular file: {name}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        if identity != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
         ):
-            return
-    path.write_text(serialized, encoding="utf-8")
+            raise RuntimeError(f"release artifact output changed while being read: {name}")
+        return identity, b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _strict_json_object_bytes(payload: bytes) -> dict[str, Any] | None:
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError):
+        return None
+    return dict(value) if type(value) is dict else None
+
+
+def _same_snapshot_across_rename(
+    left: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    right: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+) -> bool:
+    if left is None or right is None:
+        return False
+    left_identity, left_bytes = left
+    right_identity, right_bytes = right
+    # Linux updates ctime when renameat2 moves an inode.  The other identity
+    # fields and the bytes must survive an exchange unchanged.
+    return left_identity[:5] == right_identity[:5] and left_bytes == right_bytes
+
+
+def _entry_identity_no_follow(
+    parent_fd: int,
+    name: str,
+) -> tuple[int, int, int, int, int, int] | None:
+    try:
+        observed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_size,
+        observed.st_mtime_ns,
+        observed.st_ctime_ns,
+    )
+
+
+def _renameat2(
+    parent_fd: int,
+    source: str,
+    destination: str,
+    flags: int,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOSYS, "renameat2 is unavailable")
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    if (
+        renameat2(
+            parent_fd,
+            os.fsencode(source),
+            parent_fd,
+            os.fsencode(destination),
+            flags,
+        )
+        != 0
+    ):
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def _rename_exchange(parent_fd: int, source: str, destination: str) -> None:
+    _renameat2(parent_fd, source, destination, RENAME_EXCHANGE)
+
+
+def _rename_noreplace(parent_fd: int, source: str, destination: str) -> None:
+    _renameat2(parent_fd, source, destination, RENAME_NOREPLACE)
+
+
+def _quarantine_unexpected_new_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    published: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    display_path: Path,
+    validation_error: Exception,
+) -> None:
+    try:
+        _rename_noreplace(parent_fd, destination_name, temporary_name)
+    except OSError as rollback_error:
+        raise _PreserveStagedOutputError(
+            "unexpected release artifact output could not be quarantined; "
+            f"canonical entry remains at {display_path}"
+        ) from rollback_error
+    try:
+        if (
+            _entry_identity_no_follow(parent_fd, destination_name) is not None
+            or _entry_identity_no_follow(parent_fd, temporary_name) is None
+        ):
+            raise _PreserveStagedOutputError(
+                "unexpected release artifact quarantine could not be verified; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        if published is not None:
+            recovery = _read_regular_output(parent_fd, temporary_name)
+            if not _same_snapshot_across_rename(recovery, published):
+                raise _PreserveStagedOutputError(
+                    "unexpected release artifact recovery changed during quarantine; "
+                    f"entry preserved at {display_path.parent / temporary_name}"
+                ) from validation_error
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as verification_error:
+        raise _PreserveStagedOutputError(
+            "unexpected release artifact quarantine verification failed; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from verification_error
+    raise _PreserveStagedOutputError(
+        "release artifact staging path changed during publication; "
+        f"unexpected entry quarantined at {display_path.parent / temporary_name}"
+    ) from validation_error
+
+
+def _rollback_exchanged_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    approved: tuple[tuple[int, int, int, int, int, int], bytes],
+    staged: tuple[tuple[int, int, int, int, int, int], bytes],
+    displaced: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    published: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    display_path: Path,
+    validation_error: Exception | None,
+) -> bool:
+    try:
+        _rename_exchange(parent_fd, temporary_name, destination_name)
+    except OSError as rollback_error:
+        raise _PreserveStagedOutputError(
+            "release artifact exchange rollback failed; "
+            f"displaced output preserved at {display_path.parent / temporary_name}"
+        ) from rollback_error
+
+    try:
+        restored = _read_regular_output(parent_fd, destination_name)
+        expected_restored = displaced if displaced is not None else approved
+        if not _same_snapshot_across_rename(restored, expected_restored):
+            raise _PreserveStagedOutputError(
+                "release artifact exchange rollback could not restore the displaced output; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            )
+        confirmed_restored = _read_regular_output(parent_fd, destination_name)
+        if confirmed_restored != restored:
+            raise _PreserveStagedOutputError(
+                "release artifact restored output changed during validation; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            )
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as restore_error:
+        raise _PreserveStagedOutputError(
+            "release artifact exchange rollback could not validate the restored output; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from restore_error
+
+    try:
+        if published is None:
+            if _entry_identity_no_follow(parent_fd, temporary_name) is None:
+                raise _PreserveStagedOutputError(
+                    "release artifact rollback lost the unexpected publication entry"
+                ) from validation_error
+            raise _PreserveStagedOutputError(
+                "release artifact publication was invalid; canonical output restored and "
+                f"unexpected entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+
+        try:
+            returned_staged = _read_regular_output(parent_fd, temporary_name)
+        except Exception as recovery_error:
+            if _entry_identity_no_follow(parent_fd, temporary_name) is None:
+                raise _PreserveStagedOutputError(
+                    "release artifact rollback lost the unexpected publication entry"
+                ) from recovery_error
+            raise _PreserveStagedOutputError(
+                "release artifact canonical output was restored; invalid publication entry "
+                f"preserved at {display_path.parent / temporary_name}"
+            ) from recovery_error
+        if not _same_snapshot_across_rename(returned_staged, published):
+            raise _PreserveStagedOutputError(
+                "release artifact exchange rollback could not verify the recovery entry; "
+                f"entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        confirmed_returned = _read_regular_output(parent_fd, temporary_name)
+        if confirmed_returned != returned_staged:
+            raise _PreserveStagedOutputError(
+                "release artifact recovery entry changed during validation; "
+                f"entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        if validation_error is not None or not _same_snapshot_across_rename(
+            returned_staged, staged
+        ):
+            raise _PreserveStagedOutputError(
+                "release artifact staging path changed at publication; "
+                f"unexpected staged data preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        os.unlink(temporary_name, dir_fd=parent_fd)
+        return False
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as verification_error:
+        raise _PreserveStagedOutputError(
+            "release artifact post-rollback verification failed; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from verification_error
+
+
+def _publish_staged_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    approved: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    staged: tuple[tuple[int, int, int, int, int, int], bytes],
+    display_path: Path,
+) -> bool:
+    if approved is None:
+        try:
+            _rename_noreplace(parent_fd, temporary_name, destination_name)
+        except FileExistsError as exc:
+            raise RuntimeError(
+                f"release artifact output appeared during publication: {display_path}"
+            ) from exc
+        published = None
+        try:
+            published = _read_regular_output(parent_fd, destination_name)
+            confirmed = _read_regular_output(parent_fd, destination_name)
+            if (
+                not _same_snapshot_across_rename(published, staged)
+                or confirmed != published
+            ):
+                raise RuntimeError("published output does not match staged output")
+        except Exception as exc:
+            _quarantine_unexpected_new_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                published=published,
+                display_path=display_path,
+                validation_error=exc,
+            )
+        return True
+
+    _rename_exchange(parent_fd, temporary_name, destination_name)
+    displaced = None
+    published = None
+    try:
+        displaced = _read_regular_output(parent_fd, temporary_name)
+        published = _read_regular_output(parent_fd, destination_name)
+    except Exception as validation_error:
+        return _rollback_exchanged_output(
+            parent_fd,
+            temporary_name,
+            destination_name,
+            approved=approved,
+            staged=staged,
+            displaced=displaced,
+            published=published,
+            display_path=display_path,
+            validation_error=validation_error,
+        )
+
+    if _same_snapshot_across_rename(
+        displaced, approved
+    ) and _same_snapshot_across_rename(published, staged):
+        try:
+            confirmed_displaced = _read_regular_output(parent_fd, temporary_name)
+            confirmed_published = _read_regular_output(parent_fd, destination_name)
+        except Exception as validation_error:
+            return _rollback_exchanged_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                approved=approved,
+                staged=staged,
+                displaced=displaced,
+                published=published,
+                display_path=display_path,
+                validation_error=validation_error,
+            )
+        if confirmed_displaced != displaced or confirmed_published != published:
+            return _rollback_exchanged_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                approved=approved,
+                staged=staged,
+                displaced=displaced,
+                published=published,
+                display_path=display_path,
+                validation_error=RuntimeError(
+                    "release artifact exchange changed during validation"
+                ),
+            )
+        try:
+            os.unlink(temporary_name, dir_fd=parent_fd)
+        except Exception as cleanup_error:
+            raise _PreserveStagedOutputError(
+                "published release artifact, but displaced output could not be removed; "
+                f"preserved at {display_path.parent / temporary_name}"
+            ) from cleanup_error
+        return True
+
+    return _rollback_exchanged_output(
+        parent_fd,
+        temporary_name,
+        destination_name,
+        approved=approved,
+        staged=staged,
+        displaced=displaced,
+        published=published,
+        display_path=display_path,
+        validation_error=None,
+    )
+
+
+def _write_json_stable(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> None:
+    if root is None:
+        root = path.parent
+        relative_path = Path(path.name)
+    else:
+        relative_path = path
+    root, relative_path = _safe_output_path(root, relative_path)
+    serialized = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode(
+        "utf-8"
+    )
+    parent_fd = _open_output_parent(root, relative_path)
+    temporary_name = ""
+    try:
+        approved = _read_regular_output(parent_fd, relative_path.name)
+        if approved is not None:
+            _approved_identity, existing_bytes = approved
+            existing = _strict_json_object_bytes(existing_bytes)
+            semantically_equal = (
+                existing is not None
+                and _normalize_release_value(existing)
+                == _normalize_release_value(payload)
+                and not _provenance_refresh_required(
+                    _provenance_heads(existing),
+                    _provenance_heads(payload),
+                )
+            )
+            if semantically_equal:
+                if stat.S_IMODE(approved[0][2]) == 0o644:
+                    return
+                # Repair only the unsafe mode; stable writers retain the
+                # already-approved representation and volatile metadata.
+                serialized = existing_bytes
+
+        for _attempt in range(10):
+            temporary_name = (
+                f".{relative_path.name}.release-write-{secrets.token_hex(8)}"
+            )
+            try:
+                temporary_fd = os.open(
+                    temporary_name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+                break
+            except FileExistsError:
+                temporary_name = ""
+        else:
+            raise FileExistsError(
+                f"unable to allocate release artifact output: {relative_path}"
+            )
+        try:
+            remaining = memoryview(serialized)
+            while remaining:
+                written = os.write(temporary_fd, remaining)
+                if written <= 0:
+                    raise OSError(
+                        f"short write while publishing release artifact: {relative_path}"
+                    )
+                remaining = remaining[written:]
+            os.fchmod(temporary_fd, 0o644)
+            os.fsync(temporary_fd)
+        finally:
+            os.close(temporary_fd)
+
+        staged = _read_regular_output(parent_fd, temporary_name)
+        if staged is None:
+            raise RuntimeError(
+                f"release artifact staging file disappeared: {relative_path}"
+            )
+        try:
+            consumed = _publish_staged_output(
+                parent_fd,
+                temporary_name,
+                relative_path.name,
+                approved=approved,
+                staged=staged,
+                display_path=relative_path,
+            )
+        except _PreserveStagedOutputError:
+            temporary_name = ""
+            try:
+                os.fsync(parent_fd)
+            finally:
+                raise
+        temporary_name = ""
+        os.fsync(parent_fd)
+        if not consumed:
+            raise RuntimeError(
+                f"release artifact output changed before publication: {relative_path}"
+            )
+    finally:
+        try:
+            if temporary_name:
+                try:
+                    os.unlink(temporary_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(parent_fd)
 
 
 def _compact(value: object, *, fallback: str = "", limit: int = 220) -> str:
@@ -242,14 +804,14 @@ def _first_int(*values: object, fallback: int = 0) -> int:
 def _existing_cited_signal_int(existing: dict[str, Any], signal_name: str) -> int | None:
     prefix = f"{signal_name}="
     signal_sources = [
-        existing.get("governor_decisions") or [],
-        dict(existing.get("snapshot") or {}).get("governor_decisions") or [],
+        _items(existing.get("governor_decisions")),
+        _items(_object(existing.get("snapshot")).get("governor_decisions")),
     ]
     for decisions in signal_sources:
         for decision in decisions:
             if not isinstance(decision, dict):
                 continue
-            for signal in decision.get("cited_signals") or []:
+            for signal in _items(decision.get("cited_signals")):
                 signal_text = str(signal or "")
                 if not signal_text.startswith(prefix):
                     continue
@@ -308,7 +870,28 @@ def _git_metadata_for_path(path: Path) -> dict[str, str]:
     return metadata
 
 
-def _source_provenance(path: Path) -> dict[str, Any]:
+def _source_provenance(
+    path: Path,
+    *,
+    snapshot: StableFileSnapshot | None = None,
+) -> dict[str, Any]:
+    if snapshot is not None:
+        snapshot.assert_unchanged()
+        payload = {
+            "source_path": path.as_posix(),
+            "resolved_path": snapshot.path.as_posix(),
+            "present": True,
+            "size_bytes": len(snapshot.payload),
+            "mtime_utc": datetime.fromtimestamp(
+                snapshot.identity[4] / 1_000_000_000,
+                timezone.utc,
+            ).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "sha256": sha256_bytes(snapshot.payload),
+        }
+        payload.update(_git_metadata_for_path(path))
+        snapshot.assert_unchanged()
+        return payload
+
     resolved = path.resolve() if path.exists() else path
     payload: dict[str, Any] = {
         "source_path": path.as_posix(),
@@ -332,10 +915,10 @@ def _journey_gate_source(root: Path, journey_path: Path) -> dict[str, Any]:
     resolved = _resolve_for_read(root, journey_path)
     if not resolved.exists():
         existing = _load_json(root / DEFAULT_OUTPUT) or {}
-        existing_health = dict(existing.get("journey_gate_health") or {})
-        existing_provenance = dict(existing.get("journey_gate_provenance") or {})
+        existing_health = _object(existing.get("journey_gate_health"))
+        existing_provenance = _object(existing.get("journey_gate_provenance"))
         if existing_health or existing_provenance:
-            existing_signals = dict(existing.get("supporting_signals") or {})
+            existing_signals = _object(existing.get("supporting_signals"))
             blocked = _first_int(existing_health.get("blocked_count"))
             warning = _first_int(existing_health.get("warning_count"))
             state = str(existing_health.get("state") or "missing").strip() or "missing"
@@ -404,12 +987,20 @@ def _journey_gate_source(root: Path, journey_path: Path) -> dict[str, Any]:
                 "provenance": provenance,
             }
     journey = _load_json(resolved) or {}
-    summary = dict(journey.get("summary") or {})
-    journeys = [dict(row) for row in list(journey.get("journeys") or []) if isinstance(row, dict)]
-    blocked = int(summary.get("blocked_count") or 0)
-    ready = int(summary.get("ready_count") or 0)
-    total = int(summary.get("total_journey_count") or len(journeys) or (blocked + ready))
-    warning = int(summary.get("warning_count") or 0)
+    summary = _object(journey.get("summary"))
+    journeys = [
+        dict(row) for row in _items(journey.get("journeys")) if type(row) is dict
+    ]
+    blocked = max(_first_int(summary.get("blocked_count")), 0)
+    ready = max(_first_int(summary.get("ready_count")), 0)
+    parsed_total = _optional_int(summary.get("total_journey_count"))
+    total = max(
+        parsed_total
+        if parsed_total is not None
+        else (len(journeys) or (blocked + ready)),
+        0,
+    )
+    warning = max(_first_int(summary.get("warning_count")), 0)
     journey_state = str(summary.get("overall_state") or "missing").strip() or "missing"
     recommended_action = _compact(summary.get("recommended_action") or "", fallback="Journey-gate posture is not available.")
     return {
@@ -430,12 +1021,23 @@ def _journey_gate_source(root: Path, journey_path: Path) -> dict[str, Any]:
 
 def _flagship_receipt_source(root: Path, receipt_path: Path) -> dict[str, Any]:
     resolved = _resolve_for_read(root, receipt_path)
-    receipt = _load_json(resolved) or {}
+    receipt_snapshot = None
+    try:
+        receipt_snapshot = read_stable_regular_file(resolved)
+        receipt = _strict_json_object_bytes(receipt_snapshot.payload) or {}
+    except (OSError, ReleaseBindingError):
+        receipt = {}
     status = str(receipt.get("status") or "missing").strip() or "missing"
-    truth_plane = dict(receipt.get("truth_plane") or {})
-    browser = dict(receipt.get("browser_workflow_proof") or {})
-    live_readiness = dict(receipt.get("live_readiness") or {})
-    return {
+    malformed_nested = any(
+        type(receipt.get(key)) is not dict
+        for key in ("truth_plane", "browser_workflow_proof", "live_readiness")
+    )
+    truth_plane = _object(receipt.get("truth_plane"))
+    browser = _object(receipt.get("browser_workflow_proof"))
+    live_readiness = _object(receipt.get("live_readiness"))
+    if malformed_nested:
+        status = "blocked"
+    result = {
         "receipt": receipt,
         "product_label": _receipt_product_label(receipt),
         "path": receipt_path,
@@ -448,9 +1050,24 @@ def _flagship_receipt_source(root: Path, receipt_path: Path) -> dict[str, Any]:
         or "not_evaluated",
         "browser_present": bool(browser.get("published_receipt_present")),
         "browser_receipt": str(browser.get("published_receipt") or "").strip(),
-        "limitations": [str(item) for item in list(receipt.get("current_limitations") or []) if str(item).strip()],
-        "provenance": _source_provenance(resolved),
+        "limitations": [
+            str(item)
+            for item in _items(receipt.get("current_limitations"))
+            if str(item).strip()
+        ]
+        + (
+            ["flagship receipt contains invalid nested release evidence"]
+            if malformed_nested
+            else []
+        ),
+        "provenance": _source_provenance(
+            resolved,
+            snapshot=receipt_snapshot,
+        ),
     }
+    if receipt_snapshot is not None:
+        receipt_snapshot.assert_unchanged()
+    return result
 
 
 def build_pulse(
@@ -465,7 +1082,7 @@ def build_pulse(
     release_checklist_path: Path = DEFAULT_RELEASE_CHECKLIST,
 ) -> dict[str, Any]:
     scorecard = _load_yaml(root / scorecard_path)
-    cadence = dict(scorecard.get("cadence") or {})
+    cadence = _object(scorecard.get("cadence"))
     journey_info = _journey_gate_source(root, journey_gates_path)
     journey_source_path = Path(str(journey_info.get("path") or journey_gates_path.as_posix()))
     receipt_info = _flagship_receipt_source(root, flagship_receipt_path)
@@ -473,8 +1090,12 @@ def build_pulse(
     generated_at = _format_utc(now)
     review_due = _format_utc(now + timedelta(days=7))
 
-    scorecard_metrics = list(scorecard.get("scorecards") or [])
-    scorecard_metric_count = sum(len(list(dict(row).get("metrics") or [])) for row in scorecard_metrics if isinstance(row, dict))
+    scorecard_metrics = _items(scorecard.get("scorecards"))
+    scorecard_metric_count = sum(
+        len(_items(row.get("metrics")))
+        for row in scorecard_metrics
+        if type(row) is dict
+    )
     product_label = str(receipt_info["product_label"])
     release_truth_state = receipt_info["status"]
     readiness_scope = str(receipt_info["readiness_scope"])
@@ -883,8 +1504,7 @@ def main() -> int:
     )
 
     output_path = root / args.output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json_stable(output_path, pulse)
+    _write_json_stable(args.output, pulse, root=root)
     if args.stdout:
         print(json.dumps(pulse, indent=2, ensure_ascii=False))
     else:

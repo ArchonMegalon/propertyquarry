@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.product.property_search_work_queue import (
     InMemoryPropertySearchWorkQueue,
+    PropertySearchWorkQueueSnapshot,
     property_search_work_idempotency_key,
 )
 
@@ -143,6 +144,40 @@ def test_crash_after_final_claim_becomes_terminal_when_lease_expires() -> None:
     assert terminal is not None
     assert terminal.status == "failed"
     assert terminal.last_error == "lease_expired_after_max_attempts"
+
+
+def test_observability_snapshot_reports_only_active_queue_shape_and_age() -> None:
+    clock = _Clock()
+    repository = InMemoryPropertySearchWorkQueue(now=clock)
+    first = repository.enqueue_run(
+        run_record=_record(run_id="run-a"),
+        payload_json={"private_marker": "must-not-escape"},
+        idempotency_key="queue-key-a",
+    ).job
+    clock.advance(10)
+    repository.enqueue_run(
+        run_record=_record(run_id="run-b"),
+        payload_json={"private_marker": "also-private"},
+        idempotency_key="queue-key-b",
+    )
+    claimed = repository.claim(lease_owner="worker-a", lease_seconds=30)
+
+    assert claimed is not None
+    assert claimed.job_id == first.job_id
+    assert repository.observability_snapshot() == PropertySearchWorkQueueSnapshot(
+        depth=2,
+        oldest_item_age_seconds=10.0,
+    )
+
+    completed = repository.complete(
+        job_id=claimed.job_id,
+        lease_owner="worker-a",
+    )
+    assert completed is not None
+    assert repository.observability_snapshot() == PropertySearchWorkQueueSnapshot(
+        depth=1,
+        oldest_item_age_seconds=0.0,
+    )
 
 
 def test_idempotency_keys_are_tenant_scoped() -> None:

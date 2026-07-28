@@ -12,6 +12,13 @@ from app.product.property_search_schema import migrate_property_search_schema
 from app.services.property_content_job_ledger import PropertyContentJobLedger
 
 
+_SYSTEM_OWNERSHIP = {
+    "principal_id": "propertyquarry:system:content-studio",
+    "ownership_scope": "system",
+    "search_run_id": "",
+}
+
+
 def _database_url() -> str:
     value = str(os.environ.get("EA_TEST_PROPERTY_DATABASE_URL") or "").strip()
     if not value:
@@ -19,7 +26,9 @@ def _database_url() -> str:
     return value
 
 
-def test_postgres_content_ledger_claims_once_orders_events_and_recovers_crashes() -> None:
+def test_postgres_content_ledger_claims_once_orders_events_and_recovers_crashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     database_url = _database_url()
     import psycopg
     from psycopg import sql
@@ -31,8 +40,13 @@ def test_postgres_content_ledger_claims_once_orders_events_and_recovers_crashes(
         with admin.cursor() as cur:
             cur.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(namespace)))
     try:
+        monkeypatch.setenv("DATABASE_URL", isolated_url)
+        monkeypatch.setenv(
+            "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET",
+            "property-content-postgres-test-erasure-secret-v1",
+        )
         migrated = migrate_property_search_schema(isolated_url, applied_by="postgres-content-ledger-test")
-        assert migrated.applied_versions == (1, 2, 3, 4, 5)
+        assert migrated.applied_versions == tuple(range(1, 14))
         ledger_a = PropertyContentJobLedger(database_url=isolated_url, backend="postgres")
         ledger_b = PropertyContentJobLedger(database_url=isolated_url, backend="postgres")
         packet = {
@@ -40,7 +54,7 @@ def test_postgres_content_ledger_claims_once_orders_events_and_recovers_crashes(
             "content_mode": "product_tutorial",
             "subscribr_channel_key": "propertyquarry-product-tutorials",
         }
-        ledger_a.upsert_job(packet, status="QUEUED")
+        ledger_a.upsert_job(packet, **_SYSTEM_OWNERSHIP, status="QUEUED")
         observed = datetime(2026, 7, 13, 11, 0, tzinfo=timezone.utc)
         barrier = threading.Barrier(2)
 
@@ -48,6 +62,7 @@ def test_postgres_content_ledger_claims_once_orders_events_and_recovers_crashes(
             barrier.wait(timeout=5)
             return ledger.claim_job(
                 "packet-postgres",
+                **_SYSTEM_OWNERSHIP,
                 lease_owner=owner,
                 lease_seconds=60,
                 now=observed,
@@ -71,6 +86,8 @@ def test_postgres_content_ledger_claims_once_orders_events_and_recovers_crashes(
             return ledger.claim_webhook_event(
                 event_id="evt-postgres",
                 payload=payload,
+                packet_id="packet-postgres",
+                **_SYSTEM_OWNERSHIP,
                 extra={"signature_status": "verified"},
                 claim_owner=owner,
                 lease_seconds=60,
@@ -89,6 +106,8 @@ def test_postgres_content_ledger_claims_once_orders_events_and_recovers_crashes(
         recovered = ledger_b.claim_webhook_event(
             event_id="evt-postgres",
             payload=payload,
+            packet_id="packet-postgres",
+            **_SYSTEM_OWNERSHIP,
             extra={},
             claim_owner="webhook-recovery",
             lease_seconds=60,
@@ -98,6 +117,7 @@ def test_postgres_content_ledger_claims_once_orders_events_and_recovers_crashes(
         assert recovered["recovered"] is True
         ledger_b.complete_webhook_event(
             event_id="evt-postgres",
+            **_SYSTEM_OWNERSHIP,
             claim_owner="webhook-recovery",
             status="received",
         )

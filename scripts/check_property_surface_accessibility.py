@@ -76,8 +76,14 @@ FORBIDDEN_CUSTOMER_NOISE = (
     "operator center",
 )
 
-ALLOWED_HASH_TARGETS = {"#results-list", "#pqx-filtered-breakdown", "#sign-in-options"}
-FOCUSABLE_HASH_TARGETS = {"#sign-in-options"}
+ALLOWED_HASH_TARGETS = {
+    "#main-content",
+    "#pqx-main-content",
+    "#results-list",
+    "#pqx-filtered-breakdown",
+    "#sign-in-options",
+}
+FOCUSABLE_HASH_TARGETS = {"#main-content", "#pqx-main-content", "#sign-in-options"}
 
 ACCESSIBILITY_PRIMITIVE_TEMPLATES = (
     "ea/app/templates/base_public.html",

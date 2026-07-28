@@ -48,6 +48,32 @@ def test_release_hygiene_flags_untracked_release_sources_but_ignores_runtime_art
     )
 
 
+def test_release_hygiene_classifies_untracked_inputs_fail_closed() -> None:
+    release_inputs = (
+        "native/propertyquarry-release-control-v2/internal/releasecontrol/releasecontrol.go",
+        "packaging/propertyquarry-release-control-v2/systemd/propertyquarry-release-control-v2@.service",
+        "config/monitoring/propertyquarry_flagship_operations.v1.json",
+        "config/propertyquarry_security_runner_requirements.lock",
+        ".github/workflows/smoke-runtime.yml",
+        "pytest.ini",
+        "unclassified/release-input.bin",
+    )
+    generated_or_runtime_paths = (
+        "_completion/property_gold_status/latest.json",
+        "_tmp_live_shots/research.png",
+        ".pytest_cache/v/cache/nodeids",
+        "build/propertyquarry-release-control-v2/linux-amd64/propertyquarry-release-controller-v2",
+        "state/receipts/propertyquarry_gold_status_current.json",
+        "tmp_audit/probe.json",
+    )
+
+    assert all(release_hygiene._is_release_source_path(path) for path in release_inputs)
+    assert not any(
+        release_hygiene._is_release_source_path(path)
+        for path in generated_or_runtime_paths
+    )
+
+
 def test_manifest_release_binding_accepts_only_named_metadata_descendants(monkeypatch) -> None:
     monkeypatch.setattr(release_hygiene, "git_commit_is_ancestor", lambda manifest, head: True)
     monkeypatch.setattr(

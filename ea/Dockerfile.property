@@ -45,6 +45,9 @@ COPY scripts/generate_property_reconstruction.py /app/scripts/generate_property_
 COPY scripts/property_reconstruction_render_bridge.py /app/scripts/property_reconstruction_render_bridge.py
 COPY scripts/import_magicfit_walkthrough.py /app/scripts/import_magicfit_walkthrough.py
 COPY scripts/verify_property_tour_controls.py /app/scripts/verify_property_tour_controls.py
+COPY scripts/property_tour_3dvista_provenance.py /app/scripts/property_tour_3dvista_provenance.py
+COPY scripts/property_tour_panorama_provenance.py /app/scripts/property_tour_panorama_provenance.py
+COPY scripts/property_tour_host_safety.py /app/scripts/property_tour_host_safety.py
 COPY scripts/verify_property_tour_vendor_tooling.py /app/scripts/verify_property_tour_vendor_tooling.py
 COPY scripts/intake_3dvista_gold_artifact.py /app/scripts/intake_3dvista_gold_artifact.py
 COPY vendor/three /app/vendor/three

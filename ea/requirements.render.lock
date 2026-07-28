@@ -1,0 +1,3 @@
+# Dedicated render bridge dependency set. The artifact is vendored and pip
+# verifies this exact digest while the image build has no network.
+pillow==12.3.0 --hash=sha256:0dd2064cbc55aaec028ef5fbb60fa47bb6c3e7918e07ff17935284b227a9d2df

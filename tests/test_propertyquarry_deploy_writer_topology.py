@@ -34,6 +34,7 @@ def test_pinned_topology_declares_every_target_role_and_no_implicit_external_wri
     assert set(payload["target"]) == set(topology.ROLE_NAMES)
     assert topology.allowed_database_writer_names(payload) == [
         "propertyquarry-api",
+        "propertyquarry-worker",
         "propertyquarry-scheduler",
         "propertyquarry-migrate",
     ]
@@ -63,17 +64,22 @@ def test_inventory_discovers_pinned_writers_without_trusting_literal_dsn() -> No
         ),
         _container(
             container_id="b" * 64,
+            name="propertyquarry-worker",
+            database_url=database_url,
+        ),
+        _container(
+            container_id="c" * 64,
             name="propertyquarry-migrate",
             database_url=None,
             extra_environment=["DATABASE_URL_FILE=/run/secrets/database-url"],
         ),
         _container(
-            container_id="c" * 64,
+            container_id="d" * 64,
             name="other-database",
             database_url="postgresql://writer:secret@other.internal/property",
         ),
         _container(
-            container_id="d" * 64,
+            container_id="e" * 64,
             name="stopped-writer",
             database_url=database_url,
             running=False,
@@ -82,10 +88,15 @@ def test_inventory_discovers_pinned_writers_without_trusting_literal_dsn() -> No
 
     assert topology._inventory_from_inspect(
         payload,
-        ["propertyquarry-api", "propertyquarry-migrate"],
+        [
+            "propertyquarry-api",
+            "propertyquarry-worker",
+            "propertyquarry-migrate",
+        ],
     ) == [
         ("a" * 64, "propertyquarry-api"),
-        ("b" * 64, "propertyquarry-migrate"),
+        ("c" * 64, "propertyquarry-migrate"),
+        ("b" * 64, "propertyquarry-worker"),
     ]
 
 

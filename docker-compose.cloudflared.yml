@@ -5,7 +5,27 @@ services:
     # use is nevertheless digest-only so a mutable tag cannot slip in.
     image: cloudflare/cloudflared@sha256:${PROPERTYQUARRY_CLOUDFLARED_IMAGE_SHA256:?Set the controller-approved 64-character Cloudflared image digest}
     container_name: propertyquarry-cloudflared
-    restart: unless-stopped
+    restart: "${PROPERTYQUARRY_CLOUDFLARED_RESTART_POLICY:-unless-stopped}"
+    init: true
+    read_only: true
+    cpus: ${PROPERTYQUARRY_CLOUDFLARED_CPUS:-0.25}
+    mem_limit: "${PROPERTYQUARRY_CLOUDFLARED_MEMORY_LIMIT:-128m}"
+    mem_reservation: "${PROPERTYQUARRY_CLOUDFLARED_MEMORY_RESERVATION:-32m}"
+    memswap_limit: "${PROPERTYQUARRY_CLOUDFLARED_MEMORY_LIMIT:-128m}"
+    pids_limit: ${PROPERTYQUARRY_CLOUDFLARED_PIDS_LIMIT:-64}
+    oom_score_adj: 500
+    stop_grace_period: 20s
+    tmpfs:
+      - /tmp:size=${PROPERTYQUARRY_CLOUDFLARED_TMPFS_LIMIT:-16m},mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     command: tunnel run
     environment:
       - TUNNEL_TOKEN=${PROPERTYQUARRY_CF_TUNNEL_TOKEN:?Set PROPERTYQUARRY_CF_TUNNEL_TOKEN for the dedicated PropertyQuarry tunnel}

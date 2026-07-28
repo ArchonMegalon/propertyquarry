@@ -181,30 +181,66 @@ def test_materialize_property_tour_export_manifest_loads_krpano_env_defaults_bef
     assert manifest["imports"][0]["provider"] == "magicfit"
 
 
-def test_materialize_property_tour_export_manifest_prioritizes_ready_tour_gaps(tmp_path: Path) -> None:
+def test_materialize_property_tour_export_manifest_prioritizes_ready_tour_gaps(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     tour_root = tmp_path / "public_tours"
     incoming_root = tmp_path / "incoming"
-    _write_base_tour(tour_root, "blocked-needs-exports")
-    ready_bundle = tour_root / "matterport-ready"
-    ready_bundle.mkdir(parents=True)
-    (ready_bundle / "tour.json").write_text(
-        json.dumps(
-            {
-                "slug": "matterport-ready",
-                "display_title": "Matterport Ready",
-                "matterport_url": "https://my.matterport.com/show/?m=READY123",
-            }
-        ),
-        encoding="utf-8",
+    monkeypatch.setattr(
+        "scripts.materialize_property_tour_export_manifest."
+        "build_property_tour_control_receipt",
+        lambda **_kwargs: {
+            "missing_provider_modes": ["3dvista", "magicfit"],
+            "tours": [
+                {
+                    "slug": "blocked-needs-exports",
+                    "title": "Blocked needs exports",
+                    "status": "blocked_missing_verified_controls",
+                    "controls": [],
+                    "missing_evidence": [
+                        {
+                            "provider": "3dvista",
+                            "reason": "missing_3dvista_export",
+                            "action": "import verified 3DVista evidence",
+                        },
+                        {
+                            "provider": "magicfit",
+                            "reason": "missing_magicfit_walkthrough",
+                            "action": "import verified MagicFit evidence",
+                        },
+                    ],
+                },
+                {
+                    "slug": "verified-required-controls",
+                    "title": "Verified required controls",
+                    "status": "ready",
+                    "controls": [
+                        {"provider": "3dvista", "status": "ready"},
+                        {"provider": "magicfit", "status": "ready"},
+                    ],
+                    "missing_evidence": [],
+                },
+            ],
+        },
     )
 
     manifest = build_export_manifest(tour_root=tour_root, incoming_root=incoming_root, limit_per_provider=1)
 
     assert manifest["status"] == "waiting_for_verified_assets"
     assert manifest["import_count"] == 4
-    assert {row["slug"] for row in manifest["imports"]} == {"matterport-ready"}
-    assert {row["current_control_providers"] for row in manifest["imports"]} == {"matterport"}
-    assert {row["title"] for row in manifest["imports"]} == {"Matterport Ready"}
+    imports = {row["provider"]: row for row in manifest["imports"]}
+    assert {
+        provider: row["slug"]
+        for provider, row in imports.items()
+    } == {
+        "3dvista": "blocked-needs-exports",
+        "magicfit": "blocked-needs-exports",
+        "krpano": "verified-required-controls",
+        "pano2vr": "verified-required-controls",
+    }
+    assert imports["krpano"]["current_control_providers"] == "3dvista,magicfit"
+    assert imports["pano2vr"]["title"] == "Verified required controls"
 
 
 def test_materialize_property_tour_export_manifest_prepares_drop_dir_readmes(tmp_path: Path) -> None:

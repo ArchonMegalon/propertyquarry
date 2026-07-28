@@ -1,0 +1,11 @@
+{
+  "arch": "amd64",
+  "archive_bytes": 66879095,
+  "archive_sha256": "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053",
+  "archive_url": "https://go.dev/dl/go1.26.5.linux-amd64.tar.gz",
+  "distribution": "go.dev official binary archive",
+  "go_binary_sha256": "8da5fd321795754b994c64e3eb8a5a14ff47bd285559a7e876f3c79abafc67f9",
+  "os": "linux",
+  "schema": "propertyquarry.release-control.toolchain-lock.v2",
+  "version": "go1.26.5"
+}

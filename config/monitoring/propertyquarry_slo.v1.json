@@ -44,7 +44,7 @@
       "id": "runtime_heartbeats",
       "target_stale": 0,
       "indicator": "propertyquarry_runtime_heartbeat_stale",
-      "baseline_required_roles": ["scheduler"],
+      "baseline_required_roles": ["worker", "scheduler"],
       "conditional_roles_from_metric": "propertyquarry_runtime_heartbeat_required",
       "runbook_anchor": "runtime-heartbeats"
     },
@@ -53,18 +53,47 @@
       "target_rate": 0,
       "indicator": "propertyquarry_http_request_errors_total on bounded provider/quota/balance route templates",
       "runbook_anchor": "provider-and-quota-failures"
+    },
+    {
+      "id": "ingress_admission_backend",
+      "target_rate": 0,
+      "indicator": "increase(propertyquarry_ingress_admission_operations_total{outcome=\"backend_unavailable\"}[5m])",
+      "runbook_anchor": "ingress-admission-backend"
+    },
+    {
+      "id": "ingress_admission_capacity",
+      "target_contract_valid": 1,
+      "warning_ratio": 0.8,
+      "critical_ratio": 0.95,
+      "hard_limits": {
+        "lease": 100000,
+        "quota": 1000000
+      },
+      "indicator": "propertyquarry_admission_capacity_row_count / propertyquarry_admission_capacity_limit",
+      "runbook_anchor": "ingress-admission-capacity"
     }
   ],
   "required_metric_families": [
     "propertyquarry_http_requests_total",
     "propertyquarry_http_request_errors_total",
     "propertyquarry_http_request_duration_seconds",
+    "propertyquarry_runtime_build_info",
     "propertyquarry_readiness",
     "propertyquarry_expected_api_replicas",
     "propertyquarry_runtime_heartbeat_required",
     "propertyquarry_runtime_heartbeat_age_seconds",
     "propertyquarry_runtime_heartbeat_present",
     "propertyquarry_runtime_heartbeat_stale",
+    "propertyquarry_ingress_rejections_total",
+    "propertyquarry_ingress_cost_units_total",
+    "propertyquarry_ingress_high_cost_inflight",
+    "propertyquarry_ingress_admission_operations_total",
+    "propertyquarry_admission_capacity_contract_valid",
+    "propertyquarry_admission_capacity_row_count",
+    "propertyquarry_admission_capacity_limit",
+    "propertyquarry_queue_observed",
+    "propertyquarry_queue_depth",
+    "propertyquarry_queue_oldest_item_age_seconds",
     "propertyquarry_scheduler_delivery_outbox_events_total",
     "propertyquarry_content_ledger_events_total"
   ],
@@ -80,9 +109,11 @@
     },
     "queue_backlog": {
       "metric_families": [
+        "propertyquarry_queue_observed",
         "propertyquarry_queue_depth",
         "propertyquarry_queue_oldest_item_age_seconds"
       ],
+      "target_observed": 1,
       "warning_depth": 100,
       "critical_depth": 500,
       "maximum_oldest_age_seconds": 300,
@@ -103,8 +134,13 @@
     "PropertyQuarryReadinessFailed",
     "PropertyQuarryRuntimeHeartbeatMissing",
     "PropertyQuarryRuntimeHeartbeatStale",
+    "PropertyQuarryIngressAdmissionBackendUnavailable",
+    "PropertyQuarryAdmissionCapacityContractInvalid",
+    "PropertyQuarryAdmissionCapacityWarning",
+    "PropertyQuarryAdmissionCapacityCritical",
     "PropertyQuarryDatabasePoolSaturation",
     "PropertyQuarryDatabasePoolExhaustion",
+    "PropertyQuarryQueueTelemetryUnobserved",
     "PropertyQuarryQueueDepthHigh",
     "PropertyQuarryQueueOldestItemStale",
     "PropertyQuarryProviderOrQuotaFailures",

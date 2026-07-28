@@ -241,6 +241,31 @@ MagicFit pass criteria:
 - a playable hosted walkthrough video is returned, for example `hosted_walkthrough_video_url`
 - `magicfit_insufficient_credits` is cleared only after that proof render succeeds
 
+Provider render success is not delivery acceptance. `import_magicfit_walkthrough.py`
+copies the playable artifact but writes `tour.magicfit.json` with
+`acceptance_status=pending` and `launch_eligible=false`. A separate delivery
+review must replace that state with the closed
+`propertyquarry.magicfit_delivery_acceptance.v1` profile. It requires canonical
+MagicFit/provider state, the nonempty source-receipt hash, the active canonical
+`video_relpath` and exact `video_sha256`, and a nested
+`propertyquarry.magicfit_delivery_review.v1` record. That record binds the tour
+slug and all three artifact identities to a UTC review time, reviewer-authority
+digest, evidence digest, and literal passing checks for end-to-end playback,
+walkthrough continuity, visible rotation jumps, intended property/scope, and
+sensitive or trial branding. Missing, extra, stale, unbound, mistyped, future,
+pre-import, or hash-mismatched fields remain ineligible; status aliases and
+truthy strings are not approval. Here, stale means an artifact binding that no
+longer matches the active manifest or video bytes, not age alone. The local
+profile deliberately has no expiry and cannot establish freshness or detect
+replay. Allowlisted remote playback remains a separate live-probed control path.
+
+This local JSON contract prevents accidental promotion; it is not reviewer or
+provider authority. A launch authority must still verify canonical signed bytes,
+a root-pinned reviewer key and role (including revocation and scope), the
+content-addressed provider/evidence artifacts, trusted time, and replay state.
+The digest fields do not prove those facts by themselves, and an unverified
+`signature` field must never be accepted.
+
 Readiness with multiple accounts may become `constrained` rather than blocked if only one account is known depleted.
 
 ## OMagic / Magic unblock

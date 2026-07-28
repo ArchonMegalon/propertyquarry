@@ -21,6 +21,7 @@ from uuid import uuid4
 import fcntl
 
 from app.product.projections import compact_text
+from app.product.property_search_storage import property_account_publication_authority
 
 _PROPERTY_SCOUT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0 Safari/537.36"
 _PROPERTY_SCOUT_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
@@ -29,6 +30,7 @@ _PROPERTY_PUBLIC_TOUR_PRIVATE_MANIFEST = "tour.private.json"
 _PROPERTY_PUBLIC_TOUR_PRIVATE_RECEIPT_MERGE_KEYS = frozenset(
     {
         "principal_id",
+        "search_run_id",
         "listing_url",
         "property_url",
         "source_ref",
@@ -357,6 +359,7 @@ def _normalize_generated_reconstruction_bundle_permissions(bundle_dir: Path) -> 
 
 def _write_hosted_property_tour_payload(bundle_dir: Path, payload: dict[str, object]) -> None:
     incoming_owner = str(payload.get("principal_id") or "").strip()
+    search_run_id = str(payload.get("search_run_id") or "").strip()
     private_manifest_path = _public_tour_private_manifest_path(bundle_dir)
     _validate_hosted_property_tour_private_receipt_target(private_manifest_path)
     if (bundle_dir / "tour.json").exists() or _public_tour_private_manifest_path(bundle_dir).exists():
@@ -367,11 +370,25 @@ def _write_hosted_property_tour_payload(bundle_dir: Path, payload: dict[str, obj
                 raise RuntimeError("hosted_property_tour_owner_mismatch")
         elif incoming_owner:
             raise RuntimeError("hosted_property_tour_legacy_owner_missing")
-    bundle_dir.mkdir(parents=True, exist_ok=True)
     public_payload = _public_tour_public_payload(payload)
     private_payload = _public_tour_private_receipt(payload)
-    _write_hosted_property_tour_private_receipt_atomic(bundle_dir, private_payload)
-    (bundle_dir / "tour.json").write_text(json.dumps(public_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _commit_payload() -> None:
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        _write_hosted_property_tour_private_receipt_atomic(bundle_dir, private_payload)
+        (bundle_dir / "tour.json").write_text(
+            json.dumps(public_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    if incoming_owner:
+        with property_account_publication_authority(
+            incoming_owner,
+            run_id=search_run_id,
+        ):
+            _commit_payload()
+    else:
+        _commit_payload()
 
 
 def _load_hosted_property_tour_private_receipt(bundle_dir: Path) -> dict[str, object]:
@@ -615,11 +632,42 @@ def list_hosted_property_tours_for_principal(*, principal_id: str) -> tuple[dict
     return tuple(rows)
 
 
-def revoke_hosted_property_tour_bundle(*, slug: str, principal_id: str = "", actor: str = "") -> dict[str, object]:
-    normalized_slug = str(slug or "").strip()
-    if not normalized_slug or "/" in normalized_slug or ".." in normalized_slug:
-        return {"status": "not_found", "slug": normalized_slug}
-    requested_principal = str(principal_id or "").strip()
+@contextmanager
+def _hosted_property_tour_publication_lock(
+    *,
+    public_dir: Path,
+    slug: str,
+) -> Iterator[None]:
+    """Join the generated publisher's exact per-slug filesystem lock."""
+
+    # service owns the dependency-neutral lock implementation today and also
+    # imports this hosting module. Import lazily so both paths share one lock
+    # derivation and inode without creating a module-import cycle.
+    from app.product.service import _property_reconstruction_publication_lock
+
+    with _property_reconstruction_publication_lock(
+        public_dir=public_dir,
+        slug=slug,
+    ):
+        yield
+
+
+def _remove_revoked_hosted_property_tour_bundle(bundle_dir: Path) -> None:
+    if bundle_dir.is_symlink() or bundle_dir.is_file():
+        bundle_dir.unlink(missing_ok=True)
+    elif bundle_dir.exists():
+        shutil.rmtree(bundle_dir)
+    if bundle_dir.exists() or bundle_dir.is_symlink():
+        raise RuntimeError("hosted_property_tour_revocation_removal_failed")
+
+
+def _revoke_hosted_property_tour_bundle_with_lock_held(
+    *,
+    normalized_slug: str,
+    requested_principal: str,
+    actor: str,
+    public_dir: Path,
+) -> dict[str, object]:
     existing_revocation = hosted_property_tour_revocation_receipt(normalized_slug)
     requested_digest = hashlib.sha256(requested_principal.encode("utf-8")).hexdigest() if requested_principal else ""
     if (
@@ -627,6 +675,7 @@ def revoke_hosted_property_tour_bundle(*, slug: str, principal_id: str = "", act
         and requested_digest
         and hmac.compare_digest(str(existing_revocation.get("principal_id_sha256") or ""), requested_digest)
     ):
+        _remove_revoked_hosted_property_tour_bundle(public_dir / normalized_slug)
         return {
             "status": "revoked",
             "slug": normalized_slug,
@@ -635,9 +684,11 @@ def revoke_hosted_property_tour_bundle(*, slug: str, principal_id: str = "", act
             "already_revoked": True,
             "cdn_purge": dict(existing_revocation.get("cdn_purge") or {}),
         }
-    public_dir = _public_tour_dir()
     root = public_dir.resolve()
-    bundle_dir = (public_dir / normalized_slug).resolve()
+    canonical_bundle_dir = public_dir / normalized_slug
+    if canonical_bundle_dir.is_symlink():
+        return {"status": "not_found", "slug": normalized_slug}
+    bundle_dir = canonical_bundle_dir.resolve()
     if bundle_dir == root or root not in bundle_dir.parents or not bundle_dir.exists() or not bundle_dir.is_dir():
         return {"status": "not_found", "slug": normalized_slug}
     manifest_path = bundle_dir / "tour.json"
@@ -674,7 +725,7 @@ def revoke_hosted_property_tour_bundle(*, slug: str, principal_id: str = "", act
         ),
         encoding="utf-8",
     )
-    shutil.rmtree(bundle_dir, ignore_errors=True)
+    _remove_revoked_hosted_property_tour_bundle(canonical_bundle_dir)
     return {
         "status": "revoked",
         "slug": normalized_slug,
@@ -683,6 +734,24 @@ def revoke_hosted_property_tour_bundle(*, slug: str, principal_id: str = "", act
         "already_revoked": False,
         "cdn_purge": cdn_purge,
     }
+
+
+def revoke_hosted_property_tour_bundle(*, slug: str, principal_id: str = "", actor: str = "") -> dict[str, object]:
+    normalized_slug = str(slug or "").strip()
+    if not normalized_slug or "/" in normalized_slug or ".." in normalized_slug:
+        return {"status": "not_found", "slug": normalized_slug}
+    requested_principal = str(principal_id or "").strip()
+    public_dir = _public_tour_dir()
+    with _hosted_property_tour_publication_lock(
+        public_dir=public_dir,
+        slug=normalized_slug,
+    ):
+        return _revoke_hosted_property_tour_bundle_with_lock_held(
+            normalized_slug=normalized_slug,
+            requested_principal=requested_principal,
+            actor=actor,
+            public_dir=public_dir,
+        )
 
 
 def _configured_public_tour_hosts() -> tuple[str, ...]:
@@ -1288,6 +1357,8 @@ def _hosted_property_tour_generated_reconstruction_contract(
     bundle_dir: Path,
     payload: dict[str, object],
 ) -> dict[str, object]:
+    if "publication_status" in payload and payload.get("publication_status") != "ready":
+        return {"ready": False}
     generated_reconstruction = payload.get("generated_reconstruction")
     if not isinstance(generated_reconstruction, dict):
         return {"ready": False}
@@ -1988,6 +2059,7 @@ def _write_hosted_floorplan_property_tour_bundle(
     property_facts_json: dict[str, object],
     source_host: str,
     source_ref: str = "",
+    search_run_id: str = "",
     external_id: str = "",
     recipient_email: str = "",
 ) -> dict[str, object]:
@@ -2078,6 +2150,7 @@ def _write_hosted_floorplan_property_tour_bundle(
             "hosted_url": f"{base_url}/{slug}",
             "public_url": f"{base_url}/{slug}",
             "principal_id": normalized_principal,
+            "search_run_id": str(search_run_id or "").strip(),
             "listing_url": property_url,
             "property_url": property_url,
             "source_ref": str(source_ref or "").strip(),
@@ -2125,6 +2198,7 @@ def _write_hosted_photo_gallery_property_tour_bundle(
     property_facts_json: dict[str, object],
     source_host: str,
     source_ref: str = "",
+    search_run_id: str = "",
     external_id: str = "",
     recipient_email: str = "",
 ) -> dict[str, object]:
@@ -2215,6 +2289,7 @@ def _write_hosted_photo_gallery_property_tour_bundle(
             "hosted_url": f"{base_url}/{slug}",
             "public_url": f"{base_url}/{slug}",
             "principal_id": normalized_principal,
+            "search_run_id": str(search_run_id or "").strip(),
             "listing_url": property_url,
             "property_url": property_url,
             "source_ref": str(source_ref or "").strip(),
@@ -2263,6 +2338,7 @@ def _write_hosted_feelestate_pure_360_property_tour_bundle(
     property_facts_json: dict[str, object],
     source_host: str,
     source_ref: str = "",
+    search_run_id: str = "",
     external_id: str = "",
     recipient_email: str = "",
 ) -> dict[str, object]:
@@ -2317,6 +2393,7 @@ def _write_hosted_feelestate_pure_360_property_tour_bundle(
             "hosted_url": f"{base_url}/{slug}",
             "public_url": f"{base_url}/{slug}",
             "principal_id": normalized_principal,
+            "search_run_id": str(search_run_id or "").strip(),
             "listing_url": property_url,
             "property_url": property_url,
             "source_ref": str(source_ref or "").strip(),

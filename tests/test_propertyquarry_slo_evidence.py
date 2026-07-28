@@ -1,29 +1,29 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import re
 import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 import pytest
-
+import yaml
 from propertyquarry_evidence_test_support import (
-    EvidenceTestAuthority,
     CanonicalMonitoringTestIdentity,
+    EvidenceTestAuthority,
     OperatorGatewayTestAuthority,
     install_test_authority,
     install_test_canonical_monitoring_identity,
     install_test_operator_gateway,
 )
+
 from ea.app import observability
 from ea.app.observability import RuntimeMetrics, runtime_build_identity
 from scripts import propertyquarry_evidence_contract as evidence_contract
 from scripts import propertyquarry_gold_status as gold_status
 from scripts import propertyquarry_observability_receipts as receipts
 from scripts import propertyquarry_slo_evidence as evidence
-
 
 RELEASE_SHA = "d" * 40
 IMAGE_DIGEST = "sha256:" + "e" * 64
@@ -69,6 +69,27 @@ def _metrics(multiplier: int) -> str:
         f'{{method="GET",route="/health",le="{bound}"}} {value * multiplier}'
         for bound, value in zip(BUCKETS, bucket_base, strict=True)
     )
+    admission_rows = "\n".join(
+        (
+            "propertyquarry_ingress_admission_operations_total"
+            f'{{backend="postgres",operation="{operation}",outcome="{outcome}"}} 0'
+        )
+        for operation in (
+            "ip_request",
+            "admit",
+            "renew",
+            "release",
+            "cleanup",
+            "snapshot",
+        )
+        for outcome in (
+            "allowed",
+            "quota_limited",
+            "lease_limited",
+            "capacity_exhausted",
+            "backend_unavailable",
+        )
+    )
     return f"""\
 # HELP propertyquarry_http_requests_total HTTP requests.
 # TYPE propertyquarry_http_requests_total counter
@@ -88,17 +109,36 @@ propertyquarry_readiness 1
 # TYPE propertyquarry_expected_api_replicas gauge
 propertyquarry_expected_api_replicas 1
 # TYPE propertyquarry_runtime_heartbeat_required gauge
-propertyquarry_runtime_heartbeat_required{{role="worker"}} 0
+propertyquarry_runtime_heartbeat_required{{role="worker"}} 1
 propertyquarry_runtime_heartbeat_required{{role="scheduler"}} 1
 # TYPE propertyquarry_runtime_heartbeat_age_seconds gauge
-propertyquarry_runtime_heartbeat_age_seconds{{role="worker"}} 0
+propertyquarry_runtime_heartbeat_age_seconds{{role="worker"}} 5
 propertyquarry_runtime_heartbeat_age_seconds{{role="scheduler"}} 5
 # TYPE propertyquarry_runtime_heartbeat_present gauge
-propertyquarry_runtime_heartbeat_present{{role="worker"}} 0
+propertyquarry_runtime_heartbeat_present{{role="worker"}} 1
 propertyquarry_runtime_heartbeat_present{{role="scheduler"}} 1
 # TYPE propertyquarry_runtime_heartbeat_stale gauge
-propertyquarry_runtime_heartbeat_stale{{role="worker"}} 1
+propertyquarry_runtime_heartbeat_stale{{role="worker"}} 0
 propertyquarry_runtime_heartbeat_stale{{role="scheduler"}} 0
+# TYPE propertyquarry_ingress_rejections_total counter
+# TYPE propertyquarry_ingress_cost_units_total counter
+# TYPE propertyquarry_ingress_high_cost_inflight gauge
+# TYPE propertyquarry_ingress_admission_operations_total counter
+{admission_rows}
+# TYPE propertyquarry_admission_capacity_contract_valid gauge
+propertyquarry_admission_capacity_contract_valid{{backend="postgres"}} 1
+# TYPE propertyquarry_admission_capacity_row_count gauge
+propertyquarry_admission_capacity_row_count{{backend="postgres",capacity_key="lease"}} 0
+propertyquarry_admission_capacity_row_count{{backend="postgres",capacity_key="quota"}} 0
+# TYPE propertyquarry_admission_capacity_limit gauge
+propertyquarry_admission_capacity_limit{{backend="postgres",capacity_key="lease"}} 100000
+propertyquarry_admission_capacity_limit{{backend="postgres",capacity_key="quota"}} 1000000
+# TYPE propertyquarry_queue_observed gauge
+propertyquarry_queue_observed{{queue="property_search"}} 1
+# TYPE propertyquarry_queue_depth gauge
+propertyquarry_queue_depth{{queue="property_search"}} 0
+# TYPE propertyquarry_queue_oldest_item_age_seconds gauge
+propertyquarry_queue_oldest_item_age_seconds{{queue="property_search"}} 0
 # TYPE propertyquarry_scheduler_delivery_outbox_events_total counter
 propertyquarry_scheduler_delivery_outbox_events_total{{outcome="dead_lettered"}} 0
 propertyquarry_scheduler_delivery_outbox_events_total{{outcome="failed"}} 0
@@ -308,6 +348,7 @@ def _write_inputs(
         "propertyquarry_http_request_duration_seconds_bucket",
         "propertyquarry_http_request_duration_seconds_sum",
         "propertyquarry_http_request_duration_seconds_count",
+        "propertyquarry_ingress_admission_operations_total",
         "propertyquarry_runtime_build_info",
     }
     matrix: list[dict[str, object]] = []
@@ -445,6 +486,168 @@ def _rewrite_hashed_json(path: Path, mutate: Callable[[dict[str, object]], None]
     _write_json(path, payload)
 
 
+@pytest.mark.parametrize(
+    "objective_id",
+    ("ingress_admission_backend", "ingress_admission_capacity"),
+)
+def test_slo_requires_authoritative_ingress_objectives(
+    objective_id: str,
+) -> None:
+    payload = json.loads(
+        evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8")
+    )
+    payload["objectives"] = [
+        row for row in payload["objectives"] if row["id"] != objective_id
+    ]
+
+    with pytest.raises(
+        evidence.SloValidationError,
+        match="missing a launch-evaluated objective",
+    ):
+        evidence.validate_slo_document(payload)
+
+
+@pytest.mark.parametrize(
+    ("collection", "removed", "error"),
+    (
+        (
+            "required_metric_families",
+            "propertyquarry_admission_capacity_contract_valid",
+            "missing an authoritative admission metric",
+        ),
+        (
+            "required_alerts",
+            "PropertyQuarryAdmissionCapacityContractInvalid",
+            "missing an authoritative admission alert",
+        ),
+    ),
+)
+def test_slo_requires_authoritative_ingress_metrics_and_alerts(
+    collection: str,
+    removed: str,
+    error: str,
+) -> None:
+    payload = json.loads(
+        evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8")
+    )
+    payload[collection].remove(removed)
+
+    with pytest.raises(evidence.SloValidationError, match=error):
+        evidence.validate_slo_document(payload)
+
+
+@pytest.mark.parametrize(
+    ("collection", "removed", "error"),
+    (
+        (
+            "required_metric_families",
+            "propertyquarry_queue_observed",
+            "missing an authoritative queue metric",
+        ),
+        (
+            "required_alerts",
+            "PropertyQuarryQueueTelemetryUnobserved",
+            "missing an authoritative queue alert",
+        ),
+    ),
+)
+def test_slo_requires_authoritative_queue_metrics_and_alerts(
+    collection: str,
+    removed: str,
+    error: str,
+) -> None:
+    payload = json.loads(
+        evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8")
+    )
+    payload[collection].remove(removed)
+
+    with pytest.raises(evidence.SloValidationError, match=error):
+        evidence.validate_slo_document(payload)
+
+
+@pytest.mark.parametrize("target_observed", (0, False, 2))
+def test_slo_rejects_noncanonical_queue_observation_target(
+    target_observed: object,
+) -> None:
+    payload = json.loads(
+        evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8")
+    )
+    payload["conditional_capabilities"]["queue_backlog"][
+        "target_observed"
+    ] = target_observed
+
+    with pytest.raises(
+        evidence.SloValidationError,
+        match="queue-backlog capability is not canonical",
+    ):
+        evidence.validate_slo_document(payload)
+
+
+@pytest.mark.parametrize(
+    ("objective_id", "field", "value", "error"),
+    (
+        (
+            "ingress_admission_backend",
+            "target_rate",
+            1,
+            "ingress-admission-backend objective is not canonical",
+        ),
+        (
+            "ingress_admission_backend",
+            "target_rate",
+            False,
+            "ingress-admission-backend objective is not canonical",
+        ),
+        (
+            "ingress_admission_backend",
+            "indicator",
+            "sum(rate(unbounded[1m]))",
+            "ingress-admission-backend objective is not canonical",
+        ),
+        (
+            "ingress_admission_capacity",
+            "warning_ratio",
+            9,
+            "ingress-admission-capacity objective is not canonical",
+        ),
+        (
+            "ingress_admission_capacity",
+            "target_contract_valid",
+            True,
+            "ingress-admission-capacity objective is not canonical",
+        ),
+        (
+            "ingress_admission_capacity",
+            "critical_ratio",
+            -1,
+            "ingress-admission-capacity objective is not canonical",
+        ),
+        (
+            "ingress_admission_capacity",
+            "hard_limits",
+            {"lease": 1, "quota": 2},
+            "ingress-admission-capacity objective is not canonical",
+        ),
+    ),
+)
+def test_slo_rejects_mutated_authoritative_ingress_objectives(
+    objective_id: str,
+    field: str,
+    value: object,
+    error: str,
+) -> None:
+    payload = json.loads(
+        evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8")
+    )
+    objective = next(
+        row for row in payload["objectives"] if row["id"] == objective_id
+    )
+    objective[field] = value
+
+    with pytest.raises(evidence.SloValidationError, match=error):
+        evidence.validate_slo_document(payload)
+
+
 @pytest.mark.parametrize("declared_bytes", [True, 1.0, "1", -1])
 def test_file_reference_bytes_require_exact_nonnegative_json_integer(
     tmp_path: Path,
@@ -531,6 +734,164 @@ def test_flagship_evidence_passes_two_snapshot_and_authenticated_range_contract(
     assert receipt["amtool"]["routing_check_passed"] is True
     assert receipt["monitoring_config"]["per_replica_discovery"] is True
     assert stat.S_IMODE(config.receipt_path.stat().st_mode) == 0o600
+
+
+def test_ingress_backend_failure_fails_short_window_slo(
+    tmp_path: Path,
+) -> None:
+    end_metrics = BASE_END_METRICS.replace(
+        (
+            "propertyquarry_ingress_admission_operations_total"
+            '{backend="postgres",operation="admit",'
+            'outcome="backend_unavailable"} 0'
+        ),
+        (
+            "propertyquarry_ingress_admission_operations_total"
+            '{backend="postgres",operation="admit",'
+            'outcome="backend_unavailable"} 1'
+        ),
+    )
+    receipt, exit_code = evidence.run_evidence_gate(
+        config=_config(tmp_path, end_metrics=end_metrics),
+        runner=FakePromtoolRunner(),
+        now=NOW,
+    )
+
+    assert exit_code == 2
+    assert "ingress_admission_backend" in receipt["error"]["message"]
+
+
+def test_unobserved_queue_fails_launch_snapshot(
+    tmp_path: Path,
+) -> None:
+    end_metrics = BASE_END_METRICS.replace(
+        'propertyquarry_queue_observed{queue="property_search"} 1',
+        'propertyquarry_queue_observed{queue="property_search"} 0',
+    )
+
+    receipt, exit_code = evidence.run_evidence_gate(
+        config=_config(tmp_path, end_metrics=end_metrics),
+        runner=FakePromtoolRunner(),
+        now=NOW,
+    )
+
+    assert exit_code == 2
+    assert "queue telemetry is unobserved" in receipt["error"]["message"]
+
+
+def test_empty_queue_with_nonzero_age_fails_launch_snapshot(
+    tmp_path: Path,
+) -> None:
+    end_metrics = BASE_END_METRICS.replace(
+        'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} 0',
+        'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} 1',
+    )
+
+    receipt, exit_code = evidence.run_evidence_gate(
+        config=_config(tmp_path, end_metrics=end_metrics),
+        runner=FakePromtoolRunner(),
+        now=NOW,
+    )
+
+    assert exit_code == 2
+    assert "empty property search queue" in receipt["error"]["message"]
+
+
+def test_ingress_backend_failure_fails_authenticated_range_slo(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    assert config.prometheus_range_path is not None
+    assert config.prometheus_range_receipt_path is not None
+    response = json.loads(
+        config.prometheus_range_path.read_text(encoding="utf-8")
+    )
+    target = next(
+        row
+        for row in response["data"]["result"]
+        if (
+            row["metric"]["__name__"]
+            == "propertyquarry_ingress_admission_operations_total"
+            and row["metric"]["operation"] == "admit"
+            and row["metric"]["outcome"] == "backend_unavailable"
+        )
+    )
+    target["values"][-1][1] = "1"
+    raw = json.dumps(
+        response,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    config.prometheus_range_path.write_bytes(raw)
+
+    def rebind(payload: dict[str, object]) -> None:
+        matrix = evidence._normalized_matrix(response["data"]["result"])
+        payload["range_response_sha256"] = evidence.sha256_bytes(raw)
+        payload["range_response_bytes"] = len(raw)
+        series = payload["series"]
+        assert isinstance(series, dict)
+        series["sha256"] = evidence.canonical_json_sha256(matrix)
+
+    _rewrite_hashed_json(config.prometheus_range_receipt_path, rebind)
+    receipt, exit_code = evidence.run_evidence_gate(
+        config=config,
+        runner=FakePromtoolRunner(),
+        now=NOW,
+    )
+
+    assert exit_code == 2
+    assert "ingress_admission_backend" in receipt["error"]["message"]
+
+
+def test_authenticated_range_requires_complete_ingress_admission_matrix(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    assert config.prometheus_range_path is not None
+    assert config.prometheus_range_receipt_path is not None
+    response = json.loads(
+        config.prometheus_range_path.read_text(encoding="utf-8")
+    )
+    result = response["data"]["result"]
+    removed = next(
+        row
+        for row in result
+        if (
+            row["metric"]["__name__"]
+            == "propertyquarry_ingress_admission_operations_total"
+            and row["metric"]["operation"] == "cleanup"
+            and row["metric"]["outcome"] == "allowed"
+        )
+    )
+    result.remove(removed)
+    raw = json.dumps(
+        response,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    config.prometheus_range_path.write_bytes(raw)
+
+    def rebind(payload: dict[str, object]) -> None:
+        matrix = evidence._normalized_matrix(result)
+        payload["range_response_sha256"] = evidence.sha256_bytes(raw)
+        payload["range_response_bytes"] = len(raw)
+        series = payload["series"]
+        assert isinstance(series, dict)
+        series["count"] = len(matrix)
+        series["sha256"] = evidence.canonical_json_sha256(matrix)
+
+    _rewrite_hashed_json(config.prometheus_range_receipt_path, rebind)
+    receipt, exit_code = evidence.run_evidence_gate(
+        config=config,
+        runner=FakePromtoolRunner(),
+        now=NOW,
+    )
+
+    assert exit_code == 2
+    assert (
+        "ingress admission operation matrix"
+        in receipt["error"]["message"]
+    )
 
 
 def test_missing_range_proof_fails_before_monitoring_tools(tmp_path: Path) -> None:
@@ -821,6 +1182,7 @@ def test_pinned_monitoring_runner_ignores_malicious_path(
 
 def test_one_immutable_fixture_passes_slo_observability_and_gold(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _config(tmp_path)
     snapshot_raw = config.metrics_snapshot_path.read_bytes()
@@ -895,6 +1257,73 @@ def test_one_immutable_fixture_passes_slo_observability_and_gold(
     )
     monitoring_path = tmp_path / "monitoring.json"
     _write_json(monitoring_path, monitoring)
+    dashboard_path = tmp_path / "dashboard.json"
+    _write_json(dashboard_path, {"kind": "dashboard"})
+    structured_logs_path = tmp_path / "structured-logs.json"
+    _write_json(structured_logs_path, {"kind": "structured-logs"})
+    distributed_trace_path = tmp_path / "distributed-trace.json"
+    _write_json(distributed_trace_path, {"kind": "distributed-trace"})
+
+    def fake_operations_verifier(**kwargs):  # type: ignore[no-untyped-def]
+        shared_input_hashes = {
+            "dashboard_render_receipt": receipts.sha256_bytes(
+                kwargs["dashboard_render_receipt_path"].read_bytes()
+            ),
+            "structured_log_query_receipt": receipts.sha256_bytes(
+                kwargs["structured_log_query_receipt_path"].read_bytes()
+            ),
+            "distributed_trace_query_receipt": receipts.sha256_bytes(
+                kwargs["distributed_trace_query_receipt_path"].read_bytes()
+            ),
+        }
+        assert shared_input_hashes == dict(kwargs["expected_input_hashes"])
+        return receipts.add_payload_sha256(
+            {
+                "schema_version": receipts.OPERATIONS_VERIFICATION_SCHEMA,
+                "producer": receipts.OPERATIONS_VERIFICATION_PRODUCER,
+                "verified_at": receipts.isoformat(kwargs["now"]),
+                "release": {
+                    "commit_sha": kwargs["release_commit_sha"],
+                    "image_digest": kwargs["release_image_digest"],
+                },
+                "deployment_id": AUTHORITY.challenge.deployment_id,
+                "challenge_sha256": AUTHORITY.challenge.artifact_sha256,
+                "policy_sha256": AUTHORITY.challenge.policy_hashes[
+                    "flagship_operations_sha256"
+                ],
+                "source_contract_status": "defined_not_live_evidence",
+                "shared_input_hashes": shared_input_hashes,
+                "replica_ids": [REPLICA_ID],
+                "status": "verified",
+                "receipts": {
+                    "dashboard_render": {
+                        "file_sha256": shared_input_hashes[
+                            "dashboard_render_receipt"
+                        ],
+                        "payload_sha256": "a" * 64,
+                    },
+                    "structured_log_query": {
+                        "file_sha256": shared_input_hashes[
+                            "structured_log_query_receipt"
+                        ],
+                        "payload_sha256": "b" * 64,
+                    },
+                    "distributed_trace_query": {
+                        "file_sha256": shared_input_hashes[
+                            "distributed_trace_query_receipt"
+                        ],
+                        "payload_sha256": "c" * 64,
+                    },
+                },
+                "cross_receipt_links_verified": True,
+            }
+        )
+
+    monkeypatch.setattr(
+        receipts,
+        "verify_operations_evidence",
+        fake_operations_verifier,
+    )
 
     immutable_files = [path for path in tmp_path.iterdir() if path.is_file()]
     original_hashes = {
@@ -913,6 +1342,9 @@ def test_one_immutable_fixture_passes_slo_observability_and_gold(
             prometheus_range_receipt_path=config.prometheus_range_receipt_path,
             prometheus_range_response_path=config.prometheus_range_path,
             alert_delivery_receipt_path=alert_path,
+            dashboard_render_receipt_path=dashboard_path,
+            structured_log_query_receipt_path=structured_logs_path,
+            distributed_trace_query_receipt_path=distributed_trace_path,
             output_directory=tmp_path / "gold-revalidation",
             slo_runner=FakePromtoolRunner(),
             now=NOW,
@@ -960,6 +1392,280 @@ def test_versioned_rules_cover_every_slo_alert_and_runbook() -> None:
     )
     assert result["rule_alerts"] == sorted(slo["required_alerts"])
     assert result["injection_test_alerts"] == sorted(slo["required_alerts"])
+
+
+def test_monitoring_contract_runbook_references_resolve() -> None:
+    root = evidence.DEFAULT_SLO_PATH.parents[2]
+    flagship = json.loads(
+        (root / "config/monitoring/propertyquarry_flagship_operations.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    incident = json.loads(
+        (root / "config/monitoring/propertyquarry_incident_support.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    rules = yaml.safe_load(evidence.DEFAULT_RULES_PATH.read_text(encoding="utf-8"))
+    references = [
+        *(panel["runbook"] for panel in flagship["panels"]),
+        *incident["runbooks"],
+        *(
+            rule["annotations"]["runbook"]
+            for group in rules["groups"]
+            for rule in group["rules"]
+            if "alert" in rule
+        ),
+    ]
+
+    for reference in references:
+        relative_path, separator, anchor = str(reference).partition("#")
+        path = root / relative_path
+        assert path.is_file(), reference
+        if not separator:
+            continue
+        text = path.read_text(encoding="utf-8")
+        explicit_anchors = set(
+            re.findall(r"""<a\s+id=["']([^"']+)["']\s*></a>""", text, re.IGNORECASE)
+        )
+        heading_anchors = {
+            re.sub(r"-+", "-", re.sub(r"[^a-z0-9 _-]", "", heading.lower()).replace(" ", "-"))
+            for heading in re.findall(r"^#{1,6}\s+(.+?)\s*$", text, re.MULTILINE)
+        }
+        assert anchor in explicit_anchors | heading_anchors, reference
+
+    assert flagship["source_contract_status"] == "defined_not_live_evidence"
+
+
+def test_required_metric_families_are_emitted_by_canonical_runtime_exporter(
+    tmp_path: Path,
+) -> None:
+    worker_path = tmp_path / "worker-heartbeat.json"
+    _write_json(
+        worker_path,
+        {
+            "role": "worker",
+            "epoch": NOW.timestamp(),
+            "pid": 10,
+            "property_search_work_queue": {
+                "observed": True,
+                "depth": 0,
+                "oldest_item_age_seconds": 0.0,
+            },
+        },
+    )
+    registry = RuntimeMetrics()
+    registry.record_request(
+        method="GET",
+        route="/health",
+        status_code=200,
+        duration_seconds=0.02,
+    )
+    rendered = registry.render_prometheus(
+        readiness_ready=True,
+        environ={
+            "EA_WORKER_HEARTBEAT_PATH": str(worker_path),
+            "EA_SCHEDULER_HEARTBEAT_PATH": str(tmp_path / "missing-scheduler.json"),
+        },
+        now_epoch=NOW.timestamp(),
+    )
+    families, _samples = evidence.parse_metrics_snapshot(rendered)
+    slo = evidence.validate_slo_document(
+        json.loads(evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8"))
+    )
+
+    assert sorted(set(slo["required_metric_families"]) - set(families)) == []
+
+
+def test_slo_requires_worker_and_scheduler_baseline_heartbeats() -> None:
+    slo = json.loads(evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8"))
+    heartbeat_objective = next(
+        row for row in slo["objectives"] if row["id"] == "runtime_heartbeats"
+    )
+    heartbeat_objective["baseline_required_roles"] = ["scheduler"]
+
+    with pytest.raises(
+        evidence.SloValidationError,
+        match="baseline roles must uniquely include worker and scheduler",
+    ):
+        evidence.validate_slo_document(slo)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    (evidence.validate_metrics, evidence._validate_end_state),
+)
+def test_runtime_heartbeat_baseline_roles_drive_metrics_validation(
+    validator: Callable[..., object],
+) -> None:
+    slo = evidence.validate_slo_document(
+        json.loads(evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8"))
+    )
+    families, samples = evidence.parse_metrics_snapshot(BASE_END_METRICS)
+    worker_optional = [
+        evidence.MetricSample(sample.name, sample.labels, 0.0)
+        if sample.name == "propertyquarry_runtime_heartbeat_required"
+        and sample.labels.get("role") == "worker"
+        else sample
+        for sample in samples
+    ]
+
+    with pytest.raises(
+        evidence.SloValidationError,
+        match="worker heartbeat must remain required",
+    ):
+        validator(
+            families=families,
+            samples=worker_optional,
+            slo=slo,
+        )
+
+
+@pytest.mark.parametrize(
+    "validator",
+    (evidence.validate_metrics, evidence._validate_end_state),
+)
+def test_property_search_queue_samples_are_required_and_finite(
+    validator: Callable[..., object],
+) -> None:
+    slo = evidence.validate_slo_document(
+        json.loads(evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8"))
+    )
+    families, samples = evidence.parse_metrics_snapshot(
+        BASE_END_METRICS.replace(
+            'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} 0',
+            'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} NaN',
+        )
+    )
+
+    with pytest.raises(
+        evidence.SloValidationError,
+        match=r"conditional capability queue_backlog has (?:no finite|invalid) samples",
+    ):
+        validator(families=families, samples=samples, slo=slo)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    (evidence.validate_metrics, evidence._validate_end_state),
+)
+def test_queue_capability_requires_exact_property_search_samples(
+    validator: Callable[..., object],
+) -> None:
+    slo = evidence.validate_slo_document(
+        json.loads(evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8"))
+    )
+    families, samples = evidence.parse_metrics_snapshot(
+        BASE_END_METRICS.replace(
+            'propertyquarry_queue_depth{queue="property_search"} 0',
+            'propertyquarry_queue_depth{queue="other"} 0',
+        )
+    )
+
+    with pytest.raises(
+        evidence.SloValidationError,
+        match=(
+            "queue capability must expose one finite non-negative "
+            "property_search sample for propertyquarry_queue_depth"
+        ),
+    ):
+        validator(families=families, samples=samples, slo=slo)
+
+
+@pytest.mark.parametrize(
+    "validator",
+    (evidence.validate_metrics, evidence._validate_end_state),
+)
+def test_property_search_queue_depth_must_be_an_integer(
+    validator: Callable[..., object],
+) -> None:
+    slo = evidence.validate_slo_document(
+        json.loads(evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8"))
+    )
+    families, samples = evidence.parse_metrics_snapshot(
+        BASE_END_METRICS.replace(
+            'propertyquarry_queue_depth{queue="property_search"} 0',
+            'propertyquarry_queue_depth{queue="property_search"} 0.5',
+        )
+    )
+
+    with pytest.raises(
+        evidence.SloValidationError,
+        match="property search queue depth must be an integer",
+    ):
+        validator(families=families, samples=samples, slo=slo)
+
+
+def test_required_ingress_metric_types_fail_closed() -> None:
+    slo = evidence.validate_slo_document(
+        json.loads(evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8"))
+    )
+    families, samples = evidence.parse_metrics_snapshot(
+        BASE_END_METRICS.replace(
+            "# TYPE propertyquarry_ingress_rejections_total counter",
+            "# TYPE propertyquarry_ingress_rejections_total gauge",
+        )
+    )
+
+    with pytest.raises(
+        evidence.SloValidationError,
+        match="propertyquarry_ingress_rejections_total:gauge",
+    ):
+        evidence._validate_end_state(
+            families=families,
+            samples=samples,
+            slo=slo,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutated", "error"),
+    (
+        (
+            BASE_END_METRICS.replace(
+                'propertyquarry_admission_capacity_contract_valid{backend="postgres"} 1',
+                'propertyquarry_admission_capacity_contract_valid{backend="postgres"} 0',
+            ),
+            "capacity contract must be exactly valid",
+        ),
+        (
+            BASE_END_METRICS.replace(
+                'propertyquarry_admission_capacity_limit{backend="postgres",capacity_key="lease"} 100000',
+                'propertyquarry_admission_capacity_limit{backend="postgres",capacity_key="lease"} 99999',
+            ),
+            "capacity limits differ",
+        ),
+        (
+            BASE_END_METRICS.replace(
+                'propertyquarry_ingress_admission_operations_total{backend="postgres",operation="cleanup",outcome="allowed"} 0\n',
+                "",
+            ),
+            "operation label matrix is incomplete",
+        ),
+        (
+            BASE_END_METRICS.replace(
+                'backend="postgres",operation="admit",outcome="allowed"',
+                'backend="memory",operation="admit",outcome="allowed"',
+            ),
+            "operation sample is invalid",
+        ),
+    ),
+)
+def test_authoritative_ingress_admission_metrics_fail_closed(
+    mutated: str,
+    error: str,
+) -> None:
+    slo = evidence.validate_slo_document(
+        json.loads(evidence.DEFAULT_SLO_PATH.read_text(encoding="utf-8"))
+    )
+    families, samples = evidence.parse_metrics_snapshot(mutated)
+
+    with pytest.raises(evidence.SloValidationError, match=error):
+        evidence._validate_end_state(
+            families=families,
+            samples=samples,
+            slo=slo,
+        )
 
 
 def test_runtime_exporter_emits_candidate_build_and_exact_histogram_identity(

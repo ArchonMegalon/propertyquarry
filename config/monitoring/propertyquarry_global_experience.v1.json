@@ -1,0 +1,232 @@
+{
+  "schema": "propertyquarry.global_experience.v1",
+  "service": "propertyquarry",
+  "source_contract_status": "defined_not_live_evidence",
+  "required_markets": [
+    {
+      "country_code": "AT",
+      "locale": "de-AT",
+      "currency": "EUR",
+      "timezone": "Europe/Vienna"
+    },
+    {
+      "country_code": "DE",
+      "locale": "de-DE",
+      "currency": "EUR",
+      "timezone": "Europe/Berlin"
+    },
+    {
+      "country_code": "CR",
+      "locale": "es-CR",
+      "currency": "CRC",
+      "timezone": "America/Costa_Rica"
+    }
+  ],
+  "required_customer_routes": [
+    "/",
+    "/pricing",
+    "/security",
+    "/support",
+    "/privacy",
+    "/terms",
+    "/cookies",
+    "/subprocessors",
+    "/refunds",
+    "/disclaimers",
+    "/imprint",
+    "/integrations",
+    "/docs",
+    "/guides/wohnung-kaufen-wien-checkliste",
+    "/markets/vienna",
+    "/sign-in",
+    "/register",
+    "/app/search",
+    "/app/properties",
+    "/app/shortlist",
+    "/app/agents",
+    "/app/alerts",
+    "/app/research",
+    "/app/account",
+    "/app/billing",
+    "/app/support",
+    "/app/settings/google",
+    "/app/settings/access",
+    "/app/settings/usage",
+    "/app/settings/support",
+    "/app/settings/trust",
+    "/app/settings/invitations",
+    "/app/settings/outcomes",
+    "/app/settings/plan",
+    "/app/properties/packets",
+    "/app/properties/notifications/preview",
+    "/app/research/{candidate_ref}",
+    "/app/shortlist/run/{run_id}",
+    "/tours/{slug}"
+  ],
+  "critical_state_scenarios": {
+    "required_scenarios": [
+      "authentication_success",
+      "authentication_failure",
+      "expired_session_recovery",
+      "billing_handoff_ready",
+      "billing_handoff_unavailable",
+      "http_401",
+      "http_403",
+      "http_404",
+      "http_422",
+      "http_429",
+      "http_500",
+      "http_503",
+      "tour_ready",
+      "tour_unavailable",
+      "tour_revoked"
+    ],
+    "require_useful_next_action": true,
+    "require_customer_data_preserved": true
+  },
+  "native_content_review": {
+    "reviewer_role": "independent_native_language_reviewer",
+    "required_proficiency": "native",
+    "require_market_specific_qualification": true,
+    "minimum_reviewed_route_count": 39,
+    "required_checks": [
+      "native_ui_copy",
+      "native_public_content",
+      "forms_and_validation",
+      "currency_number_date_time",
+      "address_and_region_conventions",
+      "text_expansion_and_layout"
+    ]
+  },
+  "accessibility": {
+    "standard": "WCAG 2.2 AA",
+    "automated": {
+      "required_engines": [
+        "chromium",
+        "firefox",
+        "webkit"
+      ],
+      "minimum_route_count": 39,
+      "required_tags": [
+        "wcag2a",
+        "wcag2aa",
+        "wcag21aa",
+        "wcag22aa"
+      ],
+      "maximum_serious_or_critical_violations": 0
+    },
+    "manual": {
+      "required_tasks": [
+        "keyboard_navigation",
+        "screen_reader_desktop",
+        "screen_reader_mobile",
+        "zoom_200_percent",
+        "zoom_400_percent",
+        "reduced_motion"
+      ],
+      "required_screen_reader_platforms": [
+        "nvda_windows",
+        "voiceover_macos",
+        "voiceover_ios",
+        "talkback_android"
+      ]
+    }
+  },
+  "browser_device_coverage": {
+    "require_desktop_browser_version": true,
+    "require_desktop_binary_digest": true,
+    "require_physical_mobile_devices": true,
+    "required_desktop_engines": [
+      "chromium",
+      "firefox",
+      "webkit"
+    ],
+    "required_mobile_profiles": [
+      {
+        "profile_id": "ios_safari_390x844",
+        "engine": "webkit",
+        "browser_family": "safari",
+        "operating_system": "ios",
+        "execution_environment": "physical_device",
+        "viewport_width": 390,
+        "viewport_height": 844
+      },
+      {
+        "profile_id": "android_chrome_412x915",
+        "engine": "chromium",
+        "browser_family": "chrome",
+        "operating_system": "android",
+        "execution_environment": "physical_device",
+        "viewport_width": 412,
+        "viewport_height": 915
+      }
+    ]
+  },
+  "field_core_web_vitals": {
+    "measurement_scope": "field_rum",
+    "percentile": 75,
+    "minimum_window_days": 28,
+    "required_device_cohorts": [
+      "desktop",
+      "mobile"
+    ],
+    "minimum_samples_per_market_device_cohort": 200,
+    "thresholds": {
+      "LCP": {
+        "maximum": 2500,
+        "unit": "ms"
+      },
+      "INP": {
+        "maximum": 200,
+        "unit": "ms"
+      },
+      "CLS": {
+        "maximum": 0.1,
+        "unit": "score"
+      }
+    }
+  },
+  "degraded_network_recovery": {
+    "required_scenarios": [
+      "slow_3g",
+      "offline_reconnect",
+      "packet_loss_retry",
+      "request_timeout_recovery"
+    ],
+    "require_no_data_loss": true,
+    "require_no_duplicate_mutation": true
+  },
+  "localized_seo": {
+    "required_hreflang_values": [
+      "de-AT",
+      "de-DE",
+      "es-CR",
+      "x-default"
+    ],
+    "minimum_indexable_route_count": 3,
+    "required_checks": [
+      "html_lang",
+      "content_language",
+      "self_canonical",
+      "reciprocal_hreflang",
+      "localized_title_and_description",
+      "sitemap_membership",
+      "robots_indexable"
+    ]
+  },
+  "live_evidence_policy": {
+    "maximum_receipt_age_hours": 24,
+    "independent_attestation_authority": "independent_release_controller",
+    "require_exact_git_sha": true,
+    "require_sha256_image_digest": true,
+    "require_attested_payload_digest": true,
+    "reject_placeholders": true
+  },
+  "required_approvals": [
+    "global_experience_owner",
+    "accessibility_owner",
+    "localization_owner",
+    "performance_owner",
+    "seo_owner"
+  ]
+}

@@ -2984,6 +2984,42 @@ Updated: 2026-05-03
     assert "`2026-05-06T01:07:36.964Z` (`15000` credits)" in updated
 
 
+def test_billing_snapshot_test_harness_never_rewrites_repository_ltds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    protected_path = Path(__file__).resolve().parents[1] / "LTDs.md"
+    protected_before = protected_path.read_bytes()
+    protected_digest_before = hashlib.sha256(protected_before).hexdigest()
+    isolated_path = upstream._onemin_ltd_markdown_path()
+
+    assert isolated_path.resolve(strict=False) != protected_path.resolve()
+    isolated_path.parent.mkdir(parents=True, exist_ok=True)
+    isolated_path.write_bytes(protected_before)
+    monkeypatch.setenv(
+        "EA_RESPONSES_PROVIDER_LEDGER_DIR",
+        str(tmp_path / "provider-ledger"),
+    )
+    upstream._test_reset_onemin_states()
+
+    upstream.record_onemin_billing_snapshot(
+        account_name="ONEMIN_AI_API_KEY",
+        snapshot_json={
+            "observed_at": "2026-07-17T08:24:15Z",
+            "remaining_credits": 12_345,
+            "basis": "actual_provider_api",
+        },
+        source="test-isolation-regression",
+    )
+
+    assert hashlib.sha256(protected_path.read_bytes()).hexdigest() == (
+        protected_digest_before
+    )
+    isolated_text = isolated_path.read_text(encoding="utf-8")
+    assert "`2026-07-17T08:24:15Z`" in isolated_text
+    assert "`12345` remaining credits" in isolated_text
+
+
 def test_call_magicx_retries_with_smaller_token_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_MAGICX_API_KEY", "magicx-key")
     monkeypatch.setenv("EA_RESPONSES_MAGICX_URLS", "https://good.magicx.local/api/v1/chat/completions")

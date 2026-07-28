@@ -35,7 +35,7 @@ owner/control credentials, or migrator credentials to this planner.
 ```
 
 The private `0600` receipt must report `status: dry_run`, dedicated
-PropertyQuarry identities, the five steady-state services plus the ephemeral
+PropertyQuarry identities, the six steady-state services plus the ephemeral
 migrator, `legacy_ea_aliases_allowed: false`, and
 `credentials_owned_by_external_controller: true`. No Docker, HTTP, migration,
 or controller command runs during dry-run.
@@ -66,8 +66,9 @@ code cannot select Docker commands, credentials, migrations, or traffic.
 
 The controller must prove the dedicated database and role policy, stable zero
 writers before any migration, migration plan/result binding, private candidate
-readiness, exact release version, scheduler/render health, fresh Gold and
-observability evidence, and final public version before releasing ingress.
+readiness, exact release version, fresh dedicated-worker heartbeat,
+scheduler/render health, fresh Gold and observability evidence, and final
+public version before releasing ingress.
 
 ## 4. Failure handling
 

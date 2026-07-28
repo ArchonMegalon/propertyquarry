@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -9,7 +10,7 @@ import pytest
 from tests.product_test_helpers import build_product_client
 
 
-def _clean_3dvista_proof() -> dict[str, object]:
+def _clean_3dvista_proof(*, slug: str, provider_url: str) -> dict[str, object]:
     return {
         "three_d_vista_white_label_proof": {
             "source_project": "propertyquarry",
@@ -24,12 +25,33 @@ def _clean_3dvista_proof() -> dict[str, object]:
             "status": "pass",
             "rendered_viewer": True,
         },
+        "three_d_vista_target_provenance": {
+            "schema": "propertyquarry.3dvista_target_provenance.v1",
+            "status": "pass",
+            "provider": "3dvista",
+            "target_slug": slug,
+            "artifact": {
+                "kind": "hosted_url",
+                "sha256": hashlib.sha256(provider_url.encode("utf-8")).hexdigest(),
+            },
+            "authorization": {
+                "status": "approved",
+                "reference": "public-tour-csp-fixture",
+            },
+            "review": {
+                "property_match": "pass",
+                "visual_match": "pass",
+                "reviewed_by": "public-tour-csp-test",
+                "reviewed_at": "2026-07-26T12:00:00+00:00",
+            },
+        },
     }
 
 
 def _write_external_3dvista_bundle(root: Path, *, slug: str) -> None:
     bundle_dir = root / slug
     bundle_dir.mkdir(parents=True)
+    provider_url = "https://viewer.3dvista.com/tours/launch-ready/index.html"
     (bundle_dir / "tour.json").write_text(
         json.dumps(
             {
@@ -56,8 +78,8 @@ def _write_external_3dvista_bundle(root: Path, *, slug: str) -> None:
     (bundle_dir / "tour.private.json").write_text(
         json.dumps(
             {
-                "three_d_vista_url": "https://viewer.3dvista.com/tours/launch-ready/index.html",
-                **_clean_3dvista_proof(),
+                "three_d_vista_url": provider_url,
+                **_clean_3dvista_proof(slug=slug, provider_url=provider_url),
             }
         ),
         encoding="utf-8",

@@ -5,12 +5,14 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 import re
 import subprocess
 import sys
 import tempfile
 import time
+from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -24,6 +26,25 @@ try:
 except ModuleNotFoundError:
     from scripts.property_magicfit_env import load_magicfit_env
     from scripts.propertyquarry_playwright_runtime import playwright_chromium_launch_kwargs
+
+try:
+    from property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_env_int,
+        bounded_lane_lock,
+        require_bounded_file,
+        require_free_disk,
+        tour_asset_max_bytes,
+    )
+except ModuleNotFoundError:
+    from scripts.property_tour_host_safety import (
+        TourHostSafetyError,
+        bounded_env_int,
+        bounded_lane_lock,
+        require_bounded_file,
+        require_free_disk,
+        tour_asset_max_bytes,
+    )
 
 MAGICFIT_HOME_URL = "https://magicfit.pushowl.com/home"
 MAGICFIT_VIDEO_URL = "https://magicfit.pushowl.com/agents/generate?mode=video"
@@ -58,6 +79,32 @@ ASPECT_CURRENT_OPTIONS = (
     "3:4",
     "21:9",
 )
+
+
+def _render_output_max_bytes() -> int:
+    return bounded_env_int(
+        "PROPERTYQUARRY_MAGICFIT_RENDER_MAX_OUTPUT_BYTES",
+        default=tour_asset_max_bytes(),
+        minimum=1024 * 1024,
+        maximum=2 * 1024 * 1024 * 1024,
+    )
+
+
+def _render_retry_limit() -> int:
+    return bounded_env_int(
+        "PROPERTYQUARRY_MAGICFIT_RENDER_MAX_RETRIES",
+        default=3,
+        minimum=1,
+        maximum=3,
+    )
+
+
+def _bounded_attempts(value: object) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 1
+    return max(1, min(parsed, _render_retry_limit()))
 
 
 def load_env() -> None:
@@ -136,13 +183,55 @@ def choose_newest_video(urls: set[str], baseline: set[str], submitted_at_ms: int
 
 
 def download(url: str, out_path: Path) -> None:
-    response = requests.get(url, timeout=120, stream=True)
-    response.raise_for_status()
+    maximum_bytes = _render_output_max_bytes()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("wb") as handle:
-        for chunk in response.iter_content(chunk_size=1024 * 128):
-            if chunk:
-                handle.write(chunk)
+    require_free_disk(
+        out_path.parent,
+        reason_prefix="magicfit_render",
+        expected_write_bytes=maximum_bytes,
+        env_name="PROPERTYQUARRY_MAGICFIT_RENDER_MIN_FREE_BYTES",
+    )
+    temporary_path: Path | None = None
+    total = 0
+    try:
+        with requests.get(url, timeout=(15, 120), stream=True) as response:
+            response.raise_for_status()
+            content_type = str(response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+            if content_type and content_type not in {"video/mp4", "video/webm", "application/octet-stream"}:
+                raise RuntimeError("magicfit_video_content_type_invalid")
+            raw_length = str(response.headers.get("content-length") or "").strip()
+            if raw_length:
+                try:
+                    declared_length = int(raw_length)
+                except ValueError as exc:
+                    raise RuntimeError("magicfit_video_content_length_invalid") from exc
+                if declared_length <= 0 or declared_length > maximum_bytes:
+                    raise RuntimeError("magicfit_video_download_too_large")
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=out_path.parent,
+                prefix=f".{out_path.name}.",
+                suffix=".download",
+                delete=False,
+            ) as handle:
+                temporary_path = Path(handle.name)
+                for chunk in response.iter_content(chunk_size=1024 * 128):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > maximum_bytes:
+                        raise RuntimeError("magicfit_video_download_too_large")
+                    handle.write(chunk)
+                handle.flush()
+                os.fsync(handle.fileno())
+        if total <= 0:
+            raise RuntimeError("magicfit_video_download_empty")
+        temporary_path.chmod(0o600)
+        os.replace(temporary_path, out_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def video_metadata(path: Path) -> dict[str, object]:
@@ -194,6 +283,86 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def write_private_state_receipt(path: Path, payload: dict[str, object]) -> None:
+    """Atomically persist the full provider receipt without exposing it on stdout."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary_path.chmod(0o600)
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def operator_safe_render_summary(
+    payload: dict[str, object],
+    *,
+    private_receipt_written: bool,
+) -> dict[str, object]:
+    """Return a strict allowlist suitable for stdout and parent-process logs."""
+
+    metadata = (
+        dict(payload.get("output_metadata") or {})
+        if isinstance(payload.get("output_metadata"), dict)
+        else {}
+    )
+
+    def _bounded_int(value: object, *, maximum: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0
+        return max(0, min(parsed, maximum))
+
+    def _bounded_float(value: object, *, maximum: float) -> float:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        if not math.isfinite(parsed):
+            return 0.0
+        return round(max(0.0, min(parsed, maximum)), 3)
+
+    return {
+        "schema": "ea.governed_spatial_render_stdout.v1",
+        "status": (
+            "completed"
+            if str(payload.get("render_status") or "").strip().lower() == "completed"
+            else "failed"
+        ),
+        "artifact_kind": "continuous_walkthrough",
+        "target_bound": bool(str(payload.get("target_slug") or "").strip()),
+        "output_contract_ok": payload.get("output_contract_ok") is True,
+        "duration_seconds": _bounded_float(
+            metadata.get("duration_seconds"),
+            maximum=24 * 60 * 60,
+        ),
+        "width": _bounded_int(metadata.get("width"), maximum=32_768),
+        "height": _bounded_int(metadata.get("height"), maximum=32_768),
+        "size_bytes": _bounded_int(
+            metadata.get("size_bytes"),
+            maximum=2 * 1024 * 1024 * 1024,
+        ),
+        "private_receipt_written": bool(private_receipt_written),
+    }
 
 
 def output_contract_matches(*, metadata: dict[str, object], duration_seconds: int, aspect_label: str) -> bool:
@@ -385,8 +554,9 @@ def persist_storage_state(page, path: Path | None) -> None:
 
 
 def goto_with_retries(page, url: str, *, attempts: int = 3) -> None:
+    attempts = _bounded_attempts(attempts)
     last_error: Exception | None = None
-    for attempt in range(1, max(attempts, 1) + 1):
+    for attempt in range(1, attempts + 1):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=120000)
             return
@@ -407,7 +577,8 @@ def select_generator_mode(page, mode: str, *, attempts: int = 3) -> None:
     expected_text = (
         "Select a video above to extend" if normalized_mode == "extend" else "First Frame"
     )
-    for attempt in range(1, max(1, attempts) + 1):
+    attempts = _bounded_attempts(attempts)
+    for attempt in range(1, attempts + 1):
         locator = page.get_by_role("button", name=label, exact=True)
         try:
             locator.wait_for(state="attached", timeout=30_000)
@@ -638,6 +809,16 @@ def wait_for_submit_ready(page, *, timeout_ms: int = 180_000):
 def upload_first_frame(page, image_path: Path) -> None:
     if not image_path.is_file():
         raise RuntimeError(f"magicfit_first_frame_missing:{image_path}")
+    require_bounded_file(
+        image_path,
+        reason_prefix="magicfit_first_frame",
+        maximum_bytes=bounded_env_int(
+            "PROPERTYQUARRY_MAGICFIT_FIRST_FRAME_MAX_BYTES",
+            default=25 * 1024 * 1024,
+            minimum=64 * 1024,
+            maximum=100 * 1024 * 1024,
+        ),
+    )
     before_images = 0
     with contextlib.suppress(Exception):
         before_images = int(page.locator("img").count())
@@ -677,6 +858,11 @@ def upload_first_frame(page, image_path: Path) -> None:
 def upload_extend_video(page, video_path: Path, *, timeout_ms: int = 90_000) -> dict[str, object]:
     if not video_path.is_file():
         raise RuntimeError(f"magicfit_extend_video_missing:{video_path}")
+    require_bounded_file(
+        video_path,
+        reason_prefix="magicfit_extend_video",
+        maximum_bytes=_render_output_max_bytes(),
+    )
     before_videos = 0
     with contextlib.suppress(Exception):
         before_videos = int(page.locator("video").count())
@@ -749,6 +935,21 @@ def validate_extend_source(
         raise RuntimeError(f"magicfit_extend_source_missing:{source_path}")
     if not receipt_path.is_file():
         raise RuntimeError(f"magicfit_extend_source_receipt_missing:{receipt_path}")
+    require_bounded_file(
+        source_path,
+        reason_prefix="magicfit_extend_source",
+        maximum_bytes=_render_output_max_bytes(),
+    )
+    require_bounded_file(
+        receipt_path,
+        reason_prefix="magicfit_extend_source_receipt",
+        maximum_bytes=bounded_env_int(
+            "PROPERTYQUARRY_MAGICFIT_RECEIPT_MAX_BYTES",
+            default=1024 * 1024,
+            minimum=1_024,
+            maximum=8 * 1024 * 1024,
+        ),
+    )
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -905,7 +1106,7 @@ def write_debug_snapshot(page, *, poll_count: int, label: str = "poll") -> None:
     debug_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"{label}-{poll_count:03d}"
     with contextlib.suppress(Exception):
-        body_text = page.locator("body").inner_text(timeout=5000)
+        body_text = str(page.locator("body").inner_text(timeout=5000) or "")[:200_000]
         (debug_dir / f"{prefix}.txt").write_text(body_text, encoding="utf-8", errors="replace")
     with contextlib.suppress(Exception):
         (debug_dir / f"{prefix}.url.txt").write_text(str(page.url or ""), encoding="utf-8")
@@ -933,12 +1134,56 @@ def raise_if_credit_blocked(page) -> None:
         raise RuntimeError("magicfit_not_enough_credits")
 
 
-def run() -> int:
+def _run_unlocked() -> int:
     load_env()
     args = arg_parser().parse_args()
     out_path = Path(args.out).resolve()
+    maximum_timeout_minutes = bounded_env_int(
+        "PROPERTYQUARRY_MAGICFIT_RENDER_MAX_TIMEOUT_MINUTES",
+        default=30,
+        minimum=1,
+        maximum=60,
+    )
+    requested_timeout_minutes = int(args.timeout_minutes or 0)
+    if not 1 <= requested_timeout_minutes <= maximum_timeout_minutes:
+        raise RuntimeError("magicfit_timeout_out_of_bounds")
+    requested_duration = int(args.duration or 0)
+    if not 1 <= requested_duration <= 15:
+        raise RuntimeError("magicfit_duration_out_of_bounds")
+    raw_prompt = str(args.prompt or "").strip()
+    prompt_max_characters = bounded_env_int(
+        "PROPERTYQUARRY_MAGICFIT_PROMPT_MAX_CHARACTERS",
+        default=6_000,
+        minimum=256,
+        maximum=20_000,
+    )
+    if not raw_prompt or len(raw_prompt) > prompt_max_characters:
+        raise RuntimeError("magicfit_prompt_size_invalid")
+    require_free_disk(
+        out_path.parent,
+        reason_prefix="magicfit_render",
+        expected_write_bytes=_render_output_max_bytes(),
+        env_name="PROPERTYQUARRY_MAGICFIT_RENDER_MIN_FREE_BYTES",
+    )
+    require_free_disk(
+        Path(tempfile.gettempdir()),
+        reason_prefix="magicfit_render_temp",
+        expected_write_bytes=1024 * 1024 * 1024,
+        env_name="PROPERTYQUARRY_MAGICFIT_RENDER_MIN_FREE_BYTES",
+    )
     state_path = Path(args.state_json).resolve() if args.state_json else None
     first_frame_path = Path(args.first_frame).expanduser().resolve() if args.first_frame else None
+    if first_frame_path is not None:
+        require_bounded_file(
+            first_frame_path,
+            reason_prefix="magicfit_first_frame",
+            maximum_bytes=bounded_env_int(
+                "PROPERTYQUARRY_MAGICFIT_FIRST_FRAME_MAX_BYTES",
+                default=25 * 1024 * 1024,
+                minimum=64 * 1024,
+                maximum=100 * 1024 * 1024,
+            ),
+        )
     storage_state_path = Path(args.storage_state).expanduser().resolve() if args.storage_state else None
     native_extend_url = str(args.extend_library_video_url or "").strip()
     native_source_path = (
@@ -965,8 +1210,8 @@ def run() -> int:
         and native_source_receipt_path is not None
         else None
     )
-    prompt = f"{args.prompt.strip()} Global constraints: {NEGATIVE}."
-    provider_duration = magicfit_duration(int(args.duration or 10))
+    prompt = f"{raw_prompt} Global constraints: {NEGATIVE}."
+    provider_duration = magicfit_duration(requested_duration)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             **playwright_chromium_launch_kwargs(playwright, args=["--no-sandbox"])
@@ -998,7 +1243,7 @@ def run() -> int:
                     print("magicfit: select native extend source", flush=True)
                     source_selection = select_extend_library_video(page, native_extend_url)
             write_debug_snapshot(page, poll_count=0, label="generator-open")
-            baseline = collect_visible_video_urls(page)
+            baseline = set(list(collect_visible_video_urls(page))[:1_000])
             print(f"magicfit: baseline urls={len(baseline)}", flush=True)
             model_selected = None
             if args.model_label:
@@ -1017,7 +1262,7 @@ def run() -> int:
                     ],
                     option_text=args.model_label,
                 )
-                print(f"magicfit: model_target={args.model_label} selected={model_selected}", flush=True)
+                print(f"magicfit: model configured selected={bool(model_selected)}", flush=True)
                 if not model_selected:
                     raise RuntimeError("magicfit_model_selection_unverified")
             aspect_selected: object = "source_locked"
@@ -1027,7 +1272,7 @@ def run() -> int:
                     current_options=list(ASPECT_CURRENT_OPTIONS),
                     option_text=args.aspect_label,
                 )
-            print(f"magicfit: aspect_target={args.aspect_label} selected={aspect_selected}", flush=True)
+            print(f"magicfit: aspect configured selected={bool(aspect_selected)}", flush=True)
             if aspect_selected is False:
                 raise RuntimeError("magicfit_aspect_selection_unverified")
             duration_selected = select_option_from_known_current(
@@ -1044,7 +1289,7 @@ def run() -> int:
                 upload_first_frame(page, first_frame_path)
             fill_prompt(page, prompt)
             write_debug_snapshot(page, poll_count=0, label="ready-to-submit")
-            events: list[dict[str, object]] = []
+            events: deque[dict[str, object]] = deque(maxlen=200)
             seen_urls: set[str] = set()
 
             def handle_response(response) -> None:
@@ -1059,13 +1304,20 @@ def run() -> int:
                 }
                 events.append(item)
                 if re.search(r"(?:cdn\.pushowl\.com|media\.powlcdn\.com)/magicfit/.*\.(mp4|webm)(?:$|\?)", url):
-                    seen_urls.add(url)
-                try:
-                    body = response.text() if re.search(r"json|script|text", item["content_type"], re.I) else ""
-                except Exception:
-                    body = ""
+                    if len(seen_urls) < 1_000:
+                        seen_urls.add(url)
+                body = ""
+                raw_length = str(response.headers.get("content-length") or "").strip()
+                if re.search(r"json|script|text", item["content_type"], re.I) and raw_length.isdigit() and int(raw_length) <= 1024 * 1024:
+                    try:
+                        body = response.text()
+                    except Exception:
+                        body = ""
                 if body:
-                    seen_urls.update(collect_video_urls(body))
+                    for found_url in collect_video_urls(body):
+                        if len(seen_urls) >= 1_000:
+                            break
+                        seen_urls.add(found_url)
 
             page.on("response", handle_response)
             submitted_at_ms = int(time.time() * 1000)
@@ -1075,14 +1327,17 @@ def run() -> int:
             page.wait_for_timeout(3000)
             write_debug_snapshot(page, poll_count=0, label="submitted")
             raise_if_credit_blocked(page)
-            deadline = time.time() + max(int(args.timeout_minutes or 18), 1) * 60
+            deadline = time.time() + requested_timeout_minutes * 60
             video_url = ""
             poll_count = 0
             while time.time() < deadline and not video_url:
                 page.wait_for_timeout(10000)
                 poll_count += 1
                 raise_if_credit_blocked(page)
-                seen_urls.update(collect_visible_video_urls(page))
+                for found_url in collect_visible_video_urls(page):
+                    if len(seen_urls) >= 1_000:
+                        break
+                    seen_urls.add(found_url)
                 video_url = choose_newest_video(seen_urls, baseline, submitted_at_ms)
                 print(f"magicfit: poll={poll_count} seen_urls={len(seen_urls)} found={bool(video_url)}", flush=True)
                 if poll_count <= 3 or poll_count % 12 == 0:
@@ -1139,7 +1394,7 @@ def run() -> int:
                 "property_slug": str(args.property_slug or "").strip(),
                 "property_title": str(args.property_title or "").strip(),
                 "property_url": str(args.property_url or "").strip(),
-                "duration_seconds_requested": int(args.duration or 10),
+                "duration_seconds_requested": requested_duration,
                 "duration_seconds_magicfit": provider_duration,
                 "aspect_label": args.aspect_label,
                 "model_label": str(args.model_label or "").strip(),
@@ -1153,19 +1408,31 @@ def run() -> int:
                 "output_contract_ok": output_contract_ok,
                 "prompt": prompt,
                 "page_url": page.url,
-                "events_tail": events[-80:],
+                "events_tail": list(events)[-80:],
                 "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             if state_path is not None:
-                state_path.parent.mkdir(parents=True, exist_ok=True)
-                state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                write_private_state_receipt(state_path, payload)
             if not output_contract_ok:
                 raise RuntimeError("magicfit_output_contract_mismatch")
-            print(json.dumps(payload))
+            print(
+                json.dumps(
+                    operator_safe_render_summary(
+                        payload,
+                        private_receipt_written=state_path is not None,
+                    ),
+                    sort_keys=True,
+                )
+            )
             return 0
         finally:
             context.close()
             browser.close()
+
+
+def run() -> int:
+    with bounded_lane_lock("magicfit-render"):
+        return _run_unlocked()
 
 
 if __name__ == "__main__":

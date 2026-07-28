@@ -24,7 +24,39 @@ def _contains(text: str, *needles: str) -> bool:
     return all(str(needle or "") in text for needle in needles)
 
 
+def _extract_discovery_rows(markdown_text: str) -> dict[str, dict[str, str]]:
+    rows: dict[str, dict[str, str]] = {}
+    in_section = False
+    for raw_line in markdown_text.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("## Discovery Tracking"):
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if not in_section or not line.startswith("|") or line.startswith("|---"):
+            continue
+        parts = [part.strip() for part in line.strip().strip("|").split("|")]
+        if len(parts) != 6 or parts[0] == "Service":
+            continue
+        service = parts[0].strip("`")
+        rows[service] = {
+            "discovery_status": parts[2].strip("`"),
+            "verification_source": parts[3].strip("`"),
+        }
+    return rows
+
+
+def _verified_live_discovery(rows: dict[str, dict[str, str]], service: str) -> bool:
+    row = rows.get(service) or {}
+    return (
+        row.get("discovery_status") == "complete"
+        and row.get("verification_source") == "browseract_live"
+    )
+
+
 def build_receipt(*, markdown_text: str, env: dict[str, str]) -> dict[str, object]:
+    discovery_rows = _extract_discovery_rows(markdown_text)
     checks = {
         "prompt_architects_inventory": _contains(
             markdown_text,
@@ -38,14 +70,8 @@ def build_receipt(*, markdown_text: str, env: dict[str, str]) -> dict[str, objec
             "scripts/resolve_onemin_ai_key.sh",
             "remaining credits",
         ),
-        "browseract_discovery": _contains(
-            markdown_text,
-            "| `BrowserAct` | ops@example.com | `complete` | `browseract_live` |",
-        ),
-        "teable_discovery": _contains(
-            markdown_text,
-            "| `Teable` | ops@teable.example | `complete` | `browseract_live` |",
-        ),
+        "browseract_discovery": _verified_live_discovery(discovery_rows, "BrowserAct"),
+        "teable_discovery": _verified_live_discovery(discovery_rows, "Teable"),
         "prompt_architects_env": bool(str(env.get("PROMPTING_SYSTEMS_API_KEY") or "").strip()),
         "onemin_env": bool(str(env.get("ONEMIN_AI_API_KEY") or "").strip()),
     }

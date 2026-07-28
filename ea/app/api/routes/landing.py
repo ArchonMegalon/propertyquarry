@@ -2946,45 +2946,153 @@ def _property_lookup_candidate_across_runs(
     normalized_candidate_ref = str(candidate_ref or "").strip()
     if not normalized_candidate_ref:
         return None, ""
+    indexed_clean_miss = False
+    indexed_lookup_failed = False
+    indexed_coverage_complete = False
+    indexed_lookup = getattr(product, "get_property_research_packet_link", None)
+    if callable(indexed_lookup):
+        indexed_link: object = None
+        try:
+            indexed_link = indexed_lookup(
+                principal_id=principal_id,
+                candidate_ref=normalized_candidate_ref,
+                account_email=access_email,
+            )
+        except TypeError:
+            try:
+                indexed_link = indexed_lookup(
+                    principal_id=principal_id,
+                    candidate_ref=normalized_candidate_ref,
+                )
+            except Exception:
+                indexed_lookup_failed = True
+        except Exception:
+            indexed_lookup_failed = True
+        if isinstance(indexed_link, dict):
+            indexed_candidate = indexed_link.get("candidate") or indexed_link.get("packet_json")
+            if isinstance(indexed_candidate, dict) and (
+                str(_property_candidate_ref(indexed_candidate) or "").strip()
+                == normalized_candidate_ref
+            ):
+                matched_run_id = str(
+                    indexed_link.get("last_run_id")
+                    or indexed_candidate.get("packet_source_run_id")
+                    or normalized_run_id
+                    or ""
+                ).strip()
+                packet_source_run_id = str(
+                    indexed_candidate.get("packet_source_run_id") or matched_run_id
+                ).strip()
+                if not normalized_run_id or packet_source_run_id == normalized_run_id:
+                    return dict(indexed_candidate), matched_run_id
+                indexed_lookup_failed = True
+            else:
+                indexed_lookup_failed = True
+        elif indexed_link is None and not indexed_lookup_failed:
+            indexed_clean_miss = True
+            coverage_lookup = getattr(
+                product,
+                "property_research_packet_index_coverage_complete",
+                None,
+            )
+            if callable(coverage_lookup):
+                try:
+                    indexed_coverage_complete = coverage_lookup() is True
+                except Exception:
+                    indexed_lookup_failed = True
+                    indexed_coverage_complete = False
+        else:
+            indexed_lookup_failed = True
     run_ids: list[str] = []
+    listed_runs: list[dict[str, object]] = []
+    compact_listing_supported = False
     if normalized_run_id:
         run_ids.append(normalized_run_id)
     try:
-        for row in list(
-            product.list_property_search_runs(
-                principal_id=principal_id,
-                limit=max_runs,
-                hydrate=False,
-                account_email=access_email,
+        listed_runs = [
+            dict(row)
+            for row in list(
+                product.list_property_search_runs(
+                    principal_id=principal_id,
+                    limit=max_runs,
+                    hydrate=False,
+                    account_email=access_email,
+                )
+                or []
             )
-            or []
-        ):
-            if not isinstance(row, dict):
-                continue
-            recent_run_id = str(row.get("run_id") or "").strip()
-            if recent_run_id and recent_run_id not in run_ids:
-                run_ids.append(recent_run_id)
+            if isinstance(row, dict)
+        ]
+        compact_listing_supported = True
     except TypeError:
         try:
-            for row in list(product.list_property_search_runs(principal_id=principal_id, limit=max_runs, hydrate=False) or []):
-                if not isinstance(row, dict):
-                    continue
-                recent_run_id = str(row.get("run_id") or "").strip()
-                if recent_run_id and recent_run_id not in run_ids:
-                    run_ids.append(recent_run_id)
+            listed_runs = [
+                dict(row)
+                for row in list(
+                    product.list_property_search_runs(
+                        principal_id=principal_id,
+                        limit=max_runs,
+                        hydrate=False,
+                    )
+                    or []
+                )
+                if isinstance(row, dict)
+            ]
+            compact_listing_supported = True
         except TypeError:
             with contextlib.suppress(Exception):
-                for row in list(product.list_property_search_runs(principal_id=principal_id, limit=max_runs) or []):
-                    if not isinstance(row, dict):
-                        continue
-                    recent_run_id = str(row.get("run_id") or "").strip()
-                    if recent_run_id and recent_run_id not in run_ids:
-                        run_ids.append(recent_run_id)
+                listed_runs = [
+                    dict(row)
+                    for row in list(product.list_property_search_runs(principal_id=principal_id, limit=max_runs) or [])
+                    if isinstance(row, dict)
+                ]
         except Exception:
             pass
     except Exception:
         pass
-    for row_run_id in run_ids[: max(int(max_runs or 0), 1)]:
+
+    for row in listed_runs:
+        recent_run_id = str(row.get("run_id") or "").strip()
+        if recent_run_id and recent_run_id not in run_ids:
+            run_ids.append(recent_run_id)
+
+    if compact_listing_supported and listed_runs:
+        for compact_run in listed_runs:
+            try:
+                prepared_run = _propertyquarry_prepare_run_payload(
+                    product=product,
+                    run_payload=compact_run,
+                    backfill_cached_previews=False,
+                    principal_id=principal_id,
+                )
+            except Exception:
+                continue
+            candidate = _property_lookup_candidate(
+                property_context={"run": prepared_run},
+                candidate_ref=normalized_candidate_ref,
+            )
+            if candidate:
+                prepared_summary = (
+                    dict(prepared_run.get("summary") or {})
+                    if isinstance(prepared_run.get("summary"), dict)
+                    else {}
+                )
+                matched_run_id = str(
+                    prepared_run.get("run_id")
+                    or prepared_summary.get("run_id")
+                    or compact_run.get("run_id")
+                    or ""
+                ).strip()
+                return candidate, matched_run_id
+        if (
+            not normalized_run_id
+            and indexed_clean_miss
+            and indexed_coverage_complete
+            and not indexed_lookup_failed
+        ):
+            return None, ""
+
+    fallback_run_ids = run_ids[: max(int(max_runs or 0), 1)]
+    for row_run_id in fallback_run_ids:
         try:
             run_payload = dict(
                 product.get_property_search_run_status(
@@ -3490,16 +3598,16 @@ def _property_missing_packet_response(
         run_id=normalized_run_id,
         candidate_ref=normalized_candidate_ref,
     )
-    repair_task_ref = _property_queue_missing_research_packet_repair(
-        container=container,
-        principal_id=principal_id,
-        run_id=normalized_run_id,
-        candidate_ref=normalized_candidate_ref,
-        recovery_url=target,
-    )
     accept_header = str(request.headers.get("accept") or "").lower()
     requested_with = str(request.headers.get("x-requested-with") or "").lower()
     if "application/json" in accept_header or requested_with == "xmlhttprequest":
+        repair_task_ref = _property_queue_missing_research_packet_repair(
+            container=container,
+            principal_id=principal_id,
+            run_id=normalized_run_id,
+            candidate_ref=normalized_candidate_ref,
+            recovery_url=target,
+        )
         return JSONResponse(
             {
                 "status": "recovery_available",
@@ -3514,7 +3622,20 @@ def _property_missing_packet_response(
             },
             status_code=202,
         )
-    return RedirectResponse(url=target, status_code=307)
+    from starlette.background import BackgroundTask
+
+    return RedirectResponse(
+        url=target,
+        status_code=307,
+        background=BackgroundTask(
+            _property_queue_missing_research_packet_repair,
+            container=container,
+            principal_id=principal_id,
+            run_id=normalized_run_id,
+            candidate_ref=normalized_candidate_ref,
+            recovery_url=target,
+        ),
+    )
 
 
 def _property_queue_missing_research_packet_repair(
@@ -4634,6 +4755,10 @@ def _property_console_context(
     wants_agent_views = surface_scope.wants_agent_views
     raw_property_preferences = dict(status.get("property_search_preferences") or {})
     merged_preference_seed = dict(raw_property_preferences.get("raw_preferences") or raw_property_preferences)
+    for preference_key, preference_value in raw_property_preferences.items():
+        if preference_key in {"raw_preferences", "saved_shortlist_candidates"}:
+            continue
+        merged_preference_seed[preference_key] = preference_value
     if isinstance(raw_property_preferences.get("property_commercial"), dict) and not isinstance(
         merged_preference_seed.get("property_commercial"),
         dict,
