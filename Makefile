@@ -1,4 +1,29 @@
-.PHONY: deploy deploy-legacy-ea-stack deploy-memory deploy-bootstrap bootstrap db-status db-size db-retention smoke-api smoke-api-tibor smoke-postgres smoke-postgres-legacy smoke-help release-smoke release-preflight propertyquarry-release-preflight propertyquarry-release-protocol-contracts release-docs test-api test-all propertyquarry-target-recovery-canary test-postgres-contracts test-telegram-bot openapi-export openapi-diff openapi-prune endpoints version-info operator-summary operator-help provider-readiness overlay-vision-check overlay-vision-pull support-bundle tasks-archive tasks-archive-prune tasks-archive-dry-run materialize-release-assets verify-generated-release-artifacts-clean ci-local ci-gates ci-gates-postgres ci-gates-postgres-legacy hard-exit-gates runtime-hard-exit-gates property-release-gates property-security-posture ltd-release-gates verify-release-assets verify-flagship-release-readiness verify-pocket-audio-archive verify-ltd-critical-entries verify-ltd-flagship-subset verify-design-mirror-bundle verify-design-full-mirror-parity repair-design-mirror-bundle docs-verify all-local
+override SHELL := /bin/bash
+override .SHELLFLAGS := -p -o pipefail -c
+override MAKE := /usr/bin/make
+override MAKE_COMMAND := /usr/bin/make
+
+override _PROPERTYQUARRY_RELEASE_DISPATCH_TARGETS := release-preflight propertyquarry-release-preflight propertyquarry-release-protocol-contracts propertyquarry-native-release-control-gates materialize-release-assets-authenticated verify-release-assets-authenticated verify-flagship-release-readiness-authenticated verify-generated-release-artifacts-clean-authenticated property-release-gates property-security-posture ltd-release-gates verify-ltd-critical-entries-authenticated verify-ltd-flagship-subset-authenticated verify-pocket-audio-archive verify-design-mirror-bundle verify-design-full-mirror-parity ci-gates-authenticated
+override _PROPERTYQUARRY_RELEASE_INTERNAL_TARGETS := ci-local-authenticated operator-help-authenticated release-smoke-authenticated smoke-api-authenticated smoke-help-authenticated test-api-authenticated
+override _PROPERTYQUARRY_RELEASE_AUTHENTICATED_TARGETS := $(_PROPERTYQUARRY_RELEASE_DISPATCH_TARGETS) $(_PROPERTYQUARRY_RELEASE_INTERNAL_TARGETS)
+ifneq ($(strip $(filter $(_PROPERTYQUARRY_RELEASE_AUTHENTICATED_TARGETS),$(MAKECMDGOALS))),)
+ifneq ($(PROPERTYQUARRY_RELEASE_DISPATCH),1)
+$(error authenticated release targets are internal; use scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py)
+endif
+ifneq ($(filter command line,$(origin MAKEFLAGS)),)
+$(error authenticated release targets forbid command-line MAKEFLAGS overrides)
+endif
+override _PROPERTYQUARRY_MAKE_SHORT_FLAGS := $(filter-out -%,$(firstword $(MAKEFLAGS)))
+override _PROPERTYQUARRY_UNSAFE_MAKE_FLAGS := $(strip $(foreach flag,n i q t,$(if $(findstring $(flag),$(_PROPERTYQUARRY_MAKE_SHORT_FLAGS)),$(flag))))
+ifneq ($(_PROPERTYQUARRY_UNSAFE_MAKE_FLAGS),)
+$(error authenticated release targets forbid dry-run, ignore-errors, question, and touch modes)
+endif
+ifneq ($(filter --dry-run --just-print --recon --ignore-errors --question --touch,$(MAKEFLAGS)),)
+$(error authenticated release targets forbid dry-run, ignore-errors, question, and touch modes)
+endif
+endif
+
+.PHONY: deploy deploy-legacy-ea-stack deploy-memory deploy-bootstrap bootstrap db-status db-size db-retention smoke-api smoke-api-authenticated smoke-api-tibor smoke-postgres smoke-postgres-legacy smoke-help smoke-help-authenticated release-smoke release-smoke-authenticated release-preflight propertyquarry-release-preflight propertyquarry-release-protocol-contracts propertyquarry-native-release-control-gates bootstrap-propertyquarry-release-python release-docs test-api test-api-real-chromium test-api-authenticated test-all propertyquarry-target-recovery-canary test-postgres-contracts test-telegram-bot openapi-export openapi-diff openapi-prune endpoints version-info operator-summary operator-help operator-help-authenticated provider-readiness overlay-vision-check overlay-vision-pull support-bundle tasks-archive tasks-archive-prune tasks-archive-dry-run materialize-release-assets materialize-release-assets-authenticated verify-generated-release-artifacts-clean verify-generated-release-artifacts-clean-authenticated ci-local ci-local-authenticated ci-gates ci-gates-authenticated ci-gates-postgres ci-gates-postgres-legacy hard-exit-gates runtime-hard-exit-gates property-release-gates property-security-posture ltd-release-gates verify-release-assets verify-release-assets-authenticated verify-flagship-release-readiness verify-flagship-release-readiness-authenticated verify-pocket-audio-archive verify-ltd-critical-entries verify-ltd-critical-entries-authenticated verify-ltd-flagship-subset verify-ltd-flagship-subset-authenticated verify-design-mirror-bundle verify-design-full-mirror-parity repair-design-mirror-bundle docs-verify all-local
 
 PYTHON_BIN ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 override PYTHONDONTWRITEBYTECODE := 1
@@ -95,7 +120,31 @@ release-docs:
 	$(MAKE) operator-help
 
 test-api:
-	PYTHONPATH=ea EA_STORAGE_BACKEND=memory $(PYTEST_PYTHON_BIN) -m pytest -q tests --durations=25 --durations-min=1.0 $(TEST_API_PYTEST_IGNORE) $(TEST_API_PYTEST_DESELECT)
+	@set -eu; \
+	propertyquarry_ci_temp="$$(/usr/bin/mktemp -d /tmp/propertyquarry-ci-test.XXXXXXXX)"; \
+	cleanup_propertyquarry_ci_temp() { \
+	  case "$$propertyquarry_ci_temp" in \
+	    /tmp/propertyquarry-ci-test.*) /bin/rm -rf -- "$$propertyquarry_ci_temp" ;; \
+	    *) echo "refusing unsafe CI temp cleanup: $$propertyquarry_ci_temp" >&2; return 70 ;; \
+	  esac; \
+	}; \
+	trap cleanup_propertyquarry_ci_temp EXIT; \
+	PROPERTYQUARRY_GATE_RECEIPT_DIR="$$propertyquarry_ci_temp/exit-gate" PYTHONPATH=ea EA_STORAGE_BACKEND=memory $(PYTEST_PYTHON_BIN) -m pytest -q tests -p no:cacheprovider --durations=25 --durations-min=1.0 $(TEST_API_PYTEST_IGNORE) $(TEST_API_PYTEST_DESELECT)
+
+test-api-real-chromium: test-api
+test-api-real-chromium: export PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION := 1
+
+test-api-authenticated:
+	@set -eu; \
+	propertyquarry_ci_temp="$$(/usr/bin/mktemp -d /tmp/propertyquarry-ci-test.XXXXXXXX)"; \
+	cleanup_propertyquarry_ci_temp() { \
+	  case "$$propertyquarry_ci_temp" in \
+	    /tmp/propertyquarry-ci-test.*) /bin/rm -rf -- "$$propertyquarry_ci_temp" ;; \
+	    *) echo "refusing unsafe CI temp cleanup: $$propertyquarry_ci_temp" >&2; return 70 ;; \
+	  esac; \
+	}; \
+	trap cleanup_propertyquarry_ci_temp EXIT; \
+	PROPERTYQUARRY_GATE_RECEIPT_DIR="$$propertyquarry_ci_temp/exit-gate" /usr/bin/env -u PROPERTYQUARRY_RELEASE_DISPATCH EA_STORAGE_BACKEND=memory ./scripts/propertyquarry_release_python.sh -m pytest -q tests -p no:cacheprovider --durations=25 --durations-min=1.0 $(TEST_API_PYTEST_IGNORE) $(TEST_API_PYTEST_DESELECT)
 
 test-all:
 	PYTHONPATH=ea $(PYTEST_PYTHON_BIN) -m pytest -q
@@ -183,7 +232,7 @@ materialize-release-assets-authenticated:
 	./scripts/propertyquarry_release_python.sh scripts/materialize_weekly_product_pulse.py
 
 verify-generated-release-artifacts-clean:
-	$(PYTHON_BIN) scripts/verify_generated_release_artifacts_clean.py --materialize-in-sandbox
+	$(PYTHON_BIN) scripts/verify_generated_release_artifacts_clean.py
 
 verify-generated-release-artifacts-clean-authenticated:
 	./scripts/propertyquarry_release_python.sh scripts/verify_generated_release_artifacts_clean.py
@@ -201,7 +250,7 @@ ci-local-authenticated:
 ci-gates:
 	$(MAKE) smoke-help
 	$(MAKE) ci-local
-	PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION=1 $(MAKE) test-api
+	$(MAKE) test-api-real-chromium
 	$(MAKE) verify-release-assets
 	$(MAKE) verify-flagship-release-readiness
 	$(MAKE) verify-generated-release-artifacts-clean
@@ -231,7 +280,7 @@ runtime-hard-exit-gates:
 	bash scripts/runtime_hard_exit_gates.sh
 
 property-release-gates:
-	./scripts/property_release_gates.sh
+	/bin/bash -p scripts/property_release_gates.sh
 
 property-security-posture:
 	./scripts/propertyquarry_release_python.sh scripts/check_property_security_posture.py
@@ -241,7 +290,10 @@ ltd-release-gates:
 	$(MAKE) verify-ltd-flagship-subset-authenticated
 
 verify-release-assets:
-	bash scripts/verify_release_assets.sh
+	PYTHON_BIN="$(PYTHON_BIN)" ./scripts/verify_release_assets.sh --developer
+
+verify-release-assets-authenticated:
+	/bin/bash -p scripts/verify_release_assets.sh
 
 verify-flagship-release-readiness:
 	$(PYTHON_BIN) scripts/verify_flagship_release_readiness.py

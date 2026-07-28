@@ -322,6 +322,9 @@ class RuntimeMetrics:
         self._ingress_cost: dict[str, int] = defaultdict(int)
         self._ingress_inflight: dict[str, int] = defaultdict(int)
         self._ingress_admission: dict[tuple[str, str, str], int] = defaultdict(int)
+        self._ingress_admission_capacity_backend = ""
+        self._ingress_admission_capacity_contract_valid: bool | None = None
+        self._ingress_admission_capacity_rows: dict[str, tuple[int, int]] = {}
         self._content_ledger_events: dict[str, int] = defaultdict(int)
 
     def record_request(
@@ -379,6 +382,79 @@ class RuntimeMetrics:
         with self._lock:
             self._ingress_admission[(safe_backend, safe_operation, safe_outcome)] += 1
 
+    def record_ingress_admission_operation(
+        self,
+        *,
+        backend: str,
+        operation: str,
+        outcome: str,
+    ) -> None:
+        normalized_backend = str(backend or "").strip().lower()
+        normalized_operation = str(operation or "").strip().lower()
+        normalized_outcome = str(outcome or "").strip().lower()
+        if normalized_backend not in _INGRESS_ADMISSION_BACKENDS:
+            raise ValueError("ingress_admission_metric_backend_invalid")
+        if normalized_operation not in _INGRESS_ADMISSION_OPERATIONS:
+            raise ValueError("ingress_admission_metric_operation_invalid")
+        if normalized_outcome not in _INGRESS_ADMISSION_OUTCOMES:
+            raise ValueError("ingress_admission_metric_outcome_invalid")
+        self.record_ingress_admission(
+            backend=normalized_backend,
+            operation=normalized_operation,
+            outcome=normalized_outcome,
+        )
+
+    def record_ingress_admission_capacity(
+        self,
+        *,
+        backend: str,
+        contract_valid: bool,
+        rows: Mapping[str, tuple[int, int]],
+    ) -> None:
+        normalized_backend = str(backend or "").strip().lower()
+        if normalized_backend not in _INGRESS_ADMISSION_BACKENDS:
+            raise ValueError("ingress_admission_metric_backend_invalid")
+        if not isinstance(contract_valid, bool):
+            raise ValueError("ingress_admission_metric_contract_valid_invalid")
+        normalized_rows: dict[str, tuple[int, int]] = {}
+        for raw_key, raw_values in dict(rows).items():
+            capacity_key = str(raw_key or "").strip().lower()
+            if capacity_key not in _INGRESS_ADMISSION_CAPACITY_LIMITS:
+                raise ValueError("ingress_admission_metric_capacity_key_invalid")
+            if (
+                not isinstance(raw_values, tuple)
+                or len(raw_values) != 2
+                or isinstance(raw_values[0], bool)
+                or isinstance(raw_values[1], bool)
+            ):
+                raise ValueError("ingress_admission_metric_capacity_row_invalid")
+            row_count = int(raw_values[0])
+            hard_limit = int(raw_values[1])
+            expected_limit = _INGRESS_ADMISSION_CAPACITY_LIMITS[capacity_key]
+            if (
+                row_count < 0
+                or hard_limit < 1
+                or row_count > hard_limit
+                or (
+                    normalized_backend == "postgres"
+                    and hard_limit != expected_limit
+                )
+                or (
+                    normalized_backend == "memory"
+                    and hard_limit > expected_limit
+                )
+            ):
+                raise ValueError("ingress_admission_metric_capacity_row_invalid")
+            normalized_rows[capacity_key] = (row_count, hard_limit)
+        if contract_valid and set(normalized_rows) != set(
+            _INGRESS_ADMISSION_CAPACITY_LIMITS
+        ):
+            raise ValueError("ingress_admission_metric_capacity_contract_incomplete")
+        with self._lock:
+            self._ingress_admission_capacity_backend = normalized_backend
+            self._ingress_admission_capacity_contract_valid = contract_valid
+            self._ingress_admission_capacity_rows = normalized_rows
+
     def record_content_ledger_event(self, *, outcome: str) -> None:
         safe_outcome = _ingress_label(outcome, fallback="failed")
         if safe_outcome not in _CONTENT_LEDGER_METRIC_OUTCOMES:
@@ -406,6 +482,15 @@ class RuntimeMetrics:
             ingress_cost = dict(self._ingress_cost)
             ingress_inflight = dict(self._ingress_inflight)
             ingress_admission = dict(self._ingress_admission)
+            ingress_admission_capacity_backend = (
+                self._ingress_admission_capacity_backend
+            )
+            ingress_admission_capacity_contract_valid = (
+                self._ingress_admission_capacity_contract_valid
+            )
+            ingress_admission_capacity_rows = dict(
+                self._ingress_admission_capacity_rows
+            )
             content_ledger_events = dict(self._content_ledger_events)
         from app.telemetry import span_export_health_snapshot
 
@@ -497,7 +582,36 @@ class RuntimeMetrics:
                 "# TYPE propertyquarry_ingress_admission_operations_total counter",
             ]
         )
+        admission_backends = {
+            backend
+            for backend, _operation, _outcome in ingress_admission
+            if backend in _INGRESS_ADMISSION_BACKENDS
+        }
+        if ingress_admission_capacity_backend:
+            admission_backends.add(ingress_admission_capacity_backend)
+        for backend in sorted(admission_backends):
+            for operation in _INGRESS_ADMISSION_OPERATIONS:
+                for outcome in _INGRESS_ADMISSION_OUTCOMES:
+                    count = ingress_admission.get(
+                        (backend, operation, outcome),
+                        0,
+                    )
+                    lines.append(
+                        'propertyquarry_ingress_admission_operations_total{backend="%s",operation="%s",outcome="%s"} %d'
+                        % (
+                            _label_value(backend),
+                            _label_value(operation),
+                            _label_value(outcome),
+                            count,
+                        )
+                    )
         for (backend, operation, outcome), count in sorted(ingress_admission.items()):
+            if (
+                backend in _INGRESS_ADMISSION_BACKENDS
+                and operation in _INGRESS_ADMISSION_OPERATIONS
+                and outcome in _INGRESS_ADMISSION_OUTCOMES
+            ):
+                continue
             lines.append(
                 'propertyquarry_ingress_admission_operations_total{backend="%s",operation="%s",outcome="%s"} %d'
                 % (
@@ -508,6 +622,17 @@ class RuntimeMetrics:
                 )
             )
 
+        if ingress_admission_capacity_backend:
+            admission_backend = ingress_admission_capacity_backend
+            admission_capacity_rows = tuple(
+                (capacity_key, row_count, hard_limit)
+                for capacity_key, (row_count, hard_limit) in sorted(
+                    ingress_admission_capacity_rows.items()
+                )
+            )
+            admission_capacity_valid = bool(
+                ingress_admission_capacity_contract_valid
+            )
         safe_capacity_backend = _ingress_label(
             admission_backend,
             fallback="unknown",
@@ -537,13 +662,16 @@ class RuntimeMetrics:
         }
         capacity_contract_valid = (
             admission_capacity_valid
-            and safe_capacity_backend == "postgres"
+            and safe_capacity_backend in _INGRESS_ADMISSION_BACKENDS
             and len(capacity_rows) == 2
-            and {
-                capacity_key: row_limit
+            and all(
+                (
+                    row_limit == expected_capacity_limits[capacity_key]
+                    if safe_capacity_backend == "postgres"
+                    else row_limit <= expected_capacity_limits[capacity_key]
+                )
                 for capacity_key, _row_count, row_limit in capacity_rows
-            }
-            == expected_capacity_limits
+            )
         )
         if not capacity_contract_valid:
             capacity_rows = []
@@ -739,35 +867,6 @@ class RuntimeMetrics:
             lines.append(
                 'propertyquarry_scheduler_delivery_outbox_events_total{outcome="%s"} %d'
                 % (_label_value(outcome), max(0, int(delivery_totals.get(outcome, 0))))
-            )
-        worker_sample = next(sample for sample in samples if sample.role == "worker")
-        lines.extend(
-            [
-                "# HELP propertyquarry_queue_depth Active durable work items in a bounded queue.",
-                "# TYPE propertyquarry_queue_depth gauge",
-                "# HELP propertyquarry_queue_oldest_item_age_seconds Age of the oldest active durable work item.",
-                "# TYPE propertyquarry_queue_oldest_item_age_seconds gauge",
-            ]
-        )
-        if (
-            not worker_sample.stale
-            and worker_sample.property_search_queue_depth is not None
-            and worker_sample.property_search_queue_oldest_item_age_seconds is not None
-        ):
-            lines.extend(
-                [
-                    'propertyquarry_queue_depth{queue="property_search"} %d'
-                    % worker_sample.property_search_queue_depth,
-                    'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} %s'
-                    % _metric_float(
-                        (
-                            worker_sample.property_search_queue_oldest_item_age_seconds
-                            + worker_sample.age_seconds
-                            if worker_sample.property_search_queue_depth > 0
-                            else 0.0
-                        )
-                    ),
-                ]
             )
         return "\n".join(lines) + "\n"
 

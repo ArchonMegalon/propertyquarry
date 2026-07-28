@@ -1299,14 +1299,14 @@ def _normalize_release(config: ProofConfig) -> tuple[str, str]:
         raise MonitoringProofError("monitoring and alert-delivery receipt paths must differ")
     if config.delivery_timeout_seconds < 1 or config.delivery_timeout_seconds > 60:
         raise MonitoringProofError("delivery timeout must be between 1 and 60 seconds")
-    selected_policy_paths = {
-        config.slo_path: DEFAULT_SLO_PATH,
-        config.prometheus_config_path: DEFAULT_PROMETHEUS_CONFIG_PATH,
-        config.alertmanager_config_path: DEFAULT_ALERTMANAGER_CONFIG_PATH,
-        config.alert_rules_path: DEFAULT_ALERT_RULES_PATH,
-        config.alert_rule_tests_path: DEFAULT_ALERT_RULE_TESTS_PATH,
-        config.flagship_operations_path: DEFAULT_FLAGSHIP_OPERATIONS_PATH,
-    }
+    selected_policy_paths = (
+        (config.slo_path, DEFAULT_SLO_PATH),
+        (config.prometheus_config_path, DEFAULT_PROMETHEUS_CONFIG_PATH),
+        (config.alertmanager_config_path, DEFAULT_ALERTMANAGER_CONFIG_PATH),
+        (config.alert_rules_path, DEFAULT_ALERT_RULES_PATH),
+        (config.alert_rule_tests_path, DEFAULT_ALERT_RULE_TESTS_PATH),
+        (config.flagship_operations_path, DEFAULT_FLAGSHIP_OPERATIONS_PATH),
+    )
     if any(
         selected.resolve() != canonical.resolve()
         for selected, canonical in selected_policy_paths

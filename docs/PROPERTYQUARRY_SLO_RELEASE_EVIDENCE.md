@@ -79,7 +79,7 @@ gate.
 ```bash
 export PROPERTYQUARRY_SLO_METRICS_SNAPSHOT='_completion/propertyquarry_slo_evidence/metrics-current.prom'
 export PROPERTYQUARRY_SLO_METRICS_PROBE_RECEIPT='_completion/propertyquarry_slo_evidence/metrics-probe-current.json'
-./scripts/property_release_gates.sh
+./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates
 ```
 
 ## Production deploy boundary

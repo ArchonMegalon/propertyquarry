@@ -6,7 +6,7 @@ import pytest
 from app.product import property_search_schema as schema
 from app.product import property_search_storage
 
-_V1_TO_V14_CHECKSUMS = (
+_V1_TO_V16_CHECKSUMS = (
     "4938925d3679ca592f67de1fb5f5c5538ce0e2c93dd2435ffe1204674d02a37e",
     "9beb0cbc778018c9ea7ee5939cbd25a86830a904a8c2bfe8454a022219a078a6",
     "f89e047a0ed002e2da26884077001a91c7f69faa57e5719ac73881d68a14d93a",
@@ -21,6 +21,8 @@ _V1_TO_V14_CHECKSUMS = (
     "92901d215583a8c41854e3c3236417aca61fa21f03460777f15e5cec7626d25f",
     "192d605e9a96e73bde817c51f28317b491313ebe3cb61f1b4c617256dbb2f8cf",
     "0e89b189e06f2fbaaed1639e80951f87780d4102704d3371bbfc6d48bd124d0b",
+    "2f20534f4d824d1bceb763c6016358d2266c1f7e70fda60267005f50b2b53629",
+    "11069fd9275f1150beb57cc95d911ce9b2a9ae6bc09793d25ccd4ca8732f4140",
 )
 
 
@@ -34,8 +36,8 @@ def _ledger_rows(
 
 
 class _MigrationCursor:
-    def __init__(self, *, fail_v15: bool = False) -> None:
-        self.fail_v15 = fail_v15
+    def __init__(self, *, fail_v17: bool = False) -> None:
+        self.fail_v17 = fail_v17
         self.executed: list[tuple[str, object | None]] = []
 
     def __enter__(self) -> _MigrationCursor:
@@ -46,16 +48,16 @@ class _MigrationCursor:
 
     def execute(self, sql: str, params: object | None = None) -> None:
         self.executed.append((sql, params))
-        if self.fail_v15 and sql == schema.PROPERTY_SEARCH_MIGRATIONS[-1].sql:
-            raise RuntimeError("simulated_v15_ddl_failure")
+        if self.fail_v17 and sql == schema.PROPERTY_SEARCH_MIGRATIONS[-1].sql:
+            raise RuntimeError("simulated_v17_ddl_failure")
 
     def fetchall(self) -> list[tuple[int, str, str]]:
         return _ledger_rows(schema.PROPERTY_SEARCH_MIGRATIONS[:-1])
 
 
 class _MigrationConnection:
-    def __init__(self, *, fail_v15: bool = False) -> None:
-        self.cursor_instance = _MigrationCursor(fail_v15=fail_v15)
+    def __init__(self, *, fail_v17: bool = False) -> None:
+        self.cursor_instance = _MigrationCursor(fail_v17=fail_v17)
         self.committed = False
         self.rolled_back = False
         self.closed = False
@@ -87,14 +89,12 @@ class _ReadinessCursor:
                 (
                     "lease",
                     0,
-                    schema.PROPERTYQUARRY_INGRESS_LEASE_CAPACITY_LIMIT,
-                    schema.PROPERTYQUARRY_INGRESS_CAPACITY_CONTRACT_VERSION,
+                    schema.ADMISSION_LEASE_ROW_LIMIT,
                 ),
                 (
                     "quota",
                     0,
-                    schema.PROPERTYQUARRY_INGRESS_QUOTA_CAPACITY_LIMIT,
-                    schema.PROPERTYQUARRY_INGRESS_CAPACITY_CONTRACT_VERSION,
+                    schema.ADMISSION_QUOTA_ROW_LIMIT,
                 ),
             )
         )
@@ -107,7 +107,7 @@ class _ReadinessCursor:
         self.params = params
 
     def fetchall(self) -> list[Sequence[object]]:
-        if "FROM propertyquarry_ingress_admission_capacity" in self.sql:
+        if "FROM propertyquarry_admission_capacity_state" in self.sql:
             if "AS actual_row_count" in self.sql:
                 return [
                     (*row, self.actual_counts[index])
@@ -131,53 +131,42 @@ class _ReadinessCursor:
         raise AssertionError(f"unexpected readiness query: {self.sql}")
 
 
-def test_v15_is_append_only_and_preserves_prior_migration_checksums() -> None:
+def test_v17_is_append_only_and_preserves_prior_migration_checksums() -> None:
     assert tuple(
         migration.version for migration in schema.PROPERTY_SEARCH_MIGRATIONS
-    ) == tuple(range(1, 16))
+    ) == tuple(range(1, 18))
     assert tuple(
         migration.checksum for migration in schema.PROPERTY_SEARCH_MIGRATIONS[:-1]
-    ) == _V1_TO_V14_CHECKSUMS
+    ) == _V1_TO_V16_CHECKSUMS
     latest = schema.PROPERTY_SEARCH_MIGRATIONS[-1]
-    assert latest.version == 15
-    assert latest.name == "authoritative_distributed_ingress_admission"
+    assert latest.version == 17
+    assert latest.name == "bounded_admission_capacity_state"
     assert (
         latest.checksum
-        == "02fe41df2ce7fa85eeea60d989a4b7f0aa15bac713227ce5a288c2b724313feb"
+        == "25a1fcfc28060abc309f7c767889964b23e694c3ae88209105b23a6ca33ac797"
     )
-    assert schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION == 15
+    assert schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION == 17
 
 
-def test_v15_defines_bounded_authoritative_capacity_contract() -> None:
-    sql = schema.PROPERTY_SEARCH_MIGRATIONS[-1].sql
-    assert "CREATE TABLE IF NOT EXISTS propertyquarry_ingress_quota_buckets" in sql
-    assert "CREATE TABLE IF NOT EXISTS propertyquarry_ingress_leases" in sql
-    assert (
-        "CREATE TABLE IF NOT EXISTS "
-        "propertyquarry_ingress_admission_capacity" in sql
-    )
-    assert "PRIMARY KEY (quota_kind, dimension, subject_digest, window_id)" in sql
-    assert "quota_kind IN ('request', 'cost')" in sql
-    assert "dimension IN ('ip', 'account')" in sql
-    assert "lease_token UUID PRIMARY KEY" in sql
-    assert "^hmac-sha256:[0-9a-f]{64}$" in sql
-    assert "propertyquarry_ingress_lease_horizon_check" in sql
-    assert "expires_at >= heartbeat_at + INTERVAL '1 second'" in sql
-    assert "expires_at <= heartbeat_at + INTERVAL '3600 seconds'" in sql
-    assert "capacity_key IN ('lease', 'quota')" in sql
-    assert "hard_limit = 100000" in sql
-    assert "hard_limit = 1000000" in sql
-    assert "row_count < hard_limit" in sql
-    assert "row_count > 0" in sql
-    assert "pg_trigger_depth() <> 2" in sql
-    assert "BEFORE TRUNCATE ON propertyquarry_ingress_quota_buckets" in sql
-    assert "BEFORE TRUNCATE ON propertyquarry_ingress_leases" in sql
-    assert (
-        "BEFORE TRUNCATE ON propertyquarry_ingress_admission_capacity" in sql
-    )
+def test_v16_and_v17_define_bounded_authoritative_capacity_contract() -> None:
+    admission_sql = schema.PROPERTY_SEARCH_MIGRATIONS[15].sql
+    capacity_sql = schema.PROPERTY_SEARCH_MIGRATIONS[16].sql
+    assert "CREATE TABLE IF NOT EXISTS propertyquarry_admission_quota_buckets" in admission_sql
+    assert "CREATE TABLE IF NOT EXISTS propertyquarry_admission_leases" in admission_sql
+    assert "PRIMARY KEY (lease_id, dimension_key)" in admission_sql
+    assert "CHECK (expires_at > acquired_at)" in admission_sql
+    assert "CREATE TABLE propertyquarry_admission_capacity_state" in capacity_sql
+    assert "capacity_key IN ('quota', 'lease')" in capacity_sql
+    assert "row_limit = 100000" in capacity_sql
+    assert "row_limit = 1000000" in capacity_sql
+    assert "row_count <= row_limit - $1" in capacity_sql
+    assert "row_count >= $1 AND row_count <= row_limit" in capacity_sql
+    assert "AFTER INSERT ON propertyquarry_admission_quota_buckets" in capacity_sql
+    assert "AFTER DELETE ON propertyquarry_admission_leases" in capacity_sql
+    assert "AFTER TRUNCATE ON propertyquarry_admission_leases" in capacity_sql
 
 
-def test_upgrade_from_v14_applies_only_v15_and_commits(
+def test_upgrade_from_v16_applies_only_v17_and_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -189,13 +178,13 @@ def test_upgrade_from_v14_applies_only_v15_and_commits(
 
     result = schema.migrate_property_search_schema(
         "postgresql://schema.test/property",
-        applied_by="schema-v15-test",
+        applied_by="schema-v17-test",
         connect=lambda *args, **kwargs: connection,
     )
 
-    assert result.previous_version == 14
-    assert result.current_version == 15
-    assert result.applied_versions == (15,)
+    assert result.previous_version == 16
+    assert result.current_version == 17
+    assert result.applied_versions == (17,)
     assert connection.committed is True
     assert connection.rolled_back is False
     assert connection.closed is True
@@ -205,7 +194,7 @@ def test_upgrade_from_v14_applies_only_v15_and_commits(
     ) in connection.cursor_instance.executed
 
 
-def test_v15_failure_rolls_back_without_committing(
+def test_v17_failure_rolls_back_without_committing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -213,12 +202,12 @@ def test_v15_failure_rolls_back_without_committing(
         "_property_search_erasure_key_id",
         lambda: "test-erasure-key",
     )
-    connection = _MigrationConnection(fail_v15=True)
+    connection = _MigrationConnection(fail_v17=True)
 
-    with pytest.raises(RuntimeError, match="simulated_v15_ddl_failure"):
+    with pytest.raises(RuntimeError, match="simulated_v17_ddl_failure"):
         schema.migrate_property_search_schema(
             "postgresql://schema.test/property",
-            applied_by="schema-v15-test",
+            applied_by="schema-v17-test",
             connect=lambda *args, **kwargs: connection,
         )
 
@@ -238,7 +227,7 @@ def test_readiness_accepts_exact_capacity_contract_and_counts() -> None:
 
     assert status.ready is True
     assert status.reason == "schema_ready"
-    assert status.current_version == 15
+    assert status.current_version == 17
 
 
 def test_readiness_rejects_capacity_contract_drift() -> None:
@@ -248,14 +237,12 @@ def test_readiness_rejects_capacity_contract_drift() -> None:
                 (
                     "lease",
                     0,
-                    schema.PROPERTYQUARRY_INGRESS_LEASE_CAPACITY_LIMIT + 1,
-                    schema.PROPERTYQUARRY_INGRESS_CAPACITY_CONTRACT_VERSION,
+                    schema.ADMISSION_LEASE_ROW_LIMIT + 1,
                 ),
                 (
                     "quota",
                     0,
-                    schema.PROPERTYQUARRY_INGRESS_QUOTA_CAPACITY_LIMIT,
-                    schema.PROPERTYQUARRY_INGRESS_CAPACITY_CONTRACT_VERSION,
+                    schema.ADMISSION_QUOTA_ROW_LIMIT,
                 ),
             )
         )

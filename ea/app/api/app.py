@@ -20,16 +20,25 @@ from app.api.dependencies import (
     require_request_auth,
 )
 from app.api.errors import install_error_handlers
-from app.api.ingress import IngressAbuseMiddleware, IngressPolicy
+from app.api.ingress import (
+    INGRESS_POLICY_CONTRACT_VERSION,
+    IngressAbuseMiddleware,
+    IngressPolicy,
+)
+from app.api.ingress_admission import (
+    INGRESS_ADMISSION_CONTRACT_VERSION,
+    AdmissionBackend,
+    AdmissionOperation,
+    AdmissionOutcome,
+    IngressAdmissionContractError,
+    InMemoryIngressAdmissionStore,
+    PostgresIngressAdmissionStore,
+)
 from app.api.principal_identity import PrincipalIdentityMiddleware, PrincipalIdentityPolicy
 from app.api.propertyquarry_localization import PropertyQuarryLocalizationMiddleware
 from app.api.threadpool_compat import inline_sync_handlers_enabled, install_inline_threadpool_compat
 from app.container import build_container
 from app.observability import RuntimeMetrics
-from app.services.admission_control import (
-    build_admission_backend,
-    resolve_api_admission_database_url,
-)
 from app.settings import get_settings, validate_startup_settings
 
 _PROPERTY_SEARCH_PREWARM_CONTAINER = None
@@ -651,19 +660,16 @@ def create_app() -> FastAPI:
     app.add_middleware(PropertyQuarryLocalizationMiddleware)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     ingress_policy = IngressPolicy.from_environ(runtime_mode=s.runtime.mode)
-    admission_database_url = resolve_api_admission_database_url(
-        runtime_mode=s.runtime.mode,
-        primary_database_url=s.database_url,
+    app.state.ingress_admission_store = _build_ingress_admission_store(
+        settings=s,
+        container=app.state.container,
+        policy=ingress_policy,
+        metrics=app.state.runtime_metrics,
     )
-    admission_backend = build_admission_backend(
-        runtime_mode=s.runtime.mode,
-        database_url=admission_database_url,
-    )
-    app.state.admission_backend = admission_backend
     app.add_middleware(
         IngressAbuseMiddleware,
         policy=ingress_policy,
-        admission_backend=admission_backend,
+        admission_store=app.state.ingress_admission_store,
     )
     app.add_middleware(
         PrincipalIdentityMiddleware,

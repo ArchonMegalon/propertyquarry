@@ -31,7 +31,8 @@ from typing import Any, BinaryIO, Iterable, Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
-for _dependency_root in (ROOT, SCRIPT_DIRECTORY):
+EA_ROOT = ROOT / "ea"
+for _dependency_root in (ROOT, SCRIPT_DIRECTORY, EA_ROOT):
     if str(_dependency_root) not in sys.path:
         sys.path.insert(0, str(_dependency_root))
 
@@ -3486,6 +3487,7 @@ def _write_generated_reconstruction_diorama_preview(
         applied_style_scene,
         style_label=style_label,
     )
+    renderer_palette = _generated_reconstruction_diorama_palette(style_label)
     max_route_rows = 12
     route_labels = [
         _compact_route_label(
@@ -3519,17 +3521,96 @@ def _write_generated_reconstruction_diorama_preview(
         footer_copy = source_disclosure
     preview_sources = list(photo_paths[:3]) or [floorplan_path]
     try:
+        from app.product.property_diorama_preview import (
+            render_bright_apartment_diorama,
+        )
+
         rendered_diorama = render_bright_apartment_diorama(
             floorplan_path=floorplan_path,
             walkable_scene=walkable_scene,
-            palette=palette,
+            palette=renderer_palette,
             hero_path=photo_paths[0] if photo_paths else None,
             source_photo_count=photo_count,
             canvas_size=(1600, 1100),
         )
         if rendered_diorama is not None:
             canvas, composition = rendered_diorama
+            canvas = canvas.convert("RGBA")
+            source_panel_specs = (
+                {"size": (250, 172), "rotate": -7.0, "anchor": (146, 370)},
+                {"size": (330, 222), "rotate": 1.6, "anchor": (784, 86)},
+                {"size": (250, 172), "rotate": 6.4, "anchor": (1260, 190)},
+            )
+            source_panel_boxes: list[list[int]] = []
+            for index, source_path in enumerate(
+                preview_sources[: len(source_panel_specs)]
+            ):
+                panel_spec = source_panel_specs[index]
+                panel_size = tuple(panel_spec["size"])
+                panel_card = _generated_reconstruction_mount_card(
+                    _generated_reconstruction_fit_cover(source_path, panel_size),
+                    max_size=panel_size,
+                    frame_px=16 if index == 1 else 14,
+                    rotate_degrees=float(panel_spec["rotate"]),
+                    matte_color=renderer_palette["matte"],
+                    shadow_alpha=92 if index == 1 else 78,
+                )
+                anchor_x, anchor_y = panel_spec["anchor"]
+                anchor_x = min(
+                    int(anchor_x),
+                    canvas.width - panel_card.width - 24,
+                )
+                anchor_y = min(
+                    int(anchor_y),
+                    canvas.height - panel_card.height - 24,
+                )
+                canvas.alpha_composite(panel_card, (anchor_x, anchor_y))
+                source_panel_boxes.append(
+                    [
+                        anchor_x,
+                        anchor_y,
+                        anchor_x + panel_card.width,
+                        anchor_y + panel_card.height,
+                    ]
+                )
+            style_vignette = _draw_style_scene_preview_vignette(
+                canvas,
+                style_scene=applied_style_scene,
+                box=(760, 330, 1120, 790),
+            )
+            style_vignette_box = [
+                int(value) for value in list(style_vignette.get("box") or [])
+            ]
+            composition_boxes = dict(composition.get("boxes") or {})
+            composition_boxes["style_vignette"] = style_vignette_box
+            composition_boxes["source_panels"] = source_panel_boxes
+            composition["boxes"] = composition_boxes
             layout_checks = dict(composition.get("checks") or {})
+            layout_checks["source_panels_fit_canvas"] = all(
+                _preview_rect_contains(
+                    (0, 0, canvas.width, canvas.height),
+                    tuple(panel_box),
+                )
+                for panel_box in source_panel_boxes
+            )
+            layout_checks["style_vignette_fits_canvas"] = (
+                len(style_vignette_box) == 4
+                and _preview_rect_contains(
+                    (0, 0, canvas.width, canvas.height),
+                    tuple(style_vignette_box),
+                )
+            )
+            rendered_style_cues = [
+                str(value)
+                for value in list(style_vignette.get("rendered_cues") or [])
+            ]
+            layout_checks["style_vignette_covers_required_cues"] = set(
+                rendered_style_cues
+            ) == set(
+                str(value)
+                for value in list(applied_style_scene.get("required_cues") or [])
+            )
+            composition["checks"] = layout_checks
             failed_layout_checks = [name for name, passed in layout_checks.items() if not passed]
             if failed_layout_checks:
                 raise RuntimeError(
@@ -3552,6 +3633,12 @@ def _write_generated_reconstruction_diorama_preview(
                 "source_mode": source_mode,
                 "source_photo_count": photo_count,
                 "source_disclosure": source_disclosure,
+                "preview_kind": "bright_playful_cutaway_with_style_scene",
+                "style_id": str(applied_style_scene.get("style_id") or ""),
+                "style_signature": str(applied_style_scene.get("style_signature") or ""),
+                "style_scene_signature": str(applied_style_scene.get("scene_signature") or ""),
+                "style_evidence_status": "ready",
+                "rendered_style_cues": rendered_style_cues,
                 "layout": layout,
             }
     except Exception:

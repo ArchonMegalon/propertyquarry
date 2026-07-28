@@ -36,7 +36,7 @@ def test_release_asset_shell_requires_and_runs_governance_verifier() -> None:
     ):
         assert f'"{relative}"' in release_verifier
     assert (
-        "python3 scripts/verify_propertyquarry_global_governance_assets.py"
+        '"${RELEASE_PYTHON}" scripts/verify_propertyquarry_global_governance_assets.py'
         in release_verifier
     )
 

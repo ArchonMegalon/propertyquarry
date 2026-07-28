@@ -26,10 +26,9 @@ from app.api.routes.channels import (
 from app.container import build_container
 from app.logging_utils import configure_logging, log_event
 from app.observability import (
+    RuntimeTraceContext,
     bind_runtime_trace_context,
-    child_trace_context,
     runtime_build_identity,
-    runtime_trace_context_from_mapping,
 )
 from app.product.property_research_packet_fleet_proof import (
     PROPERTY_RESEARCH_PACKET_WRITER_READY_STATUSES,
@@ -2357,38 +2356,12 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
             "attempt_count": job.attempt_count,
         }
 
-    parent_trace = runtime_trace_context_from_mapping(job.payload_json.get("trace_context"))
-    worker_trace = child_trace_context(parent_trace) if parent_trace is not None else None
-    trace_fields = (
-        {
-            "trace_id": worker_trace.trace_id,
-            "span_id": worker_trace.span_id,
-            "parent_span_id": worker_trace.parent_span_id,
-            "trace_flags": worker_trace.trace_flags,
-            "trace_source": worker_trace.source,
-        }
-        if worker_trace is not None
-        else {}
-    )
-    build_identity = runtime_build_identity()
-    trace_fields.update(build_identity)
-    correlation_id = str(
-        dict(job.payload_json.get("trace_context") or {}).get("correlation_id")
-        if isinstance(job.payload_json.get("trace_context"), dict)
+    correlation_id = (
+        telemetry_parent.correlation_id
+        if telemetry_parent is not None
         else ""
-    ).strip()
-    log_event(
-        log,
-        logging.INFO,
-        "property_search_work_started",
-        correlation_id=correlation_id,
-        component="property_search_worker",
-        operation="execute",
-        outcome="started",
-        job_id=job.job_id,
-        run_id=job.run_id,
-        **trace_fields,
     )
+    trace_fields = runtime_build_identity()
 
     stop_heartbeat = threading.Event()
     lease_lost = threading.Event()
@@ -2419,11 +2392,44 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
     heartbeat_thread.start()
     try:
         service = build_product_service(container)
-        with bind_runtime_trace_context(
-            worker_trace,
+        with start_span(
+            "durable_search_worker",
+            parent=telemetry_parent,
             correlation_id=correlation_id,
-        ):
-            result = service.execute_property_search_work_job(job)
+        ) as worker_telemetry_context:
+            worker_trace = RuntimeTraceContext(
+                trace_id=worker_telemetry_context.trace_id,
+                span_id=worker_telemetry_context.span_id,
+                parent_span_id=worker_telemetry_context.parent_span_id,
+                trace_flags=worker_telemetry_context.trace_flags,
+                source="boundary",
+            )
+            trace_fields.update(
+                {
+                    "trace_id": worker_trace.trace_id,
+                    "span_id": worker_trace.span_id,
+                    "parent_span_id": worker_trace.parent_span_id,
+                    "trace_flags": worker_trace.trace_flags,
+                    "trace_source": worker_trace.source,
+                }
+            )
+            log_event(
+                log,
+                logging.INFO,
+                "property_search_work_started",
+                correlation_id=correlation_id,
+                component="property_search_worker",
+                operation="execute",
+                outcome="started",
+                job_id=job.job_id,
+                run_id=job.run_id,
+                **trace_fields,
+            )
+            with bind_runtime_trace_context(
+                worker_trace,
+                correlation_id=correlation_id,
+            ):
+                result = service.execute_property_search_work_job(job)
     except Exception as exc:
         stop_heartbeat.set()
         heartbeat_thread.join(timeout=max(1.0, float(property_search_work_heartbeat_seconds()) + 1.0))
@@ -2457,12 +2463,15 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
         )
         return {
             "claimed": True,
-            "completed": True,
+            "completed": False,
             "job_id": job.job_id,
             "run_id": job.run_id,
-            "status": completed.status,
-            "attempt_count": completed.attempt_count,
-            "result_status": str(result.get("status") or "completed"),
+            "status": str(
+                failed.status if failed is not None else "lease_lost"
+            ),
+            "attempt_count": (
+                failed.attempt_count if failed is not None else job.attempt_count
+            ),
         }
     stop_heartbeat.set()
     heartbeat_thread.join(timeout=max(1.0, float(property_search_work_heartbeat_seconds()) + 1.0))

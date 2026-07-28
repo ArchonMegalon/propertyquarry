@@ -48,7 +48,8 @@ def test_security_posture_receipt_includes_worker_and_render_database_controls()
     assert isinstance(required_checks, list)
     assert "compose_runtime_privilege_boundaries" in required_checks
     assert "durable_property_worker_hardening" in required_checks
-    assert "render_database_isolation" in required_checks
+    assert "service_scoped_database_credentials" in required_checks
+    assert "strict_deploy_writer_topology" in required_checks
 
 
 def test_resolved_worker_security_contract_checks_the_effective_model() -> None:
@@ -570,11 +571,11 @@ def test_durable_worker_security_contract_rejects_render_environment_bundle() ->
         "propertyquarry-worker",
     )
     worker = worker.replace(
-        "    env_file:\n      - .env",
+        "    read_only: true",
+        "    read_only: true\n"
         "    env_file:\n"
         "      - path: ./state/runtime/property_scene_video_shared.env\n"
-        "        required: false\n"
-        "      - .env",
+        "        required: false",
         1,
     )
 
@@ -612,10 +613,10 @@ def test_durable_worker_security_contract_requires_property_only_postgres_role()
     assert any("EA_STORAGE_BACKEND=postgres" in failure for failure in failures)
 
 
-def test_current_render_bridge_is_explicitly_database_isolated() -> None:
+def test_current_render_bridge_uses_dedicated_database_writer_authority() -> None:
     compose = _compose()
 
-    assert security_posture._render_non_writer_security_failures(
+    assert security_posture._render_database_writer_security_failures(
         security_posture._compose_service_block(
             compose,
             "propertyquarry-render-tools",
@@ -624,12 +625,12 @@ def test_current_render_bridge_is_explicitly_database_isolated() -> None:
     ) == []
 
 
-def test_render_database_isolation_rejects_credential_or_writer_classification() -> None:
+def test_render_database_isolation_rejects_generic_dsn_or_nonwriter_classification() -> None:
     render = security_posture._compose_service_block(
         _compose(),
         "propertyquarry-render-tools",
     ).replace(
-        '      DATABASE_URL: ""',
+        '      DATABASE_URL: "${PROPERTYQUARRY_RENDER_DATABASE_URL:?Set a least-privilege PROPERTYQUARRY_RENDER_DATABASE_URL for admission state}"',
         '      DATABASE_URL: "${DATABASE_URL}"',
         1,
     )
@@ -638,15 +639,15 @@ def test_render_database_isolation_rejects_credential_or_writer_classification()
     assert isinstance(target, dict)
     render_topology = target["render"]
     assert isinstance(render_topology, dict)
-    render_topology["database_writer"] = True
+    render_topology["database_writer"] = False
 
-    failures = security_posture._render_non_writer_security_failures(
+    failures = security_posture._render_database_writer_security_failures(
         render,
         writer_topology=topology,
     )
 
-    assert any("explicitly blank DATABASE_URL" in failure for failure in failures)
-    assert any("current render bridge as a non-writer" in failure for failure in failures)
+    assert any("dedicated least-privilege render database URL" in failure for failure in failures)
+    assert any("dedicated database writer" in failure for failure in failures)
 
 
 @pytest.mark.parametrize(
@@ -664,14 +665,16 @@ def test_security_posture_strictly_parses_writer_topology(
 ) -> None:
     topology = _writer_topology_text()
     if topology_kind == "duplicate":
-        marker = '"database_writer": false'
-        assert marker in topology
-        topology = topology.replace(
+        prefix, render_payload = topology.split('"render": {', 1)
+        marker = '"database_writer": true'
+        assert marker in render_payload
+        render_payload = render_payload.replace(
             marker,
             '"database_writer": true,\n'
             '      "database_writer": false',
             1,
         )
+        topology = prefix + '"render": {' + render_payload
         permissive_payload = json.loads(topology)
         assert permissive_payload["target"]["render"]["database_writer"] is False
     elif topology_kind == "non_finite":

@@ -13,10 +13,14 @@ DYNAMIC_TARGET = "/data/public_property_tours"
 GOVERNED_VOLUME = "propertyquarry_governed_public_tours"
 GOVERNED_DOCKER_NAME = "property_propertyquarry_governed_public_tours"
 GOVERNED_TARGET = "/data/governed_public_property_tours"
-EXPECTED_SERVICES = {
+DYNAMIC_SERVICES = {
     "propertyquarry-api",
     "propertyquarry-scheduler",
     "propertyquarry-render-tools",
+}
+GOVERNED_SERVICES = {
+    "propertyquarry-api",
+    "propertyquarry-scheduler",
 }
 
 
@@ -53,7 +57,7 @@ def _volume_mounts(
 def test_dynamic_public_tour_writers_retain_read_write_mounts() -> None:
     mounts = _volume_mounts(_compose(), DYNAMIC_VOLUME)
 
-    assert set(mounts) == EXPECTED_SERVICES
+    assert set(mounts) == DYNAMIC_SERVICES
     for service_name, service_mounts in mounts.items():
         assert service_mounts == [
             f"{DYNAMIC_VOLUME}:{DYNAMIC_TARGET}"
@@ -64,7 +68,7 @@ def test_governed_public_tour_consumers_are_read_only() -> None:
     compose = _compose()
     mounts = _volume_mounts(compose, GOVERNED_VOLUME)
 
-    assert set(mounts) == EXPECTED_SERVICES
+    assert set(mounts) == GOVERNED_SERVICES
     for service_name, service_mounts in mounts.items():
         assert service_mounts == [
             f"{GOVERNED_VOLUME}:{GOVERNED_TARGET}:ro"

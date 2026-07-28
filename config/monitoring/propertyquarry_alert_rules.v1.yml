@@ -156,6 +156,17 @@ groups:
           summary: A required PropertyQuarry runtime heartbeat is stale or invalid
           runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#runtime-heartbeats
 
+      - alert: PropertyQuarryIngressAdmissionBackendUnavailable
+        expr: increase(propertyquarry_ingress_admission_operations_total{backend="postgres",outcome="backend_unavailable"}[5m]) > 0
+        for: 2m
+        labels:
+          service: propertyquarry
+          severity: critical
+          slo: ingress_admission
+        annotations:
+          summary: PropertyQuarry ingress admission recorded a backend-unavailable outcome
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-backend
+
       - alert: PropertyQuarryAdmissionCapacityTelemetryMissing
         expr: up{job="propertyquarry"} == 1 unless on (job, instance) propertyquarry_admission_capacity_contract_valid{backend="postgres"}
         for: 2m
@@ -175,30 +186,30 @@ groups:
           severity: critical
           slo: admission_capacity
         annotations:
-          summary: The shared PostgreSQL admission-capacity contract cannot be validated
-          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#admission-capacity
+          summary: PropertyQuarry PostgreSQL admission capacity contract is invalid or missing
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity
 
       - alert: PropertyQuarryAdmissionCapacityWarning
-        expr: (max by (capacity_key) (propertyquarry_admission_capacity_row_count{backend="postgres"}) / clamp_min(max by (capacity_key) (propertyquarry_admission_capacity_limit{backend="postgres"}), 1) > 0.8) and (max by (capacity_key) (propertyquarry_admission_capacity_row_count{backend="postgres"}) / clamp_min(max by (capacity_key) (propertyquarry_admission_capacity_limit{backend="postgres"}), 1) <= 0.95)
+        expr: (max by (backend, capacity_key) (propertyquarry_admission_capacity_row_count{backend="postgres"}) / clamp_min(max by (backend, capacity_key) (propertyquarry_admission_capacity_limit{backend="postgres"}), 1) >= 0.8) and (max by (backend, capacity_key) (propertyquarry_admission_capacity_row_count{backend="postgres"}) / clamp_min(max by (backend, capacity_key) (propertyquarry_admission_capacity_limit{backend="postgres"}), 1) < 0.95)
         for: 10m
         labels:
           service: propertyquarry
           severity: warning
           slo: admission_capacity
         annotations:
-          summary: Shared PropertyQuarry admission capacity exceeds 80 percent
-          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#admission-capacity
+          summary: PropertyQuarry admission capacity utilization is at least 80 percent
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity
 
       - alert: PropertyQuarryAdmissionCapacityCritical
-        expr: max by (capacity_key) (propertyquarry_admission_capacity_row_count{backend="postgres"}) / clamp_min(max by (capacity_key) (propertyquarry_admission_capacity_limit{backend="postgres"}), 1) > 0.95
+        expr: max by (backend, capacity_key) (propertyquarry_admission_capacity_row_count{backend="postgres"}) / clamp_min(max by (backend, capacity_key) (propertyquarry_admission_capacity_limit{backend="postgres"}), 1) >= 0.95
         for: 5m
         labels:
           service: propertyquarry
           severity: critical
           slo: admission_capacity
         annotations:
-          summary: Shared PropertyQuarry admission capacity exceeds 95 percent
-          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#admission-capacity
+          summary: PropertyQuarry admission capacity utilization is at least 95 percent
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity
 
       - alert: PropertyQuarryDatabasePoolSaturation
         expr: propertyquarry_db_pool_in_use / clamp_min(propertyquarry_db_pool_capacity, 1) > 0.85
@@ -232,6 +243,37 @@ groups:
           queue: property_search
         annotations:
           summary: Durable property-search queue telemetry is absent
+          runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#queue-backlog
+
+      - alert: PropertyQuarryQueueTelemetryUnobserved
+        expr: |-
+          (
+            count(
+              (propertyquarry_queue_observed{queue="property_search"} == 1)
+              and on (job, instance)
+              (
+                (propertyquarry_runtime_heartbeat_required{role="worker"} == 1)
+                and on (job, instance) (propertyquarry_runtime_heartbeat_present{role="worker"} == 1)
+                and on (job, instance) (propertyquarry_runtime_heartbeat_stale{role="worker"} == 0)
+              )
+            ) or vector(0)
+          )
+          !=
+          (
+            count(
+              (propertyquarry_runtime_heartbeat_required{role="worker"} == 1)
+              and on (job, instance) (propertyquarry_runtime_heartbeat_present{role="worker"} == 1)
+              and on (job, instance) (propertyquarry_runtime_heartbeat_stale{role="worker"} == 0)
+            ) or vector(0)
+          )
+        for: 2m
+        labels:
+          service: propertyquarry
+          severity: critical
+          slo: queue_backlog
+          queue: property_search
+        annotations:
+          summary: PropertyQuarry queue telemetry is unobserved despite a healthy required worker
           runbook: docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#queue-backlog
 
       - alert: PropertyQuarryQueueDepthHigh

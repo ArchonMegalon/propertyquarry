@@ -35,6 +35,9 @@ _PROPERTY_SEARCH_RUN_COMPACT_SOURCE_LIMIT = 64
 _PROPERTY_SEARCH_RUN_COMPACT_NESTED_LIST_LIMIT = 32
 _PROPERTY_SEARCH_RUN_COMPACT_TEXT_LIMIT = 2048
 _PROPERTY_SEARCH_ERASURE_KEY_DOMAIN = b"propertyquarry:property-search-erasure:v1\0"
+_PROPERTY_SEARCH_INGRESS_ADMISSION_KEY_DOMAIN = (
+    b"propertyquarry:ingress-admission-key:v1\0"
+)
 _PROPERTY_SEARCH_DISTANCE_FACT_KEYS = tuple(
     dict.fromkeys(
         str(alias or "").strip()
@@ -123,13 +126,34 @@ def _property_search_erasure_secret() -> str:
     return "propertyquarry-local-property-search-erasure-v1"
 
 
-def _property_search_erasure_key_id() -> str:
+def _property_search_erasure_key_id_for_secret(secret: str) -> str:
     return hashlib.sha256(
         (
             "propertyquarry:property-search-erasure-key-id:v1\0"
-            + _property_search_erasure_secret()
+            + secret
         ).encode("utf-8")
     ).hexdigest()
+
+
+def _property_search_erasure_key_id() -> str:
+    return _property_search_erasure_key_id_for_secret(
+        _property_search_erasure_secret()
+    )
+
+
+def _property_search_ingress_admission_hmac_material() -> tuple[bytes, str]:
+    """Derive a domain-separated admission key bound to the durable DB key ID."""
+
+    erasure_secret = _property_search_erasure_secret()
+    derived_secret = hmac.new(
+        erasure_secret.encode("utf-8"),
+        _PROPERTY_SEARCH_INGRESS_ADMISSION_KEY_DOMAIN,
+        hashlib.sha256,
+    ).digest()
+    return (
+        derived_secret,
+        _property_search_erasure_key_id_for_secret(erasure_secret),
+    )
 
 
 def _is_property_search_account_erased_error(exc: BaseException) -> bool:

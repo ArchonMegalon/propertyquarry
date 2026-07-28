@@ -21,6 +21,18 @@ PYTHON_ALPINE_X86_64_MANIFEST = (
 )
 PILLOW_WHEEL = "pillow-12.3.0-cp312-cp312-musllinux_1_2_x86_64.whl"
 PILLOW_SHA256 = "0dd2064cbc55aaec028ef5fbb60fa47bb6c3e7918e07ff17935284b227a9d2df"
+PSYCOPG_WHEEL = "psycopg-3.3.4-py3-none-any.whl"
+PSYCOPG_SHA256 = "b6bbc25ccf05c8fad3b061d9db2ef0909a555171b84b07f29458a447253d679a"
+PSYCOPG_BINARY_WHEEL = (
+    "psycopg_binary-3.3.4-cp312-cp312-musllinux_1_2_x86_64.whl"
+)
+PSYCOPG_BINARY_SHA256 = (
+    "71e55ccbdfae79a2ed9c6369c3008a3025817ff9d7e27b32a2d84e2a4267e66e"
+)
+TYPING_EXTENSIONS_WHEEL = "typing_extensions-4.15.0-py3-none-any.whl"
+TYPING_EXTENSIONS_SHA256 = (
+    "f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"
+)
 HASH_LINE = re.compile(r"(?P<digest>[0-9a-f]{64})  (?P<filename>[^\s/\\]+\.apk)")
 
 
@@ -85,14 +97,19 @@ def test_render_alpine_artifacts_are_exact_safe_and_hash_locked() -> None:
         assert not any(forbidden in filename.lower() for filename in filenames)
 
 
-def test_render_python_dependency_is_the_single_vendored_hash_locked_wheel() -> None:
-    wheel = (
+def test_render_python_dependencies_are_exact_vendored_hash_locked_wheels() -> None:
+    wheelhouse = (
         ROOT
         / "vendor"
         / "propertyquarry-wheelhouse"
         / "cp312-musllinux-x86_64"
-        / PILLOW_WHEEL
     )
+    expected_wheels = {
+        PILLOW_WHEEL: PILLOW_SHA256,
+        PSYCOPG_WHEEL: PSYCOPG_SHA256,
+        PSYCOPG_BINARY_WHEEL: PSYCOPG_BINARY_SHA256,
+        TYPING_EXTENSIONS_WHEEL: TYPING_EXTENSIONS_SHA256,
+    }
     requirement_lines = [
         line
         for line in REQUIREMENTS_LOCK.read_text(encoding="utf-8").splitlines()
@@ -101,9 +118,18 @@ def test_render_python_dependency_is_the_single_vendored_hash_locked_wheel() -> 
 
     assert requirement_lines == [
         f"pillow==12.3.0 --hash=sha256:{PILLOW_SHA256}",
+        f"psycopg==3.3.4 --hash=sha256:{PSYCOPG_SHA256}",
+        f"psycopg-binary==3.3.4 --hash=sha256:{PSYCOPG_BINARY_SHA256}",
+        (
+            "typing-extensions==4.15.0 "
+            f"--hash=sha256:{TYPING_EXTENSIONS_SHA256}"
+        ),
     ]
-    assert wheel.is_file()
-    assert _hash_file(wheel) == PILLOW_SHA256
+    assert {path.name for path in wheelhouse.iterdir()} == set(expected_wheels)
+    for filename, expected_sha256 in expected_wheels.items():
+        wheel = wheelhouse / filename
+        assert wheel.is_file()
+        assert _hash_file(wheel) == expected_sha256
 
 
 def test_render_image_is_offline_minimal_non_root_and_immutable() -> None:
@@ -135,7 +161,17 @@ def test_render_image_is_offline_minimal_non_root_and_immutable() -> None:
     assert "requirements.txt" not in dockerfile
     assert "requirements.lock" not in dockerfile
     assert "COPY ea/app /app/app" not in dockerfile
-    assert dockerfile.count("ea/app/") == 1
+    assert dockerfile.count("ea/app/") == 3
+    assert (
+        "COPY --chown=10001:10001 ea/app/observability.py "
+        "/app/app/observability.py"
+        in dockerfile
+    )
+    assert (
+        "COPY --chown=10001:10001 ea/app/services/admission_control.py "
+        "/app/app/services/admission_control.py"
+        in dockerfile
+    )
     assert (
         "COPY --chown=10001:10001 ea/app/product/property_diorama_preview.py "
         "/app/app/product/property_diorama_preview.py"
@@ -173,7 +209,9 @@ def test_render_image_is_offline_minimal_non_root_and_immutable() -> None:
     }
     assert copied_scripts == {
         "generate_property_reconstruction.py",
+        "property_reconstruction_styles.py",
         "property_reconstruction_render_bridge.py",
+        "property_tour_governed_reservation.py",
         "property_tour_runtime_paths.py",
         "propertyquarry_playwright_runtime.py",
     }
@@ -220,7 +258,10 @@ def test_render_compose_inherits_image_command_and_limits_runtime_authority() ->
     assert environment["XDG_CACHE_HOME"] == "/tmp/cache"
     assert environment["XDG_CONFIG_HOME"] == "/tmp/config"
     assert environment["TMPDIR"] == "/tmp"
-    assert environment["DATABASE_URL"] == ""
+    assert environment["DATABASE_URL"].startswith(
+        "${PROPERTYQUARRY_RENDER_DATABASE_URL:?"
+    )
+    assert environment["PROPERTYQUARRY_ADMISSION_BACKEND"] == "postgres"
     assert environment["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"] == ""
     assert environment["THREEDVISTA_LOGIN_EMAIL"] == ""
     assert environment["THREEDVISTA_LOGIN_PASSWORD"] == ""

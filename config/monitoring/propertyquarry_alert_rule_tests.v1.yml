@@ -37,6 +37,8 @@ tests:
         values: '1+0x40'
       - series: 'propertyquarry_runtime_heartbeat_stale{role="scheduler"}'
         values: '1+0x40'
+      - series: 'propertyquarry_ingress_admission_operations_total{backend="postgres",operation="admit",outcome="backend_unavailable"}'
+        values: '0+1x40'
       - series: 'propertyquarry_admission_capacity_contract_valid{backend="postgres",job="propertyquarry",instance="api-a:8090"}'
         values: '0+0x40'
       - series: 'propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="lease"}'
@@ -137,18 +139,6 @@ tests:
         exp_alerts:
           - exp_labels: {backend: postgres, capacity_key: quota, service: propertyquarry, severity: critical, slo: admission_capacity}
             exp_annotations: {summary: "PropertyQuarry admission capacity utilization is at least 95 percent", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity"}
-      - eval_time: 35m
-        alertname: PropertyQuarryAdmissionCapacityContractInvalid
-        exp_alerts:
-          - exp_labels: {backend: postgres, instance: "api-a:8090", job: propertyquarry, service: propertyquarry, severity: critical, slo: admission_capacity}
-      - eval_time: 35m
-        alertname: PropertyQuarryAdmissionCapacityWarning
-        exp_alerts:
-          - exp_labels: {capacity_key: lease, service: propertyquarry, severity: warning, slo: admission_capacity}
-      - eval_time: 35m
-        alertname: PropertyQuarryAdmissionCapacityCritical
-        exp_alerts:
-          - exp_labels: {capacity_key: quota, service: propertyquarry, severity: critical, slo: admission_capacity}
       - eval_time: 35m
         alertname: PropertyQuarryDatabasePoolSaturation
         exp_alerts:

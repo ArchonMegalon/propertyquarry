@@ -506,6 +506,7 @@ class PostgresPropertySearchWorkQueue:
             raise ValueError("property_search_principal_key_required")
         compact = _compact_property_search_run_record(normalized)
         packet_links = tuple(project_property_research_packet_links(normalized))
+        validated_payload = validated_property_search_work_payload(payload_json)
         inserted_run = False
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -769,7 +770,44 @@ class PostgresPropertySearchWorkQueue:
                     conn.rollback()
                     continue
                 if row is not None:
-                    return self._from_row(row)
+                    try:
+                        return self._from_row(row)
+                    except ValueError as exc:
+                        if str(exc) != "property_search_trace_context_invalid":
+                            raise
+                    poisoned_job_id = str(row[0] or "").strip()
+                    poisoned_principal_id = str(row[1] or "").strip()
+                    poisoned_run_id = str(row[2] or "").strip()
+                    with conn.cursor() as cur:
+                        self._set_writer_contract(cur)
+                        self._acquire_principal_write_authority(
+                            cur,
+                            principal_id=poisoned_principal_id,
+                            run_id=poisoned_run_id,
+                        )
+                        cur.execute(
+                            """
+                            UPDATE property_search_work_jobs
+                            SET status = 'failed',
+                                lease_owner = NULL,
+                                lease_expires_at = NULL,
+                                last_error = 'property_search_trace_context_invalid',
+                                completed_at = NOW(),
+                                updated_at = NOW()
+                            WHERE job_id = %s
+                              AND principal_id = %s
+                              AND run_id = %s
+                              AND status = 'leased'
+                              AND lease_owner = %s
+                            """,
+                            (
+                                poisoned_job_id,
+                                poisoned_principal_id,
+                                poisoned_run_id,
+                                owner,
+                            ),
+                        )
+                    conn.commit()
         return None
 
     def heartbeat(self, *, job_id: str, lease_owner: str, lease_seconds: int) -> bool:

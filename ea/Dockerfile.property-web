@@ -1,29 +1,46 @@
-FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS prepared
+FROM python:3.12-slim@sha256:cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464 AS build
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 RUN adduser --system --uid 10001 --group --home /home/ea --shell /bin/sh ea
 
+RUN set -eu; \
+    runtime_overlay=/runtime-overlay; \
+    mkdir -p "${runtime_overlay}/var/lib/dpkg/status.d"; \
+    for package in libbz2-1.0 libcrypt1 libffi8 liblzma5 libsqlite3-0; do \
+      dpkg-query --status "${package}" >"${runtime_overlay}/var/lib/dpkg/status.d/${package}"; \
+      dpkg-query --listfiles "${package}" \
+        | while IFS= read -r package_path; do \
+            if { [ -e "${package_path}" ] || [ -L "${package_path}" ]; } \
+              && [ "${package_path}" != "/." ]; then \
+              printf '%s\n' "${package_path#/}"; \
+            fi; \
+          done \
+        | tar --create --no-recursion --file - --directory / --files-from - \
+        | tar --extract --file - --directory "${runtime_overlay}"; \
+    done
+
 WORKDIR /app
 
 COPY ea/requirements.txt /app/requirements.txt
 COPY ea/requirements.lock /app/requirements.lock
 COPY ea/requirements.wheelhouse.lock /app/requirements.wheelhouse.lock
-COPY vendor/propertyquarry-python-wheels /opt/propertyquarry-python-wheels
+COPY vendor/propertyquarry-wheelhouse/cp312-linux-x86_64 /wheelhouse
 COPY --chmod=0555 scripts/verify_propertyquarry_python_wheelhouse.py /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py
 
 RUN python /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py \
         --requirements-lock /app/requirements.lock \
         --hash-lock /app/requirements.wheelhouse.lock \
-        --wheelhouse /opt/propertyquarry-python-wheels && \
+        --wheelhouse /wheelhouse && \
     python -m pip install \
         --no-cache-dir \
         --no-index \
-        --find-links=/opt/propertyquarry-python-wheels \
+        --find-links=/wheelhouse \
         --require-hashes \
         --requirement /app/requirements.wheelhouse.lock && \
-    rm -rf /opt/propertyquarry-python-wheels && \
+    python -m pip uninstall --yes pip && \
+    rm -rf /wheelhouse && \
     rm -f /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py
 
 RUN mkdir -p /app/scripts /app/docs /data/artifacts /data/public_property_tours /data/provider-ledger /data/governed-render-consents /home/ea
@@ -86,71 +103,32 @@ COPY --chmod=0555 scripts/propertyquarry_prater_ai_panorama_controller.py /usr/l
 COPY --chmod=0555 scripts/propertyquarry_prater_ai_panorama_recovery.py /usr/local/libexec/propertyquarry-prater-ai-panorama-recovery-v1.py
 COPY --chmod=0555 scripts/propertyquarry_prater_governed_volume_bootstrap.py /usr/local/libexec/propertyquarry-prater-governed-volume-bootstrap-v1.py
 COPY --chmod=0555 scripts/propertyquarry_prater_ai_panorama_closeout.py /usr/local/libexec/propertyquarry-prater-ai-panorama-closeout-v1.py
-COPY --chmod=0555 ea/property_web_entrypoint.py /usr/local/libexec/property_web_entrypoint.py
-COPY --chmod=0555 ea/property_web_elf_validator.py /usr/local/libexec/property_web_elf_validator.py
 COPY LTDs.md /app/LTDs.md
 
 RUN set -eu; \
     mkdir -p /data/artifacts /data/public_property_tours /data/provider-ledger /data/governed-render-consents /home/ea; \
     chown -R ea:ea /app /data /home/ea
 
-USER 0:0
+FROM gcr.io/distroless/cc-debian13@sha256:d0b79eb697888ecb8ef019bbb7192e4f41974830ea95f0543123eaaeb2d5fd2c AS runtime
 
-RUN set -eux; \
-    export DEBIAN_FRONTEND=noninteractive; \
-    apt-get clean; \
-    dpkg-query -W -f='${db:Status-Status}\t${Package}\n' \
-        > /tmp/property-web-packages.before; \
-    apt-get purge --yes --allow-remove-essential --no-auto-remove \
-        gzip \
-        perl-base \
-        bsdutils \
-        libblkid1 \
-        liblastlog2-2 \
-        libmount1 \
-        libsmartcols1 \
-        libuuid1 \
-        login \
-        mount \
-        util-linux; \
-    rm -rf /var/lib/apt/lists/*; \
-    test -s /var/lib/dpkg/status; \
-    audit_output="$(dpkg --audit)"; \
-    test -z "${audit_output}"; \
-    dpkg-query -W -f='${db:Status-Status}\t${Package}\n' \
-        > /tmp/property-web-packages.after; \
-    python -c 'from pathlib import Path; load=lambda name: {row[1] for line in Path(name).read_text(encoding="utf-8").splitlines() if len(row := line.split("\t")) == 2 and row[0] == "installed"}; before=load("/tmp/property-web-packages.before"); after=load("/tmp/property-web-packages.after"); removed=sorted(before-after); added=sorted(after-before); expected=sorted({"gzip", "bsdutils", "libblkid1", "liblastlog2-2", "libmount1", "libsmartcols1", "libuuid1", "login", "mount", "perl-base", "util-linux"}); invalid=removed != expected or bool(added); print("unexpected package delta: removed=" + repr(removed) + " added=" + repr(added), file=__import__("sys").stderr) if invalid else None; raise SystemExit(invalid)'; \
-    dpkg-query -W \
-        -f='${db:Status-Status}\t${source:Package}\t${binary:Package}\n' \
-        | python -c 'import sys; rows=[line.rstrip("\n").split("\t") for line in sys.stdin]; bad=[row for row in rows if len(row) >= 3 and row[0] == "installed" and ((row[1].split()[0] if row[1].split() else row[2].split(":", 1)[0]) in {"gzip", "perl", "util-linux"})]; print("\n".join("\t".join(row) for row in bad), file=sys.stderr) if bad else None; raise SystemExit(bool(bad))'; \
-    python -I -S -c 'import sysconfig; from pathlib import Path; root=Path(sysconfig.get_config_var("DESTSHARED")); modules=("_uuid", "_tkinter"); matches={module: sorted(root.glob(f"{module}.*")) for module in modules}; assert all(len(paths) == 1 for paths in matches.values()), matches; assert all(paths[0].is_file() and not paths[0].is_symlink() for paths in matches.values()), matches; [paths[0].unlink() for paths in matches.values()]'; \
-    python -I -S -c 'import importlib.util, uuid; assert importlib.util.find_spec("_uuid") is None; assert importlib.util.find_spec("_tkinter") is None; assert uuid.uuid1().version == 1; assert uuid.uuid4().version == 4'; \
-    python -I -S /usr/local/libexec/property_web_elf_validator.py; \
-    rm -f /usr/local/libexec/property_web_elf_validator.py; \
-    rm -f /tmp/property-web-packages.before /tmp/property-web-packages.after; \
-    ! command -v gzip; \
-    ! command -v gunzip; \
-    ! command -v perl; \
-    ! command -v runuser
-
-FROM scratch AS runtime
-
-COPY --from=prepared / /
-
-ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    LANG=C.UTF-8 \
-    GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305 \
-    PYTHON_VERSION=3.12.13 \
-    PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684 \
+ENV HOME=/home/ea \
+    PATH=/usr/local/bin:/usr/bin \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
+
+COPY --from=build /etc/passwd /etc/passwd
+COPY --from=build /etc/group /etc/group
+COPY --from=build /usr/local /usr/local
+COPY --from=build /runtime-overlay/ /
+COPY --from=build --chown=10001:10001 /app /app
+COPY --from=build --chown=10001:10001 /data /data
+COPY --from=build --chown=10001:10001 /home/ea /home/ea
 
 WORKDIR /app
 
 USER 10001:10001
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=5 \
-  CMD ["/bin/sh", "-ec", "role=${EA_ROLE:-api}; case \"$role\" in worker|scheduler|render-tools) exit 0 ;; *) exec /usr/local/bin/python -c 'import http.client; connection=http.client.HTTPConnection(\"127.0.0.1\",8090,timeout=10); connection.request(\"GET\",\"/health/live\"); response=connection.getresponse(); raise SystemExit(0 if response.status == 200 else 1)' ;; esac"]
+  CMD ["python", "-c", "import os, urllib.request; role = os.environ.get('EA_ROLE', 'api'); role in {'worker', 'scheduler', 'render-tools'} or urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8090/health/live', timeout=10).read(1)"]
 
-ENTRYPOINT ["/usr/local/bin/python", "-I", "-S", "/usr/local/libexec/property_web_entrypoint.py"]
-CMD ["/usr/local/bin/python", "-m", "app.runner"]
+CMD ["python", "-m", "app.runner"]

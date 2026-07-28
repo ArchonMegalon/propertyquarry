@@ -25,6 +25,7 @@ _HASHED_REQUIREMENT_RE = re.compile(
 _MAX_WHEEL_BYTES = 64 * 1024 * 1024
 _MAX_METADATA_BYTES = 1024 * 1024
 _MAX_WHEELS = 128
+_BOOTSTRAP_REQUIREMENTS = {("pip", "26.1.2")}
 
 
 class WheelhouseError(RuntimeError):
@@ -104,7 +105,7 @@ def verify_wheelhouse(
 ) -> dict[str, object]:
     plain = _load_requirements(requirements_lock, hashed=False)
     expected = _load_requirements(hash_lock, hashed=True)
-    if set(plain) != set(expected):
+    if set(plain) | _BOOTSTRAP_REQUIREMENTS != set(expected):
         raise WheelhouseError("requirement_sets_differ")
     try:
         root = wheelhouse.resolve(strict=True)

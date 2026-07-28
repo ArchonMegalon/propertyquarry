@@ -179,7 +179,16 @@ def test_all_catalog_styles_bind_exact_palette_instances_and_viewer_scene(style_
     assert f'data-pq-style-id="{style_id}"' in viewer_html
     assert f'data-pq-style-signature="{selected["signature"]}"' in viewer_html
     assert "styleInstances.forEach((instance) => addStyledSceneInstance(instance));" in viewer_html
-    assert "routeStops.forEach((stop, index) => addGeneratedStagingForStop(stop, index));" in viewer_html
+    assert "const maxStagedRouteStops = 12;" in viewer_html
+    assert "const stagedRouteStops = routeStops.slice(0, maxStagedRouteStops);" in viewer_html
+    assert (
+        "stagedRouteStops.forEach((stop, index) => addGeneratedStagingForStop(stop, index));"
+        in viewer_html
+    )
+    assert (
+        "routeStops.forEach((stop, index) => addGeneratedStagingForStop(stop, index));"
+        not in viewer_html
+    )
     assert "map: null" in viewer_html
     assert "minimumStyledCoveragePct = activeViewMode === \"room\" ? 5.0 : 3.0" in viewer_html
     for cue in EXPECTED_CUES[style_id]:

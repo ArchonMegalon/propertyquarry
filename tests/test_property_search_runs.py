@@ -19912,7 +19912,7 @@ def test_property_search_storage_schema_check_runs_source_contracts_without_data
     env["PYTHONPATH"] = "ea"
 
     result = subprocess.run(
-        ["python3", "scripts/check_property_search_storage_schema.py"],
+        [sys.executable, "scripts/check_property_search_storage_schema.py"],
         cwd=Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,

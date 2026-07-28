@@ -217,6 +217,10 @@ RUN mkdir -p \
         /usr/local/share/propertyquarry/receipts \
         /usr/local/share/propertyquarry/recipes
 COPY scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_paths.py
+COPY scripts/verify_property_tour_controls.py /app/scripts/verify_property_tour_controls.py
+COPY scripts/property_tour_3dvista_provenance.py /app/scripts/property_tour_3dvista_provenance.py
+COPY scripts/property_tour_panorama_provenance.py /app/scripts/property_tour_panorama_provenance.py
+COPY scripts/property_tour_host_safety.py /app/scripts/property_tour_host_safety.py
 COPY --chmod=0444 scripts/property_tour_governed_reservation.py /app/scripts/property_tour_governed_reservation.py
 COPY scripts/property_render_video_probe.py /app/scripts/property_render_video_probe.py
 COPY scripts/propertyquarry_playwright_runtime.py /app/scripts/propertyquarry_playwright_runtime.py

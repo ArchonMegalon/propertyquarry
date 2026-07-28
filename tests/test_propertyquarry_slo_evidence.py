@@ -127,7 +127,7 @@ propertyquarry_ingress_cost_units_total{{route_class="property_search_start"}} 0
 # TYPE propertyquarry_ingress_high_cost_inflight gauge
 propertyquarry_ingress_high_cost_inflight{{route_class="property_search_start"}} 0
 # TYPE propertyquarry_ingress_admission_operations_total counter
-propertyquarry_ingress_admission_operations_total{{backend="postgres",operation="quota",outcome="allowed"}} 0
+{admission_rows}
 # TYPE propertyquarry_admission_capacity_contract_valid gauge
 propertyquarry_admission_capacity_contract_valid{{backend="postgres"}} 1
 # TYPE propertyquarry_admission_capacity_row_count gauge
@@ -136,6 +136,8 @@ propertyquarry_admission_capacity_row_count{{backend="postgres",capacity_key="qu
 # TYPE propertyquarry_admission_capacity_limit gauge
 propertyquarry_admission_capacity_limit{{backend="postgres",capacity_key="lease"}} 100000
 propertyquarry_admission_capacity_limit{{backend="postgres",capacity_key="quota"}} 1000000
+# TYPE propertyquarry_queue_observed gauge
+propertyquarry_queue_observed{{queue="property_search"}} 1
 # TYPE propertyquarry_queue_depth gauge
 propertyquarry_queue_depth{{queue="property_search"}} 0
 # TYPE propertyquarry_queue_oldest_item_age_seconds gauge

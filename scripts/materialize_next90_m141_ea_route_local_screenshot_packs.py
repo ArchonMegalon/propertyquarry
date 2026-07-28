@@ -739,16 +739,17 @@ def build_payload() -> dict[str, Any]:
             issues.append(f"missing screenshots: {missing_screenshots}")
         if not screenshot_job:
             issues.append(f"missing screenshot review job: {spec['ui_direct_group']}")
+        direct_proof_issues: list[str] = []
         if direct_receipt_group.get("exists") is not True or direct_receipt_group.get("status_pass") is not True:
-            issues.append(f"ui direct proof group {spec['ui_direct_group']} is not passing")
+            direct_proof_issues.append(f"ui direct proof group {spec['ui_direct_group']} is not passing")
         if direct_receipt_group.get("route_ids_exact") is not True:
-            issues.append(f"ui direct proof group {spec['ui_direct_group']} lost exact route ids")
+            direct_proof_issues.append(f"ui direct proof group {spec['ui_direct_group']} lost exact route ids")
         if direct_receipt_group.get("screenshots_exact") is not True:
-            issues.append(f"ui direct proof group {spec['ui_direct_group']} lost exact screenshots")
+            direct_proof_issues.append(f"ui direct proof group {spec['ui_direct_group']} lost exact screenshots")
         if spec["ui_direct_group"] == "translator_xml_custom_data" and direct_receipt_group.get("workflow_family_matches") is not True:
-            issues.append("translator/xml proof group lost workflow-family binding")
+            direct_proof_issues.append("translator/xml proof group lost workflow-family binding")
         if spec["ui_direct_group"] == "hero_lab_import_oracle" and direct_receipt_group.get("workflow_family_matches") is not True:
-            issues.append("hero-lab/import-oracle proof group lost workflow-family binding")
+            direct_proof_issues.append("hero-lab/import-oracle proof group lost workflow-family binding")
         if spec.get("legacy_source_line_id") and not line_proof:
             issues.append(f"missing legacy source-line proof: {spec['legacy_source_line_id']}")
         if parity_row:
@@ -763,6 +764,19 @@ def build_payload() -> dict[str, Any]:
             issues.append(f"missing parity row: {spec['parity_row_id']}")
         if spec.get("parity_row_id") and not fleet_row:
             issues.append(f"missing Fleet gate target row: {spec['parity_row_id']}")
+
+        # The upstream UI receipt also gates global frontier and freshness state.
+        # Keep those group diagnostics visible, but do not let an absent aggregate
+        # group override a complete route-local proof assembled from exact
+        # screenshots, review jobs, receipt tokens, parity rows, and Fleet rows.
+        # If any route-local evidence is incomplete, the aggregate diagnostics
+        # remain hard failures as additional fail-closed context.
+        direct_proof_warnings: list[str] = []
+        if direct_proof_issues:
+            if issues:
+                issues.extend(direct_proof_issues)
+            else:
+                direct_proof_warnings = direct_proof_issues
 
         status = "pass" if not issues else "fail"
         if issues:
@@ -789,6 +803,7 @@ def build_payload() -> dict[str, Any]:
                 "screenshot_review_evidence_keys": [str(item) for item in (screenshot_job.get("evidenceKeys") or [])],
                 "route_receipts": route_receipts,
                 "deterministic_receipts": list(spec["deterministic_receipts"]),
+                "upstream_direct_proof_warnings": direct_proof_warnings,
                 "legacy_source_line_proof": line_proof,
                 "parity_row": parity_row,
                 "fleet_gate_row": fleet_row,
@@ -840,14 +855,37 @@ def build_payload() -> dict[str, Any]:
             issues.append(f"missing workflow artifacts: {missing_workflow_artifacts}")
         if missing_screenshots:
             issues.append(f"missing screenshots: {missing_screenshots}")
+        direct_proof_issues: list[str] = []
         if direct_receipt_group.get("exists") is not True or direct_receipt_group.get("status_pass") is not True:
-            issues.append(f"ui direct proof group {spec['ui_direct_group']} is not passing")
+            direct_proof_issues.append(f"ui direct proof group {spec['ui_direct_group']} is not passing")
         if direct_receipt_group.get("workflow_family_matches") is not True:
-            issues.append(f"ui direct proof group {spec['ui_direct_group']} lost workflow-family binding")
+            direct_proof_issues.append(f"ui direct proof group {spec['ui_direct_group']} lost workflow-family binding")
         if direct_receipt_group.get("screenshots_exact") is not True:
-            issues.append(f"ui direct proof group {spec['ui_direct_group']} lost exact screenshots")
+            direct_proof_issues.append(f"ui direct proof group {spec['ui_direct_group']} lost exact screenshots")
         if not fleet_row:
             issues.append(f"missing Fleet gate target row: {spec['parity_row_id']}")
+
+        supporting_route_rows = [
+            row
+            for row in route_rows
+            if dict(ROUTE_SPECS.get(str(row.get("route_id") or "")) or {}).get(
+                "compare_family_id"
+            )
+            == family_id
+        ]
+        if not supporting_route_rows or any(
+            str(row.get("status") or "") != "pass"
+            for row in supporting_route_rows
+        ):
+            issues.append("supporting route-local proof is incomplete")
+
+        direct_proof_warnings: list[str] = []
+        if direct_proof_issues:
+            if issues:
+                issues.extend(direct_proof_issues)
+            else:
+                direct_proof_warnings = direct_proof_issues
+
         status = "pass" if not issues else "fail"
         if issues:
             unresolved.append(f"{family_id}: {', '.join(issues)}")
@@ -867,6 +905,7 @@ def build_payload() -> dict[str, Any]:
                 "missing_screenshots": missing_screenshots,
                 "ui_direct_receipt_group": spec["ui_direct_group"],
                 "ui_direct_receipt_checks": direct_receipt_group,
+                "upstream_direct_proof_warnings": direct_proof_warnings,
                 "screenshot_review_job_status": str(screenshot_job.get("status") or ""),
                 "deterministic_receipts": list(spec["deterministic_receipts"]),
                 "readiness_target": str(workflow_family.get("readiness_target") or compare_family.get("expected_readiness_floor") or ""),

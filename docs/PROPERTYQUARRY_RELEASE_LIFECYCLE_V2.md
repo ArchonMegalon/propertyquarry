@@ -25,6 +25,12 @@ Normal v2 operations are:
   nonterminal lifecycle. It cannot start a release or roll back a sealed final
   lifecycle.
 
+The repository-level, read-only authenticated preflight is invoked from the
+canonical checkout with
+`./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight`.
+This repository proof does not replace or authorize the independently installed
+controller operation described above.
+
 Candidate and disposable-environment operations remain protocol-v1 concerns.
 The v1 wire schema is closed and is not changed by this design.
 

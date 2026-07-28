@@ -344,11 +344,12 @@ def test_expired_session_sign_in_state_keeps_saved_work_and_next_action_visible(
 def test_payment_failure_state_is_rendered_from_durable_billing_truth() -> None:
     from tests.product_test_helpers import build_property_client, start_workspace
 
-    client = build_property_client(principal_id="pq-payment-failure-state")
+    principal_id = "pq-payment-failure-state"
+    client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Payment Failure State")
-    stored = client.post(
-        "/v1/onboarding/property-search/preferences",
-        json={
+    stored = client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json={
             "property_search_enabled": True,
             "country_code": "AT",
             "listing_mode": "rent",
@@ -359,8 +360,12 @@ def test_payment_failure_state_is_rendered_from_durable_billing_truth() -> None:
                 "last_billing_event_type": "subscription.payment_failed",
             },
         },
+        trusted_commercial_update=True,
     )
-    assert stored.status_code == 200, stored.text
+    assert (
+        stored["property_search_preferences"]["property_commercial"]["status"]
+        == "payment_failed"
+    )
 
     response = client.get("/app/account?billing=1")
 

@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ea"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 try:
     from scripts.propertyquarry_playwright_runtime import (

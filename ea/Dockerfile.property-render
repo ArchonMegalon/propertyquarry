@@ -22,6 +22,9 @@ RUN set -eu; \
 
 COPY ea/requirements.render.lock /usr/share/propertyquarry/requirements.render.lock
 COPY vendor/propertyquarry-wheelhouse/cp312-musllinux-x86_64/pillow-12.3.0-cp312-cp312-musllinux_1_2_x86_64.whl /tmp/render-wheelhouse/
+COPY vendor/propertyquarry-wheelhouse/cp312-musllinux-x86_64/psycopg-3.3.4-py3-none-any.whl /tmp/render-wheelhouse/
+COPY vendor/propertyquarry-wheelhouse/cp312-musllinux-x86_64/psycopg_binary-3.3.4-cp312-cp312-musllinux_1_2_x86_64.whl /tmp/render-wheelhouse/
+COPY vendor/propertyquarry-wheelhouse/cp312-musllinux-x86_64/typing_extensions-4.15.0-py3-none-any.whl /tmp/render-wheelhouse/
 
 RUN python -m pip install \
       --no-cache-dir \
@@ -31,7 +34,7 @@ RUN python -m pip install \
       --requirement /usr/share/propertyquarry/requirements.render.lock && \
     python -m pip uninstall --yes pip && \
     rm -rf /tmp/render-wheelhouse /usr/local/lib/python3.12/ensurepip && \
-    python -c "import importlib.util; from PIL import Image; assert importlib.util.find_spec('pip') is None; assert importlib.util.find_spec('playwright') is None"
+    python -c "import importlib.util; import psycopg; from psycopg import pq; from PIL import Image; assert pq.__impl__ == 'binary'; assert importlib.util.find_spec('pip') is None; assert importlib.util.find_spec('playwright') is None"
 
 RUN set -eu; \
     addgroup -S -g 10001 ea; \
@@ -41,8 +44,12 @@ RUN set -eu; \
 
 COPY --chown=10001:10001 scripts/property_reconstruction_render_bridge.py /app/scripts/property_reconstruction_render_bridge.py
 COPY --chown=10001:10001 scripts/generate_property_reconstruction.py /app/scripts/generate_property_reconstruction.py
+COPY --chown=10001:10001 scripts/property_reconstruction_styles.py /app/scripts/property_reconstruction_styles.py
+COPY --chown=10001:10001 scripts/property_tour_governed_reservation.py /app/scripts/property_tour_governed_reservation.py
 COPY --chown=10001:10001 scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_paths.py
 COPY --chown=10001:10001 scripts/propertyquarry_playwright_runtime.py /app/scripts/propertyquarry_playwright_runtime.py
+COPY --chown=10001:10001 ea/app/observability.py /app/app/observability.py
+COPY --chown=10001:10001 ea/app/services/admission_control.py /app/app/services/admission_control.py
 COPY --chown=10001:10001 ea/app/product/property_diorama_preview.py /app/app/product/property_diorama_preview.py
 COPY --chown=10001:10001 vendor/three/0.167.1/three.module.js /app/vendor/three/0.167.1/three.module.js
 COPY --chown=10001:10001 vendor/three/0.167.1/LICENSE /app/vendor/three/0.167.1/LICENSE

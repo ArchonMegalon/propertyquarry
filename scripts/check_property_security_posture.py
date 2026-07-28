@@ -334,6 +334,19 @@ def _service_list_items(service_block: str, name: str) -> list[str]:
     return items
 
 
+def _env_file_paths(service_block: str) -> list[str]:
+    paths: list[str] = []
+    for line in _service_section(service_block, "env_file"):
+        raw = line.strip()
+        if raw.startswith("- path:"):
+            paths.append(_unquote_yaml_scalar(raw.split(":", 1)[1]))
+        elif raw.startswith("path:"):
+            paths.append(_unquote_yaml_scalar(raw.split(":", 1)[1]))
+        elif raw.startswith("- "):
+            paths.append(_unquote_yaml_scalar(raw[2:]))
+    return paths
+
+
 def _compose_runtime_privilege_failures(compose: str) -> list[str]:
     failures = _compose_parser_preflight_failures(compose)
     if re.search(r"^\s*<<\s*:", compose, flags=re.MULTILINE):
@@ -433,6 +446,321 @@ def _resolved_compose_runtime_privilege_failures(
                 f"{service_name} may set only "
                 "security_opt=no-new-privileges:true"
             )
+    return failures
+
+
+def _durable_worker_security_failures(
+    worker: str,
+    *,
+    api: str,
+) -> list[str]:
+    prefix = "docker-compose.property.yml propertyquarry-worker"
+    if not worker:
+        return [f"{prefix} must be a configured service"]
+
+    failures: list[str] = []
+    if not api or _service_scalar(worker, "image") != _service_scalar(api, "image"):
+        failures.append(
+            f"{prefix} must use the lightweight property web runtime image"
+        )
+    if _service_scalar(worker, "read_only") != "true":
+        failures.append(f"{prefix} must use a read-only root filesystem")
+    if _service_list_items(worker, "cap_drop") != ["ALL"]:
+        failures.append(f"{prefix} must drop all Linux capabilities")
+    if _service_list_items(worker, "security_opt") != ["no-new-privileges:true"]:
+        failures.append(f"{prefix} must set no-new-privileges")
+    if _service_scalar(worker, "privileged") == "true":
+        failures.append(f"{prefix} must not be privileged")
+    if _service_scalar(worker, "network_mode") == "host":
+        failures.append(f"{prefix} must not use host networking")
+    ports = _service_scalar(worker, "ports")
+    if ports not in (None, "", "[]") or _service_list_items(worker, "ports"):
+        failures.append(f"{prefix} must not publish host ports")
+
+    expected_volumes = [
+        "./config:/config:ro",
+        "./config:/app/config:ro",
+        "propertyquarry_artifacts:/data/artifacts",
+        "propertyquarry_provider_ledger:/data/provider-ledger",
+    ]
+    if _service_list_items(worker, "volumes") != expected_volumes:
+        failures.append(
+            f"{prefix} must mount only property config, artifacts, and "
+            "provider-ledger storage"
+        )
+    if _env_file_paths(worker):
+        failures.append(
+            f"{prefix} must not load optional render environment bundles"
+        )
+
+    expected_environment = {
+        "EA_ROLE": "worker",
+        "EA_STORAGE_BACKEND": "postgres",
+        "PROPERTYQUARRY_WORKER_PROFILE": "property_only",
+        "PROPERTYQUARRY_SEARCH_SCHEMA_READINESS_REQUIRED": "1",
+        "EA_WORKER_HEARTBEAT_PATH": (
+            "/data/artifacts/propertyquarry-worker-heartbeat.json"
+        ),
+    }
+    for name, expected in expected_environment.items():
+        if _service_scalar(worker, name, indent=6) != expected:
+            failures.append(f"{prefix} must set {name}={expected}")
+    database_url = str(
+        _service_scalar(worker, "DATABASE_URL", indent=6) or ""
+    )
+    if not database_url.startswith("${PROPERTYQUARRY_WORKER_DATABASE_URL:?"):
+        failures.append(
+            f"{prefix} must require its explicit least-privilege worker database URL"
+        )
+    for name in (
+        "THREEDVISTA_LOGIN_EMAIL",
+        "THREEDVISTA_LOGIN_PASSWORD",
+        "THREEDVISTA_LICENSE_EMAIL",
+    ):
+        if _service_scalar(worker, name, indent=6) != "":
+            failures.append(
+                f"{prefix} must explicitly blank reusable vendor credential {name}"
+            )
+
+    depends_on = "\n".join(_service_section(worker, "depends_on"))
+    if not re.search(
+        r"^\s{6}propertyquarry-db:\s*$"
+        r"\n^\s{8}condition:\s*service_healthy\s*$",
+        depends_on,
+        flags=re.MULTILINE,
+    ):
+        failures.append(f"{prefix} must wait for the healthy property database")
+    if not re.search(
+        r"^\s{6}propertyquarry-migrate:\s*$"
+        r"\n^\s{8}condition:\s*service_completed_successfully\s*$",
+        depends_on,
+        flags=re.MULTILINE,
+    ):
+        failures.append(f"{prefix} must wait for the successful schema migration")
+    if (
+        _service_scalar(worker, "test", indent=6)
+        != '["CMD", "/usr/local/bin/python", "-m", "app.scheduler_healthcheck"]'
+    ):
+        failures.append(
+            f"{prefix} must expose the role-aware worker heartbeat healthcheck"
+        )
+    return failures
+
+
+def _resolved_durable_worker_security_failures(
+    worker: object,
+    *,
+    api: object,
+) -> list[str]:
+    prefix = "resolved docker-compose.property.yml propertyquarry-worker"
+    if type(worker) is not dict:
+        return [f"{prefix} must be a configured service object"]
+
+    failures: list[str] = []
+    if type(api) is not dict or worker.get("image") != api.get("image"):
+        failures.append(
+            f"{prefix} must use the lightweight property web runtime image"
+        )
+    if worker.get("read_only") is not True:
+        failures.append(f"{prefix} must use a read-only root filesystem")
+    if worker.get("cap_drop") != ["ALL"]:
+        failures.append(f"{prefix} must drop all Linux capabilities")
+    if worker.get("security_opt") != ["no-new-privileges:true"]:
+        failures.append(f"{prefix} must set no-new-privileges")
+    if worker.get("privileged") is True:
+        failures.append(f"{prefix} must not be privileged")
+    if worker.get("network_mode") == "host":
+        failures.append(f"{prefix} must not use host networking")
+    if "ports" in worker:
+        failures.append(f"{prefix} must not publish host ports")
+
+    expected_volumes: list[dict[str, object]] = [
+        {
+            "bind": {"create_host_path": True},
+            "read_only": True,
+            "source": str(ROOT / "config"),
+            "target": "/config",
+            "type": "bind",
+        },
+        {
+            "bind": {"create_host_path": True},
+            "read_only": True,
+            "source": str(ROOT / "config"),
+            "target": "/app/config",
+            "type": "bind",
+        },
+        {
+            "source": "propertyquarry_artifacts",
+            "target": "/data/artifacts",
+            "type": "volume",
+            "volume": {},
+        },
+        {
+            "source": "propertyquarry_provider_ledger",
+            "target": "/data/provider-ledger",
+            "type": "volume",
+            "volume": {},
+        },
+    ]
+    if worker.get("volumes") != expected_volumes:
+        failures.append(
+            f"{prefix} must mount only property config, artifacts, and "
+            "provider-ledger storage"
+        )
+    if "env_file" in worker:
+        failures.append(f"{prefix} must not load optional render environment bundles")
+
+    environment = worker.get("environment")
+    if type(environment) is not dict:
+        failures.append(f"{prefix} must declare an explicit environment object")
+        environment = {}
+    expected_environment = {
+        "EA_ROLE": "worker",
+        "EA_STORAGE_BACKEND": "postgres",
+        "PROPERTYQUARRY_WORKER_PROFILE": "property_only",
+        "PROPERTYQUARRY_SEARCH_SCHEMA_READINESS_REQUIRED": "1",
+        "EA_WORKER_HEARTBEAT_PATH": (
+            "/data/artifacts/propertyquarry-worker-heartbeat.json"
+        ),
+    }
+    for name, expected in expected_environment.items():
+        if environment.get(name) != expected:
+            failures.append(f"{prefix} must set {name}={expected}")
+    database_url = environment.get("DATABASE_URL")
+    if (
+        type(database_url) is not str
+        or not database_url.startswith("${PROPERTYQUARRY_WORKER_DATABASE_URL:?")
+    ):
+        failures.append(
+            f"{prefix} must require its explicit least-privilege worker database URL"
+        )
+    for name in (
+        "THREEDVISTA_LOGIN_EMAIL",
+        "THREEDVISTA_LOGIN_PASSWORD",
+        "THREEDVISTA_LICENSE_EMAIL",
+    ):
+        if environment.get(name) != "":
+            failures.append(
+                f"{prefix} must explicitly blank reusable vendor credential {name}"
+            )
+
+    expected_depends_on = {
+        "propertyquarry-db": {
+            "condition": "service_healthy",
+            "required": True,
+        },
+        "propertyquarry-migrate": {
+            "condition": "service_completed_successfully",
+            "required": True,
+        },
+    }
+    if worker.get("depends_on") != expected_depends_on:
+        failures.append(
+            f"{prefix} must depend only on the healthy database and completed "
+            "migration"
+        )
+    expected_healthcheck = {
+        "interval": "30s",
+        "retries": 5,
+        "start_period": "90s",
+        "test": [
+            "CMD",
+            "/usr/local/bin/python",
+            "-m",
+            "app.scheduler_healthcheck",
+        ],
+        "timeout": "10s",
+    }
+    if worker.get("healthcheck") != expected_healthcheck:
+        failures.append(
+            f"{prefix} must expose the role-aware worker heartbeat healthcheck"
+        )
+    return failures
+
+
+def _render_database_writer_security_failures(
+    render: str,
+    *,
+    writer_topology: object,
+) -> list[str]:
+    prefix = "docker-compose.property.yml propertyquarry-render-tools"
+    failures: list[str] = []
+    if not render:
+        failures.append(f"{prefix} must be a configured service")
+    else:
+        database_url = str(
+            _service_scalar(render, "DATABASE_URL", indent=6) or ""
+        )
+        if not database_url.startswith("${PROPERTYQUARRY_RENDER_DATABASE_URL:?"):
+            failures.append(
+                f"{prefix} must require its dedicated least-privilege render database URL"
+            )
+
+    topology_target = (
+        writer_topology.get("target")
+        if type(writer_topology) is dict
+        else None
+    )
+    render_topology = (
+        topology_target.get("render")
+        if type(topology_target) is dict
+        else None
+    )
+    if (
+        type(render_topology) is not dict
+        or render_topology.get("service") != "propertyquarry-render-tools"
+        or render_topology.get("database_writer") is not True
+    ):
+        failures.append(
+            "propertyquarry deploy writer topology must classify the current "
+            "render bridge as a dedicated database writer"
+        )
+    return failures
+
+
+def _resolved_render_database_writer_security_failures(
+    render: object,
+    *,
+    writer_topology: object,
+) -> list[str]:
+    prefix = "resolved docker-compose.property.yml propertyquarry-render-tools"
+    failures: list[str] = []
+    if type(render) is not dict:
+        failures.append(f"{prefix} must be a configured service object")
+    else:
+        environment = render.get("environment")
+        database_url = (
+            environment.get("DATABASE_URL")
+            if type(environment) is dict
+            else None
+        )
+        if (
+            type(database_url) is not str
+            or not database_url.startswith("${PROPERTYQUARRY_RENDER_DATABASE_URL:?")
+        ):
+            failures.append(
+                f"{prefix} must require its dedicated least-privilege render database URL"
+            )
+
+    topology_target = (
+        writer_topology.get("target")
+        if type(writer_topology) is dict
+        else None
+    )
+    render_topology = (
+        topology_target.get("render")
+        if type(topology_target) is dict
+        else None
+    )
+    if (
+        type(render_topology) is not dict
+        or render_topology.get("service") != "propertyquarry-render-tools"
+        or render_topology.get("database_writer") is not True
+    ):
+        failures.append(
+            "propertyquarry deploy writer topology must classify the current "
+            "render bridge as a dedicated database writer"
+        )
     return failures
 
 
@@ -540,7 +868,7 @@ def _web_wheelhouse_install_contract_present(dockerfile: str) -> bool:
     required_copy_instructions = {
         "COPY ea/requirements.lock /app/requirements.lock",
         "COPY ea/requirements.wheelhouse.lock /app/requirements.wheelhouse.lock",
-        "COPY vendor/propertyquarry-python-wheels /opt/propertyquarry-python-wheels",
+        "COPY vendor/propertyquarry-wheelhouse/cp312-linux-x86_64 /wheelhouse",
         (
             "COPY --chmod=0555 scripts/verify_propertyquarry_python_wheelhouse.py "
             "/usr/local/libexec/verify_propertyquarry_python_wheelhouse.py"
@@ -552,11 +880,12 @@ def _web_wheelhouse_install_contract_present(dockerfile: str) -> bool:
         "RUN python /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py "
         "--requirements-lock /app/requirements.lock "
         "--hash-lock /app/requirements.wheelhouse.lock "
-        "--wheelhouse /opt/propertyquarry-python-wheels && "
+        "--wheelhouse /wheelhouse && "
         "python -m pip install --no-cache-dir --no-index "
-        "--find-links=/opt/propertyquarry-python-wheels --require-hashes "
+        "--find-links=/wheelhouse --require-hashes "
         "--requirement /app/requirements.wheelhouse.lock && "
-        "rm -rf /opt/propertyquarry-python-wheels && "
+        "python -m pip uninstall --yes pip && "
+        "rm -rf /wheelhouse && "
         "rm -f /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py"
     )
     pip_install_command = re.compile(
@@ -709,6 +1038,19 @@ def build_security_posture_receipt() -> dict[str, object]:
         failures.append(
             "docker-compose.property.yml worker must remain independent of advanced visuals"
         )
+    failures.extend(
+        _durable_worker_security_failures(
+            _compose_service_block(compose, "propertyquarry-worker"),
+            api=_compose_service_block(compose, "propertyquarry-api"),
+        )
+    )
+    if resolved_services is not None:
+        failures.extend(
+            _resolved_durable_worker_security_failures(
+                resolved_services.get("propertyquarry-worker"),
+                api=resolved_services.get("propertyquarry-api"),
+            )
+        )
     try:
         api_section = compose.split("  propertyquarry-api:\n", 1)[1].split(
             "  propertyquarry-migrate:\n", 1
@@ -812,6 +1154,30 @@ def build_security_posture_receipt() -> dict[str, object]:
         failures.append(
             "docker-compose.property.yml migration must use only its isolated "
             "service-scoped DSN"
+        )
+    try:
+        writer_topology = _strict_json_object(
+            _read(
+                "config/release/"
+                "propertyquarry_deploy_writer_topology.v1.json"
+            ),
+            label="propertyquarry deploy writer topology",
+        )
+    except (SecurityPostureConfigError, OSError) as exc:
+        writer_topology = {}
+        failures.append(str(exc))
+    failures.extend(
+        _render_database_writer_security_failures(
+            _compose_service_block(compose, "propertyquarry-render-tools"),
+            writer_topology=writer_topology,
+        )
+    )
+    if resolved_services is not None:
+        failures.extend(
+            _resolved_render_database_writer_security_failures(
+                resolved_services.get("propertyquarry-render-tools"),
+                writer_topology=writer_topology,
+            )
         )
     if "POSTGRES_HOST_AUTH_METHOD" in compose or ":-trust" in compose:
         failures.append("docker-compose.property.yml must not default Postgres to trust auth")
@@ -1084,7 +1450,10 @@ def build_security_posture_receipt() -> dict[str, object]:
         "property_env_placeholders",
         "property_service_aliases",
         "property_compose_isolation",
+        "compose_runtime_privilege_boundaries",
+        "durable_property_worker_hardening",
         "service_scoped_database_credentials",
+        "strict_deploy_writer_topology",
         "non_root_pinned_runtime_image",
         "lightweight_web_runtime_split",
         "web_runtime_browser_payload_isolation",

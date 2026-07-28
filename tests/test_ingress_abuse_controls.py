@@ -6,6 +6,10 @@ import threading
 from dataclasses import replace
 
 import pytest
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
 from app.api.dependencies import RequestContext
 from app.api.errors import install_error_handlers
 from app.api.ingress import (
@@ -15,7 +19,10 @@ from app.api.ingress import (
     resolve_client_ip,
 )
 from app.api.ingress_admission import (
+    AdmissionBackend as IngressAdmissionBackend,
+    AdmissionOperation,
     AdmissionRequest,
+    IngressAdmissionUnavailable,
     InMemoryIngressAdmissionStore,
 )
 from app.api.routes.product_api_contracts import (
@@ -50,7 +57,7 @@ def _app_with_ingress(
     *,
     policy: IngressPolicy,
     clock=lambda: 1.0,
-    admission_backend=None,
+    admission_store=None,
     context_resolver=None,
     active_search_counter=None,
 ) -> FastAPI:
@@ -59,7 +66,8 @@ def _app_with_ingress(
     app.add_middleware(
         IngressAbuseMiddleware,
         policy=policy,
-        admission_backend=admission_backend or MemoryAdmissionBackend(clock=clock),
+        clock=clock,
+        admission_store=admission_store,
         context_resolver=context_resolver,
         active_search_counter=active_search_counter,
     )
@@ -378,14 +386,16 @@ def test_ingress_rate_limit_has_retry_after_envelope_and_health_bypass() -> None
 
 def test_ingress_fails_closed_when_distributed_admission_is_unavailable() -> None:
     class _UnavailableAdmission:
-        backend_name = "postgres"
-
-        def consume_many(self, charges):  # noqa: ANN001
-            raise AdmissionBackendUnavailable("database unavailable")
+        def consume_ip_request(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise IngressAdmissionUnavailable(
+                "database unavailable",
+                backend=IngressAdmissionBackend.POSTGRES,
+                operation=AdmissionOperation.IP_REQUEST,
+            )
 
     app = _app_with_ingress(
         policy=_policy(),
-        admission_backend=_UnavailableAdmission(),
+        admission_store=_UnavailableAdmission(),
     )
 
     response = TestClient(app).get("/limited")
@@ -396,7 +406,7 @@ def test_ingress_fails_closed_when_distributed_admission_is_unavailable() -> Non
     metrics = app.state.runtime_metrics.render_prometheus(readiness_ready=True)
     assert (
         'propertyquarry_ingress_admission_operations_total{backend="postgres",'
-        'operation="quota",outcome="unavailable"} 1'
+        'operation="ip_request",outcome="backend_unavailable"} 1'
     ) in metrics
 
 
@@ -534,7 +544,7 @@ def test_high_cost_account_concurrency_is_shed() -> None:
     app.add_middleware(
         IngressAbuseMiddleware,
         policy=_policy(high_cost_account_concurrency=1),
-        admission_backend=MemoryAdmissionBackend(clock=lambda: 1.0),
+        admission_store=InMemoryIngressAdmissionStore(clock=lambda: 1.0),
         context_resolver=lambda request: context,
     )
 
@@ -588,7 +598,7 @@ def test_active_property_search_cap_rejects_before_route_dispatch() -> None:
 
 
 def test_active_search_check_and_dispatch_are_serialized_across_replicas() -> None:
-    shared_admission = MemoryAdmissionBackend(clock=lambda: 1.0)
+    shared_admission = InMemoryIngressAdmissionStore(clock=lambda: 1.0)
     context = RequestContext(
         principal_id="shared-search-account",
         authenticated=True,
@@ -604,7 +614,7 @@ def test_active_search_check_and_dispatch_are_serialized_across_replicas() -> No
         app.add_middleware(
             IngressAbuseMiddleware,
             policy=_policy(active_search_limit=1),
-            admission_backend=shared_admission,
+            admission_store=shared_admission,
             context_resolver=lambda request: context,
             active_search_counter=lambda request, resolved, limit: active_count[0],
         )

@@ -197,7 +197,7 @@ def test_database_fence_policy_tracks_every_long_lived_database_writer() -> None
         if contract["database_writer"] is True and role != "migration"
     }
 
-    assert runtime_writers == {"api", "worker", "scheduler"}
+    assert runtime_writers == {"api", "worker", "scheduler", "render"}
     assert {
         key.removesuffix("_runtime_epoch_prefix")
         for key in policy["roles"]

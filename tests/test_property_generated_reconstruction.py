@@ -43,6 +43,26 @@ from scripts.verify_property_tour_controls import build_property_tour_control_re
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _read_glb_document(path: Path) -> dict[str, object]:
+    payload = path.read_bytes()
+    magic, version, total_length = struct.unpack_from("<4sII", payload)
+    assert magic == b"glTF"
+    assert version == 2
+    assert total_length == len(payload)
+    json_length, json_type = struct.unpack_from("<I4s", payload, 12)
+    assert json_type == b"JSON"
+    json_start = 20
+    json_end = json_start + json_length
+    binary_length, binary_type = struct.unpack_from("<I4s", payload, json_end)
+    assert binary_type == b"BIN\0"
+    assert json_end + 8 + binary_length == len(payload)
+    document = json.loads(
+        payload[json_start:json_end].rstrip(b" ").decode("utf-8")
+    )
+    assert isinstance(document, dict)
+    return document
+
+
 @pytest.mark.parametrize(
     ("configured_limit", "expected_limit"),
     (

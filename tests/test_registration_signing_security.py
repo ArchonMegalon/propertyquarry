@@ -1,71 +1,78 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
-import time
-from types import SimpleNamespace
 
-from app.api.routes import onboarding
+import pytest
 
-
-def _container(*, signing_secret: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        settings=SimpleNamespace(
-            auth=SimpleNamespace(signing_secret=signing_secret),
-        )
-    )
-
-
-def _registration_payload() -> dict[str, object]:
-    return {
-        "email": "release-security@example.test",
-        "verification_code": "123456",
-        "expires_at": int(time.time()) + 300,
-    }
+from app.services import propertyquarry_registration_identity as identity
 
 
 def test_registration_token_is_bound_to_configured_signing_secret() -> None:
-    first = _container(signing_secret="first-release-signing-secret")
-    second = _container(signing_secret="second-release-signing-secret")
-    payload = _registration_payload()
-
-    token = onboarding._sign_registration_payload(
-        container=first,
-        payload=payload,
+    issued = identity.issue_registration_challenge(
+        email="release-security@example.test",
+        return_to="/app/search",
+        secret="first-release-signing-secret",
+        now=1_900_000_000,
     )
 
-    assert onboarding._verify_registration_payload(
-        container=first,
-        token=token,
-    ) == payload
-    assert onboarding._verify_registration_payload(
-        container=second,
-        token=token,
-    ) is None
+    with pytest.raises(
+        identity.RegistrationChallengeError,
+        match="registration_verification_code_invalid",
+    ):
+        identity.verify_registration_challenge(
+            token=issued.token,
+            verification_code=issued.verification_code,
+            secret="second-release-signing-secret",
+            now=1_900_000_001,
+        )
+
+    verified = identity.verify_registration_challenge(
+        token=issued.token,
+        verification_code=issued.verification_code,
+        secret="first-release-signing-secret",
+        now=1_900_000_002,
+    )
+    assert verified.email == "release-security@example.test"
+    assert verified.grant.startswith("pqrg2_")
 
 
 def test_registration_rejects_legacy_predictable_secret() -> None:
-    payload = _registration_payload()
-    encoded = onboarding._urlsafe_b64encode(
+    payload = {
+        "email": "release-security@example.test",
+        "verification_code": "123456",
+        "expires_at": 1_900_000_300,
+    }
+    encoded = (
+        base64.urlsafe_b64encode(
         json.dumps(
             payload,
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
+        )
+        .decode("ascii")
+        .rstrip("=")
     )
     signature = hmac.new(
         b"register:prod:local-user",
         encoded.encode("utf-8"),
         hashlib.sha256,
     ).digest()
-    forged_token = (
-        f"{encoded}.{onboarding._urlsafe_b64encode(signature)}"
+    encoded_signature = (
+        base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
     )
+    forged_token = f"{encoded}.{encoded_signature}"
 
-    assert onboarding._verify_registration_payload(
-        container=_container(
-            signing_secret="configured-release-signing-secret"
-        ),
-        token=forged_token,
-    ) is None
+    with pytest.raises(
+        identity.RegistrationChallengeError,
+        match="registration_verification_invalid",
+    ):
+        identity.verify_registration_challenge(
+            token=forged_token,
+            verification_code="123456",
+            secret="configured-release-signing-secret",
+            now=1_900_000_001,
+        )

@@ -14,8 +14,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 EA_ROOT = ROOT / "ea"
 APP_SOURCE_ROOT = EA_ROOT if (EA_ROOT / "app").is_dir() else ROOT
-if str(APP_SOURCE_ROOT) not in sys.path:
-    sys.path.insert(0, str(APP_SOURCE_ROOT))
+for source_root in (ROOT, ROOT / "scripts", APP_SOURCE_ROOT):
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
 
 STORAGE_SOURCE = APP_SOURCE_ROOT / "app" / "product" / "property_search_storage.py"
 QUEUE_SOURCE = APP_SOURCE_ROOT / "app" / "product" / "property_search_work_queue.py"

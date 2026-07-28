@@ -1849,7 +1849,7 @@ def test_release_shell_forwards_operations_receipts_without_policy_override() ->
     )
 
     assert '! -r "${required_monitoring_input}"' in shell
-    assert active_v2_job.count("/usr/bin/env -i") == 2
+    assert active_v2_job.count("/usr/bin/env -i") == 3
     assert "if: ${{ false }}" in legacy_launch_job
     for environment_name, shell_name, flag_name in receipt_contracts:
         assert environment_example.count(f"{environment_name}=") == 1

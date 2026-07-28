@@ -4306,58 +4306,71 @@ def _property_visual_url_uses_retired_product_host(value: object) -> bool:
     return host == "myexternalbrain.com" or host.endswith(".myexternalbrain.com")
 
 
+def _property_visual_url_is_auth_surface(value: object) -> bool:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(normalized)
+    except Exception:
+        return True
+    host = str(parsed.hostname or "").strip().lower().rstrip(".")
+    host_prefix = host.split(".", 1)[0] if host else ""
+    path_parts = {
+        part.strip().lower()
+        for part in str(parsed.path or "").split("/")
+        if part.strip()
+    }
+    return bool(
+        host_prefix in {"account", "accounts", "auth", "login", "signin", "sso"}
+        or path_parts.intersection(
+            {
+                "account",
+                "accounts",
+                "auth",
+                "login",
+                "sign-in",
+                "signin",
+                "oauth",
+                "authorize",
+            }
+        )
+    )
+
+
+def _property_visual_verified_public_tour_url(
+    value: object,
+    *,
+    principal_id: object = "",
+) -> str:
+    normalized = str(value or "").strip()
+    if not normalized or _property_visual_url_is_auth_surface(normalized):
+        return ""
+    resolved = str(
+        _hosted_property_tour_verified_open_url(
+            normalized,
+            principal_id=principal_id,
+        )
+        or ""
+    ).strip()
+    if not resolved or _property_visual_url_is_auth_surface(resolved):
+        return ""
+    return resolved
+
+
 def _property_visual_ready_tour_url(
     *,
     tour_url: object = "",
     open_tour_url: object = "",
     principal_id: object = "",
 ) -> str:
-    normalized_tour_url = str(tour_url or "").strip()
-    normalized_open_tour_url = str(open_tour_url or "").strip()
-    if _property_visual_url_uses_retired_product_host(normalized_tour_url):
-        normalized_tour_url = ""
-    if _property_visual_url_uses_retired_product_host(normalized_open_tour_url):
-        normalized_open_tour_url = ""
-    if normalized_tour_url:
-        if _is_branded_public_tour_url(normalized_tour_url):
-            resolved_open_tour_url = str(
-                _hosted_property_tour_verified_open_url(
-                    normalized_tour_url,
-                    principal_id=principal_id,
-                )
-                or ""
-            ).strip()
-            if resolved_open_tour_url:
-                return resolved_open_tour_url
-            resolved_first_party_open_url = str(
-                _hosted_property_tour_first_party_open_url(
-                    normalized_tour_url,
-                    principal_id=principal_id,
-                )
-                or ""
-            ).strip()
-            if resolved_first_party_open_url:
-                return resolved_first_party_open_url
-        elif (
-            normalized_tour_url.startswith(("http://", "https://", "/"))
-            and not _property_visual_generated_reconstruction_bundle_url(normalized_tour_url)
-        ):
-            return normalized_tour_url
-    if normalized_open_tour_url.startswith(("http://", "https://", "/")):
-        generated_reconstruction_bundle_url = _property_visual_generated_reconstruction_bundle_url(normalized_open_tour_url)
-        if generated_reconstruction_bundle_url:
-            return ""
-        if not _is_branded_public_tour_url(normalized_open_tour_url):
-            return normalized_open_tour_url
-        resolved_first_party_open_url = str(
-            _hosted_property_tour_first_party_open_url(
-                normalized_open_tour_url,
-                principal_id=principal_id,
-            )
-            or ""
-        ).strip()
-        if resolved_first_party_open_url:
-            return resolved_first_party_open_url
+    for candidate in (tour_url, open_tour_url):
+        verified = _property_visual_verified_public_tour_url(
+            candidate,
+            principal_id=principal_id,
+        )
+        if verified:
+            return verified
     return ""
 
 
@@ -4392,34 +4405,162 @@ def _property_visual_sanitize_tour_url(
 
 
 def _property_visual_layout_preview_url(
-    generated_reconstruction_url: object,
+    value: object,
     *,
     principal_id: object = "",
 ) -> str:
-    """Return the first-party launch page for a ready generated layout.
-
-    Generated reconstructions are useful, walkable visual aids, but they are
-    not provider-captured 3D tours.  Keeping this resolver separate prevents a
-    reconstruction from satisfying the verified-tour gate while still giving
-    the workbench a safe URL it can open.
-    """
-    normalized_url = str(generated_reconstruction_url or "").strip()
-    if not normalized_url:
+    normalized = str(value or "").strip()
+    if not normalized or _property_visual_url_is_auth_surface(normalized):
         return ""
-    if _hosted_property_tour_verified_open_url(
-        normalized_url,
+    generated_bundle_url = _property_visual_generated_reconstruction_bundle_url(
+        normalized
+    )
+    candidate_url = generated_bundle_url or normalized
+    if _property_visual_verified_public_tour_url(
+        candidate_url,
         principal_id=principal_id,
     ):
         return ""
-    if not _hosted_property_tour_generated_reconstruction_bundle_ready(normalized_url):
-        return ""
-    return str(
+    first_party_url = str(
         _hosted_property_tour_first_party_open_url(
-            normalized_url,
+            candidate_url,
             principal_id=principal_id,
         )
         or ""
     ).strip()
+    if not first_party_url or _property_visual_url_is_auth_surface(first_party_url):
+        return ""
+    if _property_visual_verified_public_tour_url(
+        first_party_url,
+        principal_id=principal_id,
+    ):
+        return ""
+    return first_party_url
+
+
+def _normalize_property_candidate_visual_truth(
+    candidate: dict[str, object],
+    *,
+    principal_id: object = "",
+) -> dict[str, object]:
+    normalized = dict(candidate or {})
+    fact_keys = [
+        key
+        for key in ("property_facts", "property_facts_json")
+        if isinstance(normalized.get(key), dict)
+    ]
+    fact_payloads = [dict(normalized.get(key) or {}) for key in fact_keys]
+
+    raw_source_urls = [str(normalized.get("source_virtual_tour_url") or "").strip()]
+    raw_source_urls.extend(
+        str(facts.get("source_virtual_tour_url") or "").strip()
+        for facts in fact_payloads
+    )
+    safe_source_url = ""
+    for raw_source_url in raw_source_urls:
+        safe_candidate = _safe_provider_live_360_url(raw_source_url)
+        verified_candidate = _property_visual_verified_public_tour_url(
+            safe_candidate,
+            principal_id=principal_id,
+        )
+        if verified_candidate:
+            safe_source_url = verified_candidate
+            break
+
+    tour_url = str(normalized.get("tour_url") or "").strip()
+    open_tour_url = str(normalized.get("open_tour_url") or "").strip()
+    vendor_tour_url = str(normalized.get("vendor_tour_url") or "").strip()
+    verified_tour_url = ""
+    for candidate_url in (tour_url, open_tour_url, vendor_tour_url, safe_source_url):
+        verified_tour_url = _property_visual_verified_public_tour_url(
+            candidate_url,
+            principal_id=principal_id,
+        )
+        if verified_tour_url:
+            break
+    panorama_urls: list[str] = []
+    for payload in (normalized, *fact_payloads):
+        values = payload.get("panorama_media_urls_json")
+        if isinstance(values, (list, tuple)):
+            panorama_urls.extend(
+                str(value or "").strip()
+                for value in values
+                if str(value or "").strip()
+            )
+        assets = payload.get("media_assets_json")
+        if isinstance(assets, list):
+            panorama_urls.extend(
+                str(asset.get("url") or "").strip()
+                for asset in assets
+                if isinstance(asset, dict)
+                and bool(asset.get("panorama_candidate"))
+                and str(asset.get("url") or "").strip()
+            )
+    has_live_360 = bool(panorama_urls or safe_source_url or verified_tour_url)
+    normalized["source_virtual_tour_url"] = safe_source_url
+    normalized["has_360"] = has_live_360
+    if not has_live_360:
+        normalized["panorama_source"] = ""
+    for key, facts in zip(fact_keys, fact_payloads):
+        facts["source_virtual_tour_url"] = safe_source_url
+        facts["has_360"] = has_live_360
+        if not has_live_360:
+            facts["panorama_source"] = ""
+        normalized[key] = facts
+
+    generated_reconstruction_url = str(
+        normalized.get("generated_reconstruction_url") or ""
+    ).strip()
+    layout_preview_url = ""
+    for candidate_url in (generated_reconstruction_url, tour_url, open_tour_url):
+        layout_preview_url = _property_visual_layout_preview_url(
+            candidate_url,
+            principal_id=principal_id,
+        )
+        if layout_preview_url:
+            if not generated_reconstruction_url:
+                generated_reconstruction_url = (
+                    _property_visual_generated_reconstruction_bundle_url(
+                        candidate_url
+                    )
+                    or str(candidate_url or "").strip()
+                )
+            break
+    normalized["generated_reconstruction_url"] = generated_reconstruction_url
+    normalized["layout_preview_url"] = layout_preview_url
+    existing_layout_preview_status = str(
+        normalized.get("layout_preview_status") or ""
+    ).strip().lower()
+    if layout_preview_url:
+        normalized["layout_preview_status"] = "ready"
+    elif existing_layout_preview_status == "ready":
+        normalized["layout_preview_status"] = "blocked"
+    else:
+        normalized["layout_preview_status"] = existing_layout_preview_status
+
+    if _property_visual_url_is_auth_surface(vendor_tour_url):
+        normalized["vendor_tour_url"] = ""
+    if (
+        str(normalized.get("tour_status") or "").strip().lower() == "ready"
+        and not verified_tour_url
+    ):
+        normalized["tour_status"] = "blocked"
+        normalized["tour_url"] = ""
+        normalized["open_tour_url"] = ""
+        normalized["vendor_tour_url"] = ""
+        normalized["blocked_reason"] = str(
+            normalized.get("blocked_reason")
+            or (
+                "listing_360_media_missing"
+                if layout_preview_url or not has_live_360
+                else "provider_export_missing"
+            )
+        ).strip()
+    elif verified_tour_url:
+        normalized["open_tour_url"] = verified_tour_url
+    elif open_tour_url:
+        normalized["open_tour_url"] = ""
+    return normalized
 
 
 def _property_visual_initial_eta_minutes(*, status: object, eta_minutes: object = "") -> int:
@@ -27904,6 +28045,27 @@ def _property_tour_execution_diagnostic(exc: Exception) -> dict[str, str]:
     raw_detail = str(exc or "").strip()
     detail = raw_detail.lower()
     error_type = re.sub(r"[^A-Za-z0-9_]", "", type(exc).__name__)[:80] or "Exception"
+    if isinstance(exc, _PropertyTourExecutionFailure):
+        blocked_reason = (
+            "property_packet_temporarily_unavailable"
+            if exc.stage == "willhaben_property_packet" and exc.retryable
+            else (
+                "property_packet_generation_failed"
+                if exc.stage == "willhaben_property_packet"
+                else "property_tour_execution_failed"
+            )
+        )
+        fingerprint_source = f"{exc.stage}:{exc.error_code}:{error_type}"
+        return {
+            "blocked_reason": blocked_reason,
+            "failure_stage": exc.stage,
+            "error_code": exc.error_code,
+            "error_type": error_type,
+            "error_fingerprint": hashlib.sha256(
+                fingerprint_source.encode("utf-8", "replace")
+            ).hexdigest()[:16],
+            "safe_detail": exc.error_code,
+        }
     blocked_reason = "property_tour_execution_failed"
     failure_stage = "tour_execution"
     error_code = "property_tour_execution_failed"
@@ -46236,6 +46398,18 @@ class ProductService:
                 "flythrough_url": str(result_payload.get("flythrough_url") or "").strip(),
                 "tour_media_mode": str(result_payload.get("tour_media_mode") or "").strip(),
             }
+            for diagnostic_key in (
+                "failure_stage",
+                "error_code",
+                "diagnostic_sha256",
+            ):
+                diagnostic_value = str(
+                    result_payload.get(diagnostic_key) or ""
+                ).strip()
+                if diagnostic_value:
+                    payload[diagnostic_key] = diagnostic_value
+            if "retryable" in result_payload:
+                payload["retryable"] = bool(result_payload.get("retryable"))
             if normalized_kind == "flythrough":
                 payload["flythrough_status"] = str(
                     result_payload.get("flythrough_status") or result_payload.get("status") or resolution or ""
@@ -46583,6 +46757,7 @@ class ProductService:
                 )
             except Exception as exc:
                 execution_diagnostic = _property_tour_execution_diagnostic(exc)
+                failure_metadata = _property_tour_execution_failure_metadata(exc)
                 blocked_reason = execution_diagnostic["blocked_reason"]
                 blocked_total += 1
                 blocked_state = {
@@ -48326,6 +48501,7 @@ class ProductService:
             followup_generated_reconstruction_url = str(
                 followup_payload.get("generated_reconstruction_url") or ""
             ).strip()
+            followup_layout_preview_url = ""
             if followup_generated_reconstruction_url:
                 followup_layout_preview_url = _property_visual_layout_preview_url(
                     followup_generated_reconstruction_url,
@@ -48592,7 +48768,12 @@ class ProductService:
             "request_kind": normalized_kind,
             "run_id": normalized_run_id,
             "candidate_ref": normalized_candidate_ref,
-            "tour_url": tour_url,
+            "tour_url": (
+                tour_url
+                if normalized_kind == "tour"
+                and (ready_url or generated_reconstruction_ready)
+                else ""
+            ),
             "open_tour_url": (
                 ready_url or (layout_preview_url if generated_reconstruction_ready else "")
                 if normalized_kind == "tour"
@@ -49026,14 +49207,6 @@ class ProductService:
         durable_execution = durable_work_required and not dispatch_probe_ack_only
         if durable_execution:
             normalized_trace_context = runtime_trace_context_from_mapping(trace_context)
-            durable_trace_context = (
-                {
-                    **normalized_trace_context.as_mapping(),
-                    "correlation_id": str((trace_context or {}).get("correlation_id") or "")[:128],
-                }
-                if normalized_trace_context is not None
-                else {}
-            )
             durable_summary = dict(persisted_state.get("summary") or {})
             durable_summary.update(
                 {
@@ -49066,18 +49239,21 @@ class ProductService:
                 "force_refresh": bool(force_refresh),
             }
             telemetry_parent = serialize_current_trace_parent()
+            if not telemetry_parent and normalized_trace_context is not None:
+                telemetry_parent = {
+                    "traceparent": normalized_trace_context.traceparent,
+                }
+                correlation_id = str(
+                    (trace_context or {}).get("correlation_id") or ""
+                ).strip()
+                if correlation_id:
+                    telemetry_parent["correlation_id"] = correlation_id[:128]
             if telemetry_parent:
                 work_payload[TELEMETRY_PARENT_KEY] = telemetry_parent
             try:
                 enqueue_result = _property_search_work_queue_repository().enqueue_run(
                     run_record=persisted_state,
-                    payload_json={
-                        "run_id": run_id,
-                        "principal_id": normalized_principal,
-                        "actor": str(actor or "property_search_worker").strip() or "property_search_worker",
-                        "force_refresh": bool(force_refresh),
-                        "trace_context": durable_trace_context,
-                    },
+                    payload_json=work_payload,
                     idempotency_key=queue_key,
                     max_attempts=property_search_work_max_attempts(),
                 )

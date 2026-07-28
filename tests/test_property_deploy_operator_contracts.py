@@ -1682,7 +1682,6 @@ def test_governed_tour_install_follows_managed_compose_volume_genesis() -> None:
     assert governed_consumers == {
         "propertyquarry-api": [governed_mount],
         "propertyquarry-scheduler": [governed_mount],
-        "propertyquarry-render-tools": [governed_mount],
     }
 
 
@@ -2327,23 +2326,42 @@ def test_core_ci_requires_the_genuine_chromium_cache_integration() -> None:
         _read(".github/workflows/smoke-runtime.yml")
     )
     job = workflow["jobs"]["smoke-runtime-api"]
+    chromium_step = next(
+        row
+        for row in job["steps"]
+        if row.get("name") == "Install Chromium in canonical release cache"
+    )
     step = next(
         row
         for row in job["steps"]
-        if row.get("name") == "Run core CI gates"
+        if row.get("name") == "Run read-only authenticated core CI gates"
     )
 
-    assert step == {
-        "name": "Run core CI gates",
+    assert chromium_step == {
+        "name": "Install Chromium in canonical release cache",
         "env": {
-            "PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION": "1",
+            "PLAYWRIGHT_BROWSERS_PATH": (
+                "/docker/property/.propertyquarry_release_tools/ms-playwright"
+            ),
         },
-        "run": "make ci-gates",
+        "run": "python -m playwright install --with-deps chromium",
     }
+    assert step == {
+        "name": "Run read-only authenticated core CI gates",
+        "working-directory": "/docker/property",
+        "run": (
+            "./scripts/propertyquarry_release_python.sh "
+            "scripts/propertyquarry_release_make_dispatch.py "
+            "ci-gates-authenticated"
+        ),
+    }
+    makefile = _read("Makefile")
+    assert "test-api-real-chromium: test-api" in makefile
     assert (
-        "PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION=1 $(MAKE) test-api"
-        in _read("Makefile")
-    )
+        "test-api-real-chromium: export "
+        "PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION := 1"
+    ) in makefile
+    assert "$(MAKE) test-api-real-chromium" in makefile
 
 
 def test_smoke_runtime_v2_lane_is_fail_closed_without_installed_authority() -> None:
@@ -2446,16 +2464,15 @@ def test_protected_live_release_gate_is_remote_only_and_fail_closed() -> None:
     ):
         assert required_option in script
 
-    release_bundle = _read("scripts/property_release_gates.sh")
-    assert release_bundle.startswith("#!/bin/bash -p\n")
-    assert (
-        "/usr/bin/env \\\n"
-        "  -u BASH_ENV \\\n"
-        "  -u ENV \\\n"
-        '  PROPERTYQUARRY_LIVE_PROBE_SECRET="${performance_release_probe_secret}" \\\n'
-        '  PYTHON_BIN="${PYTHON_BIN}" \\\n'
-        "  /bin/bash --noprofile --norc -p "
-        "scripts/propertyquarry_live_release_gates.sh"
+        release_bundle = _read("scripts/property_release_gates.sh")
+        assert release_bundle.startswith("#!/bin/bash -p\n")
+        assert (
+            'PROPERTYQUARRY_LIVE_PROBE_SECRET="${performance_release_probe_secret}" \\\n'
+            "/usr/bin/env \\\n"
+            "  -u BASH_ENV \\\n"
+            "  -u ENV \\\n"
+            "  /bin/bash --noprofile --norc -p "
+            "scripts/propertyquarry_live_release_gates.sh"
     ) in release_bundle
 
 
@@ -3687,15 +3704,36 @@ def test_runtime_hard_exit_gates_can_extend_into_propertyquarry_live_runtime() -
         assert required in smoke_help
 
 
-def test_property_security_posture_accepts_pinned_multistage_scratch_runtimes() -> None:
-    for path in ("ea/Dockerfile.property", "ea/Dockerfile.property-web"):
-        dockerfile = _read(path)
-        base_images = property_security_posture._dockerfile_base_images(dockerfile)
+def test_property_security_posture_accepts_pinned_minimal_runtimes() -> None:
+    render_dockerfile = _read("ea/Dockerfile.property")
+    render_images = property_security_posture._dockerfile_base_images(
+        render_dockerfile
+    )
+    assert len(render_images) >= 2
+    assert render_images[-1] == "scratch"
 
-        assert len(base_images) >= 2
-        assert base_images[-1] == "scratch"
-        assert property_security_posture._unpinned_dockerfile_base_images(dockerfile) == []
-        assert property_security_posture._dockerfile_final_user(dockerfile) == "10001:10001"
+    web_dockerfile = _read("ea/Dockerfile.property-web")
+    web_images = property_security_posture._dockerfile_base_images(web_dockerfile)
+    assert len(web_images) == 2
+    assert web_images[-1] == (
+        "gcr.io/distroless/cc-debian13@sha256:"
+        "d0b79eb697888ecb8ef019bbb7192e4f41974830ea95f0543123eaaeb2d5fd2c"
+    )
+
+    for path, dockerfile in (
+        ("ea/Dockerfile.property", render_dockerfile),
+        ("ea/Dockerfile.property-web", web_dockerfile),
+    ):
+        assert (
+            property_security_posture._unpinned_dockerfile_base_images(
+                dockerfile
+            )
+            == []
+        ), path
+        assert (
+            property_security_posture._dockerfile_final_user(dockerfile)
+            == "10001:10001"
+        ), path
 
     receipt = property_security_posture.build_security_posture_receipt()
     assert receipt["status"] == "pass"
@@ -3712,11 +3750,12 @@ def test_property_security_posture_accepts_pinned_multistage_scratch_runtimes() 
         "RUN python /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py \\\n",
         "        --requirements-lock /app/requirements.lock \\\n",
         "        --hash-lock /app/requirements.wheelhouse.lock \\\n",
-        "        --wheelhouse /opt/propertyquarry-python-wheels && \\\n",
+        "        --wheelhouse /wheelhouse && \\\n",
         "        --no-index \\\n",
         "        --require-hashes \\\n",
         "        --requirement /app/requirements.wheelhouse.lock && \\\n",
-        "    rm -rf /opt/propertyquarry-python-wheels && \\\n",
+        "    python -m pip uninstall --yes pip && \\\n",
+        "    rm -rf /wheelhouse && \\\n",
         "    rm -f /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py\n",
     ),
 )
@@ -3744,11 +3783,11 @@ def test_property_security_posture_rejects_ignored_web_wheelhouse_verification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def ignore_wheelhouse_verification_failure(dockerfile: str) -> str:
-        marker = "        --wheelhouse /opt/propertyquarry-python-wheels && \\\n"
+        marker = "        --wheelhouse /wheelhouse && \\\n"
         assert dockerfile.count(marker) == 1
         return dockerfile.replace(
             marker,
-            "        --wheelhouse /opt/propertyquarry-python-wheels || true; \\\n",
+            "        --wheelhouse /wheelhouse || true; \\\n",
             1,
         )
 
@@ -3843,7 +3882,18 @@ def test_property_security_posture_requires_hardened_durable_worker(
     )
 
     assert failures == [
-        "docker-compose.property.yml must keep a hardened property-only durable worker"
+        (
+            "docker-compose.property.yml must keep a hardened property-only "
+            "durable worker"
+        ),
+        (
+            "docker-compose.property.yml propertyquarry-worker must set "
+            "PROPERTYQUARRY_WORKER_PROFILE=property_only"
+        ),
+        (
+            "resolved docker-compose.property.yml propertyquarry-worker must "
+            "set PROPERTYQUARRY_WORKER_PROFILE=property_only"
+        ),
     ]
 
 
@@ -4012,6 +4062,10 @@ def test_property_dockerfile_allowlists_runtime_scripts() -> None:
     copied_scripts = re.findall(r"COPY\s+scripts/([^\s]+)\s+/app/scripts/", dockerfile)
     assert copied_scripts == [
         "property_tour_runtime_paths.py",
+        "verify_property_tour_controls.py",
+        "property_tour_3dvista_provenance.py",
+        "property_tour_panorama_provenance.py",
+        "property_tour_host_safety.py",
         "property_render_video_probe.py",
         "propertyquarry_playwright_runtime.py",
         "generate_property_reconstruction.py",
@@ -4192,12 +4246,13 @@ def test_property_web_dockerfile_keeps_reconstruction_lightweight_and_excludes_b
     dockerfile = _read("ea/Dockerfile.property-web")
 
     assert dockerfile.startswith(
-        "FROM python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de AS prepared\n"
+        "FROM python:3.12-slim@sha256:"
+        "cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464"
+        " AS build\n"
     )
     assert "curl" not in dockerfile.lower()
     assert "python3-numpy" not in dockerfile.lower()
-    assert "http.client.HTTPConnection" in dockerfile
-    assert "exec /usr/local/bin/python -c" in dockerfile
+    assert "urllib.request.ProxyHandler({})" in dockerfile
     assert "COPY . /tmp/src" not in dockerfile
     assert "COPY ea/requirements.txt /app/requirements.txt" in dockerfile
     assert "COPY ea/requirements.lock /app/requirements.lock" in dockerfile
@@ -4257,69 +4312,26 @@ def test_property_web_dockerfile_keeps_reconstruction_lightweight_and_excludes_b
     assert "for script in /tmp/src/scripts/*" not in dockerfile
     assert 'cp "$script" /app/scripts/' not in dockerfile
 
-    assert (
-        "COPY --chmod=0555 ea/property_web_entrypoint.py "
-        "/usr/local/libexec/property_web_entrypoint.py"
-    ) in dockerfile
-    assert (
-        "COPY --chmod=0555 ea/property_web_elf_validator.py "
-        "/usr/local/libexec/property_web_elf_validator.py"
-    ) in dockerfile
+    assert "property_web_entrypoint.py" not in dockerfile
+    assert "property_web_elf_validator.py" not in dockerfile
     assert "COPY ea/docker-entrypoint.sh" not in dockerfile
     assert "chown -R ea:ea /app /data /home/ea" in dockerfile
-    assert "/usr/local/libexec/property_web_entrypoint.py;" not in dockerfile
-    assert "apt-get purge --yes --allow-remove-essential --no-auto-remove" in dockerfile
-    assert "property-web-packages.before" in dockerfile
-    assert "property-web-packages.after" in dockerfile
-    assert "removed != expected" in dockerfile
-    assert "added=sorted(after-before)" in dockerfile
-    assert "or bool(added)" in dockerfile
-    for package in (
-        "gzip",
-        "bsdutils",
-        "libblkid1",
-        "liblastlog2-2",
-        "libmount1",
-        "libsmartcols1",
-        "libuuid1",
-        "login",
-        "mount",
-        "perl-base",
-    ):
-        assert f"        {package} \\\n" in dockerfile
-    assert "        util-linux;" in dockerfile
-    assert "test -s /var/lib/dpkg/status" in dockerfile
-    assert 'audit_output="$(dpkg --audit)"' in dockerfile
-    assert 'test -z "${audit_output}"' in dockerfile
-    assert 'in {"gzip", "perl", "util-linux"}' in dockerfile
-    assert "rm -rf /var/lib/dpkg" not in dockerfile
-    assert "! command -v gzip" in dockerfile
-    assert "! command -v gunzip" in dockerfile
-    assert "! command -v perl" in dockerfile
-    assert "! command -v runuser" in dockerfile
-    assert 'modules=("_uuid", "_tkinter")' in dockerfile
-    assert 'importlib.util.find_spec("_uuid") is None' in dockerfile
-    assert 'importlib.util.find_spec("_tkinter") is None' in dockerfile
-    assert "uuid.uuid1().version == 1" in dockerfile
-    assert "uuid.uuid4().version == 4" in dockerfile
-    assert "python -I -S /usr/local/libexec/property_web_elf_validator.py" in dockerfile
-    assert "rm -f /usr/local/libexec/property_web_elf_validator.py" in dockerfile
+    assert "apt-get" not in dockerfile
 
-    assert "FROM scratch AS runtime" in dockerfile
-    assert "COPY --from=prepared / /" in dockerfile
+    final_from = (
+        "FROM gcr.io/distroless/cc-debian13@sha256:"
+        "d0b79eb697888ecb8ef019bbb7192e4f41974830ea95f0543123eaaeb2d5fd2c"
+        " AS runtime"
+    )
+    assert final_from in dockerfile
+    assert "COPY --from=build /usr/local /usr/local" in dockerfile
+    assert "COPY --from=build /runtime-overlay/ /" in dockerfile
     assert "USER 10001:10001" in dockerfile
-    assert (
-        'ENTRYPOINT ["/usr/local/bin/python", "-I", "-S", '
-        '"/usr/local/libexec/property_web_entrypoint.py"]'
-    ) in dockerfile
-    assert 'CMD ["/usr/local/bin/python", "-m", "app.runner"]' in dockerfile
+    assert "\nENTRYPOINT " not in dockerfile
+    assert 'CMD ["python", "-m", "app.runner"]' in dockerfile
 
-    prune_at = dockerfile.index("apt-get purge")
-    final_at = dockerfile.index("FROM scratch AS runtime")
-    assert prune_at > dockerfile.index("COPY LTDs.md /app/LTDs.md")
-    assert "COPY " not in dockerfile[prune_at:final_at]
+    final_at = dockerfile.index(final_from)
     runtime = dockerfile[final_at:]
-    assert runtime.count("COPY ") == 1
     assert "RUN " not in runtime
     assert "apt-get" not in runtime
     assert "dpkg" not in runtime
@@ -4365,6 +4377,10 @@ def test_property_runtime_copied_scripts_do_not_depend_on_fleet_paths() -> None:
 
     assert copied_scripts == [
         "property_tour_runtime_paths.py",
+        "verify_property_tour_controls.py",
+        "property_tour_3dvista_provenance.py",
+        "property_tour_panorama_provenance.py",
+        "property_tour_host_safety.py",
         "property_render_video_probe.py",
         "propertyquarry_playwright_runtime.py",
         "generate_property_reconstruction.py",
@@ -4400,14 +4416,14 @@ def test_property_compose_container_names_are_recoverable() -> None:
     assert "dockerfile: ea/Dockerfile.property-web" in compose
     assert 'image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"' in compose
     assert "propertyquarry-render-tools:" in compose
-    assert "dockerfile: ea/Dockerfile.property" in compose
+    assert "dockerfile: ea/Dockerfile.property-render" in compose
     assert 'image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-standalone-render-runtime:latest}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_API_CONTAINER_NAME:-propertyquarry-api-live}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker-live}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler-live}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_DB_CONTAINER_NAME:-propertyquarry-db-live}"' in compose
     assert 'container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-live}"' in compose
-    assert compose.count("path: ./state/runtime/property_scene_video_shared.env") == 1
+    assert "property_scene_video_shared.env" not in compose
     assert "property_scene_video_shared.env" not in api_section
     assert compose.count(
         'PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"'
@@ -4440,23 +4456,21 @@ def test_property_compose_container_names_are_recoverable() -> None:
     assert "property_scene_video_shared.env" not in scheduler_section
     assert "disable: true" not in scheduler_section
     render_section = compose.split("  propertyquarry-render-tools:", 1)[1].split("  propertyquarry-db:", 1)[0]
-    assert "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET" not in render_section
+    assert "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: \"\"" in render_section
     assert "PROPERTYQUARRY_RENDER_DATABASE_URL:?Set a least-privilege" in render_section
     assert "${DATABASE_URL:-postgresql://postgres:" not in render_section
     assert "profiles:" not in render_section
     assert "- render-tools" not in render_section
-    assert (
-        'command: ["/usr/local/bin/python", '
-        '"-I", "/app/scripts/property_reconstruction_render_bridge.py"]'
-    ) in render_section
-    assert "env_file:" in render_section
-    assert "path: ./state/runtime/property_scene_video_shared.env" in render_section
+    assert "\n    command:" not in render_section
+    assert "env_file:" not in render_section
     assert "EA_ARTIFACTS_DIR" not in render_section
     assert "EA_RESPONSES_PROVIDER_LEDGER_DIR" not in render_section
     assert "TEABLE_" not in render_section
     assert "incoming_property_tours" not in render_section
     assert "provider-ledger" not in render_section
-    assert "propertyquarry_artifacts" not in render_section
+    assert render_section.count(
+        "propertyquarry_artifacts:/data/artifacts"
+    ) == 1
     assert "./config:" not in render_section
     assert render_section.count("propertyquarry_public_tours:/data/public_property_tours") == 1
     assert 'PROPERTYQUARRY_RECONSTRUCTION_RENDER_HOST: "0.0.0.0"' in render_section
@@ -4468,10 +4482,10 @@ def test_property_compose_container_names_are_recoverable() -> None:
     assert 'security_opt:\n      - "no-new-privileges:true"' in render_section
     assert "read_only: true" in render_section
     assert (
-        "tmpfs:\n      - /tmp:rw,nosuid,nodev,noexec,size=2147483648"
+        "tmpfs:\n      - /tmp:size=${PROPERTYQUARRY_RENDER_TMPFS_LIMIT:-512m},mode=1777"
         in render_section
     )
-    assert "- /run:rw,nosuid,nodev,noexec,size=16777216" in render_section
+    assert "- /run:" not in render_section
     assert 'mem_limit: "${PROPERTYQUARRY_RENDER_MEMORY_LIMIT:-4g}"' in render_section
     assert (
         'memswap_limit: "${PROPERTYQUARRY_RENDER_MEMORY_SWAP_LIMIT:-4g}"'
@@ -4486,14 +4500,7 @@ def test_property_compose_container_names_are_recoverable() -> None:
         "networks:\n  propertyquarry_render_internal:\n    internal: true"
         in compose
     )
-    assert (
-        '"CMD",\n          "/usr/local/bin/property-render-env-launcher",\n'
-        '          "/usr/local/bin/python",\n          "-I",\n'
-        '          "-S",\n          "-c"'
-    ) in render_section
-    assert "http.client.HTTPConnection('127.0.0.1', 8091, timeout=10)" in render_section
-    assert "connection.request('GET', '/health/ready')" in render_section
-    assert "response.status == 200" in render_section
+    assert "\n    healthcheck:" not in render_section
     for identity_only_probe in (
         "command -v blender",
         "command -v colmap",

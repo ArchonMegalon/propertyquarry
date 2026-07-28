@@ -102,8 +102,7 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
     render = services["propertyquarry-render-tools"]
     assert render["shm_size"] == "${PROPERTYQUARRY_RENDER_SHM_SIZE:-256m}"
     assert render["tmpfs"] == [
-        "/tmp:rw,nosuid,nodev,noexec,size=2147483648",
-        "/run:rw,nosuid,nodev,noexec,size=16777216",
+        "/tmp:size=${PROPERTYQUARRY_RENDER_TMPFS_LIMIT:-512m},mode=1777",
     ]
     assert services["propertyquarry-db"]["shm_size"] == "${PROPERTYQUARRY_DB_SHM_LIMIT:-256m}"
     scheduler_environment = services["propertyquarry-scheduler"]["environment"]
@@ -206,10 +205,10 @@ def test_propertyquarry_tour_lanes_share_persistent_fail_closed_host_limits() ->
     render_volumes = render["volumes"]
     assert type(render_volumes) is list
     assert render_volumes == [
+        "propertyquarry_artifacts:/data/artifacts",
         "propertyquarry_public_tours:/data/public_property_tours",
-        "propertyquarry_governed_public_tours:/data/governed_public_property_tours:ro",
     ]
-    assert render_volumes[1].endswith(":ro")
+    assert not render_volumes[1].endswith(":ro")
 
 
 def test_propertyquarry_tunnel_is_bounded_and_read_only() -> None:

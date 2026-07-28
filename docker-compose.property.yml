@@ -447,7 +447,7 @@ services:
   propertyquarry-render-tools:
     build:
       context: .
-      dockerfile: ea/Dockerfile.property
+      dockerfile: ea/Dockerfile.property-render
     image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-standalone-render-runtime:latest}"
     container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
@@ -455,9 +455,7 @@ services:
     init: true
     # The bridge reads the same numeric seconds value and reserves 30s for process close.
     stop_grace_period: "${PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS:-1860}s"
-    env_file:
-      - path: ./state/runtime/property_scene_video_shared.env
-        required: false
+    user: "10001:10001"
     environment:
       EA_ROLE: render-tools
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
@@ -483,34 +481,22 @@ services:
       PROPERTYQUARRY_RECONSTRUCTION_RENDER_MAX_GENERATION_SECONDS: "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_MAX_GENERATION_SECONDS:-1800}"
       PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS: "${PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS:-1860}"
       DATABASE_URL: "${PROPERTYQUARRY_RENDER_DATABASE_URL:?Set a least-privilege PROPERTYQUARRY_RENDER_DATABASE_URL for admission state}"
+      PROPERTYQUARRY_ADMISSION_BACKEND: "postgres"
+      PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: ""
       PROPERTYQUARRY_RELEASE_COMMIT_SHA: "${PROPERTYQUARRY_RELEASE_COMMIT_SHA:-}"
       PROPERTYQUARRY_RELEASE_IMAGE_DIGEST: "${PROPERTYQUARRY_RELEASE_IMAGE_DIGEST:-}"
-      HOME: /home/ea
+      HOME: /tmp/home
+      XDG_CACHE_HOME: /tmp/cache
+      XDG_CONFIG_HOME: /tmp/config
+      TMPDIR: /tmp
       TZ: Europe/Vienna
-    command: ["/usr/local/bin/python", "-I", "/app/scripts/property_reconstruction_render_bridge.py"]
     cap_drop:
       - ALL
     security_opt:
       - "no-new-privileges:true"
     read_only: true
     tmpfs:
-      - /tmp:rw,nosuid,nodev,noexec,size=2147483648
-      - /run:rw,nosuid,nodev,noexec,size=16777216
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "/usr/local/bin/property-render-env-launcher",
-          "/usr/local/bin/python",
-          "-I",
-          "-S",
-          "-c",
-          "import http.client; connection = http.client.HTTPConnection('127.0.0.1', 8091, timeout=10); connection.request('GET', '/health/ready'); response = connection.getresponse(); response.read(); connection.close(); raise SystemExit(0 if response.status == 200 else 1)",
-        ]
-      interval: 30s
-      timeout: 15s
-      start_period: 30s
-      retries: 5
+      - /tmp:size=${PROPERTYQUARRY_RENDER_TMPFS_LIMIT:-512m},mode=1777
     cpu_shares: ${PROPERTYQUARRY_RENDER_CPU_SHARES:-512}
     cpus: ${PROPERTYQUARRY_RENDER_CPUS:-1.0}
     # The isolated render lane keeps its independently measured memory, swap,
@@ -528,8 +514,8 @@ services:
         max-size: "10m"
         max-file: "3"
     volumes:
+      - propertyquarry_artifacts:/data/artifacts
       - propertyquarry_public_tours:/data/public_property_tours
-      - propertyquarry_governed_public_tours:/data/governed_public_property_tours:ro
     networks:
       - propertyquarry_render_internal
     depends_on:

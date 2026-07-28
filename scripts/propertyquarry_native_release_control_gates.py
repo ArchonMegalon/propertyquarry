@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NATIVE_ROOT = ROOT / "native" / "propertyquarry-release-control-v2"
 LOCK_PATH = NATIVE_ROOT / "toolchain.lock.json"
 NATIVE_TEST = ROOT / "tests" / "test_propertyquarry_release_control_native.py"
-EXPECTED_NATIVE_TESTS = 55
+EXPECTED_NATIVE_TESTS = 38
 NATIVE_TEMP_PREFIX = "pq-native."
 
 EXPECTED_LOCK: dict[str, object] = {

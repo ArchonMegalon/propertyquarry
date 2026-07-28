@@ -338,12 +338,18 @@ def test_core_ci_gate_is_bounded_and_reports_slow_tests_without_reducing_coverag
     job = workflow["jobs"]["smoke-runtime-api"]
     assert job["timeout-minutes"] == 120
     assert [
-        step for step in job["steps"] if step.get("name") == "Run core CI gates"
+        step
+        for step in job["steps"]
+        if step.get("name") == "Run read-only authenticated core CI gates"
     ] == [
         {
-            "name": "Run core CI gates",
-            "env": {"PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION": "1"},
-            "run": "make ci-gates",
+            "name": "Run read-only authenticated core CI gates",
+            "working-directory": "/docker/property",
+            "run": (
+                "./scripts/propertyquarry_release_python.sh "
+                "scripts/propertyquarry_release_make_dispatch.py "
+                "ci-gates-authenticated"
+            ),
         }
     ]
 
@@ -401,11 +407,17 @@ def test_core_ci_gate_is_bounded_and_reports_slow_tests_without_reducing_coverag
     ] == [
         "$(MAKE) smoke-help",
         "$(MAKE) ci-local",
-        "PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION=1 $(MAKE) test-api",
+        "$(MAKE) test-api-real-chromium",
         "$(MAKE) verify-release-assets",
         "$(MAKE) verify-flagship-release-readiness",
         "$(MAKE) verify-generated-release-artifacts-clean",
     ]
+    assert (
+        "test-api-real-chromium: test-api\n"
+        "test-api-real-chromium: export "
+        "PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION := 1"
+        in makefile
+    )
 
     authenticated_body = makefile.split(
         "ci-gates-authenticated:\n", 1

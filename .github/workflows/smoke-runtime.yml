@@ -704,16 +704,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
           python -m pip install -r ea/requirements.txt -c ea/requirements.lock -c ea/requirements.ci.lock httpx==0.28.1 jsonschema==4.25.1 opencv-python-headless==4.13.0.92 pytest==9.0.3
-          python -m playwright install --with-deps chromium
       - name: Prepare canonical repository path
         run: |
           sudo mkdir -p /docker
           sudo chown "$USER":"$USER" /docker
-          ln -sfn "$GITHUB_WORKSPACE" /docker/property
-      - name: Run core CI gates
+          test ! -e /docker/property
+          install -d -m 0755 /docker/property
+          cp -a "$GITHUB_WORKSPACE/." /docker/property/
+      - name: Bootstrap hash-locked release verifier
+        working-directory: /docker/property
+        run: ./scripts/bootstrap_propertyquarry_release_python.sh
+      - name: Install Chromium in canonical release cache
         env:
-          PROPERTYQUARRY_REQUIRE_REAL_CHROMIUM_INTEGRATION: "1"
-        run: make ci-gates
+          PLAYWRIGHT_BROWSERS_PATH: /docker/property/.propertyquarry_release_tools/ms-playwright
+        run: python -m playwright install --with-deps chromium
+      - name: Reproduce canonical release receipts in disposable checkout
+        working-directory: /docker/property
+        run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py materialize-release-assets-authenticated
+      - name: Verify reproduced release receipts match HEAD
+        working-directory: /docker/property
+        run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py verify-generated-release-artifacts-clean-authenticated
+      - name: Run read-only authenticated core CI gates
+        working-directory: /docker/property
+        run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated
 
   propertyquarry-browser-contracts:
     permissions:
@@ -1843,7 +1856,7 @@ jobs:
         # replaces inherited loader/shell hooks before process creation; then
         # privileged Bash blocks functions before the gate captures the secret.
         shell: /bin/bash --noprofile --norc -p -e -u -o pipefail {0}
-        run: exec /bin/bash --noprofile --norc -p scripts/propertyquarry_live_release_gates.sh
+        run: ./scripts/propertyquarry_live_release_gates.sh
       - name: Preserve protected PropertyQuarry live release evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -2150,7 +2163,7 @@ jobs:
         # Keep that script to one privileged exec; the release gate shebang is
         # the second /bin/bash -p boundary.
         shell: /bin/bash --noprofile --norc -p -e -u -o pipefail {0}
-        run: exec ./scripts/property_release_gates.sh
+        run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates
       - name: Atomically activate the Gold overlay and issue final launch authority
         env:
           DATABASE_URL: ${{ secrets.PROPERTYQUARRY_RELEASE_DATABASE_URL }}

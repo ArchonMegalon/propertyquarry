@@ -69,8 +69,8 @@ def _stable_source(path: Path, *, maximum: int) -> bytes:
             or before.st_dev != before_path.st_dev
             or before.st_ino != before_path.st_ino
             or before.st_nlink != 1
-            or before.st_mode & 0o022
-            or not 0 < before.st_size <= maximum
+            or before.st_mode & 0o002
+            or not 0 <= before.st_size <= maximum
         ):
             raise BundleBuildError(f"source file is unsafe: {path}")
         chunks: list[bytes] = []

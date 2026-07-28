@@ -462,7 +462,11 @@ def test_launch_release_gate_requires_secret_safe_constrained_browser_inputs() -
         step
         for job in workflow["jobs"].values()
         for step in job.get("steps", [])
-        if step.get("run") == "exec ./scripts/property_release_gates.sh"
+        if step.get("run")
+        == (
+            "./scripts/propertyquarry_release_python.sh "
+            "scripts/propertyquarry_release_make_dispatch.py property-release-gates"
+        )
     ]
     assert len(release_gate_steps) == 1
     assert release_gate_steps[0]["shell"] == (
@@ -493,9 +497,12 @@ def test_secret_bearing_workflow_steps_replace_inherited_startup_hooks() -> None
         )
     )
     expected_commands = {
-        "exec /bin/bash --noprofile --norc -p "
-        "scripts/propertyquarry_live_release_gates.sh",
-        "exec ./scripts/property_release_gates.sh",
+        "./scripts/propertyquarry_live_release_gates.sh",
+        (
+            "./scripts/propertyquarry_release_python.sh "
+            "scripts/propertyquarry_release_make_dispatch.py "
+            "property-release-gates"
+        ),
     }
     gate_steps = [
         step

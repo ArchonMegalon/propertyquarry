@@ -333,7 +333,18 @@ def test_live_release_gate_captures_before_children_and_uses_stdin_only(
     trace_path = tmp_path / "child-trace.txt"
     security_receipt = tmp_path / "security.json"
     security_receipt.write_text("{}\n", encoding="utf-8")
-    python_stub = tmp_path / "python-stub"
+    runtime_root = tmp_path / "runtime-root"
+    runtime_scripts = runtime_root / "scripts"
+    runtime_scripts.mkdir(parents=True)
+    live_gate = runtime_scripts / "propertyquarry_live_release_gates.sh"
+    live_gate.write_text(
+        (ROOT / "scripts/propertyquarry_live_release_gates.sh").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    live_gate.chmod(0o700)
+    python_stub = runtime_scripts / "propertyquarry_release_python.sh"
     python_stub.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
@@ -356,7 +367,7 @@ def test_live_release_gate_captures_before_children_and_uses_stdin_only(
         encoding="utf-8",
     )
     python_stub.chmod(0o700)
-    mkdir_stub = tmp_path / "mkdir"
+    mkdir_stub = runtime_scripts / "mkdir"
     mkdir_stub.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
@@ -371,8 +382,8 @@ def test_live_release_gate_captures_before_children_and_uses_stdin_only(
     mkdir_stub.chmod(0o700)
 
     result = subprocess.run(
-        ["/bin/bash", str(ROOT / "scripts/propertyquarry_live_release_gates.sh")],
-        cwd=ROOT,
+        ["/bin/bash", str(live_gate)],
+        cwd=runtime_root,
         env=_live_release_environment(
             python_stub=python_stub,
             trace_path=trace_path,

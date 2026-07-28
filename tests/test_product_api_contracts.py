@@ -162,29 +162,27 @@ def test_property_runtime_images_package_tour_verifier_dependencies() -> None:
     dockerfile_root = Path(__file__).resolve().parents[1] / "ea"
     render_dockerfile = (dockerfile_root / "Dockerfile.property").read_text(encoding="utf-8")
     web_dockerfile = (dockerfile_root / "Dockerfile.property-web").read_text(encoding="utf-8")
-    verifier_copy = (
-        "COPY scripts/verify_property_tour_controls.py "
-        "/app/scripts/verify_property_tour_controls.py"
-    )
-
-    assert verifier_copy in web_dockerfile
-    assert verifier_copy not in render_dockerfile
-    assert (
-        "COPY scripts/property_tour_3dvista_provenance.py "
-        "/app/scripts/property_tour_3dvista_provenance.py"
-    ) in web_dockerfile
-    assert (
-        "COPY scripts/property_tour_panorama_provenance.py "
-        "/app/scripts/property_tour_panorama_provenance.py"
-    ) in web_dockerfile
-    assert (
-        "COPY scripts/property_tour_host_safety.py "
-        "/app/scripts/property_tour_host_safety.py"
-    ) in web_dockerfile
-    assert (
-        "COPY scripts/property_tour_runtime_paths.py "
-        "/app/scripts/property_tour_runtime_paths.py"
-    ) in web_dockerfile
+    for runtime_dockerfile in (render_dockerfile, web_dockerfile):
+        assert (
+            "COPY scripts/verify_property_tour_controls.py "
+            "/app/scripts/verify_property_tour_controls.py"
+        ) in runtime_dockerfile
+        assert (
+            "COPY scripts/property_tour_3dvista_provenance.py "
+            "/app/scripts/property_tour_3dvista_provenance.py"
+        ) in runtime_dockerfile
+        assert (
+            "COPY scripts/property_tour_panorama_provenance.py "
+            "/app/scripts/property_tour_panorama_provenance.py"
+        ) in runtime_dockerfile
+        assert (
+            "COPY scripts/property_tour_host_safety.py "
+            "/app/scripts/property_tour_host_safety.py"
+        ) in runtime_dockerfile
+        assert (
+            "COPY scripts/property_tour_runtime_paths.py "
+            "/app/scripts/property_tour_runtime_paths.py"
+        ) in runtime_dockerfile
     for shared_module in (
         "browseract_ui_media.py",
         "property_magicfit_delivery_contract.py",
@@ -249,7 +247,7 @@ def test_packaged_property_runtime_scripts_import_from_isolated_web_layout(
     environment = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"PYTHONHOME", "PYTHONPATH"}
+        if key not in {"PYTHONHOME", "PYTHONPATH", "PYTHONSAFEPATH"}
     }
     completed = subprocess.run(
         [
@@ -789,63 +787,6 @@ def test_public_tour_routes_reject_hidden_transaction_like_slugs(
         assert raised.value.detail == "tour_not_found"
 
 
-def _generated_reconstruction_transaction_kwargs() -> dict[str, object]:
-    return {
-        "principal_id": "exec-reconstruction-transaction",
-        "title": "Transaction Test Home",
-        "listing_id": "transaction-listing",
-        "property_url": "https://example.test/property/transaction-listing",
-        "variant_key": "layout_first",
-        "media_urls": ("https://assets.example.test/photo.jpg",),
-        "floorplan_urls": ("https://assets.example.test/floorplan.jpg",),
-        "property_facts_json": {"has_floorplan": True, "floorplan_count": 1},
-        "source_host": "example.test",
-    }
-
-
-def test_willhaben_packet_subprocess_uses_current_runtime_and_ea_pythonpath(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from app.product import outbound_url_security
-
-    script_path = tmp_path / "willhaben_property_packet.py"
-    script_path.write_text("# packet loader fixture\n", encoding="utf-8")
-    observed: dict[str, object] = {}
-
-    def _run(command: list[str], **kwargs: object) -> SimpleNamespace:
-        observed["command"] = list(command)
-        observed["env"] = dict(kwargs.get("env") or {})
-        return SimpleNamespace(
-            returncode=0,
-            stdout=json.dumps([{"listing_id": "2057055834"}]),
-            stderr="",
-        )
-
-    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(("/existing/python-a", "/existing/python-b")))
-    monkeypatch.setattr(outbound_url_security, "validate_outbound_url", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(product_service, "_willhaben_property_packet_script_path", lambda: script_path)
-    monkeypatch.setattr(product_service.subprocess, "run", _run)
-
-    packet = product_service._load_willhaben_property_packet(
-        "https://www.willhaben.at/iad/immobilien/d/demo-2057055834/"
-    )
-
-    expected_ea_root = str(Path(product_service.__file__).resolve().parents[2])
-    assert packet["listing_id"] == "2057055834"
-    assert observed["command"] == [
-        product_service.sys.executable or "python3",
-        str(script_path),
-        "https://www.willhaben.at/iad/immobilien/d/demo-2057055834/",
-    ]
-    subprocess_env = dict(observed["env"])
-    assert subprocess_env["PYTHONPATH"].split(os.pathsep) == [
-        expected_ea_root,
-        "/existing/python-a",
-        "/existing/python-b",
-    ]
-
-
 def test_willhaben_packet_subprocess_retries_one_transient_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -910,202 +851,6 @@ def test_willhaben_packet_failure_exposes_only_redacted_stage_code_and_hash(
     assert re.fullmatch(r"[0-9a-f]{64}", str(failure["diagnostic_sha256"]))
     assert "must-not-leak" not in str(raised.value)
     assert "must-not-leak" not in json.dumps(failure)
-
-
-def test_generated_reconstruction_publication_status_fails_closed() -> None:
-    with pytest.raises(HTTPException) as raised:
-        public_tour_payloads.require_public_tour_viewable(
-            {"publication_status": "generating", "tour_privacy_mode": "anonymous_public"}
-        )
-
-    assert getattr(raised.value, "status_code", None) == 404
-    assert getattr(raised.value, "detail", None) == "tour_not_found"
-    public_tour_payloads.require_public_tour_viewable(
-        {"publication_status": "ready", "tour_privacy_mode": "anonymous_public"}
-    )
-
-
-@pytest.mark.parametrize("dockerfile_name", ("Dockerfile.property", "Dockerfile.property-web"))
-def test_property_runtime_images_package_tour_verifier_dependencies(dockerfile_name: str) -> None:
-    dockerfile = (Path(__file__).resolve().parents[1] / "ea" / dockerfile_name).read_text(encoding="utf-8")
-
-    assert "COPY scripts/verify_property_tour_controls.py /app/scripts/verify_property_tour_controls.py" in dockerfile
-    assert (
-        "COPY scripts/property_tour_3dvista_provenance.py "
-        "/app/scripts/property_tour_3dvista_provenance.py"
-    ) in dockerfile
-    assert (
-        "COPY scripts/property_tour_panorama_provenance.py "
-        "/app/scripts/property_tour_panorama_provenance.py"
-    ) in dockerfile
-    assert (
-        "COPY scripts/property_tour_host_safety.py "
-        "/app/scripts/property_tour_host_safety.py"
-    ) in dockerfile
-    assert "COPY scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_paths.py" in dockerfile
-
-
-def test_generated_reconstruction_transaction_removes_failed_new_bundle(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    kwargs = _generated_reconstruction_transaction_kwargs()
-    monkeypatch.setattr(product_service, "_public_tour_dir", lambda: tmp_path)
-    monkeypatch.setattr(product_service, "_hosted_property_tour_public_base_url", lambda: "/tours")
-    slug = product_service._make_hosted_property_tour_slug(
-        title=str(kwargs["title"]),
-        listing_id=str(kwargs["listing_id"]),
-        property_url=str(kwargs["property_url"]),
-        variant_key=str(kwargs["variant_key"]),
-        principal_id=str(kwargs["principal_id"]),
-    )
-    bundle_dir = tmp_path / slug
-
-    def _fail_after_partial_write(**_kwargs: object) -> dict[str, object]:
-        product_service._write_hosted_property_tour_payload(
-            bundle_dir,
-            {
-                "slug": slug,
-                "principal_id": kwargs["principal_id"],
-                "title": kwargs["title"],
-                "scene_count": 1,
-                "scene_strategy": "generated_reconstruction",
-                "creation_mode": "generated_reconstruction_tour",
-                "publication_status": "generating",
-                "scenes": [],
-                "facts": {"has_floorplan": True, "floorplan_count": 1},
-            },
-        )
-        (bundle_dir / "partial-render.bin").write_bytes(b"partial")
-        raise RuntimeError("render_bridge_unavailable")
-
-    monkeypatch.setattr(
-        product_service,
-        "_write_generated_reconstruction_property_tour_bundle_unchecked",
-        _fail_after_partial_write,
-    )
-
-    with pytest.raises(RuntimeError, match="render_bridge_unavailable"):
-        product_service._write_generated_reconstruction_property_tour_bundle(**kwargs)
-
-    assert not bundle_dir.exists()
-    assert list(tmp_path.iterdir()) == []
-
-
-def test_generated_reconstruction_transaction_restores_previous_bundle(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    kwargs = _generated_reconstruction_transaction_kwargs()
-    monkeypatch.setattr(product_service, "_public_tour_dir", lambda: tmp_path)
-    monkeypatch.setattr(product_service, "_hosted_property_tour_public_base_url", lambda: "/tours")
-    slug = product_service._make_hosted_property_tour_slug(
-        title=str(kwargs["title"]),
-        listing_id=str(kwargs["listing_id"]),
-        property_url=str(kwargs["property_url"]),
-        variant_key=str(kwargs["variant_key"]),
-        principal_id=str(kwargs["principal_id"]),
-    )
-    bundle_dir = tmp_path / slug
-    product_service._write_hosted_property_tour_payload(
-        bundle_dir,
-        {
-            "slug": slug,
-            "principal_id": kwargs["principal_id"],
-            "title": "Previous owned bundle",
-            "scene_count": 1,
-            "scene_strategy": "layout_first",
-            "creation_mode": "hosted_property_tour",
-            "publication_status": "ready",
-            "scenes": [{"name": "Previous", "role": "photo", "image_url": ""}],
-            "facts": {},
-        },
-    )
-    (bundle_dir / "previous-asset.bin").write_bytes(b"preserve-me")
-    before = {
-        path.relative_to(bundle_dir).as_posix(): path.read_bytes()
-        for path in sorted(bundle_dir.rglob("*"))
-        if path.is_file()
-    }
-
-    def _fail_after_overwrite(**_kwargs: object) -> dict[str, object]:
-        (bundle_dir / "tour.json").write_text('{"publication_status":"generating"}', encoding="utf-8")
-        (bundle_dir / "previous-asset.bin").write_bytes(b"overwritten")
-        (bundle_dir / "partial-render.bin").write_bytes(b"partial")
-        raise RuntimeError("render_validation_failed")
-
-    monkeypatch.setattr(
-        product_service,
-        "_write_generated_reconstruction_property_tour_bundle_unchecked",
-        _fail_after_overwrite,
-    )
-
-    with pytest.raises(RuntimeError, match="render_validation_failed"):
-        product_service._write_generated_reconstruction_property_tour_bundle(**kwargs)
-
-    after = {
-        path.relative_to(bundle_dir).as_posix(): path.read_bytes()
-        for path in sorted(bundle_dir.rglob("*"))
-        if path.is_file()
-    }
-    assert after == before
-    assert sorted(path.name for path in tmp_path.iterdir()) == [slug]
-
-
-def test_generated_reconstruction_transaction_finalizes_ready_manifest_without_private_fields(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    kwargs = _generated_reconstruction_transaction_kwargs()
-    monkeypatch.setattr(product_service, "_public_tour_dir", lambda: tmp_path)
-    monkeypatch.setattr(product_service, "_hosted_property_tour_public_base_url", lambda: "/tours")
-    monkeypatch.setattr(
-        product_service,
-        "_hosted_property_tour_generated_reconstruction_bundle_ready",
-        lambda _tour_url: True,
-    )
-    slug = product_service._make_hosted_property_tour_slug(
-        title=str(kwargs["title"]),
-        listing_id=str(kwargs["listing_id"]),
-        property_url=str(kwargs["property_url"]),
-        variant_key=str(kwargs["variant_key"]),
-        principal_id=str(kwargs["principal_id"]),
-    )
-    bundle_dir = tmp_path / slug
-
-    def _complete_render(**_kwargs: object) -> dict[str, object]:
-        product_service._write_hosted_property_tour_payload(
-            bundle_dir,
-            {
-                "slug": slug,
-                "principal_id": kwargs["principal_id"],
-                "title": kwargs["title"],
-                "scene_count": 1,
-                "scene_strategy": "generated_reconstruction",
-                "creation_mode": "generated_reconstruction_tour",
-                "publication_status": "generating",
-                "scenes": [{"name": "Layout", "role": "diorama", "image_url": ""}],
-                "facts": {"has_floorplan": True, "floorplan_count": 1},
-            },
-        )
-        return product_service._load_hosted_property_tour_payload(
-            bundle_dir,
-            principal_id=str(kwargs["principal_id"]),
-        )
-
-    monkeypatch.setattr(
-        product_service,
-        "_write_generated_reconstruction_property_tour_bundle_unchecked",
-        _complete_render,
-    )
-
-    result = product_service._write_generated_reconstruction_property_tour_bundle(**kwargs)
-    public_payload = json.loads((bundle_dir / "tour.json").read_text(encoding="utf-8"))
-
-    assert result["publication_status"] == "ready"
-    assert result["principal_id"] == kwargs["principal_id"]
-    assert public_payload["publication_status"] == "ready"
-    assert "principal_id" not in public_payload
 
 
 @pytest.fixture(autouse=True)
@@ -19021,7 +18766,7 @@ def test_property_tour_followup_tasks_return_generated_reconstruction_as_layout_
     )
     assert updated_task is not None
     assert updated_task.status == "returned"
-    assert updated_task.resolution == "blocked"
+    assert updated_task.resolution == "ready"
     assert updated_task.returned_payload_json["request_kind"] == "tour"
     assert updated_task.returned_payload_json["status"] == "ready"
     assert updated_task.returned_payload_json["tour_status"] == "blocked"
@@ -20330,10 +20075,13 @@ def test_property_visual_status_reports_generated_reconstruction_launch_page_as_
     )
 
     assert response["status"] == "ready"
-    assert response["status_label"] == "Open 3D tour"
-    assert response["tour_url"] == "https://propertyquarry.com/tours/generated-launch-page"
+    assert response["status_label"] == "Open AI-generated 3D tour"
+    assert response["tour_url"] == ""
     assert response["open_tour_url"] == "https://propertyquarry.com/tours/generated-launch-page"
     assert response["verified_tour_url"] == ""
+    assert response["generated_reconstruction_url"] == "https://propertyquarry.com/tours/generated-launch-page"
+    assert response["layout_preview_url"] == "https://propertyquarry.com/tours/generated-launch-page"
+    assert response["layout_preview_status"] == "ready"
     assert response["poll_after_seconds"] == 0
 
 

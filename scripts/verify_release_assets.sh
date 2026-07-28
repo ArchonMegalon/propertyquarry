@@ -358,24 +358,25 @@ if [[ -f "${f}" ]]; then
   fi
 done
 
-if python3 scripts/verify_propertyquarry_python_wheelhouse.py \
+if "${RELEASE_PYTHON}" scripts/verify_propertyquarry_python_wheelhouse.py \
   --requirements-lock ea/requirements.lock \
   --hash-lock ea/requirements.wheelhouse.lock \
-  --wheelhouse vendor/propertyquarry-python-wheels; then
+  --wheelhouse vendor/propertyquarry-wheelhouse/cp312-linux-x86_64; then
   echo "ok: PropertyQuarry offline Python wheelhouse is exact and hash locked"
 else
   echo "missing: PropertyQuarry offline Python wheelhouse is invalid" >&2
   missing=1
 fi
 
-if python3 scripts/verify_propertyquarry_global_governance_assets.py; then
+if "${RELEASE_PYTHON}" scripts/verify_propertyquarry_global_governance_assets.py; then
   echo "ok: PropertyQuarry global-governance release assets and fail-closed semantics"
 else
   echo "missing: PropertyQuarry global-governance release assets or fail-closed semantics" >&2
   missing=1
 fi
 
-if python3 scripts/verify_design_mirror_bundle.py >/tmp/ea_design_mirror_verify.out 2>/tmp/ea_design_mirror_verify.err; then
+if "${RELEASE_PYTHON}" scripts/verify_design_mirror_bundle.py \
+  >"${DESIGN_MIRROR_STDOUT}" 2>"${DESIGN_MIRROR_STDERR}"; then
   echo "ok: bounded design mirror bundle parity"
 else
   cat "${DESIGN_MIRROR_STDOUT}"
@@ -579,18 +580,27 @@ else
   missing=1
 fi
 
-if python3 - <<'PY'
+if "${RELEASE_PYTHON}" - <<'PY'
+import json
 import subprocess
 import sys
 from pathlib import Path
 
+from scripts.verify_generated_release_artifacts_clean import _normalize
 
-def _head_bytes(path: str) -> bytes:
-    return subprocess.run(
+
+def _head_json(path: str) -> dict:
+    payload = subprocess.run(
         ["git", "show", f"HEAD:{path}"],
         check=True,
         capture_output=True,
+        text=True,
     ).stdout
+    return json.loads(payload)
+
+
+def _worktree_json(path: str) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 paths = (
@@ -600,7 +610,12 @@ paths = (
 )
 drift = []
 for path in paths:
-    assert _head_bytes(path) == Path(path).read_bytes(), path
+    if _normalize(_head_json(path)) != _normalize(_worktree_json(path)):
+        drift.append(path)
+if drift:
+    for path in drift:
+        print(f"{path}: semantic drift from HEAD", file=sys.stderr)
+    raise SystemExit(1)
 PY
 then
   echo "ok: generated release artifacts stay semantically aligned with HEAD"

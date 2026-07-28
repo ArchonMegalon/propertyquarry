@@ -41,12 +41,7 @@ def test_identity_api_does_not_receive_the_broad_render_provider_bundle() -> Non
 
     assert not api.get("env_file")
     assert not scheduler.get("env_file")
-    assert render.get("env_file") == [
-        {
-            "path": "./state/runtime/property_scene_video_shared.env",
-        "required": False,
-        }
-    ]
+    assert not render.get("env_file")
 
 
 def test_registration_and_google_identity_authority_is_api_only() -> None:

@@ -284,8 +284,7 @@ Supported controls include:
 
 Use the product-only release bundle when validating the standalone PropertyQuarry surface:
 
-- `make property-release-gates`
-- `./scripts/property_release_gates.sh`
+- `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates`
 
 This bundle includes docs links, runtime security posture, repo-isolation checks, browser contracts, and property run/catalog contracts.
 

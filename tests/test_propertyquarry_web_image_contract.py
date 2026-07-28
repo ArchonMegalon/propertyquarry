@@ -98,6 +98,6 @@ def test_compose_command_override_remains_compatible_without_entrypoint() -> Non
     assert "\nENTRYPOINT " not in dockerfile
     assert 'CMD ["python", "-m", "app.runner"]' in dockerfile
     assert (
-        'command: ["python", "-m", "app.product.property_search_schema", "migrate"]'
+        'command: ["/usr/local/bin/python", "-m", "app.product.propertyquarry_schema", "migrate"]'
         in compose
     )

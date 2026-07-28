@@ -1,4 +1,6 @@
 #!/bin/bash -p
+set -euo pipefail
+
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 IFS=$' \t\n'
 LANG=C
@@ -13,7 +15,6 @@ builtin unset \
 # generated variables are readonly, so remove only their export attributes.
 builtin export -n SHELLOPTS BASHOPTS 2>/dev/null || :
 builtin umask 077
-set -euo pipefail
 set +x
 
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -475,11 +476,10 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_authenticated_performance_s
   --write _completion/smoke/property-auth-performance-release-gate.json \
   <<<"${performance_release_probe_secret}" >/dev/null
 live_mobile_base_url="${PROPERTYQUARRY_LIVE_MOBILE_BASE_URL:-${PROPERTYQUARRY_LIVE_SMOKE_BASE_URL:-}}"
+PROPERTYQUARRY_LIVE_PROBE_SECRET="${performance_release_probe_secret}" \
 /usr/bin/env \
   -u BASH_ENV \
   -u ENV \
-  PROPERTYQUARRY_LIVE_PROBE_SECRET="${performance_release_probe_secret}" \
-  PYTHON_BIN="${PYTHON_BIN}" \
   /bin/bash --noprofile --norc -p scripts/propertyquarry_live_release_gates.sh
 unset performance_release_probe_secret
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_map_preview_flagship_gate.py \
@@ -634,83 +634,6 @@ if [[ "${gold_scope}" == "advanced_visual" ]]; then
   )
 fi
 
-PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_gold_status.py \
-  --profile launch \
-  --claim-scope "${gold_scope}" \
-  --performance-receipt _completion/smoke/property-auth-performance-release-gate.json \
-  --continuous-ux-receipt "${continuous_ux_receipt}" \
-  --accessibility-receipt _completion/smoke/property-live-accessibility-release-gate.json \
-  --failure-state-receipt "${failure_state_receipt}" \
-  --activation-to-value-receipt "${activation_to_value_receipt}" \
-  --tour-control-receipt _completion/property_tour_controls/release-gate.json \
-  --repair-canary-receipt _completion/repair/propertyquarry-repair-canary-release-gate.json \
-  --provider-matrix-receipt _completion/provider_smoke/release-gate-provider-matrix.json \
-  --live-mobile-receipt _completion/smoke/property-live-mobile-release-gate.json \
-  --public-smoke-receipt _completion/smoke/property-live-public-release-gate.json \
-  --authenticated-smoke-receipt _completion/smoke/property-live-authenticated-release-gate.json \
-  --billing-receipt _completion/brilliant_directories/BRILLIANT_DIRECTORIES_PROVIDER_VERIFICATION.generated.json \
-  --map-preview-flagship-receipt _completion/smoke/property-live-map-preview-flagship-release-gate.json \
-  --tour-provider-ownership-receipt _completion/property_tour_ownership/release-gate.json \
-  --whole-project-scope-receipt _completion/whole_project_scope/property-whole-project-scope-release-gate.json \
-  --security-posture-receipt _completion/security/property-security-posture-release-gate.json \
-  --release-hygiene-receipt _completion/release_hygiene/property-release-hygiene-release-gate.json \
-  --furniture-style-contract-receipt _completion/furniture_styles/property-furniture-style-contract-release-gate.json \
-  --bts-methodology-contract-receipt _completion/bts_methodology/property-bts-methodology-contract-release-gate.json \
-  --tour-delivery-contract-receipt _completion/tour_delivery/property-tour-delivery-contract-release-gate.json \
-  --browser-3d-gate-receipt _completion/smoke/property-live-3d-browser-gate-release-gate.json \
-  --runtime-reconstruction-receipt _completion/tours/property-runtime-reconstruction-release-gate.json \
-  --service-generated-reconstruction-receipt _completion/tours/property-service-generated-reconstruction-release-gate.json \
-  "${advanced_visual_gold_args[@]}" \
-  --slo-evidence-receipt "${slo_evidence_receipt}" \
-  --slo-metrics-snapshot "${slo_metrics_snapshot}" \
-  --slo-metrics-probe "${slo_metrics_probe_receipt}" \
-  --monitoring-runtime-receipt "${monitoring_runtime_receipt}" \
-  --prometheus-range-receipt "${prometheus_range_receipt}" \
-  --prometheus-range-response "${prometheus_range_response}" \
-  --alert-delivery-receipt "${alert_delivery_receipt}" \
-  --id-austria-receipt _completion/id_austria/ID_AUSTRIA_PROVIDER_VERIFICATION.generated.json \
-  --provider-catalog-receipt "${provider_catalog_receipt}" \
-  --evidence-overlay-receipt "${evidence_overlay_receipt}" \
-  --rybbit-evidence-receipt "${rybbit_evidence_receipt}" \
-  --require-launch-evidence \
-  --expected-release-sha "${dr_release_commit_sha}" \
-  --expected-image-digest "${dr_release_image_digest}" \
-  --expected-release-deployment-id "${expected_release_deployment_id}" \
-  --expected-release-manifest-sha256 "${expected_release_manifest_sha256}" \
-  --expected-performance-chromium-executable-path "${expected_performance_chromium_path}" \
-  --expected-performance-chromium-executable-sha256 "${expected_performance_chromium_sha256}" \
-  --expected-public-origin "${expected_public_origin}" \
-  --expected-teable-origin "${expected_teable_origin}" \
-  --expected-teable-base-id-sha256 "${expected_teable_base_id_sha256}" \
-  --expected-evidence-overlay-phase staged \
-  --expected-rybbit-origin "${expected_rybbit_origin}" \
-  --expected-rybbit-site-id-sha256 "${expected_rybbit_site_id_sha256}" \
-  --write _completion/property_gold_status/release-gate.json \
-  --fail-on-blocked
-gold_notification_principal_id="${PROPERTYQUARRY_GOLD_NOTIFICATION_PRINCIPAL_ID:-${EA_PRINCIPAL_ID:-propertyquarry-operator}}"
-gold_notification_base_url="${PROPERTYQUARRY_GOLD_NOTIFICATION_BASE_URL:-${live_mobile_base_url}}"
-gold_notification_state="${PROPERTYQUARRY_GOLD_NOTIFICATION_STATE:-_completion/propertyquarry-gold-notification-state.json}"
-gold_notification_report="_completion/property_gold_status/telegram-notify-report.json"
-gold_notification_enabled="${PROPERTYQUARRY_GOLD_NOTIFICATION_ENABLED:-0}"
-gold_notification_prefer_container_runtime="${PROPERTYQUARRY_NOTIFICATION_PREFER_CONTAINER_RUNTIME:-1}"
-case "${gold_notification_enabled,,}" in
-  1|true|yes|y|on|enabled)
-    if ! PROPERTYQUARRY_NOTIFICATION_PREFER_CONTAINER_RUNTIME="${gold_notification_prefer_container_runtime}" \
-      PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_notify_gold_status.py \
-      --receipt _completion/property_gold_status/release-gate.json \
-      --state-file "${gold_notification_state}" \
-      --principal-id "${gold_notification_principal_id}" \
-      --base-url "${gold_notification_base_url}" \
-      --write "${gold_notification_report}" >/dev/null; then
-      echo "warning: PropertyQuarry gold notification script failed." >&2
-      cat "${gold_notification_report}" >&2 2>/dev/null || true
-    fi
-    ;;
-  *)
-    mkdir -p "$(dirname "${gold_notification_report}")"
-    printf '{"status":"skipped","reason":"PROPERTYQUARRY_GOLD_NOTIFICATION_ENABLED_not_set"}\n' > "${gold_notification_report}"
-    ;;
-esac
 PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
   tests/test_property_release_protocol_contracts.py \
   tests/test_property_deploy_handoff_adversarial.py \
@@ -855,14 +778,13 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_native_release_control_gate
 # before the canonical receipt, aliases, or notification can be produced.
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_gold_status.py \
   --profile launch \
+  --claim-scope "${gold_scope}" \
   --performance-receipt _completion/smoke/property-auth-performance-release-gate.json \
   --continuous-ux-receipt "${continuous_ux_receipt}" \
   --accessibility-receipt _completion/smoke/property-live-accessibility-release-gate.json \
   --failure-state-receipt "${failure_state_receipt}" \
   --activation-to-value-receipt "${activation_to_value_receipt}" \
   --tour-control-receipt _completion/property_tour_controls/release-gate.json \
-  --export-discovery-receipt _completion/property_tour_exports/release-gate-discovery.json \
-  --import-manifest-receipt _completion/property_tour_exports/release-gate-import-manifest.json \
   --repair-canary-receipt _completion/repair/propertyquarry-repair-canary-release-gate.json \
   --provider-matrix-receipt _completion/provider_smoke/release-gate-provider-matrix.json \
   --live-mobile-receipt _completion/smoke/property-live-mobile-release-gate.json \
@@ -871,7 +793,6 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_gold_status.py \
   --billing-receipt _completion/brilliant_directories/BRILLIANT_DIRECTORIES_PROVIDER_VERIFICATION.generated.json \
   --map-preview-flagship-receipt _completion/smoke/property-live-map-preview-flagship-release-gate.json \
   --tour-provider-ownership-receipt _completion/property_tour_ownership/release-gate.json \
-  --vendor-tooling-receipt _completion/tours/property-tour-vendor-tooling-current.json \
   --whole-project-scope-receipt _completion/whole_project_scope/property-whole-project-scope-release-gate.json \
   --security-posture-receipt _completion/security/property-security-posture-release-gate.json \
   --release-hygiene-receipt _completion/release_hygiene/property-release-hygiene-release-gate.json \
@@ -881,13 +802,7 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_gold_status.py \
   --browser-3d-gate-receipt _completion/smoke/property-live-3d-browser-gate-release-gate.json \
   --runtime-reconstruction-receipt _completion/tours/property-runtime-reconstruction-release-gate.json \
   --service-generated-reconstruction-receipt _completion/tours/property-service-generated-reconstruction-release-gate.json \
-  --walkthrough-quality-receipt _completion/smoke/property-live-walkthrough-quality-release-gate.json \
-  --walkthrough-provider-proof-receipt _completion/smoke/property-live-walkthrough-provider-proof-release-gate.json \
-  --scene-video-readiness-receipt _completion/scene_video_readiness/release-gate.json \
-  --scene-video-readiness-verifier-receipt _completion/scene_video_readiness/release-gate-verifier.json \
-  --scene-video-runtime-status-receipt _completion/scene_video_readiness/runtime-status.json \
-  --scene-video-provider-refresh-packet _completion/scene_video_readiness/provider-refresh-packet.json \
-  --scene-video-provider-refresh-packet-verifier-receipt _completion/scene_video_readiness/provider-refresh-packet-verifier.json \
+  "${advanced_visual_gold_args[@]}" \
   --slo-evidence-receipt "${slo_evidence_receipt}" \
   --slo-metrics-snapshot "${slo_metrics_snapshot}" \
   --slo-metrics-probe "${slo_metrics_probe_receipt}" \
@@ -905,6 +820,10 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_gold_status.py \
   --require-launch-evidence \
   --expected-release-sha "${dr_release_commit_sha}" \
   --expected-image-digest "${dr_release_image_digest}" \
+  --expected-release-deployment-id "${expected_release_deployment_id}" \
+  --expected-release-manifest-sha256 "${expected_release_manifest_sha256}" \
+  --expected-performance-chromium-executable-path "${expected_performance_chromium_path}" \
+  --expected-performance-chromium-executable-sha256 "${expected_performance_chromium_sha256}" \
   --expected-public-origin "${expected_public_origin}" \
   --expected-teable-origin "${expected_teable_origin}" \
   --expected-teable-base-id-sha256 "${expected_teable_base_id_sha256}" \

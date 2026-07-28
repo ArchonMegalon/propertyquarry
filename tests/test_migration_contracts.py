@@ -295,14 +295,18 @@ def test_local_gate_bundles_include_flagship_readiness_and_generated_cleanliness
 
     generated_clean = _make_target_body(makefile, "verify-generated-release-artifacts-clean")
     assert "scripts/verify_generated_release_artifacts_clean.py" in generated_clean
-    assert "--materialize-in-sandbox" in generated_clean
+    assert "--materialize-in-sandbox" not in generated_clean
     assert "materialize-release-assets" not in generated_clean
     assert "git diff --exit-code -- .codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json" not in generated_clean
 
     for target in ("verify-release-assets", "verify-flagship-release-readiness", "test-api"):
         assert "materialize-release-assets" not in _make_target_body(makefile, target)
 
-    assert "make ci-gates" in workflow
+    assert (
+        "./scripts/propertyquarry_release_python.sh "
+        "scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated"
+        in workflow
+    )
     assert "flagship release-readiness verification" in readme
     assert "generated release artifact cleanliness" in readme
     assert "flagship release readiness" in runbook

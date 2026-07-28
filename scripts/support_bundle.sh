@@ -66,6 +66,7 @@ select_operator_python() {
 
   for candidate in \
     "${EA_ROOT}/.venv/bin/python" \
+    "${EA_ROOT}/.propertyquarry_release_tools/release-venv/bin/python" \
     "${EA_ROOT}/scripts/propertyquarry_release_python.sh" \
     python3
   do

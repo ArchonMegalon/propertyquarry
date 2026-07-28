@@ -98,13 +98,26 @@ def test_direct_glb_writer_is_deterministic_and_has_no_blender_dependency(
 
     assert first_payload == second_payload
     assert first_result == second_result
-    assert set(first_result) == {"status", "glb_relpath", "glb_sha256", "glb_size_bytes"}
-    assert first_result == {
-        "status": "generated",
-        "glb_relpath": "model.glb",
-        "glb_sha256": hashlib.sha256(first_payload).hexdigest(),
-        "glb_size_bytes": len(first_payload),
+    assert set(first_result) == {
+        "status",
+        "exporter",
+        "glb_relpath",
+        "glb_sha256",
+        "glb_size_bytes",
+        "material_count",
+        "source_obj_sha256",
+        "triangle_count",
+        "vertex_count",
     }
+    assert first_result["status"] == "generated"
+    assert first_result["exporter"] == reconstruction.GLB_EXPORTER_VERSION
+    assert first_result["glb_relpath"] == "model.glb"
+    assert first_result["glb_sha256"] == hashlib.sha256(first_payload).hexdigest()
+    assert first_result["glb_size_bytes"] == len(first_payload)
+    assert first_result["material_count"] == 2
+    assert first_result["source_obj_sha256"] == hashlib.sha256(obj_before).hexdigest()
+    assert int(first_result["triangle_count"]) > 0
+    assert int(first_result["vertex_count"]) > 0
     assert (first_dir / "model.obj").read_bytes() == obj_before
     assert (first_dir / "model.mtl").read_bytes() == mtl_before
 

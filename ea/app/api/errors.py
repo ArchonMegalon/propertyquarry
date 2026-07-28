@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 import html
 import logging
 import re
@@ -16,11 +17,17 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.logging_utils import exception_log_fields, log_event
 from app.observability import (
+    RuntimeTraceContext,
     bind_runtime_trace_context,
     get_runtime_metrics,
-    new_server_trace_context,
     route_template,
     runtime_build_identity,
+)
+from app.telemetry import (
+    TraceContextError,
+    format_traceparent,
+    parse_traceparent,
+    start_span,
 )
 
 try:
@@ -360,20 +367,55 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
         request.state.correlation_id = _request_correlation_id(request)
-        trace_context = new_server_trace_context(request.headers.get("traceparent"))
-        request.state.trace_id = trace_context.trace_id
-        request.state.span_id = trace_context.span_id
-        request.state.parent_span_id = trace_context.parent_span_id
-        request.state.trace_flags = trace_context.trace_flags
-        request.state.traceparent = trace_context.traceparent
-        build_identity = runtime_build_identity()
-        started_at = time.perf_counter()
-        response = None
-        status_code = 500
-        with bind_runtime_trace_context(
-            trace_context,
-            correlation_id=_correlation_id(request),
-        ):
+        incoming_traceparent = str(
+            request.headers.get("traceparent") or ""
+        ).strip()
+        try:
+            telemetry_parent = (
+                parse_traceparent(incoming_traceparent)
+                if incoming_traceparent
+                else None
+            )
+        except TraceContextError:
+            telemetry_parent = None
+        request.state.traceparent_rejected = bool(
+            incoming_traceparent
+        ) and telemetry_parent is None
+        with ExitStack() as observability_stack:
+            telemetry_context = observability_stack.enter_context(
+                start_span(
+                    "customer_api",
+                    parent=telemetry_parent,
+                    correlation_id=_correlation_id(request),
+                )
+            )
+            request.state.telemetry_context = telemetry_context
+            trace_context = RuntimeTraceContext(
+                trace_id=telemetry_context.trace_id,
+                span_id=telemetry_context.span_id,
+                parent_span_id=telemetry_context.parent_span_id,
+                trace_flags=telemetry_context.trace_flags,
+                source=(
+                    "incoming"
+                    if telemetry_parent is not None
+                    else "generated"
+                ),
+            )
+            observability_stack.enter_context(
+                bind_runtime_trace_context(
+                    trace_context,
+                    correlation_id=_correlation_id(request),
+                )
+            )
+            request.state.trace_id = trace_context.trace_id
+            request.state.span_id = trace_context.span_id
+            request.state.parent_span_id = trace_context.parent_span_id
+            request.state.trace_flags = trace_context.trace_flags
+            request.state.traceparent = trace_context.traceparent
+            build_identity = runtime_build_identity()
+            started_at = time.perf_counter()
+            response = None
+            status_code = 500
             try:
                 if _propertyquarry_raw_api_docs_request(request):
                     response = _error_payload(

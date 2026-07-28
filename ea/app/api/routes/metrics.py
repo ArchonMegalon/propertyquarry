@@ -29,26 +29,66 @@ async def runtime_metrics(
     request: Request,
     container: AppContainer = Depends(get_container),
 ) -> PlainTextResponse:
-    ready, _reason = container.readiness.check()
-    admission_backend = getattr(request.app.state, "admission_backend", None)
-    backend_name = str(
-        getattr(admission_backend, "backend_name", "unknown") or "unknown"
+    ready, _reason = await asyncio.to_thread(container.readiness.check)
+    effective_ready = bool(ready)
+    registry = get_runtime_metrics(request.app)
+    admission_store = getattr(
+        request.app.state,
+        "ingress_admission_store",
+        None,
     )
-    capacity_rows: tuple[tuple[str, int, int], ...] = ()
-    capacity_valid = False
-    capacity_snapshot = getattr(admission_backend, "capacity_snapshot", None)
-    if callable(capacity_snapshot):
+    if admission_store is not None:
+        inferred_backend = (
+            AdmissionBackend.POSTGRES
+            if isinstance(admission_store, PostgresIngressAdmissionStore)
+            else AdmissionBackend.MEMORY
+        )
         try:
-            capacity_rows = tuple(await asyncio.to_thread(capacity_snapshot))
-            capacity_valid = backend_name == "postgres" and len(capacity_rows) == 2
+            snapshot = await asyncio.to_thread(admission_store.capacity_snapshot)
+        except IngressAdmissionError as exc:
+            effective_ready = False
+            registry.record_ingress_admission_operation(
+                backend=exc.backend.value,
+                operation=exc.operation.value,
+                outcome=exc.outcome.value,
+            )
+            registry.record_ingress_admission_capacity(
+                backend=exc.backend.value,
+                contract_valid=False,
+                rows={},
+            )
         except Exception:
-            capacity_rows = ()
-    payload = get_runtime_metrics(request.app).render_prometheus(
-        readiness_ready=bool(ready),
-        admission_backend=backend_name,
-        admission_capacity_rows=capacity_rows,
-        admission_capacity_valid=capacity_valid,
-    )
+            effective_ready = False
+            registry.record_ingress_admission_operation(
+                backend=inferred_backend.value,
+                operation=AdmissionOperation.SNAPSHOT.value,
+                outcome=AdmissionOutcome.BACKEND_UNAVAILABLE.value,
+            )
+            registry.record_ingress_admission_capacity(
+                backend=inferred_backend.value,
+                contract_valid=False,
+                rows={},
+            )
+        else:
+            effective_ready = effective_ready and snapshot.contract_valid
+            registry.record_ingress_admission_operation(
+                backend=snapshot.backend.value,
+                operation=AdmissionOperation.SNAPSHOT.value,
+                outcome=(
+                    AdmissionOutcome.ALLOWED.value
+                    if snapshot.contract_valid
+                    else AdmissionOutcome.BACKEND_UNAVAILABLE.value
+                ),
+            )
+            registry.record_ingress_admission_capacity(
+                backend=snapshot.backend.value,
+                contract_valid=snapshot.contract_valid,
+                rows={
+                    row.capacity_key.value: (row.row_count, row.hard_limit)
+                    for row in snapshot.rows
+                },
+            )
+    payload = registry.render_prometheus(readiness_ready=effective_ready)
     return PlainTextResponse(
         payload,
         media_type="text/plain; version=0.0.4",

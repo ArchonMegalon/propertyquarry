@@ -1,6 +1,7 @@
 {
   "schema_version": "propertyquarry.flagship-operations.v1",
   "service": "propertyquarry",
+  "source_contract_status": "defined_not_live_evidence",
   "dashboard_id": "propertyquarry-global-flagship",
   "title": "PropertyQuarry Global Flagship Operations",
   "editable": false,
@@ -199,9 +200,10 @@
           "durable_search_worker",
           "provider_or_render_boundary"
         ],
-        "same_trace_id_required": true,
-        "distinct_nonzero_span_ids_required": true,
-        "release_attributes_required": true
+      "same_trace_id_required": true,
+      "distinct_nonzero_span_ids_required": true,
+      "release_attributes_required": true,
+      "parent_chain_required": true
       },
       "runbook": "docs/PROPERTYQUARRY_OBSERVABILITY_OPERATIONS.md#trace-continuity"
     }

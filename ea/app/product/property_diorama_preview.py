@@ -756,9 +756,9 @@ def render_bright_apartment_diorama(
     overlay = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay, "RGBA")
     badge_box = (
-        int(width * 0.045),
+        int(width * 0.09),
         int(height * 0.055),
-        int(width * 0.33),
+        int(width * 0.375),
         int(height * 0.135),
     )
     overlay_draw.rounded_rectangle(
