@@ -182,12 +182,13 @@ def _runtime_walkthrough_ikea_viewer_manifest() -> dict[str, object]:
         },
     }
     route_specs = (
-        ("living kitchen", "kitchen", (0.917, 1.375, 0.809), (0.197, 1.595, 1.389)),
+        ("staircase", "stairs", (-0.697, 1.375, 0.515), (0.023, 1.595, 1.095)),
+        ("living kitchen", "kitchen", (4.143, 1.375, -2.501), (3.423, 1.595, -1.581)),
         ("living room", "living", (-4.143, 1.375, -2.501), (-3.423, 1.595, -1.581)),
-        ("bedroom", "bedroom", (4.143, 1.375, -2.501), (3.423, 1.595, -1.581)),
+        ("bedroom", "bedroom", (4.143, 1.375, 2.501), (3.423, 1.595, 2.633)),
         ("bedroom 2", "bedroom", (-4.143, 1.375, 2.501), (-3.423, 1.595, 2.633)),
-        ("bedroom 3", "bedroom", (-0.037, 1.375, -1.839), (0.683, 1.595, -0.919)),
-        ("balcony/terrace", "outdoor", (-3.043, 1.375, 0.0), (-2.323, 1.595, 0.92)),
+        ("bedroom 3", "bedroom", (-0.037, 1.375, -2.060), (0.683, 1.595, -1.140)),
+        ("balcony/terrace", "outdoor", (3.337, 1.375, 0.0), (2.617, 1.595, 0.920)),
     )
     route = [
         {
@@ -295,7 +296,7 @@ def test_style_scene_evidence_fails_closed_on_tamper(tamper: str) -> None:
     assert styles.validate_style_scene(changed, expected_style=selected)[0] is False
 
 
-def test_style_aware_cache_rejects_v5_and_a_different_requested_style() -> None:
+def test_style_aware_cache_rejects_v6_and_a_different_requested_style() -> None:
     urban = styles.reconstruction_style("urban_jungle", style_id="urban_jungle")
     warm = styles.reconstruction_style("warm_scandi", style_id="warm_scandi")
     generated = {
@@ -313,7 +314,7 @@ def test_style_aware_cache_rejects_v5_and_a_different_requested_style() -> None:
         generated,
         requested_style=warm,
     )
-    generated["viewer_version"] = "propertyquarry_3d_tour_viewer_v5"
+    generated["viewer_version"] = "propertyquarry_3d_tour_viewer_v6"
     assert not product_service._property_reconstruction_style_cache_matches(
         generated,
         requested_style=urban,

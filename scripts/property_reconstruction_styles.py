@@ -15,7 +15,7 @@ from typing import Mapping
 
 
 STYLE_SCENE_CONTRACT_VERSION = "propertyquarry_generated_style_scene_v1"
-GENERATED_RECONSTRUCTION_VIEWER_VERSION = "propertyquarry_3d_tour_viewer_v6"
+GENERATED_RECONSTRUCTION_VIEWER_VERSION = "propertyquarry_3d_tour_viewer_v7"
 FLOORPLAN_DISPLAY_MODE = "reference_toggle_default_off"
 
 _STYLE_ROWS: tuple[dict[str, object], ...] = (
@@ -68,7 +68,7 @@ _STYLE_ROWS: tuple[dict[str, object], ...] = (
         "required_cues": ("modular_storage", "bright_storage", "simple_lines", "rental_friendly"),
         "decor": (
             ("modular-storage", "shelf", "modular_storage", "stone", (-1.08, 0.62, -0.20), (0.72, 1.24, 0.32)),
-            ("blue-cabinet", "box", "bright_storage", "accent", (0.98, 0.36, -0.66), (0.72, 0.72, 0.36)),
+            ("blue-cabinet", "box", "bright_storage", "accent", (0.50, 0.36, -0.20), (0.72, 0.72, 0.36)),
             ("yellow-stool", "cylinder", "simple_lines", "metal", (-1.28, 0.24, 0.80), (0.34, 0.48, 0.34)),
             ("rental-table", "table", "rental_friendly", "timber", (0.88, 0.31, 0.80), (0.82, 0.62, 0.52)),
         ),
