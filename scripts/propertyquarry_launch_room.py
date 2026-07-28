@@ -221,11 +221,19 @@ def build_launch_room(root: Path = ROOT) -> dict[str, object]:
             "network_freshness_proven": False,
         },
         "next_action": (
-            "Commit and reseal the canonical candidate, then dispatch "
-            "smoke-runtime on ArchonMegalon/propertyquarry main with the "
-            "one-time release/security runner labels and release-runner ticket; "
-            "preserve ordinary-CI, bootstrap-attestation, image, live, rollback, "
-            "and DR receipts."
+            (
+                "Commit and reseal the canonical candidate, then dispatch "
+                "smoke-runtime on ArchonMegalon/propertyquarry main"
+            )
+            if dirty
+            else (
+                "Dispatch smoke-runtime on ArchonMegalon/propertyquarry main"
+            )
+        )
+        + (
+            " with the one-time release/security runner labels and "
+            "release-runner ticket; preserve ordinary-CI, "
+            "bootstrap-attestation, image, live, rollback, and DR receipts."
         ),
         "production_launch_ready": False,
     }
