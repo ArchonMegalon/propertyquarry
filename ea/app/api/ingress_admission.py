@@ -1065,13 +1065,29 @@ class PostgresIngressAdmissionStore:
         lock: bool,
         operation: AdmissionOperation,
     ) -> CapacityRow:
-        lock_clause = " FOR UPDATE" if lock else ""
+        if lock:
+            # The ingress runtime has read-only authority over the counter
+            # table.  Serialize prospective inserts with a deterministic
+            # transaction-scoped advisory lock instead of requiring UPDATE
+            # authority solely for SELECT ... FOR UPDATE.  Every insertion
+            # path takes quota before lease, and the owner-only triggers remain
+            # the final hard-limit enforcement boundary.
+            cursor.execute(
+                """
+                SELECT pg_advisory_xact_lock(hashtextextended(%s, %s))
+                """,
+                (
+                    "propertyquarry:ingress-admission:v1:"
+                    f"capacity:{capacity_key.value}",
+                    _ADVISORY_LOCK_SEED,
+                ),
+            )
         cursor.execute(
-            (
-                "SELECT row_count, hard_limit, contract_version "
-                "FROM propertyquarry_ingress_admission_capacity "
-                "WHERE capacity_key = %s" + lock_clause
-            ),
+            """
+            SELECT row_count, hard_limit, contract_version
+            FROM propertyquarry_ingress_admission_capacity
+            WHERE capacity_key = %s
+            """,
             (capacity_key.value,),
         )
         row = cursor.fetchone()

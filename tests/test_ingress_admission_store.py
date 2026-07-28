@@ -17,6 +17,7 @@ from app.api.ingress_admission import (
     AdmissionResult,
     IngressAdmissionContractError,
     IngressAdmissionStore,
+    INGRESS_ADMISSION_QUOTA_HARD_LIMIT,
     InMemoryIngressAdmissionStore,
     LeaseScope,
     PostgresIngressAdmissionStore,
@@ -455,6 +456,34 @@ def test_postgres_cleanup_is_cadenced_instead_of_per_admission() -> None:
     clock.advance(1)
     store._cleanup_if_due()
     assert store.cleanup_transactions == 2
+
+
+def test_capacity_lock_uses_advisory_authority_not_table_update_authority() -> (
+    None
+):
+    class _Cursor:
+        def __init__(self) -> None:
+            self.executed: list[tuple[str, object | None]] = []
+
+        def execute(self, sql: str, params: object | None = None) -> None:
+            self.executed.append((sql, params))
+
+        def fetchone(self) -> tuple[int, int, int]:
+            return (0, INGRESS_ADMISSION_QUOTA_HARD_LIMIT, 1)
+
+    cursor = _Cursor()
+    row = PostgresIngressAdmissionStore._capacity_row(
+        cursor,
+        AdmissionCapacityKey.QUOTA,
+        lock=True,
+        operation=AdmissionOperation.ADMIT,
+    )
+
+    assert row.capacity_key is AdmissionCapacityKey.QUOTA
+    rendered = "\n".join(sql for sql, _params in cursor.executed)
+    assert "pg_advisory_xact_lock" in rendered
+    assert "capacity:quota" in str(cursor.executed[0][1])
+    assert "FOR UPDATE" not in rendered
 
 
 def _postgres_url() -> str:
