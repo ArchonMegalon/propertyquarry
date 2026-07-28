@@ -131,6 +131,56 @@ def test_runtime_reconstruction_smoke_script_imports_with_ea_pythonpath() -> Non
     assert "--fail-on-error" in result.stdout
 
 
+def test_hosted_tour_slug_matches_governed_lifecycle_boundary() -> None:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = ".:ea"
+    probe = """
+import json
+from app.product.property_tour_hosting import (
+    GovernedPropertyTourContractError,
+    GovernedPropertyTourLifecycleStore,
+    _hosted_property_tour_slug,
+)
+
+identity = {
+    "listing_id": "listing-42",
+    "property_url": "https://example.test/listing/42",
+    "variant_key": "layout_first",
+}
+short_slug = _hosted_property_tour_slug(title="Vienna home", **identity)
+long_slug = _hosted_property_tour_slug(title="Luxury residence " * 40, **identity)
+rejection = ""
+try:
+    GovernedPropertyTourLifecycleStore._slug(long_slug + "x")
+except GovernedPropertyTourContractError as exc:
+    rejection = str(exc)
+print(json.dumps({
+    "long_slug": long_slug,
+    "normalized": GovernedPropertyTourLifecycleStore._slug(long_slug),
+    "rejection": rejection,
+    "short_slug": short_slug,
+}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert len(payload["long_slug"]) == 120
+    assert payload["normalized"] == payload["long_slug"]
+    assert payload["rejection"] == "governed_tour_slug_invalid"
+    assert payload["short_slug"].startswith("vienna-home-layout-first-")
+    assert payload["long_slug"].endswith(
+        payload["short_slug"].removeprefix("vienna-home")
+    )
+
+
 def test_layout_viewer_wait_polls_snapshots_without_route_index_requirement(monkeypatch) -> None:
     waits: list[int] = []
 

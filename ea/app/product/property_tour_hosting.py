@@ -91,7 +91,10 @@ _KRPANO_PANORAMA_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 _KRPANO_FORBIDDEN_SCENE_STRATEGIES = {"generated_listing_summary", "photo_gallery_hosted", "floorplan_hosted", "pure_360_cube"}
 _KRPANO_FORBIDDEN_CREATION_MODES = {"hosted_listing_fallback", "hosted_photo_gallery_tour"}
 _CUSTOMER_FACING_TOUR_PROVIDERS = ("3dvista",)
-_PROPERTY_PUBLIC_TOUR_SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_HOSTED_PROPERTY_TOUR_SLUG_MAX_LENGTH = 120
+_PROPERTY_PUBLIC_TOUR_SLUG_RE = re.compile(
+    rf"[A-Za-z0-9][A-Za-z0-9._-]{{0,{_HOSTED_PROPERTY_TOUR_SLUG_MAX_LENGTH - 1}}}"
+)
 _PROPERTY_GENERATED_RECONSTRUCTION_VIEWER_VERSION = GENERATED_RECONSTRUCTION_VIEWER_VERSION
 _AI_PANORAMA_CANONICAL_DISCLOSURE = (
     "AI-reconstructed from listing photos; not a captured 360 or measured survey."
@@ -3780,10 +3783,10 @@ def _hosted_property_tour_slug(
         "-",
         str(variant_key or "layout_first").lower(),
     ).strip("-") or "layout-first"
-    # The public route and governed render bridge both cap slugs at 128
-    # characters.  Keep the full normalized variant in the identity digest,
-    # but bound its human-readable segment and shrink only long title segments
-    # so existing short slugs remain stable.
+    # The public route, governed render bridge, and lifecycle store share the
+    # same 120-character slug contract. Keep the full normalized variant in
+    # the identity digest, but shrink only long title segments so existing
+    # short slugs remain stable.
     variant = normalized_variant[:32].strip("-") or "layout-first"
     normalized_principal = str(principal_id or "").strip()
     identity_material = (
@@ -3799,7 +3802,7 @@ def _hosted_property_tour_slug(
         # Legacy slugs remain computable for exact-owner migration-safe reuse.
         digest = hashlib.sha256(identity_material).hexdigest()[:10]
     suffix = f"-{variant}-{digest}"
-    base_limit = min(96, 128 - len(suffix))
+    base_limit = min(96, _HOSTED_PROPERTY_TOUR_SLUG_MAX_LENGTH - len(suffix))
     bounded_base = base[:base_limit].strip("-") or "property-tour"[:base_limit]
     slug = f"{bounded_base}{suffix}"
     _assert_governed_property_tour_slug_not_reserved(slug)
@@ -5350,7 +5353,10 @@ class GovernedPropertyTourLifecycleStore:
     @staticmethod
     def _slug(value: object) -> str:
         normalized = str(value or "").strip()
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}", normalized):
+        if not re.fullmatch(
+            rf"[A-Za-z0-9][A-Za-z0-9._-]{{0,{_HOSTED_PROPERTY_TOUR_SLUG_MAX_LENGTH - 1}}}",
+            normalized,
+        ):
             raise GovernedPropertyTourContractError("governed_tour_slug_invalid")
         return normalized
 
