@@ -4,6 +4,7 @@ import json
 import stat
 from pathlib import Path
 
+from app.api.routes.public_tour_payloads import build_public_tour_manifest
 from scripts import propertyquarry_public_tour_volume_privacy as privacy
 from scripts.propertyquarry_public_tour_volume_privacy import audit_or_repair
 
@@ -162,3 +163,100 @@ def test_public_projection_converges_before_repair_write(
 
     assert result == {"slug": "served-tour", "scenes": []}
     assert len(calls) == 3
+
+
+def test_repair_preserves_governed_generated_viewer_contract(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "public"
+    backup = tmp_path / "backup"
+    bundle = root / "generated-tour"
+    generated = bundle / "generated-reconstruction"
+    generated.mkdir(parents=True)
+    (generated / "viewer.html").write_text("<main>viewer</main>", encoding="utf-8")
+    (generated / "walkthrough.mp4").write_bytes(b"walkthrough")
+    (generated / "floorplan.jpg").write_bytes(b"floorplan")
+    (generated / "photo-01.jpg").write_bytes(b"photo")
+    (generated / "reconstruction.json").write_text("{}", encoding="utf-8")
+    (generated / "walkthrough.quality.json").write_text("{}", encoding="utf-8")
+    (bundle / "tour.json").write_text(
+        json.dumps(
+            {
+                "slug": "generated-tour",
+                "publication_status": "ready",
+                "video_relpath": "generated-reconstruction/walkthrough.mp4",
+                "video_sidecar_relpath": (
+                    "generated-reconstruction/walkthrough.quality.json"
+                ),
+                "video_provider": "propertyquarry_generated_reconstruction",
+                "video_provider_key": "propertyquarry_generated_reconstruction",
+                "video_coverage_proof": "boundary_verified_frame_continuation",
+                "generated_reconstruction": {
+                    "provider": "propertyquarry_generated_reconstruction",
+                    "viewer_version": "propertyquarry_3d_tour_viewer_v7",
+                    "viewer_relpath": "generated-reconstruction/viewer.html",
+                    "manifest_relpath": (
+                        "generated-reconstruction/reconstruction.json"
+                    ),
+                    "verified_provider_capture": False,
+                    "satisfies_verified_tour_gate": False,
+                    "floorplan_relpath": "generated-reconstruction/floorplan.jpg",
+                    "photo_relpaths": [
+                        "generated-reconstruction/photo-01.jpg",
+                    ],
+                    "walkthrough_video_relpath": (
+                        "generated-reconstruction/walkthrough.mp4"
+                    ),
+                    "walkthrough_sidecar_relpath": (
+                        "generated-reconstruction/walkthrough.quality.json"
+                    ),
+                    "route_labels": ["Living room"],
+                    "walkthrough_route_labels": ["Living room"],
+                    "walkable_scene": {
+                        "kind": "generated_reconstruction_layout",
+                        "recipient_email": "private@example.invalid",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    receipt = audit_or_repair(root, apply=True, backup_root=backup)
+
+    assert receipt["status"] == "pass"
+    public = json.loads((bundle / "tour.json").read_text(encoding="utf-8"))
+    reconstruction = public["generated_reconstruction"]
+    assert reconstruction["viewer_relpath"] == (
+        "generated-reconstruction/viewer.html"
+    )
+    assert reconstruction["manifest_relpath"] == (
+        "generated-reconstruction/reconstruction.json"
+    )
+    assert reconstruction["walkthrough_sidecar_relpath"] == (
+        "generated-reconstruction/walkthrough.quality.json"
+    )
+    assert "recipient_email" not in reconstruction["walkable_scene"]
+    assert {
+        row["path"] for row in public["public_assets"]
+    } >= {
+        "generated-reconstruction/viewer.html",
+        "generated-reconstruction/walkthrough.mp4",
+        "generated-reconstruction/floorplan.jpg",
+        "generated-reconstruction/photo-01.jpg",
+    }
+
+    public_api_payload = build_public_tour_manifest(
+        public,
+        url_allowed=lambda _url: False,
+        bundle_dir_resolver=lambda slug: (
+            bundle if slug == "generated-tour" else None
+        ),
+    ).as_dict()
+    public_api_reconstruction = public_api_payload["generated_reconstruction"]
+    assert public_api_reconstruction["viewer_url"].endswith(
+        "/generated-reconstruction/viewer.html"
+    )
+    assert "manifest_relpath" not in public_api_reconstruction
+    assert "walkthrough_sidecar_relpath" not in public_api_reconstruction
+    assert audit_or_repair(root)["status"] == "pass"

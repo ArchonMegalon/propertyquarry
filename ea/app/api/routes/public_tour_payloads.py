@@ -436,6 +436,7 @@ _PUBLIC_TOUR_PUBLIC_ASSESSMENT_KEYS = frozenset(
 )
 _PUBLIC_TOUR_TOP_LEVEL_KEYS = frozenset(
     {
+        "covered_route_labels",
         "slug",
         "title",
         "tour_title",
@@ -458,12 +459,80 @@ _PUBLIC_TOUR_TOP_LEVEL_KEYS = frozenset(
         "scenes",
         "video_relpath",
         "video_mobile_relpath",
+        "video_sidecar_relpath",
+        "video_source",
+        "video_provider",
+        "video_provider_key",
+        "video_render_provider",
+        "video_coverage_proof",
+        "room_visit_plan",
+        "generated_reconstruction",
         "walkable_scene",
         "pano2vr_entry_relpath",
         "pano2vr_export_entry_relpath",
         "pano2vr_export_root_relpath",
         "tour_privacy_mode",
         "privacy_mode",
+    }
+)
+_PUBLIC_TOUR_GENERATED_RECONSTRUCTION_KEYS = frozenset(
+    {
+        "provider",
+        "generated_at",
+        "viewer_version",
+        "viewer_relpath",
+        "model_relpath",
+        "material_relpath",
+        "manifest_relpath",
+        "glb_export_status",
+        "verified_provider_capture",
+        "satisfies_verified_tour_gate",
+        "disclosure",
+        "style_contract_version",
+        "style_id",
+        "style_label",
+        "style_signature",
+        "style_scene_signature",
+        "style_evidence_status",
+        "styled_scene_instance_count",
+        "style_cue_kinds",
+        "floorplan_display_mode",
+        "route_labels",
+        "room_stop_count",
+        "walkthrough_route_labels",
+        "walkthrough_stop_count",
+        "photo_reference_panel_count",
+        "walkable_scene",
+        "walkable_scene_kind",
+        "floorplan_relpath",
+        "photo_relpaths",
+        "glb_model_relpath",
+        "diorama_preview_bundle_relpath",
+        "telegram_preview_bundle_relpath",
+        "walkthrough_video_relpath",
+        "walkthrough_style_label",
+        "walkthrough_composition",
+        "walkthrough_motion_style",
+        "walkthrough_sidecar_relpath",
+        "walkthrough_coverage_proof",
+    }
+)
+_PUBLIC_TOUR_GENERATED_RECONSTRUCTION_PUBLIC_ASSET_KEYS = frozenset(
+    {
+        "viewer_relpath",
+        "model_relpath",
+        "material_relpath",
+        "floorplan_relpath",
+        "glb_model_relpath",
+        "diorama_preview_bundle_relpath",
+        "telegram_preview_bundle_relpath",
+        "walkthrough_video_relpath",
+    }
+)
+_PUBLIC_TOUR_GENERATED_RECONSTRUCTION_INTERNAL_ASSET_KEYS = frozenset(
+    {
+        "manifest_relpath",
+        "walkthrough_sidecar_relpath",
     }
 )
 _PUBLIC_TOUR_SCENE_KEYS = frozenset(
@@ -1375,6 +1444,74 @@ def redact_public_tour_value(value: object) -> object:
     return value
 
 
+def redacted_public_tour_generated_reconstruction(
+    payload: dict[str, object],
+    *,
+    expose_asset_relpaths: bool,
+) -> dict[str, object]:
+    source = payload.get("generated_reconstruction")
+    if not isinstance(source, dict):
+        return {}
+    if (
+        str(source.get("provider") or "").strip().lower()
+        != "propertyquarry_generated_reconstruction"
+        or source.get("verified_provider_capture") is not False
+        or source.get("satisfies_verified_tour_gate") is not False
+    ):
+        return {}
+
+    allowed_assets = public_tour_allowed_asset_paths(payload)
+    rendered: dict[str, object] = {}
+    for key in _PUBLIC_TOUR_GENERATED_RECONSTRUCTION_KEYS:
+        if key not in source or public_tour_key_is_private(key):
+            continue
+        if key in _PUBLIC_TOUR_GENERATED_RECONSTRUCTION_PUBLIC_ASSET_KEYS:
+            relpath = public_tour_safe_asset_relpath(source.get(key))
+            if not relpath or relpath not in allowed_assets:
+                continue
+            if expose_asset_relpaths:
+                rendered[key] = relpath
+            else:
+                rendered[key.replace("_relpath", "_url")] = public_tour_file_url(
+                    str(payload.get("slug") or "").strip(),
+                    relpath,
+                )
+            continue
+        if key in _PUBLIC_TOUR_GENERATED_RECONSTRUCTION_INTERNAL_ASSET_KEYS:
+            if not expose_asset_relpaths:
+                continue
+            relpath = public_tour_safe_asset_relpath(source.get(key))
+            if (
+                relpath
+                and relpath.startswith(_PUBLIC_TOUR_GENERATED_RECONSTRUCTION_PREFIX)
+                and PurePosixPath(relpath).suffix.lower() == ".json"
+            ):
+                rendered[key] = relpath
+            continue
+        if key == "photo_relpaths":
+            photo_relpaths = [
+                relpath
+                for relpath in (
+                    public_tour_safe_asset_relpath(value)
+                    for value in list(source.get(key) or [])
+                )
+                if relpath and relpath in allowed_assets
+            ][:64]
+            if expose_asset_relpaths:
+                rendered[key] = photo_relpaths
+            else:
+                rendered["photo_urls"] = [
+                    public_tour_file_url(
+                        str(payload.get("slug") or "").strip(),
+                        relpath,
+                    )
+                    for relpath in photo_relpaths
+                ]
+            continue
+        rendered[key] = redact_public_tour_value(source.get(key))
+    return rendered
+
+
 def public_tour_anonymous_uniqueness_risk(
     payload: dict[str, object],
     facts: dict[str, object],
@@ -1889,6 +2026,14 @@ def redacted_public_tour_payload(
             if rendered_walkable_scene:
                 rendered[key] = rendered_walkable_scene
             continue
+        if key == "generated_reconstruction":
+            generated_reconstruction = redacted_public_tour_generated_reconstruction(
+                payload,
+                expose_asset_relpaths=expose_asset_relpaths,
+            )
+            if generated_reconstruction:
+                rendered[key] = generated_reconstruction
+            continue
         if key in {"video_relpath", "video_mobile_relpath"}:
             relpath = public_tour_safe_asset_relpath(payload.get(key))
             if not relpath or relpath not in public_tour_allowed_asset_paths(payload):
@@ -1897,6 +2042,17 @@ def redacted_public_tour_payload(
                 rendered[key] = relpath
             else:
                 rendered[key.replace("_relpath", "_url")] = public_tour_file_url(slug, relpath)
+            continue
+        if key == "video_sidecar_relpath":
+            if not expose_asset_relpaths:
+                continue
+            relpath = public_tour_safe_asset_relpath(payload.get(key))
+            if (
+                relpath
+                and relpath.startswith(_PUBLIC_TOUR_GENERATED_RECONSTRUCTION_PREFIX)
+                and PurePosixPath(relpath).suffix.lower() == ".json"
+            ):
+                rendered[key] = relpath
             continue
         if key in {"diorama_preview_relpath", "preview_relpath", "telegram_preview_relpath"}:
             relpath = public_tour_safe_asset_relpath(payload.get(key))
@@ -1931,13 +2087,23 @@ def redacted_public_tour_payload(
     rendered["tour_privacy_mode"] = privacy_mode
     rendered.setdefault("facts", {})
     rendered.setdefault("scenes", [])
-    if not expose_asset_relpaths:
-        rendered["public_assets"] = list(
-            public_tour_manifest(
-                payload,
-                bundle_dir_resolver=bundle_dir_resolver,
-            ).values()
-        )
+    asset_manifest = list(
+        public_tour_manifest(
+            payload,
+            bundle_dir_resolver=bundle_dir_resolver,
+        ).values()
+    )
+    if expose_asset_relpaths:
+        if (
+            payload.get("public_assets") is not None
+            or payload.get("generated_reconstruction") is not None
+        ):
+            rendered["public_assets"] = [
+                {key: value for key, value in row.items() if key != "url"}
+                for row in asset_manifest
+            ]
+    else:
+        rendered["public_assets"] = asset_manifest
     fingerprints = public_tour_exact_location_string_fingerprints(payload)
     scrubbed = scrub_public_tour_exact_location_strings(
         rendered,
