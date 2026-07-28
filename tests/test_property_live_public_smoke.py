@@ -106,12 +106,12 @@ def test_live_public_smoke_passes_core_public_routes_without_network() -> None:
         "https://propertyquarry.com/app/properties": "PropertyQuarry Use email or one of the sign-in options below.",
         "https://propertyquarry.com/app/shortlist/run/public-demo-run": (
             "PropertyQuarry Sample homes Preview example homes before signing in. "
-            "example-shortlist-home-1.png Open property "
+            "example-shortlist-diorama-1.webp Open property "
             "/app/example/shortlist?candidate=danube-flats-demo#danube-flats-demo"
         ),
         "https://propertyquarry.com/app/shortlist/run/0a89ead9e0b048288cca22d1aac54fa7": (
             "PropertyQuarry Sample homes Preview example homes before signing in. "
-            "example-shortlist-home-1.png Open property "
+            "example-shortlist-diorama-1.webp Open property "
             "/app/example/shortlist?candidate=danube-flats-demo#danube-flats-demo"
         ),
     }

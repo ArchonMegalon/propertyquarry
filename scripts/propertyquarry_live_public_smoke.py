@@ -451,7 +451,7 @@ def _route_checks(*, path: str, status_code: int, final_url: str, text: str) -> 
                     "public_fast_run_diorama_payload",
                     bool(
                         re.search(
-                            r"(?:telegram-preview|diorama-preview|scene-01|example-shortlist-home-1)\.(?:png|jpg)",
+                            r"(?:telegram-preview|diorama-preview|scene-01|example-shortlist-(?:home|diorama)-1)\.(?:png|jpe?g|webp)",
                             text,
                             re.IGNORECASE,
                         )
