@@ -55,6 +55,17 @@ def test_audit_fails_closed_without_mutating(tmp_path: Path) -> None:
     assert (bundle / "tour.json").read_bytes() == before
 
 
+def test_minimal_web_image_packages_the_live_volume_auditor() -> None:
+    dockerfile = (
+        Path(__file__).resolve().parents[1] / "ea" / "Dockerfile.property-web"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "COPY --chmod=0555 scripts/propertyquarry_public_tour_volume_privacy.py "
+        "/app/scripts/propertyquarry_public_tour_volume_privacy.py"
+    ) in dockerfile
+
+
 def test_repair_snapshots_then_splits_public_and_private_payloads(
     tmp_path: Path,
 ) -> None:

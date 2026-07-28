@@ -91,6 +91,7 @@ COPY scripts/verify_property_tour_controls.py /app/scripts/verify_property_tour_
 COPY scripts/property_tour_3dvista_provenance.py /app/scripts/property_tour_3dvista_provenance.py
 COPY scripts/property_tour_panorama_provenance.py /app/scripts/property_tour_panorama_provenance.py
 COPY scripts/property_tour_host_safety.py /app/scripts/property_tour_host_safety.py
+COPY --chmod=0555 scripts/propertyquarry_public_tour_volume_privacy.py /app/scripts/propertyquarry_public_tour_volume_privacy.py
 COPY scripts/intake_3dvista_gold_artifact.py /app/scripts/intake_3dvista_gold_artifact.py
 COPY vendor/three /app/vendor/three
 COPY ea/app /app/app
