@@ -71,7 +71,7 @@ import_existing_runtime_environment() {
     [[ "${key}" =~ ^(EA|PROPERTYQUARRY|TEABLE|EMAILIT|THREEDVISTA)_[A-Z0-9_]+$ ]] || continue
     [[ "${key}" != "POSTGRES_PASSWORD" ]] || continue
     if [[ -z "${!key:-}" ]]; then
-      /usr/bin/printf -v "${key}" '%s' "${value}"
+      builtin printf -v "${key}" '%s' "${value}"
       export "${key}"
     fi
   done < <(

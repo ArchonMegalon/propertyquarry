@@ -41,6 +41,8 @@ def test_local_deploy_accepts_only_the_local_docker_daemon() -> None:
 
 def test_local_deploy_requires_role_scoped_runtime_credentials() -> None:
     deploy = _deploy()
+    assert 'builtin printf -v "${key}"' in deploy
+    assert '/usr/bin/printf -v "${key}"' not in deploy
     for key in (
         "PROPERTYQUARRY_API_DATABASE_URL",
         "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
