@@ -67,6 +67,7 @@ DISPATCH_TARGETS = frozenset(
         "verify-generated-release-artifacts-clean-authenticated",
         "verify-ltd-critical-entries-authenticated",
         "verify-ltd-flagship-subset-authenticated",
+        "verify-local-docker-deployment-authenticated",
         "verify-pocket-audio-archive",
         "verify-release-assets-authenticated",
     }

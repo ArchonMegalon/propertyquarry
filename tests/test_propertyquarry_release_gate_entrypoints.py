@@ -668,7 +668,16 @@ def test_release_authority_uses_fixed_privileged_make_boundaries() -> None:
     )
     release_preflight = _make_target(makefile, "release-preflight")
     assert "$(MAKE) operator-help-authenticated" in release_preflight
-    assert "$(MAKE) release-smoke-authenticated" in release_preflight
+    assert "$(MAKE) smoke-help-authenticated" in release_preflight
+    assert "$(MAKE) smoke-api-authenticated" not in release_preflight
+    assert "$(MAKE) release-smoke-authenticated" not in release_preflight
+    propertyquarry_preflight = _make_target(
+        makefile, "propertyquarry-release-preflight"
+    )
+    assert (
+        "$(MAKE) verify-local-docker-deployment-authenticated"
+        in propertyquarry_preflight
+    )
     authenticated_operator_help = _make_target(
         makefile, "operator-help-authenticated"
     )
@@ -2307,8 +2316,9 @@ def test_release_preflight_verification_leaves_preserve_generated_artifacts() ->
         "\t$(MAKE) verify-flagship-release-readiness-authenticated",
         "\t$(MAKE) verify-generated-release-artifacts-clean-authenticated",
         "\t$(MAKE) operator-help-authenticated",
-        "\t$(MAKE) release-smoke-authenticated",
+        "\t$(MAKE) smoke-help-authenticated",
     ]
+    assert "smoke-api-authenticated" not in release_preflight
     assert local_verify_assets.strip().splitlines() == [
         "verify-release-assets:",
         (

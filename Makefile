@@ -3,7 +3,7 @@ override .SHELLFLAGS := -p -o pipefail -c
 override MAKE := /usr/bin/make
 override MAKE_COMMAND := /usr/bin/make
 
-override _PROPERTYQUARRY_RELEASE_DISPATCH_TARGETS := release-preflight propertyquarry-release-preflight propertyquarry-release-protocol-contracts propertyquarry-native-release-control-gates materialize-release-assets-authenticated verify-release-assets-authenticated verify-flagship-release-readiness-authenticated verify-generated-release-artifacts-clean-authenticated property-release-gates property-security-posture ltd-release-gates verify-ltd-critical-entries-authenticated verify-ltd-flagship-subset-authenticated verify-pocket-audio-archive verify-design-mirror-bundle verify-design-full-mirror-parity ci-gates-authenticated
+override _PROPERTYQUARRY_RELEASE_DISPATCH_TARGETS := release-preflight propertyquarry-release-preflight propertyquarry-release-protocol-contracts propertyquarry-native-release-control-gates materialize-release-assets-authenticated verify-release-assets-authenticated verify-flagship-release-readiness-authenticated verify-generated-release-artifacts-clean-authenticated verify-local-docker-deployment-authenticated property-release-gates property-security-posture ltd-release-gates verify-ltd-critical-entries-authenticated verify-ltd-flagship-subset-authenticated verify-pocket-audio-archive verify-design-mirror-bundle verify-design-full-mirror-parity ci-gates-authenticated
 override _PROPERTYQUARRY_RELEASE_INTERNAL_TARGETS := ci-local-authenticated operator-help-authenticated release-smoke-authenticated smoke-api-authenticated smoke-help-authenticated test-api-authenticated
 override _PROPERTYQUARRY_RELEASE_AUTHENTICATED_TARGETS := $(_PROPERTYQUARRY_RELEASE_DISPATCH_TARGETS) $(_PROPERTYQUARRY_RELEASE_INTERNAL_TARGETS)
 ifneq ($(strip $(filter $(_PROPERTYQUARRY_RELEASE_AUTHENTICATED_TARGETS),$(MAKECMDGOALS))),)
@@ -23,7 +23,7 @@ $(error authenticated release targets forbid dry-run, ignore-errors, question, a
 endif
 endif
 
-.PHONY: deploy deploy-legacy-ea-stack deploy-memory deploy-bootstrap bootstrap db-status db-size db-retention smoke-api smoke-api-authenticated smoke-api-tibor smoke-postgres smoke-postgres-legacy smoke-help smoke-help-authenticated release-smoke release-smoke-authenticated release-preflight propertyquarry-release-preflight propertyquarry-release-protocol-contracts propertyquarry-native-release-control-gates bootstrap-propertyquarry-release-python release-docs test-api test-api-real-chromium test-api-authenticated test-all propertyquarry-target-recovery-canary test-postgres-contracts test-telegram-bot openapi-export openapi-diff openapi-prune endpoints version-info operator-summary operator-help operator-help-authenticated provider-readiness overlay-vision-check overlay-vision-pull support-bundle tasks-archive tasks-archive-prune tasks-archive-dry-run materialize-release-assets materialize-release-assets-authenticated verify-generated-release-artifacts-clean verify-generated-release-artifacts-clean-authenticated ci-local ci-local-authenticated ci-gates ci-gates-authenticated ci-gates-postgres ci-gates-postgres-legacy hard-exit-gates runtime-hard-exit-gates property-release-gates property-security-posture ltd-release-gates verify-release-assets verify-release-assets-authenticated verify-flagship-release-readiness verify-flagship-release-readiness-authenticated verify-pocket-audio-archive verify-ltd-critical-entries verify-ltd-critical-entries-authenticated verify-ltd-flagship-subset verify-ltd-flagship-subset-authenticated verify-design-mirror-bundle verify-design-full-mirror-parity repair-design-mirror-bundle docs-verify all-local
+.PHONY: deploy deploy-legacy-ea-stack deploy-memory deploy-bootstrap bootstrap db-status db-size db-retention smoke-api smoke-api-authenticated smoke-api-tibor smoke-postgres smoke-postgres-legacy smoke-help smoke-help-authenticated release-smoke release-smoke-authenticated release-preflight propertyquarry-release-preflight propertyquarry-release-protocol-contracts propertyquarry-native-release-control-gates bootstrap-propertyquarry-release-python release-docs test-api test-api-real-chromium test-api-authenticated test-all propertyquarry-target-recovery-canary test-postgres-contracts test-telegram-bot openapi-export openapi-diff openapi-prune endpoints version-info operator-summary operator-help operator-help-authenticated provider-readiness overlay-vision-check overlay-vision-pull support-bundle tasks-archive tasks-archive-prune tasks-archive-dry-run materialize-release-assets materialize-release-assets-authenticated verify-generated-release-artifacts-clean verify-generated-release-artifacts-clean-authenticated verify-local-docker-deployment-authenticated ci-local ci-local-authenticated ci-gates ci-gates-authenticated ci-gates-postgres ci-gates-postgres-legacy hard-exit-gates runtime-hard-exit-gates property-release-gates property-security-posture ltd-release-gates verify-release-assets verify-release-assets-authenticated verify-flagship-release-readiness verify-flagship-release-readiness-authenticated verify-pocket-audio-archive verify-ltd-critical-entries verify-ltd-critical-entries-authenticated verify-ltd-flagship-subset verify-ltd-flagship-subset-authenticated verify-design-mirror-bundle verify-design-full-mirror-parity repair-design-mirror-bundle docs-verify all-local
 
 PYTHON_BIN ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 override PYTHONDONTWRITEBYTECODE := 1
@@ -100,10 +100,11 @@ release-preflight:
 	$(MAKE) verify-flagship-release-readiness-authenticated
 	$(MAKE) verify-generated-release-artifacts-clean-authenticated
 	$(MAKE) operator-help-authenticated
-	$(MAKE) release-smoke-authenticated
+	$(MAKE) smoke-help-authenticated
 
 propertyquarry-release-preflight:
 	$(MAKE) release-preflight
+	$(MAKE) verify-local-docker-deployment-authenticated
 	$(MAKE) property-release-gates
 
 propertyquarry-release-protocol-contracts:
@@ -236,6 +237,9 @@ verify-generated-release-artifacts-clean:
 
 verify-generated-release-artifacts-clean-authenticated:
 	./scripts/propertyquarry_release_python.sh scripts/verify_generated_release_artifacts_clean.py
+
+verify-local-docker-deployment-authenticated:
+	./scripts/propertyquarry_release_python.sh scripts/propertyquarry_launch_room.py --format json --require-production-ready
 
 ci-local:
 	$(PYTHON_BIN) scripts/propertyquarry_compileall_clean.py

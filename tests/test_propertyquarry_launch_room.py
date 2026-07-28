@@ -157,3 +157,30 @@ def test_launch_room_cli_writes_json(tmp_path: Path) -> None:
     assert payload["schema"] == "propertyquarry.launch_room.v1"
     assert payload["production_launch_ready"] is False
     assert payload["release_proof_plane"]["github_actions_used"] is False
+
+
+def test_launch_room_cli_can_require_production_readiness(tmp_path: Path) -> None:
+    output = tmp_path / "launch-room.json"
+    missing = tmp_path / "missing-deployment.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "propertyquarry_launch_room.py"),
+            "--format",
+            "json",
+            "--deployment-receipt",
+            str(missing),
+            "--write",
+            str(output),
+            "--require-production-ready",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == "launch-room production readiness is blocked\n"
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["production_launch_ready"] is False

@@ -384,6 +384,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--format", choices=("json", "markdown"), default="markdown")
     parser.add_argument("--write", type=Path)
+    parser.add_argument(
+        "--require-production-ready",
+        action="store_true",
+        help=(
+            "Exit non-zero unless exact candidate proof, the local Docker "
+            "deployment receipt, and the clean worktree all pass."
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         report = build_launch_room(
@@ -402,6 +410,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write(args.write, rendered)
     else:
         sys.stdout.write(rendered)
+    if (
+        args.require_production_ready
+        and report.get("production_launch_ready") is not True
+    ):
+        print(
+            "launch-room production readiness is blocked",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

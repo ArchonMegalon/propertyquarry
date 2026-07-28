@@ -9,8 +9,17 @@ The local operator entrypoint is:
 ```text
 scripts/deploy_propertyquarry.sh --preflight-only
 scripts/deploy_propertyquarry.sh
-python3 scripts/propertyquarry_launch_room.py
+./scripts/propertyquarry_release_python.sh \
+  scripts/propertyquarry_release_make_dispatch.py \
+  verify-local-docker-deployment-authenticated
 ```
+
+The authenticated local-deployment verifier invokes the launch room with
+`--require-production-ready`. It fails closed unless the exact candidate
+proof, mode-`0600` local Docker receipt, and clean worktree all pass. The
+source-only `release-preflight` is hermetic and never sends mutation smoke
+requests to an ambient EA or PropertyQuarry runtime; live API mutation smokes
+remain explicit runtime-operations commands.
 
 Deployment builds immutable local web and render images, runs the migration,
 starts the complete Compose topology, waits for health, probes localhost, and
