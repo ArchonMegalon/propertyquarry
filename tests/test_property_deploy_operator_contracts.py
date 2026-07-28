@@ -49,6 +49,7 @@ def test_local_deploy_requires_role_scoped_runtime_credentials() -> None:
         "propertyquarry_admission.env",
         "propertyquarry_auth.env",
         "propertyquarry_google_identity.env",
+        "propertyquarry_registration_email.env",
         "propertyquarry_render_bridge.env",
     ):
         assert env_file in deploy

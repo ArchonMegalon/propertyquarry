@@ -101,6 +101,7 @@ load_env_file "${APP_ROOT}/state/runtime/propertyquarry_database_roles.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_admission.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_auth.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_google_identity.env"
+load_env_file "${APP_ROOT}/state/runtime/propertyquarry_registration_email.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_render_bridge.env"
 import_existing_runtime_environment
 
