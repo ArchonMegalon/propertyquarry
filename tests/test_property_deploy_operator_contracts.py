@@ -43,6 +43,15 @@ def test_local_deploy_requires_role_scoped_runtime_credentials() -> None:
     deploy = _deploy()
     assert 'builtin printf -v "${key}"' in deploy
     assert '/usr/bin/printf -v "${key}"' not in deploy
+    assert "must be owned by the operator and mode 0600" in deploy
+    for env_file in (
+        "propertyquarry_database_roles.env",
+        "propertyquarry_admission.env",
+        "propertyquarry_auth.env",
+        "propertyquarry_google_identity.env",
+        "propertyquarry_render_bridge.env",
+    ):
+        assert env_file in deploy
     for key in (
         "PROPERTYQUARRY_API_DATABASE_URL",
         "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",

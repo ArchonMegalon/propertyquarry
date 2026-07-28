@@ -48,6 +48,13 @@ done
 load_env_file() {
   local source_path="$1"
   [[ -f "${source_path}" ]] || return 0
+  if [[ -L "${source_path}" ]] ||
+     [[ "$(/usr/bin/stat -c '%u' "${source_path}")" != "$(/usr/bin/id -u)" ]] ||
+     [[ "$(/usr/bin/stat -c '%a' "${source_path}")" != "600" ]]; then
+    /usr/bin/printf 'Local deployment env file must be owned by the operator and mode 0600: %s\n' \
+      "${source_path}" >&2
+    exit 2
+  fi
   set -a
   # The local operator owns these ignored credential files.
   # shellcheck disable=SC1090
@@ -90,6 +97,11 @@ require_value() {
 
 load_env_file "${APP_ROOT}/.env"
 load_env_file "${APP_ROOT}/.env.local"
+load_env_file "${APP_ROOT}/state/runtime/propertyquarry_database_roles.env"
+load_env_file "${APP_ROOT}/state/runtime/propertyquarry_admission.env"
+load_env_file "${APP_ROOT}/state/runtime/propertyquarry_auth.env"
+load_env_file "${APP_ROOT}/state/runtime/propertyquarry_google_identity.env"
+load_env_file "${APP_ROOT}/state/runtime/propertyquarry_render_bridge.env"
 import_existing_runtime_environment
 
 : "${PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID:=${EA_GOOGLE_OAUTH_CLIENT_ID:-}}"
