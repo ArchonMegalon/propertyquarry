@@ -32,10 +32,37 @@ state/release/propertyquarry-local-deployment.v1.json
 - numeric non-root application users, no privileged containers, no Docker
   socket mounts, and `no-new-privileges`;
 - the localhost `/health/ready` probe; and
+- a live audit of the persisted public-tour volume proving raw `tour.json`
+  manifests contain no private keys and every `tour.private.json` is mode
+  `0600`; and
 - `github_actions_used: false`.
 
 No database URL, provider credential, OAuth secret, tunnel token, or reusable
 environment value is serialized into the receipt.
+
+Legacy tour-volume repair is a one-time, snapshot-first operation. Use the
+exact runtime image and a new empty backup volume; the repair refuses to
+mutate without that backup, atomically rebuilds public manifests through the
+current narrow allowlist, retains removed values in private receipts, and
+writes a count/digest-only receipt:
+
+```text
+docker volume create property_propertyquarry_public_tours_preprivacy_20260728
+docker run --rm --entrypoint python \
+  -v property_propertyquarry_public_tours:/data/public_property_tours \
+  -v property_propertyquarry_public_tours_preprivacy_20260728:/backup \
+  -v /docker/property/state/release:/receipts \
+  PROPERTYQUARRY_EXACT_WEB_IMAGE \
+  /app/scripts/propertyquarry_public_tour_volume_privacy.py \
+  --root /data/public_property_tours \
+  --apply \
+  --backup-root /backup \
+  --receipt /receipts/propertyquarry-public-tour-volume-privacy.v1.json
+```
+
+The backup volume is retained for rollback and is never mounted by the
+application. Subsequent deployments run the same tool in audit mode through
+the local deployment receipt and fail closed on drift.
 
 The launch-room view combines this deployment receipt with the shared
 repository-role policy, marked release manifest, exact candidate-bound browser

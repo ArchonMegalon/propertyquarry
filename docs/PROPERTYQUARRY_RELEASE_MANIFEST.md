@@ -76,7 +76,7 @@ The artifact-set identity covers the exact tracked bytes of the flagship release
 Production stays fail-closed until every item is bound to the exact runtime candidate:
 
 1. The authenticated local release gate bundle is green for the final runtime and receipt envelope, with no accepted skips or mutable generated state.
-2. The local Docker operator deploys only the canonical Compose files, preserves the canonical public-tour volume, and writes a secret-free receipt binding image IDs, Compose hashes, service topology, migration, health, and security posture.
+2. The local Docker operator deploys only the canonical Compose files, preserves the canonical public-tour volume, and writes a secret-free receipt binding image IDs, Compose hashes, service topology, migration, health, security posture, and a live raw public/private tour-volume privacy audit. Legacy tour repair requires an exact pre-mutation backup volume, atomically rebuilds public manifests through the current allowlist, retains removed values in mode-`0600` private receipts, and emits only counts and content digests.
 3. The local image store contains distinct immutable `PROPERTYQUARRY_WEB_IMAGE` and `PROPERTYQUARRY_RENDER_IMAGE` IDs built from the canonical checkout.
 4. Dependency, container, policy, and SBOM scans pass without stale databases or weakened gates.
 5. The governed deployment preserves the canonical public-tour inventory, repairs only journaled legacy ownership, and completes; `/version` reports the approved runtime SHA and complete manifest; `/` remains healthy without generated-bundle permission errors or path disclosure.

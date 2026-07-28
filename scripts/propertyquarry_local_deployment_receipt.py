@@ -265,6 +265,49 @@ def _probe(
     }
 
 
+def _public_tour_volume_privacy(container_name: str) -> dict[str, object]:
+    result = _run(
+        (
+            "/usr/bin/docker",
+            "exec",
+            container_name,
+            "python",
+            "/app/scripts/propertyquarry_public_tour_volume_privacy.py",
+            "--root",
+            "/data/public_property_tours",
+        )
+    )
+    if result.returncode not in {0, 1} or len(result.stdout.encode()) > 65_536:
+        return {"status": "failed", "secret_values_recorded": False}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"status": "failed", "secret_values_recorded": False}
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema")
+        != "propertyquarry-public-tour-volume-privacy-v1"
+        or payload.get("secret_values_recorded") is not False
+    ):
+        return {"status": "failed", "secret_values_recorded": False}
+    counts = payload.get("counts")
+    safe_counts = (
+        {
+            str(key): int(value)
+            for key, value in counts.items()
+            if isinstance(key, str) and isinstance(value, int)
+        }
+        if isinstance(counts, dict)
+        else {}
+    )
+    return {
+        "status": str(payload.get("status") or "failed"),
+        "mode": str(payload.get("mode") or ""),
+        "counts": safe_counts,
+        "secret_values_recorded": False,
+    }
+
+
 def audit_local_deployment(
     *,
     root: Path = ROOT,
@@ -412,6 +455,19 @@ def audit_local_deployment(
     )
     if local_probe["status"] != "pass":
         failures.append("local_readiness_probe_failed")
+    api_service = services.get("propertyquarry-api")
+    api_container_name = (
+        str(api_service.get("container_name") or "")
+        if isinstance(api_service, dict)
+        else ""
+    )
+    public_tour_volume_privacy = (
+        _public_tour_volume_privacy(api_container_name)
+        if api_container_name
+        else {"status": "failed", "secret_values_recorded": False}
+    )
+    if public_tour_volume_privacy["status"] != "pass":
+        failures.append("public_tour_volume_privacy_failed")
     unique_failures = list(dict.fromkeys(failures))
     return {
         "schema": SCHEMA,
@@ -437,6 +493,7 @@ def audit_local_deployment(
         },
         "services": services,
         "local_probe": local_probe,
+        "public_tour_volume_privacy": public_tour_volume_privacy,
         "secret_values_recorded": False,
         "passed": not unique_failures,
         "failures": unique_failures,

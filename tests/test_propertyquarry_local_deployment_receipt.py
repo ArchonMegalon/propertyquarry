@@ -97,6 +97,20 @@ def _patch_happy_path(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(
+        receipt,
+        "_public_tour_volume_privacy",
+        lambda _container_name: {
+            "status": "pass",
+            "mode": "audit",
+            "counts": {
+                "bundles": 1,
+                "private_key_manifests": 0,
+                "private_mode_violations": 0,
+            },
+            "secret_values_recorded": False,
+        },
+    )
+    monkeypatch.setattr(
         receipt.subprocess,
         "run",
         lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0, "", ""),
@@ -124,6 +138,7 @@ def test_local_docker_receipt_binds_all_services_without_secrets(
         "canonical_repository": "ArchonMegalon/propertyquarry",
     }
     assert set(result["services"]) == set(receipt.SERVICE_CONTRACT)
+    assert result["public_tour_volume_privacy"]["status"] == "pass"
     assert result["secret_values_recorded"] is False
     encoded = json.dumps(result)
     assert "must-never-be-recorded" not in encoded
