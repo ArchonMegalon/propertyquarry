@@ -2127,3 +2127,27 @@ def build_public_tour_manifest(
             bundle_dir_resolver=bundle_dir_resolver,
         )
     )
+
+
+def canonical_public_tour_payload(
+    payload: dict[str, object],
+    *,
+    bundle_dir: Path,
+) -> dict[str, object]:
+    current = dict(payload or {})
+    for _attempt in range(4):
+        slug = str(current.get("slug") or "").strip()
+        canonical = build_public_tour_manifest(
+            current,
+            expose_asset_relpaths=True,
+            url_allowed=lambda _url: False,
+            bundle_dir_resolver=lambda requested_slug: (
+                bundle_dir
+                if str(requested_slug or "").strip() == slug
+                else None
+            ),
+        ).as_dict()
+        if canonical == current:
+            return canonical
+        current = canonical
+    raise ValueError("public_manifest_canonicalization_did_not_converge")

@@ -60,7 +60,7 @@ def test_generated_reconstruction_slug_fits_public_and_render_contracts(
         principal_id="cf-email:principal.user@example.test",
     )
 
-    assert len(slug) == 128
+    assert len(slug) == 120
     assert property_reconstruction_render_bridge._valid_generated_bundle_slug(slug) == slug
 
 
@@ -288,6 +288,11 @@ def test_generated_reconstruction_propagates_search_run_id_to_renderer_and_final
         "run_id": "authoritative-run",
     }
     assert result["publication_status"] == "ready"
+    assert result == public_tour_payloads.canonical_public_tour_payload(
+        result,
+        bundle_dir=bundle_dir,
+    )
+    assert "generation" not in result
 
 
 def test_visual_request_passes_authoritative_run_id_to_tour_and_reconstruction(

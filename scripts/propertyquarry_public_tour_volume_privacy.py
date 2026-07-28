@@ -23,7 +23,7 @@ from typing import Any
 
 from app.api.routes.public_tour_payloads import (
     PrivateTourReceipt,
-    build_public_tour_manifest,
+    canonical_public_tour_payload,
     public_tour_key_is_exact_location,
 )
 
@@ -140,23 +140,7 @@ def _canonical_public_payload(
     *,
     bundle_dir: Path,
 ) -> dict[str, object]:
-    current = dict(payload)
-    for _attempt in range(4):
-        slug = str(current.get("slug") or "").strip()
-        canonical = build_public_tour_manifest(
-            current,
-            expose_asset_relpaths=True,
-            url_allowed=lambda _url: False,
-            bundle_dir_resolver=lambda requested_slug: (
-                bundle_dir
-                if str(requested_slug or "").strip() == slug
-                else None
-            ),
-        ).as_dict()
-        if canonical == current:
-            return canonical
-        current = canonical
-    raise ValueError("public_manifest_canonicalization_did_not_converge")
+    return canonical_public_tour_payload(payload, bundle_dir=bundle_dir)
 
 
 def _merge_private_receipt(

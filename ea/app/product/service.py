@@ -21360,6 +21360,14 @@ def _write_generated_reconstruction_property_tour_bundle_with_lock_held(
             run_id=normalized_search_run_id,
         ):
             finalized_payload["publication_status"] = "ready"
+            from app.api.routes.public_tour_payloads import (
+                canonical_public_tour_payload,
+            )
+
+            finalized_payload = canonical_public_tour_payload(
+                finalized_payload,
+                bundle_dir=bundle_dir,
+            )
             pending_manifest_path = bundle_dir / f".tour.json.{uuid4().hex}.tmp"
             try:
                 with pending_manifest_path.open("w", encoding="utf-8") as handle:

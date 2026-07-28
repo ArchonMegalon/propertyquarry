@@ -4,6 +4,7 @@ import json
 import stat
 from pathlib import Path
 
+from app.api.routes import public_tour_payloads
 from app.api.routes.public_tour_payloads import build_public_tour_manifest
 from scripts import propertyquarry_public_tour_volume_privacy as privacy
 from scripts.propertyquarry_public_tour_volume_privacy import audit_or_repair
@@ -154,7 +155,7 @@ def test_public_projection_converges_before_repair_write(
             )
         return Projection({"slug": "served-tour", "scenes": []})
 
-    monkeypatch.setattr(privacy, "build_public_tour_manifest", build)
+    monkeypatch.setattr(public_tour_payloads, "build_public_tour_manifest", build)
 
     result = privacy._canonical_public_payload(
         {"slug": "served-tour"},
