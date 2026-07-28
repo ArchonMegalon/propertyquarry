@@ -106,9 +106,16 @@ def _container_health_probe(container: str, *, health_url: str) -> dict[str, obj
             "docker",
             "exec",
             normalized_container,
-            "sh",
-            "-lc",
-            f"curl -fsS --connect-timeout 2 --max-time 10 {normalized_url} >/dev/null",
+            "/usr/local/bin/python",
+            "-I",
+            "-c",
+            (
+                "import sys, urllib.request; "
+                "opener = urllib.request.build_opener(urllib.request.ProxyHandler({})); "
+                "response = opener.open(sys.argv[1], timeout=10); "
+                "raise SystemExit(0 if response.status == 200 else 1)"
+            ),
+            normalized_url,
         ],
         timeout=20,
     )

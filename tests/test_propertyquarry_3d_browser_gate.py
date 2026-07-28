@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 
@@ -342,6 +343,19 @@ def test_advertised_walkthrough_retains_every_strict_check() -> None:
         "walkthrough_responsive_layout",
     ]
     assert all(row["ok"] for row in checks)
+
+
+def test_browser_gate_initializes_walkthrough_contract_before_rendering_result() -> None:
+    source = inspect.getsource(gate.build_browser_gate_receipt)
+    contract_call = (
+        "walkthrough_advertised, walkthrough_checks = "
+        "_walkthrough_gate_checks("
+    )
+
+    assert source.count(contract_call) == 1
+    assert source.index(contract_call) < source.index(
+        "if walkthrough_screenshot_path and walkthrough_advertised:"
+    )
 
 
 def test_advertised_walkthrough_still_fails_strict_metadata_check() -> None:

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+DEFAULT_API_CONTAINER = "propertyquarry-api"
 DEFAULT_RENDER_CONTAINER = "propertyquarry-render-tools"
 _BROWSER_SHELL_VIEWER_BOOTSTRAP_WAIT_MS = 5_000
 _BROWSER_SHELL_PROBE_TIMEOUT_SECONDS = 240
@@ -1623,8 +1624,14 @@ def build_runtime_reconstruction_receipt(
     render_bridge_runtime: dict[str, object] = {"status": "skipped", "reason": "render_bridge_runtime_ensure_disabled"}
     if ensure_render_bridge_runtime:
         render_bridge_runtime = build_render_bridge_runtime_receipt(
-            container=container,
-            service=str(os.getenv("PROPERTYQUARRY_RENDER_SERVICE") or container or DEFAULT_RENDER_CONTAINER).strip(),
+            container=str(
+                os.getenv("PROPERTYQUARRY_RENDER_CONTAINER_NAME")
+                or DEFAULT_RENDER_CONTAINER
+            ).strip(),
+            service=str(
+                os.getenv("PROPERTYQUARRY_RENDER_SERVICE")
+                or DEFAULT_RENDER_CONTAINER
+            ).strip(),
             compose_file=str(os.getenv("PROPERTYQUARRY_COMPOSE_FILE") or "docker-compose.property.yml").strip(),
             compose_project_name=(
                 str(os.getenv("PROPERTYQUARRY_COMPOSE_PROJECT_NAME") or os.getenv("COMPOSE_PROJECT_NAME") or "").strip()
@@ -1642,13 +1649,6 @@ def build_runtime_reconstruction_receipt(
 
     generation_timeout_seconds = _runtime_reconstruction_generation_timeout_seconds(container)
     setup_script = f"""
-	set -eu
-	slug={slug!r}
-	bundle="/data/public_property_tours/$slug"
-	src="/tmp/propertyquarry-runtime-reconstruction-$slug"
-rm -rf "$bundle" "$src"
-mkdir -p "$src"
-python - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -1658,6 +1658,9 @@ from app.product import service as product_service
 
 slug = {slug!r}
 src = Path('/tmp') / f'propertyquarry-runtime-reconstruction-{{slug}}'
+shutil.rmtree(Path('/data/public_property_tours') / slug, ignore_errors=True)
+shutil.rmtree(src, ignore_errors=True)
+src.mkdir(parents=True, exist_ok=True)
 title = f'Runtime reconstruction smoke {{slug}}'
 listing_id = f'runtime-reconstruction-smoke-{{slug}}'
 property_url = (
@@ -1746,11 +1749,10 @@ payload = product_service._write_generated_reconstruction_property_tour_bundle(
     diorama_style_hint='Ikea',
 )
 print(json.dumps({{'slug': payload.get('slug')}}, sort_keys=True))
-PY
 """
     try:
         generated = _run(
-            ["docker", "exec", container, "sh", "-lc", setup_script],
+            ["docker", "exec", container, "python", "-c", setup_script],
             timeout=generation_timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
@@ -1796,10 +1798,6 @@ PY
         generated_slug = str(generated_setup_payload.get("slug") or generated_slug).strip() or generated_slug
 
     inspect_script = f"""
-set -eu
-slug={generated_slug!r}
-base="/data/public_property_tours/$slug"
-python - <<'PY'
 import json
 from pathlib import Path
 slug = {generated_slug!r}
@@ -1837,9 +1835,11 @@ print(json.dumps({{
   'walkthrough_coverage_proof': walkthrough.get('coverage_proof') or {{}},
   'paths': {{key: {{'exists': value.is_file(), 'size_bytes': value.stat().st_size if value.exists() else 0}} for key, value in paths.items()}},
 }}, sort_keys=True))
-PY
 """
-    inspected = _run(["docker", "exec", container, "sh", "-lc", inspect_script], timeout=30)
+    inspected = _run(
+        ["docker", "exec", container, "python", "-c", inspect_script],
+        timeout=30,
+    )
     if inspected.returncode != 0:
         return {
             "status": "failed",
@@ -2013,7 +2013,10 @@ PY
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke the deployed PropertyQuarry runtime generated reconstruction path.")
-    parser.add_argument("--container", default=os.getenv("PROPERTYQUARRY_RENDER_CONTAINER_NAME") or DEFAULT_RENDER_CONTAINER)
+    parser.add_argument(
+        "--container",
+        default=os.getenv("PROPERTYQUARRY_API_CONTAINER_NAME") or DEFAULT_API_CONTAINER,
+    )
     parser.add_argument("--slug", default="runtime-reconstruction-smoke")
     parser.add_argument("--public-base-url", default=os.getenv("PROPERTYQUARRY_RUNTIME_RECONSTRUCTION_PUBLIC_BASE_URL") or "")
     parser.add_argument(

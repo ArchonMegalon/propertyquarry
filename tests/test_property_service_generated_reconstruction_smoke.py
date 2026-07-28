@@ -98,8 +98,10 @@ def _inspection_payload(
 
 def test_service_generated_reconstruction_smoke_passes_when_contract_is_complete(monkeypatch) -> None:
     monkeypatch.setattr(smoke.shutil, "which", lambda command: "/usr/bin/docker" if command == "docker" else None)
+    calls: list[list[str]] = []
 
     def _fake_run(command: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps(_inspection_payload()) + "\n", stderr="")
 
     monkeypatch.setattr(smoke, "_run", _fake_run)
@@ -121,6 +123,9 @@ def test_service_generated_reconstruction_smoke_passes_when_contract_is_complete
     assert receipt["delivery_contract_ok"] is True
     assert receipt["browser_shell_ok"] is True
     assert receipt["minimum_walkthrough_duration_seconds"] == 30.0
+    assert calls[0][:4] == ["docker", "exec", "propertyquarry-api", "python"]
+    assert "sh" not in calls[0]
+    assert "src.mkdir(parents=True, exist_ok=True)" in calls[0][-1]
 
 
 def test_service_generated_reconstruction_smoke_fails_when_top_level_video_contract_is_missing(monkeypatch) -> None:

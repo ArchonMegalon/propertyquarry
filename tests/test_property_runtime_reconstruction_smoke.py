@@ -312,6 +312,8 @@ def test_runtime_reconstruction_smoke_passes_when_container_generates_glb(monkey
     assert receipt["honest_disclosure_ok"] is True
     assert receipt["glb_manifest_ok"] is True
     assert len(calls) == 2
+    assert all(call[:4] == ["docker", "exec", "propertyquarry-api", "python"] for call in calls)
+    assert all("sh" not in call for call in calls)
 
 
 def test_runtime_reconstruction_smoke_uses_hosted_bundle_writer_and_clears_materialized_slug(monkeypatch) -> None:
@@ -335,6 +337,7 @@ def test_runtime_reconstruction_smoke_uses_hosted_bundle_writer_and_clears_mater
     assert "_make_hosted_property_tour_slug(" in setup_script
     assert "materialized_slug" in setup_script
     assert "shutil.rmtree(Path('/data/public_property_tours') / materialized_slug, ignore_errors=True)" in setup_script
+    assert "src.mkdir(parents=True, exist_ok=True)" in setup_script
     assert "PROPERTYQUARRY_RECONSTRUCTION_WALKTHROUGH_SECONDS_PER_STOP'] = '5'" in setup_script
     assert "PROPERTYQUARRY_RECONSTRUCTION_FFMPEG_TIMEOUT_SECONDS'] = '420'" in setup_script
 

@@ -126,13 +126,6 @@ def build_service_generated_reconstruction_receipt(
             }
 
     setup_script = f"""
-set -eu
-slug={slug!r}
-bundle="/data/public_property_tours/$slug"
-src="/tmp/propertyquarry-service-reconstruction-$slug"
-rm -rf "$bundle" "$src"
-mkdir -p "$src"
-python - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -142,6 +135,9 @@ from app.product import service as product_service
 
 slug = {slug!r}
 src = Path('/tmp') / f'propertyquarry-service-reconstruction-{{slug}}'
+shutil.rmtree(Path('/data/public_property_tours') / slug, ignore_errors=True)
+shutil.rmtree(src, ignore_errors=True)
+src.mkdir(parents=True, exist_ok=True)
 title = f'Runtime service reconstruction smoke {{slug}}'
 listing_id = f'runtime-service-reconstruction-smoke-{{slug}}'
 property_url = (
@@ -259,7 +255,6 @@ print(json.dumps({{
     'walkthrough_asset_url': product_service._hosted_property_tour_walkthrough_asset_url(tour_url),
     'paths': {{key: {{'exists': value.is_file(), 'size_bytes': value.stat().st_size if value.exists() else 0}} for key, value in paths.items()}},
 }}, sort_keys=True))
-PY
 """
     explicit_command_timeout_seconds = max(int(command_timeout_seconds or 0), 0)
     resolved_command_timeout_seconds = (
@@ -269,7 +264,7 @@ PY
     )
     try:
         generated = _run(
-            ["docker", "exec", container, "sh", "-lc", setup_script],
+            ["docker", "exec", container, "python", "-c", setup_script],
             timeout=resolved_command_timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:

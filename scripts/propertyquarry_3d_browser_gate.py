@@ -1013,15 +1013,19 @@ def build_browser_gate_receipt(
                 timeout=timeout_ms,
             )
             walkthrough_state = _walkthrough_video_state(walkthrough_page, timeout_ms=timeout_ms)
-            source_rows = [
-                dict(row)
-                for row in list(walkthrough_state.get("sources") or [])
-                if isinstance(row, dict)
-            ]
-            mobile_expected = int(viewport["width"]) <= 760
-            current_src_path = urllib.parse.urlparse(str(walkthrough_state.get("current_src") or "")).path
-            expected_mobile_suffix = "/walkthrough-mobile-720p60.mp4"
-            expected_desktop_suffix = f"/tours/{urllib.parse.quote(slug, safe='')}/walkthrough"
+            provider_verified = any(
+                str(row.get("provider") or "").strip().lower() == "3dvista"
+                and str(row.get("status") or "").strip().lower() == "pass"
+                for row in provider_results
+            )
+            walkthrough_advertised, walkthrough_checks = _walkthrough_gate_checks(
+                response_ok=bool(walkthrough_response and walkthrough_response.ok),
+                response_status=walkthrough_response.status if walkthrough_response else 0,
+                provider_verified=provider_verified,
+                walkthrough_state=walkthrough_state,
+                slug=slug,
+                viewport_width=int(viewport["width"]),
+            )
             screenshot_error = ""
             walkthrough_screenshot_path = screenshot_dir / "walkthrough.png" if screenshot_dir else None
             if walkthrough_screenshot_path:

@@ -17,6 +17,36 @@ from scripts import property_reconstruction_render_bridge as bridge
 from app.services.admission_control import MemoryAdmissionBackend
 
 
+def test_render_bridge_health_probe_uses_hardened_python_runtime(
+    monkeypatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def _fake_run(command: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+        observed["command"] = command
+        observed["timeout"] = timeout
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(runtime, "_run", _fake_run)
+
+    receipt = runtime._container_health_probe(
+        "propertyquarry-render-live",
+        health_url="http://127.0.0.1:8091/health/ready",
+    )
+
+    assert receipt["status"] == "pass"
+    command = list(observed["command"])
+    assert command[:4] == [
+        "docker",
+        "exec",
+        "propertyquarry-render-live",
+        "/usr/local/bin/python",
+    ]
+    assert "sh" not in command
+    assert "curl" not in " ".join(command)
+    assert command[-1] == "http://127.0.0.1:8091/health/ready"
+
+
 def test_property_compose_wires_protected_bounded_restart_render_bridge() -> None:
     compose = yaml.safe_load(Path("docker-compose.property.yml").read_text(encoding="utf-8"))
     services = compose["services"]

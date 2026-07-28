@@ -158,6 +158,68 @@ def _cb82_scale_viewer_manifest() -> dict[str, object]:
     return manifest
 
 
+def _runtime_walkthrough_ikea_viewer_manifest() -> dict[str, object]:
+    manifest = _viewer_manifest("ikea_practical")
+    selected = styles.reconstruction_style("ikea_practical", style_id="ikea_practical")
+    manifest["room_dimensions_m"] = {"width": 10.0, "depth": 6.269, "height": 2.75}
+    manifest["geometry"] = {
+        "wall_rectangles": [
+            {"center_x": 0.0, "center_z": -2.9673, "width": 9.8336, "depth": 0.1669, "rotation_y": 0.0},
+            {"center_x": -2.5833, "center_z": -1.3792, "width": 3.3435, "depth": 0.1667, "rotation_y": -1.570796},
+            {"center_x": 2.5417, "center_z": -1.3792, "width": 4.7503, "depth": 0.1669, "rotation_y": 0.0},
+            {"center_x": -4.8333, "center_z": 0.0, "width": 6.1018, "depth": 0.1667, "rotation_y": 1.570796},
+            {"center_x": 0.2083, "center_z": 0.0, "width": 6.1018, "depth": 0.1125, "rotation_y": -1.570796},
+            {"center_x": 4.8333, "center_z": 0.0, "width": 6.1018, "depth": 0.1667, "rotation_y": -1.570796},
+            {"center_x": -2.3333, "center_z": 0.209, "width": 5.1669, "depth": 0.1669, "rotation_y": 0.0},
+            {"center_x": 2.5417, "center_z": 0.7941, "width": 4.5137, "depth": 0.1125, "rotation_y": -1.570796},
+            {"center_x": 0.0, "center_z": 2.9673, "width": 9.8336, "depth": 0.1669, "rotation_y": 0.0},
+        ],
+        "floor_texture_crop": {
+            "offset_x": 0.0,
+            "offset_y": 0.0,
+            "repeat_x": 1.0,
+            "repeat_y": 1.0,
+        },
+    }
+    route_specs = (
+        ("living kitchen", "kitchen", (0.917, 1.375, 0.809), (0.197, 1.595, 1.389)),
+        ("living room", "living", (-4.143, 1.375, -2.501), (-3.423, 1.595, -1.581)),
+        ("bedroom", "bedroom", (4.143, 1.375, -2.501), (3.423, 1.595, -1.581)),
+        ("bedroom 2", "bedroom", (-4.143, 1.375, 2.501), (-3.423, 1.595, 2.633)),
+        ("bedroom 3", "bedroom", (-0.037, 1.375, -1.839), (0.683, 1.595, -0.919)),
+        ("balcony/terrace", "outdoor", (-3.043, 1.375, 0.0), (-2.323, 1.595, 0.92)),
+    )
+    route = [
+        {
+            "label": label,
+            "kind": kind,
+            "focus": {"x": focus[0], "y": focus[1], "z": focus[2]},
+            "camera": {"x": camera[0], "y": camera[1], "z": camera[2]},
+        }
+        for label, kind, focus, camera in route_specs
+    ]
+    manifest["style_scene"] = styles.build_style_scene(
+        selected,
+        route_stop_count=len(route),
+    )
+    manifest["walkable_scene"] = {
+        "kind": "generated_reconstruction_layout",
+        "route": route,
+        "rooms": [
+            {
+                "label": row["label"],
+                "position": {
+                    "x": row["focus"]["x"],
+                    "z": row["focus"]["z"],
+                },
+                "focus": dict(row["focus"]),
+            }
+            for row in route
+        ],
+    }
+    return manifest
+
+
 @pytest.mark.parametrize("style_id", sorted(EXPECTED_CUES))
 def test_all_catalog_styles_bind_exact_palette_instances_and_viewer_scene(style_id: str) -> None:
     selected = styles.reconstruction_style(style_id, style_id=style_id)
@@ -233,7 +295,7 @@ def test_style_scene_evidence_fails_closed_on_tamper(tamper: str) -> None:
     assert styles.validate_style_scene(changed, expected_style=selected)[0] is False
 
 
-def test_style_aware_cache_rejects_v3_and_a_different_requested_style() -> None:
+def test_style_aware_cache_rejects_v4_and_a_different_requested_style() -> None:
     urban = styles.reconstruction_style("urban_jungle", style_id="urban_jungle")
     warm = styles.reconstruction_style("warm_scandi", style_id="warm_scandi")
     generated = {
@@ -251,11 +313,73 @@ def test_style_aware_cache_rejects_v3_and_a_different_requested_style() -> None:
         generated,
         requested_style=warm,
     )
-    generated["viewer_version"] = "propertyquarry_3d_tour_viewer_v3"
+    generated["viewer_version"] = "propertyquarry_3d_tour_viewer_v4"
     assert not product_service._property_reconstruction_style_cache_matches(
         generated,
         requested_style=urban,
     )
+
+
+def test_ikea_walkthrough_browser_keeps_every_style_cue_visible_across_routes(
+    tmp_path: Path,
+) -> None:
+    if not generator._playwright_chromium_capture_available():
+        pytest.skip("playwright_missing")
+    manifest = _runtime_walkthrough_ikea_viewer_manifest()
+    vendor = generator._copy_viewer_vendor_assets(tmp_path)
+    Image.new("RGB", (800, 600), (246, 244, 238)).save(
+        tmp_path / "source-floorplan.png"
+    )
+    (tmp_path / "viewer.html").write_text(
+        generator._viewer_html(
+            manifest=manifest,
+            three_relpath=str(vendor["three_relpath"]),
+            orbit_controls_relpath=str(vendor["orbit_controls_relpath"]),
+        ),
+        encoding="utf-8",
+    )
+
+    with _serve_directory(tmp_path) as base_url:
+        with generator.sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                **generator._playwright_chromium_launch_kwargs(playwright)
+            )
+            try:
+                page = browser.new_page(
+                    viewport={"width": 1280, "height": 780},
+                    device_scale_factor=1,
+                )
+                page.goto(f"{base_url}/viewer.html", wait_until="domcontentloaded")
+                page.wait_for_function(
+                    "() => window.__pqReconstructionDebug?.getRenderMetrics?.().ready === true",
+                    timeout=20_000,
+                )
+                for route_index in range(6):
+                    page.evaluate(
+                        """(index) => {
+                            window.__pqReconstructionDebug.setRouteView(
+                                index,
+                                { immediate: true },
+                            );
+                        }""",
+                        route_index,
+                    )
+                    metrics = page.evaluate(
+                        "() => window.__pqReconstructionDebug.getRenderMetrics()"
+                    )
+                    assert metrics["ready"] is True, metrics
+                    assert metrics["activeRouteIndex"] == route_index
+                    assert metrics["missingVisibleStyleCues"] == []
+                    assert metrics["styleCueVisibilityReady"] is True
+                    for cue in EXPECTED_CUES["ikea_practical"]:
+                        assert metrics["visibleStyleCueInstanceIds"][cue], metrics
+                        assert (
+                            float(metrics["projectedStyleCueCoveragePct"][cue])
+                            >= float(metrics["minimumStyleCueCoveragePct"])
+                        )
+                        assert float(metrics["visibleStyleCueRayPct"][cue]) > 0
+            finally:
+                browser.close()
 
 
 def test_urban_jungle_browser_starts_styled_floor_with_visible_coverage(tmp_path: Path) -> None:
