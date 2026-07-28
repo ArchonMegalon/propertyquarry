@@ -148,10 +148,43 @@ python3 scripts/check_property_repository_role.py \
   --expected-role canonical \
   --expected-head-sha "${head_sha}" \
   --require-clean-worktree
-runtime_sha="$(
-  python3 -c \
-    'from scripts.propertyquarry_launch_room import ROOT, _manifest_values; print(_manifest_values(ROOT)["release_commit_sha"])'
-)"
+manifest_authority="$(
+  python3 - <<'PY'
+from scripts.propertyquarry_launch_room import ROOT, _manifest_values
+
+values = _manifest_values(ROOT)
+for key in (
+    "release_commit_sha",
+    "release_repository",
+    "release_branch",
+    "release_public_origin",
+    "release_artifact_set",
+    "release_deployment_id",
+    "release_label",
+    "release_generated_at",
+):
+    value = values[key]
+    if not value or value != value.strip() or "\n" in value or "\r" in value:
+        raise SystemExit(f"release manifest field is not canonical: {key}")
+    print(value)
+PY
+)" || {
+  /usr/bin/printf '%s\n' "Release manifest authority could not be loaded." >&2
+  exit 2
+}
+mapfile -t release_authority <<<"${manifest_authority}"
+if ((${#release_authority[@]} != 8)); then
+  /usr/bin/printf '%s\n' "Release manifest authority has an invalid field count." >&2
+  exit 2
+fi
+runtime_sha="${release_authority[0]}"
+release_repository="${release_authority[1]}"
+release_branch="${release_authority[2]}"
+release_public_origin="${release_authority[3]}"
+release_artifact_set="${release_authority[4]}"
+release_deployment_id="${release_authority[5]}"
+release_label="${release_authority[6]}"
+release_generated_at="${release_authority[7]}"
 if [[ ! "${runtime_sha}" =~ ^[0-9a-f]{40}$ ]] ||
    ! /usr/bin/git merge-base --is-ancestor "${runtime_sha}" "${head_sha}"; then
   /usr/bin/printf '%s\n' \
@@ -217,14 +250,15 @@ fi
 
 export PROPERTYQUARRY_WEB_IMAGE="${web_image}"
 export PROPERTYQUARRY_RENDER_IMAGE="${render_image}"
-export PROPERTYQUARRY_RELEASE_REPOSITORY=ArchonMegalon/propertyquarry
-export PROPERTYQUARRY_RELEASE_BRANCH=main
+export PROPERTYQUARRY_RELEASE_REPOSITORY="${release_repository}"
+export PROPERTYQUARRY_RELEASE_BRANCH="${release_branch}"
 export PROPERTYQUARRY_RELEASE_COMMIT_SHA="${runtime_sha}"
 export PROPERTYQUARRY_RELEASE_IMAGE_DIGEST="${web_image}"
-export PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID="propertyquarry-local-docker-${short_sha}"
-export PROPERTYQUARRY_RELEASE_PUBLIC_ORIGIN="${PROPERTYQUARRY_PUBLIC_BASE_URL:-https://propertyquarry.com}"
-export PROPERTYQUARRY_RELEASE_LABEL="propertyquarry-local-docker-${short_sha}"
-export PROPERTYQUARRY_RELEASE_GENERATED_AT="$(/usr/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+export PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID="${release_deployment_id}"
+export PROPERTYQUARRY_RELEASE_PUBLIC_ORIGIN="${release_public_origin}"
+export PROPERTYQUARRY_RELEASE_ARTIFACT_SET="${release_artifact_set}"
+export PROPERTYQUARRY_RELEASE_LABEL="${release_label}"
+export PROPERTYQUARRY_RELEASE_GENERATED_AT="${release_generated_at}"
 
 /usr/bin/docker compose \
   --project-name "${COMPOSE_PROJECT_NAME}" \

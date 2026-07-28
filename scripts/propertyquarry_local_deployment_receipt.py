@@ -193,8 +193,14 @@ def _inspect(container_id: str) -> dict[str, object]:
     return item
 
 
-def _probe(origin: str) -> dict[str, object]:
+def _probe(
+    origin: str,
+    *,
+    expected_commit: str,
+    expected_web_image: str,
+) -> dict[str, object]:
     target = origin.rstrip("/") + "/health/ready"
+    version_target = origin.rstrip("/") + "/version"
     request = urllib.request.Request(
         target,
         headers={"Host": "propertyquarry.com", "User-Agent": "pq-local-release/1"},
@@ -203,13 +209,59 @@ def _probe(origin: str) -> dict[str, object]:
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             response.read(65_536)
-            status = int(response.status)
-    except (OSError, urllib.error.URLError, ValueError):
-        return {"status": "failed", "http_status": 0, "target": target}
+            readiness_status = int(response.status)
+        version_request = urllib.request.Request(
+            version_target,
+            headers={
+                "Host": "propertyquarry.com",
+                "User-Agent": "pq-local-release/1",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(version_request, timeout=15) as response:
+            version_status = int(response.status)
+            version_raw = response.read(65_537)
+        if len(version_raw) > 65_536:
+            raise ValueError("version_response_too_large")
+        version = json.loads(version_raw)
+        if not isinstance(version, dict):
+            raise ValueError("version_response_invalid")
+    except (json.JSONDecodeError, OSError, urllib.error.URLError, ValueError):
+        return {
+            "status": "failed",
+            "http_status": 0,
+            "target": target,
+            "version_target": version_target,
+        }
+    identity = {
+        "release_commit_sha": str(version.get("release_commit_sha") or ""),
+        "release_image_digest": str(version.get("release_image_digest") or ""),
+        "release_manifest_status": str(
+            version.get("release_manifest_status") or ""
+        ),
+        "release_manifest_sha256": str(
+            version.get("release_manifest_sha256") or ""
+        ),
+    }
+    passed = (
+        readiness_status == 200
+        and version_status == 200
+        and identity["release_commit_sha"] == expected_commit
+        and identity["release_image_digest"] == expected_web_image
+        and identity["release_manifest_status"] == "complete"
+        and re.fullmatch(
+            r"[0-9a-f]{64}",
+            identity["release_manifest_sha256"],
+        )
+        is not None
+    )
     return {
-        "status": "pass" if status == 200 else "failed",
-        "http_status": status,
+        "status": "pass" if passed else "failed",
+        "http_status": readiness_status,
         "target": target,
+        "version_http_status": version_status,
+        "version_target": version_target,
+        "release_identity": identity,
     }
 
 
@@ -353,7 +405,11 @@ def audit_local_deployment(
             "release_identity": release,
         }
 
-    local_probe = _probe(local_origin)
+    local_probe = _probe(
+        local_origin,
+        expected_commit=expected_commit,
+        expected_web_image=expected_web_image,
+    )
     if local_probe["status"] != "pass":
         failures.append("local_readiness_probe_failed")
     unique_failures = list(dict.fromkeys(failures))

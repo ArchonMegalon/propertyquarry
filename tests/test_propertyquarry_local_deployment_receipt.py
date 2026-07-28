@@ -82,10 +82,18 @@ def _patch_happy_path(monkeypatch) -> None:
     monkeypatch.setattr(
         receipt,
         "_probe",
-        lambda origin: {
+        lambda origin, **_kwargs: {
             "status": "pass",
             "http_status": 200,
             "target": origin + "/health/ready",
+            "version_http_status": 200,
+            "version_target": origin + "/version",
+            "release_identity": {
+                "release_commit_sha": COMMIT,
+                "release_image_digest": WEB,
+                "release_manifest_status": "complete",
+                "release_manifest_sha256": "f" * 64,
+            },
         },
     )
     monkeypatch.setattr(

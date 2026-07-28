@@ -73,7 +73,18 @@ def test_local_deploy_requires_role_scoped_runtime_credentials() -> None:
 
 def test_local_deploy_builds_distinct_images_and_uses_ids_for_compose() -> None:
     deploy = _deploy()
-    assert '_manifest_values(ROOT)["release_commit_sha"]' in deploy
+    assert "values = _manifest_values(ROOT)" in deploy
+    for field in (
+        "release_commit_sha",
+        "release_repository",
+        "release_branch",
+        "release_public_origin",
+        "release_artifact_set",
+        "release_deployment_id",
+        "release_label",
+        "release_generated_at",
+    ):
+        assert f'"{field}"' in deploy
     assert 'git merge-base --is-ancestor "${runtime_sha}" "${head_sha}"' in deploy
     assert 'short_sha="${runtime_sha:0:12}"' in deploy
     assert "propertyquarry-standalone-web-runtime:local-${short_sha}" in deploy
@@ -82,6 +93,12 @@ def test_local_deploy_builds_distinct_images_and_uses_ids_for_compose() -> None:
     assert 'export PROPERTYQUARRY_WEB_IMAGE="${web_image}"' in deploy
     assert 'export PROPERTYQUARRY_RENDER_IMAGE="${render_image}"' in deploy
     assert 'PROPERTYQUARRY_RELEASE_IMAGE_DIGEST="${web_image}"' in deploy
+    assert 'PROPERTYQUARRY_RELEASE_ARTIFACT_SET="${release_artifact_set}"' in deploy
+    assert 'PROPERTYQUARRY_RELEASE_DEPLOYMENT_ID="${release_deployment_id}"' in deploy
+    assert 'PROPERTYQUARRY_RELEASE_LABEL="${release_label}"' in deploy
+    assert 'PROPERTYQUARRY_RELEASE_GENERATED_AT="${release_generated_at}"' in deploy
+    assert 'PROPERTYQUARRY_RELEASE_PUBLIC_ORIGIN="${release_public_origin}"' in deploy
+    assert 'propertyquarry-local-docker-${short_sha}' not in deploy
 
 
 def test_local_deploy_protects_project_scope_and_waits_for_health() -> None:
