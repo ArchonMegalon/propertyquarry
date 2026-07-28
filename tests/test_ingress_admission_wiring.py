@@ -374,6 +374,10 @@ def test_app_store_builder_uses_postgres_without_memory_fallback(
     )
     monkeypatch.setenv("EA_RUNTIME_MODE", "prod")
     monkeypatch.setenv(
+        "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
+        "postgresql://admission/propertyquarry_admission",
+    )
+    monkeypatch.setenv(
         "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET",
         "z" * 64,
     )
@@ -397,7 +401,15 @@ def test_app_store_builder_uses_postgres_without_memory_fallback(
 
     assert isinstance(store, _PostgresStore)
     assert calls == [
-        ("postgres", ("postgresql://db/property", 32, 64, True))
+        (
+            "postgres",
+            (
+                "postgresql://admission/propertyquarry_admission",
+                32,
+                64,
+                True,
+            ),
+        )
     ]
     rendered = metrics.render_prometheus(readiness_ready=True)
     assert (
