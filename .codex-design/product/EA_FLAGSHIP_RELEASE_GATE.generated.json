@@ -3,7 +3,7 @@
   "surface": "propertyquarry_flagship_release_control",
   "version": 2,
   "kind": "release_receipt",
-  "generated_at": "2026-07-28T12:03:56Z",
+  "generated_at": "2026-07-28T13:26:18Z",
   "generated_by": "scripts/materialize_ea_flagship_release_gate.py",
   "approved_baseline": {
     "id": "propertyquarry.release-proof.v1",
@@ -28,7 +28,7 @@
       "id": "propertyquarry.release-proof.v1",
       "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
     },
-    "code_commit": "96005865adbb165da95f9906ec51992ff14407db",
+    "code_commit": "7cc934e40d9f2236e08b60dac396cf490547e790",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
@@ -54,8 +54,8 @@
   },
   "browser_receipt_binding": {
     "path": ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json",
-    "sha256": "804ab5bc9527a998dc3d9fd8b4bfd18894687aa45ca6624a4e08f94e8cfbf387",
-    "git_blob_oid": "3022c6a38a48840078d5e55e18016faba791da0d"
+    "sha256": "390d1faadfcc197659b9980e93d723feb631b6b335edebc56f4eec13810b291b",
+    "git_blob_oid": "8feecb98ee83f2b95dc2eb3d9cf9f7ac5c50c31a"
   },
   "operator_summary": "PropertyQuarry source/browser checkpoint is published and green; this does not establish global launch authority, and final live readiness is not evaluated by this receipt.",
   "truth_plane": {
@@ -307,7 +307,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "96005865adbb165da95f9906ec51992ff14407db",
+    "runtime_commit_sha": "7cc934e40d9f2236e08b60dac396cf490547e790",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
