@@ -93,6 +93,7 @@ WALKTHROUGH_VIEWPORT_SIZE = (1280, 720)
 WALKTHROUGH_CARD_SIZE = (1440, 810)
 WALKTHROUGH_MAP_BOX = (988, 222, 1332, 452)
 WALKTHROUGH_OUTPUT_FPS = 12
+MIN_WALKTHROUGH_DURATION_SECONDS = 30.0
 MAX_WALKTHROUGH_DURATION_SECONDS = 240.0
 MAX_WALKTHROUGH_ENCODED_FRAMES = int(
     MAX_WALKTHROUGH_DURATION_SECONDS * WALKTHROUGH_OUTPUT_FPS
@@ -10042,6 +10043,74 @@ def _walkthrough_coverage_segments(
     return rows
 
 
+def _walkthrough_crossfade_duration(
+    seconds_per_stop: float,
+    *,
+    stop_count: int,
+) -> float:
+    if int(stop_count or 0) <= 1:
+        return 0.0
+    return min(0.8, max(0.35, float(seconds_per_stop) / 20.0))
+
+
+def _stop_card_walkthrough_encoded_frame_count(
+    *,
+    stop_count: int,
+    seconds_per_stop: float,
+) -> int:
+    normalized_stop_count = max(1, int(stop_count or 0))
+    segment_frame_count = max(
+        1,
+        int(round(float(seconds_per_stop) * WALKTHROUGH_OUTPUT_FPS)),
+    )
+    transition_frame_count = int(
+        round(
+            _walkthrough_crossfade_duration(
+                seconds_per_stop,
+                stop_count=normalized_stop_count,
+            )
+            * WALKTHROUGH_OUTPUT_FPS
+        )
+    )
+    return max(
+        1,
+        (normalized_stop_count * segment_frame_count)
+        - ((normalized_stop_count - 1) * transition_frame_count),
+    )
+
+
+def _quality_safe_walkthrough_seconds_per_stop(
+    requested_seconds_per_stop: float,
+    *,
+    stop_count: int,
+    crossfade: bool,
+) -> float:
+    normalized_stop_count = max(1, int(stop_count or 0))
+    seconds_per_stop = max(5.0, min(30.0, float(requested_seconds_per_stop)))
+    required_frame_count = int(
+        math.ceil(MIN_WALKTHROUGH_DURATION_SECONDS * WALKTHROUGH_OUTPUT_FPS)
+    )
+    if not crossfade:
+        return min(
+            30.0,
+            max(
+                seconds_per_stop,
+                MIN_WALKTHROUGH_DURATION_SECONDS / normalized_stop_count,
+            ),
+        )
+    frame_step_seconds = 1.0 / WALKTHROUGH_OUTPUT_FPS
+    while (
+        _stop_card_walkthrough_encoded_frame_count(
+            stop_count=normalized_stop_count,
+            seconds_per_stop=seconds_per_stop,
+        )
+        < required_frame_count
+        and seconds_per_stop < 30.0
+    ):
+        seconds_per_stop = min(30.0, seconds_per_stop + frame_step_seconds)
+    return seconds_per_stop
+
+
 def _write_viewer_walkthrough(
     target: Path,
     *,
@@ -10409,6 +10478,12 @@ def _write_stop_card_walkthrough(
             if fallback_stop_count <= 0:
                 fallback_stop_count = 1
             expected_segments = [f"Room view {index:02d}" for index in range(1, fallback_stop_count + 1)]
+        requested_seconds_per_stop = seconds_per_stop
+        seconds_per_stop = _quality_safe_walkthrough_seconds_per_stop(
+            requested_seconds_per_stop,
+            stop_count=len(expected_segments),
+            crossfade=True,
+        )
         duration_seconds = max(
             seconds_per_stop,
             len(expected_segments) * seconds_per_stop,
@@ -10454,7 +10529,10 @@ def _write_stop_card_walkthrough(
         except Exception:
             configured_timeout_seconds = 0
         timeout_seconds = max(300, int(duration_seconds * 8), configured_timeout_seconds)
-        transition_duration = min(0.8, max(0.35, seconds_per_stop / 20.0)) if len(stop_card_paths) > 1 else 0.0
+        transition_duration = _walkthrough_crossfade_duration(
+            seconds_per_stop,
+            stop_count=len(stop_card_paths),
+        )
         transition_frame_count = int(round(transition_duration * fps)) if transition_duration > 0 else 0
         encoded_frame_count = 0
         for index in range(len(stop_card_paths)):
@@ -10608,6 +10686,7 @@ def _write_stop_card_walkthrough(
         "style_label": style_label,
         "duration_seconds": round(duration, 3),
         "seconds_per_stop": seconds_per_stop,
+        "requested_seconds_per_stop": requested_seconds_per_stop,
         "transition_style": "crossfade" if transition_duration > 0 else "hard_cut",
         "transition_duration_seconds": round(transition_duration, 3),
         "room_stop_count": len(expected_segments),
@@ -10671,6 +10750,11 @@ def _write_walkthrough(
         if fallback_stop_count <= 0:
             fallback_stop_count = 1
         expected_segments = [f"Room view {index:02d}" for index in range(1, fallback_stop_count + 1)]
+    seconds_per_stop = _quality_safe_walkthrough_seconds_per_stop(
+        seconds_per_stop,
+        stop_count=len(expected_segments),
+        crossfade=False,
+    )
 
     route_stops = (
         [dict(stop) for stop in list((walkable_scene or {}).get("route") or []) if isinstance(stop, dict)]

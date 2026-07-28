@@ -15,7 +15,7 @@ from typing import Mapping
 
 
 STYLE_SCENE_CONTRACT_VERSION = "propertyquarry_generated_style_scene_v1"
-GENERATED_RECONSTRUCTION_VIEWER_VERSION = "propertyquarry_3d_tour_viewer_v5"
+GENERATED_RECONSTRUCTION_VIEWER_VERSION = "propertyquarry_3d_tour_viewer_v6"
 FLOORPLAN_DISPLAY_MODE = "reference_toggle_default_off"
 
 _STYLE_ROWS: tuple[dict[str, object], ...] = (

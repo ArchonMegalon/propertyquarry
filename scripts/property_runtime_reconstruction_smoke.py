@@ -1006,14 +1006,14 @@ def _generated_reconstruction_shell_variant_failures(
     contracts = {
         "launch_shell": {
             "launch_mode": "tour_public_launch",
-            "hero_eyebrow_text": "propertyquarry layout tour",
-            "primary_cta_href": "#walkthrough",
-            "secondary_cta_href": "#reference-focus",
+            "hero_eyebrow_text": "propertyquarry styled 3d reconstruction",
+            "primary_cta_href": "#layout-viewer",
+            "secondary_cta_href": "#walkthrough",
             "heading_failure": "launch_shell_missing_heading",
         },
         "layout_preview": {
             "launch_mode": "layout_preview",
-            "hero_eyebrow_text": "propertyquarry layout preview",
+            "hero_eyebrow_text": "propertyquarry styled 3d reconstruction",
             "primary_cta_href": "#layout-viewer",
             "secondary_cta_href": "#walkthrough",
             "heading_failure": "layout_preview_heading_wrong",
@@ -1537,7 +1537,10 @@ def _check_generated_reconstruction_public_contract(
         if not (viewer_redirect_path.startswith(expected_control_prefix) or viewer_redirect_path == canonical_path):
             failures.append("viewer_redirect_target_wrong")
     elif viewer_status == 200:
-        if "layout preview | propertyquarry" not in viewer_body_lower or "class=\"viewport\"" not in viewer_body_lower:
+        if (
+            "styled 3d reconstruction | propertyquarry" not in viewer_body_lower
+            or "id=\"viewport\"" not in viewer_body_lower
+        ):
             failures.append("viewer_not_routed_to_clean_shell")
     else:
         failures.append("viewer_not_routed_to_clean_shell")
@@ -1550,7 +1553,7 @@ def _check_generated_reconstruction_public_contract(
             failures.append("canonical_redirect_target_wrong")
     elif canonical_status == 200:
         canonical_body_lower = canonical_body.lower()
-        if "propertyquarry layout tour" not in canonical_body_lower:
+        if "propertyquarry styled 3d reconstruction" not in canonical_body_lower:
             failures.append("canonical_missing_shell_heading")
         if "generated reconstruction" not in canonical_body_lower:
             failures.append("canonical_missing_generated_reconstruction_disclosure")
@@ -1562,13 +1565,20 @@ def _check_generated_reconstruction_public_contract(
     canonical_body_lower = canonical_body_raw.lower()
     if "generated-reconstruction/viewer.html" in canonical_body_raw and "layout-viewer-shell" not in canonical_body_lower:
         failures.append("canonical_leaks_fake_viewer_url")
-    if int(model.get("status_code") or 0) != 410:
-        failures.append("model_not_gone")
-    private_markers = (
+    model_status = int(model.get("status_code") or 0)
+    model_body = str(model.get("body_excerpt") or "")
+    if model_status == 200:
+        if (
+            "o propertyquarry_generated_layout" not in model_body
+            or "mtllib model.mtl" not in model_body
+            or "\nv " not in model_body
+            or "\nf " not in model_body
+        ):
+            failures.append("model_not_public_generated_layout")
+    elif model_status != 410:
+        failures.append("model_not_public_generated_layout")
+    private_key_markers = {
         "principal_id",
-        "owner@example.test",
-        "willhaben:runtime-reconstruction-smoke",
-        "runtime-reconstruction-smoke:",
         "listing_url",
         "property_url",
         "source_ref",
@@ -1578,16 +1588,47 @@ def _check_generated_reconstruction_public_contract(
         "address_lines",
         "map_lat",
         "map_lng",
+    }
+    private_value_markers = (
+        "owner@example.test",
+        "willhaben:runtime-reconstruction-smoke",
+        "runtime-reconstruction-smoke:",
     )
     public_payload_body = str(public_payload.get("body_excerpt") or "")
     public_payload_status = int(public_payload.get("status_code") or 0)
     if public_payload_status != 200:
         failures.append("public_payload_not_ok")
-    leaked_markers = [
-        marker
-        for marker in private_markers
-        if marker.lower() in public_payload_body.lower() or marker.lower() in canonical_body_raw.lower()
-    ]
+    leaked_markers: list[str] = []
+    if public_payload_status == 200:
+        try:
+            public_payload_json = json.loads(public_payload_body)
+        except Exception:
+            public_payload_json = None
+            failures.append("public_payload_invalid_json")
+
+        def _collect_private_payload_markers(value: object) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    normalized_key = str(key or "").strip().lower()
+                    if normalized_key in private_key_markers:
+                        leaked_markers.append(normalized_key)
+                    _collect_private_payload_markers(child)
+            elif isinstance(value, list):
+                for child in value:
+                    _collect_private_payload_markers(child)
+            elif isinstance(value, str):
+                normalized_value = value.lower()
+                for marker in private_value_markers:
+                    if marker in normalized_value:
+                        leaked_markers.append(marker)
+
+        if public_payload_json is not None:
+            _collect_private_payload_markers(public_payload_json)
+    canonical_body_lower = canonical_body_raw.lower()
+    leaked_markers.extend(
+        marker for marker in private_value_markers if marker in canonical_body_lower
+    )
+    leaked_markers = sorted(set(leaked_markers))
     if leaked_markers:
         failures.append("public_payload_private_markers_present")
     return {

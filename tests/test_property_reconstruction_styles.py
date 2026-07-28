@@ -295,7 +295,7 @@ def test_style_scene_evidence_fails_closed_on_tamper(tamper: str) -> None:
     assert styles.validate_style_scene(changed, expected_style=selected)[0] is False
 
 
-def test_style_aware_cache_rejects_v4_and_a_different_requested_style() -> None:
+def test_style_aware_cache_rejects_v5_and_a_different_requested_style() -> None:
     urban = styles.reconstruction_style("urban_jungle", style_id="urban_jungle")
     warm = styles.reconstruction_style("warm_scandi", style_id="warm_scandi")
     generated = {
@@ -313,10 +313,36 @@ def test_style_aware_cache_rejects_v4_and_a_different_requested_style() -> None:
         generated,
         requested_style=warm,
     )
-    generated["viewer_version"] = "propertyquarry_3d_tour_viewer_v4"
+    generated["viewer_version"] = "propertyquarry_3d_tour_viewer_v5"
     assert not product_service._property_reconstruction_style_cache_matches(
         generated,
         requested_style=urban,
+    )
+
+
+@pytest.mark.parametrize("stop_count", [1, 2, 4, 6])
+def test_walkthrough_duration_floor_is_enforced_for_viewer_and_crossfade_paths(
+    stop_count: int,
+) -> None:
+    viewer_seconds = generator._quality_safe_walkthrough_seconds_per_stop(
+        5.0,
+        stop_count=stop_count,
+        crossfade=False,
+    )
+    assert viewer_seconds * stop_count >= generator.MIN_WALKTHROUGH_DURATION_SECONDS
+
+    crossfade_seconds = generator._quality_safe_walkthrough_seconds_per_stop(
+        5.0,
+        stop_count=stop_count,
+        crossfade=True,
+    )
+    encoded_frames = generator._stop_card_walkthrough_encoded_frame_count(
+        stop_count=stop_count,
+        seconds_per_stop=crossfade_seconds,
+    )
+    assert (
+        encoded_frames / generator.WALKTHROUGH_OUTPUT_FPS
+        >= generator.MIN_WALKTHROUGH_DURATION_SECONDS
     )
 
 

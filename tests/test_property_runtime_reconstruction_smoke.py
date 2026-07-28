@@ -902,9 +902,9 @@ def test_generated_reconstruction_shell_variant_failures_accept_launch_and_layou
             shell_name="launch_shell",
             snapshot={
                 "launch_mode": "tour_public_launch",
-                "hero_eyebrow_text": "PropertyQuarry layout tour",
-                "primary_cta_href": "#walkthrough",
-                "secondary_cta_href": "#reference-focus",
+                "hero_eyebrow_text": "PropertyQuarry styled 3D reconstruction",
+                "primary_cta_href": "#layout-viewer",
+                "secondary_cta_href": "#walkthrough",
             },
         )
         == []
@@ -914,7 +914,7 @@ def test_generated_reconstruction_shell_variant_failures_accept_launch_and_layou
             shell_name="layout_preview",
             snapshot={
                 "launch_mode": "layout_preview",
-                "hero_eyebrow_text": "PropertyQuarry layout preview",
+                "hero_eyebrow_text": "PropertyQuarry styled 3D reconstruction",
                 "primary_cta_href": "#layout-viewer",
                 "secondary_cta_href": "#walkthrough",
             },
@@ -928,7 +928,7 @@ def test_generated_reconstruction_shell_variant_failures_report_layout_preview_c
         shell_name="layout_preview",
         snapshot={
             "launch_mode": "tour_public_launch",
-            "hero_eyebrow_text": "PropertyQuarry layout tour",
+            "hero_eyebrow_text": "PropertyQuarry layout preview",
             "primary_cta_href": "#walkthrough",
             "secondary_cta_href": "#reference-focus",
         },
@@ -1076,7 +1076,7 @@ def test_runtime_reconstruction_smoke_accepts_bedroom_led_route_without_hall_whe
     assert receipt["walkthrough_generated_ok"] is True
 
 
-def test_generated_reconstruction_public_contract_requires_clean_shell_redirect_and_gone(monkeypatch) -> None:
+def test_generated_reconstruction_public_contract_requires_clean_shell_redirect_and_private_model_gone(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
 
     def _fake_probe(url: str, *, host_header: str = "") -> dict[str, object]:
@@ -1085,10 +1085,12 @@ def test_generated_reconstruction_public_contract_requires_clean_shell_redirect_
             return {"status_code": 302, "location": "/tours/runtime-smoke", "body_excerpt": ""}
         if url.endswith("/generated-reconstruction/model.obj"):
             return {"status_code": 410, "location": "", "body_excerpt": "This generated model is not a public 3D tour."}
+        if url.endswith("/runtime-smoke.json"):
+            return {"status_code": 200, "location": "", "body_excerpt": '{"slug":"runtime-smoke"}'}
         return {
             "status_code": 200,
             "location": "",
-            "body_excerpt": "PropertyQuarry layout tour Generated reconstruction Room route Reference deck",
+            "body_excerpt": "PropertyQuarry styled 3D reconstruction Generated reconstruction Room route Reference deck",
         }
 
     monkeypatch.setattr(smoke, "_http_probe", _fake_probe)
@@ -1128,15 +1130,25 @@ def test_generated_reconstruction_public_contract_allows_first_party_embedded_vi
             return {
                 "status_code": 200,
                 "location": "",
-                "body_excerpt": '<html><head><title>Layout preview | PropertyQuarry</title></head><body><div class="viewport"></div></body></html>',
+                "body_excerpt": '<html><head><title>Styled 3D reconstruction | PropertyQuarry</title></head><body><div id="viewport"></div></body></html>',
             }
         if url.endswith("/generated-reconstruction/model.obj"):
-            return {"status_code": 410, "location": "", "body_excerpt": "This generated model is not a public 3D tour."}
+            return {
+                "status_code": 200,
+                "location": "",
+                "body_excerpt": "mtllib model.mtl\no propertyquarry_generated_layout\nv 0 0 0\nf 1 2 3\n",
+            }
+        if url.endswith("/runtime-smoke.json"):
+            return {
+                "status_code": 200,
+                "location": "",
+                "body_excerpt": '{"slug":"runtime-smoke","property_url_sha256":"sha256:safe"}',
+            }
         return {
             "status_code": 200,
             "location": "",
             "body_excerpt": (
-                'PropertyQuarry layout tour Generated reconstruction '
+                'PropertyQuarry styled 3D reconstruction Generated reconstruction '
                 '<section class="layout-viewer-shell"><iframe src="/tours/files/runtime-smoke/generated-reconstruction/viewer.html"></iframe></section>'
             ),
         }
@@ -1149,6 +1161,7 @@ def test_generated_reconstruction_public_contract_allows_first_party_embedded_vi
     )
 
     assert receipt["status"] == "pass"
+    assert receipt["private_marker_leaks"] == []
 
 
 def test_generated_reconstruction_public_contract_rejects_raw_viewer_404(monkeypatch) -> None:
@@ -1160,7 +1173,7 @@ def test_generated_reconstruction_public_contract_rejects_raw_viewer_404(monkeyp
         return {
             "status_code": 200,
             "location": "",
-            "body_excerpt": "PropertyQuarry layout tour Generated reconstruction Room route Reference deck",
+            "body_excerpt": "PropertyQuarry styled 3D reconstruction Generated reconstruction Room route Reference deck",
         }
 
     monkeypatch.setattr(smoke, "_http_probe", _fake_probe)
@@ -1184,7 +1197,7 @@ def test_generated_reconstruction_public_contract_forwards_host_header_to_loopba
         return {
             "status_code": 200,
             "location": "",
-            "body_excerpt": "PropertyQuarry layout tour Generated reconstruction Room route Reference deck",
+            "body_excerpt": "PropertyQuarry styled 3D reconstruction Generated reconstruction Room route Reference deck",
         }
 
     monkeypatch.setattr(smoke, "_http_probe", _fake_probe)
@@ -1220,7 +1233,7 @@ def test_generated_reconstruction_public_contract_rejects_private_markers_in_pay
         return {
             "status_code": 200,
             "location": "",
-            "body_excerpt": "PropertyQuarry layout tour Generated reconstruction Room route Reference deck",
+            "body_excerpt": "PropertyQuarry styled 3D reconstruction Generated reconstruction Room route Reference deck",
         }
 
     monkeypatch.setattr(smoke, "_http_probe", _fake_probe)
