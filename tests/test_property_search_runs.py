@@ -13217,6 +13217,7 @@ def test_property_search_run_preserves_restored_agent_commercial_when_raw_prefer
                 "active_until": "2999-01-01T00:00:00+00:00",
             },
         },
+        trusted_commercial_update=True,
     )
     observed: dict[str, object] = {}
 
@@ -16569,13 +16570,23 @@ def test_property_search_run_uses_saved_platforms_before_family_toggles(monkeypa
             "country_code": "AT",
             "language_code": "de",
             "listing_mode": "rent",
-            "location_query": "Wien",
-            "selected_platforms": ["willhaben", "immmo", "immoscout_at", "remax_at", "kalandra", "broker_direct_at"],
-            "include_broker_direct_sources": True,
-            "property_commercial": {"active_plan_key": "agent", "status": "active", "active_until": "2999-01-01T00:00:00+00:00"},
-        },
-    )
+                "location_query": "Wien",
+                "selected_platforms": ["willhaben", "immmo", "immoscout_at", "remax_at", "kalandra", "broker_direct_at"],
+                "include_broker_direct_sources": True,
+            },
+        )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "active_plan_key": "agent",
+        "status": "active",
+        "active_until": "2999-01-01T00:00:00+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     observed: dict[str, object] = {}
 
@@ -16806,9 +16817,9 @@ def test_property_search_preferences_update_preserves_existing_commercial_state(
     started = client.post("/v1/onboarding/start", json={"workspace_name": "Commercial Preserve", "workspace_mode": "personal"})
     assert started.status_code == 200
 
-    seeded = client.post(
-        "/v1/onboarding/property-search/preferences",
-        json={
+    seeded = client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json={
             "country_code": "AT",
             "language_code": "de",
             "listing_mode": "buy",
@@ -16820,8 +16831,9 @@ def test_property_search_preferences_update_preserves_existing_commercial_state(
                 "active_until": "2099-12-31T23:59:59+00:00",
             },
         },
+        trusted_commercial_update=True,
     )
-    assert seeded.status_code == 200
+    assert seeded["property_search_preferences"]["property_commercial"]["active_plan_key"] == "agent"
 
     updated = client.post(
         "/v1/onboarding/property-search/preferences",
@@ -17916,10 +17928,20 @@ def test_property_search_run_drops_saved_providers_from_wrong_country(monkeypatc
             "listing_mode": "rent",
             "location_query": "1020 Vienna",
             "selected_platforms": ["re_cr_mls", "encuentra24_cr"],
-            "property_commercial": {"active_plan_key": "agent", "status": "active", "active_until": "2999-01-01T00:00:00+00:00"},
         },
     )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "active_plan_key": "agent",
+        "status": "active",
+        "active_until": "2999-01-01T00:00:00+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     observed: dict[str, object] = {}
 

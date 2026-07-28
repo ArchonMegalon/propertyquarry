@@ -48,6 +48,12 @@ def test_property_scene_video_shared_env_materializes_magicfit_and_magicai_bridg
                 "ONEMIN_AI_API_KEY_FALLBACK_7=onemin-fallback-7",
                 "BROWSERACT_API_KEY=browseract-primary-key",
                 "BROWSERACT_API_KEY_FALLBACK_2=browseract-fallback-2",
+                "WORKLLM_BASE_URL=https://girschele-workspace.workllm.io",
+                "WORKLLM_EMAIL=workllm@example.test",
+                "WORKLLM_PASSWORD=workllm-pass",
+                "WORKLLM_LICENSE_TIER=4",
+                "WORKLLM_PROVIDER_VERIFIED=false",
+                "WORKLLM_RUNTIME_ENABLED=false",
             ]
         )
         + "\n",
@@ -90,6 +96,14 @@ def test_property_scene_video_shared_env_materializes_magicfit_and_magicai_bridg
     assert "ONEMIN_AI_API_KEY_FALLBACK_7='onemin-fallback-7'" in rendered
     assert "BROWSERACT_API_KEY='browseract-primary-key'" in rendered
     assert "BROWSERACT_API_KEY_FALLBACK_2='browseract-fallback-2'" in rendered
+    assert "WORKLLM_BASE_URL='https://girschele-workspace.workllm.io'" in rendered
+    assert "WORKLLM_EMAIL='workllm@example.test'" in rendered
+    assert "WORKLLM_PASSWORD='workllm-pass'" in rendered
+    assert "WORKLLM_LICENSE_TIER='4'" in rendered
+    assert "WORKLLM_PROVIDER_VERIFIED='false'" in rendered
+    assert "WORKLLM_RUNTIME_ENABLED='false'" in rendered
+    assert result["providers"]["workllm"]["credentials_present"] is True
+    assert result["providers"]["workllm"]["agent_id_present"] is False
     assert "PROPERTYQUARRY_OMAGIC_MODEL_UPLOAD_ENABLED" not in rendered
     assert "PROPERTYQUARRY_OMAGIC_RENDER_ENDPOINT" not in rendered
     assert output_path.stat().st_mode & 0o777 == 0o600

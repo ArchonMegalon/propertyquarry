@@ -7,6 +7,9 @@ def test_ltd_critical_entries_gate_passes_for_expected_inventory_and_env() -> No
     markdown = """
 | `1min.AI` | `Advanced Business Plan` | `12 licenses / 12 accounts` | `Owned` |  | `Tier 1` | Local `.env` key rotation slots plus `scripts/resolve_onemin_ai_key.sh` | Latest credit refresh confirmed remaining credits. |
 | `Prompt Architects` | `Tier 4` | `1 account` | `Activated` |  | `Tier 4` | `PROMPTING_SYSTEMS_API_KEY` in local `.env`; governed Prompt Foundry Accelerator is integrated for template seed/operator assist | AppSumo Tier 4 capture is confirmed. |
+
+## Discovery Tracking
+
 | `BrowserAct` | ops@example.com | `complete` | `browseract_live` | 2026-03-07T00:00:00Z | Plan/Tier: Tier 3; Status: activated |
 | `Teable` | ops@teable.example | `complete` | `browseract_live` | 2026-03-07T00:01:00Z | Plan/Tier: License Tier 4; Status: activated |
 """.strip()

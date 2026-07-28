@@ -44,6 +44,14 @@ Operator environment controls are deliberately narrow:
 - `PROPERTYQUARRY_SLO_CAPTURE_TIMEOUT_SECONDS` bounds the private request.
 - `PROPERTYQUARRY_REQUIRE_SLO_RELEASE_EVIDENCE=1` applies the production gate to an isolated non-production candidate; production cannot bypass it.
 - `PROPERTYQUARRY_SLO_METRICS_SNAPSHOT`, `PROPERTYQUARRY_SLO_METRICS_PROBE_RECEIPT`, and `PROPERTYQUARRY_SLO_EVIDENCE_RECEIPT` connect operator-private artifacts to the focused release bundle.
+- `PROPERTYQUARRY_MONITORING_RUNTIME_RECEIPT`,
+  `PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT`,
+  `PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE`,
+  `PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT`,
+  `PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT`,
+  `PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT`, and
+  `PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT` bind every raw deployed-
+  observability input consumed by the canonical bundle verifier.
 
 ## Offline flagship gate
 
@@ -63,9 +71,10 @@ python3 scripts/propertyquarry_slo_evidence.py \
   --overwrite-receipt
 ```
 
-For the focused release bundle, export the two input paths. The bundle reruns
-the validator fail closed and passes the resulting receipt into the
-consolidated gold-status gate.
+For the focused release bundle, export the SLO inputs and every deployed-
+observability input. The bundle reruns both validators fail closed and passes
+their resulting receipts and raw inputs into the consolidated gold-status
+gate.
 
 ```bash
 export PROPERTYQUARRY_SLO_METRICS_SNAPSHOT='_completion/propertyquarry_slo_evidence/metrics-current.prom'
@@ -93,10 +102,10 @@ disposition.
 Promotion requires a receipt signed by an independent release-control
 authority. This repository intentionally has no sign/issue mode. The v2
 receipt binds the exact release SHA and digest, deployment ID, target ID,
-Compose project, public origin, API/scheduler/render/ingress containers, actor,
-the pinned writer-topology SHA-256, UTC issue/expiry times, action, key ID, and
-a 32-hex nonce. Its lifetime is at most five minutes. The deploy actor may
-configure only the receipt, target, and actor bindings:
+Compose project, public origin, API/worker/scheduler/render/ingress containers,
+actor, the pinned writer-topology SHA-256, UTC issue/expiry times, action, key
+ID, and a 32-hex nonce. Its lifetime is at most five minutes. The deploy actor
+may configure only the receipt, target, and actor bindings:
 
 ```bash
 export PROPERTYQUARRY_DEPLOY_DRAIN_RECEIPT='/secure/release-control/propertyquarry-drain.json'
@@ -135,11 +144,11 @@ Privileged automation must invoke the installed native controller directly
 and must never run this checkout wrapper as root.
 
 The fixed controller lock is acquired before candidate evidence is examined.
-Ingress, API, scheduler, render, and the pinned migrator are contained first on
-every production invocation. Consequently an expired new receipt or a missing,
-deleted, corrupt, or rolled-back local journal cannot prevent crash recovery.
-All production journal mutations and drain consumption are controller
-operations under that inherited lock.
+Ingress, API, dedicated worker, scheduler, render, and the pinned migrator are
+contained first on every production invocation. Consequently an expired new
+receipt or a missing, deleted, corrupt, or rolled-back local journal cannot
+prevent crash recovery. All production journal mutations and drain consumption
+are controller operations under that inherited lock.
 
 Release control provisions the v2 external drain keyring at
 `/etc/propertyquarry/release-control/deploy-drain-keyring.v2.json`. Rotation has
@@ -191,9 +200,9 @@ runtime-role epoch and consume promotion authority immediately before ingress.
 Any pre-commit failure leaves ingress stopped and restores only writers that
 were previously active. Any committed-migration, SLO, monitoring, range,
 alert-delivery, gold, receipt-replay, tunnel, or public-version failure leaves
-ingress and candidate API/scheduler/render stopped. A consumed receipt is
-single-use even when promotion subsequently fails; request a new signed receipt
-after resolving the failure.
+ingress and candidate API/worker/scheduler/render stopped. A consumed receipt
+is single-use even when promotion subsequently fails; request a new signed
+receipt after resolving the failure.
 
 The release-controlled containment topology is pinned at
 `config/release/propertyquarry_deploy_writer_topology.v1.json` and its digest is
@@ -215,7 +224,8 @@ privileged deployment or rollback.
 
 ## Canonical deployed-observability bundle
 
-Flagship promotion additionally consumes four private raw artifacts:
+Flagship promotion additionally consumes seven private raw observability
+artifacts, alongside the SLO metrics snapshot and probe:
 
 - monitoring runtime receipt
   (`propertyquarry.monitoring-runtime-proof.v1`)
@@ -224,6 +234,9 @@ Flagship promotion additionally consumes four private raw artifacts:
 - 30-day Prometheus range receipt
   (`propertyquarry.prometheus-range-receipt.v1`)
 - the exact raw Prometheus `query_range` JSON bound by that range receipt
+- dashboard-render receipt
+- structured-log-query receipt
+- distributed-trace-query receipt
 
 Do not accept the producers' status booleans or stored hashes directly. The
 canonical verifier re-reads every input, recomputes canonical payload hashes,
@@ -238,6 +251,9 @@ python3 scripts/propertyquarry_observability_receipts.py verify \
   --prometheus-range-receipt '_completion/propertyquarry_monitoring/range-receipt.json' \
   --prometheus-range-response '_completion/propertyquarry_monitoring/range-response.json' \
   --alert-delivery-receipt '_completion/propertyquarry_monitoring/alert-delivery.json' \
+  --dashboard-render-receipt '_completion/propertyquarry_monitoring/dashboard-render.json' \
+  --structured-log-query-receipt '_completion/propertyquarry_monitoring/structured-log-query.json' \
+  --distributed-trace-query-receipt '_completion/propertyquarry_monitoring/distributed-trace-query.json' \
   --metrics-snapshot '_completion/propertyquarry_slo_evidence/metrics-current.prom' \
   --metrics-probe '_completion/propertyquarry_slo_evidence/metrics-probe-current.json' \
   --output '_completion/propertyquarry_monitoring/verification.json'
@@ -251,6 +267,9 @@ unless `--overwrite` is explicit and always writes mode `0600`.
 Set `PROPERTYQUARRY_MONITORING_RUNTIME_RECEIPT`,
 `PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT`,
 `PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE`, and
-`PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT` to these private raw artifacts for the
-deploy. Gold uses `--require-launch-evidence`; a previously generated green
-receipt without its raw inputs has no promotion authority.
+`PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT`,
+`PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT`,
+`PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT`, and
+`PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT` to these private raw artifacts
+for the deploy. Gold uses `--require-launch-evidence`; a previously generated
+green receipt without its raw inputs has no promotion authority.

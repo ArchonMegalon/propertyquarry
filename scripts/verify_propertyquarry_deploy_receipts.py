@@ -409,6 +409,13 @@ def verify_deploy_receipts(
         issues.append(f"current seed/source cryptographic binding failed: {exc}")
         expected_source_binding = None
         expected_browser_binding = None
+    if (
+        isinstance(expected_source_binding, dict)
+        and str(expected_source_binding.get("code_commit") or "").lower() != code_parent
+    ):
+        issues.append(
+            "expected code parent is not the exact code parent bound by the receipt source closure"
+        )
     if browser.get("source_binding") != expected_source_binding:
         issues.append("browser workflow proof is not bound to the exact code parent, seed, and test sources")
     if flagship.get("source_binding") != expected_source_binding:

@@ -4,39 +4,26 @@ import logging
 import os
 from dataclasses import dataclass
 
-from app.repositories.artifacts import InMemoryArtifactRepository
-from app.repositories.connector_bindings import InMemoryConnectorBindingRepository
-from app.repositories.commitments import InMemoryCommitmentRepository
-from app.repositories.communication_policies import InMemoryCommunicationPolicyRepository
-from app.repositories.decision_windows import InMemoryDecisionWindowRepository
-from app.repositories.deadline_windows import InMemoryDeadlineWindowRepository
-from app.repositories.delivery_outbox import InMemoryDeliveryOutboxRepository
-from app.repositories.delivery_preferences import InMemoryDeliveryPreferenceRepository
-from app.repositories.entities import InMemoryEntityRepository
-from app.repositories.evidence_objects import InMemoryEvidenceObjectRepository
-from app.repositories.follow_ups import InMemoryFollowUpRepository
-from app.repositories.follow_up_rules import InMemoryFollowUpRuleRepository
-from app.repositories.interruption_budgets import InMemoryInterruptionBudgetRepository
-from app.repositories.authority_bindings import InMemoryAuthorityBindingRepository
-from app.repositories.memory_candidates import InMemoryMemoryCandidateRepository
-from app.repositories.memory_items import InMemoryMemoryItemRepository
-from app.repositories.observation import InMemoryObservationEventRepository
 from app.repositories.onemin_manager import build_onemin_manager_service_repo
-from app.repositories.relationships import InMemoryRelationshipRepository
 from app.repositories.provider_bindings import build_provider_binding_service_repo
-from app.repositories.stakeholders import InMemoryStakeholderRepository
-from app.repositories.tool_registry import InMemoryToolRegistryRepository
 from app.services.brain_router import BrainRouterService
-from app.services.cognitive_load import CognitiveLoadService
 from app.services.channel_runtime import ChannelRuntimeService, build_channel_runtime
+from app.services.cognitive_load import CognitiveLoadService
 from app.services.evidence_runtime import EvidenceRuntimeService, build_evidence_runtime
 from app.services.memory_runtime import MemoryRuntimeService, build_memory_runtime
-from app.services.orchestrator import RewriteOrchestrator, build_artifact_repo, build_default_orchestrator
-from app.services.onemin_manager import OneminManagerService, register_onemin_manager
 from app.services.onboarding import OnboardingService, build_onboarding_service
+from app.services.onemin_manager import OneminManagerService, register_onemin_manager
+from app.services.orchestrator import (
+    RewriteOrchestrator,
+    build_artifact_repo,
+    build_default_orchestrator,
+)
 from app.services.planner import PlannerService
 from app.services.policy import PolicyDecisionService
-from app.services.preference_profile_service import PreferenceProfileService, build_preference_profile_service
+from app.services.preference_profile_service import (
+    PreferenceProfileService,
+    build_preference_profile_service,
+)
 from app.services.proactive_horizon import ProactiveHorizonService
 from app.services.provider_registry import ProviderRegistryService
 from app.services.admission_control import (
@@ -55,6 +42,7 @@ from app.settings import (
     SUPPORTED_RUNTIME_ROLES,
     ensure_storage_fallback_allowed,
     ensure_prod_api_token_configured,
+    ensure_storage_fallback_allowed,
     get_settings,
     settings_with_storage_backend,
     validate_startup_settings,
@@ -261,8 +249,21 @@ class ReadinessService:
             except RuntimeError as exc:
                 return False, f"propertyquarry_admission_not_ready:{exc}"
         try:
-            with psycopg.connect(_database_url(self._settings), autocommit=True) as conn:
+            with psycopg.connect(
+                _database_url(self._settings),
+                autocommit=True,
+                connect_timeout=3,
+            ) as conn:
                 with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT
+                            set_config('statement_timeout', %s, FALSE),
+                            set_config('lock_timeout', %s, FALSE)
+                        """,
+                        ("2000ms", "250ms"),
+                    )
+                    _ = cur.fetchone()
                     cur.execute("SELECT 1")
                     _ = cur.fetchone()
                     from app.product.property_search_schema import (
@@ -280,7 +281,10 @@ class ReadinessService:
                             or ""
                         ),
                     ):
-                        schema_status = inspect_property_search_schema_cursor(cur)
+                        schema_status = inspect_property_search_schema_cursor(
+                            cur,
+                            verify_capacity_counts=False,
+                        )
                         if not schema_status.ready:
                             return (
                                 False,

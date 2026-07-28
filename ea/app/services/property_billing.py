@@ -8,7 +8,6 @@ import hmac
 import json
 import os
 import urllib.parse
-from typing import Any
 
 import requests
 
@@ -20,6 +19,9 @@ _AGENT_PLAN_ALIASES = {
     "agent_lifetime": "agent",
     "agent_tier_lifetime": "agent",
 }
+
+_LIFETIME_AGENT_ENTITLEMENT_KIND = "lifetime"
+_LIFETIME_AGENT_EXPIRY = datetime(2999, 1, 1, tzinfo=timezone.utc)
 
 _PROPERTY_FURNITURE_STYLE_LIMIT_BY_PLAN = {
     "free": 5,
@@ -197,24 +199,43 @@ def property_plan_spec(plan_key: str) -> PropertyPlanSpec:
     raise ValueError("unknown_property_plan")
 
 
-def normalize_property_commercial(value: dict[str, object] | None) -> dict[str, object]:
+def normalize_property_commercial(
+    value: dict[str, object] | None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, object]:
     raw = dict(value or {})
     raw_requested_plan_key = str(raw.get("active_plan_key") or raw.get("plan_key") or "free").strip().lower().replace("-", "_").replace(" ", "_")
+    entitlement_kind = str(raw.get("entitlement_kind") or "").strip().lower()
+    lifetime_agent = entitlement_kind == _LIFETIME_AGENT_ENTITLEMENT_KIND
     requested_plan_key = normalize_property_plan_key(raw_requested_plan_key)
+    if lifetime_agent:
+        requested_plan_key = "agent"
     if requested_plan_key not in {"free", *tuple(_PAID_PLANS.keys())}:
         requested_plan_key = "free"
     raw_status = str(raw.get("status") or "").strip().lower()
     active_until = _parse_iso(raw.get("active_until"))
-    if raw_requested_plan_key in _AGENT_PLAN_ALIASES and active_until is None and raw_status in {"", "active", "captured", "lifetime"}:
-        active_until = datetime(2999, 1, 1, tzinfo=timezone.utc)
-    expired = requested_plan_key != "free" and (active_until is None or active_until <= _now())
+    if lifetime_agent:
+        active_until = _LIFETIME_AGENT_EXPIRY
+    elif raw_requested_plan_key in _AGENT_PLAN_ALIASES and active_until is None and raw_status in {"", "active", "captured", "lifetime"}:
+        active_until = _LIFETIME_AGENT_EXPIRY
+    evaluated_at = now or _now()
+    if evaluated_at.tzinfo is None:
+        evaluated_at = evaluated_at.replace(tzinfo=timezone.utc)
+    else:
+        evaluated_at = evaluated_at.astimezone(timezone.utc)
+    expired = (
+        not lifetime_agent
+        and requested_plan_key != "free"
+        and (active_until is None or active_until <= evaluated_at)
+    )
     effective_plan_key = "free" if expired else requested_plan_key
     status = str(raw.get("status") or ("expired" if expired else ("active" if effective_plan_key != "free" else "free"))).strip().lower()
     if effective_plan_key == "free" and status not in {"expired", "free", "payment_failed", "cancelled", "refunded"}:
         status = "free"
     if effective_plan_key != "free" and status not in {"active", "pending", "captured"}:
         status = "active"
-    return {
+    normalized = {
         "active_plan_key": effective_plan_key,
         "status": status,
         "active_until": active_until.isoformat() if active_until is not None and effective_plan_key != "free" and not expired else "",
@@ -234,6 +255,18 @@ def normalize_property_commercial(value: dict[str, object] | None) -> dict[str, 
         "billing_events_json": _normalized_property_billing_events(raw.get("billing_events_json")),
         "billing_reconciliations_json": _normalized_property_billing_reconciliations(raw.get("billing_reconciliations_json")),
     }
+    if lifetime_agent:
+        normalized.update(
+            {
+                "entitlement_kind": _LIFETIME_AGENT_ENTITLEMENT_KIND,
+                "entitlement_plan_key": "agent",
+                "entitlement_source": str(raw.get("entitlement_source") or "").strip(),
+                "entitlement_grant_id": str(raw.get("entitlement_grant_id") or "").strip(),
+                "entitlement_granted_at": str(raw.get("entitlement_granted_at") or "").strip(),
+                "entitlement_reason_digest": str(raw.get("entitlement_reason_digest") or "").strip(),
+            }
+        )
+    return normalized
 
 
 def _normalized_property_billing_events(value: object) -> list[dict[str, object]]:
@@ -423,7 +456,7 @@ def reconcile_brilliant_directories_billing_event(
     note: str = "",
     now: datetime | None = None,
 ) -> dict[str, object]:
-    normalized = normalize_property_commercial(existing_commercial)
+    normalized = normalize_property_commercial(existing_commercial, now=now)
     compact_event_id = str(event_id or "").strip()
     compact_decision = str(decision or "").strip().lower()
     if compact_decision not in {"approve", "reject"}:

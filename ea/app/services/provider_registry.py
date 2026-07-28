@@ -17,6 +17,7 @@ from app.services.brain_catalog import get_brain_profile
 from app.services.browseract_ui_service_catalog import browseract_ui_service_definitions
 from app.services.survival_lane import survival_route_health_snapshot
 from app.services.tool_execution_common import ToolExecutionError
+from app.services.workllm_client import workllm_enabled
 
 
 _ONEMIN_FALLBACK_ENV_RE = re.compile(r"^ONEMIN_AI_API_KEY_FALLBACK_(\d+)$")
@@ -744,6 +745,20 @@ class ProviderRegistryService:
                 source="runtime",
             ),
             ProviderBinding(
+                provider_key="workllm",
+                display_name="WorkLLM Real Estate",
+                executable=True,
+                capabilities=(
+                    ProviderCapability(
+                        provider_key="workllm",
+                        capability_key="real_estate_advisory",
+                        tool_name="provider.workllm.real_estate_advisory",
+                        executable=True,
+                    ),
+                ),
+                source="runtime",
+            ),
+            ProviderBinding(
                 provider_key="unmixr",
                 display_name="Unmixr AI",
                 executable=False,
@@ -1144,6 +1159,12 @@ class ProviderRegistryService:
             "prompting_systems": ("PROMPTING_SYSTEMS_API_KEY",),
             "teable": ("TEABLE_API_KEY",),
             "unmixr": ("UNMIXR_API_KEY", "UNMIXR_VOICE_ID"),
+            "workllm": (
+                "WORKLLM_BASE_URL",
+                "WORKLLM_EMAIL",
+                "WORKLLM_PASSWORD",
+                "WORKLLM_REAL_ESTATE_AGENT_ID",
+            ),
         }
         return mapping.get(str(provider_key or "").strip(), ())
 
@@ -1158,6 +1179,8 @@ class ProviderRegistryService:
             return "cli"
         if binding.provider_key == "google_gmail":
             return "oauth"
+        if binding.provider_key == "workllm":
+            return "workspace_password"
         if self._secret_env_names(binding.provider_key):
             return "api_key"
         return "catalog"
@@ -1182,6 +1205,8 @@ class ProviderRegistryService:
                     "EA_PROVIDER_SECRET_KEY",
                 )
             )
+        if binding.provider_key == "workllm":
+            return workllm_enabled()
         return any(str(os.environ.get(name) or "").strip() for name in self._secret_env_names(binding.provider_key))
 
     def binding_state(
@@ -2154,6 +2179,8 @@ class ProviderRegistryService:
             "poppy": "poppy_ai",
             "poppy.ai": "poppy_ai",
             "poppy_ai": "poppy_ai",
+            "workllm.io": "workllm",
+            "work_llm": "workllm",
             "gemini": "gemini_vortex",
             "gemini_cli": "gemini_vortex",
             "vortex": "gemini_vortex",

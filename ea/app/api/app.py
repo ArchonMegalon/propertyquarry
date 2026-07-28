@@ -32,7 +32,6 @@ from app.services.admission_control import (
 )
 from app.settings import get_settings, validate_startup_settings
 
-
 _PROPERTY_SEARCH_PREWARM_CONTAINER = None
 
 _PROPERTYQUARRY_RUNTIME_PROFILE = "propertyquarry"
@@ -525,6 +524,80 @@ def preload_non_channel_route_modules(*, include_legacy: bool = False) -> None:
         _load_legacy_route_modules()
 
 
+def _ingress_admission_hmac_material() -> tuple[bytes, str]:
+    from app.product.property_search_storage import (
+        _property_search_ingress_admission_hmac_material,
+    )
+
+    return _property_search_ingress_admission_hmac_material()
+
+
+def _build_ingress_admission_store(  # type: ignore[no-untyped-def]
+    *,
+    settings,
+    container,
+    policy: IngressPolicy,
+    metrics: RuntimeMetrics,
+):
+    if not policy.quotas_enabled:
+        return None
+    if (
+        INGRESS_POLICY_CONTRACT_VERSION
+        != INGRESS_ADMISSION_CONTRACT_VERSION
+    ):
+        raise RuntimeError("ingress_admission_policy_contract_mismatch")
+    runtime_profile = getattr(container, "runtime_profile", None)
+    backend = str(
+        getattr(runtime_profile, "storage_backend", "")
+        or getattr(settings, "storage_backend", "")
+        or ""
+    ).strip().lower()
+    hmac_secret, erasure_key_id = _ingress_admission_hmac_material()
+    if backend == "postgres":
+        database_url = str(
+            getattr(getattr(container, "settings", None), "database_url", "")
+            or getattr(settings, "database_url", "")
+            or ""
+        ).strip()
+        store = PostgresIngressAdmissionStore(
+            database_url,
+            hmac_secret=hmac_secret,
+            erasure_key_id=erasure_key_id,
+            verify_schema=True,
+        )
+    elif backend == "memory":
+        store = InMemoryIngressAdmissionStore(
+            hmac_secret=hmac_secret,
+        )
+    else:
+        raise RuntimeError("ingress admission backend is not resolved")
+    snapshot = store.capacity_snapshot()
+    metrics.record_ingress_admission_operation(
+        backend=snapshot.backend.value,
+        operation=AdmissionOperation.SNAPSHOT.value,
+        outcome=(
+            AdmissionOutcome.ALLOWED.value
+            if snapshot.contract_valid
+            else AdmissionOutcome.BACKEND_UNAVAILABLE.value
+        ),
+    )
+    metrics.record_ingress_admission_capacity(
+        backend=snapshot.backend.value,
+        contract_valid=snapshot.contract_valid,
+        rows={
+            row.capacity_key.value: (row.row_count, row.hard_limit)
+            for row in snapshot.rows
+        },
+    )
+    if not snapshot.contract_valid:
+        raise IngressAdmissionContractError(
+            snapshot.reason,
+            backend=AdmissionBackend(backend),
+            operation=AdmissionOperation.SNAPSHOT,
+        )
+    return store
+
+
 def create_app() -> FastAPI:
     propertyquarry_profile = propertyquarry_runtime_profile_enabled()
     s = get_settings()
@@ -567,6 +640,7 @@ def create_app() -> FastAPI:
     runtime_router = route_modules["runtime"].router
     app = FastAPI(title=s.app_name, version=s.app_version, docs_url="/api/docs", redoc_url="/api/redoc")
     app.state.runtime_metrics = RuntimeMetrics()
+    app.state.container = build_container(settings=s)
     static_root = Path(__file__).resolve().parents[1] / "static"
     if static_root.exists():
         app.mount("/static", CachedStaticFiles(directory=static_root), name="static")
@@ -599,7 +673,6 @@ def create_app() -> FastAPI:
         ),
     )
     install_error_handlers(app)
-    app.state.container = build_container(settings=s)
     is_memory_backend = str(s.storage_backend or "").strip().lower() == "memory"
     if is_memory_backend:
         app.router.on_startup.append(_prewarm_property_search_surface_cache)

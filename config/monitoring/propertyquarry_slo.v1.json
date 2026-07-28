@@ -65,6 +65,24 @@
       "target_rate": 0,
       "indicator": "propertyquarry_http_request_errors_total on bounded provider/quota/balance route templates",
       "runbook_anchor": "provider-and-quota-failures"
+    },
+    {
+      "id": "ingress_admission_backend",
+      "target_rate": 0,
+      "indicator": "increase(propertyquarry_ingress_admission_operations_total{outcome=\"backend_unavailable\"}[5m])",
+      "runbook_anchor": "ingress-admission-backend"
+    },
+    {
+      "id": "ingress_admission_capacity",
+      "target_contract_valid": 1,
+      "warning_ratio": 0.8,
+      "critical_ratio": 0.95,
+      "hard_limits": {
+        "lease": 100000,
+        "quota": 1000000
+      },
+      "indicator": "propertyquarry_admission_capacity_row_count / propertyquarry_admission_capacity_limit",
+      "runbook_anchor": "ingress-admission-capacity"
     }
   ],
   "required_metric_families": [
@@ -102,9 +120,11 @@
     },
     "queue_backlog": {
       "metric_families": [
+        "propertyquarry_queue_observed",
         "propertyquarry_queue_depth",
         "propertyquarry_queue_oldest_item_age_seconds"
       ],
+      "target_observed": 1,
       "warning_depth": 100,
       "critical_depth": 500,
       "maximum_oldest_age_seconds": 300,

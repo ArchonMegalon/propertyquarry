@@ -35,7 +35,7 @@ wait_for_docker() {
 recreate_compose_stack() {
   local workdir="$1"
   shift
-  run docker compose "$@" up -d --force-recreate --remove-orphans
+  run docker compose --project-directory "$workdir" "$@" up -d --force-recreate --remove-orphans
 }
 
 main() {

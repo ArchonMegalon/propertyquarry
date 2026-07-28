@@ -1,6 +1,8 @@
   (() => {
     const root = document.querySelector('[data-property-decision-workbench]');
     if (!root) return;
+    if (root.dataset.pqWorkbenchController === 'loaded') return;
+    root.dataset.pqWorkbenchController = 'initializing';
     const initialSurface = String(root.getAttribute('data-pqx-surface') || '').trim().toLowerCase();
     const shortlistSurface = initialSurface === 'shortlist';
     if (shortlistSurface) {
@@ -6761,11 +6763,13 @@
       applyBrowserAndIpDefaults().finally(finalizeInitialFormState);
     }
     const propertyInlineStatuses = () => [
-      ...root.querySelectorAll('[data-property-inline-status], [data-property-launch-status]'),
+      ...root.querySelectorAll('[data-property-inline-status], [data-property-launch-status], [data-property-top-launch-status]'),
     ];
     const setPropertyInlineStatus = (message) => {
       propertyInlineStatuses().forEach((node) => {
         node.textContent = String(message || '');
+        if (message) node.dataset.pqTone = 'pending';
+        else delete node.dataset.pqTone;
       });
     };
     const setPropertyInlineError = (message) => {
@@ -6774,6 +6778,14 @@
         node.removeAttribute('data-pq-failure-state');
         node.textContent = String(message || '');
       });
+      const topStatus = root.querySelector('[data-property-top-launch-status]');
+      if (topStatus && message) {
+        topStatus.textContent = String(message);
+        topStatus.dataset.pqTone = 'error';
+      } else if (topStatus?.dataset.pqTone === 'error') {
+        topStatus.textContent = '';
+        delete topStatus.dataset.pqTone;
+      }
     };
     const setPropertyInlineFailureState = ({ state, message, actionLabel, action }) => {
       const nodes = [...root.querySelectorAll('[data-property-inline-error]')];
@@ -6828,7 +6840,7 @@
         if (!button) return;
         const isBusy = Boolean(busy);
         if (!button.dataset.pqxIdleLabel) {
-          button.dataset.pqxIdleLabel = String(button.textContent || '').trim() || 'Launch search';
+          button.dataset.pqxIdleLabel = String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search';
         }
         button.toggleAttribute('disabled', isBusy);
         button.setAttribute('aria-disabled', isBusy ? 'true' : 'false');
@@ -8114,4 +8126,6 @@
       if (clippyStatusNode && presetPrompt) clippyStatusNode.textContent = 'Question loaded from the email or shared link.';
     }
     initPreferenceManager();
+    root.dataset.pqWorkbenchController = 'loaded';
+    root.dispatchEvent(new CustomEvent('propertyquarry:workbench-ready'));
   })();

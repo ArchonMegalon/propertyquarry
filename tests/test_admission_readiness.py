@@ -103,10 +103,10 @@ def test_prod_api_readiness_probes_admission_with_the_dedicated_connection(
     monkeypatch.setattr(
         property_search_schema,
         "inspect_property_search_schema_cursor",
-        lambda _cursor: SimpleNamespace(
+        lambda _cursor, **_kwargs: SimpleNamespace(
             ready=True,
             reason="ready",
-            current_version=16,
+            current_version=17,
         ),
     )
     monkeypatch.setattr(
@@ -122,10 +122,10 @@ def test_prod_api_readiness_probes_admission_with_the_dedicated_connection(
 
     assert ReadinessService(_settings(primary_url))._probe_database() == (
         True,
-        "postgres_ready:property_search_schema_v16",
+        "postgres_ready:property_search_schema_v17",
     )
     assert connections == [
-        (primary_url, {"autocommit": True}),
+        (primary_url, {"autocommit": True, "connect_timeout": 3}),
         (
             admission_url,
             {
@@ -223,10 +223,10 @@ def test_prod_worker_readiness_uses_nested_authority_for_schema_when_aliases_are
     monkeypatch.setattr(
         property_search_schema,
         "inspect_property_search_schema_cursor",
-        lambda _cursor: SimpleNamespace(
+        lambda _cursor, **_kwargs: SimpleNamespace(
             ready=True,
             reason="ready",
-            current_version=16,
+            current_version=17,
         ),
     )
     monkeypatch.setattr(
@@ -244,7 +244,7 @@ def test_prod_worker_readiness_uses_nested_authority_for_schema_when_aliases_are
         )
     )._probe_database() == (
         True,
-        "postgres_ready:property_search_schema_v16",
+        "postgres_ready:property_search_schema_v17",
     )
     assert readiness_authority == [("prod", "worker")]
     assert connections == [primary_url]
@@ -436,10 +436,10 @@ def test_prod_api_readiness_preserves_bounded_admission_probe_failure(
     monkeypatch.setattr(
         property_search_schema,
         "inspect_property_search_schema_cursor",
-        lambda _cursor: SimpleNamespace(
+        lambda _cursor, **_kwargs: SimpleNamespace(
             ready=True,
             reason="ready",
-            current_version=16,
+            current_version=17,
         ),
     )
     monkeypatch.setattr(

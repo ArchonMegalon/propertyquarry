@@ -335,6 +335,31 @@ def test_source_configs_are_structurally_active_and_protected() -> None:
 
     assert "PropertyQuarryExpectedReplicaMetricMissing" in required
     assert "PropertyQuarryExpectedReplicaConfigurationDivergent" in required
+    assert "PropertyQuarryQueueTelemetryUnobserved" in required
+
+
+def test_static_validator_rejects_weakened_queue_telemetry_alert() -> None:
+    rules = copy.deepcopy(
+        proof.load_yaml(proof.DEFAULT_ALERT_RULES_PATH, name="rules")
+    )
+    queue_alert = next(
+        rule
+        for group in rules["groups"]
+        for rule in group["rules"]
+        if rule.get("alert") == "PropertyQuarryQueueTelemetryUnobserved"
+    )
+    queue_alert["expr"] = (
+        'propertyquarry_queue_observed{queue="property_search"} == 0'
+    )
+
+    with pytest.raises(
+        proof.MonitoringProofError,
+        match="queue-telemetry unobserved alert is not fail-closed",
+    ):
+        proof.validate_rule_config(
+            rules,
+            ["PropertyQuarryQueueTelemetryUnobserved"],
+        )
 
 
 def test_static_validator_rejects_dns_discovery_and_inline_operator_url() -> None:
@@ -506,6 +531,10 @@ def test_runtime_proof_requires_every_replica_and_delivers_only_synthetic_route(
     assert stat.S_IMODE(config.receipt_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(config.alert_delivery_receipt_path.stat().st_mode) == 0o600
     assert all(Path(call[0]).is_absolute() for call in runner.calls)
+    assert any(
+        call[1:4] == ("check", "config", "--syntax-only")
+        for call in runner.calls
+    )
 
 
 @pytest.mark.parametrize(
@@ -560,10 +589,124 @@ def test_existing_output_refuses_before_tools_or_network(
     assert runner.calls == []
 
 
-def test_runtime_proof_rejects_caller_selected_policy_path(tmp_path: Path) -> None:
-    config = replace(_config(tmp_path), slo_path=tmp_path / "lax-slo.json")
+@pytest.mark.parametrize("field", ["slo_path", "flagship_operations_path"])
+def test_runtime_proof_rejects_caller_selected_policy_path(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    config = replace(
+        _config(tmp_path),
+        **{field: tmp_path / f"lax-{field}.json"},
+    )
     with pytest.raises(proof.MonitoringProofError, match="policy path override"):
         proof._normalize_release(config)
+
+
+def test_runtime_proof_rejects_policy_path_alias_collision_before_tools_or_network(
+    tmp_path: Path,
+) -> None:
+    config = replace(
+        _config(tmp_path),
+        slo_path=proof.DEFAULT_FLAGSHIP_OPERATIONS_PATH,
+        flagship_operations_path=proof.DEFAULT_FLAGSHIP_OPERATIONS_PATH,
+    )
+    client = FakeHttpClient()
+    runner = FakeCommandRunner()
+
+    with pytest.raises(
+        proof.MonitoringProofError,
+        match="policy path override",
+    ):
+        proof.run_monitoring_proof(
+            config=config,
+            http_client=client,
+            command_runner=runner,
+            clock=lambda: NOW,
+            sleeper=lambda _: None,
+            signature_provider=AUTHORITY.sign,
+        )
+
+    assert client.calls == []
+    assert runner.calls == []
+
+
+def test_runtime_proof_rejects_flagship_operations_hash_drift_before_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    original_sha256_file = proof.sha256_file
+    hashed_paths: list[Path] = []
+
+    def drifted_sha256_file(path: Path) -> str:
+        hashed_paths.append(path)
+        if path == config.flagship_operations_path:
+            return "0" * 64
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(proof, "sha256_file", drifted_sha256_file)
+    client = FakeHttpClient()
+    runner = FakeCommandRunner()
+
+    with pytest.raises(
+        proof.MonitoringProofError,
+        match="policy hashes differ from the signed challenge",
+    ):
+        proof.run_monitoring_proof(
+            config=config,
+            http_client=client,
+            command_runner=runner,
+            clock=lambda: NOW,
+            sleeper=lambda _: None,
+            signature_provider=AUTHORITY.sign,
+        )
+
+    assert config.flagship_operations_path in hashed_paths
+    assert client.calls == []
+    assert runner.calls == []
+
+
+def test_cli_binds_canonical_flagship_operations_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[proof.ProofConfig] = []
+
+    def fake_run_monitoring_proof(**kwargs: object) -> dict[str, object]:
+        config = kwargs["config"]
+        assert isinstance(config, proof.ProofConfig)
+        captured.append(config)
+        return {}
+
+    monkeypatch.setattr(proof, "run_monitoring_proof", fake_run_monitoring_proof)
+    monkeypatch.setattr(proof, "PrivateJsonHttpClient", lambda **_kwargs: object())
+    monkeypatch.setattr(proof, "SubprocessCommandRunner", lambda: object())
+
+    assert (
+        proof.main(
+            [
+                "--execute",
+                "--release-sha",
+                RELEASE_SHA,
+                "--image-digest",
+                IMAGE_DIGEST,
+                "--receipt",
+                str(tmp_path / "monitoring.json"),
+                "--alert-delivery-receipt",
+                str(tmp_path / "alert.json"),
+                "--metrics-snapshot",
+                str(tmp_path / "metrics.json"),
+                "--flagship-operations-policy",
+                str(proof.DEFAULT_FLAGSHIP_OPERATIONS_PATH),
+            ]
+        )
+        == 0
+    )
+    assert len(captured) == 1
+    assert (
+        captured[0].flagship_operations_path
+        == proof.DEFAULT_FLAGSHIP_OPERATIONS_PATH
+    )
 
 
 @pytest.mark.parametrize(

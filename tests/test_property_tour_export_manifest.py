@@ -185,7 +185,10 @@ def test_materialize_property_tour_export_manifest_loads_krpano_env_defaults_bef
     assert manifest["imports"][0]["provider"] == "magicfit"
 
 
-def test_materialize_property_tour_export_manifest_prioritizes_ready_tour_gaps(tmp_path: Path) -> None:
+def test_materialize_property_tour_export_manifest_prioritizes_ready_tour_gaps(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     tour_root = tmp_path / "public_tours"
     incoming_root = tmp_path / "incoming"
     _write_base_tour(tour_root, "blocked-needs-exports")

@@ -363,6 +363,20 @@ def flatten_property_search_preferences_snapshot(
     return flattened
 
 
+def strip_client_property_commercial_authority(
+    value: dict[str, object] | None,
+) -> dict[str, object]:
+    """Remove billing authority from a client-controlled preference payload.
+
+    Flatten legacy ``raw_preferences`` first so a caller cannot smuggle an
+    entitlement through a nested snapshot.
+    """
+
+    sanitized = flatten_property_search_preferences_snapshot(value)
+    sanitized.pop("property_commercial", None)
+    return sanitized
+
+
 class OnboardingService(AssistantOnboardingService):
     def __init__(
         self,
@@ -522,10 +536,16 @@ class OnboardingService(AssistantOnboardingService):
         *,
         principal_id: str,
         property_search_preferences_json: dict[str, object],
+        trusted_commercial_update: bool = False,
     ) -> dict[str, object]:
         state = self._ensure_state(principal_id)
-        normalized_preferences = self._normalize_property_search_preferences(property_search_preferences_json)
-        raw_incoming_preferences = dict(property_search_preferences_json or {})
+        incoming_preferences = dict(property_search_preferences_json or {})
+        if not trusted_commercial_update:
+            incoming_preferences = strip_client_property_commercial_authority(
+                incoming_preferences
+            )
+        normalized_preferences = self._normalize_property_search_preferences(incoming_preferences)
+        raw_incoming_preferences = dict(incoming_preferences)
         if "language_code" not in raw_incoming_preferences and "language" not in raw_incoming_preferences:
             normalized_preferences["language_code"] = normalize_language_code(
                 None,

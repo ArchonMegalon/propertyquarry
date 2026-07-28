@@ -40,6 +40,24 @@ def _isolate_provider_contract_persistence(
                 os.environ[key] = value
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _isolate_provider_contract_persistence(
+    tmp_path_factory: pytest.TempPathFactory,
+):
+    isolated_root = tmp_path_factory.mktemp("provider-contract-persistence")
+    keys = ("EA_LTD_MARKDOWN_PATH",)
+    previous = {key: os.environ.get(key) for key in keys}
+    os.environ["EA_LTD_MARKDOWN_PATH"] = str(isolated_root / "LTDs.md")
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def _client(*, principal_id: str, operator: bool = False) -> TestClient:
     os.environ["EA_STORAGE_BACKEND"] = "memory"
     os.environ.pop("EA_LEDGER_BACKEND", None)
@@ -1556,6 +1574,10 @@ def test_telegram_ingest_answers_capability_question_directly(monkeypatch: pytes
             return json.dumps({"ok": True, "result": {"message_id": 9}}).encode("utf-8")
 
     def _fake_urlopen(request, timeout=30):
+        if not request.full_url.startswith("https://api.telegram.org/"):
+            raise channels_route.urllib.error.URLError(
+                "non-Telegram transport disabled by this test"
+            )
         sent.append(json.loads(request.data.decode("utf-8")))
         return _FakeResponse()
 
@@ -4385,6 +4407,10 @@ def test_telegram_ingest_duplicate_update_retries_reply_after_transient_send_fai
             return json.dumps({"ok": True, "result": {"message_id": 6}}).encode("utf-8")
 
     def _fake_urlopen(request, timeout=30):
+        if not request.full_url.startswith("https://api.telegram.org/"):
+            raise channels_route.urllib.error.URLError(
+                "non-Telegram transport disabled by this test"
+            )
         call_count["value"] += 1
         if call_count["value"] == 1:
             raise RuntimeError("transient_telegram_send_failure")
@@ -8788,6 +8814,52 @@ def test_public_tour_routes_retire_matterport_media_and_interactive_control(
     assert "Load 3D tour" not in page.text
 
 
+def _reviewed_3dvista_target_provenance(
+    *,
+    slug: str,
+    export_dir: Path | None = None,
+    entry_relpath: str = "",
+    provider_url: str = "",
+) -> dict[str, object]:
+    from scripts.property_tour_3dvista_provenance import (
+        THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
+        export_tree_sha256,
+        sha256_text,
+    )
+
+    if export_dir is not None:
+        artifact = {
+            "kind": "local_export",
+            "sha256": export_tree_sha256(export_dir),
+            "entry_relpath": entry_relpath,
+        }
+    else:
+        artifact = {
+            "kind": "hosted_url",
+            "sha256": sha256_text(provider_url),
+        }
+    proof: dict[str, object] = {
+        "schema": THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
+        "status": "pass",
+        "provider": "3dvista",
+        "target_slug": slug,
+        "artifact": artifact,
+        "authorization": {
+            "status": "approved",
+            "reference": "test-fixture-reviewed-export",
+        },
+        "review": {
+            "property_match": "pass",
+            "visual_match": "pass",
+            "reviewed_by": "test-suite",
+            "reviewed_at": "2026-01-01T00:00:00Z",
+        },
+    }
+    if export_dir is not None:
+        proof["target_subdir"] = export_dir.name
+    return proof
+
+
 def test_public_tour_routes_expose_propertyquarry_3dvista_private_viewer_proof(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -8803,6 +8875,19 @@ def test_public_tour_routes_expose_propertyquarry_3dvista_private_viewer_proof(
     (vista_dir / "runtime.wasm").write_bytes(b"\0asm\x01\0\0\0")
     (bundle_dir / "walkthrough.mp4").write_bytes(b"video")
     (bundle_dir / "scene-01.jpg").write_bytes(b"fake-jpeg-data")
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "three_d_vista_target_provenance": _reviewed_3dvista_target_provenance(
+                    slug=slug,
+                    export_dir=vista_dir,
+                    entry_relpath="index.htm",
+                )
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (bundle_dir / "tour.json").write_text(
         json.dumps(
             {
@@ -8910,6 +8995,19 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
     (vista_dir / "index.htm").write_text("<html><script src='tdvplayer.js'></script><div>tourviewer</div></html>", encoding="utf-8")
     (vista_dir / "tdvplayer.js").write_text("window.TDVPlayer = true;", encoding="utf-8")
     (bundle_dir / "scene-01.jpg").write_bytes(b"fake-jpeg-data")
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "three_d_vista_target_provenance": _reviewed_3dvista_target_provenance(
+                    slug=slug,
+                    export_dir=vista_dir,
+                    entry_relpath="index.htm",
+                )
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (bundle_dir / "tour.json").write_text(
         json.dumps(
             {
@@ -8961,6 +9059,18 @@ def test_public_tour_hides_external_3dvista_without_browser_render_proof_but_kee
     bundle_dir.mkdir(parents=True)
     (bundle_dir / "scene-01.jpg").write_bytes(b"fake-jpeg-data")
     external_url = "https://show.3dvista.com/propertyquarry/unrendered"
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "three_d_vista_target_provenance": _reviewed_3dvista_target_provenance(
+                    slug=slug,
+                    provider_url=external_url,
+                )
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (bundle_dir / "tour.json").write_text(
         json.dumps(
             {
@@ -9010,6 +9120,18 @@ def test_public_tour_exposes_external_3dvista_only_with_browser_render_proof(
     bundle_dir.mkdir(parents=True)
     (bundle_dir / "scene-01.jpg").write_bytes(b"fake-jpeg-data")
     external_url = "https://show.3dvista.com/propertyquarry/rendered"
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "three_d_vista_target_provenance": _reviewed_3dvista_target_provenance(
+                    slug=slug,
+                    provider_url=external_url,
+                )
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (bundle_dir / "tour.json").write_text(
         json.dumps(
             {

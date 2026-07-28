@@ -43,7 +43,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--write",
-        default="/tmp/propertyquarry-postgres-browser-session.json",
+        required=True,
     )
     args = parser.parse_args()
 

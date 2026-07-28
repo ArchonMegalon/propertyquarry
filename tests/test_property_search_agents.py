@@ -12,8 +12,31 @@ from app.services.onboarding import OnboardingService
 from tests.product_test_helpers import build_property_client, start_workspace
 
 
+def _seed_trusted_commercial(
+    client,
+    *,
+    principal_id: str,
+    preferences: dict[str, object],
+    plan_key: str,
+    plan_source: str = "",
+) -> None:
+    trusted_preferences = dict(preferences)
+    trusted_preferences["property_commercial"] = {
+        "active_plan_key": plan_key,
+        "status": "active",
+        "active_until": "2999-01-01T00:00:00+00:00",
+        **({"plan_source": plan_source} if plan_source else {}),
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
+
+
 def test_property_search_agents_can_be_managed_independently() -> None:
-    client = build_property_client(principal_id="exec-property-search-agents")
+    principal_id = "exec-property-search-agents"
+    client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property office")
 
     created = client.post(
@@ -30,11 +53,6 @@ def test_property_search_agents_can_be_managed_independently() -> None:
             "search_agent_duration_days": 90,
             "search_agent_notification_limit": 3,
             "search_agent_notification_period": "day",
-            "property_commercial": {
-                "active_plan_key": "plus",
-                "status": "active",
-                "active_until": "2999-01-01T00:00:00+00:00",
-            },
         },
     )
     assert created.status_code == 200, created.text
@@ -44,6 +62,13 @@ def test_property_search_agents_can_be_managed_independently() -> None:
     agent_id = agents[0]["agent_id"]
     assert agents[0]["enabled"] is True
     assert agents[0]["notification_limit"] == 3
+
+    _seed_trusted_commercial(
+        client,
+        principal_id=principal_id,
+        preferences=preferences,
+        plan_key="plus",
+    )
 
     duplicated = client.post(
         f"/v1/onboarding/property-search/agents/{agent_id}",
@@ -394,7 +419,8 @@ def test_property_search_agent_management_rows_edit_in_search_editor() -> None:
 
 
 def test_property_search_agent_load_returns_saved_filters_without_overwriting_current_preferences() -> None:
-    client = build_property_client(principal_id="exec-property-search-agent-load")
+    principal_id = "exec-property-search-agent-load"
+    client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property office")
 
     created = client.post(
@@ -413,15 +439,17 @@ def test_property_search_agent_load_returns_saved_filters_without_overwriting_cu
             "search_agent_duration_days": 90,
             "search_agent_notification_limit": 3,
             "search_agent_notification_period": "day",
-            "property_commercial": {
-                "active_plan_key": "plus",
-                "status": "active",
-                "active_until": "2999-01-01T00:00:00+00:00",
             },
-        },
-    )
+        )
     assert created.status_code == 200, created.text
-    first_agent_id = created.json()["property_search_preferences"]["search_agents"][0]["agent_id"]
+    preferences = created.json()["property_search_preferences"]
+    first_agent_id = preferences["search_agents"][0]["agent_id"]
+    _seed_trusted_commercial(
+        client,
+        principal_id=principal_id,
+        preferences=preferences,
+        plan_key="plus",
+    )
     duplicated = client.post(f"/v1/onboarding/property-search/agents/{first_agent_id}", json={"action": "duplicate"})
     assert duplicated.status_code == 200, duplicated.text
     second_agent_id = next(
@@ -754,7 +782,8 @@ def test_investment_saved_search_snapshot_forces_buy_and_investment_labels() -> 
 
 
 def test_property_search_preference_save_preserves_other_agents_and_sanitizes_provider_country() -> None:
-    client = build_property_client(principal_id="exec-property-search-agent-preserve")
+    principal_id = "exec-property-search-agent-preserve"
+    client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property office")
 
     created = client.post(
@@ -771,18 +800,20 @@ def test_property_search_preference_save_preserves_other_agents_and_sanitizes_pr
             "search_agent_duration_days": 56,
             "search_agent_notification_limit": 5,
             "search_agent_notification_period": "day",
-            "property_commercial": {
-                "active_plan_key": "agent",
-                "status": "active",
-                "active_until": "2999-01-01T00:00:00+00:00",
             },
-        },
-    )
+        )
     assert created.status_code == 200, created.text
-    first_agent_id = created.json()["property_search_preferences"]["active_search_agent_id"]
-    assert len(created.json()["property_search_preferences"]["search_agents"]) == 1
-    assert created.json()["property_search_preferences"]["search_agents"][0]["selected_platforms"] == ["willhaben"]
+    created_preferences = created.json()["property_search_preferences"]
+    first_agent_id = created_preferences["active_search_agent_id"]
+    assert len(created_preferences["search_agents"]) == 1
+    assert created_preferences["search_agents"][0]["selected_platforms"] == ["willhaben"]
 
+    _seed_trusted_commercial(
+        client,
+        principal_id=principal_id,
+        preferences=created_preferences,
+        plan_key="agent",
+    )
     duplicated = client.post(f"/v1/onboarding/property-search/agents/{first_agent_id}", json={"action": "duplicate"})
     assert duplicated.status_code == 200, duplicated.text
     second_agent_id = next(
@@ -1152,7 +1183,8 @@ def test_property_search_preferences_recover_paid_commercial_state_from_teable(m
 
 
 def test_property_search_preferences_ignore_empty_free_overwrite_when_paid_exists() -> None:
-    client = build_property_client(principal_id="pq-commercial-overwrite-guard")
+    principal_id = "pq-commercial-overwrite-guard"
+    client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property preserve")
 
     seeded = client.post(
@@ -1162,15 +1194,16 @@ def test_property_search_preferences_ignore_empty_free_overwrite_when_paid_exist
             "language_code": "de",
             "listing_mode": "rent",
             "location_query": "Wien",
-            "property_commercial": {
-                "active_plan_key": "agent",
-                "status": "active",
-                "active_until": "2999-01-01T00:00:00+00:00",
-                "plan_source": "billing",
             },
-        },
     )
     assert seeded.status_code == 200, seeded.text
+    _seed_trusted_commercial(
+        client,
+        principal_id=principal_id,
+        preferences=seeded.json()["property_search_preferences"],
+        plan_key="agent",
+        plan_source="billing",
+    )
 
     downgraded = client.post(
         "/v1/onboarding/property-search/preferences",

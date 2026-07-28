@@ -13,12 +13,12 @@ allowed_paths:
 - scripts
 - feedback
 - docs
-status: pass
+status: fail
 summary:
   route_count: 4
-  route_pass_count: 4
+  route_pass_count: 0
   family_count: 2
-  family_pass_count: 2
+  family_pass_count: 0
   fleet_gate_status: pass
   desktop_client_status: missing
   queue_ready_to_mark_complete: false
@@ -107,7 +107,7 @@ source_inputs:
     generated_at: '2026-06-27T18:41:18.951468Z'
   ui_direct_import_route_proof:
     path: /docker/chummercomplete/chummer6-ui/.codex-studio/published/NEXT90_M141_UI_DIRECT_IMPORT_ROUTE_PROOF.generated.json
-    generated_at: '2026-07-13T04:39:07Z'
+    generated_at: '2026-07-27T16:02:23Z'
   import_parity_certification:
     path: /docker/chummercomplete/chummer6-core/.codex-studio/published/IMPORT_PARITY_CERTIFICATION.generated.json
     generated_at: '2026-07-17T22:25:44Z'
@@ -196,7 +196,7 @@ desktop_client_readiness:
 route_local_screenshot_packs:
 - route_id: menu:translator
   label: Translator route
-  status: pass
+  status: fail
   parity_row_id: source:translator_route
   compare_family_id: custom_data_xml_and_translator_bridge
   required_compare_artifacts:
@@ -211,11 +211,11 @@ route_local_screenshot_packs:
   missing_workflow_artifacts: []
   ui_direct_receipt_group: translator_xml_custom_data
   ui_direct_receipt_checks:
-    exists: true
-    status_pass: true
-    route_ids_exact: true
-    workflow_family_matches: true
-    screenshots_exact: true
+    exists: false
+    route_ids_exact: false
+    screenshots_exact: false
+    status_pass: false
+    workflow_family_matches: false
   required_screenshots:
   - 38-translator-dialog-light.png
   screenshots:
@@ -295,10 +295,14 @@ route_local_screenshot_packs:
   - /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
   - /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
   - /docker/chummercomplete/chummer-core-engine/.codex-studio/published/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.generated.json
-  issues: []
+  issues:
+  - ui direct proof group translator_xml_custom_data is not passing
+  - ui direct proof group translator_xml_custom_data lost exact route ids
+  - ui direct proof group translator_xml_custom_data lost exact screenshots
+  - translator/xml proof group lost workflow-family binding
 - route_id: menu:xml_editor
   label: XML amendment editor route
-  status: pass
+  status: fail
   parity_row_id: source:xml_amendment_editor_route
   compare_family_id: custom_data_xml_and_translator_bridge
   required_compare_artifacts:
@@ -313,11 +317,11 @@ route_local_screenshot_packs:
   missing_workflow_artifacts: []
   ui_direct_receipt_group: translator_xml_custom_data
   ui_direct_receipt_checks:
-    exists: true
-    status_pass: true
-    route_ids_exact: true
-    workflow_family_matches: true
-    screenshots_exact: true
+    exists: false
+    route_ids_exact: false
+    screenshots_exact: false
+    status_pass: false
+    workflow_family_matches: false
   required_screenshots:
   - 39-xml-editor-dialog-light.png
   screenshots:
@@ -400,10 +404,14 @@ route_local_screenshot_packs:
   - /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
   - /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
   - /docker/chummercomplete/chummer-core-engine/.codex-studio/published/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.generated.json
-  issues: []
+  issues:
+  - ui direct proof group translator_xml_custom_data is not passing
+  - ui direct proof group translator_xml_custom_data lost exact route ids
+  - ui direct proof group translator_xml_custom_data lost exact screenshots
+  - translator/xml proof group lost workflow-family binding
 - route_id: menu:hero_lab_importer
   label: Hero Lab importer route
-  status: pass
+  status: fail
   parity_row_id: source:hero_lab_importer_route
   compare_family_id: legacy_and_adjacent_import_oracles
   required_compare_artifacts:
@@ -418,11 +426,11 @@ route_local_screenshot_packs:
   missing_workflow_artifacts: []
   ui_direct_receipt_group: hero_lab_import_oracle
   ui_direct_receipt_checks:
-    exists: true
-    status_pass: true
-    route_ids_exact: true
-    workflow_family_matches: true
-    screenshots_exact: true
+    exists: false
+    route_ids_exact: false
+    screenshots_exact: false
+    status_pass: false
+    workflow_family_matches: false
   required_screenshots:
   - 40-hero-lab-importer-dialog-light.png
   screenshots:
@@ -505,10 +513,14 @@ route_local_screenshot_packs:
   - /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
   - /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
   - /docker/chummercomplete/chummer-core-engine/.codex-studio/published/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.generated.json
-  issues: []
+  issues:
+  - ui direct proof group hero_lab_import_oracle is not passing
+  - ui direct proof group hero_lab_import_oracle lost exact route ids
+  - ui direct proof group hero_lab_import_oracle lost exact screenshots
+  - hero-lab/import-oracle proof group lost workflow-family binding
 - route_id: workflow:import_oracle
   label: Import-oracle workflow
-  status: pass
+  status: fail
   parity_row_id: null
   compare_family_id: legacy_and_adjacent_import_oracles
   required_compare_artifacts:
@@ -523,11 +535,11 @@ route_local_screenshot_packs:
   missing_workflow_artifacts: []
   ui_direct_receipt_group: hero_lab_import_oracle
   ui_direct_receipt_checks:
-    exists: true
-    status_pass: true
-    route_ids_exact: true
-    workflow_family_matches: true
-    screenshots_exact: true
+    exists: false
+    route_ids_exact: false
+    screenshots_exact: false
+    status_pass: false
+    workflow_family_matches: false
   required_screenshots:
   - 40-hero-lab-importer-dialog-light.png
   screenshots:
@@ -565,11 +577,15 @@ route_local_screenshot_packs:
   - /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
   - /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
   - /docker/chummercomplete/chummer-core-engine/.codex-studio/published/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.generated.json
-  issues: []
+  issues:
+  - ui direct proof group hero_lab_import_oracle is not passing
+  - ui direct proof group hero_lab_import_oracle lost exact route ids
+  - ui direct proof group hero_lab_import_oracle lost exact screenshots
+  - hero-lab/import-oracle proof group lost workflow-family binding
 family_compare_packets:
 - family_id: custom_data_xml_and_translator_bridge
   label: Custom data/XML and translator bridge
-  status: pass
+  status: fail
   parity_row_id: family:custom_data_xml_and_translator_bridge
   required_compare_artifacts:
   - menu:translator
@@ -591,11 +607,11 @@ family_compare_packets:
   missing_screenshots: []
   ui_direct_receipt_group: translator_xml_custom_data
   ui_direct_receipt_checks:
-    exists: true
-    status_pass: true
-    route_ids_exact: true
-    workflow_family_matches: true
-    screenshots_exact: true
+    exists: false
+    route_ids_exact: false
+    screenshots_exact: false
+    status_pass: false
+    workflow_family_matches: false
   screenshot_review_job_status: pass
   deterministic_receipts:
   - customDataXmlBridgeDeterministicReceipt
@@ -654,10 +670,13 @@ family_compare_packets:
   - /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
   - /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
   - /docker/chummercomplete/chummer-core-engine/.codex-studio/published/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.generated.json
-  issues: []
+  issues:
+  - ui direct proof group translator_xml_custom_data is not passing
+  - ui direct proof group translator_xml_custom_data lost workflow-family binding
+  - ui direct proof group translator_xml_custom_data lost exact screenshots
 - family_id: legacy_and_adjacent_import_oracles
   label: Legacy and adjacent import-oracle family
-  status: pass
+  status: fail
   parity_row_id: family:legacy_and_adjacent_import_oracles
   required_compare_artifacts:
   - menu:hero_lab_importer
@@ -678,11 +697,11 @@ family_compare_packets:
   missing_screenshots: []
   ui_direct_receipt_group: hero_lab_import_oracle
   ui_direct_receipt_checks:
-    exists: true
-    status_pass: true
-    route_ids_exact: true
-    workflow_family_matches: true
-    screenshots_exact: true
+    exists: false
+    route_ids_exact: false
+    screenshots_exact: false
+    status_pass: false
+    workflow_family_matches: false
   screenshot_review_job_status: pass
   deterministic_receipts:
   - importOracleDeterministicReceipt
@@ -741,12 +760,16 @@ family_compare_packets:
   - /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
   - /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
   - /docker/chummercomplete/chummer-core-engine/.codex-studio/published/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.generated.json
-  issues: []
+  issues:
+  - ui direct proof group hero_lab_import_oracle is not passing
+  - ui direct proof group hero_lab_import_oracle lost workflow-family binding
+  - ui direct proof group hero_lab_import_oracle lost exact screenshots
 closeout:
   ready: false
   blockers:
   - 'canonical queue/registry rows are still open: design_queue=not_started, fleet_queue=not_started,
     registry_task=unspecified'
+  - one or more route-local or family compare packets are failing
   notes:
   - This EA packet compiles route-local screenshot and compare proof for milestone
     141 from current UI, core, presentation, and Fleet receipts.
@@ -754,4 +777,26 @@ closeout:
     the canonical queue or registry rows from inside EA.
   - Canonical frontier identity comes from the live queue rows and mirrored registry
     rows, not stale handoff snippets or assignment prose.
-unresolved: []
+unresolved:
+- 'menu:translator: ui direct proof group translator_xml_custom_data is not passing,
+  ui direct proof group translator_xml_custom_data lost exact route ids, ui direct
+  proof group translator_xml_custom_data lost exact screenshots, translator/xml proof
+  group lost workflow-family binding'
+- 'menu:xml_editor: ui direct proof group translator_xml_custom_data is not passing,
+  ui direct proof group translator_xml_custom_data lost exact route ids, ui direct
+  proof group translator_xml_custom_data lost exact screenshots, translator/xml proof
+  group lost workflow-family binding'
+- 'menu:hero_lab_importer: ui direct proof group hero_lab_import_oracle is not passing,
+  ui direct proof group hero_lab_import_oracle lost exact route ids, ui direct proof
+  group hero_lab_import_oracle lost exact screenshots, hero-lab/import-oracle proof
+  group lost workflow-family binding'
+- 'workflow:import_oracle: ui direct proof group hero_lab_import_oracle is not passing,
+  ui direct proof group hero_lab_import_oracle lost exact route ids, ui direct proof
+  group hero_lab_import_oracle lost exact screenshots, hero-lab/import-oracle proof
+  group lost workflow-family binding'
+- 'custom_data_xml_and_translator_bridge: ui direct proof group translator_xml_custom_data
+  is not passing, ui direct proof group translator_xml_custom_data lost workflow-family
+  binding, ui direct proof group translator_xml_custom_data lost exact screenshots'
+- 'legacy_and_adjacent_import_oracles: ui direct proof group hero_lab_import_oracle
+  is not passing, ui direct proof group hero_lab_import_oracle lost workflow-family
+  binding, ui direct proof group hero_lab_import_oracle lost exact screenshots'

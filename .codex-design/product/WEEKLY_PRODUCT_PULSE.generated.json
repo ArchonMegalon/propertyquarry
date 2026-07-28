@@ -39,25 +39,25 @@
   "journey_gate_scope": "supporting_external_fleet_context",
   "journey_gate_authority": "non_authoritative_for_propertyquarry_launch",
   "journey_gate_snapshot_policy": "carry_forward_committed_snapshot_only",
-  "summary": "PropertyQuarry source/browser candidate proof is green, but protected live readiness is not_evaluated; this pulse does not support a production launch claim.",
+  "summary": "PropertyQuarry source/browser candidate proof is blocked; protected live readiness is not_evaluated, so production launch remains blocked.",
   "active_wave": "PropertyQuarry flagship receipt closeout",
   "active_wave_status": "active",
   "release_health": {
     "state": "blocked",
     "scope": "production_launch",
-    "candidate_state": "clear",
+    "candidate_state": "blocked",
     "reported_live_readiness_state": "not_passed",
     "production_launch_state": "blocked",
-    "reason": "The PropertyQuarry source/browser candidate receipt is published, but protected live and deployment authority are not validated by this pulse.",
-    "flagship_receipt_status": "pass"
+    "reason": "The PropertyQuarry flagship receipt is blocked by the current browser workflow proof or release evidence.",
+    "flagship_receipt_status": "blocked"
   },
   "flagship_readiness": {
     "state": "blocked",
     "scope": "production_launch",
-    "candidate_state": "clear",
+    "candidate_state": "blocked",
     "reported_live_readiness_state": "not_passed",
     "production_launch_state": "blocked",
-    "reason": "Source/browser candidate receipt and browser proof are aligned; protected live and deployment authority are not validated by this pulse."
+    "reason": "Browser workflow proof is currently blocked, so the flagship receipt cannot support wider release claims."
   },
   "rule_environment_trust": {
     "state": "monitor",
@@ -79,7 +79,7 @@
   "top_support_or_feedback_clusters": [
     {
       "cluster_id": "ea_flagship_receipt_closeout",
-      "summary": "The weekly pulse now anchors to the PropertyQuarry flagship receipt generated from local truth surfaces, and the browser execution proof is published.",
+      "summary": "The weekly pulse now anchors to the PropertyQuarry flagship receipt generated from local truth surfaces, but browser execution proof is still pending.",
       "source_paths": [
         ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
         "README.md",
@@ -114,9 +114,9 @@
     {
       "decision_id": "2026-04-10-focus-ea-flagship-receipt-closeout",
       "action": "focus_shift",
-      "reason": "Keep the weekly pulse anchored to the PropertyQuarry source/browser receipt without treating external fleet journey context as launch authority. The receipt is pass and protected live readiness is not_evaluated.",
+      "reason": "Keep the weekly pulse anchored to the PropertyQuarry source/browser receipt without treating external fleet journey context as launch authority. The receipt is blocked and protected live readiness is not_evaluated.",
       "cited_signals": [
-        "flagship_receipt_status=pass",
+        "flagship_receipt_status=blocked",
         "supporting_external_fleet_journey_state=ready",
         "supporting_external_fleet_blocked_count=0",
         "supporting_external_fleet_ready_count=6",
@@ -130,9 +130,9 @@
     {
       "decision_id": "2026-04-10-freeze-launch-expansion",
       "action": "freeze_launch",
-      "reason": "Freeze production launch until protected live readiness passes.",
+      "reason": "Freeze production launch until source/browser candidate proof and protected live readiness both pass.",
       "cited_signals": [
-        "flagship_receipt_status=pass",
+        "flagship_receipt_status=blocked",
         "browser_execution_receipt_present=True",
         "supporting_external_fleet_blocked_count=0",
         "live_readiness_status=not_evaluated",
@@ -140,16 +140,16 @@
       ]
     }
   ],
-  "next_checkpoint_question": "Which protected production receipt or deployment input is the next blocker to clear?",
+  "next_checkpoint_question": "What source/browser evidence is still needed to promote the PropertyQuarry candidate receipt to pass?",
   "supporting_signals": {
     "current_recommended_wave": "PropertyQuarry flagship receipt closeout",
     "overall_progress_percent": null,
     "overall_progress_status": "production_launch_progress_not_evaluated",
     "external_fleet_journey_ready_share_percent": 100,
-    "phase_label": "Protected live evidence closeout",
+    "phase_label": "Source/browser candidate closeout",
     "history_snapshot_count": 1,
-    "longest_pole": "protected live production evidence",
-    "launch_readiness": "Source/browser candidate proof is green; hold production launch until protected live readiness passes.",
+    "longest_pole": "browser execution proof",
+    "launch_readiness": "Hold production launch pending complete source/browser candidate proof and protected live evidence.",
     "readiness_scope": "source_and_browser_proof",
     "live_readiness_status": "not_evaluated",
     "provider_route_stewardship": {
@@ -173,19 +173,19 @@
     "release_health": {
       "state": "blocked",
       "scope": "production_launch",
-      "candidate_state": "clear",
+      "candidate_state": "blocked",
       "reported_live_readiness_state": "not_passed",
       "production_launch_state": "blocked",
-      "reason": "The PropertyQuarry source/browser candidate receipt is published, but protected live and deployment authority are not validated by this pulse.",
-      "flagship_receipt_status": "pass"
+      "reason": "The PropertyQuarry flagship receipt is materialized, but it is still preview_only until browser execution proof is published.",
+      "flagship_receipt_status": "blocked"
     },
     "flagship_readiness": {
       "state": "blocked",
       "scope": "production_launch",
-      "candidate_state": "clear",
+      "candidate_state": "blocked",
       "reported_live_readiness_state": "not_passed",
       "production_launch_state": "blocked",
-      "reason": "Source/browser candidate receipt and browser proof are aligned; protected live and deployment authority are not validated by this pulse."
+      "reason": "Browser execution proof is missing or incomplete, so the flagship receipt cannot yet claim pass status."
     },
     "rule_environment_trust": {
       "state": "monitor",
@@ -207,7 +207,7 @@
     "top_support_or_feedback_clusters": [
       {
         "cluster_id": "ea_flagship_receipt_closeout",
-        "summary": "The weekly pulse now anchors to the PropertyQuarry flagship receipt generated from local truth surfaces, and the browser execution proof is published.",
+        "summary": "The weekly pulse now anchors to the PropertyQuarry flagship receipt generated from local truth surfaces, but browser execution proof is still pending.",
         "source_paths": [
           ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
           "README.md",
@@ -242,9 +242,9 @@
       {
         "decision_id": "2026-04-10-focus-ea-flagship-receipt-closeout",
         "action": "focus_shift",
-        "reason": "Keep the weekly pulse anchored to the PropertyQuarry source/browser receipt without treating external fleet journey context as launch authority. The receipt is pass and protected live readiness is not_evaluated.",
+        "reason": "Keep the weekly pulse anchored to the PropertyQuarry source/browser receipt without treating external fleet journey context as launch authority. The receipt is blocked and protected live readiness is not_evaluated.",
         "cited_signals": [
-          "flagship_receipt_status=pass",
+          "flagship_receipt_status=blocked",
           "supporting_external_fleet_journey_state=ready",
           "supporting_external_fleet_blocked_count=0",
           "supporting_external_fleet_ready_count=6",
@@ -258,9 +258,9 @@
       {
         "decision_id": "2026-04-10-freeze-launch-expansion",
         "action": "freeze_launch",
-        "reason": "Freeze production launch until protected live readiness passes.",
+        "reason": "Freeze production launch until source/browser candidate proof and protected live readiness both pass.",
         "cited_signals": [
-          "flagship_receipt_status=pass",
+          "flagship_receipt_status=blocked",
           "browser_execution_receipt_present=True",
           "supporting_external_fleet_blocked_count=0",
           "live_readiness_status=not_evaluated",
@@ -268,7 +268,7 @@
         ]
       }
     ],
-    "next_checkpoint_question": "Which protected production receipt or deployment input is the next blocker to clear?"
+    "next_checkpoint_question": "What source/browser evidence is still needed to promote the PropertyQuarry candidate receipt to pass?"
   },
   "release_wave": {
     "current_recommended_wave": "PropertyQuarry flagship receipt closeout",

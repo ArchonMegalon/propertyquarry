@@ -16,11 +16,21 @@ The runtime runbook still tracks the EA product canon and flagship gate receipts
 
 Recommended operator gate commands:
 
-- `make verify-flagship-release-readiness`
+- `make materialize-release-assets` to explicitly refresh generated release
+  receipts
+- `make verify-flagship-release-readiness` to validate already-materialized
+  receipts without rewriting them
 - `make verify-generated-release-artifacts-clean`
 - `make runtime-hard-exit-gates`
 - `make hard-exit-gates`
-- `make ltd-release-gates`
+- `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ltd-release-gates`
+
+The first three Make commands are non-authoritative local parity. The
+standalone readiness and generated-cleanliness targets are read-only; only the
+explicit materialization target can refresh generated receipts. Authenticated
+repository verification must run after the pinned bootstrap through
+`propertyquarry_release_make_dispatch.py`; direct Make invocations cannot be
+trusted against caller-controlled GNU Make startup or parser inputs.
 
 The runbook also expects the hard-exit and LTD verifier scripts, including `verify_ltd_critical_entries.py` and `verify_ltd_flagship_subset.py`, to stay wired into operator release practice.
 
@@ -147,7 +157,7 @@ Auth:
 - When the local API is already running, `bash scripts/refresh_ltds_via_api.sh --binding-id <browseract-binding-id> --service-name BrowserAct --service-name Teable --write` can execute the BrowserAct-backed `ltd_inventory_refresh` skill via `/v1/plans/execute`, save the raw inventory payload if requested, and update [LTDs.md](/docker/property/LTDs.md) in one pass.
 - `python3 scripts/verify_ltd_critical_entries.py` is the hard verifier for the currently depended-on LTD lanes. It fails closed if [LTDs.md](/docker/property/LTDs.md) or the live env drift away from the required `1min.AI`, `Prompt Architects`, BrowserAct, and Teable facts.
 - `python3 scripts/verify_ltd_flagship_subset.py` is the broader release gate for the current flagship verified subset. It intentionally covers a named subset instead of pretending all `manual_seeded` or `missing` LTD rows are already proven.
-- `make ltd-release-gates` runs both LTD release verifiers together.
+- `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ltd-release-gates` runs both authenticated LTD release verifiers together.
 - `make verify-ltd-critical-entries` and `make verify-ltd-flagship-subset` are the corresponding operator entrypoints and are included by `make hard-exit-gates`.
 
 Runtime mode:
@@ -295,7 +305,7 @@ Use `--help` (or `-h`) on key scripts to print usage contracts quickly:
 | `scripts/smoke_help.sh` | `bash scripts/smoke_help.sh --help` | Verify `--help` usage contracts for operator scripts |
 | `scripts/smoke_postgres.sh` | `bash scripts/smoke_postgres.sh --help` | Run end-to-end Postgres-backed smoke contract |
 | `scripts/test_postgres_contracts.sh` | `bash scripts/test_postgres_contracts.sh --help` | Run isolated Postgres-backed repository contract tests |
-| `scripts/hard_exit_gates.sh` | `bash scripts/hard_exit_gates.sh --help` | Run the full flagship hard-exit bundle |
+| `scripts/hard_exit_gates.sh` | `./scripts/hard_exit_gates.sh --help` | Run the full flagship hard-exit bundle |
 | `scripts/runtime_hard_exit_gates.sh` | `bash scripts/runtime_hard_exit_gates.sh --help` | Run the deploy-safe runtime hard-exit bundle |
 | `scripts/property_release_gates.sh` | `./scripts/property_release_gates.sh --help` | Run the focused PropertyQuarry release bundle |
 | `scripts/verify_ltd_critical_entries.py` | `python3 scripts/verify_ltd_critical_entries.py --help` | Fail closed on runtime-critical LTD drift |
@@ -310,7 +320,7 @@ Use `--help` (or `-h`) on key scripts to print usage contracts quickly:
 | `scripts/archive_tasks.sh` | `bash scripts/archive_tasks.sh --help` | Archive/prune local task log Done rows |
 | `scripts/bootstrap_payfunnels_propertyquarry.py` | `python3 scripts/bootstrap_payfunnels_propertyquarry.py --help` | Prepare PayFunnels webhook/runtime config for PropertyQuarry |
 | `scripts/bootstrap_emailit_propertyquarry.py` | `python3 scripts/bootstrap_emailit_propertyquarry.py --help` | Prepare and inspect the PropertyQuarry Emailit sending domain |
-| `scripts/verify_release_assets.sh` | `bash scripts/verify_release_assets.sh --help` | Verify release artifact completeness |
+| `scripts/verify_release_assets.sh` | `./scripts/verify_release_assets.sh --help` | Verify release artifact completeness |
 
 Combined index:
 
@@ -328,12 +338,12 @@ EA product canon for those claims now lives in `.codex-design/ea/START_HERE.md`.
 `smoke-runtime` workflow currently enforces:
 
 - API gate bundle job:
-  - `make smoke-help`
-  - `make ci-local`
-  - `make test-api`
-  - `make verify-release-assets`
-  - `make verify-flagship-release-readiness`
-  - `make verify-generated-release-artifacts-clean`
+  - `./scripts/bootstrap_propertyquarry_release_python.sh`
+  - `./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated`
+  - The authenticated bundle includes these non-authoritative local component
+    checks:
+    - `make verify-flagship-release-readiness`
+    - `make verify-generated-release-artifacts-clean`
   - `make runtime-hard-exit-gates`
   - `make hard-exit-gates`
 - Postgres smoke jobs:
@@ -349,6 +359,21 @@ Local mirror command:
 make ci-gates
 ```
 
+Authenticated repository mirror on the canonical checkout:
+
+```bash
+./scripts/bootstrap_propertyquarry_release_python.sh
+./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated
+```
+
+The bootstrap and authenticated launcher authenticate the v3 pin's canonical
+requirements input and compiled lock from stable no-follow snapshots, then
+check exact direct-pin parity before creating a verifier environment or
+collecting tests. The current lock intentionally stops there with a concise
+`jsonschema[format-nongpl]==4.26.0 is missing from the compiled requirements
+lock` diagnostic. Recover the lock only through the approved registry lane;
+do not hand-edit it or bypass this blocker with an ambient Python environment.
+
 Local mirror including Postgres smoke:
 
 ```bash
@@ -358,7 +383,7 @@ make ci-gates-postgres
 Aggregate LTD release verification:
 
 ```bash
-make ltd-release-gates
+./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ltd-release-gates
 ```
 
 Isolated Postgres repository-contract run:
@@ -778,8 +803,8 @@ bash scripts/operator_summary.sh
 make operator-summary
 ```
 
-The operator summary includes release smoke/readiness commands plus legacy smoke/parity shortcuts, release/support commands such as `make release-preflight` and `make support-bundle`, and task-archive shortcuts.
-It also includes the aggregate LTD release gate shortcut `make ltd-release-gates`.
+The operator summary includes release smoke/readiness commands plus legacy smoke/parity shortcuts, release/support commands such as the authenticated release-preflight dispatcher and `make support-bundle`, and task-archive shortcuts.
+It also includes the authenticated aggregate LTD release-gate dispatcher.
 
 ## 15) Generate Support Bundle
 
@@ -827,16 +852,22 @@ make tasks-archive-prune
 ## 17) Verify Release Assets
 
 ```bash
-bash scripts/verify_release_assets.sh
-# or
+# non-authoritative local parity
 make verify-release-assets
 # docs-focused alias
 make docs-verify
 # docs + operator-help bundle
 make release-docs
+
+# authenticated repository verification on the canonical Linux checkout
+./scripts/bootstrap_propertyquarry_release_python.sh
+./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py verify-release-assets-authenticated
+# equivalent direct authority boundary after bootstrap
+./scripts/verify_release_assets.sh
 ```
 
-Use `make release-docs` as a pre-smoke documentation/usage pass before running `make release-preflight`.
+Use `make release-docs` as a pre-smoke documentation/usage pass before
+dispatching the authenticated `release-preflight` target.
 
 Combined local readiness check:
 
@@ -844,14 +875,43 @@ Combined local readiness check:
 make all-local
 ```
 
-`make all-local` is a lightweight readiness pass that still checks release assets, flagship release readiness, and generated release artifact cleanliness. Use `make release-preflight` for release-stage smoke and operator checks.
+`make all-local` is a lightweight readiness pass that remains
+non-authoritative and still
+checks release assets, flagship release readiness, and generated release
+artifact cleanliness with the selected development Python. The authenticated
+lane requires a real `/docker/property` checkout, the pinned Linux CPython
+runtime, and `./scripts/bootstrap_propertyquarry_release_python.sh`. Use the
+dispatcher's `release-preflight` target for that release-stage repository proof
+and operator checks. `make all-local`, the release-asset verifiers, the
+generated-cleanliness verifiers, and authenticated `release-preflight` are
+read-only with respect to the three canonical receipts. Only the explicitly
+named materialization targets refresh them. Both `ci-gates` lanes are also
+source-tree read-only: bytecode is compiled into a private temporary cache,
+pytest's repository cache is disabled, and nested exit-gate evidence is routed
+to a private temporary receipt directory that is removed after the test
+bundle. They validate the evidence already in the checkout. The official smoke
+workflow explicitly reproduces the browser, flagship, and weekly receipts in
+its disposable canonical checkout after Chromium installation, immediately
+requires an exact-`HEAD` match, and only then runs `ci-gates-authenticated`.
+That workflow action is current-runtime reproduction evidence, not publication
+or release authority.
 
 Deploys now default to a runtime hard-exit pass after the stack reports healthy. `scripts/deploy.sh` will run `bash scripts/runtime_hard_exit_gates.sh` unless `EA_RUN_RUNTIME_HARD_EXIT_GATES=0`. The runtime bundle is deploy-safe and excludes the deeper `smoke_api_tibor.sh` contract lane; that lane remains part of `make hard-exit-gates`.
 
-Release preflight aggregate (asset checks + flagship release-readiness verification + generated release artifact cleanliness + operator help + release smoke):
+Read-only release preflight aggregate (asset checks + flagship
+release-readiness verification + generated release artifact cleanliness +
+operator help + release smoke):
 
 ```bash
-make release-preflight
+./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight
+```
+
+For an intentional standalone authenticated refresh followed by read-only
+readiness validation:
+
+```bash
+./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py materialize-release-assets-authenticated
+./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py verify-flagship-release-readiness-authenticated
 ```
 
 `RELEASE_CHECKLIST.md` now includes explicit EA flagship truth-plane and release-readiness preflight lines to validate the browser proof, release gate seed, weekly pulse, and Fleet journey gate.

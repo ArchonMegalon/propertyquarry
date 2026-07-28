@@ -81,6 +81,7 @@ authority.
 ## 5. Failure handling
 
 Any missing, expired, mismatched, replayed, or rejected authorization leaves
-ingress and writers in the controller's fail-safe state. Preserve the local
-receipt and the controller's signed journal/seal receipts. Never retry a
-traffic switch from a checkout command and never lower the schema epoch.
+ingress, API, dedicated worker, scheduler, and dependent render runtime in the
+controller's fail-safe state. Preserve the local receipt and the controller's
+signed journal/seal receipts. Never retry a traffic switch from a checkout
+command and never lower the schema epoch.

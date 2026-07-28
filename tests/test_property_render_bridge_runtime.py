@@ -17,7 +17,7 @@ from scripts import property_reconstruction_render_bridge as bridge
 from app.services.admission_control import MemoryAdmissionBackend
 
 
-def test_property_compose_wires_protected_restart_resilient_render_bridge() -> None:
+def test_property_compose_wires_protected_bounded_restart_render_bridge() -> None:
     compose = yaml.safe_load(Path("docker-compose.property.yml").read_text(encoding="utf-8"))
     services = compose["services"]
     api = services["propertyquarry-api"]

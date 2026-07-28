@@ -8,11 +8,12 @@ import signal
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+import time
 
 import pytest
+import yaml
 
 from scripts import check_property_security_posture as property_security_posture
-import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -475,10 +476,22 @@ def test_property_release_gate_execution_trace_never_touches_advanced_state_in_c
     release_gate_source = release_gate_source.replace(
         "PATH=/usr/sbin:/usr/bin:/sbin:/bin",
         f"PATH={stub_dir}:/usr/sbin:/usr/bin:/sbin:/bin",
+    ).replace(
+        "\nPATH=/usr/bin:/bin\n",
+        f"\nPATH={stub_dir}:/usr/bin:/bin\n",
         1,
     ).replace(
-        'EA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"',
+        'EA_ROOT="$(cd -P -- "${script_source%/*}/.." && pwd -P)"',
         f'EA_ROOT="{ROOT}"',
+        1,
+    ).replace(
+        'PYTHON_BIN="${EA_ROOT}/scripts/propertyquarry_release_python.sh"',
+        f'PYTHON_BIN="{python_stub}"',
+        1,
+    ).replace(
+        "/bin/bash --noprofile --norc -p "
+        "scripts/propertyquarry_live_release_gates.sh",
+        f"{bash_stub} scripts/propertyquarry_live_release_gates.sh",
         1,
     )
     release_gate_under_test.write_text(release_gate_source, encoding="utf-8")
@@ -487,7 +500,6 @@ def test_property_release_gate_execution_trace_never_touches_advanced_state_in_c
     base_env = {
         **os.environ,
         "PATH": f"{stub_dir}:{os.environ['PATH']}",
-        "PYTHON_BIN": str(python_stub),
         "PQ_RELEASE_TRACE": str(trace_path),
         "PROPERTYQUARRY_DR_BACKUP_RECEIPT": str(receipt_path),
         "PROPERTYQUARRY_DR_RESTORE_RECEIPT": str(receipt_path),
@@ -522,6 +534,9 @@ def test_property_release_gate_execution_trace_never_touches_advanced_state_in_c
         "PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT": str(receipt_path),
         "PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE": str(receipt_path),
         "PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT": str(receipt_path),
+        "PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT": str(receipt_path),
+        "PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT": str(receipt_path),
+        "PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT": str(receipt_path),
         "PROPERTYQUARRY_CONTINUOUS_UX_RECEIPT": str(receipt_path),
         "PROPERTYQUARRY_FAILURE_STATE_RECEIPT": str(receipt_path),
         "PROPERTYQUARRY_ACTIVATION_TO_VALUE_RECEIPT": str(receipt_path),
@@ -718,6 +733,16 @@ def _workflow_job(workflow: str, job_name: str) -> str:
     next_job = re.search(r"^  [a-zA-Z0-9_-]+:\n", workflow[body_start:], flags=re.MULTILINE)
     end = body_start + next_job.start() if next_job else len(workflow)
     return workflow[start:end]
+
+
+def _bash_function(source: str, name: str) -> str:
+    match = re.search(
+        rf"^{re.escape(name)}\(\) \{{\n.*?^\}}\n",
+        source,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, f"missing bash function {name}"
+    return match.group(0)
 
 
 def _run_schema_quiesce_scenario(
@@ -1029,8 +1054,432 @@ def test_smoke_runtime_runs_fail_closed_postgres_production_storage_browser_lane
         "_secure_write",
         "os.O_EXCL",
         'getattr(os, "O_NOFOLLOW", 0)',
+        "required=True",
     ):
         assert required in bootstrap
+
+
+def test_property_postgres_smoke_private_workspace_round_trip() -> None:
+    source = _read("scripts/smoke_property_postgres.sh")
+    create_function = _bash_function(source, "create_smoke_tmp_dir")
+    validate_function = _bash_function(source, "smoke_tmp_is_exact")
+    cleanup_function = _bash_function(source, "cleanup_smoke_tmp_dir")
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-eu",
+            "-c",
+            (
+                f"{create_function}\n"
+                f"{validate_function}\n"
+                f"{cleanup_function}\n"
+                "smoke_tmp_dir=''\n"
+                "smoke_tmp_identity=''\n"
+                "create_smoke_tmp_dir\n"
+                "candidate=\"${smoke_tmp_dir}\"\n"
+                "smoke_tmp_is_exact\n"
+                "stat -c '%a' -- \"${candidate}\"\n"
+                "cleanup_smoke_tmp_dir\n"
+                "[[ ! -e \"${candidate}\" && ! -L \"${candidate}\" ]]\n"
+                "[[ -z \"${smoke_tmp_dir}\" && -z \"${smoke_tmp_identity}\" ]]\n"
+            ),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "700\n"
+    assert completed.stderr == ""
+
+
+def test_property_postgres_smoke_cleanup_refuses_replaced_workspace(
+    tmp_path: Path,
+) -> None:
+    source = _read("scripts/smoke_property_postgres.sh")
+    temporary = tmp_path / "propertyquarry-postgres-smoke.fixture"
+    original = tmp_path / "original"
+    temporary.mkdir(mode=0o700)
+    expected_identity = f"{temporary.stat().st_dev}:{temporary.stat().st_ino}"
+    temporary.rename(original)
+    temporary.mkdir(mode=0o700)
+    (temporary / "replacement-marker").write_text(
+        "preserve\n",
+        encoding="utf-8",
+    )
+    validate_function = _bash_function(source, "smoke_tmp_is_exact").replace(
+        "    /tmp/propertyquarry-postgres-smoke.*)",
+        f'    "{temporary}")',
+    )
+    cleanup_function = _bash_function(source, "cleanup_smoke_tmp_dir")
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-eu",
+            "-c",
+            (
+                f"{validate_function}\n"
+                f"{cleanup_function}\n"
+                "smoke_tmp_dir=\"$1\"\n"
+                "smoke_tmp_identity=\"$2\"\n"
+                "if cleanup_smoke_tmp_dir; then exit 99; else exit 0; fi\n"
+            ),
+            "bash",
+            str(temporary),
+            expected_identity,
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+    assert completed.stderr == (
+        "refusing cleanup of replaced property postgres smoke "
+        "temporary directory\n"
+    )
+    assert (temporary / "replacement-marker").read_text(
+        encoding="utf-8"
+    ) == "preserve\n"
+    assert original.is_dir()
+
+
+@pytest.mark.parametrize("entry_kind", ("symlink", "directory", "fifo"))
+def test_property_postgres_smoke_rejects_preexisting_nonregular_env_before_snapshot(
+    tmp_path: Path,
+    entry_kind: str,
+) -> None:
+    source = _read("scripts/smoke_property_postgres.sh")
+    create_function = _bash_function(source, "create_smoke_tmp_dir")
+    validate_function = _bash_function(source, "smoke_tmp_is_exact")
+    private_env_function = _bash_function(source, "smoke_env_is_exact")
+    snapshot_function = _bash_function(source, "snapshot_smoke_env")
+    cleanup_function = _bash_function(source, "cleanup_smoke_tmp_dir")
+    root = tmp_path / "root"
+    root.mkdir()
+    victim = tmp_path / "victim"
+    victim.write_text("preserve=true\n", encoding="utf-8")
+    env_path = root / ".env"
+    if entry_kind == "symlink":
+        env_path.symlink_to(victim)
+    elif entry_kind == "directory":
+        env_path.mkdir()
+        (env_path / "marker").write_text("preserve\n", encoding="utf-8")
+    else:
+        os.mkfifo(env_path)
+
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-eu",
+            "-c",
+            (
+                f"{create_function}\n"
+                f"{validate_function}\n"
+                f"{private_env_function}\n"
+                f"{snapshot_function}\n"
+                f"{cleanup_function}\n"
+                "ROOT=\"$1\"\n"
+                "smoke_tmp_dir=''\n"
+                "smoke_tmp_identity=''\n"
+                "smoke_env_file=''\n"
+                "smoke_env_identity=''\n"
+                "create_smoke_tmp_dir\n"
+                "if snapshot_smoke_env; then\n"
+                "  exit 99\n"
+                "else\n"
+                "  snapshot_status=\"$?\"\n"
+                "fi\n"
+                "[[ \"${snapshot_status}\" -eq 2 ]]\n"
+                "cleanup_smoke_tmp_dir\n"
+            ),
+            "bash",
+            str(root),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+    assert completed.stderr == (
+        "refusing nonregular pre-existing property postgres smoke .env\n"
+    )
+    if entry_kind == "symlink":
+        assert env_path.is_symlink()
+        assert os.readlink(env_path) == str(victim)
+    elif entry_kind == "directory":
+        assert (env_path / "marker").read_text(encoding="utf-8") == "preserve\n"
+    else:
+        assert env_path.exists()
+        assert env_path.stat().st_mode & 0o170000 == 0o010000
+    assert victim.read_text(encoding="utf-8") == "preserve=true\n"
+
+
+def test_property_postgres_smoke_private_env_snapshot_and_update_round_trip(
+    tmp_path: Path,
+) -> None:
+    source = _read("scripts/smoke_property_postgres.sh")
+    create_function = _bash_function(source, "create_smoke_tmp_dir")
+    validate_function = _bash_function(source, "smoke_tmp_is_exact")
+    private_env_function = _bash_function(source, "smoke_env_is_exact")
+    snapshot_function = _bash_function(source, "snapshot_smoke_env")
+    set_function = _bash_function(source, "set_env_value")
+    cleanup_function = _bash_function(source, "cleanup_smoke_tmp_dir")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".env.example").write_text(
+        "UNCHANGED=true\nTARGET=old\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-eu",
+            "-c",
+            (
+                f"{create_function}\n"
+                f"{validate_function}\n"
+                f"{private_env_function}\n"
+                f"{snapshot_function}\n"
+                f"{set_function}\n"
+                f"{cleanup_function}\n"
+                "ROOT=\"$1\"\n"
+                "smoke_tmp_dir=''\n"
+                "smoke_tmp_identity=''\n"
+                "smoke_env_file=''\n"
+                "smoke_env_identity=''\n"
+                "create_smoke_tmp_dir\n"
+                "workspace=\"${smoke_tmp_dir}\"\n"
+                "snapshot_smoke_env\n"
+                "set_env_value TARGET replacement\n"
+                "smoke_env_is_exact\n"
+                "stat -c '%a' -- \"${workspace}\" \"${smoke_env_file}\"\n"
+                "cat -- \"${smoke_env_file}\"\n"
+                "[[ ! -e \"${ROOT}/.env\" && ! -L \"${ROOT}/.env\" ]]\n"
+                "cleanup_smoke_tmp_dir\n"
+                "[[ ! -e \"${workspace}\" && ! -L \"${workspace}\" ]]\n"
+            ),
+            "bash",
+            str(root),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == (
+        "700\n"
+        "600\n"
+        "UNCHANGED=true\n"
+        "TARGET=replacement\n"
+    )
+    assert completed.stderr == ""
+    assert not (root / ".env").exists()
+
+
+@pytest.mark.parametrize("mutation", ("replace_name", "edit_in_place"))
+def test_property_postgres_smoke_rejects_canonical_env_change_during_snapshot(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    source = _read("scripts/smoke_property_postgres.sh")
+    create_function = _bash_function(source, "create_smoke_tmp_dir")
+    validate_function = _bash_function(source, "smoke_tmp_is_exact")
+    private_env_function = _bash_function(source, "smoke_env_is_exact")
+    snapshot_function = _bash_function(source, "snapshot_smoke_env")
+    cleanup_function = _bash_function(source, "cleanup_smoke_tmp_dir")
+    root = tmp_path / "root"
+    root.mkdir()
+    env_path = root / ".env"
+    env_path.write_text("original=true\n", encoding="utf-8")
+    displaced = root / "displaced-original"
+    replacement = root / "replacement"
+    replacement.write_text("replacement=true\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-eu",
+            "-c",
+            (
+                f"{create_function}\n"
+                f"{validate_function}\n"
+                f"{private_env_function}\n"
+                f"{snapshot_function}\n"
+                f"{cleanup_function}\n"
+                "ROOT=\"$1\"\n"
+                "MUTATION=\"$2\"\n"
+                "DISPLACED=\"$3\"\n"
+                "REPLACEMENT=\"$4\"\n"
+                "smoke_tmp_dir=''\n"
+                "smoke_tmp_identity=''\n"
+                "smoke_env_file=''\n"
+                "smoke_env_identity=''\n"
+                "create_smoke_tmp_dir\n"
+                "cp() {\n"
+                "  /usr/bin/cp \"$@\"\n"
+                "  case \"$2\" in\n"
+                "    /proc/self/fd/*)\n"
+                "      if [[ \"${MUTATION}\" == replace_name ]]; then\n"
+                "        /usr/bin/mv -T -- \"${ROOT}/.env\" \"${DISPLACED}\"\n"
+                "        /usr/bin/mv -T -- \"${REPLACEMENT}\" \"${ROOT}/.env\"\n"
+                "      else\n"
+                "        printf 'concurrent=true\\n' >> \"${ROOT}/.env\"\n"
+                "      fi\n"
+                "      ;;\n"
+                "  esac\n"
+                "}\n"
+                "if snapshot_smoke_env; then\n"
+                "  exit 99\n"
+                "else\n"
+                "  snapshot_status=\"$?\"\n"
+                "fi\n"
+                "[[ \"${snapshot_status}\" -eq 1 ]]\n"
+                "cleanup_smoke_tmp_dir\n"
+            ),
+            "bash",
+            str(root),
+            mutation,
+            str(displaced),
+            str(replacement),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+    assert completed.stderr == (
+        "property postgres smoke .env changed while it was snapshotted\n"
+    )
+    if mutation == "replace_name":
+        assert env_path.read_text(encoding="utf-8") == "replacement=true\n"
+        assert displaced.read_text(encoding="utf-8") == "original=true\n"
+    else:
+        assert env_path.read_text(encoding="utf-8") == (
+            "original=true\nconcurrent=true\n"
+        )
+        assert not displaced.exists()
+        assert replacement.read_text(encoding="utf-8") == "replacement=true\n"
+
+
+@pytest.mark.parametrize("mutation", ("replace_name", "edit_in_place"))
+def test_property_postgres_smoke_private_update_and_cleanup_never_touch_canonical_env(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    source = _read("scripts/smoke_property_postgres.sh")
+    create_function = _bash_function(source, "create_smoke_tmp_dir")
+    validate_function = _bash_function(source, "smoke_tmp_is_exact")
+    cleanup_tmp_function = _bash_function(source, "cleanup_smoke_tmp_dir")
+    private_env_function = _bash_function(source, "smoke_env_is_exact")
+    snapshot_function = _bash_function(source, "snapshot_smoke_env")
+    set_function = _bash_function(source, "set_env_value")
+    cleanup_function = _bash_function(source, "cleanup")
+    root = tmp_path / "root"
+    root.mkdir()
+    env_path = root / ".env"
+    env_path.write_text("original=true\nTARGET=old\n", encoding="utf-8")
+    displaced = root / "displaced-original"
+    cleanup_marker = tmp_path / "compose-cleanup"
+
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-eu",
+            "-c",
+            (
+                f"{create_function}\n"
+                f"{validate_function}\n"
+                f"{cleanup_tmp_function}\n"
+                f"{private_env_function}\n"
+                f"{snapshot_function}\n"
+                f"{set_function}\n"
+                f"{cleanup_function}\n"
+                "ROOT=\"$1\"\n"
+                "MUTATION=\"$2\"\n"
+                "DISPLACED=\"$3\"\n"
+                "CLEANUP_MARKER=\"$4\"\n"
+                "compose_stub() {\n"
+                "  smoke_env_is_exact\n"
+                "  printf 'private-env-present\\n' > \"${CLEANUP_MARKER}\"\n"
+                "}\n"
+                "DC=(compose_stub)\n"
+                "compose_cleanup_armed=1\n"
+                "smoke_tmp_dir=''\n"
+                "smoke_tmp_identity=''\n"
+                "smoke_env_file=''\n"
+                "smoke_env_identity=''\n"
+                "create_smoke_tmp_dir\n"
+                "workspace=\"${smoke_tmp_dir}\"\n"
+                "snapshot_smoke_env\n"
+                "if [[ \"${MUTATION}\" == replace_name ]]; then\n"
+                "  /usr/bin/mv -T -- \"${ROOT}/.env\" \"${DISPLACED}\"\n"
+                "  printf 'replacement=true\\n' > \"${ROOT}/.env\"\n"
+                "else\n"
+                "  printf 'before-update=true\\n' >> \"${ROOT}/.env\"\n"
+                "fi\n"
+                "set_env_value TARGET private-only\n"
+                "grep -Fx 'TARGET=private-only' \"${smoke_env_file}\"\n"
+                "printf 'before-cleanup=true\\n' >> \"${ROOT}/.env\"\n"
+                "cleanup\n"
+                "[[ ! -e \"${workspace}\" && ! -L \"${workspace}\" ]]\n"
+            ),
+            "bash",
+            str(root),
+            mutation,
+            str(displaced),
+            str(cleanup_marker),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "TARGET=private-only\n"
+    assert completed.stderr == ""
+    assert cleanup_marker.read_text(encoding="utf-8") == "private-env-present\n"
+    if mutation == "replace_name":
+        assert env_path.read_text(encoding="utf-8") == (
+            "replacement=true\nbefore-cleanup=true\n"
+        )
+        assert displaced.read_text(encoding="utf-8") == (
+            "original=true\nTARGET=old\n"
+        )
+    else:
+        assert env_path.read_text(encoding="utf-8") == (
+            "original=true\n"
+            "TARGET=old\n"
+            "before-update=true\n"
+            "before-cleanup=true\n"
+        )
+        assert not displaced.exists()
 
 
 def test_smoke_runtime_bootstraps_clean_runner_dependencies_and_release_parent() -> None:
@@ -1114,10 +1563,6 @@ def test_smoke_runtime_uses_only_the_fixed_v2_supervisor_for_release() -> None:
     assert (
         "      - ${{ needs['propertyquarry-protected-dispatch-inputs'].outputs."
         "release_runner_label }}" in release_job
-    )
-    assert (
-        "shell: /bin/bash --noprofile --norc -p -euo pipefail {0}"
-        in release_job
     )
     assert release_job.count(RELEASE_CLIENT) == 3
     assert release_job.count("/usr/bin/env -i") == 3
@@ -2004,10 +2449,11 @@ def test_protected_live_release_gate_is_remote_only_and_fail_closed() -> None:
     release_bundle = _read("scripts/property_release_gates.sh")
     assert release_bundle.startswith("#!/bin/bash -p\n")
     assert (
-        'PYTHON_BIN="${PYTHON_BIN}" \\\n'
         "/usr/bin/env \\\n"
         "  -u BASH_ENV \\\n"
         "  -u ENV \\\n"
+        '  PROPERTYQUARRY_LIVE_PROBE_SECRET="${performance_release_probe_secret}" \\\n'
+        '  PYTHON_BIN="${PYTHON_BIN}" \\\n'
         "  /bin/bash --noprofile --norc -p "
         "scripts/propertyquarry_live_release_gates.sh"
     ) in release_bundle
@@ -2143,6 +2589,78 @@ def test_propertyquarry_schema_migration_quiesces_existing_writers_before_commit
         "candidate-worker-ready",
         "candidate-scheduler-ready",
     ]
+
+
+@pytest.mark.parametrize(
+    ("sent_signal", "expected_status"),
+    (
+        (signal.SIGHUP, 129),
+        (signal.SIGINT, 130),
+        (signal.SIGTERM, 143),
+    ),
+)
+def test_propertyquarry_schema_recovery_ignores_repeated_signal(
+    tmp_path: Path,
+    sent_signal: signal.Signals,
+    expected_status: int,
+) -> None:
+    recovery_started = tmp_path / "recovery-started"
+    traps_ready = tmp_path / "traps-ready"
+    shell = r'''
+set -euo pipefail
+
+source "${QUIESCE_HELPER}"
+PROPERTYQUARRY_SCHEMA_QUIESCE_ARMED=1
+PROPERTYQUARRY_SCHEMA_MIGRATION_COMMITTED=0
+PROPERTYQUARRY_PUBLIC_INGRESS_HOLD_ARMED=0
+
+propertyquarry_restore_pre_migration_schema_writers() {
+  printf 'entered\n'
+  : > "${RECOVERY_STARTED}"
+  /usr/bin/sleep 0.25
+  printf 'finished\n'
+}
+
+propertyquarry_install_schema_quiesce_traps
+: > "${TRAPS_READY}"
+while :; do
+  :
+done
+'''
+    process = subprocess.Popen(
+        ["/bin/bash", "--noprofile", "--norc", "-c", shell],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "QUIESCE_HELPER": str(
+                ROOT / "scripts/propertyquarry_deploy_quiesce.sh"
+            ),
+            "RECOVERY_STARTED": str(recovery_started),
+            "TRAPS_READY": str(traps_ready),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 3
+    while not traps_ready.exists() and process.poll() is None:
+        if time.monotonic() >= deadline:
+            process.kill()
+            raise AssertionError("schema quiesce traps were not installed")
+        time.sleep(0.01)
+    os.killpg(process.pid, sent_signal)
+    while not recovery_started.exists() and process.poll() is None:
+        if time.monotonic() >= deadline:
+            process.kill()
+            raise AssertionError("schema recovery did not begin")
+        time.sleep(0.01)
+    os.killpg(process.pid, sent_signal)
+    stdout, stderr = process.communicate(timeout=5)
+
+    assert process.returncode == expected_status
+    assert stdout == "entered\nfinished\n"
+    assert stderr == ""
 
 
 def test_propertyquarry_schema_migration_failure_aborts_migrator_then_restores_prior_runtime(
@@ -2997,7 +3515,7 @@ def test_property_release_gate_sends_gold_notification_when_green() -> None:
 def test_readme_separates_disposable_compose_from_production_handoff() -> None:
     readme = " ".join(_read("README.md").split())
 
-    assert "make deploy" in readme
+    assert "make deploy" not in readme
     assert "scripts/deploy_propertyquarry.sh" in readme
     assert "## Disposable local development" in readme
     assert (
@@ -3013,7 +3531,11 @@ def test_readme_separates_disposable_compose_from_production_handoff() -> None:
     assert "independently installed release controller" in readme
     assert "The caller must remain unprivileged, have no Docker daemon authority" in readme
     assert "docs/PROPERTYQUARRY_RELEASE_CONTROL_PROTOCOL_V1.md" in readme
-    assert "make propertyquarry-release-protocol-contracts" in readme
+    assert (
+        "propertyquarry_release_make_dispatch.py "
+        "propertyquarry-release-protocol-contracts"
+        in readme
+    )
     assert "does not verify signatures, establish trust, authorize an operation" in readme
     assert "There is no local Compose fallback." in readme
     assert "POSTGRES_PASSWORD" in readme

@@ -2375,6 +2375,32 @@ def test_property_tour_control_verifier_blocks_when_no_verified_controls(tmp_pat
     assert set(receipt["missing_provider_modes"]) == {"3dvista", "magicfit"}
 
 
+def test_matterport_delivery_contract_keeps_retirement_reason_for_mixed_tour_set(
+    tmp_path: Path,
+) -> None:
+    _write_tour(tmp_path, "without-matterport", {})
+    _write_tour(
+        tmp_path,
+        "also-without-matterport",
+        {},
+    )
+    _write_tour(
+        tmp_path,
+        "retired-matterport",
+        {"matterport_url": "https://my.matterport.com/show/?m=RETIRED123"},
+    )
+
+    receipt = build_property_tour_control_receipt(tour_root=tmp_path)
+
+    blocker_reasons = receipt["provider_blockers"]["matterport"]["reasons"]
+    assert blocker_reasons[0]["reason"] == "missing_matterport_url"
+    contract = receipt["delivery_contracts"]["matterport"]
+    assert contract["status"] == "blocked"
+    assert contract["blocked_reason"] == "matterport_public_control_retired"
+    assert contract["ready_payload"]["ready_count"] == 0
+    assert contract["ready_payload"]["sample_controls"] == []
+
+
 def test_property_tour_control_verifier_marks_photo_gallery_as_not_3d(tmp_path: Path) -> None:
     _write_tour(
         tmp_path,

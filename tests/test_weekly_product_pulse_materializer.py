@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import importlib.util
 import json
 import subprocess
@@ -24,6 +25,19 @@ def _load_materializer_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def test_weekly_product_pulse_json_loader_rejects_ambiguous_input(
+    tmp_path: Path,
+) -> None:
+    module = _load_materializer_module()
+    path = tmp_path / "receipt.json"
+    path.write_text(
+        '{"status":"blocked","status":"pass"}\n',
+        encoding="utf-8",
+    )
+
+    assert module._load_json(path) is None
 
 
 def _seed_truth_sources(root: Path) -> None:

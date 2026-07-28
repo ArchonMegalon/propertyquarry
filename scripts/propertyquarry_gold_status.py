@@ -9,9 +9,9 @@ import json
 import math
 import os
 import re
+import secrets
 import stat
 import sys
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
@@ -31,6 +31,10 @@ if __package__:
         verify_receipt as verify_evidence_overlay_read_model_receipt,
     )
     from scripts.propertyquarry_observability_receipts import (
+        OPERATIONS_SHARED_INPUT_NAMES,
+        OPERATIONS_VERIFICATION_PRODUCER,
+        OPERATIONS_VERIFICATION_SCHEMA,
+        REPLICA_ID_RE,
         ReceiptValidationError as ObservabilityReceiptValidationError,
         atomic_write_json as write_observability_verification,
         verify_receipt_bundle,
@@ -67,6 +71,10 @@ else:
         verify_receipt as verify_evidence_overlay_read_model_receipt,
     )
     from propertyquarry_observability_receipts import (
+        OPERATIONS_SHARED_INPUT_NAMES,
+        OPERATIONS_VERIFICATION_PRODUCER,
+        OPERATIONS_VERIFICATION_SCHEMA,
+        REPLICA_ID_RE,
         ReceiptValidationError as ObservabilityReceiptValidationError,
         atomic_write_json as write_observability_verification,
         verify_receipt_bundle,
@@ -386,6 +394,7 @@ FLAGSHIP_CUSTOMER_UX_RECEIPT_AREAS = (
     "walkthrough_quality",
 )
 DEFAULT_FLAGSHIP_MAX_RECEIPT_AGE_HOURS = 24.0
+DEFAULT_RECEIPT_FUTURE_TOLERANCE_SECONDS = 300.0
 DEFAULT_EVIDENCE_OVERLAY_MAX_AGE_HOURS = 48.0
 DEFAULT_RYBBIT_EVIDENCE_MAX_AGE_MINUTES = 15.0
 DEFAULT_SLO_EVIDENCE_MAX_AGE_SECONDS = 900
@@ -1072,50 +1081,419 @@ def _default_receipt_path_if_exists(name: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def _canonical_gold_status_alias_targets(output_path: Path) -> list[Path]:
-    resolved_output = output_path.expanduser().resolve()
-    latest_targets = [Path(path).expanduser().resolve() for path in _CANONICAL_GOLD_STATUS_LATEST_PATHS]
-    release_gate_target = Path(_CANONICAL_GOLD_STATUS_RELEASE_GATE_PATH).expanduser().resolve()
+_GoldStatusDirectoryChain = list[
+    tuple[int, int | None, str | None, tuple[int, int]]
+]
 
-    if resolved_output == release_gate_target:
-        return [path for path in latest_targets if path != resolved_output]
-    if resolved_output in latest_targets:
-        return [path for path in latest_targets if path != resolved_output]
+
+def _lexical_gold_status_output_path(path: Path) -> Path:
+    """Return an absolute path without dereferencing any path component."""
+
+    output_path = Path(os.path.abspath(os.fspath(path.expanduser())))
+    if not output_path.name:
+        raise ValueError("Gold status output path must name a file")
+    return output_path
+
+
+def _gold_status_node_identity(metadata: os.stat_result) -> tuple[int, int]:
+    return (metadata.st_dev, metadata.st_ino)
+
+
+def _validate_gold_status_directory(
+    metadata: os.stat_result,
+    *,
+    path: Path,
+    final: bool,
+) -> None:
+    peer_writable = bool(
+        metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    )
+    sticky = bool(metadata.st_mode & stat.S_ISVTX)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid not in {0, os.geteuid()}
+        or (peer_writable and (final or not sticky))
+    ):
+        raise ValueError(
+            "Unsafe Gold status output directory chain; only trusted-owner "
+            f"non-final sticky ancestors may be peer-writable: {path}"
+        )
+
+
+def _close_gold_status_directory_chain(chain: _GoldStatusDirectoryChain) -> None:
+    for directory_fd, _parent_fd, _name, _identity in reversed(chain):
+        with contextlib.suppress(OSError):
+            os.close(directory_fd)
+
+
+def _open_gold_status_output_directory(output_path: Path) -> _GoldStatusDirectoryChain:
+    if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+        raise RuntimeError("Secure Gold status publication requires O_DIRECTORY and O_NOFOLLOW")
+
+    directory_flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    chain: _GoldStatusDirectoryChain = []
+    components = output_path.parent.parts[1:]
+    try:
+        root_fd = os.open(os.sep, directory_flags)
+        try:
+            root_metadata = os.fstat(root_fd)
+            _validate_gold_status_directory(
+                root_metadata,
+                path=Path(os.sep),
+                final=not components,
+            )
+        except BaseException:
+            os.close(root_fd)
+            raise
+        chain.append((root_fd, None, None, _gold_status_node_identity(root_metadata)))
+
+        current_path = Path(os.sep)
+        for component_index, component in enumerate(components):
+            current_path /= component
+            parent_fd = chain[-1][0]
+            created = False
+            try:
+                directory_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=parent_fd)
+                    created = True
+                except FileExistsError:
+                    pass
+                try:
+                    directory_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+                except OSError as exc:
+                    raise ValueError(
+                        f"Unsafe Gold status output parent: {current_path}"
+                    ) from exc
+            except OSError as exc:
+                raise ValueError(
+                    f"Unsafe Gold status output parent: {current_path}"
+                ) from exc
+
+            try:
+                metadata = os.fstat(directory_fd)
+                _validate_gold_status_directory(
+                    metadata,
+                    path=current_path,
+                    final=component_index == len(components) - 1,
+                )
+                named_metadata = os.stat(
+                    component,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+                identity = _gold_status_node_identity(metadata)
+                if _gold_status_node_identity(named_metadata) != identity:
+                    raise RuntimeError(
+                        f"Gold status output parent changed while opening: {current_path}"
+                    )
+            except BaseException:
+                os.close(directory_fd)
+                raise
+            chain.append((directory_fd, parent_fd, component, identity))
+            if created:
+                os.fsync(parent_fd)
+        return chain
+    except BaseException:
+        _close_gold_status_directory_chain(chain)
+        raise
+
+
+def _revalidate_gold_status_directory_chain(
+    chain: _GoldStatusDirectoryChain,
+    *,
+    output_path: Path,
+) -> None:
+    for index, (
+        directory_fd,
+        parent_fd,
+        component,
+        expected_identity,
+    ) in enumerate(chain):
+        metadata = os.fstat(directory_fd)
+        _validate_gold_status_directory(
+            metadata,
+            path=output_path.parent,
+            final=index == len(chain) - 1,
+        )
+        if _gold_status_node_identity(metadata) != expected_identity:
+            raise RuntimeError(
+                f"Gold status output parent changed during publication: {output_path.parent}"
+            )
+        if parent_fd is None or component is None:
+            continue
+        try:
+            named_metadata = os.stat(
+                component,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise RuntimeError(
+                f"Gold status output parent changed during publication: {output_path.parent}"
+            ) from exc
+        if (
+            not stat.S_ISDIR(named_metadata.st_mode)
+            or _gold_status_node_identity(named_metadata) != expected_identity
+        ):
+            raise RuntimeError(
+                f"Gold status output parent changed during publication: {output_path.parent}"
+            )
+
+
+def _validate_gold_status_destination(parent_fd: int, output_path: Path) -> None:
+    try:
+        metadata = os.stat(
+            output_path.name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return
+    if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)):
+        raise ValueError(f"Unsafe Gold status output path: {output_path}")
+
+
+def _unlink_gold_status_destination(
+    parent_fd: int,
+    output_path: Path,
+    *,
+    expected_identity: tuple[int, int] | None = None,
+) -> None:
+    try:
+        metadata = os.stat(
+            output_path.name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return
+    if expected_identity is not None and (
+        _gold_status_node_identity(metadata) != expected_identity
+    ):
+        return
+    if stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+        os.unlink(output_path.name, dir_fd=parent_fd)
+
+
+def _write_all(file_descriptor: int, payload: bytes) -> None:
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(file_descriptor, remaining)
+        if written <= 0:
+            raise OSError("Gold status output write made no progress")
+        remaining = remaining[written:]
+
+
+def _publish_private_text_at(
+    output_path: Path,
+    rendered: str,
+    directory_chain: _GoldStatusDirectoryChain,
+) -> tuple[int, int]:
+    parent_fd = directory_chain[-1][0]
+    _revalidate_gold_status_directory_chain(
+        directory_chain,
+        output_path=output_path,
+    )
+    _validate_gold_status_destination(parent_fd, output_path)
+
+    temporary_name = ""
+    file_descriptor = -1
+    for _attempt in range(128):
+        temporary_name = f".propertyquarry-gold-{secrets.token_hex(16)}.tmp"
+        try:
+            file_descriptor = os.open(
+                temporary_name,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | os.O_NOFOLLOW
+                | getattr(os, "O_CLOEXEC", 0),
+                stat.S_IRUSR | stat.S_IWUSR,
+                dir_fd=parent_fd,
+            )
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise FileExistsError("Unable to allocate a private Gold status staging file")
+
+    published = False
+    published_identity: tuple[int, int] | None = None
+    try:
+        os.fchmod(file_descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        _write_all(file_descriptor, rendered.encode("utf-8"))
+        os.fsync(file_descriptor)
+
+        staged_metadata = os.fstat(file_descriptor)
+        if not stat.S_ISREG(staged_metadata.st_mode) or staged_metadata.st_nlink != 1:
+            raise RuntimeError("Unsafe Gold status staging file")
+        published_identity = _gold_status_node_identity(staged_metadata)
+        named_staged_metadata = os.stat(
+            temporary_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if _gold_status_node_identity(named_staged_metadata) != published_identity:
+            raise RuntimeError("Gold status staging file changed during publication")
+
+        _revalidate_gold_status_directory_chain(
+            directory_chain,
+            output_path=output_path,
+        )
+        _validate_gold_status_destination(parent_fd, output_path)
+        named_staged_metadata = os.stat(
+            temporary_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if _gold_status_node_identity(named_staged_metadata) != published_identity:
+            raise RuntimeError("Gold status staging file changed during publication")
+
+        os.replace(
+            temporary_name,
+            output_path.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        published = True
+        published_metadata = os.stat(
+            output_path.name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISREG(published_metadata.st_mode)
+            or _gold_status_node_identity(published_metadata) != published_identity
+        ):
+            raise RuntimeError("Gold status output changed during publication")
+        _revalidate_gold_status_directory_chain(
+            directory_chain,
+            output_path=output_path,
+        )
+        os.fsync(parent_fd)
+        return published_identity
+    except BaseException:
+        if published and published_identity is not None:
+            with contextlib.suppress(OSError):
+                _unlink_gold_status_destination(
+                    parent_fd,
+                    output_path,
+                    expected_identity=published_identity,
+                )
+            with contextlib.suppress(OSError):
+                os.fsync(parent_fd)
+        raise
+    finally:
+        if file_descriptor >= 0:
+            with contextlib.suppress(OSError):
+                os.close(file_descriptor)
+        if temporary_name:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary_name, dir_fd=parent_fd)
+
+
+def _canonical_gold_status_alias_targets(output_path: Path) -> list[Path]:
+    lexical_output = _lexical_gold_status_output_path(output_path)
+    latest_targets = [
+        _lexical_gold_status_output_path(Path(path))
+        for path in _CANONICAL_GOLD_STATUS_LATEST_PATHS
+    ]
+    release_gate_target = _lexical_gold_status_output_path(
+        Path(_CANONICAL_GOLD_STATUS_RELEASE_GATE_PATH)
+    )
+
+    if lexical_output == release_gate_target:
+        return [path for path in latest_targets if path != lexical_output]
+    if lexical_output in latest_targets:
+        return [path for path in latest_targets if path != lexical_output]
     return []
 
 
-def _write_gold_status_output(output_path: Path, output: str) -> list[str]:
-    resolved_output = output_path.expanduser().resolve()
-    rendered = output if output.endswith("\n") else f"{output}\n"
-    _atomic_write_private_text(resolved_output, rendered)
+def _clear_gold_status_publication(
+    opened_targets: list[tuple[Path, _GoldStatusDirectoryChain]],
+) -> None:
+    for output_path, directory_chain in opened_targets:
+        parent_fd = directory_chain[-1][0]
+        with contextlib.suppress(OSError):
+            _unlink_gold_status_destination(parent_fd, output_path)
+        with contextlib.suppress(OSError):
+            os.fsync(parent_fd)
 
-    synced: list[str] = []
-    for alias_path in _canonical_gold_status_alias_targets(resolved_output):
-        _atomic_write_private_text(alias_path, rendered)
-        synced.append(str(alias_path))
-    return synced
+
+def _write_gold_status_output(output_path: Path, output: str) -> list[str]:
+    lexical_output = _lexical_gold_status_output_path(output_path)
+    alias_targets = _canonical_gold_status_alias_targets(lexical_output)
+    targets = [lexical_output, *alias_targets]
+    rendered = output if output.endswith("\n") else f"{output}\n"
+
+    opened_targets: list[tuple[Path, _GoldStatusDirectoryChain]] = []
+    published_identities: list[tuple[int, int]] = []
+    publication_started = False
+    try:
+        for target in targets:
+            opened_targets.append(
+                (target, _open_gold_status_output_directory(target))
+            )
+        for target, directory_chain in opened_targets:
+            _revalidate_gold_status_directory_chain(
+                directory_chain,
+                output_path=target,
+            )
+            _validate_gold_status_destination(directory_chain[-1][0], target)
+
+        for target, directory_chain in opened_targets:
+            publication_started = True
+            published_identities.append(
+                _publish_private_text_at(target, rendered, directory_chain)
+            )
+
+        for (target, directory_chain), expected_identity in zip(
+            opened_targets,
+            published_identities,
+            strict=True,
+        ):
+            _revalidate_gold_status_directory_chain(
+                directory_chain,
+                output_path=target,
+            )
+            published_metadata = os.stat(
+                target.name,
+                dir_fd=directory_chain[-1][0],
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISREG(published_metadata.st_mode)
+                or _gold_status_node_identity(published_metadata)
+                != expected_identity
+            ):
+                raise RuntimeError(
+                    f"Gold status output changed during canonical publication: {target}"
+                )
+        return [str(path) for path in alias_targets]
+    except BaseException:
+        if publication_started and len(opened_targets) > 1:
+            _clear_gold_status_publication(opened_targets)
+        raise
+    finally:
+        for _target, directory_chain in reversed(opened_targets):
+            _close_gold_status_directory_chain(directory_chain)
 
 
 def _atomic_write_private_text(path: Path, rendered: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary = Path(temporary_name)
+    output_path = _lexical_gold_status_output_path(path)
+    directory_chain = _open_gold_status_output_directory(output_path)
     try:
-        os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(rendered.encode("utf-8"))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        _publish_private_text_at(output_path, rendered, directory_chain)
     finally:
-        with contextlib.suppress(FileNotFoundError):
-            temporary.unlink()
+        _close_gold_status_directory_chain(directory_chain)
 
 
 def _parse_receipt_datetime(value: object) -> datetime | None:
@@ -1321,7 +1699,17 @@ def _receipt_freshness_status(
     now: datetime | None = None,
     max_age_hours: float | None = None,
 ) -> tuple[bool, list[dict[str, Any]]]:
-    if max_age_hours is None or max_age_hours <= 0:
+    if max_age_hours is None:
+        return True, []
+    if not math.isfinite(max_age_hours):
+        return False, [
+            {
+                "area": "receipt_freshness",
+                "status": "invalid_max_age_hours",
+                "max_age_hours": max_age_hours,
+            }
+        ]
+    if max_age_hours <= 0:
         return True, []
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     rows: list[dict[str, Any]] = []
@@ -8779,6 +9167,9 @@ def _run_canonical_launch_validators(
     prometheus_range_receipt_path: Path,
     prometheus_range_response_path: Path,
     alert_delivery_receipt_path: Path,
+    dashboard_render_receipt_path: Path,
+    structured_log_query_receipt_path: Path,
+    distributed_trace_query_receipt_path: Path,
     output_directory: Path,
     slo_path: Path = DEFAULT_SLO_PATH,
     rules_path: Path = DEFAULT_RULES_PATH,
@@ -8818,6 +9209,9 @@ def _run_canonical_launch_validators(
             "prometheus_range_receipt": prometheus_range_receipt_path,
             "prometheus_range_response": prometheus_range_response_path,
             "alert_delivery_receipt": alert_delivery_receipt_path,
+            "dashboard_render_receipt": dashboard_render_receipt_path,
+            "structured_log_query_receipt": structured_log_query_receipt_path,
+            "distributed_trace_query_receipt": distributed_trace_query_receipt_path,
         },
         destination=output_directory / "pinned-inputs",
         _test_allow_insecure=_test_allow_insecure_inputs,
@@ -8828,6 +9222,25 @@ def _run_canonical_launch_validators(
     prometheus_range_receipt_path = pinned_inputs["prometheus_range_receipt"]
     prometheus_range_response_path = pinned_inputs["prometheus_range_response"]
     alert_delivery_receipt_path = pinned_inputs["alert_delivery_receipt"]
+    dashboard_render_receipt_path = pinned_inputs["dashboard_render_receipt"]
+    structured_log_query_receipt_path = pinned_inputs["structured_log_query_receipt"]
+    distributed_trace_query_receipt_path = pinned_inputs[
+        "distributed_trace_query_receipt"
+    ]
+    slo_input_names = (
+        "metrics_snapshot",
+        "metrics_probe",
+        "monitoring_receipt",
+        "prometheus_range_receipt",
+        "prometheus_range_response",
+        "alert_delivery_receipt",
+    )
+    slo_shared_input_hashes = {
+        name: shared_input_hashes[name] for name in slo_input_names
+    }
+    slo_shared_input_paths = {
+        name: pinned_inputs[name] for name in slo_input_names
+    }
     slo_output = output_directory / "slo-revalidated.json"
     observability_output = output_directory / "observability-revalidated.json"
     errors: list[str] = []
@@ -8850,8 +9263,8 @@ def _run_canonical_launch_validators(
                 receipt_path=slo_output,
                 flagship=True,
                 overwrite_receipt=True,
-                shared_input_hashes=shared_input_hashes,
-                shared_input_paths=pinned_inputs,
+                shared_input_hashes=slo_shared_input_hashes,
+                shared_input_paths=slo_shared_input_paths,
             )
         }
         if slo_runner is not None:
@@ -8877,6 +9290,9 @@ def _run_canonical_launch_validators(
             "prometheus_range_receipt_path": prometheus_range_receipt_path,
             "prometheus_range_response_path": prometheus_range_response_path,
             "alert_delivery_receipt_path": alert_delivery_receipt_path,
+            "dashboard_render_receipt_path": dashboard_render_receipt_path,
+            "structured_log_query_receipt_path": structured_log_query_receipt_path,
+            "distributed_trace_query_receipt_path": distributed_trace_query_receipt_path,
             "expected_input_hashes": shared_input_hashes,
         }
         if now is not None:
@@ -8896,7 +9312,7 @@ def _run_canonical_launch_validators(
     except Exception as exc:
         errors.append(f"canonical observability validator could not complete: {type(exc).__name__}")
 
-    if slo_receipt.get("shared_input_hashes") != shared_input_hashes:
+    if slo_receipt.get("shared_input_hashes") != slo_shared_input_hashes:
         errors.append("canonical SLO validator shared input hash set differs")
     if observability_receipt.get("shared_input_hashes") != shared_input_hashes:
         errors.append("canonical observability validator shared input hash set differs")
@@ -8958,7 +9374,7 @@ def _apply_canonical_launch_evidence(
     observability_receipt_path: Path,
     validation_errors: list[str],
 ) -> None:
-    """Attach validator results and fail gold closed when either proof is not canonical."""
+    """Attach validator results and fail gold closed unless every proof is canonical."""
 
     effective_errors = list(validation_errors)
     try:
@@ -8980,6 +9396,90 @@ def _apply_canonical_launch_evidence(
                 "Gold canonical monitoring or pinned tool identity differs"
             )
     slo_ok = slo_receipt.get("status") == "pass" and slo_receipt.get("gate_passed") is True
+    operations_evidence_raw = observability_receipt.get("operations_evidence")
+    operations_evidence = (
+        operations_evidence_raw
+        if isinstance(operations_evidence_raw, dict)
+        else {}
+    )
+    operations_shared_input_hashes = operations_evidence.get(
+        "shared_input_hashes"
+    )
+    operations_receipts = operations_evidence.get("receipts")
+    operations_replica_ids = operations_evidence.get("replica_ids")
+    observability_replica_ids = observability_receipt.get("replica_ids")
+    operations_replicas_ok = (
+        isinstance(operations_replica_ids, list)
+        and bool(operations_replica_ids)
+        and operations_replica_ids == observability_replica_ids
+        and all(
+            isinstance(replica_id, str)
+            and REPLICA_ID_RE.fullmatch(replica_id) is not None
+            and replica_id != "UNCONFIGURED"
+            for replica_id in operations_replica_ids
+        )
+        and operations_replica_ids == sorted(set(operations_replica_ids))
+    )
+    observability_shared_input_hashes = observability_receipt.get(
+        "shared_input_hashes"
+    )
+    if not isinstance(observability_shared_input_hashes, dict):
+        observability_shared_input_hashes = {}
+    observability_policy_hashes = observability_receipt.get("policy_hashes")
+    if not isinstance(observability_policy_hashes, dict):
+        observability_policy_hashes = {}
+    operations_hashes_ok = (
+        isinstance(operations_shared_input_hashes, dict)
+        and set(operations_shared_input_hashes) == set(OPERATIONS_SHARED_INPUT_NAMES)
+        and all(
+            isinstance(value, str)
+            and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+            for value in operations_shared_input_hashes.values()
+        )
+    )
+    operations_receipt_names = {
+        "dashboard_render_receipt": "dashboard_render",
+        "structured_log_query_receipt": "structured_log_query",
+        "distributed_trace_query_receipt": "distributed_trace_query",
+    }
+    operations_receipts_ok = (
+        operations_hashes_ok
+        and isinstance(operations_receipts, dict)
+        and all(
+            isinstance(operations_receipts.get(receipt_name), dict)
+            and operations_receipts[receipt_name].get("file_sha256")
+            == operations_shared_input_hashes[input_name]
+            for input_name, receipt_name in operations_receipt_names.items()
+        )
+    )
+    operations_ok = (
+        operations_evidence.get("schema_version")
+        == OPERATIONS_VERIFICATION_SCHEMA
+        and operations_evidence.get("producer")
+        == OPERATIONS_VERIFICATION_PRODUCER
+        and operations_evidence.get("status") == "verified"
+        and operations_evidence.get("source_contract_status")
+        == "defined_not_live_evidence"
+        and operations_evidence.get("cross_receipt_links_verified") is True
+        and operations_replicas_ok
+        and operations_evidence.get("release")
+        == observability_receipt.get("release")
+        and operations_evidence.get("deployment_id")
+        == observability_receipt.get("deployment_id")
+        and operations_evidence.get("challenge_sha256")
+        == observability_receipt.get("challenge_sha256")
+        and operations_evidence.get("policy_sha256")
+        == observability_policy_hashes.get(
+            "flagship_operations_sha256"
+        )
+        and operations_hashes_ok
+        and all(
+            observability_shared_input_hashes.get(name)
+            == operations_shared_input_hashes[name]
+            for name in OPERATIONS_SHARED_INPUT_NAMES
+        )
+        and operations_receipts_ok
+    )
     observability_ok = (
         observability_receipt.get("schema_version")
         == "propertyquarry.observability-receipt-verification.v2"
@@ -8987,6 +9487,7 @@ def _apply_canonical_launch_evidence(
         == "propertyquarry-observability-receipt-verifier"
         and observability_receipt.get("status") == "verified"
         and observability_receipt.get("cross_receipt_links_verified") is True
+        and operations_ok
     )
     launch_ok = bool(slo_ok and observability_ok and not effective_errors)
     receipt["canonical_launch_evidence"] = {
@@ -8995,6 +9496,7 @@ def _apply_canonical_launch_evidence(
         "validators_invoked": [
             "scripts.propertyquarry_slo_evidence.run_evidence_gate",
             "scripts.propertyquarry_observability_receipts.verify_receipt_bundle",
+            "scripts.propertyquarry_flagship_operations_evidence.verify_operations_evidence",
         ],
         "validation_errors": effective_errors,
         "slo": {
@@ -9018,16 +9520,25 @@ def _apply_canonical_launch_evidence(
             "status": observability_receipt.get("status") or "missing",
             "receipt_path": str(observability_receipt_path),
             "release": observability_receipt.get("release") or {},
-            "replica_ids": observability_receipt.get("replica_ids") or [],
+            "deployment_id": observability_receipt.get("deployment_id") or "",
+            "challenge_sha256": observability_receipt.get("challenge_sha256")
+            or "",
+            "replica_ids": (
+                observability_replica_ids
+                if isinstance(observability_replica_ids, list)
+                else []
+            ),
             "receipts": observability_receipt.get("receipts") or {},
             "cross_receipt_links_verified": observability_receipt.get("cross_receipt_links_verified"),
             "payload_sha256": observability_receipt.get("payload_sha256") or "",
             "policy_hashes": observability_receipt.get("policy_hashes") or {},
+            "shared_input_hashes": observability_shared_input_hashes,
             "canonical_monitoring_identity": observability_receipt.get(
                 "canonical_monitoring_identity"
             )
             or {},
             "monitoring_tools": observability_receipt.get("monitoring_tools") or {},
+            "operations_evidence": operations_evidence,
         },
         "note": "Gold invoked canonical validators from raw artifacts; stored producer pass booleans were not used as launch authority.",
     }
@@ -9054,11 +9565,12 @@ def _apply_canonical_launch_evidence(
             "slo_validated": slo_ok,
             "observability_validated": observability_ok,
             "validation_errors": effective_errors,
-            "action": "supply fresh raw metrics, monitoring-runtime, Prometheus 30-day range response/receipt, and alert-delivery artifacts for this exact release, then rerun gold",
+            "operations_evidence_validated": operations_ok,
+            "action": "supply fresh raw metrics, monitoring-runtime, Prometheus 30-day range response/receipt, alert-delivery, dashboard-render, structured-log-query, and distributed-trace-query artifacts for this exact release, then rerun gold",
         }
     )
     receipt.setdefault("next_required_actions", []).append(
-        "Re-run canonical SLO and observability validation from fresh raw release-bound artifacts."
+        "Re-run canonical SLO, observability, and flagship operations validation from fresh raw release-bound artifacts."
     )
     receipt.setdefault("notes", []).append(
         "Gold launch authority is withheld because canonical raw-artifact validation did not pass."
@@ -9128,10 +9640,13 @@ def main() -> int:
     parser.add_argument("--prometheus-range-receipt", default="")
     parser.add_argument("--prometheus-range-response", default="")
     parser.add_argument("--alert-delivery-receipt", default="")
+    parser.add_argument("--dashboard-render-receipt", default="")
+    parser.add_argument("--structured-log-query-receipt", default="")
+    parser.add_argument("--distributed-trace-query-receipt", default="")
     parser.add_argument(
         "--require-launch-evidence",
         action="store_true",
-        help="Invoke both canonical validators from every raw launch artifact and fail gold closed.",
+        help="Invoke all canonical validators from every raw launch artifact and fail gold closed.",
     )
     parser.add_argument(
         "--launch-evidence-dir",
@@ -9305,6 +9820,9 @@ def main() -> int:
         "--prometheus-range-receipt": args.prometheus_range_receipt,
         "--prometheus-range-response": args.prometheus_range_response,
         "--alert-delivery-receipt": args.alert_delivery_receipt,
+        "--dashboard-render-receipt": args.dashboard_render_receipt,
+        "--structured-log-query-receipt": args.structured_log_query_receipt,
+        "--distributed-trace-query-receipt": args.distributed_trace_query_receipt,
     }
     launch_evidence_requested = (
         args.require_launch_evidence
@@ -9352,6 +9870,13 @@ def main() -> int:
             prometheus_range_receipt_path=Path(args.prometheus_range_receipt),
             prometheus_range_response_path=Path(args.prometheus_range_response),
             alert_delivery_receipt_path=Path(args.alert_delivery_receipt),
+            dashboard_render_receipt_path=Path(args.dashboard_render_receipt),
+            structured_log_query_receipt_path=Path(
+                args.structured_log_query_receipt
+            ),
+            distributed_trace_query_receipt_path=Path(
+                args.distributed_trace_query_receipt
+            ),
             output_directory=Path(args.launch_evidence_dir),
             slo_path=Path(args.slo_definition),
             rules_path=Path(args.alert_rules),

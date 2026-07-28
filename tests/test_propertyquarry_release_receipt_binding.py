@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts import propertyquarry_release_proof_baseline as release_proof_baseline
+from scripts import propertyquarry_release_receipt_binding as receipt_binding
 from scripts.propertyquarry_release_receipt_binding import ReleaseBindingError
 from scripts.propertyquarry_release_receipt_binding import build_source_binding
 
@@ -98,6 +99,62 @@ def _binding(root: Path, evidence_sources: list[dict[str, object]]) -> dict[str,
     )
 
 
+def test_file_snapshot_binding_derives_digests_from_one_stable_read(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    artifact = Path("evidence/receipt.json")
+    _write(tmp_path, artifact, '{"generation":"one"}\n')
+
+    snapshot, binding = receipt_binding.file_snapshot_binding(
+        tmp_path,
+        artifact,
+    )
+
+    assert snapshot.payload == b'{"generation":"one"}\n'
+    assert binding == {
+        "path": artifact.as_posix(),
+        "sha256": receipt_binding.sha256_bytes(snapshot.payload),
+        "git_blob_oid": receipt_binding.git_blob_oid_bytes(
+            tmp_path,
+            snapshot.payload,
+        ),
+    }
+    snapshot.assert_unchanged()
+
+
+def test_file_snapshot_binding_rejects_replacement_during_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    artifact = Path("evidence/receipt.json")
+    target = tmp_path / artifact
+    _write(tmp_path, artifact, '{"generation":"one"}\n')
+    original_git_blob_oid_bytes = receipt_binding.git_blob_oid_bytes
+
+    def replace_during_digest(root: Path, payload: bytes) -> str:
+        replacement = target.with_name("replacement.json")
+        replacement.write_text(
+            '{"generation":"two"}\n',
+            encoding="utf-8",
+        )
+        replacement.replace(target)
+        return original_git_blob_oid_bytes(root, payload)
+
+    monkeypatch.setattr(
+        receipt_binding,
+        "git_blob_oid_bytes",
+        replace_during_digest,
+    )
+
+    with pytest.raises(
+        ReleaseBindingError,
+        match="changed after it was read",
+    ):
+        receipt_binding.file_snapshot_binding(tmp_path, artifact)
+
+
 def test_source_binding_walks_consecutive_metadata_only_refresh_commits(tmp_path: Path) -> None:
     evidence_sources, initial = _initialize_repository(tmp_path)
     initial_binding = _binding(tmp_path, evidence_sources)
@@ -126,7 +183,7 @@ def test_source_binding_walks_consecutive_metadata_only_refresh_commits(tmp_path
         seed_path=SEED,
         evidence_sources=evidence_sources,
         code_commit=metadata_commit,
-    )["code_commit"] == metadata_commit
+    )["code_commit"] == source_commit
 
     _write(tmp_path, metadata_paths[1], "second metadata refresh\n")
     _commit(tmp_path, "refresh pulse metadata")

@@ -6,6 +6,9 @@ import sys
 import concurrent.futures
 from pathlib import Path
 
+import pytest
+from app.logging_utils import RedactingJsonFormatter
+from app.observability import RuntimeMetrics, runtime_heartbeat_readiness
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import pytest
@@ -217,6 +220,64 @@ def test_registry_exports_bounded_request_error_latency_and_readiness_metrics(tm
     assert "propertyquarry_expected_api_replicas 1" in metrics
 
 
+def test_registry_exports_closed_authoritative_admission_metrics() -> None:
+    registry = RuntimeMetrics()
+    registry.record_ingress_admission_operation(
+        backend="postgres",
+        operation="admit",
+        outcome="allowed",
+    )
+    registry.record_ingress_admission_capacity(
+        backend="postgres",
+        contract_valid=True,
+        rows={
+            "lease": (7, 100_000),
+            "quota": (19, 1_000_000),
+        },
+    )
+
+    metrics = registry.render_prometheus(readiness_ready=True)
+
+    assert (
+        "propertyquarry_ingress_admission_operations_total"
+        '{backend="postgres",operation="admit",outcome="allowed"} 1'
+    ) in metrics
+    assert (
+        "propertyquarry_ingress_admission_operations_total"
+        '{backend="postgres",operation="renew",outcome="backend_unavailable"} 0'
+    ) in metrics
+    assert (
+        'propertyquarry_admission_capacity_contract_valid{backend="postgres"} 1'
+        in metrics
+    )
+    assert (
+        "propertyquarry_admission_capacity_row_count"
+        '{backend="postgres",capacity_key="lease"} 7'
+    ) in metrics
+    assert (
+        "propertyquarry_admission_capacity_limit"
+        '{backend="postgres",capacity_key="quota"} 1000000'
+    ) in metrics
+    with pytest.raises(
+        ValueError,
+        match="ingress_admission_metric_operation_invalid",
+    ):
+        registry.record_ingress_admission_operation(
+            backend="postgres",
+            operation="raw_route_name",
+            outcome="allowed",
+        )
+    with pytest.raises(
+        ValueError,
+        match="ingress_admission_metric_capacity_contract_incomplete",
+    ):
+        registry.record_ingress_admission_capacity(
+            backend="postgres",
+            contract_valid=True,
+            rows={"lease": (0, 100_000)},
+        )
+
+
 def test_metrics_endpoint_requires_system_auth_and_reuses_correlation_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -242,6 +303,45 @@ def test_metrics_endpoint_requires_system_auth_and_reuses_correlation_id(
     assert 'propertyquarry_http_requests_total{method="GET",route="/health",status_class="2xx"} 1' in scrape.text
     assert "propertyquarry_readiness 1" in scrape.text
     assert "/internal/metrics" not in client.get("/openapi.json").json()["paths"]
+
+
+def test_metrics_readiness_fails_closed_when_admission_snapshot_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.ingress_admission import (
+        AdmissionBackend,
+        AdmissionOperation,
+        IngressAdmissionUnavailable,
+    )
+
+    class _UnavailableAdmissionStore:
+        @staticmethod
+        def capacity_snapshot():  # type: ignore[no-untyped-def]
+            raise IngressAdmissionUnavailable(
+                "test_admission_unavailable",
+                backend=AdmissionBackend.POSTGRES,
+                operation=AdmissionOperation.SNAPSHOT,
+            )
+
+    app = _app(monkeypatch)
+    app.state.ingress_admission_store = _UnavailableAdmissionStore()
+
+    scrape = TestClient(app).get(
+        "/internal/metrics",
+        headers=_metrics_headers(),
+    )
+
+    assert scrape.status_code == 200
+    assert "propertyquarry_readiness 0" in scrape.text
+    assert (
+        "propertyquarry_ingress_admission_operations_total"
+        '{backend="postgres",operation="snapshot",'
+        'outcome="backend_unavailable"} 1'
+    ) in scrape.text
+    assert (
+        'propertyquarry_admission_capacity_contract_valid{backend="postgres"} 0'
+        in scrape.text
+    )
 
 
 def test_error_counter_and_latency_are_recorded_by_real_request_middleware(

@@ -89,6 +89,10 @@ from app.services.property_media_factory import (
 )
 from app.services.property_customer_copy import normalize_property_fit_note
 from app.product import property_search_storage as _property_search_storage
+from app.product.property_diorama_preview import (
+    DIORAMA_PREVIEW_RENDERER_VERSION,
+    render_bright_apartment_diorama,
+)
 from app.product.property_worker_queues import property_worker_queue_spec
 from app.product.property_listing_extractors import (
     _property_area_text_to_sqm,
@@ -18733,6 +18737,10 @@ def _property_visual_unavailable_detail(*, request_kind: str, reason: str = "") 
     normalized_reason = str(reason or "").strip().lower()
     if normalized_reason == "listing_expired":
         return "This listing has expired and its source page is no longer available."
+    if normalized_reason == "property_packet_temporarily_unavailable":
+        return "The source listing is temporarily unavailable. Try the 3D request again shortly."
+    if normalized_reason == "property_packet_generation_failed":
+        return "The source listing could not be prepared for a 3D request yet."
     if normalized_reason in {
         "listing_packet_acquisition_failed",
         "listing_packet_invalid",
@@ -20265,12 +20273,18 @@ def _repo_root() -> Path:
 
 
 def _runtime_python_executable() -> str:
-    venv_python = (_repo_root() / ".venv" / "bin" / "python").resolve()
+    # A generator subprocess must inherit the dependency set of the running
+    # service when an explicit repository runtime is configured. Otherwise,
+    # return the canonical interpreter target so a container-style deployment
+    # cannot inherit an ambient checkout's venv symlink.
+    sys_python = Path(os.path.abspath(sys.executable))
+    if sys_python.exists():
+        if str(os.getenv("EA_REPO_ROOT") or "").strip():
+            return str(sys_python)
+        return str(sys_python.resolve())
+    venv_python = _repo_root() / ".venv" / "bin" / "python"
     if venv_python.exists():
         return str(venv_python)
-    sys_python = Path(sys.executable).resolve()
-    if sys_python.exists():
-        return str(sys_python)
     which_python3 = shutil.which("python3")
     if which_python3:
         return which_python3
@@ -25119,6 +25133,12 @@ def _hosted_property_tour_register_generated_preview_assets(
             if str(payload.get(key) or "").strip() != normalized_diorama:
                 payload[key] = normalized_diorama
                 updated = True
+        if (
+            str(payload.get("diorama_preview_renderer_version") or "").strip()
+            != DIORAMA_PREVIEW_RENDERER_VERSION
+        ):
+            payload["diorama_preview_renderer_version"] = DIORAMA_PREVIEW_RENDERER_VERSION
+            updated = True
     if normalized_telegram == "telegram-preview.png" and str(payload.get("telegram_preview_relpath") or "").strip() != normalized_telegram:
         payload["telegram_preview_relpath"] = normalized_telegram
         updated = True
@@ -25332,7 +25352,11 @@ def _generated_reconstruction_preview_upgrade_required(payload: dict[str, object
     generated_reconstruction = payload.get("generated_reconstruction")
     if not isinstance(generated_reconstruction, dict) or not generated_reconstruction:
         return False
-    return not str(payload.get("diorama_preview_relpath") or "").strip()
+    return (
+        not str(payload.get("diorama_preview_relpath") or "").strip()
+        or str(payload.get("diorama_preview_renderer_version") or "").strip()
+        != DIORAMA_PREVIEW_RENDERER_VERSION
+    )
 
 
 def _write_hosted_property_tour_diorama_preview(
@@ -25353,6 +25377,25 @@ def _write_hosted_property_tour_diorama_preview(
         input_paths.append(floorplan_path)
     if not force_refresh and not _hosted_property_tour_diorama_needs_refresh(output_path, input_paths):
         return output_path.exists()
+    if floorplan_path is not None:
+        try:
+            palette = _generated_reconstruction_preview_palette(style_hint)
+            rendered_diorama = render_bright_apartment_diorama(
+                floorplan_path=floorplan_path,
+                walkable_scene=dict(walkable_scene or {}),
+                palette=palette,
+                hero_path=hero_path,
+                source_photo_count=1 + len(supporting_paths),
+                canvas_size=(1600, 1100),
+            )
+            if rendered_diorama is not None:
+                canvas, composition = rendered_diorama
+                if all(dict(composition.get("checks") or {}).values()):
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    canvas.save(output_path, format="PNG", optimize=True)
+                    return True
+        except Exception:
+            pass
     try:
         palette = _generated_reconstruction_preview_palette(style_hint)
         with Image.open(hero_path) as hero_image:
@@ -27131,6 +27174,81 @@ def _crezlo_property_tour_bootstrap_metadata() -> dict[str, object]:
     return metadata
 
 
+class _PropertyTourExecutionFailure(RuntimeError):
+    def __init__(
+        self,
+        *,
+        stage: str,
+        error_code: str,
+        diagnostic_sha256: str,
+        retryable: bool = False,
+    ) -> None:
+        self.stage = (
+            str(stage or "property_tour_execution").strip()
+            or "property_tour_execution"
+        )
+        self.error_code = (
+            str(error_code or "property_tour_execution_failed").strip()
+            or "property_tour_execution_failed"
+        )
+        self.diagnostic_sha256 = str(diagnostic_sha256 or "").strip().lower()
+        self.retryable = bool(retryable)
+        super().__init__(f"{self.stage}:{self.error_code}:{self.diagnostic_sha256}")
+
+
+def _property_tour_failure_hash(detail: object) -> str:
+    payload = f"{type(detail).__name__}:{str(detail or '')}".encode("utf-8", "replace")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _willhaben_packet_failure(detail: object, *, timeout: bool = False) -> _PropertyTourExecutionFailure:
+    normalized_detail = str(detail or "").strip().lower()
+    transient_markers = (
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "temporary failure",
+        "remote disconnected",
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "http error 408",
+        "http error 425",
+        "http error 429",
+        "http error 500",
+        "http error 502",
+        "http error 503",
+        "http error 504",
+        "name or service not known",
+    )
+    retryable = bool(timeout or any(marker in normalized_detail for marker in transient_markers))
+    error_code = "willhaben_packet_transient_failure" if retryable else "willhaben_packet_process_failed"
+    return _PropertyTourExecutionFailure(
+        stage="willhaben_property_packet",
+        error_code=error_code,
+        diagnostic_sha256=_property_tour_failure_hash(detail),
+        retryable=retryable,
+    )
+
+
+def _property_tour_execution_failure_metadata(exc: Exception) -> dict[str, object]:
+    if isinstance(exc, _PropertyTourExecutionFailure):
+        return {
+            "failure_stage": exc.stage,
+            "error_code": exc.error_code,
+            "diagnostic_sha256": exc.diagnostic_sha256,
+            "retryable": exc.retryable,
+        }
+    return {
+        "failure_stage": "property_tour_execution",
+        "error_code": "property_tour_execution_failed",
+        "diagnostic_sha256": _property_tour_failure_hash(
+            f"{type(exc).__name__}:{str(exc or '')}"
+        ),
+        "retryable": False,
+    }
+
+
 def _load_willhaben_property_packet(property_url: str, *, timeout_seconds: int = 180) -> dict[str, object]:
     from .outbound_url_security import OutboundUrlRejected, validate_outbound_url
 
@@ -27152,28 +27270,51 @@ def _load_willhaben_property_packet(property_url: str, *, timeout_seconds: int =
         if normalized_entry and normalized_entry not in python_path_entries:
             python_path_entries.append(normalized_entry)
     subprocess_env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
-    try:
-        completed = subprocess.run(
-            [sys.executable or "python3", str(script_path), normalized_url],
-            check=False,
-            capture_output=True,
-            env=subprocess_env,
-            text=True,
-            timeout=max(1, int(timeout_seconds)),
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("python3_missing:willhaben_property_packet") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("willhaben_property_packet_timeout") from exc
-    if completed.returncode != 0:
+    completed = None
+    for attempt in range(2):
+        try:
+            completed = subprocess.run(
+                [sys.executable or "python3", str(script_path), normalized_url],
+                check=False,
+                capture_output=True,
+                env=subprocess_env,
+                text=True,
+                timeout=max(1, int(timeout_seconds)),
+            )
+        except FileNotFoundError as exc:
+            raise _PropertyTourExecutionFailure(
+                stage="willhaben_property_packet",
+                error_code="willhaben_packet_runtime_missing",
+                diagnostic_sha256=_property_tour_failure_hash(type(exc).__name__),
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            failure = _willhaben_packet_failure(type(exc).__name__, timeout=True)
+            if attempt == 0:
+                continue
+            raise failure from exc
+        if completed.returncode == 0:
+            break
         detail = (completed.stderr or completed.stdout or "").strip()
-        raise RuntimeError(f"willhaben_property_packet_failed:{detail[:400]}")
+        failure = _willhaben_packet_failure(detail)
+        if failure.retryable and attempt == 0:
+            continue
+        raise failure
+    if completed is None or completed.returncode != 0:
+        raise _willhaben_packet_failure("packet process did not complete")
     try:
         payload = json.loads(str(completed.stdout or "").strip() or "[]")
     except json.JSONDecodeError as exc:
-        raise RuntimeError("willhaben_property_packet_invalid") from exc
+        raise _PropertyTourExecutionFailure(
+            stage="willhaben_property_packet",
+            error_code="willhaben_packet_invalid_json",
+            diagnostic_sha256=_property_tour_failure_hash(completed.stdout),
+        ) from exc
     if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
-        raise RuntimeError("willhaben_property_packet_invalid")
+        raise _PropertyTourExecutionFailure(
+            stage="willhaben_property_packet",
+            error_code="willhaben_packet_invalid_payload",
+            diagnostic_sha256=_property_tour_failure_hash(completed.stdout),
+        )
     return dict(payload[0])
 
 
@@ -45493,6 +45634,10 @@ class ProductService:
                     elif normalized_property_url:
                         matches_candidate = candidate_property_url == normalized_property_url
                     if matches_candidate:
+                        candidate_row = _normalize_property_candidate_visual_truth(
+                            candidate_row,
+                            principal_id=normalized_principal,
+                        )
                         candidate_row.setdefault(
                             "candidate_ref",
                             normalized_candidate_ref
@@ -45564,6 +45709,10 @@ class ProductService:
                                 str(visual_state.get("diorama_style_hint") or ""),
                                 max_length=180,
                             )
+                        candidate_row = _normalize_property_candidate_visual_truth(
+                            candidate_row,
+                            principal_id=normalized_principal,
+                        )
                         mutated = True
                     updated_candidates.append(candidate_row)
                 source[key] = updated_candidates
@@ -45726,6 +45875,7 @@ class ProductService:
             return {
                 "tour_url": tour_url,
                 "vendor_tour_url": vendor_tour_url,
+                "open_tour_url": str(candidate_row.get("open_tour_url") or "").strip(),
                 "tour_requested_at": str(candidate_row.get("tour_requested_at") or "").strip(),
                 "tour_status_updated_at": str(candidate_row.get("tour_status_updated_at") or "").strip(),
                 "tour_eta_minutes": str(candidate_row.get("tour_eta_minutes") or "").strip(),
@@ -46435,7 +46585,10 @@ class ProductService:
                 execution_diagnostic = _property_tour_execution_diagnostic(exc)
                 blocked_reason = execution_diagnostic["blocked_reason"]
                 blocked_total += 1
-                blocked_state = {"blocked_reason": blocked_reason}
+                blocked_state = {
+                    "blocked_reason": blocked_reason,
+                    **failure_metadata,
+                }
                 if request_kind == "flythrough":
                     blocked_state.update(
                         {
@@ -46501,6 +46654,7 @@ class ProductService:
                         run_id=run_id,
                         candidate_ref=candidate_ref,
                         diorama_style_hint=diorama_style_hint,
+                        result=failure_metadata,
                         blocked_reason=blocked_reason,
                     ),
                 )
@@ -46515,6 +46669,7 @@ class ProductService:
                         "status_label": "",
                         "tour_url": "",
                         "flythrough_url": "",
+                        **failure_metadata,
                         "returned": completed is not None,
                     }
                 )
@@ -46680,6 +46835,8 @@ class ProductService:
                     else str(result.get("tour_url") or "").strip()
                 )
             )
+            resolved_layout_preview_url = str(result.get("layout_preview_url") or "").strip()
+            resolved_layout_preview_status = str(result.get("layout_preview_status") or "").strip().lower()
             resolved_flythrough_url = (
                 str(result.get("flythrough_url") or "").strip()
                 if request_kind == "flythrough"
@@ -47864,7 +48021,10 @@ class ProductService:
         for candidate in list(summary.get("ranked_candidates") or []):
             if not isinstance(candidate, dict):
                 continue
-            candidate_row = dict(candidate)
+            candidate_row = _normalize_property_candidate_visual_truth(
+                dict(candidate),
+                principal_id=normalized_principal,
+            )
             source_label = str(candidate_row.get("source_label") or candidate_row.get("source_url") or "Source").strip()
             candidate_row.setdefault("source_label", source_label)
             _append_if_match(candidate_row, source_label)
@@ -47874,7 +48034,10 @@ class ProductService:
                 for candidate in list(source.get(key) or []):
                     if not isinstance(candidate, dict):
                         continue
-                    candidate_row = dict(candidate)
+                    candidate_row = _normalize_property_candidate_visual_truth(
+                        dict(candidate),
+                        principal_id=normalized_principal,
+                    )
                     candidate_row.setdefault("source_label", source_label)
                     _append_if_match(candidate_row, source_label)
 
@@ -47978,6 +48141,9 @@ class ProductService:
                     or followup_payload.get("detail")
                     or ""
                 ).strip(),
+                "failure_stage": str(followup_payload.get("failure_stage") or "").strip(),
+                "error_code": str(followup_payload.get("error_code") or "").strip(),
+                "diagnostic_sha256": str(followup_payload.get("diagnostic_sha256") or "").strip(),
                 "flythrough_reason": str(
                     followup_payload.get("flythrough_reason")
                     or followup_payload.get("reason")
@@ -48029,6 +48195,9 @@ class ProductService:
         tour_status = str(matched_candidate.get("tour_status") or "").strip().lower()
         flythrough_status = str(matched_candidate.get("flythrough_status") or "").strip().lower()
         blocked_reason = str(matched_candidate.get("blocked_reason") or "").strip()
+        failure_stage = str(matched_candidate.get("failure_stage") or "").strip()
+        error_code = str(matched_candidate.get("error_code") or "").strip()
+        diagnostic_sha256 = str(matched_candidate.get("diagnostic_sha256") or "").strip()
         title = str(matched_candidate.get("title") or "Selected property").strip() or "Selected property"
         source_ref_value = str(matched_candidate.get("source_ref") or normalized_source_ref or normalized_property_url).strip()
         status_value = flythrough_status if normalized_kind == "flythrough" else tour_status
@@ -48144,6 +48313,11 @@ class ProductService:
                 if isinstance(getattr(latest_followup, "input_json", None), dict)
                 else {}
             )
+            failure_stage = str(followup_payload.get("failure_stage") or failure_stage).strip()
+            error_code = str(followup_payload.get("error_code") or error_code).strip()
+            diagnostic_sha256 = str(
+                followup_payload.get("diagnostic_sha256") or diagnostic_sha256
+            ).strip()
             if not visual_style_hint:
                 visual_style_hint = _compact_diorama_style_hint(
                     str(followup_payload.get("diorama_style_hint") or followup_input.get("diorama_style_hint") or ""),
@@ -48222,6 +48396,20 @@ class ProductService:
                         open_tour_url = followup_open_tour_url
                     if followup_generated_reconstruction_url:
                         generated_reconstruction_url = followup_generated_reconstruction_url
+                    if followup_layout_preview_url:
+                        layout_preview_url = followup_layout_preview_url
+                        layout_preview_status = "ready"
+                    elif generated_reconstruction_url:
+                        layout_preview_url = _property_visual_layout_preview_url(
+                            generated_reconstruction_url,
+                            principal_id=normalized_principal,
+                        )
+                        layout_preview_status = "ready" if layout_preview_url else layout_preview_status
+                    failure_stage = str(followup_payload.get("failure_stage") or failure_stage).strip()
+                    error_code = str(followup_payload.get("error_code") or error_code).strip()
+                    diagnostic_sha256 = str(
+                        followup_payload.get("diagnostic_sha256") or diagnostic_sha256
+                    ).strip()
                     if normalized_kind == "flythrough" and followup_flythrough_url:
                         flythrough_url = followup_flythrough_url
                     ready_url = _resolved_ready_url()
@@ -48420,6 +48608,9 @@ class ProductService:
             "flythrough_status": status_value if normalized_kind == "flythrough" else flythrough_status,
             "flythrough_reason": response_flythrough_reason,
             "blocked_reason": blocked_reason,
+            "failure_stage": failure_stage,
+            "error_code": error_code,
+            "diagnostic_sha256": diagnostic_sha256,
             "status_label": status_label,
             "status_detail": status_detail,
             "eta_label": eta_label,
@@ -48862,6 +49053,21 @@ class ProductService:
                 run_id=run_id,
                 requested_key=idempotency_key,
             )
+            from app.telemetry import (
+                TELEMETRY_PARENT_KEY,
+                serialize_current_trace_parent,
+            )
+
+            work_payload: dict[str, object] = {
+                "run_id": run_id,
+                "principal_id": normalized_principal,
+                "actor": str(actor or "property_search_worker").strip()
+                or "property_search_worker",
+                "force_refresh": bool(force_refresh),
+            }
+            telemetry_parent = serialize_current_trace_parent()
+            if telemetry_parent:
+                work_payload[TELEMETRY_PARENT_KEY] = telemetry_parent
             try:
                 enqueue_result = _property_search_work_queue_repository().enqueue_run(
                     run_record=persisted_state,

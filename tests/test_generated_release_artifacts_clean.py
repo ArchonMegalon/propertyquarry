@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import importlib.util
 import json
 import subprocess
@@ -20,6 +21,29 @@ def _load_module() -> Any:
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        b'{"status":"blocked","status":"pass"}',
+        b'{"status":NaN}',
+        b'["pass"]',
+        b'{"status":"pass"}\xff',
+    ),
+)
+def test_generated_artifact_loader_rejects_ambiguous_or_noncanonical_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: bytes,
+) -> None:
+    module = _load_module()
+    artifact = Path("artifact.json")
+    (tmp_path / artifact).write_bytes(payload)
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    with pytest.raises(ValueError):
+        module._load_worktree(artifact)
 
 
 def test_generated_release_artifact_normalizer_ignores_host_runner_execution_fields() -> None:

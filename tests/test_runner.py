@@ -125,6 +125,7 @@ def test_worker_heartbeat_is_role_aware_and_fails_closed(
     assert payload["role"] == "worker"
     assert payload["status"] == "loop"
     assert payload["profile"] == ""
+    assert payload["property_search_work_queue"] == {"observed": False}
     assert int(payload["pid"]) > 0
     assert payload["property_search_work_queue"] == {"observed": False}
     assert scheduler_healthcheck.main() == 0

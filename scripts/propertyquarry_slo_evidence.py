@@ -10,7 +10,6 @@ synthetic series through Prometheus rule-unit tests.
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
 import hashlib
 import ipaddress
 import json
@@ -21,6 +20,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -86,6 +86,21 @@ CANONICAL_LATENCY_BUCKETS = (
 )
 PROMETHEUS_RANGE_WINDOW_SECONDS = evidence_contract.RANGE_WINDOW_SECONDS
 PROMETHEUS_RANGE_QUERY = evidence_contract.PROMETHEUS_RANGE_QUERY
+_INGRESS_ADMISSION_OPERATIONS = (
+    "ip_request",
+    "admit",
+    "renew",
+    "release",
+    "cleanup",
+    "snapshot",
+)
+_INGRESS_ADMISSION_OUTCOMES = (
+    "allowed",
+    "quota_limited",
+    "lease_limited",
+    "capacity_exhausted",
+    "backend_unavailable",
+)
 
 
 class SloEvidenceError(RuntimeError):
@@ -300,6 +315,15 @@ def load_json(path: Path, *, document_name: str) -> object:
         raise SloValidationError(f"{document_name} is not valid JSON") from exc
 
 
+def _is_exact_json_number(value: object, expected: int | float) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and value == expected
+    )
+
+
 def validate_slo_document(payload: object) -> dict[str, object]:
     if not isinstance(payload, dict) or payload.get("schema") != SLO_SCHEMA:
         raise SloValidationError(f"SLO schema must be {SLO_SCHEMA}")
@@ -318,8 +342,76 @@ def validate_slo_document(payload: object) -> dict[str, object]:
         required_alerts
     ):
         raise SloValidationError("SLO required metric and alert names must be unique")
+    admission_metrics = {
+        "propertyquarry_ingress_admission_operations_total",
+        "propertyquarry_admission_capacity_contract_valid",
+        "propertyquarry_admission_capacity_row_count",
+        "propertyquarry_admission_capacity_limit",
+    }
+    admission_alerts = {
+        "PropertyQuarryIngressAdmissionBackendUnavailable",
+        "PropertyQuarryAdmissionCapacityContractInvalid",
+        "PropertyQuarryAdmissionCapacityWarning",
+        "PropertyQuarryAdmissionCapacityCritical",
+    }
+    queue_metrics = {
+        "propertyquarry_queue_observed",
+        "propertyquarry_queue_depth",
+        "propertyquarry_queue_oldest_item_age_seconds",
+    }
+    queue_alerts = {
+        "PropertyQuarryQueueTelemetryUnobserved",
+        "PropertyQuarryQueueDepthHigh",
+        "PropertyQuarryQueueOldestItemStale",
+    }
+    if not admission_metrics.issubset(set(required_metrics)):
+        raise SloValidationError(
+            "SLO document is missing an authoritative admission metric"
+        )
+    if not admission_alerts.issubset(set(required_alerts)):
+        raise SloValidationError(
+            "SLO document is missing an authoritative admission alert"
+        )
+    if not queue_metrics.issubset(set(required_metrics)):
+        raise SloValidationError(
+            "SLO document is missing an authoritative queue metric"
+        )
+    if not queue_alerts.issubset(set(required_alerts)):
+        raise SloValidationError(
+            "SLO document is missing an authoritative queue alert"
+        )
     if not isinstance(conditional, dict):
         raise SloValidationError("SLO conditional_capabilities must be an object")
+    queue_capability = conditional.get("queue_backlog")
+    if (
+        not isinstance(queue_capability, dict)
+        or queue_capability.get("metric_families")
+        != [
+            "propertyquarry_queue_observed",
+            "propertyquarry_queue_depth",
+            "propertyquarry_queue_oldest_item_age_seconds",
+        ]
+        or not _is_exact_json_number(
+            queue_capability.get("target_observed"),
+            1,
+        )
+        or not _is_exact_json_number(
+            queue_capability.get("warning_depth"),
+            100,
+        )
+        or not _is_exact_json_number(
+            queue_capability.get("critical_depth"),
+            500,
+        )
+        or not _is_exact_json_number(
+            queue_capability.get("maximum_oldest_age_seconds"),
+            300,
+        )
+        or queue_capability.get("runbook_anchor") != "queue-backlog"
+    ):
+        raise SloValidationError(
+            "SLO queue-backlog capability is not canonical"
+        )
     if not isinstance(objectives, list) or not objectives:
         raise SloValidationError("SLO objectives must be a non-empty list")
     objective_ids = {
@@ -330,12 +422,115 @@ def validate_slo_document(payload: object) -> dict[str, object]:
     required_objectives = {
         "availability",
         "error_rate",
+        "ingress_admission_backend",
+        "ingress_admission_capacity",
         "latency_p95_seconds",
         "latency_p99_seconds",
         "provider_quota_failures",
     }
     if not required_objectives.issubset(objective_ids):
         raise SloValidationError("SLO document is missing a launch-evaluated objective")
+    admission_backend_objectives = [
+        row
+        for row in objectives
+        if isinstance(row, dict) and row.get("id") == "ingress_admission_backend"
+    ]
+    if len(admission_backend_objectives) != 1:
+        raise SloValidationError(
+            "SLO document must define one ingress-admission-backend objective"
+        )
+    admission_backend_objective = admission_backend_objectives[0]
+    if (
+        not _is_exact_json_number(
+            admission_backend_objective.get("target_rate"),
+            0,
+        )
+        or admission_backend_objective.get("indicator")
+        != (
+            "increase(propertyquarry_ingress_admission_operations_total"
+            '{outcome="backend_unavailable"}[5m])'
+        )
+        or admission_backend_objective.get("runbook_anchor")
+        != "ingress-admission-backend"
+    ):
+        raise SloValidationError(
+            "SLO ingress-admission-backend objective is not canonical"
+        )
+    admission_capacity_objectives = [
+        row
+        for row in objectives
+        if isinstance(row, dict) and row.get("id") == "ingress_admission_capacity"
+    ]
+    if len(admission_capacity_objectives) != 1:
+        raise SloValidationError(
+            "SLO document must define one ingress-admission-capacity objective"
+        )
+    admission_capacity_objective = admission_capacity_objectives[0]
+    hard_limits = admission_capacity_objective.get("hard_limits")
+    hard_limits_are_canonical = (
+        isinstance(hard_limits, dict)
+        and set(hard_limits) == {"lease", "quota"}
+        and type(hard_limits["lease"]) is int
+        and type(hard_limits["quota"]) is int
+        and hard_limits["lease"] == 100_000
+        and hard_limits["quota"] == 1_000_000
+    )
+    if (
+        not _is_exact_json_number(
+            admission_capacity_objective.get("target_contract_valid"),
+            1,
+        )
+        or not _is_exact_json_number(
+            admission_capacity_objective.get("warning_ratio"),
+            0.8,
+        )
+        or not _is_exact_json_number(
+            admission_capacity_objective.get("critical_ratio"),
+            0.95,
+        )
+        or not hard_limits_are_canonical
+        or admission_capacity_objective.get("indicator")
+        != (
+            "propertyquarry_admission_capacity_row_count / "
+            "propertyquarry_admission_capacity_limit"
+        )
+        or admission_capacity_objective.get("runbook_anchor")
+        != "ingress-admission-capacity"
+    ):
+        raise SloValidationError(
+            "SLO ingress-admission-capacity objective is not canonical"
+        )
+    heartbeat_objective = next(
+        (
+            row
+            for row in objectives
+            if isinstance(row, dict) and row.get("id") == "runtime_heartbeats"
+        ),
+        None,
+    )
+    if heartbeat_objective is None:
+        raise SloValidationError("SLO document is missing the runtime-heartbeats objective")
+    baseline_roles = heartbeat_objective.get("baseline_required_roles")
+    if (
+        not isinstance(baseline_roles, list)
+        or not baseline_roles
+        or any(
+            not isinstance(role, str) or role not in {"worker", "scheduler"}
+            for role in baseline_roles
+        )
+        or len(set(baseline_roles)) != len(baseline_roles)
+        or set(baseline_roles) != {"worker", "scheduler"}
+    ):
+        raise SloValidationError(
+            "SLO runtime-heartbeats baseline roles must uniquely include worker and scheduler"
+        )
+    if (
+        heartbeat_objective.get("conditional_roles_from_metric")
+        != "propertyquarry_runtime_heartbeat_required"
+    ):
+        raise SloValidationError(
+            "SLO runtime-heartbeats objective must use the canonical required-role metric"
+        )
     if not isinstance(toolchain, dict):
         raise SloValidationError("SLO monitoring_toolchain must pin promtool and amtool")
     for tool in ("promtool", "amtool"):
@@ -622,13 +817,10 @@ def histogram_quantile(
         raise SloValidationError(f"histogram {family} has no observed requests")
     ordered = sorted(buckets.items(), key=lambda row: row[0])
     previous_count = 0.0
-    previous_bound = 0.0
     for bound, cumulative_count in ordered:
         if cumulative_count < previous_count:
             raise SloValidationError(f"histogram {family} buckets are not cumulative")
         previous_count = cumulative_count
-        if math.isfinite(bound):
-            previous_bound = bound
     rank = quantile * buckets[math.inf]
     lower_count = 0.0
     lower_bound = 0.0
@@ -1575,6 +1767,136 @@ def _monotonic_deltas(
     return deltas
 
 
+def _validate_ingress_admission_state(
+    samples: Sequence[MetricSample],
+    *,
+    capacity_objective: Mapping[str, object],
+) -> None:
+    backends = {"postgres"}
+    operations = {
+        "ip_request",
+        "admit",
+        "renew",
+        "release",
+        "cleanup",
+        "snapshot",
+    }
+    outcomes = {
+        "allowed",
+        "quota_limited",
+        "lease_limited",
+        "capacity_exhausted",
+        "backend_unavailable",
+    }
+    operation_rows = samples_for(
+        samples,
+        "propertyquarry_ingress_admission_operations_total",
+    )
+    expected_operation_labels = {
+        (backend, operation, outcome)
+        for backend in backends
+        for operation in operations
+        for outcome in outcomes
+    }
+    observed_operation_labels: set[tuple[str, str, str]] = set()
+    for row in operation_rows:
+        if set(row.labels) != {"backend", "operation", "outcome"}:
+            raise SloValidationError(
+                "ingress admission operation labels are not canonical"
+            )
+        identity = (
+            row.labels["backend"],
+            row.labels["operation"],
+            row.labels["outcome"],
+        )
+        if (
+            identity[0] not in backends
+            or identity[1] not in operations
+            or identity[2] not in outcomes
+            or not math.isfinite(row.value)
+            or row.value < 0
+            or row.value != math.floor(row.value)
+        ):
+            raise SloValidationError(
+                "ingress admission operation sample is invalid"
+            )
+        observed_operation_labels.add(identity)
+    if observed_operation_labels != expected_operation_labels:
+        raise SloValidationError(
+            "ingress admission operation label matrix is incomplete"
+        )
+
+    contract_rows = samples_for(
+        samples,
+        "propertyquarry_admission_capacity_contract_valid",
+    )
+    if (
+        len(contract_rows) != 1
+        or contract_rows[0].labels != {"backend": "postgres"}
+        or contract_rows[0].value != 1.0
+    ):
+        raise SloValidationError(
+            "PostgreSQL admission capacity contract must be exactly valid"
+        )
+
+    expected_limits = {
+        str(key): int(value)
+        for key, value in dict(capacity_objective["hard_limits"]).items()
+    }
+    row_count_samples = samples_for(
+        samples,
+        "propertyquarry_admission_capacity_row_count",
+    )
+    limit_samples = samples_for(
+        samples,
+        "propertyquarry_admission_capacity_limit",
+    )
+
+    def capacity_values(
+        rows: Sequence[MetricSample],
+        *,
+        family: str,
+    ) -> dict[str, int]:
+        values: dict[str, int] = {}
+        for row in rows:
+            if set(row.labels) != {"backend", "capacity_key"}:
+                raise SloValidationError(
+                    f"{family} labels are not canonical"
+                )
+            backend = row.labels["backend"]
+            capacity_key = row.labels["capacity_key"]
+            if (
+                backend != "postgres"
+                or capacity_key not in expected_limits
+                or capacity_key in values
+                or not math.isfinite(row.value)
+                or row.value < 0
+                or row.value != math.floor(row.value)
+            ):
+                raise SloValidationError(f"{family} sample is invalid")
+            values[capacity_key] = int(row.value)
+        if set(values) != set(expected_limits):
+            raise SloValidationError(f"{family} key set is incomplete")
+        return values
+
+    row_counts = capacity_values(
+        row_count_samples,
+        family="admission capacity row count",
+    )
+    limits = capacity_values(
+        limit_samples,
+        family="admission capacity limit",
+    )
+    if limits != expected_limits:
+        raise SloValidationError(
+            "admission capacity limits differ from the canonical contract"
+        )
+    if any(row_counts[key] > limits[key] for key in expected_limits):
+        raise SloValidationError(
+            "admission capacity row count exceeds its hard limit"
+        )
+
+
 def _validate_end_state(
     *,
     families: Mapping[str, str],
@@ -1595,6 +1917,16 @@ def _validate_end_state(
         "propertyquarry_runtime_heartbeat_age_seconds": "gauge",
         "propertyquarry_runtime_heartbeat_present": "gauge",
         "propertyquarry_runtime_heartbeat_stale": "gauge",
+        "propertyquarry_ingress_rejections_total": "counter",
+        "propertyquarry_ingress_cost_units_total": "counter",
+        "propertyquarry_ingress_high_cost_inflight": "gauge",
+        "propertyquarry_ingress_admission_operations_total": "counter",
+        "propertyquarry_admission_capacity_contract_valid": "gauge",
+        "propertyquarry_admission_capacity_row_count": "gauge",
+        "propertyquarry_admission_capacity_limit": "gauge",
+        "propertyquarry_queue_observed": "gauge",
+        "propertyquarry_queue_depth": "gauge",
+        "propertyquarry_queue_oldest_item_age_seconds": "gauge",
         "propertyquarry_scheduler_delivery_outbox_events_total": "counter",
         "propertyquarry_content_ledger_events_total": "counter",
     }
@@ -1605,9 +1937,27 @@ def _validate_end_state(
     )
     if wrong:
         raise SloValidationError("required metrics have invalid Prometheus types: " + ", ".join(wrong))
+    capacity_objective = next(
+        row
+        for row in slo["objectives"]  # type: ignore[index]
+        if (
+            isinstance(row, Mapping)
+            and row.get("id") == "ingress_admission_capacity"
+        )
+    )
+    _validate_ingress_admission_state(
+        samples,
+        capacity_objective=capacity_objective,
+    )
     readiness = samples_for(samples, "propertyquarry_readiness")
     if len(readiness) != 1 or readiness[0].value != 1.0:
         raise SloValidationError("PropertyQuarry readiness must have exactly one passing sample")
+    heartbeat_objective = next(
+        row
+        for row in slo["objectives"]  # type: ignore[index]
+        if isinstance(row, Mapping) and row.get("id") == "runtime_heartbeats"
+    )
+    baseline_required_roles = set(heartbeat_objective["baseline_required_roles"])
     roles: dict[str, object] = {}
     for role in ("worker", "scheduler"):
         required_sample = single_role_sample(samples, "propertyquarry_runtime_heartbeat_required", role)
@@ -1616,8 +1966,8 @@ def _validate_end_state(
         age = single_role_sample(samples, "propertyquarry_runtime_heartbeat_age_seconds", role)
         if required_sample.value not in {0.0, 1.0} or present.value not in {0.0, 1.0} or stale.value not in {0.0, 1.0}:
             raise SloValidationError(f"heartbeat state for {role} is invalid")
-        if role == "scheduler" and required_sample.value != 1.0:
-            raise SloValidationError("scheduler heartbeat must remain required")
+        if role in baseline_required_roles and required_sample.value != 1.0:
+            raise SloValidationError(f"{role} heartbeat must remain required")
         role_required = required_sample.value == 1.0
         if role_required and (
             present.value != 1.0
@@ -1657,6 +2007,41 @@ def _validate_end_state(
                 raise SloValidationError("database pool is saturated at launch evidence capture")
             values["utilization_ratio"] = ratio
         elif capability_name == "queue_backlog":
+            for family in capability_families:
+                property_search_samples = [
+                    item
+                    for item in samples_for(samples, family)
+                    if item.labels.get("queue") == "property_search"
+                ]
+                if (
+                    len(property_search_samples) != 1
+                    or not math.isfinite(property_search_samples[0].value)
+                    or property_search_samples[0].value < 0
+                ):
+                    raise SloValidationError(
+                        "queue capability must expose one finite non-negative "
+                        f"property_search sample for {family}"
+                    )
+                values[family] = property_search_samples[0].value
+            if not values["propertyquarry_queue_depth"].is_integer():
+                raise SloValidationError("property search queue depth must be an integer")
+            if (
+                values["propertyquarry_queue_observed"]
+                != float(raw_capability["target_observed"])
+            ):
+                raise SloValidationError(
+                    "property search queue telemetry is unobserved"
+                )
+            if (
+                values["propertyquarry_queue_depth"] == 0
+                and values[
+                    "propertyquarry_queue_oldest_item_age_seconds"
+                ]
+                != 0
+            ):
+                raise SloValidationError(
+                    "empty property search queue reports a non-zero oldest age"
+                )
             if values["propertyquarry_queue_depth"] > float(raw_capability["warning_depth"]):
                 raise SloValidationError("queue depth exceeds the launch evidence threshold")
             if values["propertyquarry_queue_oldest_item_age_seconds"] > float(
@@ -1697,6 +2082,24 @@ def _slo_delta_values(
         for row in samples_for(deltas, "propertyquarry_http_request_errors_total")
         if re.search(r"provider|quota|balance", str(row.labels.get("route") or ""), re.I)
     )
+    admission_backend_rows = [
+        row
+        for row in samples_for(
+            deltas,
+            "propertyquarry_ingress_admission_operations_total",
+        )
+        if row.labels.get("outcome") == "backend_unavailable"
+    ]
+    if not admission_backend_rows or any(
+        not math.isfinite(row.value) or row.value < 0
+        for row in admission_backend_rows
+    ):
+        raise SloValidationError(
+            f"{window_name} ingress admission backend deltas are missing or invalid"
+        )
+    admission_backend_failures = sum(
+        row.value for row in admission_backend_rows
+    )
     integrity_contract = {
         "delivery_outbox": (
             "propertyquarry_scheduler_delivery_outbox_events_total",
@@ -1724,6 +2127,11 @@ def _slo_delta_values(
         "p95_seconds_maximum": objective_number(slo, "latency_p95_seconds", "target_maximum"),
         "p99_seconds_maximum": objective_number(slo, "latency_p99_seconds", "target_maximum"),
         "provider_quota_failures_maximum": objective_number(slo, "provider_quota_failures", "target_rate"),
+        "ingress_admission_backend_maximum": objective_number(
+            slo,
+            "ingress_admission_backend",
+            "target_rate",
+        ),
     }
     values = {
         "request_delta": request_total,
@@ -1733,6 +2141,7 @@ def _slo_delta_values(
         "latency_p95_seconds": p95,
         "latency_p99_seconds": p99,
         "provider_quota_failure_delta": provider_failures,
+        "ingress_admission_backend_failure_delta": admission_backend_failures,
     }
     failures: list[str] = []
     if availability < thresholds["availability_minimum"]:
@@ -1745,6 +2154,8 @@ def _slo_delta_values(
         failures.append("latency_p99_seconds")
     if provider_failures > thresholds["provider_quota_failures_maximum"]:
         failures.append("provider_quota_failures")
+    if admission_backend_failures > thresholds["ingress_admission_backend_maximum"]:
+        failures.append("ingress_admission_backend")
     if failures:
         raise SloValidationError(f"{window_name} metrics exceed SLO objective(s): " + ", ".join(failures))
     return {
@@ -1754,6 +2165,41 @@ def _slo_delta_values(
         "thresholds": thresholds,
         "integrity": integrity,
     }
+
+
+def _validate_ingress_admission_operation_matrix(
+    samples: Sequence[MetricSample],
+    *,
+    window_name: str,
+) -> None:
+    rows = samples_for(
+        samples,
+        "propertyquarry_ingress_admission_operations_total",
+    )
+    expected = {
+        ("postgres", operation, outcome)
+        for operation in _INGRESS_ADMISSION_OPERATIONS
+        for outcome in _INGRESS_ADMISSION_OUTCOMES
+    }
+    observed = [
+        (
+            str(row.labels.get("backend") or ""),
+            str(row.labels.get("operation") or ""),
+            str(row.labels.get("outcome") or ""),
+        )
+        for row in rows
+    ]
+    if (
+        len(rows) != len(expected)
+        or set(observed) != expected
+        or any(
+            set(row.labels) != {"backend", "operation", "outcome"}
+            for row in rows
+        )
+    ):
+        raise SloValidationError(
+            f"{window_name} ingress admission operation matrix is incomplete or divergent"
+        )
 
 
 def validate_short_window_metrics(
@@ -1993,6 +2439,7 @@ def validate_prometheus_range_evidence(
             "propertyquarry_http_request_duration_seconds_bucket",
             "propertyquarry_http_request_duration_seconds_sum",
             "propertyquarry_http_request_duration_seconds_count",
+            "propertyquarry_ingress_admission_operations_total",
             "propertyquarry_runtime_build_info",
         }:
             raise SloValidationError("Prometheus range response contains an uncontracted metric")
@@ -2054,10 +2501,19 @@ def validate_prometheus_range_evidence(
         build_end = samples_for(end_rows, "propertyquarry_runtime_build_info")
         if len(build_start) != 1 or len(build_end) != 1:
             raise SloValidationError("Prometheus range proof lacks one runtime identity per replica")
+        _validate_ingress_admission_operation_matrix(
+            start_rows,
+            window_name="Prometheus range start",
+        )
+        _validate_ingress_admission_operation_matrix(
+            end_rows,
+            window_name="Prometheus range end",
+        )
         families = {
             "propertyquarry_http_requests_total": "counter",
             "propertyquarry_http_request_errors_total": "counter",
             "propertyquarry_http_request_duration_seconds": "histogram",
+            "propertyquarry_ingress_admission_operations_total": "counter",
             "propertyquarry_runtime_build_info": "gauge",
         }
         _validate_histogram_contract(start_rows, "propertyquarry_http_request_duration_seconds")

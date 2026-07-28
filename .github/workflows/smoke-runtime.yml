@@ -39,11 +39,16 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   property-security-posture:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -57,6 +62,7 @@ jobs:
         with:
           # Release hygiene audits every commit between the manifest candidate and HEAD.
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -683,12 +689,13 @@ jobs:
           retention-days: 30
 
   smoke-runtime-api:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
@@ -2026,6 +2033,9 @@ jobs:
       PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT: ${{ vars.PROPERTYQUARRY_PROMETHEUS_RANGE_RECEIPT }}
       PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE: ${{ vars.PROPERTYQUARRY_PROMETHEUS_RANGE_RESPONSE }}
       PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT: ${{ vars.PROPERTYQUARRY_ALERT_DELIVERY_RECEIPT }}
+      PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT: ${{ vars.PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT }}
+      PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT: ${{ vars.PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT }}
+      PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT: ${{ vars.PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT }}
       PROPERTYQUARRY_FAILURE_STATE_RECEIPT: ${{ vars.PROPERTYQUARRY_FAILURE_STATE_RECEIPT }}
       PROPERTYQUARRY_PROVIDER_CATALOG_RECEIPT: ${{ vars.PROPERTYQUARRY_PROVIDER_CATALOG_RECEIPT }}
       PROPERTYQUARRY_CONTINUOUS_UX_RECEIPT: _completion/smoke/propertyquarry-continuous-ux-${{ github.sha }}.json
@@ -2186,6 +2196,9 @@ jobs:
             --expected-rybbit-analytics-origin "${PROPERTYQUARRY_RYBBIT_ORIGIN}" \
             --expected-rybbit-site-id-sha256 "${PROPERTYQUARRY_RYBBIT_SITE_ID_SHA256}" \
             --rybbit-receipt "${PROPERTYQUARRY_RYBBIT_EVIDENCE_RECEIPT}" \
+            --dashboard-render-receipt "${PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT}" \
+            --structured-log-query-receipt "${PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT}" \
+            --distributed-trace-query-receipt "${PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT}" \
             --security-receipt "${PROPERTYQUARRY_RELEASE_SECURITY_RECEIPT}" \
             --security-workflow-binding "${PROPERTYQUARRY_RELEASE_SECURITY_WORKFLOW_BINDING}" \
             --controller-bundle "${PROPERTYQUARRY_RELEASE_CONTROLLER_BUNDLE_PATH}" \
@@ -2238,6 +2251,9 @@ jobs:
             --expected-rybbit-analytics-origin "${PROPERTYQUARRY_RYBBIT_ORIGIN}" \
             --expected-rybbit-site-id-sha256 "${PROPERTYQUARRY_RYBBIT_SITE_ID_SHA256}" \
             --rybbit-receipt "${PROPERTYQUARRY_RYBBIT_EVIDENCE_RECEIPT}" \
+            --dashboard-render-receipt "${PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT}" \
+            --structured-log-query-receipt "${PROPERTYQUARRY_STRUCTURED_LOG_QUERY_RECEIPT}" \
+            --distributed-trace-query-receipt "${PROPERTYQUARRY_DISTRIBUTED_TRACE_QUERY_RECEIPT}" \
             --security-receipt "${PROPERTYQUARRY_RELEASE_SECURITY_RECEIPT}" \
             --security-workflow-binding "${PROPERTYQUARRY_RELEASE_SECURITY_WORKFLOW_BINDING}" \
             --controller-bundle "${PROPERTYQUARRY_RELEASE_CONTROLLER_BUNDLE_PATH}" \
@@ -2272,6 +2288,8 @@ jobs:
       POSTGRES_PASSWORD: propertyquarry-ci-${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Prepare external smoke volume
         run: docker volume create property_propertyquarry_public_tours >/dev/null
       - name: Run Postgres runtime smoke
@@ -2286,6 +2304,8 @@ jobs:
       POSTGRES_PASSWORD: propertyquarry-ci-${{ github.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"

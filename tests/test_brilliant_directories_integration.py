@@ -23,14 +23,10 @@ from app.services.brilliant_directories import (
     build_brilliant_directories_api_request,
     build_brilliant_directories_billing_sso_bridge_launch_url,
     build_brilliant_directories_billing_sso_bridge_receipt,
-    build_brilliant_directories_member_create_request,
     build_brilliant_directories_member_login_token_handoff_url,
     build_brilliant_directories_member_login_token_receipt,
-    build_brilliant_directories_member_login_token_url,
     build_brilliant_directories_member_profile_request,
-    build_brilliant_directories_member_lookup_request,
     build_brilliant_directories_member_search_request,
-    build_brilliant_directories_member_update_request,
     build_brilliant_directories_projection_packet_from_profile_response,
     build_brilliant_directories_projection_packet_from_search_response,
     build_brilliant_directories_projection_packet,
@@ -1149,15 +1145,16 @@ def test_property_billing_bridge_launch_redirects_when_sso_bridge_is_ready(monke
     )
     client = build_property_client(principal_id="exec-bd-billing-sso-launch")
     start_workspace(client, mode="personal", workspace_name="BD Billing SSO Launch")
-    client.post(
-        "/v1/onboarding/property-search/preferences",
-        json={
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id="exec-bd-billing-sso-launch",
+        property_search_preferences_json={
             "property_commercial": {
                 "active_plan_key": "agent",
                 "status": "active",
                 "active_until": "2999-01-01T00:00:00+00:00",
             }
         },
+        trusted_commercial_update=True,
     )
 
     response = client.get(
@@ -1251,15 +1248,16 @@ def test_property_billing_bridge_launch_redirects_with_member_login_token_handof
     )
     client = build_property_client(principal_id="cf-email:tibor@example.com")
     start_workspace(client, mode="personal", workspace_name="BD Billing Member Launch")
-    client.post(
-        "/v1/onboarding/property-search/preferences",
-        json={
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id="cf-email:tibor@example.com",
+        property_search_preferences_json={
             "property_commercial": {
                 "active_plan_key": "agent",
                 "status": "active",
                 "active_until": "2999-01-01T00:00:00+00:00",
             }
         },
+        trusted_commercial_update=True,
     )
 
     response = client.get(
@@ -2107,7 +2105,10 @@ def test_brilliant_directories_local_reconciliation_approves_signed_advisory_eve
         note="Invoice and account match local customer.",
         now=now,
     )
-    commercial = normalize_property_commercial({**existing, **receipt["updates"]})
+    commercial = normalize_property_commercial(
+        {**existing, **receipt["updates"]},
+        now=now,
+    )
 
     assert receipt["status"] == "approved_local_entitlement"
     assert receipt["entitlement_mutation"] == "activated"
@@ -2149,6 +2150,37 @@ def test_brilliant_directories_local_reconciliation_can_reject_without_entitleme
     assert commercial["active_plan_key"] == "free"
     assert commercial["billing_reconciliations_json"][-1]["decision"] == "reject"
     assert commercial["billing_events_json"][-1]["accounting_status"] == "local_rejected"
+
+
+def test_brilliant_directories_local_reconciliation_reject_uses_injected_clock_for_existing_entitlement() -> None:
+    now = datetime(2026, 6, 25, 12, 0, 0, tzinfo=timezone.utc)
+    existing = {
+        "active_plan_key": "agent",
+        "status": "active",
+        "active_until": "2026-07-01T00:00:00+00:00",
+        "billing_events_json": [
+            {
+                "event_id": "bd_evt_reject_active_1",
+                "event_type": "invoice.paid",
+                "provider": "brilliant_directories",
+                "plan_key": "plus",
+                "accounting_status": "external_advisory",
+                "payment_status": "paid",
+            }
+        ],
+    }
+
+    receipt = reconcile_brilliant_directories_billing_event(
+        existing,
+        event_id="bd_evt_reject_active_1",
+        decision="reject",
+        reconciled_by="billing-operator",
+        note="Customer mismatch.",
+        now=now,
+    )
+
+    assert receipt["entitlement_mutation"] == "none"
+    assert receipt["current_plan_key"] == "agent"
 
 
 def test_brilliant_directories_local_reconciliation_rejects_unpaid_or_replayed_event() -> None:

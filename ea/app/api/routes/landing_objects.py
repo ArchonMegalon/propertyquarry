@@ -444,8 +444,16 @@ def _merge_propertyquarry_live_visual_status(
             generated_reconstruction_url = str(tour_status.get("generated_reconstruction_url") or "").strip()
             if generated_reconstruction_url:
                 merged["generated_reconstruction_url"] = generated_reconstruction_url
+            layout_preview_url = str(tour_status.get("layout_preview_url") or "").strip()
+            if layout_preview_url:
+                merged["layout_preview_url"] = layout_preview_url
+            merged["layout_preview_status"] = str(
+                tour_status.get("layout_preview_status") or merged.get("layout_preview_status") or ""
+            ).strip().lower()
             merged["tour_status"] = str(tour_status.get("tour_status") or tour_status.get("status") or merged.get("tour_status") or "").strip()
             merged["blocked_reason"] = str(tour_status.get("blocked_reason") or merged.get("blocked_reason") or "").strip()
+            for failure_key in ("failure_stage", "error_code", "diagnostic_sha256"):
+                merged[failure_key] = str(tour_status.get(failure_key) or merged.get(failure_key) or "").strip()
             merged["tour_progress_pct"] = str(tour_status.get("progress_pct") or merged.get("tour_progress_pct") or "").strip()
             merged["tour_status_updated_at"] = str(tour_status.get("generated_at") or merged.get("tour_status_updated_at") or "").strip()
     with contextlib.suppress(Exception):

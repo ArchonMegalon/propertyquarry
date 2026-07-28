@@ -2,8 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import json
+import math
+import os
 import re
+import secrets
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,15 +18,19 @@ if __package__:
     from . import propertyquarry_release_proof_baseline as release_proof_baseline
     from .propertyquarry_release_receipt_binding import (
         ReleaseBindingError,
+        SOURCE_BINDING_VERSION,
         build_source_binding,
-        file_digest_binding,
+        file_snapshot_binding,
+        read_stable_regular_file,
     )
 else:
     import propertyquarry_release_proof_baseline as release_proof_baseline
     from propertyquarry_release_receipt_binding import (
         ReleaseBindingError,
+        SOURCE_BINDING_VERSION,
         build_source_binding,
-        file_digest_binding,
+        file_snapshot_binding,
+        read_stable_regular_file,
     )
 
 
@@ -43,6 +53,26 @@ PYTEST_OUTCOME_RE = re.compile(
 REQUIRED_JOURNEY_IDS = release_proof_baseline.APPROVED_REQUIRED_JOURNEY_IDS
 REAL_BROWSER_TEST_FILE = release_proof_baseline.REAL_BROWSER_TEST_FILE
 REQUIRED_PACKETS_TOURS_REAL_BROWSER_CASES = release_proof_baseline.PACKETS_TOURS_REAL_BROWSER_CASES
+JOURNEY_MATRIX_VERSION = 1
+RENAME_NOREPLACE = 1
+RENAME_EXCHANGE = 2
+
+
+class _PreserveStagedOutputError(RuntimeError):
+    pass
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate JSON key: {key}")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
 
 
 def _utc_now() -> str:
@@ -50,7 +80,32 @@ def _utc_now() -> str:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        return {}
+    return dict(payload) if type(payload) is dict else {}
+
+
+def _object(value: object) -> dict[str, Any]:
+    return value if type(value) is dict else {}
+
+
+def _strict_string_list(value: object) -> list[str] | None:
+    if type(value) is not list or any(
+        type(item) is not str or not item.strip() for item in value
+    ):
+        return None
+    return [item.strip() for item in value]
+
+
+def _string_list(value: object) -> list[str]:
+    strict = _strict_string_list(value)
+    return strict if strict is not None else []
 
 
 def _normalize_release_value(value: Any) -> Any:
@@ -70,20 +125,545 @@ def _normalize_release_value(value: Any) -> Any:
     return value
 
 
-def _write_json_stable(path: Path, payload: dict[str, Any]) -> None:
-    serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    if path.exists():
+def _safe_output_path(root: Path, relative_path: Path) -> tuple[Path, Path]:
+    if (
+        relative_path.is_absolute()
+        or not relative_path.parts
+        or any(part in {"", ".", ".."} for part in relative_path.parts)
+    ):
+        raise ValueError(
+            f"release artifact output is not a safe repository-relative path: {relative_path}"
+        )
+    resolved_root = root.resolve(strict=True)
+    if not stat.S_ISDIR(resolved_root.lstat().st_mode):
+        raise ValueError(f"release artifact root is not a directory: {root}")
+    return resolved_root, relative_path
+
+
+def _open_output_parent(root: Path, relative_path: Path) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    current_fd = os.open(root, flags)
+    try:
+        for part in relative_path.parts[:-1]:
+            try:
+                os.mkdir(part, mode=0o755, dir_fd=current_fd)
+            except FileExistsError:
+                pass
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except OSError as exc:
+                raise ValueError(
+                    f"release artifact output parent is symlinked or not a directory: {relative_path}"
+                ) from exc
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
+
+
+def _read_regular_output(
+    parent_fd: int,
+    name: str,
+) -> tuple[tuple[int, int, int, int, int, int], bytes] | None:
+    try:
+        fd = os.open(
+            name,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(
+            f"release artifact output is symlinked or unreadable: {name}"
+        ) from exc
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"release artifact output is not a regular file: {name}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        if identity != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise RuntimeError(f"release artifact output changed while being read: {name}")
+        return identity, b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _strict_json_object_bytes(payload: bytes) -> dict[str, Any] | None:
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError):
+        return None
+    return dict(value) if type(value) is dict else None
+
+
+def _same_snapshot_across_rename(
+    left: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    right: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+) -> bool:
+    if left is None or right is None:
+        return False
+    left_identity, left_bytes = left
+    right_identity, right_bytes = right
+    # Linux updates ctime when renameat2 moves an inode.  The other identity
+    # fields and the bytes must survive an exchange unchanged.
+    return left_identity[:5] == right_identity[:5] and left_bytes == right_bytes
+
+
+def _entry_identity_no_follow(
+    parent_fd: int,
+    name: str,
+) -> tuple[int, int, int, int, int, int] | None:
+    try:
+        observed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_size,
+        observed.st_mtime_ns,
+        observed.st_ctime_ns,
+    )
+
+
+def _renameat2(
+    parent_fd: int,
+    source: str,
+    destination: str,
+    flags: int,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOSYS, "renameat2 is unavailable")
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    if (
+        renameat2(
+            parent_fd,
+            os.fsencode(source),
+            parent_fd,
+            os.fsencode(destination),
+            flags,
+        )
+        != 0
+    ):
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def _rename_exchange(parent_fd: int, source: str, destination: str) -> None:
+    _renameat2(parent_fd, source, destination, RENAME_EXCHANGE)
+
+
+def _rename_noreplace(parent_fd: int, source: str, destination: str) -> None:
+    _renameat2(parent_fd, source, destination, RENAME_NOREPLACE)
+
+
+def _quarantine_unexpected_new_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    published: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    display_path: Path,
+    validation_error: Exception,
+) -> None:
+    try:
+        _rename_noreplace(parent_fd, destination_name, temporary_name)
+    except OSError as rollback_error:
+        raise _PreserveStagedOutputError(
+            "unexpected release artifact output could not be quarantined; "
+            f"canonical entry remains at {display_path}"
+        ) from rollback_error
+    try:
+        if (
+            _entry_identity_no_follow(parent_fd, destination_name) is not None
+            or _entry_identity_no_follow(parent_fd, temporary_name) is None
+        ):
+            raise _PreserveStagedOutputError(
+                "unexpected release artifact quarantine could not be verified; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        if published is not None:
+            recovery = _read_regular_output(parent_fd, temporary_name)
+            if not _same_snapshot_across_rename(recovery, published):
+                raise _PreserveStagedOutputError(
+                    "unexpected release artifact recovery changed during quarantine; "
+                    f"entry preserved at {display_path.parent / temporary_name}"
+                ) from validation_error
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as verification_error:
+        raise _PreserveStagedOutputError(
+            "unexpected release artifact quarantine verification failed; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from verification_error
+    raise _PreserveStagedOutputError(
+        "release artifact staging path changed during publication; "
+        f"unexpected entry quarantined at {display_path.parent / temporary_name}"
+    ) from validation_error
+
+
+def _rollback_exchanged_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    approved: tuple[tuple[int, int, int, int, int, int], bytes],
+    staged: tuple[tuple[int, int, int, int, int, int], bytes],
+    displaced: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    published: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    display_path: Path,
+    validation_error: Exception | None,
+) -> bool:
+    try:
+        _rename_exchange(parent_fd, temporary_name, destination_name)
+    except OSError as rollback_error:
+        raise _PreserveStagedOutputError(
+            "release artifact exchange rollback failed; "
+            f"displaced output preserved at {display_path.parent / temporary_name}"
+        ) from rollback_error
+
+    try:
+        restored = _read_regular_output(parent_fd, destination_name)
+        expected_restored = displaced if displaced is not None else approved
+        if not _same_snapshot_across_rename(restored, expected_restored):
+            raise _PreserveStagedOutputError(
+                "release artifact exchange rollback could not restore the displaced output; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            )
+        confirmed_restored = _read_regular_output(parent_fd, destination_name)
+        if confirmed_restored != restored:
+            raise _PreserveStagedOutputError(
+                "release artifact restored output changed during validation; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            )
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as restore_error:
+        raise _PreserveStagedOutputError(
+            "release artifact exchange rollback could not validate the restored output; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from restore_error
+
+    try:
+        if published is None:
+            if _entry_identity_no_follow(parent_fd, temporary_name) is None:
+                raise _PreserveStagedOutputError(
+                    "release artifact rollback lost the unexpected publication entry"
+                ) from validation_error
+            raise _PreserveStagedOutputError(
+                "release artifact publication was invalid; canonical output restored and "
+                f"unexpected entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+
         try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            existing = None
-        if isinstance(existing, dict) and _normalize_release_value(existing) == _normalize_release_value(payload):
-            return
-    path.write_text(serialized, encoding="utf-8")
+            returned_staged = _read_regular_output(parent_fd, temporary_name)
+        except Exception as recovery_error:
+            if _entry_identity_no_follow(parent_fd, temporary_name) is None:
+                raise _PreserveStagedOutputError(
+                    "release artifact rollback lost the unexpected publication entry"
+                ) from recovery_error
+            raise _PreserveStagedOutputError(
+                "release artifact canonical output was restored; invalid publication entry "
+                f"preserved at {display_path.parent / temporary_name}"
+            ) from recovery_error
+        if not _same_snapshot_across_rename(returned_staged, published):
+            raise _PreserveStagedOutputError(
+                "release artifact exchange rollback could not verify the recovery entry; "
+                f"entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        confirmed_returned = _read_regular_output(parent_fd, temporary_name)
+        if confirmed_returned != returned_staged:
+            raise _PreserveStagedOutputError(
+                "release artifact recovery entry changed during validation; "
+                f"entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        if validation_error is not None or not _same_snapshot_across_rename(
+            returned_staged, staged
+        ):
+            raise _PreserveStagedOutputError(
+                "release artifact staging path changed at publication; "
+                f"unexpected staged data preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        os.unlink(temporary_name, dir_fd=parent_fd)
+        return False
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as verification_error:
+        raise _PreserveStagedOutputError(
+            "release artifact post-rollback verification failed; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from verification_error
+
+
+def _publish_staged_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    approved: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    staged: tuple[tuple[int, int, int, int, int, int], bytes],
+    display_path: Path,
+) -> bool:
+    if approved is None:
+        try:
+            _rename_noreplace(parent_fd, temporary_name, destination_name)
+        except FileExistsError as exc:
+            raise RuntimeError(
+                f"release artifact output appeared during publication: {display_path}"
+            ) from exc
+        published = None
+        try:
+            published = _read_regular_output(parent_fd, destination_name)
+            confirmed = _read_regular_output(parent_fd, destination_name)
+            if (
+                not _same_snapshot_across_rename(published, staged)
+                or confirmed != published
+            ):
+                raise RuntimeError("published output does not match staged output")
+        except Exception as exc:
+            _quarantine_unexpected_new_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                published=published,
+                display_path=display_path,
+                validation_error=exc,
+            )
+        return True
+
+    _rename_exchange(parent_fd, temporary_name, destination_name)
+    displaced = None
+    published = None
+    try:
+        displaced = _read_regular_output(parent_fd, temporary_name)
+        published = _read_regular_output(parent_fd, destination_name)
+    except Exception as validation_error:
+        return _rollback_exchanged_output(
+            parent_fd,
+            temporary_name,
+            destination_name,
+            approved=approved,
+            staged=staged,
+            displaced=displaced,
+            published=published,
+            display_path=display_path,
+            validation_error=validation_error,
+        )
+
+    if _same_snapshot_across_rename(
+        displaced, approved
+    ) and _same_snapshot_across_rename(published, staged):
+        try:
+            confirmed_displaced = _read_regular_output(parent_fd, temporary_name)
+            confirmed_published = _read_regular_output(parent_fd, destination_name)
+        except Exception as validation_error:
+            return _rollback_exchanged_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                approved=approved,
+                staged=staged,
+                displaced=displaced,
+                published=published,
+                display_path=display_path,
+                validation_error=validation_error,
+            )
+        if confirmed_displaced != displaced or confirmed_published != published:
+            return _rollback_exchanged_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                approved=approved,
+                staged=staged,
+                displaced=displaced,
+                published=published,
+                display_path=display_path,
+                validation_error=RuntimeError(
+                    "release artifact exchange changed during validation"
+                ),
+            )
+        try:
+            os.unlink(temporary_name, dir_fd=parent_fd)
+        except Exception as cleanup_error:
+            raise _PreserveStagedOutputError(
+                "published release artifact, but displaced output could not be removed; "
+                f"preserved at {display_path.parent / temporary_name}"
+            ) from cleanup_error
+        return True
+
+    return _rollback_exchanged_output(
+        parent_fd,
+        temporary_name,
+        destination_name,
+        approved=approved,
+        staged=staged,
+        displaced=displaced,
+        published=published,
+        display_path=display_path,
+        validation_error=None,
+    )
+
+
+def _write_json_stable(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> None:
+    if root is None:
+        root = path.parent
+        relative_path = Path(path.name)
+    else:
+        relative_path = path
+    root, relative_path = _safe_output_path(root, relative_path)
+    serialized = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode(
+        "utf-8"
+    )
+    parent_fd = _open_output_parent(root, relative_path)
+    temporary_name = ""
+    try:
+        approved = _read_regular_output(parent_fd, relative_path.name)
+        if approved is not None:
+            _approved_identity, existing_bytes = approved
+            existing = _strict_json_object_bytes(existing_bytes)
+            semantically_equal = (
+                existing is not None
+                and _normalize_release_value(existing)
+                == _normalize_release_value(payload)
+            )
+            if semantically_equal:
+                if stat.S_IMODE(approved[0][2]) == 0o644:
+                    return
+                # Repair only the unsafe mode; stable writers retain the
+                # already-approved representation and volatile metadata.
+                serialized = existing_bytes
+
+        for _attempt in range(10):
+            temporary_name = (
+                f".{relative_path.name}.release-write-{secrets.token_hex(8)}"
+            )
+            try:
+                temporary_fd = os.open(
+                    temporary_name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+                break
+            except FileExistsError:
+                temporary_name = ""
+        else:
+            raise FileExistsError(
+                f"unable to allocate release artifact output: {relative_path}"
+            )
+        try:
+            remaining = memoryview(serialized)
+            while remaining:
+                written = os.write(temporary_fd, remaining)
+                if written <= 0:
+                    raise OSError(
+                        f"short write while publishing release artifact: {relative_path}"
+                    )
+                remaining = remaining[written:]
+            os.fchmod(temporary_fd, 0o644)
+            os.fsync(temporary_fd)
+        finally:
+            os.close(temporary_fd)
+
+        staged = _read_regular_output(parent_fd, temporary_name)
+        if staged is None:
+            raise RuntimeError(
+                f"release artifact staging file disappeared: {relative_path}"
+            )
+        try:
+            consumed = _publish_staged_output(
+                parent_fd,
+                temporary_name,
+                relative_path.name,
+                approved=approved,
+                staged=staged,
+                display_path=relative_path,
+            )
+        except _PreserveStagedOutputError:
+            temporary_name = ""
+            try:
+                os.fsync(parent_fd)
+            finally:
+                raise
+        temporary_name = ""
+        os.fsync(parent_fd)
+        if not consumed:
+            raise RuntimeError(
+                f"release artifact output changed before publication: {relative_path}"
+            )
+    finally:
+        try:
+            if temporary_name:
+                try:
+                    os.unlink(temporary_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(parent_fd)
 
 
 def _present(root: Path, rel: Path) -> bool:
-    return (root / rel).exists()
+    if (
+        rel.is_absolute()
+        or not rel.parts
+        or any(part in {"", ".", ".."} for part in rel.parts)
+    ):
+        return False
+    try:
+        root = root.resolve(strict=True)
+        candidate = root / rel
+        if candidate.resolve(strict=True) != candidate:
+            return False
+        return candidate.is_file() and not candidate.is_symlink()
+    except OSError:
+        return False
 
 
 def _stringify_path(path: Path) -> str:
@@ -112,36 +692,66 @@ def _browser_lane_pass_is_supported(
     expected_test_file: str,
     expected_cases: list[str],
 ) -> bool:
-    if not isinstance(lane, dict) or str(lane.get("status") or "").strip().lower() != "pass":
+    if type(lane) is not dict or type(lane.get("status")) is not str:
         return False
-    cases = [str(item) for item in lane.get("cases") or [] if str(item).strip()]
-    try:
-        required_case_count = int(lane.get("required_case_count") or len(cases))
-        raw_counts = lane.get("outcome_counts")
-        if isinstance(raw_counts, dict):
-            counts = {key: int(raw_counts.get(key) or 0) for key in PYTEST_OUTCOME_KEYS}
-        else:
-            counts = _pytest_outcome_counts(lane.get("output_excerpt"))
-        executed_count = int(lane.get("executed_count") or 0)
-        exit_code = int(lane.get("exit_code") if lane.get("exit_code") is not None else 1)
-    except (TypeError, ValueError):
+    if lane["status"].strip().lower() != "pass":
         return False
-    if executed_count == 0:
-        executed_count = sum(counts[key] for key in ("passed", "failed", "errors", "xfailed", "xpassed"))
+
+    raw_cases = lane.get("cases")
+    raw_counts = lane.get("outcome_counts")
+    limitations = lane.get("limitations")
+    if (
+        type(raw_cases) is not list
+        or any(type(item) is not str or not item.strip() for item in raw_cases)
+        or type(raw_counts) is not dict
+        or set(raw_counts) != set(PYTEST_OUTCOME_KEYS)
+        or type(limitations) is not list
+        or limitations
+    ):
+        return False
+
+    integer_fields = ("required_case_count", "selected_count", "executed_count", "exit_code")
+    if any(type(lane.get(field)) is not int or lane[field] < 0 for field in integer_fields):
+        return False
+    counts: dict[str, int] = {}
+    for key in PYTEST_OUTCOME_KEYS:
+        value = raw_counts.get(key)
+        if type(value) is not int or value < 0:
+            return False
+        counts[key] = value
+
+    duration_seconds = lane.get("duration_seconds")
+    if (
+        type(duration_seconds) not in {int, float}
+        or not math.isfinite(duration_seconds)
+        or duration_seconds < 0
+    ):
+        return False
+
+    required_case_count = lane["required_case_count"]
+    selected_count = lane["selected_count"]
+    executed_count = lane["executed_count"]
+    exit_code = lane["exit_code"]
+    executed_outcomes = sum(
+        counts[key] for key in ("passed", "failed", "errors", "xfailed", "xpassed")
+    )
     return (
         bool(expected_cases)
-        and str(lane.get("test_file") or "").strip() == expected_test_file
-        and cases == expected_cases
+        and type(lane.get("test_file")) is str
+        and lane["test_file"].strip() == expected_test_file
+        and raw_cases == expected_cases
         and required_case_count == len(expected_cases)
+        and selected_count == required_case_count
+        and executed_count == required_case_count
+        and executed_count == executed_outcomes
+        and selected_count == executed_count + counts["skipped"]
         and exit_code == 0
-        and counts["passed"] >= required_case_count
-        and executed_count >= required_case_count
+        and counts["passed"] == required_case_count
         and counts["failed"] == 0
         and counts["skipped"] == 0
         and counts["errors"] == 0
         and counts["xfailed"] == 0
         and counts["xpassed"] == 0
-        and not list(lane.get("limitations") or [])
     )
 
 
@@ -153,14 +763,20 @@ def _journey_matrix_pass_blockers(receipt: dict[str, Any], seed: dict[str, Any])
         return ["current gate seed lacks the journey evidence matrix"]
     if not isinstance(actual, dict):
         return ["published pass lacks the journey evidence matrix"]
+    expected_version = expected.get("version")
+    actual_version = actual.get("version")
+    if type(expected_version) is not int or expected_version != JOURNEY_MATRIX_VERSION:
+        blockers.append("current gate seed has the wrong journey matrix version")
+    if type(actual_version) is not int or actual_version != expected_version:
+        blockers.append("published pass journey matrix has the wrong version")
     expected_id_items = expected.get("required_journey_ids")
     actual_id_items = actual.get("required_journey_ids")
-    if not isinstance(expected_id_items, list) or not isinstance(actual_id_items, list):
+    expected_ids = _strict_string_list(expected_id_items)
+    actual_ids = _strict_string_list(actual_id_items)
+    if expected_ids is None or actual_ids is None:
         blockers.append("published pass journey IDs must be governed lists")
-        expected_id_items = expected_id_items if isinstance(expected_id_items, list) else []
-        actual_id_items = actual_id_items if isinstance(actual_id_items, list) else []
-    expected_ids = [str(item).strip() for item in expected_id_items if str(item).strip()]
-    actual_ids = [str(item).strip() for item in actual_id_items if str(item).strip()]
+        expected_ids = expected_ids or []
+        actual_ids = actual_ids or []
     if expected_ids != list(REQUIRED_JOURNEY_IDS) or actual_ids != expected_ids:
         blockers.append("published pass journey IDs do not match the complete current matrix")
     if str(actual.get("status") or "").strip().lower() != "pass":
@@ -168,7 +784,15 @@ def _journey_matrix_pass_blockers(receipt: dict[str, Any], seed: dict[str, Any])
     if str(actual.get("readiness_scope") or "").strip() != str(expected.get("readiness_scope") or "").strip():
         blockers.append("published pass journey matrix has the wrong readiness scope")
     source_binding = receipt.get("source_binding") if isinstance(receipt.get("source_binding"), dict) else {}
-    if str(actual.get("runtime_commit_sha") or "").strip().lower() != str(source_binding.get("code_commit") or "").strip().lower():
+    runtime_commit = actual.get("runtime_commit_sha")
+    source_commit = source_binding.get("code_commit")
+    if (
+        type(runtime_commit) is not str
+        or type(source_commit) is not str
+        or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", runtime_commit) is None
+        or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_commit) is None
+        or runtime_commit != source_commit
+    ):
         blockers.append("published pass journey matrix is not bound to the browser receipt runtime commit")
 
     expected_row_items = expected.get("rows")
@@ -251,13 +875,14 @@ def _journey_matrix_pass_blockers(receipt: dict[str, Any], seed: dict[str, Any])
             blockers.append(f"published pass journey {journey_id} has stale evidence nodes")
         if any(
             str(entry.get("lane_status") or "").strip().lower() != "pass"
-            for entry in actual_row.get("evidence_sources") or []
+            for entry in actual_source_items
             if isinstance(entry, dict)
         ):
             blockers.append(f"published pass journey {journey_id} has an incomplete evidence lane")
         if str(actual_row.get("proof_status") or "").strip().lower() != "pass":
             blockers.append(f"published pass journey {journey_id} did not complete")
-        if list(actual_row.get("blocking_reasons") or []):
+        raw_row_blockers = actual_row.get("blocking_reasons")
+        if type(raw_row_blockers) is not list or raw_row_blockers:
             blockers.append(f"published pass journey {journey_id} still reports blockers")
         expected_live = expected_row.get("live_requirement")
         if not isinstance(expected_live, dict):
@@ -288,11 +913,8 @@ def browser_receipt_pass_blockers(receipt: dict[str, Any], seed: dict[str, Any])
         blockers.append("published pass has the wrong browser proof receipt kind")
     if str(receipt.get("surface") or "").strip() != "browser_workflow_proof":
         blockers.append("published pass has the wrong browser proof surface")
-    try:
-        receipt_version = int(receipt.get("version") or 0)
-    except (TypeError, ValueError):
-        receipt_version = 0
-    if receipt_version != 1:
+    receipt_version = receipt.get("version")
+    if type(receipt_version) is not int or receipt_version != 1:
         blockers.append("published pass has the wrong browser proof version")
     if str(receipt.get("generated_by") or "").strip() != "scripts/materialize_ea_browser_workflow_proof.py":
         blockers.append("published pass was not produced by the governed browser proof materializer")
@@ -304,41 +926,63 @@ def browser_receipt_pass_blockers(receipt: dict[str, Any], seed: dict[str, Any])
         blockers.append(
             f"published pass targets {receipt.get('proof_target') or 'missing'}, expected {expected_target}"
         )
+    source_binding = receipt.get("source_binding")
+    if not isinstance(source_binding, dict):
+        blockers.append("published pass lacks an immutable source binding")
+    else:
+        source_binding_version = source_binding.get("version")
+        if (
+            type(source_binding_version) is not int
+            or source_binding_version != SOURCE_BINDING_VERSION
+        ):
+            blockers.append("published pass has the wrong immutable source binding version")
+        source_commit = source_binding.get("code_commit")
+        if (
+            type(source_commit) is not str
+            or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_commit) is None
+        ):
+            blockers.append("published pass has an invalid immutable source binding commit")
     release_claim = seed.get("release_claim")
     if not isinstance(release_claim, dict):
         release_claim = {}
     expected_claim = str(release_claim.get("summary") or "").strip()
     if str(receipt.get("release_claim_summary") or "").strip() != expected_claim:
         blockers.append("published pass release claim does not match the current gate seed")
-    expected_signals = [str(item) for item in proof_contract.get("expected_browser_signals") or [] if str(item).strip()]
+    raw_expected_signals = proof_contract.get("expected_browser_signals")
+    expected_signals = _strict_string_list(raw_expected_signals)
+    if expected_signals is None:
+        blockers.append("current gate seed lacks a governed browser signals list")
+        expected_signals = []
     raw_actual_signals = receipt.get("expected_browser_signals")
-    actual_signals = [
-        str(item) for item in raw_actual_signals if str(item).strip()
-    ] if isinstance(raw_actual_signals, list) else []
-    if not isinstance(raw_actual_signals, list):
+    actual_signals = _strict_string_list(raw_actual_signals)
+    if actual_signals is None:
         blockers.append("published pass lacks a governed browser signals list")
+        actual_signals = []
     if actual_signals != expected_signals:
         blockers.append("published pass browser signals do not match the current gate seed")
     raw_receipt_blockers = receipt.get("blocking_reasons")
-    receipt_blockers = [
-        str(item) for item in raw_receipt_blockers if str(item).strip()
-    ] if isinstance(raw_receipt_blockers, list) else []
-    if not isinstance(raw_receipt_blockers, list):
+    receipt_blockers = _strict_string_list(raw_receipt_blockers)
+    if receipt_blockers is None:
         blockers.append("published pass lacks a governed blocking_reasons list")
+        receipt_blockers = []
     if receipt_blockers:
         blockers.append("published pass still reports browser blockers: " + "; ".join(receipt_blockers))
     raw_receipt_limitations = receipt.get("current_limitations")
-    receipt_limitations = [
-        str(item) for item in raw_receipt_limitations if str(item).strip()
-    ] if isinstance(raw_receipt_limitations, list) else []
-    if not isinstance(raw_receipt_limitations, list):
+    receipt_limitations = _strict_string_list(raw_receipt_limitations)
+    if receipt_limitations is None:
         blockers.append("published pass lacks a governed current_limitations list")
+        receipt_limitations = []
     if receipt_limitations:
         blockers.append("published pass still reports browser limitations: " + "; ".join(receipt_limitations))
     blockers.extend(_journey_matrix_pass_blockers(receipt, seed))
 
     raw_sources = proof_contract.get("evidence_sources")
-    if not isinstance(raw_sources, list) or any(not isinstance(entry, dict) for entry in raw_sources):
+    if type(raw_sources) is not list:
+        blockers.append(
+            "current gate seed browser evidence sources must be a governed list"
+        )
+        return blockers
+    if any(not isinstance(entry, dict) for entry in raw_sources):
         blockers.append("current gate seed browser evidence sources must be a complete governed list")
         return blockers
     sources: list[dict[str, Any]] = []
@@ -381,7 +1025,10 @@ def browser_receipt_pass_blockers(receipt: dict[str, Any], seed: dict[str, Any])
     for index, expected in enumerate(source_backed):
         lane = source_lanes[index] if index < len(source_lanes) else None
         expected_file = str(expected.get("file") or "").strip()
-        expected_cases = [str(item) for item in expected.get("cases") or [] if str(item).strip()]
+        expected_cases = _strict_string_list(expected.get("cases"))
+        if expected_cases is None:
+            blockers.append(f"current gate seed has invalid {label} cases")
+            expected_cases = []
         if not _browser_lane_pass_is_supported(
             lane,
             expected_test_file=expected_file,
@@ -406,12 +1053,22 @@ def browser_receipt_pass_blockers(receipt: dict[str, Any], seed: dict[str, Any])
 
 
 def _build_browser_sources(root: Path, seed: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
-    evidence_sources = list((seed.get("browser_workflow_proof") or {}).get("evidence_sources") or [])
+    proof_contract = _object(seed.get("browser_workflow_proof"))
+    raw_sources = proof_contract.get("evidence_sources")
+    if type(raw_sources) is not list:
+        return [], ["invalid browser evidence source list"]
+    evidence_sources = raw_sources
     rendered: list[dict[str, Any]] = []
     missing: list[str] = []
-    for entry in evidence_sources:
+    for index, entry in enumerate(evidence_sources):
+        if type(entry) is not dict:
+            missing.append(f"invalid browser evidence source {index}")
+            continue
         rel = Path(str(entry.get("file") or "").strip())
-        cases = [str(case) for case in list(entry.get("cases") or []) if str(case).strip()]
+        cases = _strict_string_list(entry.get("cases"))
+        if cases is None or not cases:
+            missing.append(f"invalid browser evidence cases {index}")
+            cases = []
         present = _present(root, rel)
         rendered.append(
             {
@@ -437,12 +1094,15 @@ def _build_doc_checks(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 def _build_product_canon(root: Path, seed: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    canon = dict(seed.get("ea_product_canon") or {})
+    canon = _object(seed.get("ea_product_canon"))
     source_root = str(canon.get("source_root") or "").strip()
     scope_label = str(canon.get("scope_label") or "EA product canon").strip() or "EA product canon"
-    required_docs = [str(item) for item in list(canon.get("required_docs") or []) if str(item).strip()]
+    required_docs = _string_list(canon.get("required_docs"))
+    if type(canon.get("required_docs")) is not list:
+        missing_docs = ["invalid EA product canon required_docs"]
+    else:
+        missing_docs = []
     docs_present: list[dict[str, Any]] = []
-    missing_docs: list[str] = []
     for doc in required_docs:
         rel = Path(doc)
         present = _present(root, rel)
@@ -474,17 +1134,23 @@ def _project_journey_evidence_matrix(
     if not isinstance(raw_matrix, dict):
         raw_matrix = {}
     rendered_rows: list[dict[str, Any]] = []
-    for row in raw_matrix.get("rows") or []:
+    raw_rows = raw_matrix.get("rows")
+    if type(raw_rows) is not list:
+        raw_rows = []
+    for row in raw_rows:
         if not isinstance(row, dict):
             continue
         rendered_sources: list[dict[str, Any]] = []
-        for entry in row.get("evidence_sources") or []:
+        raw_sources = row.get("evidence_sources")
+        if type(raw_sources) is not list:
+            raw_sources = []
+        for entry in raw_sources:
             if not isinstance(entry, dict):
                 continue
             rendered_sources.append(
                 {
                     "file": str(entry.get("file") or "").strip(),
-                    "cases": [str(case).strip() for case in entry.get("cases") or [] if str(case).strip()],
+                    "cases": _string_list(entry.get("cases")),
                     "lane_status": "not_evaluated",
                 }
             )
@@ -498,14 +1164,13 @@ def _project_journey_evidence_matrix(
                 "blocking_reasons": [],
             }
         )
+    raw_version = raw_matrix.get("version")
     return {
-        "version": int(raw_matrix.get("version") or 0),
+        "version": raw_version if type(raw_version) is int else 0,
         "status": "not_evaluated",
         "readiness_scope": str(raw_matrix.get("readiness_scope") or "").strip(),
         "runtime_commit_sha": str((source_binding or {}).get("code_commit") or ""),
-        "required_journey_ids": [
-            str(item).strip() for item in raw_matrix.get("required_journey_ids") or [] if str(item).strip()
-        ],
+        "required_journey_ids": _string_list(raw_matrix.get("required_journey_ids")),
         "rows": rendered_rows,
     }
 
@@ -518,9 +1183,13 @@ def build_receipt(
     browser_proof_receipt_path: Path | None = DEFAULT_BROWSER_PROOF_RECEIPT,
     require_source_binding: bool = False,
 ) -> dict[str, Any]:
-    seed = _load_json(root / seed_path)
+    seed_present = _present(root, seed_path)
+    seed = _load_json(root / seed_path) if seed_present else {}
     approved_baseline_blockers = release_proof_baseline.approved_seed_baseline_blockers(seed)
-    proof_target = str((seed.get("browser_workflow_proof") or {}).get("proof_target") or "executive-assistant").strip()
+    proof_contract = _object(seed.get("browser_workflow_proof"))
+    proof_target = str(
+        proof_contract.get("proof_target") or "executive-assistant"
+    ).strip()
     proof_label = "PropertyQuarry" if proof_target == "propertyquarry" else "EA"
     truth_plane_present = _present(root, truth_plane_path)
     docs, missing_docs = _build_doc_checks(root)
@@ -532,6 +1201,7 @@ def build_receipt(
     browser_receipt_path_value = None
     browser_receipt_blockers: list[str] = []
     browser_receipt_limitations: list[str] = []
+    browser_receipt_snapshot = None
     source_binding: dict[str, Any] | None = None
     source_binding_blocker = ""
     if require_source_binding:
@@ -539,33 +1209,48 @@ def build_receipt(
             source_binding = build_source_binding(
                 root,
                 seed_path=seed_path,
-                evidence_sources=(seed.get("browser_workflow_proof") or {}).get("evidence_sources"),
+                evidence_sources=proof_contract.get("evidence_sources"),
             )
-        except (OSError, ReleaseBindingError) as exc:
+        except (OSError, TypeError, ReleaseBindingError) as exc:
             source_binding_blocker = f"immutable source binding failed: {exc}"
     browser_receipt_binding: dict[str, str] | None = None
     if browser_proof_receipt_path is not None:
         candidate = root / browser_proof_receipt_path
         browser_receipt_path_value = browser_proof_receipt_path.as_posix()
-        if candidate.exists():
-            published_browser_receipt = _load_json(candidate)
-            if require_source_binding:
-                try:
-                    browser_receipt_binding = file_digest_binding(root, browser_proof_receipt_path)
-                except (OSError, ReleaseBindingError) as exc:
-                    source_binding_blocker = source_binding_blocker or f"browser receipt binding failed: {exc}"
+        if _present(root, browser_proof_receipt_path):
+            try:
+                if require_source_binding:
+                    (
+                        browser_receipt_snapshot,
+                        browser_receipt_binding,
+                    ) = file_snapshot_binding(
+                        root,
+                        browser_proof_receipt_path,
+                    )
+                else:
+                    browser_receipt_snapshot = read_stable_regular_file(candidate)
+                published_browser_receipt = (
+                    _strict_json_object_bytes(browser_receipt_snapshot.payload)
+                    or {}
+                )
+            except (OSError, ReleaseBindingError) as exc:
+                published_browser_receipt = {}
+                source_binding_blocker = (
+                    source_binding_blocker
+                    or f"browser receipt binding failed: {exc}"
+                )
             browser_receipt_status = str(
                 published_browser_receipt.get("status")
                 or published_browser_receipt.get("state")
                 or published_browser_receipt.get("release_truth")
                 or ""
             ).strip()
-            browser_receipt_blockers = [
-                str(item) for item in list(published_browser_receipt.get("blocking_reasons") or []) if str(item).strip()
-            ]
-            browser_receipt_limitations = [
-                str(item) for item in list(published_browser_receipt.get("current_limitations") or []) if str(item).strip()
-            ]
+            browser_receipt_blockers = _string_list(
+                published_browser_receipt.get("blocking_reasons")
+            )
+            browser_receipt_limitations = _string_list(
+                published_browser_receipt.get("current_limitations")
+            )
             inconsistent_pass_blockers = browser_receipt_pass_blockers(published_browser_receipt, seed)
             if require_source_binding and published_browser_receipt.get("source_binding") != source_binding:
                 inconsistent_pass_blockers.append(
@@ -611,7 +1296,8 @@ def build_receipt(
         elif browser_receipt_status in {"blocked", "fail"}:
             status = "blocked"
 
-    release_summary = str((seed.get("release_claim") or {}).get("summary") or "").strip()
+    release_claim = _object(seed.get("release_claim"))
+    release_summary = str(release_claim.get("summary") or "").strip()
     blockers = list(dict.fromkeys(blockers))
     current_limitations = list(dict.fromkeys(current_limitations))
     journey_evidence_matrix = _project_journey_evidence_matrix(
@@ -642,7 +1328,7 @@ def build_receipt(
     receipt: dict[str, Any] = {
         "product": str(seed.get("product") or "propertyquarry"),
         "surface": str(seed.get("surface") or "flagship_release_control"),
-        "version": int(seed.get("version") or 1),
+        "version": seed.get("version") if type(seed.get("version")) is int else 0,
         "kind": "release_receipt",
         "generated_at": _utc_now(),
         "generated_by": "scripts/materialize_ea_flagship_release_gate.py",
@@ -666,22 +1352,26 @@ def build_receipt(
         "truth_plane": {
             "source": truth_plane_path.as_posix(),
             "present": truth_plane_present,
-            "legacy_history": (seed.get("truth_plane") or {}).get("legacy_history"),
+            "legacy_history": _object(seed.get("truth_plane")).get("legacy_history"),
         },
         "release_claim": seed.get("release_claim") or {},
         "global_launch_contract": seed.get("global_launch_contract") or {},
         "ea_product_canon": product_canon,
         "browser_workflow_proof": {
             "proof_target": proof_target,
-            "evidence_sources": seed.get("browser_workflow_proof", {}).get("evidence_sources", []),
+            "evidence_sources": (
+                proof_contract.get("evidence_sources")
+                if type(proof_contract.get("evidence_sources")) is list
+                else []
+            ),
             "source_files_present": browser_sources,
             "published_receipt": browser_receipt_path_value,
             "published_receipt_present": published_browser_receipt is not None,
         },
         "journey_evidence_matrix": journey_evidence_matrix,
         "verification_binding": {
-            "primary_verifier": (seed.get("verification_binding") or {}).get("primary_verifier", "scripts/verify_release_assets.sh"),
-            "supporting_test": (seed.get("verification_binding") or {}).get("supporting_test", "tests/test_flagship_truth_plane.py"),
+            "primary_verifier": _object(seed.get("verification_binding")).get("primary_verifier", "scripts/verify_release_assets.sh"),
+            "supporting_test": _object(seed.get("verification_binding")).get("supporting_test", "tests/test_flagship_truth_plane.py"),
             "materializer": "scripts/materialize_ea_flagship_release_gate.py",
         },
         "documentation_refs": [
@@ -702,6 +1392,8 @@ def build_receipt(
             "summary": release_summary,
         },
     }
+    if browser_receipt_snapshot is not None:
+        browser_receipt_snapshot.assert_unchanged()
     return receipt
 
 
@@ -728,9 +1420,8 @@ def main() -> int:
         require_source_binding=True,
     )
 
-    output_path = args.root / args.output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json_stable(output_path, receipt)
+    output_path = args.root.resolve() / args.output
+    _write_json_stable(args.output, receipt, root=args.root.resolve())
     if args.stdout:
         print(json.dumps(receipt, indent=2, ensure_ascii=False))
     else:

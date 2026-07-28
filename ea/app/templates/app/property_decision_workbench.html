@@ -1640,6 +1640,23 @@
     .pqx-top-actions {
       display: flex;
     }
+    .pqx-top-launch-status {
+      max-width: min(30vw, 320px);
+      color: var(--pq-green);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.25;
+      text-align: right;
+    }
+    .pqx-top-launch-status:empty {
+      display: none;
+    }
+    .pqx-top-launch-status[data-pq-tone="pending"] {
+      color: var(--pq-muted);
+    }
+    .pqx-top-launch-status[data-pq-tone="error"] {
+      color: var(--pq-red);
+    }
     .pqx-button,
     .pqx-link-button,
     .pqx-mode-button {
@@ -11019,10 +11036,79 @@
         {% endif %}
         <span class="pqx-context-actions" data-pw-top-actions></span>
         {% if show_top_search_action %}
+        <span class="pqx-top-launch-status" data-property-top-launch-status role="status" aria-live="assertive" aria-atomic="true"></span>
         <button class="pqx-button primary" type="button" data-property-start-top aria-label="{{ console_form.get('submit_label') or 'Launch search' }}">
           <span class="pqx-top-start-label-full">{{ console_form.get('submit_label') or 'Launch search' }}</span>
           <span class="pqx-top-start-label-short">Search</span>
         </button>
+        <script>
+          /* PQ_SEARCH_LAUNCH_BOOT_GUARD_START */
+          (() => {
+            const script = document.currentScript;
+            const button = script?.previousElementSibling;
+            const root = button?.closest?.('[data-property-decision-workbench]');
+            const status = root?.querySelector?.('[data-property-top-launch-status]');
+            if (!(button instanceof HTMLButtonElement) || !(root instanceof HTMLElement)) return;
+            const idleLabel = String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search';
+            let timeoutId = 0;
+            const setStatus = (message, tone = '') => {
+              if (!(status instanceof HTMLElement)) return;
+              status.textContent = String(message || '');
+              if (tone) status.dataset.pqTone = tone;
+              else delete status.dataset.pqTone;
+            };
+            const restoreButton = () => {
+              button.disabled = false;
+              button.setAttribute('aria-disabled', 'false');
+              button.setAttribute('aria-busy', 'false');
+              button.textContent = idleLabel;
+            };
+            const releaseGuard = () => {
+              window.clearTimeout(timeoutId);
+              root.dataset.pqLaunchBootstrap = 'ready';
+              button.removeEventListener('click', guard, true);
+            };
+            const guard = (event) => {
+              if (
+                root.dataset.pqWorkbenchController === 'loaded'
+                || root.dataset.pqLaunchBootstrap === 'ready'
+              ) {
+                releaseGuard();
+                return;
+              }
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              if (button.dataset.pqLaunchBootstrapTimedOut === 'true') {
+                setStatus('Reloading the search controls…', 'pending');
+                const retryUrl = new URL(window.location.href);
+                retryUrl.searchParams.set('launch_retry', String(Date.now()));
+                window.location.assign(retryUrl);
+                return;
+              }
+              if (button.dataset.pqLaunchQueued === 'true') return;
+              button.dataset.pqLaunchQueued = 'true';
+              button.disabled = true;
+              button.setAttribute('aria-disabled', 'true');
+              button.setAttribute('aria-busy', 'true');
+              button.textContent = 'Preparing…';
+              setStatus('Preparing search controls…', 'pending');
+              timeoutId = window.setTimeout(() => {
+                if (
+                  root.dataset.pqLaunchBootstrap === 'ready'
+                  || root.dataset.pqWorkbenchController === 'loaded'
+                ) return;
+                delete button.dataset.pqLaunchQueued;
+                button.dataset.pqLaunchBootstrapTimedOut = 'true';
+                restoreButton();
+                setStatus('Search controls took too long to load. Select Launch search to retry.', 'error');
+              }, 6000);
+            };
+            button.addEventListener('click', guard, true);
+            root.addEventListener('propertyquarry:launch-bootstrap-ready', releaseGuard, { once: true });
+            root.dataset.pqLaunchBootGuard = 'ready';
+          })();
+          /* PQ_SEARCH_LAUNCH_BOOT_GUARD_END */
+        </script>
         {% endif %}
         {% if run_active and run.get('run_id') %}
         <button class="pqx-link-button subtle" type="button" data-pqx-delete-run="{{ run.get('run_id') }}" data-pqx-delete-run-label="Stop this live search?">Stop</button>

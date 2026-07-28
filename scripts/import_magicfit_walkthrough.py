@@ -138,6 +138,23 @@ def _reject_nonfinite_json(value: str) -> None:
     raise ValueError(f"nonfinite:{value}")
 
 
+class _DuplicateJsonKey(ValueError):
+    pass
+
+
+def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateJsonKey(key)
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_json(value: str) -> None:
+    raise ValueError(f"nonfinite:{value}")
+
+
 def _public_tour_dir() -> Path:
     return Path(os.getenv("EA_PUBLIC_TOUR_DIR") or "/data/public_property_tours").expanduser().resolve()
 

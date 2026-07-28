@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import json
 import os
 import re
+import secrets
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -33,6 +37,8 @@ REQUIRED_PACKETS_TOURS_REAL_BROWSER_CASES = release_proof_baseline.PACKETS_TOURS
 REAL_BROWSER_CASES = list(release_proof_baseline.REAL_BROWSER_CASES)
 REQUIRED_JOURNEY_IDS = release_proof_baseline.APPROVED_REQUIRED_JOURNEY_IDS
 PYTEST_OUTCOME_KEYS = ("passed", "failed", "skipped", "errors", "xfailed", "xpassed")
+RENAME_NOREPLACE = 1
+RENAME_EXCHANGE = 2
 VOLATILE_EXECUTION_KEYS = frozenset(
     {
         "as_of",
@@ -81,6 +87,10 @@ PYTEST_ISOLATED_ENV_KEYS = (
 )
 
 
+class _PreserveStagedOutputError(RuntimeError):
+    pass
+
+
 def _governed_evidence_sources(seed: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     return (
         release_proof_baseline.approved_evidence_sources(),
@@ -92,8 +102,46 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate JSON key: {key}")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
 def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        return {}
+    return dict(payload) if type(payload) is dict else {}
+
+
+def _object(value: object) -> dict[str, Any]:
+    return value if type(value) is dict else {}
+
+
+def _strict_string_list(value: object) -> list[str] | None:
+    if type(value) is not list or any(
+        type(item) is not str or not item.strip() for item in value
+    ):
+        return None
+    return [item.strip() for item in value]
+
+
+def _string_list(value: object) -> list[str]:
+    strict = _strict_string_list(value)
+    return strict if strict is not None else []
 
 
 def _normalize_release_value(value: Any) -> Any:
@@ -114,22 +162,536 @@ def _normalize_release_value(value: Any) -> Any:
     return value
 
 
-def _write_json_stable(path: Path, payload: dict[str, Any]) -> None:
-    serialized = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    if path.exists():
+def _safe_output_path(root: Path, relative_path: Path) -> tuple[Path, Path]:
+    if (
+        relative_path.is_absolute()
+        or not relative_path.parts
+        or any(part in {"", ".", ".."} for part in relative_path.parts)
+    ):
+        raise ValueError(
+            f"release artifact output is not a safe repository-relative path: {relative_path}"
+        )
+    resolved_root = root.resolve(strict=True)
+    if not stat.S_ISDIR(resolved_root.lstat().st_mode):
+        raise ValueError(f"release artifact root is not a directory: {root}")
+    return resolved_root, relative_path
+
+
+def _open_output_parent(root: Path, relative_path: Path) -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    current_fd = os.open(root, flags)
+    try:
+        for part in relative_path.parts[:-1]:
+            try:
+                os.mkdir(part, mode=0o755, dir_fd=current_fd)
+            except FileExistsError:
+                pass
+            try:
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+            except OSError as exc:
+                raise ValueError(
+                    f"release artifact output parent is symlinked or not a directory: {relative_path}"
+                ) from exc
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
+
+
+def _read_regular_output(
+    parent_fd: int,
+    name: str,
+) -> tuple[tuple[int, int, int, int, int, int], bytes] | None:
+    try:
+        fd = os.open(
+            name,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(
+            f"release artifact output is symlinked or unreadable: {name}"
+        ) from exc
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError(f"release artifact output is not a regular file: {name}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        if identity != (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise RuntimeError(f"release artifact output changed while being read: {name}")
+        return identity, b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _strict_json_object_bytes(payload: bytes) -> dict[str, Any] | None:
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError):
+        return None
+    return dict(value) if type(value) is dict else None
+
+
+def _same_snapshot_across_rename(
+    left: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    right: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+) -> bool:
+    if left is None or right is None:
+        return False
+    left_identity, left_bytes = left
+    right_identity, right_bytes = right
+    # Linux updates ctime when renameat2 moves an inode.  The other identity
+    # fields and the bytes must survive an exchange unchanged.
+    return left_identity[:5] == right_identity[:5] and left_bytes == right_bytes
+
+
+def _entry_identity_no_follow(
+    parent_fd: int,
+    name: str,
+) -> tuple[int, int, int, int, int, int] | None:
+    try:
+        observed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_size,
+        observed.st_mtime_ns,
+        observed.st_ctime_ns,
+    )
+
+
+def _renameat2(
+    parent_fd: int,
+    source: str,
+    destination: str,
+    flags: int,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOSYS, "renameat2 is unavailable")
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    if (
+        renameat2(
+            parent_fd,
+            os.fsencode(source),
+            parent_fd,
+            os.fsencode(destination),
+            flags,
+        )
+        != 0
+    ):
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def _rename_exchange(parent_fd: int, source: str, destination: str) -> None:
+    _renameat2(parent_fd, source, destination, RENAME_EXCHANGE)
+
+
+def _rename_noreplace(parent_fd: int, source: str, destination: str) -> None:
+    _renameat2(parent_fd, source, destination, RENAME_NOREPLACE)
+
+
+def _quarantine_unexpected_new_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    published: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    display_path: Path,
+    validation_error: Exception,
+) -> None:
+    try:
+        _rename_noreplace(parent_fd, destination_name, temporary_name)
+    except OSError as rollback_error:
+        raise _PreserveStagedOutputError(
+            "unexpected release artifact output could not be quarantined; "
+            f"canonical entry remains at {display_path}"
+        ) from rollback_error
+    try:
+        if (
+            _entry_identity_no_follow(parent_fd, destination_name) is not None
+            or _entry_identity_no_follow(parent_fd, temporary_name) is None
+        ):
+            raise _PreserveStagedOutputError(
+                "unexpected release artifact quarantine could not be verified; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        if published is not None:
+            recovery = _read_regular_output(parent_fd, temporary_name)
+            if not _same_snapshot_across_rename(recovery, published):
+                raise _PreserveStagedOutputError(
+                    "unexpected release artifact recovery changed during quarantine; "
+                    f"entry preserved at {display_path.parent / temporary_name}"
+                ) from validation_error
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as verification_error:
+        raise _PreserveStagedOutputError(
+            "unexpected release artifact quarantine verification failed; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from verification_error
+    raise _PreserveStagedOutputError(
+        "release artifact staging path changed during publication; "
+        f"unexpected entry quarantined at {display_path.parent / temporary_name}"
+    ) from validation_error
+
+
+def _rollback_exchanged_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    approved: tuple[tuple[int, int, int, int, int, int], bytes],
+    staged: tuple[tuple[int, int, int, int, int, int], bytes],
+    displaced: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    published: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    display_path: Path,
+    validation_error: Exception | None,
+) -> bool:
+    try:
+        _rename_exchange(parent_fd, temporary_name, destination_name)
+    except OSError as rollback_error:
+        raise _PreserveStagedOutputError(
+            "release artifact exchange rollback failed; "
+            f"displaced output preserved at {display_path.parent / temporary_name}"
+        ) from rollback_error
+
+    try:
+        restored = _read_regular_output(parent_fd, destination_name)
+        expected_restored = displaced if displaced is not None else approved
+        if not _same_snapshot_across_rename(restored, expected_restored):
+            raise _PreserveStagedOutputError(
+                "release artifact exchange rollback could not restore the displaced output; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            )
+        confirmed_restored = _read_regular_output(parent_fd, destination_name)
+        if confirmed_restored != restored:
+            raise _PreserveStagedOutputError(
+                "release artifact restored output changed during validation; "
+                f"recovery entry preserved at {display_path.parent / temporary_name}"
+            )
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as restore_error:
+        raise _PreserveStagedOutputError(
+            "release artifact exchange rollback could not validate the restored output; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from restore_error
+
+    try:
+        if published is None:
+            if _entry_identity_no_follow(parent_fd, temporary_name) is None:
+                raise _PreserveStagedOutputError(
+                    "release artifact rollback lost the unexpected publication entry"
+                ) from validation_error
+            raise _PreserveStagedOutputError(
+                "release artifact publication was invalid; canonical output restored and "
+                f"unexpected entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+
         try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            existing = None
-        if isinstance(existing, dict) and _normalize_release_value(existing) == _normalize_release_value(payload):
-            return
-    path.write_text(serialized, encoding="utf-8")
+            returned_staged = _read_regular_output(parent_fd, temporary_name)
+        except Exception as recovery_error:
+            if _entry_identity_no_follow(parent_fd, temporary_name) is None:
+                raise _PreserveStagedOutputError(
+                    "release artifact rollback lost the unexpected publication entry"
+                ) from recovery_error
+            raise _PreserveStagedOutputError(
+                "release artifact canonical output was restored; invalid publication entry "
+                f"preserved at {display_path.parent / temporary_name}"
+            ) from recovery_error
+        if not _same_snapshot_across_rename(returned_staged, published):
+            raise _PreserveStagedOutputError(
+                "release artifact exchange rollback could not verify the recovery entry; "
+                f"entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        confirmed_returned = _read_regular_output(parent_fd, temporary_name)
+        if confirmed_returned != returned_staged:
+            raise _PreserveStagedOutputError(
+                "release artifact recovery entry changed during validation; "
+                f"entry preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        if validation_error is not None or not _same_snapshot_across_rename(
+            returned_staged, staged
+        ):
+            raise _PreserveStagedOutputError(
+                "release artifact staging path changed at publication; "
+                f"unexpected staged data preserved at {display_path.parent / temporary_name}"
+            ) from validation_error
+        os.unlink(temporary_name, dir_fd=parent_fd)
+        return False
+    except _PreserveStagedOutputError:
+        raise
+    except Exception as verification_error:
+        raise _PreserveStagedOutputError(
+            "release artifact post-rollback verification failed; "
+            f"recovery entry preserved at {display_path.parent / temporary_name}"
+        ) from verification_error
+
+
+def _publish_staged_output(
+    parent_fd: int,
+    temporary_name: str,
+    destination_name: str,
+    *,
+    approved: tuple[tuple[int, int, int, int, int, int], bytes] | None,
+    staged: tuple[tuple[int, int, int, int, int, int], bytes],
+    display_path: Path,
+) -> bool:
+    if approved is None:
+        try:
+            _rename_noreplace(parent_fd, temporary_name, destination_name)
+        except FileExistsError as exc:
+            raise RuntimeError(
+                f"release artifact output appeared during publication: {display_path}"
+            ) from exc
+        published = None
+        try:
+            published = _read_regular_output(parent_fd, destination_name)
+            confirmed = _read_regular_output(parent_fd, destination_name)
+            if (
+                not _same_snapshot_across_rename(published, staged)
+                or confirmed != published
+            ):
+                raise RuntimeError("published output does not match staged output")
+        except Exception as exc:
+            _quarantine_unexpected_new_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                published=published,
+                display_path=display_path,
+                validation_error=exc,
+            )
+        return True
+
+    _rename_exchange(parent_fd, temporary_name, destination_name)
+    displaced = None
+    published = None
+    try:
+        displaced = _read_regular_output(parent_fd, temporary_name)
+        published = _read_regular_output(parent_fd, destination_name)
+    except Exception as validation_error:
+        return _rollback_exchanged_output(
+            parent_fd,
+            temporary_name,
+            destination_name,
+            approved=approved,
+            staged=staged,
+            displaced=displaced,
+            published=published,
+            display_path=display_path,
+            validation_error=validation_error,
+        )
+
+    if _same_snapshot_across_rename(
+        displaced, approved
+    ) and _same_snapshot_across_rename(published, staged):
+        try:
+            confirmed_displaced = _read_regular_output(parent_fd, temporary_name)
+            confirmed_published = _read_regular_output(parent_fd, destination_name)
+        except Exception as validation_error:
+            return _rollback_exchanged_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                approved=approved,
+                staged=staged,
+                displaced=displaced,
+                published=published,
+                display_path=display_path,
+                validation_error=validation_error,
+            )
+        if confirmed_displaced != displaced or confirmed_published != published:
+            return _rollback_exchanged_output(
+                parent_fd,
+                temporary_name,
+                destination_name,
+                approved=approved,
+                staged=staged,
+                displaced=displaced,
+                published=published,
+                display_path=display_path,
+                validation_error=RuntimeError(
+                    "release artifact exchange changed during validation"
+                ),
+            )
+        try:
+            os.unlink(temporary_name, dir_fd=parent_fd)
+        except Exception as cleanup_error:
+            raise _PreserveStagedOutputError(
+                "published release artifact, but displaced output could not be removed; "
+                f"preserved at {display_path.parent / temporary_name}"
+            ) from cleanup_error
+        return True
+
+    return _rollback_exchanged_output(
+        parent_fd,
+        temporary_name,
+        destination_name,
+        approved=approved,
+        staged=staged,
+        displaced=displaced,
+        published=published,
+        display_path=display_path,
+        validation_error=None,
+    )
+
+
+def _write_json_stable(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> None:
+    if root is None:
+        root = path.parent
+        relative_path = Path(path.name)
+    else:
+        relative_path = path
+    root, relative_path = _safe_output_path(root, relative_path)
+    serialized = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode(
+        "utf-8"
+    )
+    parent_fd = _open_output_parent(root, relative_path)
+    temporary_name = ""
+    try:
+        approved = _read_regular_output(parent_fd, relative_path.name)
+        if approved is not None:
+            _approved_identity, existing_bytes = approved
+            existing = _strict_json_object_bytes(existing_bytes)
+            semantically_equal = (
+                existing is not None
+                and _normalize_release_value(existing)
+                == _normalize_release_value(payload)
+            )
+            if semantically_equal:
+                if stat.S_IMODE(approved[0][2]) == 0o644:
+                    return
+                # Repair only the unsafe mode; stable writers retain the
+                # already-approved representation and volatile metadata.
+                serialized = existing_bytes
+
+        for _attempt in range(10):
+            temporary_name = (
+                f".{relative_path.name}.release-write-{secrets.token_hex(8)}"
+            )
+            try:
+                temporary_fd = os.open(
+                    temporary_name,
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+                break
+            except FileExistsError:
+                temporary_name = ""
+        else:
+            raise FileExistsError(
+                f"unable to allocate release artifact output: {relative_path}"
+            )
+        try:
+            remaining = memoryview(serialized)
+            while remaining:
+                written = os.write(temporary_fd, remaining)
+                if written <= 0:
+                    raise OSError(
+                        f"short write while publishing release artifact: {relative_path}"
+                    )
+                remaining = remaining[written:]
+            os.fchmod(temporary_fd, 0o644)
+            os.fsync(temporary_fd)
+        finally:
+            os.close(temporary_fd)
+
+        staged = _read_regular_output(parent_fd, temporary_name)
+        if staged is None:
+            raise RuntimeError(
+                f"release artifact staging file disappeared: {relative_path}"
+            )
+        try:
+            consumed = _publish_staged_output(
+                parent_fd,
+                temporary_name,
+                relative_path.name,
+                approved=approved,
+                staged=staged,
+                display_path=relative_path,
+            )
+        except _PreserveStagedOutputError:
+            temporary_name = ""
+            try:
+                os.fsync(parent_fd)
+            finally:
+                raise
+        temporary_name = ""
+        os.fsync(parent_fd)
+        if not consumed:
+            raise RuntimeError(
+                f"release artifact output changed before publication: {relative_path}"
+            )
+    finally:
+        try:
+            if temporary_name:
+                try:
+                    os.unlink(temporary_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(parent_fd)
 
 
 def _resolve_python_bin(root: Path) -> str:
-    venv_python = root / ".venv" / "bin" / "python"
-    if venv_python.exists():
-        return venv_python.as_posix()
+    # The caller chooses and authenticates the materializer interpreter.  In
+    # particular, the release entrypoint runs this script with the pinned
+    # PropertyQuarry release Python.  Do not abandon that trust boundary for a
+    # checkout-local virtualenv merely because one happens to exist.
+    del root
     return sys.executable
 
 
@@ -164,6 +726,8 @@ def _pytest_outcome_counts(text: str) -> dict[str, int]:
 def _extract_limitations(text: str, *, real_browser: bool) -> list[str]:
     lowered = text.lower()
     limitations: list[str] = []
+    if "no module named pytest" in lowered:
+        limitations.append("pytest is not installed in the selected Python environment")
     if "no module named 'uvicorn'" in lowered or 'no module named "uvicorn"' in lowered:
         limitations.append("uvicorn is not installed in the selected Python environment")
     if "no module named 'playwright'" in lowered or 'no module named "playwright"' in lowered:
@@ -187,16 +751,33 @@ def _lane_completion(
 ) -> dict[str, Any]:
     normalized = dict(result)
     raw_counts = normalized.get("outcome_counts")
-    if isinstance(raw_counts, dict):
-        counts = {key: int(raw_counts.get(key) or 0) for key in PYTEST_OUTCOME_KEYS}
+    if type(raw_counts) is dict:
+        counts = {
+            key: (
+                raw_counts.get(key)
+                if type(raw_counts.get(key)) is int and raw_counts.get(key) >= 0
+                else 0
+            )
+            for key in PYTEST_OUTCOME_KEYS
+        }
+        invalid_counts = (
+            set(raw_counts) != set(PYTEST_OUTCOME_KEYS)
+            or any(
+                type(raw_counts.get(key)) is not int or raw_counts.get(key) < 0
+                for key in PYTEST_OUTCOME_KEYS
+            )
+        )
     else:
         counts = _pytest_outcome_counts("\n".join(str(line) for line in normalized.get("output_excerpt") or []))
+        invalid_counts = False
 
     required_case_count = len(required_cases)
     executed_count = sum(counts[key] for key in ("passed", "failed", "errors", "xfailed", "xpassed"))
     selected_count = executed_count + counts["skipped"]
     all_required_cases_passed = (
-        int(normalized.get("exit_code") or 0) == 0
+        type(normalized.get("exit_code")) is int
+        and normalized.get("exit_code") == 0
+        and not invalid_counts
         and required_case_count > 0
         and counts["passed"] >= required_case_count
         and counts["failed"] == 0
@@ -210,7 +791,7 @@ def _lane_completion(
     if reported_status == "pass" and not all_required_cases_passed:
         has_hard_failure = any(counts[key] for key in ("failed", "errors", "xfailed", "xpassed"))
         normalized["status"] = "preview_only" if real_browser and counts["skipped"] and not has_hard_failure else "blocked"
-        limitations = [str(item) for item in normalized.get("limitations") or [] if str(item).strip()]
+        limitations = _string_list(normalized.get("limitations"))
         if counts["skipped"]:
             limitations.append(
                 "real browser E2E did not run to completion"
@@ -235,6 +816,7 @@ def _lane_completion(
     normalized["selected_count"] = selected_count
     normalized["executed_count"] = executed_count
     normalized["outcome_counts"] = counts
+    normalized["limitations"] = _string_list(normalized.get("limitations"))
     return normalized
 
 
@@ -273,20 +855,20 @@ def _build_journey_evidence_matrix(
             "rows": [],
         }, list(dict.fromkeys(["journey evidence matrix is missing", *approved_matrix_blockers]))
 
-    try:
-        version = int(raw_matrix.get("version") or 0)
-    except (TypeError, ValueError):
-        version = 0
+    raw_version = raw_matrix.get("version")
+    version = raw_version if type(raw_version) is int else 0
     if version != 1:
         blockers.append("journey evidence matrix version must be 1")
     readiness_scope = str(raw_matrix.get("readiness_scope") or "").strip()
     if readiness_scope != "candidate_source_and_browser_proof":
         blockers.append("journey evidence matrix has the wrong readiness scope")
     raw_required_ids = raw_matrix.get("required_journey_ids")
-    if not isinstance(raw_required_ids, list):
-        raw_required_ids = []
-        blockers.append("journey evidence matrix required IDs must be a list")
-    required_ids = [str(item).strip() for item in raw_required_ids if str(item).strip()]
+    required_ids = _strict_string_list(raw_required_ids)
+    if required_ids is None:
+        required_ids = []
+        blockers.append(
+            "journey evidence matrix required IDs must contain only non-empty strings"
+        )
     if required_ids != list(REQUIRED_JOURNEY_IDS):
         blockers.append("journey evidence matrix required IDs are missing, reordered, or unexpected")
 
@@ -312,8 +894,16 @@ def _build_journey_evidence_matrix(
 
     governed_sources, evidence_source_blockers = _governed_evidence_sources(seed)
     blockers.extend(evidence_source_blockers)
+    source_lanes = (
+        [source_backed]
+        if isinstance(source_backed, dict)
+        else [lane for lane in source_backed if isinstance(lane, dict)]
+    )
     lanes: dict[str, dict[str, Any]] = {}
-    for lane in [*source_backed, real_browser]:
+    for lane in [*source_lanes, real_browser]:
+        if not isinstance(lane, dict):
+            blockers.append("browser workflow proof produced a non-object evidence lane")
+            continue
         test_file = str(lane.get("test_file") or "").strip()
         if not test_file:
             continue
@@ -352,7 +942,10 @@ def _build_journey_evidence_matrix(
                 continue
             cases = [case.strip() for case in raw_cases if isinstance(case, str) and case.strip()]
             if len(cases) != len(raw_cases):
-                row_blockers.append(f"evidence source has invalid cases: {test_file or 'missing'}")
+                row_blockers.append(
+                    f"evidence source cases must be a list of non-empty strings: "
+                    f"{test_file or 'missing'}"
+                )
                 continue
             if len(cases) != len(set(cases)):
                 row_blockers.append(f"evidence source has duplicate cases: {test_file or 'missing'}")
@@ -532,7 +1125,8 @@ def build_receipt(
     require_source_binding: bool = False,
 ) -> dict[str, Any]:
     seed = _load_json(root / seed_path)
-    proof_target = str((seed.get("browser_workflow_proof") or {}).get("proof_target") or "executive-assistant").strip()
+    proof_contract = _object(seed.get("browser_workflow_proof"))
+    proof_target = str(proof_contract.get("proof_target") or "executive-assistant").strip()
     proof_label = "PropertyQuarry" if proof_target == "propertyquarry" else "EA"
     python_bin = _resolve_python_bin(root)
     governed_sources, evidence_source_blockers = _governed_evidence_sources(seed)
@@ -575,15 +1169,27 @@ def build_receipt(
 
     blocking_reasons: list[str] = list(evidence_source_blockers)
     current_limitations: list[str] = []
+    if not seed:
+        blocking_reasons.append("flagship gate seed is missing or invalid")
+    if type(seed.get("browser_workflow_proof")) is not dict:
+        blocking_reasons.append(
+            "flagship gate seed browser_workflow_proof is missing or invalid"
+        )
+    if type(seed.get("release_claim")) is not dict:
+        blocking_reasons.append("flagship gate seed release_claim is missing or invalid")
+    if _strict_string_list(proof_contract.get("expected_browser_signals")) is None:
+        blocking_reasons.append(
+            "flagship gate seed expected_browser_signals is missing or invalid"
+        )
     source_binding: dict[str, Any] | None = None
     if require_source_binding:
         try:
             source_binding = build_source_binding(
                 root,
                 seed_path=seed_path,
-                evidence_sources=(seed.get("browser_workflow_proof") or {}).get("evidence_sources"),
+                evidence_sources=proof_contract.get("evidence_sources"),
             )
-        except (OSError, ReleaseBindingError) as exc:
+        except (OSError, TypeError, ReleaseBindingError) as exc:
             blocking_reasons.append(f"immutable source binding failed: {exc}")
     journey_evidence_matrix, journey_matrix_blockers = _build_journey_evidence_matrix(
         seed,
@@ -657,8 +1263,7 @@ def main() -> int:
     root = args.root.resolve()
     receipt = build_receipt(root, seed_path=args.seed, require_source_binding=True)
     output_path = root / args.output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json_stable(output_path, receipt)
+    _write_json_stable(args.output, receipt, root=root)
     if args.stdout:
         print(json.dumps(receipt, indent=2, ensure_ascii=False))
     else:

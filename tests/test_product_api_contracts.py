@@ -789,6 +789,325 @@ def test_public_tour_routes_reject_hidden_transaction_like_slugs(
         assert raised.value.detail == "tour_not_found"
 
 
+def _generated_reconstruction_transaction_kwargs() -> dict[str, object]:
+    return {
+        "principal_id": "exec-reconstruction-transaction",
+        "title": "Transaction Test Home",
+        "listing_id": "transaction-listing",
+        "property_url": "https://example.test/property/transaction-listing",
+        "variant_key": "layout_first",
+        "media_urls": ("https://assets.example.test/photo.jpg",),
+        "floorplan_urls": ("https://assets.example.test/floorplan.jpg",),
+        "property_facts_json": {"has_floorplan": True, "floorplan_count": 1},
+        "source_host": "example.test",
+    }
+
+
+def test_willhaben_packet_subprocess_uses_current_runtime_and_ea_pythonpath(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.product import outbound_url_security
+
+    script_path = tmp_path / "willhaben_property_packet.py"
+    script_path.write_text("# packet loader fixture\n", encoding="utf-8")
+    observed: dict[str, object] = {}
+
+    def _run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        observed["command"] = list(command)
+        observed["env"] = dict(kwargs.get("env") or {})
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([{"listing_id": "2057055834"}]),
+            stderr="",
+        )
+
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(("/existing/python-a", "/existing/python-b")))
+    monkeypatch.setattr(outbound_url_security, "validate_outbound_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(product_service, "_willhaben_property_packet_script_path", lambda: script_path)
+    monkeypatch.setattr(product_service.subprocess, "run", _run)
+
+    packet = product_service._load_willhaben_property_packet(
+        "https://www.willhaben.at/iad/immobilien/d/demo-2057055834/"
+    )
+
+    expected_ea_root = str(Path(product_service.__file__).resolve().parents[2])
+    assert packet["listing_id"] == "2057055834"
+    assert observed["command"] == [
+        product_service.sys.executable or "python3",
+        str(script_path),
+        "https://www.willhaben.at/iad/immobilien/d/demo-2057055834/",
+    ]
+    subprocess_env = dict(observed["env"])
+    assert subprocess_env["PYTHONPATH"].split(os.pathsep) == [
+        expected_ea_root,
+        "/existing/python-a",
+        "/existing/python-b",
+    ]
+
+
+def test_willhaben_packet_subprocess_retries_one_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.product import outbound_url_security
+
+    script_path = tmp_path / "willhaben_property_packet.py"
+    script_path.write_text("# packet loader fixture\n", encoding="utf-8")
+    attempts: list[int] = []
+
+    def _run(_command: list[str], **_kwargs: object) -> SimpleNamespace:
+        attempts.append(len(attempts) + 1)
+        if len(attempts) == 1:
+            return SimpleNamespace(
+                returncode=2,
+                stdout="",
+                stderr="HTTP Error 503: temporarily unavailable; token=must-not-leak",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps([{"listing_id": "retry-listing"}]),
+            stderr="",
+        )
+
+    monkeypatch.setattr(outbound_url_security, "validate_outbound_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(product_service, "_willhaben_property_packet_script_path", lambda: script_path)
+    monkeypatch.setattr(product_service.subprocess, "run", _run)
+
+    packet = product_service._load_willhaben_property_packet(
+        "https://www.willhaben.at/iad/immobilien/d/retry-listing/"
+    )
+
+    assert packet["listing_id"] == "retry-listing"
+    assert attempts == [1, 2]
+
+
+def test_willhaben_packet_failure_exposes_only_redacted_stage_code_and_hash(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.product import outbound_url_security
+
+    script_path = tmp_path / "willhaben_property_packet.py"
+    script_path.write_text("# packet loader fixture\n", encoding="utf-8")
+    sensitive_detail = "HTTP Error 503: temporarily unavailable; token=must-not-leak"
+    monkeypatch.setattr(outbound_url_security, "validate_outbound_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(product_service, "_willhaben_property_packet_script_path", lambda: script_path)
+    monkeypatch.setattr(
+        product_service.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=2, stdout="", stderr=sensitive_detail),
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        product_service._load_willhaben_property_packet(
+            "https://www.willhaben.at/iad/immobilien/d/failing-listing/"
+        )
+
+    failure = product_service._property_tour_execution_failure_metadata(raised.value)
+    assert failure["failure_stage"] == "willhaben_property_packet"
+    assert failure["error_code"] == "willhaben_packet_transient_failure"
+    assert re.fullmatch(r"[0-9a-f]{64}", str(failure["diagnostic_sha256"]))
+    assert "must-not-leak" not in str(raised.value)
+    assert "must-not-leak" not in json.dumps(failure)
+
+
+def test_generated_reconstruction_publication_status_fails_closed() -> None:
+    with pytest.raises(HTTPException) as raised:
+        public_tour_payloads.require_public_tour_viewable(
+            {"publication_status": "generating", "tour_privacy_mode": "anonymous_public"}
+        )
+
+    assert getattr(raised.value, "status_code", None) == 404
+    assert getattr(raised.value, "detail", None) == "tour_not_found"
+    public_tour_payloads.require_public_tour_viewable(
+        {"publication_status": "ready", "tour_privacy_mode": "anonymous_public"}
+    )
+
+
+@pytest.mark.parametrize("dockerfile_name", ("Dockerfile.property", "Dockerfile.property-web"))
+def test_property_runtime_images_package_tour_verifier_dependencies(dockerfile_name: str) -> None:
+    dockerfile = (Path(__file__).resolve().parents[1] / "ea" / dockerfile_name).read_text(encoding="utf-8")
+
+    assert "COPY scripts/verify_property_tour_controls.py /app/scripts/verify_property_tour_controls.py" in dockerfile
+    assert (
+        "COPY scripts/property_tour_3dvista_provenance.py "
+        "/app/scripts/property_tour_3dvista_provenance.py"
+    ) in dockerfile
+    assert (
+        "COPY scripts/property_tour_panorama_provenance.py "
+        "/app/scripts/property_tour_panorama_provenance.py"
+    ) in dockerfile
+    assert (
+        "COPY scripts/property_tour_host_safety.py "
+        "/app/scripts/property_tour_host_safety.py"
+    ) in dockerfile
+    assert "COPY scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_paths.py" in dockerfile
+
+
+def test_generated_reconstruction_transaction_removes_failed_new_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    kwargs = _generated_reconstruction_transaction_kwargs()
+    monkeypatch.setattr(product_service, "_public_tour_dir", lambda: tmp_path)
+    monkeypatch.setattr(product_service, "_hosted_property_tour_public_base_url", lambda: "/tours")
+    slug = product_service._make_hosted_property_tour_slug(
+        title=str(kwargs["title"]),
+        listing_id=str(kwargs["listing_id"]),
+        property_url=str(kwargs["property_url"]),
+        variant_key=str(kwargs["variant_key"]),
+        principal_id=str(kwargs["principal_id"]),
+    )
+    bundle_dir = tmp_path / slug
+
+    def _fail_after_partial_write(**_kwargs: object) -> dict[str, object]:
+        product_service._write_hosted_property_tour_payload(
+            bundle_dir,
+            {
+                "slug": slug,
+                "principal_id": kwargs["principal_id"],
+                "title": kwargs["title"],
+                "scene_count": 1,
+                "scene_strategy": "generated_reconstruction",
+                "creation_mode": "generated_reconstruction_tour",
+                "publication_status": "generating",
+                "scenes": [],
+                "facts": {"has_floorplan": True, "floorplan_count": 1},
+            },
+        )
+        (bundle_dir / "partial-render.bin").write_bytes(b"partial")
+        raise RuntimeError("render_bridge_unavailable")
+
+    monkeypatch.setattr(
+        product_service,
+        "_write_generated_reconstruction_property_tour_bundle_unchecked",
+        _fail_after_partial_write,
+    )
+
+    with pytest.raises(RuntimeError, match="render_bridge_unavailable"):
+        product_service._write_generated_reconstruction_property_tour_bundle(**kwargs)
+
+    assert not bundle_dir.exists()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_generated_reconstruction_transaction_restores_previous_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    kwargs = _generated_reconstruction_transaction_kwargs()
+    monkeypatch.setattr(product_service, "_public_tour_dir", lambda: tmp_path)
+    monkeypatch.setattr(product_service, "_hosted_property_tour_public_base_url", lambda: "/tours")
+    slug = product_service._make_hosted_property_tour_slug(
+        title=str(kwargs["title"]),
+        listing_id=str(kwargs["listing_id"]),
+        property_url=str(kwargs["property_url"]),
+        variant_key=str(kwargs["variant_key"]),
+        principal_id=str(kwargs["principal_id"]),
+    )
+    bundle_dir = tmp_path / slug
+    product_service._write_hosted_property_tour_payload(
+        bundle_dir,
+        {
+            "slug": slug,
+            "principal_id": kwargs["principal_id"],
+            "title": "Previous owned bundle",
+            "scene_count": 1,
+            "scene_strategy": "layout_first",
+            "creation_mode": "hosted_property_tour",
+            "publication_status": "ready",
+            "scenes": [{"name": "Previous", "role": "photo", "image_url": ""}],
+            "facts": {},
+        },
+    )
+    (bundle_dir / "previous-asset.bin").write_bytes(b"preserve-me")
+    before = {
+        path.relative_to(bundle_dir).as_posix(): path.read_bytes()
+        for path in sorted(bundle_dir.rglob("*"))
+        if path.is_file()
+    }
+
+    def _fail_after_overwrite(**_kwargs: object) -> dict[str, object]:
+        (bundle_dir / "tour.json").write_text('{"publication_status":"generating"}', encoding="utf-8")
+        (bundle_dir / "previous-asset.bin").write_bytes(b"overwritten")
+        (bundle_dir / "partial-render.bin").write_bytes(b"partial")
+        raise RuntimeError("render_validation_failed")
+
+    monkeypatch.setattr(
+        product_service,
+        "_write_generated_reconstruction_property_tour_bundle_unchecked",
+        _fail_after_overwrite,
+    )
+
+    with pytest.raises(RuntimeError, match="render_validation_failed"):
+        product_service._write_generated_reconstruction_property_tour_bundle(**kwargs)
+
+    after = {
+        path.relative_to(bundle_dir).as_posix(): path.read_bytes()
+        for path in sorted(bundle_dir.rglob("*"))
+        if path.is_file()
+    }
+    assert after == before
+    assert sorted(path.name for path in tmp_path.iterdir()) == [slug]
+
+
+def test_generated_reconstruction_transaction_finalizes_ready_manifest_without_private_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    kwargs = _generated_reconstruction_transaction_kwargs()
+    monkeypatch.setattr(product_service, "_public_tour_dir", lambda: tmp_path)
+    monkeypatch.setattr(product_service, "_hosted_property_tour_public_base_url", lambda: "/tours")
+    monkeypatch.setattr(
+        product_service,
+        "_hosted_property_tour_generated_reconstruction_bundle_ready",
+        lambda _tour_url: True,
+    )
+    slug = product_service._make_hosted_property_tour_slug(
+        title=str(kwargs["title"]),
+        listing_id=str(kwargs["listing_id"]),
+        property_url=str(kwargs["property_url"]),
+        variant_key=str(kwargs["variant_key"]),
+        principal_id=str(kwargs["principal_id"]),
+    )
+    bundle_dir = tmp_path / slug
+
+    def _complete_render(**_kwargs: object) -> dict[str, object]:
+        product_service._write_hosted_property_tour_payload(
+            bundle_dir,
+            {
+                "slug": slug,
+                "principal_id": kwargs["principal_id"],
+                "title": kwargs["title"],
+                "scene_count": 1,
+                "scene_strategy": "generated_reconstruction",
+                "creation_mode": "generated_reconstruction_tour",
+                "publication_status": "generating",
+                "scenes": [{"name": "Layout", "role": "diorama", "image_url": ""}],
+                "facts": {"has_floorplan": True, "floorplan_count": 1},
+            },
+        )
+        return product_service._load_hosted_property_tour_payload(
+            bundle_dir,
+            principal_id=str(kwargs["principal_id"]),
+        )
+
+    monkeypatch.setattr(
+        product_service,
+        "_write_generated_reconstruction_property_tour_bundle_unchecked",
+        _complete_render,
+    )
+
+    result = product_service._write_generated_reconstruction_property_tour_bundle(**kwargs)
+    public_payload = json.loads((bundle_dir / "tour.json").read_text(encoding="utf-8"))
+
+    assert result["publication_status"] == "ready"
+    assert result["principal_id"] == kwargs["principal_id"]
+    assert public_payload["publication_status"] == "ready"
+    assert "principal_id" not in public_payload
+
+
 @pytest.fixture(autouse=True)
 def _property_bundle_exit_gate_unit_bypass(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     if "deliver_telegram_property_link_bundle" not in request.node.name:
@@ -1314,9 +1633,9 @@ def test_paid_property_plan_survives_console_context_projection() -> None:
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property Paid Plan")
 
-    stored = client.post(
-        "/v1/onboarding/property-search/preferences",
-        json={
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json={
             "country_code": "AT",
             "language_code": "de",
             "listing_mode": "rent",
@@ -1329,6 +1648,19 @@ def test_paid_property_plan_survives_console_context_projection() -> None:
                 "active_until": "2999-01-01T00:00:00+00:00",
                 "plan_source": "product_contract",
             },
+        },
+        trusted_commercial_update=True,
+    )
+
+    stored = client.post(
+        "/v1/onboarding/property-search/preferences",
+        json={
+            "country_code": "AT",
+            "language_code": "de",
+            "listing_mode": "rent",
+            "property_type": "apartment",
+            "location_query": "Vienna",
+            "selected_platforms": ["willhaben"],
         },
     )
     assert stored.status_code == 200, stored.text
@@ -2906,6 +3238,10 @@ def test_hosted_property_tour_telegram_preview_synthesizes_canonical_diorama_for
     assert updated_payload["diorama_preview_relpath"] == "diorama-preview.png"
     assert updated_payload["preview_relpath"] == "diorama-preview.png"
     assert updated_payload["telegram_preview_relpath"] == "telegram-preview.png"
+    assert (
+        updated_payload["diorama_preview_renderer_version"]
+        == product_service.DIORAMA_PREVIEW_RENDERER_VERSION
+    )
     assert {row["path"] for row in updated_payload["public_assets"] if isinstance(row, dict)} >= {
         "diorama-preview.png",
         "telegram-preview.png",
@@ -2923,7 +3259,7 @@ def test_hosted_property_tour_telegram_preview_refreshes_stale_legacy_generated_
     bundle_dir = tmp_path / slug
     reconstruction_dir = bundle_dir / "generated-reconstruction"
     reconstruction_dir.mkdir(parents=True)
-    from PIL import Image
+    from PIL import Image, ImageStat
 
     Image.new("RGB", (640, 420), "#d2c5b0").save(bundle_dir / "diorama-preview.png", format="PNG")
     Image.new("RGB", (960, 640), "#cdbb9d").save(reconstruction_dir / "photo-01.jpg", format="JPEG")
@@ -2953,6 +3289,9 @@ def test_hosted_property_tour_telegram_preview_refreshes_stale_legacy_generated_
             {
                 "slug": slug,
                 "display_title": "Legacy generated bundle",
+                "diorama_preview_relpath": "diorama-preview.png",
+                "preview_relpath": "diorama-preview.png",
+                "diorama_preview_renderer_version": "propertyquarry_scrapbook_v0",
                 "scenes": [
                     {"role": "photo", "ordinal": 1, "asset_relpath": "generated-reconstruction/photo-01.jpg"},
                     {"role": "photo", "ordinal": 2, "asset_relpath": "generated-reconstruction/photo-02.jpg"},
@@ -2982,10 +3321,25 @@ def test_hosted_property_tour_telegram_preview_refreshes_stale_legacy_generated_
     assert telegram_preview_url == f"https://propertyquarry.com/tours/files/{slug}/telegram-preview.png"
     with Image.open(bundle_dir / "diorama-preview.png") as regenerated:
         assert regenerated.size == (1600, 1100)
+        thumbnail = regenerated.convert("RGB")
+        thumbnail.thumbnail((240, 180))
+        assert sum(ImageStat.Stat(thumbnail).mean) / 3 >= 145.0
+        assert (
+            sum(
+                1
+                for red, green, blue in thumbnail.get_flattened_data()
+                if max(red, green, blue) < 70
+            )
+            / max(1, thumbnail.width * thumbnail.height)
+        ) <= 0.18
     updated_payload = json.loads((bundle_dir / "tour.json").read_text(encoding="utf-8"))
     assert updated_payload["diorama_preview_relpath"] == "diorama-preview.png"
     assert updated_payload["preview_relpath"] == "diorama-preview.png"
     assert updated_payload["telegram_preview_relpath"] == "telegram-preview.png"
+    assert (
+        updated_payload["diorama_preview_renderer_version"]
+        == product_service.DIORAMA_PREVIEW_RENDERER_VERSION
+    )
 
 
 def test_hosted_property_tour_preview_source_candidates_skip_qr_like_cards(tmp_path: Path) -> None:
@@ -16740,6 +17094,21 @@ def test_runtime_python_executable_falls_back_to_sys_python(monkeypatch, tmp_pat
     assert product_service._runtime_python_executable() == str(runtime_python)
 
 
+def test_runtime_python_executable_prefers_the_running_service_environment(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_python = repo_root / ".venv" / "bin" / "python"
+    repo_python.parent.mkdir(parents=True)
+    repo_python.write_text("# stale ambient interpreter\n", encoding="utf-8")
+    monkeypatch.setenv("EA_REPO_ROOT", str(repo_root))
+
+    assert product_service._runtime_python_executable() == os.path.abspath(
+        product_service.sys.executable
+    )
+
+
 def test_willhaben_property_tour_route_blocks_with_handoff_when_connector_missing(monkeypatch) -> None:
     monkeypatch.delenv("BROWSERACT_API_KEY", raising=False)
     monkeypatch.setenv("EA_WILLHABEN_PROPERTY_TOUR_REQUIRE_360", "0")
@@ -16977,6 +17346,10 @@ def test_property_visual_status_route_returns_current_visual_snapshot(monkeypatc
             "run_id": "run-42",
             "candidate_ref": "candidate-42",
             "tour_url": "",
+            "open_tour_url": "",
+            "generated_reconstruction_url": "https://propertyquarry.com/tours/layout-demo-42",
+            "layout_preview_url": "https://propertyquarry.com/tours/layout-demo-42",
+            "layout_preview_status": "ready",
             "flythrough_url": "",
             "tour_status": "pending",
             "flythrough_status": "processing",
@@ -17003,6 +17376,10 @@ def test_property_visual_status_route_returns_current_visual_snapshot(monkeypatc
     assert body["eta_label"] == "about 5 min"
     assert body["progress_pct"] == 64
     assert body["poll_after_seconds"] == 10
+    assert body["tour_url"] == ""
+    assert body["open_tour_url"] == ""
+    assert body["layout_preview_url"] == "https://propertyquarry.com/tours/layout-demo-42"
+    assert body["layout_preview_status"] == "ready"
 
 
 def test_property_visual_request_uses_resolved_legacy_owner_packet_for_floorplan_generation(monkeypatch) -> None:
@@ -17741,7 +18118,7 @@ def test_request_property_visual_asset_keeps_explicit_workbench_floorplan(monkey
     assert result["diorama_style_hint"] == "playful Trump-style gold maximalist penthouse staging"
 
 
-def test_property_visual_ready_tour_url_accepts_ready_generated_reconstruction_public_page(monkeypatch) -> None:
+def test_property_visual_ready_tour_url_keeps_generated_reconstruction_as_layout_preview(monkeypatch) -> None:
     ready_tour_url = "https://propertyquarry.com/tours/generated-reconstruction-ready"
 
     monkeypatch.setattr(product_service, "_is_branded_public_tour_url", lambda url: str(url or "").startswith("https://propertyquarry.com/tours/"))
@@ -17756,11 +18133,12 @@ def test_property_visual_ready_tour_url_accepts_ready_generated_reconstruction_p
         lambda tour_url, **_kwargs: ready_tour_url if str(tour_url or "").strip() == ready_tour_url else "",
     )
 
-    assert product_service._property_visual_ready_tour_url(tour_url=ready_tour_url) == ready_tour_url
-    assert product_service._property_visual_ready_tour_url(open_tour_url=ready_tour_url) == ready_tour_url
+    assert product_service._property_visual_ready_tour_url(tour_url=ready_tour_url) == ""
+    assert product_service._property_visual_ready_tour_url(open_tour_url=ready_tour_url) == ""
     assert product_service._property_visual_ready_tour_url(
         open_tour_url=f"{ready_tour_url}/files/generated-reconstruction/viewer.html"
     ) == ""
+    assert product_service._property_visual_layout_preview_url(ready_tour_url) == ready_tour_url
 
 
 def test_request_property_visual_asset_sanitizes_legacy_generated_open_url_before_verified_ready_branch(
@@ -18085,7 +18463,7 @@ def test_property_visual_status_observes_stale_visual_without_repair(monkeypatch
     monkeypatch.setattr(ProductService, "_existing_property_tour_followup", lambda self, **kwargs: object())
     monkeypatch.setattr(
         product_service,
-        "_hosted_property_tour_first_party_open_url",
+        "_hosted_property_tour_verified_open_url",
         lambda tour_url, **_kwargs: str(tour_url or "").strip(),
     )
 
@@ -18416,6 +18794,11 @@ def test_current_property_search_visual_state_returns_ready_urls(monkeypatch) ->
         }
 
     monkeypatch.setattr(ProductService, "_snapshot_property_search_run", _fake_snapshot)
+    monkeypatch.setattr(
+        product_service,
+        "_hosted_property_tour_verified_open_url",
+        lambda tour_url, **_kwargs: str(tour_url or "").strip(),
+    )
 
     state = service._current_property_search_visual_state(
         principal_id=principal_id,
@@ -18604,7 +18987,17 @@ def test_property_tour_followup_tasks_return_generated_reconstruction_as_layout_
     monkeypatch.setattr(
         ProductService,
         "request_property_visual_asset",
-        lambda self, **kwargs: pytest.fail("ready generated reconstruction must not be requested again"),
+        lambda self, **kwargs: {
+            "status": "blocked",
+            "tour_status": "blocked",
+            "tour_url": "",
+            "generated_reconstruction_url": ready_tour_url,
+            "layout_preview_url": ready_tour_url,
+            "layout_preview_status": "ready",
+            "blocked_reason": "listing_360_media_missing",
+            "property_url": str(kwargs.get("property_url") or ""),
+            "source_ref": str(kwargs.get("source_ref") or ""),
+        },
     )
 
     result = service.process_property_tour_followup_tasks(
@@ -18628,7 +19021,7 @@ def test_property_tour_followup_tasks_return_generated_reconstruction_as_layout_
     )
     assert updated_task is not None
     assert updated_task.status == "returned"
-    assert updated_task.resolution == "ready"
+    assert updated_task.resolution == "blocked"
     assert updated_task.returned_payload_json["request_kind"] == "tour"
     assert updated_task.returned_payload_json["status"] == "ready"
     assert updated_task.returned_payload_json["tour_status"] == "blocked"
@@ -18986,7 +19379,7 @@ def test_property_visual_status_prefers_ready_ranked_candidate_over_stale_source
     monkeypatch.setattr(ProductService, "_snapshot_property_search_run", _fake_snapshot)
     monkeypatch.setattr(
         product_service,
-        "_hosted_property_tour_first_party_open_url",
+        "_hosted_property_tour_verified_open_url",
         lambda tour_url, **_kwargs: str(tour_url or "").strip(),
     )
 
@@ -19424,7 +19817,7 @@ def test_property_visual_status_keeps_generated_reconstruction_followup_blocked_
 
     assert response["status"] == "blocked"
     assert response["status_label"] == "3D tour not ready"
-    assert response["tour_url"] == "https://propertyquarry.com/tours/generated-reconstruction-followup"
+    assert response["tour_url"] == ""
     assert response["open_tour_url"] == ""
     assert response["poll_after_seconds"] == 0
 
@@ -19887,12 +20280,12 @@ def test_property_visual_status_reports_blocked_generated_reconstruction_without
     )
 
     assert response["status"] == "blocked"
-    assert response["tour_url"] == "https://propertyquarry.com/tours/generated-reconstruction-persist-1"
+    assert response["tour_url"] == ""
     assert response["open_tour_url"] == ""
     assert persisted == {}
 
 
-def test_property_visual_status_accepts_generated_reconstruction_launch_page_as_ready_url(monkeypatch) -> None:
+def test_property_visual_status_reports_generated_reconstruction_launch_page_as_layout_preview(monkeypatch) -> None:
     principal_id = "property-visual-status-generated-launch-page"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property Tour Office")
@@ -20906,7 +21299,11 @@ def test_property_tour_followup_tasks_block_terminally_when_visual_request_raise
     monkeypatch.setattr(
         ProductService,
         "request_property_visual_asset",
-        lambda self, **kwargs: (_ for _ in ()).throw(RuntimeError("HTTP Error 403: Forbidden")),
+        lambda self, **kwargs: (_ for _ in ()).throw(
+            product_service._willhaben_packet_failure(
+                "HTTP Error 503: temporarily unavailable; token=must-not-leak"
+            )
+        ),
     )
 
     result = service.process_property_tour_followup_tasks(
@@ -20922,7 +21319,11 @@ def test_property_tour_followup_tasks_block_terminally_when_visual_request_raise
     assert result["failed_total"] == 0
     assert persisted_states
     assert persisted_states[-1]["tour_status"] == "blocked"
-    assert persisted_states[-1]["blocked_reason"] == "property_tour_execution_failed"
+    assert persisted_states[-1]["blocked_reason"] == "property_packet_temporarily_unavailable"
+    assert persisted_states[-1]["failure_stage"] == "willhaben_property_packet"
+    assert persisted_states[-1]["error_code"] == "willhaben_packet_transient_failure"
+    assert re.fullmatch(r"[0-9a-f]{64}", str(persisted_states[-1]["diagnostic_sha256"]))
+    assert "must-not-leak" not in json.dumps(persisted_states[-1])
 
     updated_task = client.app.state.container.orchestrator.fetch_human_task(
         task.human_task_id,
@@ -20931,6 +21332,9 @@ def test_property_tour_followup_tasks_block_terminally_when_visual_request_raise
     assert updated_task is not None
     assert updated_task.status == "returned"
     assert updated_task.resolution == "blocked"
+    assert updated_task.returned_payload_json["failure_stage"] == "willhaben_property_packet"
+    assert updated_task.returned_payload_json["error_code"] == "willhaben_packet_transient_failure"
+    assert "must-not-leak" not in json.dumps(updated_task.returned_payload_json)
 
 
 def test_property_tour_followup_tasks_do_not_rerun_fresh_processing_visual(monkeypatch) -> None:

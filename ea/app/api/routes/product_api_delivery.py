@@ -112,6 +112,7 @@ from app.services.property_market_catalog import (
     resolve_country_code as property_resolve_country_code,
     selectable_property_platform_keys as property_selectable_platform_keys,
 )
+from app.services.onboarding import strip_client_property_commercial_authority
 
 router = APIRouter(prefix="/app/api", tags=["product"])
 public_payfunnels_router = APIRouter(prefix="/app/api", tags=["product-billing"])
@@ -364,6 +365,7 @@ def _save_property_preferences(
     return container.onboarding.upsert_property_search_preferences(
         principal_id=principal_id,
         property_search_preferences_json=property_preferences,
+        trusted_commercial_update=True,
     )
 
 
@@ -810,7 +812,9 @@ def _start_property_search_run_payload(
     service = build_product_service(container)
     actor = str(context.operator_id or context.access_email or context.principal_id or "property_search").strip()
     merged_preferences = _property_preferences(container, principal_id=context.principal_id)
-    merged_preferences.update(dict(body.property_preferences))
+    merged_preferences.update(
+        strip_client_property_commercial_authority(dict(body.property_preferences))
+    )
     merged_preferences.pop("max_results_per_source", None)
     merged_preferences, sanitized_platforms = _sanitize_property_search_run_platforms(
         property_preferences=merged_preferences,

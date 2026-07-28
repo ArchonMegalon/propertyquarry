@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 import hashlib
 import json
 import os
 import threading
+from dataclasses import dataclass
 from typing import Callable, Sequence
 
 from app.services.admission_control import (
@@ -2654,7 +2654,11 @@ def migrate_property_search_schema(
     )
 
 
-def inspect_property_search_schema_cursor(cur) -> PropertySearchSchemaStatus:  # type: ignore[no-untyped-def]
+def inspect_property_search_schema_cursor(  # type: ignore[no-untyped-def]
+    cur,
+    *,
+    verify_capacity_counts: bool = True,
+) -> PropertySearchSchemaStatus:
     cur.execute("SELECT to_regclass(%s)", (SCHEMA_LEDGER_TABLE,))
     ledger_row = cur.fetchone()
     if not ledger_row or ledger_row[0] is None:
@@ -2734,6 +2738,75 @@ def inspect_property_search_schema_cursor(cur) -> PropertySearchSchemaStatus:  #
             return PropertySearchSchemaStatus(
                 False,
                 f"required_trigger_missing:{trigger}",
+                current,
+                LATEST_PROPERTY_SEARCH_SCHEMA_VERSION,
+                versions,
+            )
+    capacity_count_projection = (
+        """
+        ,
+        CASE capacity_key
+            WHEN 'lease' THEN (
+                SELECT COUNT(*) FROM propertyquarry_admission_leases
+            )
+            WHEN 'quota' THEN (
+                SELECT COUNT(*) FROM propertyquarry_admission_quota_buckets
+            )
+        END AS actual_row_count
+        """
+        if verify_capacity_counts
+        else ""
+    )
+    cur.execute(
+        """
+        SELECT capacity_key, row_count, row_limit
+        """
+        + capacity_count_projection
+        + f"""
+        FROM {ADMISSION_CAPACITY_STATE_TABLE}
+        ORDER BY capacity_key
+        """
+    )
+    capacity_rows = cur.fetchall()
+    expected_capacity = (
+        ("lease", ADMISSION_LEASE_ROW_LIMIT),
+        ("quota", ADMISSION_QUOTA_ROW_LIMIT),
+    )
+    if len(capacity_rows) != len(expected_capacity):
+        return PropertySearchSchemaStatus(
+            False,
+            "ingress_admission_capacity_contract_invalid",
+            current,
+            LATEST_PROPERTY_SEARCH_SCHEMA_VERSION,
+            versions,
+        )
+    for row, (expected_key, expected_limit) in zip(
+        capacity_rows,
+        expected_capacity,
+        strict=True,
+    ):
+        observed_key = str(row[0] or "")
+        observed_count = int(row[1])
+        observed_limit = int(row[2])
+        if (
+            observed_key != expected_key
+            or observed_count < 0
+            or observed_count > expected_limit
+            or observed_limit != expected_limit
+        ):
+            return PropertySearchSchemaStatus(
+                False,
+                "ingress_admission_capacity_contract_invalid",
+                current,
+                LATEST_PROPERTY_SEARCH_SCHEMA_VERSION,
+                versions,
+            )
+        if verify_capacity_counts and (
+            len(row) != 4 or observed_count != int(row[3])
+        ):
+            return PropertySearchSchemaStatus(
+                False,
+                f"ingress_admission_capacity_count_mismatch:{observed_key}",
                 current,
                 LATEST_PROPERTY_SEARCH_SCHEMA_VERSION,
                 versions,

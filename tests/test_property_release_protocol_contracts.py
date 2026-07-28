@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 
 from scripts import validate_propertyquarry_release_protocol as protocol
 
@@ -18,12 +19,25 @@ VALIDATOR = ROOT / "scripts" / "validate_propertyquarry_release_protocol.py"
 SCHEMA = ROOT / "docs" / "propertyquarry-release-control-protocol.v1.schema.json"
 
 
-def _draft202012_validator() -> Any:
-    jsonschema = pytest.importorskip("jsonschema")
+def _draft202012_validator() -> Draft202012Validator:
     schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
-    validator_class = jsonschema.Draft202012Validator
-    validator_class.check_schema(schema)
-    return validator_class(schema)
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema, format_checker=FormatChecker())
+
+
+def test_jsonschema_uri_format_backend_is_active_and_rejects_malformed_uris() -> None:
+    validator = Draft202012Validator(
+        {"type": "string", "format": "uri"},
+        format_checker=FormatChecker(),
+    )
+
+    validator.validate("https://authority.invalid/v2")
+    for malformed in (
+        "https://authority.invalid/%ZZ",
+        "https://[:::]/v2",
+    ):
+        with pytest.raises(ValidationError):
+            validator.validate(malformed)
 
 
 def _digest(character: str) -> str:

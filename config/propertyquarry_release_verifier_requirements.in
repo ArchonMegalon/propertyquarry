@@ -1,0 +1,7 @@
+-r ../ea/requirements.lock
+
+httpx==0.28.1
+jsonschema[format-nongpl]==4.26.0
+opencv-python-headless==4.13.0.92
+pip-audit==2.10.1
+pytest==9.0.2

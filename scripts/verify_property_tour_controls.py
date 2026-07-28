@@ -15,7 +15,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
@@ -1529,6 +1529,11 @@ def _provider_delivery_contracts(
             if reasons
             else (f"missing_{provider}_evidence" if provider in missing else "")
         )
+        if provider == "matterport":
+            # This aggregate contract describes public-route policy, not the
+            # most common per-tour data gap. Matterport remains retired even
+            # when most manifests do not contain a model URL.
+            blocked_reason = "matterport_public_control_retired"
         (
             white_label_status,
             white_label_required_to_white_label,

@@ -16,6 +16,32 @@ else:
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_GIT_COMMAND = (
+    "/usr/bin/git",
+    "--no-pager",
+    "--no-replace-objects",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.untrackedCache=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+)
+
+
+def release_git_environment() -> dict[str, str]:
+    return {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        "HOME": "/nonexistent",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+        "XDG_CONFIG_HOME": "/nonexistent",
+    }
 
 FORBIDDEN_TRACKED_PREFIXES = (
     "tmp_audit/",
@@ -36,6 +62,7 @@ IGNORED_UNTRACKED_PREFIXES = (
     "_completion/",
     "_tmp_live_shots/",
     ".pytest_cache/",
+    "build/",
     "state/",
     "tmp_audit/",
 )
@@ -106,8 +133,9 @@ RELEASE_METADATA_DESCENDANT_PATHS = {
 
 def tracked_paths() -> list[str]:
     result = subprocess.run(
-        ["git", "ls-files", "-z"],
+        [*RELEASE_GIT_COMMAND, "ls-files", "-z"],
         cwd=ROOT,
+        env=release_git_environment(),
         check=True,
         capture_output=True,
         text=False,
@@ -117,8 +145,9 @@ def tracked_paths() -> list[str]:
 
 def git_head_sha() -> str:
     result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
+        [*RELEASE_GIT_COMMAND, "rev-parse", "HEAD"],
         cwd=ROOT,
+        env=release_git_environment(),
         check=True,
         capture_output=True,
         text=True,
@@ -132,6 +161,7 @@ def git_commit_parent_shas(commit_sha: str) -> list[str]:
     result = subprocess.run(
         ["git", "rev-list", "--parents", "-n", "1", commit_sha],
         cwd=ROOT,
+        env=release_git_environment(),
         check=False,
         capture_output=True,
         text=True,
@@ -165,8 +195,15 @@ def git_commit_is_ancestor(commit_sha: str, head_sha: str) -> bool:
     if not commit_sha or not head_sha:
         return False
     result = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", commit_sha, head_sha],
+        [
+            *RELEASE_GIT_COMMAND,
+            "merge-base",
+            "--is-ancestor",
+            commit_sha,
+            head_sha,
+        ],
         cwd=ROOT,
+        env=release_git_environment(),
         check=False,
         capture_output=True,
         text=True,
@@ -179,7 +216,7 @@ def committed_paths_since(commit_sha: str, head_sha: str) -> list[str] | None:
         return None
     result = subprocess.run(
         [
-            "git",
+            *RELEASE_GIT_COMMAND,
             "log",
             "-m",
             "--format=",
@@ -189,6 +226,7 @@ def committed_paths_since(commit_sha: str, head_sha: str) -> list[str] | None:
             f"{commit_sha}..{head_sha}",
         ],
         cwd=ROOT,
+        env=release_git_environment(),
         check=False,
         capture_output=True,
         text=False,
@@ -380,13 +418,67 @@ def manifest_release_binding(
 
 def _git_status_rows() -> list[str]:
     result = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
+        [
+            *RELEASE_GIT_COMMAND,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ],
         cwd=ROOT,
+        env=release_git_environment(),
         check=True,
         capture_output=True,
         text=True,
     )
     return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def release_source_state(
+    root: Path,
+    *,
+    excluded_generated_paths: frozenset[str] = frozenset(),
+) -> dict[str, object]:
+    """Return fail-closed worktree state for release-source binding."""
+    root = root.resolve(strict=True)
+    result = subprocess.run(
+        [
+            *RELEASE_GIT_COMMAND,
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--no-renames",
+        ],
+        cwd=root,
+        env=release_git_environment(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tracked_dirty_paths: list[str] = []
+    untracked_source_paths: list[str] = []
+    excluded_paths: list[str] = []
+    for row in result.stdout.splitlines():
+        if len(row) < 4:
+            continue
+        status_code = row[:2]
+        path = _normalize_status_path(row[3:])
+        if not path:
+            continue
+        if path in excluded_generated_paths:
+            excluded_paths.append(path)
+        elif status_code == "??":
+            untracked_source_paths.append(path)
+        else:
+            tracked_dirty_paths.append(path)
+    tracked_dirty_paths.sort()
+    untracked_source_paths.sort()
+    excluded_paths.sort()
+    return {
+        "clean": not tracked_dirty_paths and not untracked_source_paths,
+        "tracked_dirty_paths": tracked_dirty_paths,
+        "untracked_source_paths": untracked_source_paths,
+        "excluded_generated_paths": excluded_paths,
+    }
 
 
 def release_manifest_runtime_sha() -> str:
@@ -417,11 +509,10 @@ def _is_release_source_path(rel_path: str) -> bool:
         return False
     if any(normalized.startswith(prefix) for prefix in IGNORED_UNTRACKED_PREFIXES):
         return False
-    if normalized in RELEASE_SOURCE_EXACT_PATHS:
-        return True
-    if any(normalized.startswith(prefix) for prefix in RELEASE_SOURCE_PREFIXES):
-        return True
-    return "/" not in normalized and Path(normalized).suffix.lower() in RELEASE_SOURCE_SUFFIXES
+    # Release hygiene is fail-closed: an untracked path can affect source,
+    # packaging, configuration, or test collection unless it belongs to an
+    # explicitly named runtime/generated-output prefix above.
+    return True
 
 
 def build_release_hygiene_receipt(

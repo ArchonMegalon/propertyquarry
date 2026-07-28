@@ -127,7 +127,12 @@ def _check_ready_contract(provider: str, contract: dict[str, Any], failures: lis
         return
     if ready_payload.get("provider") != provider:
         failures.append(f"{provider} ready_payload provider mismatch")
-    if int(ready_payload.get("ready_count") or 0) <= 0:
+    ready_count = ready_payload.get("ready_count")
+    if (
+        isinstance(ready_count, bool)
+        or not isinstance(ready_count, int)
+        or ready_count <= 0
+    ):
         failures.append(f"{provider} ready_payload must prove at least one ready control")
     sample_controls = [row for row in list(ready_payload.get("sample_controls") or []) if isinstance(row, dict)]
     if not sample_controls:

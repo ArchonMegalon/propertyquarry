@@ -6,6 +6,7 @@ import json
 import math
 import os
 import pwd
+import struct
 import subprocess
 import sys
 import tarfile
@@ -3013,20 +3014,24 @@ def test_generated_reconstruction_diorama_preview_reads_as_staged_layout_composi
     layout = dict(receipt["layout"])
     assert layout["status"] == "pass"
     assert all(dict(layout["checks"]).values())
+    assert layout["renderer_version"] == "propertyquarry_bright_playful_cutaway_v1"
+    assert layout["composition"] == "elevated_three_quarter_cutaway"
+    assert layout["camera"] == "elevated_three_quarter"
+    assert layout["background"] == "bright_neutral"
+    assert layout["mood"] == "warm_playful_miniature"
     assert layout["displayed_route_stop_count"] == 9
+    assert layout["furnished_room_count"] == 9
+    assert layout["wall_relief"] is True
     assert layout["route_sequence_complete"] is True
     boxes = dict(layout["boxes"])
-    route_rows = [list(box) for box in boxes["route_rows"]]
-    route_label_boxes = [list(box) for box in boxes["route_labels"]]
-    assert len(route_rows) == 9
-    assert len(route_label_boxes) == len(route_rows)
-    assert all(first[3] <= second[1] for first, second in zip(route_rows, route_rows[1:]))
-    assert route_rows[-1][3] <= list(boxes["route_rail"])[3] - 12
-    assert all(
-        row[0] + 6 <= label[0] <= label[2] <= row[2] - 6 and row[1] + 6 <= label[1] <= label[3] <= row[3] - 6
-        for row, label in zip(route_rows, route_label_boxes)
-    )
-    assert str(layout["displayed_route_labels"][-1]).endswith("…")
+    stage_box = list(boxes["stage"])
+    assert stage_box[2] - stage_box[0] >= 1150
+    assert stage_box[3] - stage_box[1] >= 638
+    assert 0.004 <= float(layout["wall_mask_coverage"]) <= 0.34
+    brightness = dict(layout["brightness"])
+    assert float(brightness["mean_luma"]) >= 145.0
+    assert float(brightness["dark_pixel_ratio"]) <= 0.18
+    assert float(brightness["light_pixel_ratio"]) >= 0.45
     rendered = Image.open(preview).convert("RGB")
     assert rendered.size == (1600, 1100)
     background_mean = _mean_rgb(rendered, (24, 24, 144, 144))
@@ -3045,17 +3050,21 @@ def test_generated_reconstruction_diorama_preview_reads_as_staged_layout_composi
     assert sum(abs(route_rail_mean[index] - background_mean[index]) for index in range(3)) > 24.0
 
     pixels = rendered.load()
-    accent_pixels = 0
+    warm_material_pixels = 0
     dark_structure_pixels = 0
+    light_canvas_pixels = 0
     for y in range(0, rendered.height, 3):
         for x in range(0, rendered.width, 3):
             r, g, b = pixels[x, y]
-            if r >= 150 and 90 <= g <= 190 and b <= 150:
-                accent_pixels += 1
-            if r <= 96 and g <= 96 and b <= 96:
+            if r >= 125 and 75 <= g <= 185 and b <= 145:
+                warm_material_pixels += 1
+            if r <= 112 and g <= 112 and b <= 112:
                 dark_structure_pixels += 1
-    assert accent_pixels > 130
-    assert dark_structure_pixels > 340
+            if r >= 190 and g >= 185 and b >= 175:
+                light_canvas_pixels += 1
+    assert warm_material_pixels > 280
+    assert dark_structure_pixels > 180
+    assert light_canvas_pixels > 80_000
 
 
 def test_generated_reconstruction_previews_disclose_floorplan_only_and_fit_share_canvas(tmp_path: Path) -> None:
@@ -3424,6 +3433,7 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
         "photo-02.jpg",
         "model.obj",
         "model.mtl",
+        "model.glb",
         "viewer.html",
         "reconstruction.json",
         "vendor/three.module.js",
@@ -3461,6 +3471,19 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     assert "floorTextureCrop" in viewer_html
     assert "floorTexture.offset.set" in viewer_html
     assert "floorTexture.repeat.set" in viewer_html
+    assert "THREE.ACESFilmicToneMapping" in viewer_html
+    assert "stagingDetailObjectCount" in viewer_html
+    assert "physicallyBasedToneMapping" in viewer_html
+    assert "apartmentPlinthVisible" in viewer_html
+    assert "generated-sofa-cushion-left" in viewer_html
+    assert "generated-kitchen-pendant" in viewer_html
+    assert "generated-bath-mirror" in viewer_html
+    assert '"webglcontextlost"' in viewer_html
+    assert "disposeViewer" in viewer_html
+    assert "visibilitychange" in viewer_html
+    assert "new ResizeObserver" in viewer_html
+    assert "const maxStagedRouteStops = 12" in viewer_html
+    assert 'const renderQualityTier = constrainedDevice ? "balanced" : "high"' in viewer_html
     orbit_controls_html = (output_dir / "vendor" / "examples" / "jsm" / "controls" / "OrbitControls.js").read_text(
         encoding="utf-8"
     )
@@ -3584,10 +3607,12 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     assert receipt["bundle_preview_assets"]["telegram"]["status"] == "generated"
     assert receipt["bundle_preview_assets"]["telegram"]["bundle_relpath"] == "telegram-preview.png"
     assert len(receipt["walkthrough_route_labels"]) >= len(receipt["route_labels"])
-    assert receipt["model"]["glb_export"]["status"] in {"generated", "failed", "skipped"}
-    if receipt["model"]["glb_export"]["status"] == "generated":
-        assert receipt["model"]["glb_relpath"] == "model.glb"
-        assert (output_dir / "model.glb").is_file()
+    assert receipt["model"]["glb_export"]["status"] == "generated"
+    assert receipt["model"]["glb_export"]["exporter"] == reconstruction_script.GLB_EXPORTER_VERSION
+    assert receipt["model"]["glb_export"]["triangle_count"] > 0
+    assert receipt["model"]["glb_relpath"] == "model.glb"
+    assert (output_dir / "model.glb").is_file()
+    _read_glb_document(output_dir / "model.glb")
     assert receipt["walkthrough"]["status"] in {"generated", "failed", "skipped"}
     if receipt["walkthrough"]["status"] == "generated":
         expected_composition, expected_motion_style, expected_route_context_mode = _expected_default_walkthrough_contract()
@@ -4892,9 +4917,32 @@ def test_generated_reconstruction_viewer_guided_route_runs_in_real_browser(tmp_p
         with reconstruction_script.sync_playwright() as playwright:
             launch_kwargs = reconstruction_script._playwright_chromium_launch_kwargs(playwright)
             browser = playwright.chromium.launch(**launch_kwargs)
-            page = browser.new_page(viewport={"width": 1280, "height": 720}, device_scale_factor=1)
             try:
-                page.goto(f"{base_url}/{viewer_relpath}?guided=1", wait_until="domcontentloaded")
+                page = None
+                viewer_url = f"{base_url}/{viewer_relpath}?guided=1"
+                for attempt in range(3):
+                    page = browser.new_page(
+                        viewport={"width": 1280, "height": 720},
+                        device_scale_factor=1,
+                    )
+                    try:
+                        page.goto(
+                            viewer_url,
+                            wait_until="domcontentloaded",
+                        )
+                        break
+                    except Exception as exc:
+                        with suppress(Exception):
+                            page.close()
+                        if (
+                            attempt >= 2
+                            or (
+                                "Page crashed" not in str(exc)
+                                and "ERR_INSUFFICIENT_RESOURCES" not in str(exc)
+                            )
+                        ):
+                            raise
+                assert page is not None
                 _wait_for_playwright_condition(
                     page,
                     """() => {

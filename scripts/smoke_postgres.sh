@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+curl() {
+  # shellcheck disable=SC2317
+  command curl -q "$@"
+}
+
 EA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SMOKE_TMP_DIR=""
 legacy_fixture=0
 ORIGINAL_EA_API_TOKEN="${EA_API_TOKEN:-}"
 API_SERVICE="${PROPERTYQUARRY_API_SERVICE:-${EA_API_SERVICE:-ea-api}}"
@@ -9,6 +15,22 @@ WORKER_SERVICE="${PROPERTYQUARRY_WORKER_SERVICE:-${EA_WORKER_SERVICE:-ea-worker}
 SCHEDULER_SERVICE="${PROPERTYQUARRY_SCHEDULER_SERVICE:-${EA_SCHEDULER_SERVICE:-ea-scheduler}}"
 DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"
 PROPERTYQUARRY_SMOKE_PUBLIC_HOME_REQUIRED="${PROPERTYQUARRY_SMOKE_PUBLIC_HOME_REQUIRED:-}"
+
+create_smoke_tmp_dir() {
+  local candidate=""
+  candidate="$(mktemp -d -- "/tmp/propertyquarry-smoke-postgres.${BASHPID}.XXXXXXXX")"
+  chmod 700 -- "${candidate}"
+  SMOKE_TMP_DIR="${candidate}"
+}
+
+cleanup_smoke_tmp() {
+  case "${SMOKE_TMP_DIR:-}" in
+    /tmp/propertyquarry-smoke-postgres.*)
+      rm -rf -- "${SMOKE_TMP_DIR}"
+      SMOKE_TMP_DIR=""
+      ;;
+  esac
+}
 if [[ -z "${PROPERTYQUARRY_SMOKE_PUBLIC_HOME_REQUIRED}" ]]; then
   if [[ -n "${PROPERTYQUARRY_API_SERVICE:-}" ]]; then
     PROPERTYQUARRY_SMOKE_PUBLIC_HOME_REQUIRED="1"
@@ -72,6 +94,9 @@ USAGE
   esac
 done
 
+create_smoke_tmp_dir
+trap cleanup_smoke_tmp EXIT
+
 if docker compose version >/dev/null 2>&1; then
   DC=(docker compose)
 else
@@ -99,7 +124,7 @@ if [[ ! -f "${EA_ROOT}/.env" ]]; then
   created_env=1
 else
   env_had_file=1
-  env_backup="$(mktemp)"
+  env_backup="$(mktemp "${SMOKE_TMP_DIR}/env-backup.XXXXXXXX")"
   cp "${EA_ROOT}/.env" "${env_backup}"
 fi
 
@@ -139,6 +164,7 @@ cleanup() {
   if [[ "${created_env}" == "1" ]]; then
     rm -f "${EA_ROOT}/.env"
   fi
+  cleanup_smoke_tmp
 }
 trap cleanup EXIT
 
@@ -394,10 +420,11 @@ echo "== smoke-postgres: readiness check =="
 ready_json=""
 ready_reason=""
 ready_http_code=""
+ready_response_path="${SMOKE_TMP_DIR}/readiness.json"
 for _ in $(seq 1 90); do
-  ready_http_code="$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/ea_smoke_ready.json -w '%{http_code}' "${BASE}/health/ready" || true)"
-  if [[ -f /tmp/ea_smoke_ready.json ]]; then
-    ready_json="$(cat /tmp/ea_smoke_ready.json)"
+  ready_http_code="$(curl -sS --connect-timeout 2 --max-time 5 -o "${ready_response_path}" -w '%{http_code}' "${BASE}/health/ready" || true)"
+  if [[ -f "${ready_response_path}" && ! -L "${ready_response_path}" ]]; then
+    ready_json="$(cat "${ready_response_path}")"
   else
     ready_json=""
   fi
@@ -439,11 +466,12 @@ if [[ "${container_loopback_no_auth}" != "1" ]]; then
   exit 39
 fi
 token_candidates=("${EA_API_TOKEN:-}" "${container_api_token}" "${ORIGINAL_EA_API_TOKEN}" "smoke-postgres-token" "CHANGE_ME_STRONG")
+token_probe_response_path="${SMOKE_TMP_DIR}/token-probe.json"
 for candidate_token in "${token_candidates[@]}"; do
   if [[ -z "${candidate_token}" ]]; then
     continue
   fi
-  token_probe_code="$(curl -sS --connect-timeout 2 --max-time 5 -o /tmp/ea_smoke_token_probe.json -w '%{http_code}' \
+  token_probe_code="$(curl -sS --connect-timeout 2 --max-time 5 -o "${token_probe_response_path}" -w '%{http_code}' \
     -H "Authorization: Bearer ${candidate_token}" \
     -H "X-EA-API-Token: ${candidate_token}" \
     -H "X-EA-Principal-ID: exec-1" \

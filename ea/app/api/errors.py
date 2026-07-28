@@ -11,7 +11,7 @@ from typing import Any
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.logging_utils import exception_log_fields, log_event
@@ -72,6 +72,16 @@ def _request_correlation_id(request: Request) -> str:
     return str(uuid.uuid4())
 
 
+def _apply_request_observability_headers(
+    request: Request,
+    response: Response,
+) -> None:
+    response.headers["x-correlation-id"] = _correlation_id(request)
+    telemetry_context = getattr(request.state, "telemetry_context", None)
+    if telemetry_context is not None:
+        response.headers["traceparent"] = format_traceparent(telemetry_context)
+
+
 def _error_payload(
     *,
     request: Request,
@@ -99,6 +109,7 @@ def _error_payload(
         },
     )
     response.headers["Cache-Control"] = "no-store"
+    _apply_request_observability_headers(request, response)
     return response
 
 
@@ -472,7 +483,7 @@ def install_error_handlers(app: FastAPI) -> None:
                 message="internal server error",
                 details="permission_error",
             )
-        response.headers["x-correlation-id"] = _correlation_id(request)
+        _apply_request_observability_headers(request, response)
         _apply_default_browser_security_headers(request, response)
         return response
 
@@ -496,6 +507,7 @@ def install_error_handlers(app: FastAPI) -> None:
                 details="database_temporarily_unavailable",
             )
         response.headers["Retry-After"] = "5"
+        _apply_request_observability_headers(request, response)
         return response
 
     if PsycopgOperationalError is not None:
@@ -524,6 +536,6 @@ def install_error_handlers(app: FastAPI) -> None:
                 message="internal server error",
                 details=exc.__class__.__name__,
             )
-        response.headers["x-correlation-id"] = _correlation_id(request)
+        _apply_request_observability_headers(request, response)
         _apply_default_browser_security_headers(request, response)
         return response

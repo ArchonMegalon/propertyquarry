@@ -17,6 +17,7 @@
     "owner_nologin_role": "UNCONFIGURED",
     "migrator_role": "UNCONFIGURED",
     "api_runtime_epoch_prefix": "UNCONFIGURED",
+    "worker_runtime_epoch_prefix": "UNCONFIGURED",
     "scheduler_runtime_epoch_prefix": "UNCONFIGURED",
     "require_non_superuser": true,
     "forbid_createrole": true,
@@ -43,6 +44,7 @@
   "secrets": {
     "application_allowed_credentials": [
       "api_runtime_epoch",
+      "worker_runtime_epoch",
       "scheduler_runtime_epoch"
     ],
     "application_forbidden_credentials": [

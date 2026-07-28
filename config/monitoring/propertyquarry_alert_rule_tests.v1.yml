@@ -74,39 +74,69 @@ tests:
         alertname: PropertyQuarryReplicaUnavailable
         exp_alerts:
           - exp_labels: {instance: "api-b:8090", job: propertyquarry, service: propertyquarry, severity: critical, slo: telemetry}
+            exp_annotations: {summary: "A discovered PropertyQuarry API replica is not scrapeable", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#replica-coverage"}
       - eval_time: 35m
         alertname: PropertyQuarryReplicaCoverageInsufficient
         exp_alerts:
           - exp_labels: {job: propertyquarry, service: propertyquarry, severity: critical, slo: telemetry}
+            exp_annotations: {summary: "Fewer PropertyQuarry API replicas are scrapeable than the release expects", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#replica-coverage"}
       - eval_time: 35m
         alertname: PropertyQuarryAvailabilitySLOBurn
         exp_alerts:
           - exp_labels: {service: propertyquarry, severity: critical, slo: availability}
+            exp_annotations: {summary: "PropertyQuarry is burning the availability error budget rapidly", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#availability-error-rate"}
       - eval_time: 35m
         alertname: PropertyQuarryHighErrorRate
         exp_alerts:
           - exp_labels: {service: propertyquarry, severity: warning, slo: error_rate}
+            exp_annotations: {summary: "PropertyQuarry 5xx error ratio exceeds its objective", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#availability-error-rate"}
       - eval_time: 35m
         alertname: PropertyQuarryP95LatencyHigh
         exp_alerts:
           - exp_labels: {service: propertyquarry, severity: warning, slo: latency_p95}
+            exp_annotations: {summary: "PropertyQuarry p95 latency exceeds one second", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#latency"}
       - eval_time: 35m
         alertname: PropertyQuarryP99LatencyHigh
         exp_alerts:
           - exp_labels: {service: propertyquarry, severity: critical, slo: latency_p99}
+            exp_annotations: {summary: "PropertyQuarry p99 latency exceeds 2.5 seconds", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#latency"}
       - eval_time: 35m
         alertname: PropertyQuarryReadinessFailed
         exp_alerts:
           - exp_labels: {service: propertyquarry, severity: critical, slo: readiness}
+            exp_annotations: {summary: "PropertyQuarry readiness is failing", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#readiness"}
       - eval_time: 35m
         alertname: PropertyQuarryRuntimeHeartbeatMissing
         exp_alerts:
           - exp_labels: {role: worker, service: propertyquarry, severity: critical, slo: runtime_heartbeat}
+            exp_annotations: {summary: "A required PropertyQuarry runtime heartbeat is missing", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#runtime-heartbeats"}
       - eval_time: 35m
         alertname: PropertyQuarryRuntimeHeartbeatStale
         exp_alerts:
           - exp_labels: {role: scheduler, service: propertyquarry, severity: critical, slo: runtime_heartbeat}
+            exp_annotations: {summary: "A required PropertyQuarry runtime heartbeat is stale or invalid", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#runtime-heartbeats"}
           - exp_labels: {role: worker, service: propertyquarry, severity: critical, slo: runtime_heartbeat}
+            exp_annotations: {summary: "A required PropertyQuarry runtime heartbeat is stale or invalid", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#runtime-heartbeats"}
+      - eval_time: 35m
+        alertname: PropertyQuarryIngressAdmissionBackendUnavailable
+        exp_alerts:
+          - exp_labels: {backend: postgres, operation: admit, outcome: backend_unavailable, service: propertyquarry, severity: critical, slo: ingress_admission}
+            exp_annotations: {summary: "PropertyQuarry ingress admission recorded a backend-unavailable outcome", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-backend"}
+      - eval_time: 35m
+        alertname: PropertyQuarryAdmissionCapacityContractInvalid
+        exp_alerts:
+          - exp_labels: {backend: postgres, service: propertyquarry, severity: critical, slo: admission_capacity}
+            exp_annotations: {summary: "PropertyQuarry PostgreSQL admission capacity contract is invalid or missing", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity"}
+      - eval_time: 35m
+        alertname: PropertyQuarryAdmissionCapacityWarning
+        exp_alerts:
+          - exp_labels: {backend: postgres, capacity_key: lease, service: propertyquarry, severity: warning, slo: admission_capacity}
+            exp_annotations: {summary: "PropertyQuarry admission capacity utilization is at least 80 percent", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity"}
+      - eval_time: 35m
+        alertname: PropertyQuarryAdmissionCapacityCritical
+        exp_alerts:
+          - exp_labels: {backend: postgres, capacity_key: quota, service: propertyquarry, severity: critical, slo: admission_capacity}
+            exp_annotations: {summary: "PropertyQuarry admission capacity utilization is at least 95 percent", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity"}
       - eval_time: 35m
         alertname: PropertyQuarryAdmissionCapacityContractInvalid
         exp_alerts:
@@ -123,10 +153,12 @@ tests:
         alertname: PropertyQuarryDatabasePoolSaturation
         exp_alerts:
           - exp_labels: {service: propertyquarry, severity: warning, slo: database_saturation}
+            exp_annotations: {summary: "PropertyQuarry database pool utilization exceeds 85 percent", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#database-saturation"}
       - eval_time: 35m
         alertname: PropertyQuarryDatabasePoolExhaustion
         exp_alerts:
           - exp_labels: {service: propertyquarry, severity: critical, slo: database_saturation}
+            exp_annotations: {summary: "PropertyQuarry database pool utilization exceeds 95 percent", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#database-saturation"}
       - eval_time: 35m
         alertname: PropertyQuarryQueueDepthHigh
         exp_alerts:
@@ -139,30 +171,37 @@ tests:
         alertname: PropertyQuarryProviderOrQuotaFailures
         exp_alerts:
           - exp_labels: {service: propertyquarry, severity: critical, slo: provider_quota}
+            exp_annotations: {summary: "PropertyQuarry provider or quota routes are returning failures", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#provider-and-quota-failures"}
       - eval_time: 35m
         alertname: PropertyQuarryDeliveryOutboxDeadLettered
         exp_alerts:
-          - exp_labels: {service: propertyquarry, severity: critical, slo: delivery_integrity}
+          - exp_labels: {outcome: dead_lettered, service: propertyquarry, severity: critical, slo: delivery_integrity}
+            exp_annotations: {summary: "PropertyQuarry delivery outbox moved work to dead letter", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#delivery-outbox-integrity"}
       - eval_time: 35m
         alertname: PropertyQuarryDeliveryOutboxFailed
         exp_alerts:
-          - exp_labels: {service: propertyquarry, severity: critical, slo: delivery_integrity}
+          - exp_labels: {outcome: failed, service: propertyquarry, severity: critical, slo: delivery_integrity}
+            exp_annotations: {summary: "PropertyQuarry delivery outbox recorded a terminal failure", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#delivery-outbox-integrity"}
       - eval_time: 35m
         alertname: PropertyQuarryDeliveryOutboxClaimConflicts
         exp_alerts:
-          - exp_labels: {service: propertyquarry, severity: warning, slo: delivery_integrity}
+          - exp_labels: {outcome: claim_conflicts, service: propertyquarry, severity: warning, slo: delivery_integrity}
+            exp_annotations: {summary: "PropertyQuarry delivery outbox claims are conflicting", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#delivery-outbox-integrity"}
       - eval_time: 35m
         alertname: PropertyQuarryContentLedgerReplayConflict
         exp_alerts:
-          - exp_labels: {service: propertyquarry, severity: critical, slo: content_integrity}
+          - exp_labels: {outcome: replay_conflict, service: propertyquarry, severity: critical, slo: content_integrity}
+            exp_annotations: {summary: "PropertyQuarry content ledger rejected a conflicting replay", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#content-ledger-integrity"}
       - eval_time: 35m
         alertname: PropertyQuarryContentLedgerFailed
         exp_alerts:
-          - exp_labels: {service: propertyquarry, severity: critical, slo: content_integrity}
+          - exp_labels: {outcome: failed, service: propertyquarry, severity: critical, slo: content_integrity}
+            exp_annotations: {summary: "PropertyQuarry content ledger recorded a failed operation", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#content-ledger-integrity"}
       - eval_time: 35m
         alertname: PropertyQuarryContentLedgerCorruption
         exp_alerts:
-          - exp_labels: {service: propertyquarry, severity: critical, slo: content_integrity}
+          - exp_labels: {outcome: corruption, service: propertyquarry, severity: critical, slo: content_integrity}
+            exp_annotations: {summary: "PropertyQuarry content ledger detected corruption", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#content-ledger-integrity"}
 
   - name: missing-metrics-alert-is-injectable
     interval: 1m
@@ -171,7 +210,8 @@ tests:
       - eval_time: 5m
         alertname: PropertyQuarryMetricsMissing
         exp_alerts:
-          - exp_labels: {service: propertyquarry, severity: critical, slo: telemetry}
+          - exp_labels: {job: propertyquarry, service: propertyquarry, severity: critical, slo: telemetry}
+            exp_annotations: {summary: "PropertyQuarry metrics target is absent", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#metrics-missing"}
 
   - name: missing-property-search-queue-telemetry-is-injectable
     interval: 1m
@@ -205,6 +245,7 @@ tests:
         alertname: PropertyQuarryExpectedReplicaConfigurationInvalid
         exp_alerts:
           - exp_labels: {instance: "api-a:8090", job: propertyquarry, service: propertyquarry, severity: critical, slo: telemetry}
+            exp_annotations: {summary: "PropertyQuarry expected replica configuration is invalid", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#replica-coverage"}
 
   - name: missing-expected-replica-gauge-is-injectable
     interval: 1m
@@ -216,6 +257,7 @@ tests:
         alertname: PropertyQuarryExpectedReplicaMetricMissing
         exp_alerts:
           - exp_labels: {instance: "api-a:8090", job: propertyquarry, service: propertyquarry, severity: critical, slo: telemetry}
+            exp_annotations: {summary: "A scrapeable PropertyQuarry API replica omits the expected-replica gauge", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#replica-coverage"}
 
   - name: divergent-expected-replica-configuration-is-injectable
     interval: 1m
@@ -233,3 +275,121 @@ tests:
         alertname: PropertyQuarryExpectedReplicaConfigurationDivergent
         exp_alerts:
           - exp_labels: {job: propertyquarry, service: propertyquarry, severity: critical, slo: telemetry}
+            exp_annotations: {summary: "PropertyQuarry API replicas disagree about the expected replica count", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#replica-coverage"}
+
+  - name: missing-postgres-admission-capacity-contract-is-injectable
+    interval: 1m
+    input_series:
+      - series: 'up{job="propertyquarry",instance="api-a:8090"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PropertyQuarryAdmissionCapacityContractInvalid
+        exp_alerts:
+          - exp_labels: {backend: postgres, service: propertyquarry, severity: critical, slo: admission_capacity}
+            exp_annotations: {summary: "PropertyQuarry PostgreSQL admission capacity contract is invalid or missing", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity"}
+
+  - name: incorrect-postgres-admission-capacity-limit-is-injectable
+    interval: 1m
+    input_series:
+      - series: 'up{job="propertyquarry",instance="api-a:8090"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_admission_capacity_contract_valid{backend="postgres"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="lease"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_admission_capacity_limit{backend="postgres",capacity_key="lease"}'
+        values: '99999+0x10'
+      - series: 'propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="quota"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_admission_capacity_limit{backend="postgres",capacity_key="quota"}'
+        values: '1000000+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PropertyQuarryAdmissionCapacityContractInvalid
+        exp_alerts:
+          - exp_labels: {backend: postgres, service: propertyquarry, severity: critical, slo: admission_capacity}
+            exp_annotations: {summary: "PropertyQuarry PostgreSQL admission capacity contract is invalid or missing", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity"}
+
+  - name: admission-capacity-thresholds-cover-both-closed-keys
+    interval: 1m
+    input_series:
+      - series: 'propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="lease"}'
+        values: '96000+0x20'
+      - series: 'propertyquarry_admission_capacity_limit{backend="postgres",capacity_key="lease"}'
+        values: '100000+0x20'
+      - series: 'propertyquarry_admission_capacity_row_count{backend="postgres",capacity_key="quota"}'
+        values: '850000+0x20'
+      - series: 'propertyquarry_admission_capacity_limit{backend="postgres",capacity_key="quota"}'
+        values: '1000000+0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: PropertyQuarryAdmissionCapacityWarning
+        exp_alerts:
+          - exp_labels: {backend: postgres, capacity_key: quota, service: propertyquarry, severity: warning, slo: admission_capacity}
+            exp_annotations: {summary: "PropertyQuarry admission capacity utilization is at least 80 percent", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity"}
+      - eval_time: 15m
+        alertname: PropertyQuarryAdmissionCapacityCritical
+        exp_alerts:
+          - exp_labels: {backend: postgres, capacity_key: lease, service: propertyquarry, severity: critical, slo: admission_capacity}
+            exp_annotations: {summary: "PropertyQuarry admission capacity utilization is at least 95 percent", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#ingress-admission-capacity"}
+
+  - name: queue-telemetry-unobserved-is-injectable
+    interval: 1m
+    input_series:
+      - series: 'up{job="propertyquarry",instance="api-a:8090"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_required{job="propertyquarry",instance="api-a:8090",role="worker"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_present{job="propertyquarry",instance="api-a:8090",role="worker"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_stale{job="propertyquarry",instance="api-a:8090",role="worker"}'
+        values: '0+0x10'
+      - series: 'propertyquarry_queue_observed{job="propertyquarry",instance="api-a:8090",queue="property_search"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PropertyQuarryQueueTelemetryUnobserved
+        exp_alerts:
+          - exp_labels: {queue: property_search, service: propertyquarry, severity: critical, slo: queue_backlog}
+            exp_annotations: {summary: "PropertyQuarry queue telemetry is unobserved despite a healthy required worker", runbook: "docs/PROPERTYQUARRY_SLO_ALERT_RUNBOOK.md#queue-backlog"}
+
+  - name: queue-telemetry-observed-does-not-page
+    interval: 1m
+    input_series:
+      - series: 'propertyquarry_runtime_heartbeat_required{job="propertyquarry",instance="api-a:8090",role="worker"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_present{job="propertyquarry",instance="api-a:8090",role="worker"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_stale{job="propertyquarry",instance="api-a:8090",role="worker"}'
+        values: '0+0x10'
+      - series: 'propertyquarry_queue_observed{job="propertyquarry",instance="api-a:8090",queue="property_search"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PropertyQuarryQueueTelemetryUnobserved
+        exp_alerts: []
+
+  - name: optional-or-stale-worker-does-not-double-page-queue-telemetry
+    interval: 1m
+    input_series:
+      - series: 'propertyquarry_runtime_heartbeat_required{job="propertyquarry",instance="api-optional:8090",role="worker"}'
+        values: '0+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_present{job="propertyquarry",instance="api-optional:8090",role="worker"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_stale{job="propertyquarry",instance="api-optional:8090",role="worker"}'
+        values: '0+0x10'
+      - series: 'propertyquarry_queue_observed{job="propertyquarry",instance="api-optional:8090",queue="property_search"}'
+        values: '0+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_required{job="propertyquarry",instance="api-stale:8090",role="worker"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_present{job="propertyquarry",instance="api-stale:8090",role="worker"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_runtime_heartbeat_stale{job="propertyquarry",instance="api-stale:8090",role="worker"}'
+        values: '1+0x10'
+      - series: 'propertyquarry_queue_observed{job="propertyquarry",instance="api-stale:8090",queue="property_search"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PropertyQuarryQueueTelemetryUnobserved
+        exp_alerts: []

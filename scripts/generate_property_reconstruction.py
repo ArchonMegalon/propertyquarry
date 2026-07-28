@@ -113,6 +113,11 @@ ORBIT_CONTROLS_TRANSFORMED_SHA256 = "f70d0bcb05e03d18b1ebd4e63599fc6c11957e9703c
 ORBIT_CONTROLS_EMITTED_SHA256 = "b15a310c930ed4ba3e26cae34931f145a9d3fb82741339563dcb623d1eedd18b"
 ORBIT_CONTROLS_BARE_IMPORT = "} from 'three';"
 ORBIT_CONTROLS_RELATIVE_IMPORT = "} from '../../../three.module.js';"
+GLB_EXPORTER_VERSION = "propertyquarry_deterministic_glb_v1"
+GLB_MAX_OBJ_BYTES = 64 * 1024 * 1024
+GLB_MAX_MTL_BYTES = 1024 * 1024
+GLB_MAX_SOURCE_VERTICES = 1_000_000
+GLB_MAX_TRIANGLES = 2_000_000
 _PREVIEW_FONT_PATHS = {
     ("sans", False): Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     ("sans", True): Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
@@ -3514,6 +3519,45 @@ def _write_generated_reconstruction_diorama_preview(
         footer_copy = source_disclosure
     preview_sources = list(photo_paths[:3]) or [floorplan_path]
     try:
+        rendered_diorama = render_bright_apartment_diorama(
+            floorplan_path=floorplan_path,
+            walkable_scene=walkable_scene,
+            palette=palette,
+            hero_path=photo_paths[0] if photo_paths else None,
+            source_photo_count=photo_count,
+            canvas_size=(1600, 1100),
+        )
+        if rendered_diorama is not None:
+            canvas, composition = rendered_diorama
+            layout_checks = dict(composition.get("checks") or {})
+            failed_layout_checks = [name for name, passed in layout_checks.items() if not passed]
+            if failed_layout_checks:
+                raise RuntimeError(
+                    f"diorama_thumbnail_contract_failed:{','.join(failed_layout_checks)}"
+                )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            canvas.save(output_path, format="PNG", optimize=True)
+            layout = {
+                "status": "pass",
+                **composition,
+                "displayed_route_stop_count": len(route_labels),
+                "displayed_route_labels": route_labels,
+                "route_sequence_complete": len(route_labels) == len(route_stops),
+            }
+            return {
+                "status": "generated",
+                "bundle_relpath": output_path.name,
+                "sha256": _sha256(output_path),
+                "size_bytes": output_path.stat().st_size,
+                "source_mode": source_mode,
+                "source_photo_count": photo_count,
+                "source_disclosure": source_disclosure,
+                "layout": layout,
+            }
+    except Exception:
+        # Retain the established scrapbook composition as a safe local fallback.
+        pass
+    try:
         eyebrow_font = _preview_font(22, bold=True)
         title_font = _preview_font(52, serif=True, bold=True)
         body_font = _preview_font(20)
@@ -6358,6 +6402,12 @@ def _write_glb(
             raise ValueError("obj_vertices_missing")
         if not any(faces_by_material.values()):
             raise ValueError("obj_faces_missing")
+        generated_vertex_count = len(source_vertices)
+        generated_triangle_count = sum(
+            max(0, len(face) - 2)
+            for material_faces in faces_by_material.values()
+            for face in material_faces
+        )
 
         binary = bytearray()
         buffer_views: list[dict[str, object]] = []
@@ -6516,9 +6566,14 @@ def _write_glb(
         }
     return {
         "status": "generated",
+        "exporter": GLB_EXPORTER_VERSION,
         "glb_relpath": glb_path.name,
         "glb_sha256": _sha256(glb_path),
         "glb_size_bytes": glb_path.stat().st_size,
+        "material_count": len(material_specs),
+        "source_obj_sha256": _sha256(obj_path),
+        "triangle_count": generated_triangle_count,
+        "vertex_count": generated_vertex_count,
     }
 
 
@@ -7535,6 +7590,8 @@ function styleColor(key, fallback) {{
   return /^#[0-9a-f]{{6}}$/i.test(value) ? value : fallback;
 }}
 const routeStops = Array.isArray(walkableScene.route) ? walkableScene.route.filter((stop) => stop && typeof stop === "object") : [];
+const maxStagedRouteStops = 12;
+const stagedRouteStops = routeStops.slice(0, maxStagedRouteStops);
 const photoPanelSpecs = {_html_script_safe_json(photo_reference_panels)};
 const routeButtons = Array.from(document.querySelectorAll(".route-button"));
 const floorplanStopButtons = Array.from(document.querySelectorAll(".floorplan-stop"));
@@ -7605,6 +7662,10 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(styleColor("background", "#e8eeeb"));
 scene.fog = new THREE.Fog(styleColor("background", "#e8eeeb"), 13, 34);
 let renderFrameCount = 0;
+let animationFrameId = 0;
+let viewerDisposed = false;
+let contextLost = false;
+let resizeObserver = null;
 
 const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
 let renderer = null;
@@ -7620,7 +7681,13 @@ if (!renderer) {{
 }}
 if (renderer) {{
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
+const constrainedDevice =
+  Number(navigator.deviceMemory || 8) <= 4
+  || window.matchMedia("(max-width: 520px)").matches;
+const renderQualityTier = constrainedDevice ? "balanced" : "high";
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, constrainedDevice ? 1.5 : 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.domElement.setAttribute("role", "img");
@@ -7640,11 +7707,20 @@ scene.add(hemisphereLight);
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.05);
 keyLight.position.set(roomWidth * 0.7, roomHeight * 3.2, roomDepth * 0.9);
 keyLight.castShadow = true;
-keyLight.shadow.mapSize.width = 2048;
-keyLight.shadow.mapSize.height = 2048;
+keyLight.shadow.mapSize.width = constrainedDevice ? 1024 : 2048;
+keyLight.shadow.mapSize.height = constrainedDevice ? 1024 : 2048;
 keyLight.shadow.camera.near = 0.1;
 keyLight.shadow.camera.far = 40;
+keyLight.shadow.bias = -0.00015;
+keyLight.shadow.normalBias = 0.025;
 scene.add(keyLight);
+const windowLight = new THREE.DirectionalLight(0xffead1, 0.62);
+windowLight.position.set(-roomWidth * 0.8, roomHeight * 1.8, -roomDepth * 0.65);
+scene.add(windowLight);
+const interiorFill = new THREE.PointLight(0xfff3df, 0.72, Math.max(roomWidth, roomDepth) * 1.8, 1.8);
+interiorFill.position.set(0, roomHeight * 0.82, 0);
+interiorFill.castShadow = false;
+scene.add(interiorFill);
 
 const textureLoader = new THREE.TextureLoader();
 const floorTexture = textureLoader.load({_html_script_safe_json(str(dict(manifest.get("floorplan") or {}).get("relpath") or "source-floorplan.jpg"))});
@@ -7666,6 +7742,20 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
+const apartmentPlinth = new THREE.Mesh(
+  new THREE.BoxGeometry(roomWidth * 1.015, 0.12, roomDepth * 1.015),
+  new THREE.MeshPhysicalMaterial({{
+    color: styleColor("timber", "#d8c8b3"),
+    roughness: 0.76,
+    metalness: 0.0,
+    clearcoat: 0.08,
+    clearcoatRoughness: 0.8,
+  }})
+);
+apartmentPlinth.position.y = -0.065;
+apartmentPlinth.castShadow = true;
+apartmentPlinth.receiveShadow = true;
+scene.add(apartmentPlinth);
 let floorplanLayerActive = false;
 function setFloorplanLayer(active) {{
   floorplanLayerActive = Boolean(active);
@@ -7687,6 +7777,8 @@ const wallMaterial = new THREE.MeshStandardMaterial({{
   color: styleColor("wall", "#f4efe4"),
   roughness: 0.88,
   metalness: 0.02,
+  clearcoat: 0.08,
+  clearcoatRoughness: 0.82,
   side: THREE.DoubleSide,
   transparent: true,
   opacity: 1.0,
@@ -7805,6 +7897,7 @@ styleStagingGroup.name = "generated-style-staging";
 stagingGroup.add(styleStagingGroup);
 const stagingObjects = [];
 const semanticStagingObjects = [];
+const stagingDetailObjects = [];
 const stagingMaterials = {{
   textile: new THREE.MeshStandardMaterial({{ color: styleColor("textile", "#b58f73"), roughness: 0.86, metalness: 0.0 }}),
   paleTextile: new THREE.MeshStandardMaterial({{ color: styleColor("paleTextile", "#e4dacd"), roughness: 0.9, metalness: 0.0 }}),
@@ -7813,7 +7906,7 @@ const stagingMaterials = {{
   accent: new THREE.MeshStandardMaterial({{ color: styleColor("accent", "#a77c2b"), roughness: 0.58, metalness: 0.03 }}),
   foliage: new THREE.MeshStandardMaterial({{ color: styleColor("foliage", "#6f8561"), roughness: 0.92, metalness: 0.0 }}),
   rattan: new THREE.MeshStandardMaterial({{ color: styleColor("rattan", "#b78249"), roughness: 0.76, metalness: 0.0 }}),
-  metal: new THREE.MeshStandardMaterial({{ color: styleColor("metal", "#b59445"), roughness: 0.32, metalness: 0.72 }}),
+  darkMetal: new THREE.MeshStandardMaterial({{ color: styleColor("metal", "#b59445"), roughness: 0.32, metalness: 0.72 }}),
 }};
 
 function stagingKind(stop) {{
@@ -7863,6 +7956,21 @@ function addStagingRug(group, dimensions, position, material) {{
   return rug;
 }}
 
+function addStagingDetail(group, name, geometry, position, material, rotation = null) {{
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = String(name || "generated-staging-detail");
+  mesh.position.set(Number(position.x || 0), Number(position.y || 0), Number(position.z || 0));
+  if (rotation) {{
+    mesh.rotation.set(Number(rotation.x || 0), Number(rotation.y || 0), Number(rotation.z || 0));
+  }}
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+  stagingObjects.push(mesh);
+  stagingDetailObjects.push(mesh);
+  return mesh;
+}}
+
 function addGeneratedStagingForStop(stop, index) {{
   const focus = stop?.focus && typeof stop.focus === "object" ? stop.focus : null;
   if (!focus) return null;
@@ -7876,26 +7984,52 @@ function addGeneratedStagingForStop(stop, index) {{
     addStagingRug(group, {{ x: 1.62, z: 1.1 }}, {{ x: 0.05, z: 0.02 }}, stagingMaterials.paleTextile);
     addStagingBox(group, "generated-sofa-seat", {{ x: 1.24, y: 0.28, z: 0.52 }}, {{ x: -0.22, y: 0.14, z: -0.22 }}, stagingMaterials.textile);
     addStagingBox(group, "generated-sofa-back", {{ x: 1.24, y: 0.48, z: 0.12 }}, {{ x: -0.22, y: 0.38, z: -0.53 }}, stagingMaterials.textile);
+    addStagingBox(group, "generated-sofa-arm-left", {{ x: 0.12, y: 0.38, z: 0.58 }}, {{ x: -0.84, y: 0.25, z: -0.22 }}, stagingMaterials.textile);
+    addStagingBox(group, "generated-sofa-arm-right", {{ x: 0.12, y: 0.38, z: 0.58 }}, {{ x: 0.40, y: 0.25, z: -0.22 }}, stagingMaterials.textile);
+    addStagingDetail(group, "generated-sofa-cushion-left", new THREE.SphereGeometry(0.22, 20, 14), {{ x: -0.52, y: 0.38, z: -0.24 }}, stagingMaterials.paleTextile, {{ x: 0, y: 0, z: -0.12 }});
+    addStagingDetail(group, "generated-sofa-cushion-right", new THREE.SphereGeometry(0.22, 20, 14), {{ x: 0.08, y: 0.38, z: -0.24 }}, stagingMaterials.paleTextile, {{ x: 0, y: 0, z: 0.12 }});
     addStagingBox(group, "generated-coffee-table", {{ x: 0.72, y: 0.2, z: 0.42 }}, {{ x: 0.26, y: 0.1, z: 0.34 }}, stagingMaterials.timber);
+    for (const [legX, legZ] of [[-0.28, -0.13], [0.28, -0.13], [-0.28, 0.13], [0.28, 0.13]]) {{
+      addStagingDetail(group, "generated-coffee-table-leg", new THREE.CylinderGeometry(0.025, 0.025, 0.28, 12), {{ x: 0.26 + legX, y: 0.14, z: 0.34 + legZ }}, stagingMaterials.darkMetal);
+    }}
+    addStagingDetail(group, "generated-floor-lamp", new THREE.CylinderGeometry(0.035, 0.055, 1.05, 16), {{ x: 0.66, y: 0.525, z: -0.42 }}, stagingMaterials.darkMetal);
+    addStagingDetail(group, "generated-floor-lamp-shade", new THREE.CylinderGeometry(0.16, 0.25, 0.28, 24), {{ x: 0.66, y: 1.08, z: -0.42 }}, stagingMaterials.paleTextile);
   }} else if (kind === "bedroom") {{
     addStagingRug(group, {{ x: 1.74, z: 1.22 }}, {{ x: 0.02, z: 0.02 }}, stagingMaterials.paleTextile);
     addStagingBox(group, "generated-bed-base", {{ x: 1.42, y: 0.34, z: 1.02 }}, {{ x: 0, y: 0.17, z: -0.02 }}, stagingMaterials.paleTextile);
     addStagingBox(group, "generated-bed-headboard", {{ x: 1.48, y: 0.72, z: 0.12 }}, {{ x: 0, y: 0.44, z: -0.62 }}, stagingMaterials.timber);
     addStagingBox(group, "generated-bed-pillow", {{ x: 0.64, y: 0.16, z: 0.22 }}, {{ x: -0.26, y: 0.44, z: -0.42 }}, stagingMaterials.stone);
+    addStagingBox(group, "generated-bed-pillow-right", {{ x: 0.64, y: 0.16, z: 0.22 }}, {{ x: 0.38, y: 0.44, z: -0.42 }}, stagingMaterials.stone);
+    addStagingBox(group, "generated-bed-throw", {{ x: 1.28, y: 0.055, z: 0.3 }}, {{ x: 0, y: 0.385, z: 0.28 }}, stagingMaterials.textile);
+    addStagingBox(group, "generated-nightstand", {{ x: 0.34, y: 0.38, z: 0.34 }}, {{ x: -0.9, y: 0.19, z: -0.34 }}, stagingMaterials.timber);
+    addStagingDetail(group, "generated-bedside-lamp", new THREE.CylinderGeometry(0.08, 0.12, 0.26, 18), {{ x: -0.9, y: 0.51, z: -0.34 }}, stagingMaterials.paleTextile);
   }} else if (kind === "kitchen" || kind === "dining") {{
     addStagingBox(group, "generated-kitchen-counter", {{ x: 1.48, y: 0.68, z: 0.42 }}, {{ x: -0.08, y: 0.34, z: -0.38 }}, stagingMaterials.stone);
     addStagingBox(group, "generated-kitchen-island", {{ x: 0.9, y: 0.42, z: 0.5 }}, {{ x: 0.28, y: 0.21, z: 0.28 }}, stagingMaterials.timber);
     addStagingBox(group, "generated-dining-surface", {{ x: 0.86, y: 0.18, z: 0.58 }}, {{ x: -0.48, y: 0.46, z: 0.36 }}, stagingMaterials.timber);
+    addStagingBox(group, "generated-counter-splash", {{ x: 1.48, y: 0.42, z: 0.05 }}, {{ x: -0.08, y: 0.76, z: -0.59 }}, stagingMaterials.glass);
+    addStagingDetail(group, "generated-kitchen-pendant", new THREE.CylinderGeometry(0.1, 0.18, 0.24, 20), {{ x: 0.28, y: 1.28, z: 0.28 }}, stagingMaterials.darkMetal);
+    for (const chairZ of [0.1, 0.62]) {{
+      addStagingBox(group, "generated-dining-chair-seat", {{ x: 0.34, y: 0.12, z: 0.34 }}, {{ x: -0.96, y: 0.34, z: chairZ }}, stagingMaterials.timber);
+      addStagingBox(group, "generated-dining-chair-back", {{ x: 0.34, y: 0.52, z: 0.08 }}, {{ x: -1.1, y: 0.58, z: chairZ }}, stagingMaterials.timber);
+    }}
   }} else if (kind === "bath") {{
     addStagingBox(group, "generated-bath-vanity", {{ x: 0.72, y: 0.52, z: 0.36 }}, {{ x: -0.22, y: 0.26, z: -0.18 }}, stagingMaterials.stone);
     addStagingBox(group, "generated-bath-tub", {{ x: 1.08, y: 0.36, z: 0.54 }}, {{ x: 0.28, y: 0.18, z: 0.28 }}, stagingMaterials.paleTextile);
+    addStagingDetail(group, "generated-bath-basin", new THREE.CylinderGeometry(0.2, 0.24, 0.12, 24), {{ x: -0.22, y: 0.58, z: -0.18 }}, stagingMaterials.paleTextile);
+    addStagingDetail(group, "generated-bath-mirror", new THREE.CircleGeometry(0.34, 32), {{ x: -0.22, y: 1.08, z: -0.39 }}, stagingMaterials.glass);
+    addStagingDetail(group, "generated-bath-tap", new THREE.CylinderGeometry(0.025, 0.025, 0.28, 12), {{ x: -0.02, y: 0.72, z: -0.18 }}, stagingMaterials.darkMetal, {{ x: 0, y: 0, z: Math.PI * 0.5 }});
   }} else if (kind === "entry") {{
     addStagingBox(group, "generated-entry-bench", {{ x: 1.0, y: 0.28, z: 0.34 }}, {{ x: -0.1, y: 0.14, z: -0.18 }}, stagingMaterials.timber);
     addStagingBox(group, "generated-entry-console", {{ x: 0.78, y: 0.64, z: 0.22 }}, {{ x: 0.34, y: 0.32, z: 0.24 }}, stagingMaterials.stone);
+    addStagingDetail(group, "generated-entry-mirror", new THREE.CircleGeometry(0.31, 32), {{ x: 0.34, y: 1.08, z: 0.12 }}, stagingMaterials.glass);
+    addStagingDetail(group, "generated-entry-vase", new THREE.CylinderGeometry(0.08, 0.12, 0.3, 18), {{ x: 0.5, y: 0.79, z: 0.24 }}, stagingMaterials.accent);
   }} else if (kind === "outdoor") {{
     addStagingBox(group, "generated-outdoor-table", {{ x: 0.72, y: 0.26, z: 0.56 }}, {{ x: 0.0, y: 0.13, z: 0.08 }}, stagingMaterials.timber);
     addStagingBox(group, "generated-planter", {{ x: 0.34, y: 0.4, z: 0.34 }}, {{ x: -0.52, y: 0.2, z: -0.28 }}, stagingMaterials.accent);
-    addStagingBox(group, "generated-foliage", {{ x: 0.42, y: 0.42, z: 0.42 }}, {{ x: -0.52, y: 0.56, z: -0.28 }}, stagingMaterials.foliage);
+    addStagingDetail(group, "generated-foliage", new THREE.IcosahedronGeometry(0.34, 2), {{ x: -0.52, y: 0.62, z: -0.28 }}, stagingMaterials.foliage);
+    addStagingBox(group, "generated-outdoor-chair", {{ x: 0.42, y: 0.14, z: 0.42 }}, {{ x: 0.58, y: 0.28, z: 0.08 }}, stagingMaterials.timber);
+    addStagingBox(group, "generated-outdoor-chair-back", {{ x: 0.42, y: 0.5, z: 0.1 }}, {{ x: 0.74, y: 0.53, z: 0.08 }}, stagingMaterials.timber);
   }}
   semanticStagingGroup.add(group);
   return group;
@@ -8151,7 +8285,7 @@ function addStyledSceneInstance(instance) {{
   return group;
 }}
 
-routeStops.forEach((stop, index) => addGeneratedStagingForStop(stop, index));
+stagedRouteStops.forEach((stop, index) => addGeneratedStagingForStop(stop, index));
 styleInstances.forEach((instance) => addStyledSceneInstance(instance));
 const styleEvidenceReady =
   styleSceneContractReady
@@ -9238,6 +9372,10 @@ function renderCaptureFrame(payload = {{}}) {{
 }}
 
 window.addEventListener("resize", resize);
+if (typeof ResizeObserver === "function") {{
+  resizeObserver = new ResizeObserver(() => resize());
+  resizeObserver.observe(viewport);
+}}
 resize();
 setInsideView();
 syncCaptureRouteCard();
@@ -9560,6 +9698,8 @@ function getRenderMetrics(options = {{}}) {{
         && (activeViewMode !== "room" || styleCueVisibilityReady);
       return {{
         ready: visibleStyleReady,
+        contextLost: Boolean(contextLost),
+        viewerDisposed: Boolean(viewerDisposed),
         frameCount: Number(renderFrameCount || 0),
         wallRectCount: Number(wallRectangles.length || 0),
         wallMeshCount: Number(wallMeshes.length || 0),
@@ -9593,7 +9733,17 @@ function getRenderMetrics(options = {{}}) {{
       captureOverlayVisible: Boolean(captureRouteCard && !captureRouteCard.hidden),
       captureRouteLabel: String(captureRouteLabel?.textContent || "").trim(),
       stagingObjectCount: Number(stagingObjects.length || 0),
+      stagingDetailObjectCount: Number(stagingDetailObjects.length || 0),
+      stagedRouteStopCount: Number(stagedRouteStops.length || 0),
+      maxStagedRouteStops: Number(maxStagedRouteStops),
       visibleStagingObjectCount: Number(visibleStagingObjectCount || 0),
+      lightCount: Number(scene.children.filter((child) => Boolean(child && child.isLight)).length || 0),
+      physicallyBasedToneMapping: renderer.toneMapping === THREE.ACESFilmicToneMapping,
+      shadowMapEnabled: Boolean(renderer.shadowMap.enabled),
+      renderQualityTier: String(renderQualityTier),
+      rendererPixelRatio: Number(renderer.getPixelRatio().toFixed(2)),
+      shadowMapSize: Number(keyLight.shadow.mapSize.width || 0),
+      apartmentPlinthVisible: Boolean(apartmentPlinth.visible),
       semanticStagingGroupVisible: Boolean(semanticStagingGroup.visible),
       visibleSemanticStagingObjectCount: Number(
         semanticStagingObjects.filter((object) => objectEffectivelyVisible(object)).length,
@@ -9663,7 +9813,66 @@ window.__pqReconstructionDebug = {{
   getVisibleHotspotLabelBounds,
 }};
 
+    function handleWebGLContextLost(event) {{
+      event?.preventDefault?.();
+      contextLost = true;
+      if (animationFrameId) {{
+        window.cancelAnimationFrame(animationFrameId);
+        animationFrameId = 0;
+      }}
+      stopGuidedRoute();
+      showViewerFallback();
+      announceViewerState("The interactive 3D preview stopped unexpectedly. Reload the page or use the floorplan and listing photos.");
+    }}
+
+    function disposeViewer() {{
+      if (viewerDisposed) return;
+      viewerDisposed = true;
+      if (animationFrameId) {{
+        window.cancelAnimationFrame(animationFrameId);
+        animationFrameId = 0;
+      }}
+      resizeObserver?.disconnect?.();
+      stopGuidedRoute();
+      controls.dispose();
+      scene.traverse((object) => {{
+        object.geometry?.dispose?.();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {{
+          if (!material) continue;
+          for (const value of Object.values(material)) {{
+            if (value && typeof value === "object" && value.isTexture && typeof value.dispose === "function") {{
+              value.dispose();
+            }}
+          }}
+          material.dispose?.();
+        }}
+      }});
+      renderer.dispose();
+    }}
+
+    renderer.domElement.addEventListener("webglcontextlost", handleWebGLContextLost, false);
+    renderer.domElement.addEventListener("webglcontextrestored", () => {{
+      if (!viewerDisposed) window.location.reload();
+    }}, false);
+    window.addEventListener("pagehide", disposeViewer, {{ once: true }});
+    document.addEventListener("visibilitychange", () => {{
+      if (
+        document.visibilityState === "visible"
+        && !viewerDisposed
+        && !contextLost
+        && !animationFrameId
+        && !(shellProbeMode && renderFrameCount > 12)
+      ) {{
+        animationFrameId = window.requestAnimationFrame(renderFrame);
+      }}
+    }});
+    window.__pqReconstructionDebug.simulateContextLoss = () => handleWebGLContextLost({{ preventDefault() {{}} }});
+    window.__pqReconstructionDebug.disposeViewer = disposeViewer;
+
     function renderFrame(now = 0) {{
+      animationFrameId = 0;
+      if (viewerDisposed || contextLost) return;
       const transitioned = stepCameraTransition(now);
       if (!transitioned) {{
         controls.update();
@@ -9688,10 +9897,12 @@ window.__pqReconstructionDebug = {{
       if (shellProbeMode && !routeCameraTransition.active && renderFrameCount > 12) {{
         return;
       }}
-      window.requestAnimationFrame(renderFrame);
+      if (document.visibilityState === "visible") {{
+        animationFrameId = window.requestAnimationFrame(renderFrame);
+      }}
     }}
 
-    renderFrame(performance.now());
+    animationFrameId = window.requestAnimationFrame(renderFrame);
 }}
 </script>
 </body>

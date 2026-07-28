@@ -15,6 +15,7 @@ from app.product.property_search_work_queue import (
     PostgresPropertySearchWorkQueue,
     PropertySearchWorkEnqueueResult,
     PropertySearchWorkJob,
+    PropertySearchWorkQueueSnapshot,
 )
 from app.product.service import ProductService
 
@@ -531,6 +532,12 @@ def test_worker_role_processes_property_job_on_main_execution_path(
         def heartbeat(self, **_kwargs) -> bool:  # type: ignore[no-untyped-def]
             calls.append(("heartbeat", ""))
             return True
+
+        def observability_snapshot(self) -> PropertySearchWorkQueueSnapshot:
+            return PropertySearchWorkQueueSnapshot(
+                depth=1,
+                oldest_item_age_seconds=0.0,
+            )
 
         def complete(self, *, job_id: str, lease_owner: str):  # type: ignore[no-untyped-def]
             calls.append(("complete", lease_owner))

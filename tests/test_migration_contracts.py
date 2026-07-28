@@ -248,7 +248,9 @@ def test_operator_summary_lists_legacy_postgres_shortcuts() -> None:
     assert "make ci-gates-postgres" in text
     assert "make verify-release-assets" in text
     assert "make verify-flagship-release-readiness" in text
-    assert "make release-preflight" in text
+    assert "propertyquarry_release_make_dispatch.py release-preflight" in text
+    assert "propertyquarry_release_make_dispatch.py ci-gates-authenticated" in text
+    assert "propertyquarry_release_make_dispatch.py ltd-release-gates" in text
     assert "make provider-readiness" in text
     assert "verify-flagship-release-readiness" in makefile
     assert "verify-flagship-release-readiness:" in makefile
@@ -327,6 +329,7 @@ def test_hard_exit_gate_targets_and_runtime_gate_scripts_are_wired() -> None:
 
     assert "scripts/runtime_hard_exit_gates.sh" in runtime_target
     assert "scripts/hard_exit_gates.sh" in hard_target
+    assert "bootstrap-propertyquarry-release-python" in hard_target
     assert "verify-ltd-critical-entries" in ltd_target
     assert "verify-ltd-flagship-subset" in ltd_target
     assert "scripts/verify_ltd_critical_entries.py" in critical_target
@@ -339,15 +342,30 @@ def test_hard_exit_gate_targets_and_runtime_gate_scripts_are_wired() -> None:
     assert 'PYTHON_BIN="${PYTHON_BIN:-}"' in runtime_gate
     assert '"${PYTHON_BIN}" scripts/verify_pocket_audio_archive.py' in runtime_gate
 
-    assert "make release-preflight" in full_gate
-    assert "make test-postgres-contracts" in full_gate
-    assert "make smoke-postgres" in full_gate
-    assert "make smoke-postgres-legacy" in full_gate
-    assert "make smoke-api-tibor" in full_gate
-    assert "make verify-pocket-audio-archive" in full_gate
-    assert "make verify-ltd-critical-entries" in full_gate
-    assert "make verify-ltd-flagship-subset" in full_gate
-    assert "pytest -q" in full_gate
+    assert '"${RELEASE_PYTHON}" -m pytest -q' in full_gate
+    assert '"${RELEASE_DISPATCH}" release-preflight' in full_gate
+    assert '"${RELEASE_DISPATCH}" verify-pocket-audio-archive' in full_gate
+    assert (
+        '"${RELEASE_DISPATCH}" verify-ltd-critical-entries-authenticated'
+        in full_gate
+    )
+    assert (
+        '"${RELEASE_DISPATCH}" verify-ltd-flagship-subset-authenticated'
+        in full_gate
+    )
+    assert "/bin/bash -p scripts/test_postgres_contracts.sh" in full_gate
+    assert "run_flagship_postgres_smoke() {" in full_gate
+    assert '/bin/bash -p scripts/smoke_postgres.sh "$@"' in full_gate
+    assert full_gate.count("\nrun_flagship_postgres_smoke\n") == 1
+    assert (
+        full_gate.count("\nrun_flagship_postgres_smoke --legacy-fixture\n")
+        == 1
+    )
+    assert "PROPERTYQUARRY_SMOKE_PUBLIC_HOME_REQUIRED=1" in full_gate
+    assert "/bin/bash -p scripts/smoke_api_tibor.sh" in full_gate
+    assert "make " not in full_gate
+    assert "./scripts/bootstrap_propertyquarry_release_python.sh" in full_gate
+    assert "./scripts/hard_exit_gates.sh" in full_gate
 
     assert "EA_RUN_RUNTIME_HARD_EXIT_GATES=1|0" in deploy
     assert 'EA_RUN_RUNTIME_HARD_EXIT_GATES:-1' in deploy
@@ -355,13 +373,13 @@ def test_hard_exit_gate_targets_and_runtime_gate_scripts_are_wired() -> None:
 
     assert "make runtime-hard-exit-gates" in readme
     assert "make hard-exit-gates" in readme
-    assert "make ltd-release-gates" in readme
+    assert "propertyquarry_release_make_dispatch.py ltd-release-gates" in readme
     assert "make verify-ltd-critical-entries" in readme
     assert "make verify-ltd-flagship-subset" in readme
     assert "hard-exit and LTD verifier scripts" in readme
     assert "make runtime-hard-exit-gates" in runbook
     assert "make hard-exit-gates" in runbook
-    assert "make ltd-release-gates" in runbook
+    assert "propertyquarry_release_make_dispatch.py ltd-release-gates" in runbook
     assert "verify_ltd_critical_entries.py" in runbook
     assert "verify_ltd_flagship_subset.py" in runbook
     assert 'cp "${EA_ROOT}/LTDs.md"' in tibor_smoke

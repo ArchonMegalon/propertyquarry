@@ -38,6 +38,14 @@ PASSTHROUGH_ENV_NAMES = (
     "BROWSERACT_API_KEY_FALLBACK_1",
     "BROWSERACT_API_KEY_FALLBACK_2",
     "BROWSERACT_API_KEY_FALLBACK_3",
+    "WORKLLM_BASE_URL",
+    "WORKLLM_EMAIL",
+    "WORKLLM_PASSWORD",
+    "WORKLLM_LICENSE_TIER",
+    "WORKLLM_PROVIDER_VERIFIED",
+    "WORKLLM_RUNTIME_ENABLED",
+    "WORKLLM_REAL_ESTATE_AGENT_ID",
+    "WORKLLM_ALLOWED_HOSTS",
     "PROPERTYQUARRY_MOOTION_REMOTE_VIDEO_ALLOWED_HOSTS",
     "PROPERTYQUARRY_MOOTION_REMOTE_VIDEO_MAX_BYTES",
     "PROPERTYQUARRY_MOOTION_REMOTE_VIDEO_TIMEOUT_SECONDS",
@@ -451,6 +459,16 @@ def build_shared_env_assignments(
         _copy_if_present(assignments, env_updates, env_name)
     for prefix in PASSTHROUGH_ENV_PREFIXES:
         _copy_by_prefix(assignments, env_updates, prefix)
+    workllm_runtime_keys = sorted(key for key in env_updates if key.startswith("WORKLLM_"))
+    if workllm_runtime_keys:
+        details["providers"]["workllm"] = {
+            "credentials_present": all(
+                str(env_updates.get(name) or "").strip()
+                for name in ("WORKLLM_BASE_URL", "WORKLLM_EMAIL", "WORKLLM_PASSWORD")
+            ),
+            "agent_id_present": bool(str(env_updates.get("WORKLLM_REAL_ESTATE_AGENT_ID") or "").strip()),
+            "runtime_env_keys": workllm_runtime_keys,
+        }
     if property_database_url:
         env_updates["EA_STORAGE_BACKEND"] = "postgres"
     return env_updates, details

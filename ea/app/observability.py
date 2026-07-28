@@ -24,6 +24,8 @@ from app.services.admission_control import (
 _LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
 _KNOWN_METHODS = {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
 _MAX_HEARTBEAT_BYTES = 64 * 1024
+_MAX_PROPERTY_SEARCH_QUEUE_DEPTH = (2**63) - 1
+_MAX_PROPERTY_SEARCH_QUEUE_AGE_SECONDS = 10 * 365 * 24 * 60 * 60
 _DELIVERY_OUTBOX_METRIC_OUTCOMES = (
     "queued",
     "claimed",
@@ -43,6 +45,26 @@ _CONTENT_LEDGER_METRIC_OUTCOMES = (
     "corruption",
 )
 _INGRESS_LABEL_RE = re.compile(r"[^a-z0-9_]+")
+_INGRESS_ADMISSION_BACKENDS = ("memory", "postgres")
+_INGRESS_ADMISSION_OPERATIONS = (
+    "ip_request",
+    "admit",
+    "renew",
+    "release",
+    "cleanup",
+    "snapshot",
+)
+_INGRESS_ADMISSION_OUTCOMES = (
+    "allowed",
+    "quota_limited",
+    "lease_limited",
+    "capacity_exhausted",
+    "backend_unavailable",
+)
+_INGRESS_ADMISSION_CAPACITY_LIMITS = {
+    "lease": 100_000,
+    "quota": 1_000_000,
+}
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _REPLICA_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -385,6 +407,9 @@ class RuntimeMetrics:
             ingress_inflight = dict(self._ingress_inflight)
             ingress_admission = dict(self._ingress_admission)
             content_ledger_events = dict(self._content_ledger_events)
+        from app.telemetry import span_export_health_snapshot
+
+        span_export_health = span_export_health_snapshot()
 
         lines = [
             "# HELP propertyquarry_http_requests_total HTTP requests completed by bounded route template.",
@@ -571,6 +596,18 @@ class RuntimeMetrics:
                 'propertyquarry_content_ledger_events_total{outcome="%s"} %d'
                 % (_label_value(outcome), max(0, int(content_ledger_events.get(outcome, 0))))
             )
+        lines.extend(
+            [
+                "# HELP propertyquarry_local_span_export_failures_total Local span export failures observed by this process.",
+                "# TYPE propertyquarry_local_span_export_failures_total counter",
+                "propertyquarry_local_span_export_failures_total %d"
+                % max(0, int(span_export_health["failure_count"])),
+                "# HELP propertyquarry_local_span_export_recoveries_total Crash-truncated local span tails recovered by this process.",
+                "# TYPE propertyquarry_local_span_export_recoveries_total counter",
+                "propertyquarry_local_span_export_recoveries_total %d"
+                % max(0, int(span_export_health["recovery_count"])),
+            ]
+        )
 
         lines.extend(
             [
@@ -652,6 +689,43 @@ class RuntimeMetrics:
             lines.append(
                 'propertyquarry_runtime_heartbeat_stale{role="%s"} %d'
                 % (_label_value(sample.role), 1 if sample.stale else 0)
+            )
+        lines.extend(
+            [
+                "# HELP propertyquarry_queue_observed Whether a fresh valid bounded queue snapshot was observed.",
+                "# TYPE propertyquarry_queue_observed gauge",
+                "# HELP propertyquarry_queue_depth Current active work items in a bounded queue.",
+                "# TYPE propertyquarry_queue_depth gauge",
+                "# HELP propertyquarry_queue_oldest_item_age_seconds Age of the oldest active work item in a bounded queue.",
+                "# TYPE propertyquarry_queue_oldest_item_age_seconds gauge",
+            ]
+        )
+        worker_sample = next(sample for sample in samples if sample.role == "worker")
+        property_search_queue_observed = (
+            not worker_sample.stale
+            and worker_sample.property_search_queue_depth is not None
+            and worker_sample.property_search_queue_oldest_item_age_seconds is not None
+        )
+        lines.append(
+            'propertyquarry_queue_observed{queue="property_search"} %d'
+            % (1 if property_search_queue_observed else 0)
+        )
+        if property_search_queue_observed:
+            oldest_item_age_seconds = (
+                0.0
+                if worker_sample.property_search_queue_depth == 0
+                else (
+                    worker_sample.property_search_queue_oldest_item_age_seconds
+                    + worker_sample.age_seconds
+                )
+            )
+            lines.append(
+                'propertyquarry_queue_depth{queue="property_search"} %d'
+                % worker_sample.property_search_queue_depth
+            )
+            lines.append(
+                'propertyquarry_queue_oldest_item_age_seconds{queue="property_search"} %s'
+                % _metric_float(oldest_item_age_seconds)
             )
         scheduler_sample = next(sample for sample in samples if sample.role == "scheduler")
         delivery_totals = dict(scheduler_sample.delivery_outbox_totals)
@@ -804,3 +878,29 @@ def _heartbeat_sample(role: str, environ: Mapping[str, str], now_epoch: float) -
         queue_depth,
         queue_oldest_age,
     )
+
+
+def runtime_heartbeat_readiness(
+    role: str,
+    environ: Mapping[str, str] | None = None,
+    *,
+    now_epoch: float | None = None,
+) -> tuple[bool, str]:
+    """Evaluate one required role heartbeat through the metrics parser."""
+
+    normalized_role = str(role or "").strip().lower()
+    if normalized_role not in {"worker", "scheduler"}:
+        return False, "runtime_heartbeat_role_invalid"
+    env = environ if environ is not None else os.environ
+    if not _heartbeat_required(normalized_role, env):
+        return True, f"{normalized_role}_heartbeat_not_required"
+    sample = _heartbeat_sample(
+        normalized_role,
+        env,
+        float(now_epoch if now_epoch is not None else time.time()),
+    )
+    if not sample.present:
+        return False, f"{normalized_role}_heartbeat_missing_or_invalid"
+    if sample.stale:
+        return False, f"{normalized_role}_heartbeat_stale_or_invalid"
+    return True, f"{normalized_role}_heartbeat_ready"

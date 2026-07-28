@@ -31,7 +31,6 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-
 TRUST_SCHEMA = "propertyquarry.evidence-trust.v1"
 CHALLENGE_SCHEMA = "propertyquarry.evidence-challenge.v1"
 CHALLENGE_PRODUCER = "propertyquarry-release-control"
@@ -95,6 +94,7 @@ PROMETHEUS_RANGE_QUERY = (
     'propertyquarry_http_request_duration_seconds_bucket|'
     'propertyquarry_http_request_duration_seconds_sum|'
     'propertyquarry_http_request_duration_seconds_count|'
+    'propertyquarry_ingress_admission_operations_total|'
     'propertyquarry_runtime_build_info"}'
 )
 
@@ -110,6 +110,9 @@ MONITORING_DOMAIN = "propertyquarry/monitoring-runtime-proof/v1"
 RANGE_DOMAIN = "propertyquarry/prometheus-range-receipt/v1"
 ALERT_DOMAIN = "propertyquarry/operator-alert-ack/v1"
 OPERATOR_GATEWAY_ACK_DOMAIN = "propertyquarry/operator-gateway-ack/v1"
+DASHBOARD_RENDER_DOMAIN = "propertyquarry/dashboard-render-receipt/v1"
+STRUCTURED_LOG_QUERY_DOMAIN = "propertyquarry/structured-log-query-receipt/v1"
+DISTRIBUTED_TRACE_QUERY_DOMAIN = "propertyquarry/distributed-trace-query-receipt/v1"
 SIGNATURE_PREFIX = b"PROPERTYQUARRY-AUTHENTICATED-EVIDENCE-V1\x00"
 
 

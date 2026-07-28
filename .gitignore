@@ -12,6 +12,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.propertyquarry_release_tools/
 build/
 
 # Local runtime data

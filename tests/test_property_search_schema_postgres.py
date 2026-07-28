@@ -239,6 +239,35 @@ def test_postgres_legacy_run_upgrade_queue_install_and_idempotency(
             with conn.cursor() as cur:
                 cur.execute(
                     """
+                    ALTER TABLE property_search_work_jobs
+                    ENABLE REPLICA TRIGGER property_search_work_jobs_erasure_fence_guard
+                    """
+                )
+        replica_only = schema.inspect_property_search_schema(
+            database_url,
+            connect=isolated_connect,
+        )
+        assert replica_only.ready is False
+        assert replica_only.reason == (
+            "required_trigger_missing:property_search_work_jobs_erasure_fence_guard"
+        )
+        with isolated_connect(database_url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    ALTER TABLE property_search_work_jobs
+                    ENABLE ALWAYS TRIGGER property_search_work_jobs_erasure_fence_guard
+                    """
+                )
+        assert schema.inspect_property_search_schema(
+            database_url,
+            connect=isolated_connect,
+        ).ready is True
+
+        with isolated_connect(database_url, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
                     SELECT status, compact_json->>'status'
                     FROM property_search_runs
                     WHERE principal_id = 'legacy-principal' AND run_id = 'legacy-run'

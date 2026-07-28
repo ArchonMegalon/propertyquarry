@@ -651,13 +651,14 @@ propertyquarry_finish_schema_quiesce() {
   fi
   PROPERTYQUARRY_SCHEMA_QUIESCE_ARMED=0
   PROPERTYQUARRY_PUBLIC_INGRESS_HOLD_ARMED=0
-  trap - EXIT INT TERM
+  trap - EXIT HUP INT TERM
 }
 
 propertyquarry_schema_quiesce_exit_handler() {
+  trap '' HUP INT TERM
   local exit_code="${1:-1}"
   local recovery_failed=0
-  trap - EXIT INT TERM
+  trap - EXIT
   if [[ "${PROPERTYQUARRY_SCHEMA_QUIESCE_ARMED}" != "1" && \
     "${PROPERTYQUARRY_PUBLIC_INGRESS_HOLD_ARMED}" != "1" ]]; then
     exit "${exit_code}"
@@ -689,6 +690,7 @@ propertyquarry_schema_quiesce_exit_handler() {
 
 propertyquarry_install_schema_quiesce_traps() {
   trap 'propertyquarry_schema_quiesce_exit_handler $?' EXIT
+  trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
 }

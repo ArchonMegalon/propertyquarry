@@ -4,16 +4,257 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
+
 
 ROOT = Path(__file__).resolve().parents[1]
+DOCKER_BINARY = Path("/usr/bin/docker")
+EXPECTED_PROPERTY_SERVICES = {
+    "propertyquarry-api",
+    "propertyquarry-db",
+    "propertyquarry-migrate",
+    "propertyquarry-render-tools",
+    "propertyquarry-scheduler",
+    "propertyquarry-worker",
+}
+ALLOWED_COMPOSE_USER = "10001:10001"
+FORBIDDEN_COMPOSE_SERVICE_KEYS = (
+    "cap_add",
+    "cgroup",
+    "device_cgroup_rules",
+    "devices",
+    "extends",
+    "gpus",
+    "group_add",
+    "ipc",
+    "network_mode",
+    "pid",
+    "post_start",
+    "pre_stop",
+    "privileged",
+    "provider",
+    "runtime",
+    "sysctls",
+    "use_api_socket",
+    "userns_mode",
+    "uts",
+    "volumes_from",
+)
+
+
+class SecurityPostureConfigError(ValueError):
+    """Raised when a security input cannot be interpreted unambiguously."""
 
 
 def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
+
+
+def _strict_json_object(raw: str, *, label: str) -> dict[str, object]:
+    def reject_duplicate_keys(
+        pairs: list[tuple[str, object]],
+    ) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise SecurityPostureConfigError(
+                    f"{label} contains duplicate object key {key!r}"
+                )
+            result[key] = value
+        return result
+
+    def reject_non_finite_constant(value: str) -> object:
+        raise SecurityPostureConfigError(
+            f"{label} contains non-finite JSON constant {value}"
+        )
+
+    try:
+        payload = json.loads(
+            raw,
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_non_finite_constant,
+        )
+    except json.JSONDecodeError as exc:
+        raise SecurityPostureConfigError(
+            f"{label} must be strict JSON: {exc}"
+        ) from exc
+    if type(payload) is not dict:
+        raise SecurityPostureConfigError(
+            f"{label} root must be a JSON object"
+        )
+    return payload
+
+
+def _yaml_mapping_key_present(raw: str, key: str) -> bool:
+    quoted_or_plain_key = (
+        rf"(?:{re.escape(key)}|\"{re.escape(key)}\"|'{re.escape(key)}')"
+    )
+    return bool(
+        re.search(
+            rf"(?:^|[{{,])[ \t]*{quoted_or_plain_key}[ \t]*:",
+            raw,
+            flags=re.MULTILINE,
+        )
+    )
+
+
+def _compose_parser_preflight_failures(compose: str) -> list[str]:
+    failures: list[str] = []
+    if any(
+        character not in "\n\r\t"
+        and unicodedata.category(character).startswith("C")
+        for character in compose
+    ):
+        failures.append(
+            "docker-compose.property.yml must not contain BOM or control "
+            "characters before strict Compose inspection"
+        )
+    if re.search(
+        r"(?<![A-Za-z0-9_&])&[A-Za-z0-9_.-]+(?=[ \t\r\n,\]}])"
+        r"|(?<![A-Za-z0-9_*])\*[A-Za-z0-9_.-]+(?=[ \t\r\n,:,\]}])",
+        compose,
+    ):
+        failures.append(
+            "docker-compose.property.yml must not use YAML anchors or aliases "
+            "before strict Compose inspection"
+        )
+    if re.search(
+        r"""^[ \t]*["'][^"'\r\n]+["'][ \t]*:""",
+        compose,
+        flags=re.MULTILINE,
+    ):
+        failures.append(
+            "docker-compose.property.yml property keys must use plain scalars "
+            "for fail-closed security inspection"
+        )
+    if re.search(r"^[ \t]*\?", compose, flags=re.MULTILINE):
+        failures.append(
+            "docker-compose.property.yml must not use explicit YAML mapping "
+            "keys for fail-closed security inspection"
+        )
+    if _yaml_mapping_key_present(compose, "include"):
+        failures.append(
+            "docker-compose.property.yml must not include external Compose "
+            "documents outside this security inspection"
+        )
+    if _yaml_mapping_key_present(compose, "extends"):
+        failures.append(
+            "docker-compose.property.yml must not use external service "
+            "inheritance outside this security inspection"
+        )
+    return failures
+
+
+def _reject_duplicate_yaml_mapping_keys(compose: str) -> None:
+    """Reject duplicate keys independently of Docker Compose parser policy."""
+
+    failure = (
+        "docker-compose.property.yml failed strict Docker Compose "
+        "resolution (duplicate or invalid mapping)"
+    )
+    try:
+        document = yaml.compose(compose, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as exc:
+        raise SecurityPostureConfigError(failure) from exc
+
+    def visit(node: Node | None) -> None:
+        if node is None:
+            return
+        if isinstance(node, MappingNode):
+            keys: set[tuple[str, str]] = set()
+            for key_node, value_node in node.value:
+                if not isinstance(key_node, ScalarNode):
+                    raise SecurityPostureConfigError(failure)
+                identity = (key_node.tag, key_node.value)
+                if identity in keys:
+                    raise SecurityPostureConfigError(failure)
+                keys.add(identity)
+                visit(value_node)
+            return
+        if isinstance(node, SequenceNode):
+            for child in node.value:
+                visit(child)
+
+    visit(document)
+
+
+def _resolved_compose_services(
+    compose: str,
+) -> dict[str, dict[str, object]]:
+    if not compose.strip():
+        raise SecurityPostureConfigError(
+            "docker-compose.property.yml must be a non-empty Compose document"
+        )
+    _reject_duplicate_yaml_mapping_keys(compose)
+    try:
+        result = subprocess.run(
+            (
+                str(DOCKER_BINARY),
+                "compose",
+                "--project-directory",
+                str(ROOT),
+                "-f",
+                "-",
+                "config",
+                "--format",
+                "json",
+                "--no-interpolate",
+                "--no-env-resolution",
+            ),
+            cwd=ROOT,
+            env={
+                "HOME": "/nonexistent",
+                "LANG": "C",
+                "LC_ALL": "C",
+                "PATH": "/usr/bin:/bin",
+            },
+            input=compose,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SecurityPostureConfigError(
+            "docker-compose.property.yml could not be checked with the "
+            "fixed Docker Compose parser"
+        ) from exc
+    if result.returncode != 0:
+        raise SecurityPostureConfigError(
+            "docker-compose.property.yml failed strict Docker Compose "
+            "resolution (duplicate or invalid mapping)"
+        )
+
+    document = _strict_json_object(
+        result.stdout,
+        label="resolved docker-compose.property.yml",
+    )
+    services = document.get("services")
+    if type(services) is not dict:
+        raise SecurityPostureConfigError(
+            "resolved docker-compose.property.yml services must be an object"
+        )
+
+    resolved_services: dict[str, dict[str, object]] = {}
+    for service_name, service in services.items():
+        if (
+            type(service_name) is not str
+            or not service_name
+            or type(service) is not dict
+        ):
+            raise SecurityPostureConfigError(
+                "resolved docker-compose.property.yml service entries must "
+                "be named objects"
+            )
+        resolved_services[service_name] = service
+    return resolved_services
 
 
 def _normalized_requirement_name(line: str) -> str:
@@ -34,6 +275,165 @@ def _lock_package_names(lock_text: str) -> set[str]:
             continue
         names.add(raw.split("==", 1)[0].strip().lower().replace("_", "-"))
     return names
+
+
+def _compose_service_block(compose: str, service_name: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(service_name)}:\s*$"
+        rf".*?(?=^  [A-Za-z0-9_.-]+:\s*$|^[A-Za-z0-9_.-]+:\s*$|\Z)",
+        compose,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return match.group(0) if match else ""
+
+
+def _unquote_yaml_scalar(value: str) -> str:
+    raw = value.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in {'"', "'"}:
+        return raw[1:-1]
+    return raw
+
+
+def _service_scalar(
+    service_block: str,
+    name: str,
+    *,
+    indent: int = 4,
+) -> str | None:
+    match = re.search(
+        rf"^{' ' * indent}{re.escape(name)}:\s*(.*?)\s*$",
+        service_block,
+        flags=re.MULTILINE,
+    )
+    if not match:
+        return None
+    return _unquote_yaml_scalar(match.group(1))
+
+
+def _service_section(service_block: str, name: str) -> list[str]:
+    lines = service_block.splitlines()
+    header = f"    {name}:"
+    for index, line in enumerate(lines):
+        if line.strip() != header.strip() or len(line) - len(line.lstrip()) != 4:
+            continue
+        section: list[str] = []
+        for child in lines[index + 1 :]:
+            if child.strip() and len(child) - len(child.lstrip()) <= 4:
+                break
+            section.append(child)
+        return section
+    return []
+
+
+def _service_list_items(service_block: str, name: str) -> list[str]:
+    items: list[str] = []
+    for line in _service_section(service_block, name):
+        raw = line.strip()
+        if raw.startswith("- "):
+            items.append(_unquote_yaml_scalar(raw[2:]))
+    return items
+
+
+def _compose_runtime_privilege_failures(compose: str) -> list[str]:
+    failures = _compose_parser_preflight_failures(compose)
+    if re.search(r"^\s*<<\s*:", compose, flags=re.MULTILINE):
+        failures.append(
+            "docker-compose.property.yml must not use YAML merge keys that can "
+            "hide runtime privilege overrides"
+        )
+    if re.search(r"""^(?:["']|\?|\{|\[)""", compose, flags=re.MULTILINE):
+        failures.append(
+            "docker-compose.property.yml top-level property keys must use "
+            "plain block-style mappings for fail-closed security inspection"
+        )
+    if re.search(r"(?<!\S)!(?:!|<|[A-Za-z])", compose):
+        failures.append(
+            "docker-compose.property.yml must not use explicit YAML tags that "
+            "can disguise runtime privilege values"
+        )
+    if re.search(r"^\s{4}[\"']", compose, flags=re.MULTILINE):
+        failures.append(
+            "docker-compose.property.yml service property keys must be plain "
+            "scalars for fail-closed security inspection"
+        )
+
+    for key in FORBIDDEN_COMPOSE_SERVICE_KEYS:
+        if re.search(
+            rf"^\s{{4}}[\"']?{re.escape(key)}[\"']?\s*:",
+            compose,
+            flags=re.MULTILINE,
+        ):
+            failures.append(
+                "docker-compose.property.yml must not override service runtime "
+                f"privilege boundary {key}"
+            )
+
+    section_names = sorted(
+        set(
+            re.findall(
+                r"^\s{2}([A-Za-z0-9_.-]+):\s*$",
+                compose,
+                flags=re.MULTILINE,
+            )
+        )
+    )
+    for section_name in section_names:
+        block = _compose_service_block(compose, section_name)
+        user = _service_scalar(block, "user")
+        if user is not None and user != ALLOWED_COMPOSE_USER:
+            failures.append(
+                "docker-compose.property.yml must not override service runtime "
+                "privilege boundary user except with the fixed non-root "
+                f"identity {ALLOWED_COMPOSE_USER}"
+            )
+        security_opt = _service_scalar(block, "security_opt")
+        security_options = _service_list_items(block, "security_opt")
+        if security_opt is None and not security_options:
+            continue
+        if security_options == ["no-new-privileges:true"]:
+            continue
+        failures.append(
+            "docker-compose.property.yml service "
+            f"{section_name} may set only security_opt=no-new-privileges:true"
+        )
+    return failures
+
+
+def _resolved_compose_runtime_privilege_failures(
+    services: dict[str, dict[str, object]],
+) -> list[str]:
+    failures: list[str] = []
+    actual_services = set(services)
+    if actual_services != EXPECTED_PROPERTY_SERVICES:
+        missing = sorted(EXPECTED_PROPERTY_SERVICES - actual_services)
+        unexpected = sorted(actual_services - EXPECTED_PROPERTY_SERVICES)
+        failures.append(
+            "resolved docker-compose.property.yml must contain exactly the "
+            "isolated PropertyQuarry service set "
+            f"(missing={missing}, unexpected={unexpected})"
+        )
+
+    for service_name, service in sorted(services.items()):
+        for key in FORBIDDEN_COMPOSE_SERVICE_KEYS:
+            if key in service:
+                failures.append(
+                    "resolved docker-compose.property.yml service "
+                    f"{service_name} must not set runtime privilege boundary {key}"
+                )
+        if "user" in service and service["user"] != ALLOWED_COMPOSE_USER:
+            failures.append(
+                "resolved docker-compose.property.yml service "
+                f"{service_name} may set only user={ALLOWED_COMPOSE_USER}"
+            )
+        if "security_opt" in service and service["security_opt"] != [
+            "no-new-privileges:true"
+        ]:
+            failures.append(
+                "resolved docker-compose.property.yml service "
+                f"{service_name} may set only "
+                "security_opt=no-new-privileges:true"
+            )
+    return failures
 
 
 def _logical_instructions(text: str) -> list[str]:
@@ -219,6 +619,18 @@ def build_security_posture_receipt() -> dict[str, object]:
             failures.append(f".env.example must default {env_name}={expected_value}")
 
     compose = _read("docker-compose.property.yml")
+    source_compose_failures = _compose_runtime_privilege_failures(compose)
+    failures.extend(source_compose_failures)
+    resolved_services: dict[str, dict[str, object]] | None = None
+    if not source_compose_failures:
+        try:
+            resolved_services = _resolved_compose_services(compose)
+        except SecurityPostureConfigError as exc:
+            failures.append(str(exc))
+        else:
+            failures.extend(
+                _resolved_compose_runtime_privilege_failures(resolved_services)
+            )
     forbidden_compose_tokens = (
         "ea-openvoice",
         "openvoice",

@@ -56,6 +56,10 @@ _SCHEDULER_STEP_THREADS: dict[str, dict[str, object]] = {}
 _EXECUTION_INSTANCE_ID = str(os.environ.get("EA_EXECUTION_INSTANCE_ID") or uuid4().hex).strip()
 _EXECUTION_STARTED_AT_EPOCH = time.time()
 _SCHEDULER_DELIVERY_METRICS_LOCK = threading.Lock()
+_PROPERTY_SEARCH_WORK_QUEUE_METRICS_LOCK = threading.Lock()
+_PROPERTY_SEARCH_WORK_QUEUE_METRICS: dict[str, object] = {"observed": False}
+_MAX_PROPERTY_SEARCH_QUEUE_DEPTH = (2**63) - 1
+_MAX_PROPERTY_SEARCH_QUEUE_AGE_SECONDS = 10 * 365 * 24 * 60 * 60
 _SCHEDULER_PROPERTY_MAINTENANCE_ROTATION_LOCK = threading.Lock()
 _SCHEDULER_PROPERTY_MAINTENANCE_ROTATION = 0
 _SCHEDULER_DELIVERY_METRICS = {
@@ -156,6 +160,66 @@ def _record_scheduler_delivery_metrics(summary: dict[str, object]) -> None:
 def _scheduler_delivery_metrics_snapshot() -> dict[str, int]:
     with _SCHEDULER_DELIVERY_METRICS_LOCK:
         return dict(_SCHEDULER_DELIVERY_METRICS)
+
+
+def _record_property_search_work_queue_metrics(snapshot: object) -> None:
+    raw_depth = getattr(snapshot, "depth")
+    raw_oldest_item_age_seconds = getattr(snapshot, "oldest_item_age_seconds")
+    if (
+        type(raw_depth) is not int
+        or isinstance(raw_oldest_item_age_seconds, bool)
+        or not isinstance(raw_oldest_item_age_seconds, (int, float))
+    ):
+        raise ValueError("property_search_work_queue_snapshot_invalid")
+    depth = raw_depth
+    oldest_item_age_seconds = float(raw_oldest_item_age_seconds)
+    if (
+        not (0 <= depth <= _MAX_PROPERTY_SEARCH_QUEUE_DEPTH)
+        or not math.isfinite(oldest_item_age_seconds)
+        or not (
+            0.0
+            <= oldest_item_age_seconds
+            <= _MAX_PROPERTY_SEARCH_QUEUE_AGE_SECONDS
+        )
+        or (depth == 0 and oldest_item_age_seconds != 0.0)
+    ):
+        raise ValueError("property_search_work_queue_snapshot_invalid")
+    with _PROPERTY_SEARCH_WORK_QUEUE_METRICS_LOCK:
+        _PROPERTY_SEARCH_WORK_QUEUE_METRICS.clear()
+        _PROPERTY_SEARCH_WORK_QUEUE_METRICS.update(
+            {
+                "observed": True,
+                "depth": depth,
+                "oldest_item_age_seconds": oldest_item_age_seconds,
+            }
+        )
+
+
+def _property_search_work_queue_metrics_unobserved() -> None:
+    with _PROPERTY_SEARCH_WORK_QUEUE_METRICS_LOCK:
+        _PROPERTY_SEARCH_WORK_QUEUE_METRICS.clear()
+        _PROPERTY_SEARCH_WORK_QUEUE_METRICS["observed"] = False
+
+
+def _property_search_work_queue_metrics_snapshot() -> dict[str, object]:
+    with _PROPERTY_SEARCH_WORK_QUEUE_METRICS_LOCK:
+        return dict(_PROPERTY_SEARCH_WORK_QUEUE_METRICS)
+
+
+def _refresh_property_search_work_queue_metrics(
+    repository: object,
+    *,
+    log: logging.Logger,
+) -> None:
+    try:
+        snapshot = repository.observability_snapshot()  # type: ignore[attr-defined]
+        _record_property_search_work_queue_metrics(snapshot)
+    except Exception:
+        _property_search_work_queue_metrics_unobserved()
+        log.debug(
+            "property search work queue observability snapshot failed",
+            exc_info=True,
+        )
 
 
 def _scheduler_heartbeat_path() -> Path:
@@ -2247,6 +2311,11 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
         property_search_work_lease_seconds,
     )
     from app.product.service import build_product_service
+    from app.telemetry import (
+        TraceContextError,
+        persisted_trace_parent_from_payload,
+        start_span,
+    )
 
     try:
         repository = PostgresPropertySearchWorkQueue(database_url)
@@ -2263,6 +2332,30 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
     job = repository.claim(lease_owner=lease_owner, lease_seconds=lease_seconds)
     if job is None:
         return {"claimed": False}
+    try:
+        telemetry_parent = persisted_trace_parent_from_payload(job.payload_json)
+    except TraceContextError:
+        failed = repository.fail(
+            job_id=job.job_id,
+            lease_owner=lease_owner,
+            error="property_search_trace_context_invalid",
+        )
+        _refresh_property_search_work_queue_metrics(repository, log=log)
+        _write_scheduler_heartbeat(role=role, status="loop")
+        log.error(
+            "role=%s property search work rejected invalid trace context job=%s run=%s",
+            role,
+            job.job_id,
+            job.run_id,
+        )
+        return {
+            "claimed": True,
+            "completed": False,
+            "job_id": job.job_id,
+            "run_id": job.run_id,
+            "status": str(failed.status if failed is not None else "lease_lost"),
+            "attempt_count": job.attempt_count,
+        }
 
     parent_trace = runtime_trace_context_from_mapping(job.payload_json.get("trace_context"))
     worker_trace = child_trace_context(parent_trace) if parent_trace is not None else None
@@ -2364,11 +2457,12 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
         )
         return {
             "claimed": True,
-            "completed": False,
+            "completed": True,
             "job_id": job.job_id,
             "run_id": job.run_id,
-            "status": str(failed.status if failed is not None else "lease_lost"),
-            "attempt_count": job.attempt_count,
+            "status": completed.status,
+            "attempt_count": completed.attempt_count,
+            "result_status": str(result.get("status") or "completed"),
         }
     stop_heartbeat.set()
     heartbeat_thread.join(timeout=max(1.0, float(property_search_work_heartbeat_seconds()) + 1.0))
@@ -2772,8 +2866,11 @@ def _run_execution_worker(role: str) -> None:
 
 
 def main() -> None:
+    from app.telemetry import configure_span_exporter_from_environment
+
     s = get_settings()
     configure_logging(s.log_level)
+    configure_span_exporter_from_environment()
     if s.role == "api":
         _run_api()
         return

@@ -780,7 +780,15 @@ def _canvas_visual_metrics(page, selector: str) -> dict[str, object]:
         "hotspot_count": float(metrics.get("hotspotCount") or 0),
         "visible_hotspot_count": float(metrics.get("visibleHotspotCount") or 0),
         "staging_object_count": float(metrics.get("stagingObjectCount") or 0),
+        "staging_detail_object_count": float(metrics.get("stagingDetailObjectCount") or 0),
+        "staged_route_stop_count": float(metrics.get("stagedRouteStopCount") or 0),
+        "max_staged_route_stops": float(metrics.get("maxStagedRouteStops") or 0),
         "visible_staging_object_count": float(metrics.get("visibleStagingObjectCount") or 0),
+        "light_count": float(metrics.get("lightCount") or 0),
+        "physically_based_tone_mapping": bool(metrics.get("physicallyBasedToneMapping")),
+        "shadow_map_enabled": bool(metrics.get("shadowMapEnabled")),
+        "render_quality_tier": str(metrics.get("renderQualityTier") or ""),
+        "apartment_plinth_visible": bool(metrics.get("apartmentPlinthVisible")),
         "style_key": str(metrics.get("styleKey") or ""),
         "style_signature": str(metrics.get("styleSignature") or ""),
         "style_evidence_ready": bool(metrics.get("styleEvidenceReady")),
@@ -967,7 +975,15 @@ def _normalized_metrics(metrics):
         "hotspot_count": float(metrics.get("hotspotCount") or 0),
         "visible_hotspot_count": float(metrics.get("visibleHotspotCount") or 0),
         "staging_object_count": float(metrics.get("stagingObjectCount") or 0),
+        "staging_detail_object_count": float(metrics.get("stagingDetailObjectCount") or 0),
+        "staged_route_stop_count": float(metrics.get("stagedRouteStopCount") or 0),
+        "max_staged_route_stops": float(metrics.get("maxStagedRouteStops") or 0),
         "visible_staging_object_count": float(metrics.get("visibleStagingObjectCount") or 0),
+        "light_count": float(metrics.get("lightCount") or 0),
+        "physically_based_tone_mapping": bool(metrics.get("physicallyBasedToneMapping")),
+        "shadow_map_enabled": bool(metrics.get("shadowMapEnabled")),
+        "render_quality_tier": str(metrics.get("renderQualityTier") or ""),
+        "apartment_plinth_visible": bool(metrics.get("apartmentPlinthVisible")),
         "style_key": str(metrics.get("styleKey") or ""),
         "style_signature": str(metrics.get("styleSignature") or ""),
         "style_evidence_ready": bool(metrics.get("styleEvidenceReady")),
@@ -1154,6 +1170,24 @@ with sync_playwright() as playwright:
         and str(metrics.get("viewMode") or "") == "room"
         and not bool(metrics.get("isTransitioning")),
     )
+    context_loss_state = dict(
+        page.evaluate(
+            '''() => {
+                window.__pqReconstructionDebug?.simulateContextLoss?.();
+                const fallback = document.getElementById("viewer-fallback");
+                const viewport = document.getElementById("viewport");
+                return {
+                    viewerStatus: document.documentElement.dataset.viewerStatus || "",
+                    renderStatus: viewport?.dataset.renderStatus || "",
+                    fallbackVisible: Boolean(fallback && !fallback.hidden),
+                    controlsDisabled: Array.from(
+                        document.querySelectorAll(".viewer-chip, .route-button, .floorplan-stop")
+                    ).every((node) => Boolean(node.disabled)),
+                };
+            }'''
+        )
+        or {}
+    )
 
 payload = {
     "browser_engine": browser.browser_type.name,
@@ -1171,6 +1205,7 @@ payload = {
     if route2_transition_raw_metrics is None
     else _normalized_metrics(route2_transition_raw_metrics),
     "route2_metrics": _normalized_metrics(route2_raw_metrics),
+    "context_loss_state": context_loss_state,
     "page_errors": list(page_errors),
     "unexpected_console_errors": [
         message
@@ -3828,7 +3863,15 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     assert overview_metrics["hotspot_count"] == 3
     assert overview_metrics["visible_hotspot_count"] >= 1
     assert overview_metrics["staging_object_count"] >= overview_metrics["route_stop_count"] * 2
+    assert overview_metrics["staging_detail_object_count"] >= overview_metrics["route_stop_count"] * 2
+    assert overview_metrics["staged_route_stop_count"] == overview_metrics["route_stop_count"]
+    assert overview_metrics["staged_route_stop_count"] <= overview_metrics["max_staged_route_stops"] == 12
     assert overview_metrics["visible_staging_object_count"] >= overview_metrics["route_stop_count"]
+    assert overview_metrics["light_count"] >= 4
+    assert overview_metrics["physically_based_tone_mapping"] is True
+    assert overview_metrics["shadow_map_enabled"] is True
+    assert overview_metrics["render_quality_tier"] == "high"
+    assert overview_metrics["apartment_plinth_visible"] is True
     assert overview_metrics["photo_panel_count"] == 2
     assert overview_metrics["loaded_photo_texture_count"] == overview_metrics["photo_panel_count"]
     assert overview_metrics["visible_photo_panel_count"] >= 1
@@ -3999,6 +4042,56 @@ def test_generated_reconstruction_ready_viewer_route_renders_in_real_browser(
     assert updated_metrics["activeRouteIndex"] == 2
     assert external_requests == []
     context.close()
+
+
+def test_generated_reconstruction_viewer_uses_balanced_mobile_render_budget(
+    generated_reconstruction_viewer_server: dict[str, str],
+    browser: Browser,
+) -> None:
+    context = browser.new_context(
+        viewport={"width": 390, "height": 844},
+        device_scale_factor=2,
+        is_mobile=True,
+        has_touch=True,
+    )
+    page = context.new_page()
+    try:
+        response = page.goto(
+            str(generated_reconstruction_viewer_server["viewer_url"]),
+            wait_until="domcontentloaded",
+        )
+        assert response is not None and response.ok
+        page.wait_for_function(
+            """() => Boolean(window.__pqReconstructionDebug?.getRenderMetrics?.()?.ready)"""
+        )
+        metrics = dict(
+            page.evaluate(
+                """() => window.__pqReconstructionDebug?.getRenderMetrics?.() || {}"""
+            )
+            or {}
+        )
+        assert metrics["renderQualityTier"] == "balanced"
+        assert float(metrics["rendererPixelRatio"]) <= 1.5
+        assert int(metrics["shadowMapSize"]) == 1024
+        assert int(metrics["stagedRouteStopCount"]) <= int(metrics["maxStagedRouteStops"]) == 12
+        _assert_no_horizontal_overflow(page)
+        disposed_state = page.evaluate(
+            """() => {
+                const debug = window.__pqReconstructionDebug;
+                const before = debug?.getRenderMetrics?.() || {};
+                debug?.disposeViewer?.();
+                const after = debug?.getRenderMetrics?.() || {};
+                return {
+                    beforeFrameCount: Number(before.frameCount || 0),
+                    afterFrameCount: Number(after.frameCount || 0),
+                    viewerDisposed: Boolean(after.viewerDisposed),
+                };
+            }"""
+        )
+        assert disposed_state["viewerDisposed"] is True
+        assert disposed_state["afterFrameCount"] == disposed_state["beforeFrameCount"]
+    finally:
+        context.close()
 
 
 def test_generated_reconstruction_preview_route_rejects_symlinks_traversal_and_external_urls(

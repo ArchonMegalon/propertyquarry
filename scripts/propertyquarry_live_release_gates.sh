@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
 set +x
 
@@ -34,6 +34,9 @@ if [[ -z "${PYTHON_BIN}" ]]; then
     PYTHON_BIN="python3"
   fi
 fi
+unset PYTHON_BIN PYTEST_PYTHON_BIN
+PYTHON_BIN="${EA_ROOT}/scripts/propertyquarry_release_python.sh"
+readonly PYTHON_BIN
 
 cd "${EA_ROOT}"
 live_base_url="${PROPERTYQUARRY_LIVE_MOBILE_BASE_URL:-${PROPERTYQUARRY_LIVE_SMOKE_BASE_URL:-}}"

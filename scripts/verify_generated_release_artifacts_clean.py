@@ -6,14 +6,28 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import stat
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_GIT_COMMAND = (
+    "/usr/bin/git",
+    "--no-pager",
+    "--no-replace-objects",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.untrackedCache=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+)
 GENERATED_ARTIFACTS = (
     Path(".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json"),
     Path(".codex-design/product/WEEKLY_PRODUCT_PULSE.generated.json"),
@@ -30,9 +44,8 @@ RELEASE_MANIFEST_SCHEMA = "propertyquarry.release_manifest.v1"
 RELEASE_MANIFEST_JSON_START = "<!-- propertyquarry-release-manifest-json:start -->"
 RELEASE_MANIFEST_JSON_END = "<!-- propertyquarry-release-manifest-json:end -->"
 RELEASE_MANIFEST_VERIFICATION_COMMANDS = (
-    "bash scripts/verify_release_assets.sh && "
-    "python3 scripts/verify_flagship_release_readiness.py && "
-    "python3 scripts/verify_generated_release_artifacts_clean.py"
+    "./scripts/propertyquarry_release_python.sh "
+    "scripts/propertyquarry_release_make_dispatch.py release-preflight"
 )
 RELEASE_MANIFEST_FIELDS = (
     "release_manifest_schema",
@@ -81,13 +94,94 @@ VOLATILE_KEYS = {
     "python_bin",
     "review_due",
 }
+RENAME_EXCHANGE = 2
+
+
+class _DuplicateJSONKey(ValueError):
+    pass
+
+
+class _PreserveRestoreStagingError(RuntimeError):
+    pass
+
+
+def release_git_environment() -> dict[str, str]:
+    return {
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        "HOME": "/nonexistent",
+        "XDG_CONFIG_HOME": "/nonexistent",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "PATH": "/usr/bin:/bin",
+    }
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise _DuplicateJSONKey(key)
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
+def _is_valid_rfc3339_utc_seconds(value: object) -> bool:
+    if type(value) is not str or _RFC3339_UTC_SECONDS.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    return True
+
+
+def _load_json_object(payload: bytes, *, label: str) -> dict[str, Any]:
+    try:
+        decoded = payload.decode("utf-8")
+        value = json.loads(
+            decoded,
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"{label} is not strict UTF-8 JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} JSON root is not an object")
+    return dict(value)
+
+
+def _json_values_equal(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(
+            _json_values_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _json_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return bool(left == right)
 
 
 def _normalize(value: Any, path: tuple[str, ...] = ()) -> Any:
     if isinstance(value, dict):
         normalized: dict[str, Any] = {}
         for key, item in value.items():
-            if key in VOLATILE_KEYS or str(key).endswith("_git_head"):
+            source_binding_field = "source_binding" in path
+            if (
+                not source_binding_field
+                and (key in VOLATILE_KEYS or str(key).endswith("_git_head"))
+            ):
                 continue
             normalized[key] = _normalize(item, (*path, str(key)))
         return normalized
@@ -97,17 +191,34 @@ def _normalize(value: Any, path: tuple[str, ...] = ()) -> Any:
 
 
 def _load_worktree(path: Path) -> Any:
-    return json.loads((ROOT / path).read_text(encoding="utf-8"))
+    return _load_json_object(
+        (ROOT / path).read_bytes(),
+        label=f"worktree artifact {path.as_posix()}",
+    )
 
 
 def _load_head(path: Path) -> Any:
+    return _load_json_object(
+        _git_show_bytes(ROOT, "HEAD", path),
+        label=f"HEAD artifact {path.as_posix()}",
+    )
+
+
+def _git_show_bytes(root: Path, revision: str, path: Path) -> bytes:
     result = subprocess.run(
-        ["git", "-C", str(ROOT), "show", f"HEAD:{path.as_posix()}"],
+        [
+            *RELEASE_GIT_COMMAND,
+            "-C",
+            str(root),
+            f"--work-tree={root}",
+            "show",
+            f"{revision}:{path.as_posix()}",
+        ],
         check=True,
         capture_output=True,
-        text=True,
+        env=release_git_environment(),
     )
-    return json.loads(result.stdout)
+    return bytes(result.stdout)
 
 
 def _load_worktree_bytes(path: Path, *, root: Path = ROOT) -> bytes:
@@ -236,10 +347,18 @@ def _run_materializers_in_detached_worktree(*, root: Path = ROOT) -> list[str]:
     return failures
 
 
-def _release_artifact_set_identity(root: Path = ROOT) -> str:
+def _release_artifact_set_identity(
+    root: Path = ROOT,
+    *,
+    revision: str | None = None,
+) -> str:
     entries: list[dict[str, object]] = []
     for path in GENERATED_ARTIFACTS:
-        payload = (root / path).read_bytes()
+        payload = (
+            _git_show_bytes(root, revision, path)
+            if revision is not None
+            else (root / path).read_bytes()
+        )
         entries.append(
             {
                 "path": path.as_posix(),
@@ -258,28 +377,48 @@ def _release_artifact_set_identity(root: Path = ROOT) -> str:
 
 def _release_manifest_expected_values(
     root: Path = ROOT,
+    *,
+    revision: str | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     issues: list[str] = []
     receipt_path = root / GENERATED_ARTIFACTS[0]
     try:
-        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt_bytes = (
+            _git_show_bytes(root, revision, GENERATED_ARTIFACTS[0])
+            if revision is not None
+            else receipt_path.read_bytes()
+        )
+        receipt = _load_json_object(
+            receipt_bytes,
+            label="release authority receipt",
+        )
     except Exception as exc:
         return {}, [f"release authority receipt is missing or invalid: {exc}"]
-    if not isinstance(receipt, dict):
-        return {}, ["release authority receipt must be a JSON object"]
 
     source_binding = receipt.get("source_binding")
     if not isinstance(source_binding, dict):
         source_binding = {}
-    runtime_commit_sha = str(source_binding.get("code_commit") or "").strip()
-    generated_at = str(receipt.get("generated_at") or "").strip()
+    raw_runtime_commit_sha = source_binding.get("code_commit")
+    runtime_commit_sha = (
+        raw_runtime_commit_sha
+        if type(raw_runtime_commit_sha) is str
+        and raw_runtime_commit_sha == raw_runtime_commit_sha.strip()
+        else ""
+    )
+    raw_generated_at = receipt.get("generated_at")
+    generated_at = (
+        raw_generated_at
+        if type(raw_generated_at) is str
+        and raw_generated_at == raw_generated_at.strip()
+        else ""
+    )
     if not _FULL_GIT_SHA.fullmatch(runtime_commit_sha):
         issues.append("release authority receipt runtime commit SHA is missing or invalid")
-    if not _RFC3339_UTC_SECONDS.fullmatch(generated_at):
+    if not _is_valid_rfc3339_utc_seconds(generated_at):
         issues.append("release authority receipt generated_at is missing or not UTC RFC3339 seconds")
 
     try:
-        artifact_set = _release_artifact_set_identity(root)
+        artifact_set = _release_artifact_set_identity(root, revision=revision)
     except Exception as exc:
         issues.append(f"release artifact set is missing or unreadable: {exc}")
         artifact_set = ""
@@ -330,7 +469,11 @@ def _parse_release_manifest(text: str) -> tuple[dict[str, str], list[str]]:
         return payload
 
     try:
-        raw = json.loads(fenced.group("body"), object_pairs_hook=reject_duplicate_keys)
+        raw = json.loads(
+            fenced.group("body"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=_reject_json_constant,
+        )
     except json.JSONDecodeError as exc:
         return {}, [f"release manifest canonical JSON is invalid: {exc.msg}"]
     except ValueError as exc:
@@ -378,7 +521,7 @@ def _release_manifest_shape_issues(values: dict[str, str]) -> list[str]:
     if commit_sha and _FULL_GIT_SHA.fullmatch(commit_sha) is None:
         issues.append("release manifest runtime commit SHA is invalid")
     generated_at = values.get("release_generated_at", "")
-    if generated_at and _RFC3339_UTC_SECONDS.fullmatch(generated_at) is None:
+    if generated_at and not _is_valid_rfc3339_utc_seconds(generated_at):
         issues.append("release manifest generated_at is not UTC RFC3339 seconds")
     artifact_set = values.get("release_artifact_set", "")
     if artifact_set and _ARTIFACT_SET.fullmatch(artifact_set) is None:
@@ -429,8 +572,15 @@ def _validate_release_manifest_values(
     return issues
 
 
-def verify_release_manifest(root: Path = ROOT) -> list[str]:
-    expected, issues = _release_manifest_expected_values(root)
+def verify_release_manifest(
+    root: Path = ROOT,
+    *,
+    generated_artifact_revision: str | None = None,
+) -> list[str]:
+    expected, issues = _release_manifest_expected_values(
+        root,
+        revision=generated_artifact_revision,
+    )
     manifest_path = root / RELEASE_MANIFEST_PATH
     try:
         text = manifest_path.read_text(encoding="utf-8")
@@ -475,4 +625,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

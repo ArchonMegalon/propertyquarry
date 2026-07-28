@@ -98,6 +98,29 @@ def property_search_work_idempotency_key(
     return "property-search:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
+def validated_property_search_work_payload(
+    payload_json: dict[str, object],
+) -> dict[str, object]:
+    """Copy a work payload while enforcing the bounded telemetry sub-contract."""
+
+    from app.telemetry import (
+        TELEMETRY_PARENT_KEY,
+        TraceContextError,
+        normalize_persisted_trace_parent,
+    )
+
+    payload = dict(payload_json or {})
+    if TELEMETRY_PARENT_KEY not in payload:
+        return payload
+    try:
+        payload[TELEMETRY_PARENT_KEY] = normalize_persisted_trace_parent(
+            payload[TELEMETRY_PARENT_KEY]
+        )
+    except TraceContextError as exc:
+        raise ValueError("property_search_trace_context_invalid") from exc
+    return payload
+
+
 @dataclass(frozen=True)
 class PropertySearchWorkJob:
     job_id: str
@@ -174,7 +197,7 @@ class InMemoryPropertySearchWorkQueue:
                 principal_id=principal_id,
                 run_id=run_id,
                 idempotency_key=idempotency_key,
-                payload_json=dict(payload_json or {}),
+                payload_json=validated_property_search_work_payload(payload_json),
                 status="queued",
                 attempt_count=0,
                 max_attempts=max(1, int(max_attempts or 1)),
@@ -436,7 +459,7 @@ class PostgresPropertySearchWorkQueue:
             principal_id=str(row[1] or ""),
             run_id=str(row[2] or ""),
             idempotency_key=str(row[3] or ""),
-            payload_json=dict(row[4] or {}),
+            payload_json=validated_property_search_work_payload(dict(row[4] or {})),
             status=str(row[5] or ""),
             attempt_count=int(row[6] or 0),
             max_attempts=int(row[7] or 1),
@@ -537,7 +560,7 @@ class PostgresPropertySearchWorkQueue:
                         run_id,
                         principal_key,
                         key,
-                        Json(dict(payload_json or {})),
+                        Json(validated_payload),
                         max(1, int(max_attempts or 1)),
                     ),
                 )
@@ -792,6 +815,52 @@ class PostgresPropertySearchWorkQueue:
                 changed = cur.rowcount == 1
                 conn.commit()
         return changed
+
+    def complete(self, *, job_id: str, lease_owner: str) -> PropertySearchWorkJob | None:
+        normalized_job_id = str(job_id or "")
+        owner = str(lease_owner or "").strip()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_writer_contract(cur)
+                identity = self._nonlocking_job_identity(
+                    cur,
+                    job_id=normalized_job_id,
+                )
+                if identity is None:
+                    conn.commit()
+                    return None
+                principal_id, run_id = identity
+                self._acquire_principal_write_authority(
+                    cur,
+                    principal_id=principal_id,
+                    run_id=run_id,
+                )
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::bigint,
+                           COALESCE(
+                               GREATEST(
+                                   EXTRACT(
+                                       EPOCH FROM (
+                                           clock_timestamp() - MIN(created_at)
+                                       )
+                                   ),
+                                   0
+                               ),
+                               0
+                           )::double precision
+                    FROM property_search_work_jobs
+                    WHERE status IN ('queued', 'leased')
+                    """
+                )
+                row = cur.fetchone()
+                conn.commit()
+        if row is None:
+            raise RuntimeError("property_search_work_queue_snapshot_missing")
+        return PropertySearchWorkQueueSnapshot(
+            depth=max(0, int(row[0] or 0)),
+            oldest_item_age_seconds=max(0.0, float(row[1] or 0.0)),
+        )
 
     def complete(self, *, job_id: str, lease_owner: str) -> PropertySearchWorkJob | None:
         normalized_job_id = str(job_id or "")

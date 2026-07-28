@@ -2557,6 +2557,7 @@ def test_propertyquarry_account_surfaces_use_persisted_property_plan() -> None:
                 "active_until": "2999-01-01T00:00:00+00:00",
             },
         },
+        trusted_commercial_update=True,
     )
 
     billing = client.get("/app/billing", follow_redirects=False)
@@ -14097,7 +14098,7 @@ def test_property_workspace_payload_does_not_count_raw_provider_tour_as_ready() 
 def test_propertyquarry_prepare_run_payload_synthesizes_tour_payload_for_verified_hosted_url(
     monkeypatch,
 ) -> None:
-    from app.product import property_tour_hosting
+    from app.product import service as product_service
 
     verified_url = "https://propertyquarry.com/tours/ready-tour/control/matterport"
     validated_principals: list[str] = []
@@ -14107,7 +14108,7 @@ def test_propertyquarry_prepare_run_payload_synthesizes_tour_payload_for_verifie
         return verified_url
 
     monkeypatch.setattr(
-        property_tour_hosting,
+        product_service,
         "_hosted_property_tour_verified_open_url",
         _verified_open_url,
     )
@@ -22212,6 +22213,8 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
 def test_property_search_loader_keeps_mobile_map_usable_before_full_hydration() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     loader = (repo_root / "ea/app/templates/app/_property_search_loader_script.html").read_text(encoding="utf-8")
+    workbench = (repo_root / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
+    workbench_script = (repo_root / "ea/app/templates/app/_property_workbench_script.html").read_text(encoding="utf-8")
 
     assert "'[data-location-map-open]'" not in loader.split("const setBusy", 1)[0]
     assert "'[data-location-mode-button]'" not in loader.split("const setBusy", 1)[0]
@@ -22225,10 +22228,26 @@ def test_property_search_loader_keeps_mobile_map_usable_before_full_hydration() 
     assert "activePointers" in loader
     assert "details[data-what-matters-group]" in loader
     assert "root.dataset.pqWorkbenchController === 'loaded'" in loader
-    assert "existing.dataset.pqWorkbenchLoaded === 'true'" in loader
-    assert "existing.dataset.pqWorkbenchLoaded = 'true';" in loader
     assert "script.dataset.pqWorkbenchLoaded = 'true';" in loader
-    assert "root.dataset.pqWorkbenchController = 'loaded';" in loader
+    assert "existing.remove();" in loader
+    assert "loadPromise = null;" in loader
+    assert "scriptUrl.searchParams.set('pq_retry', String(attempt));" in loader
+    assert "property_workbench_initializer_handoff_missing" in loader
+    assert "property_workbench_initializer_timeout" in loader
+    assert "root.dataset.pqWorkbenchRetryMode = retryMode;" in loader
+    assert "retryMode === 'reinject'" in loader
+    assert "root.dataset.pqWorkbenchController = 'failed';" in loader
+    assert "Search controls stopped while loading. Select Launch search to reload safely." in loader
+    assert "Search controls are ready. Review your search, then launch again." in loader
+    assert "root.dispatchEvent(new CustomEvent('propertyquarry:launch-bootstrap-ready'));" in loader
+    assert "const queuedLaunch = root.querySelector('[data-property-start-top][data-pq-launch-queued=\"true\"]');" in loader
+    assert "Search controls did not load. Select Launch search to retry." in loader
+    assert "PQ_SEARCH_LAUNCH_BOOT_GUARD_START" in workbench
+    assert "data-property-top-launch-status" in workbench
+    assert "button.dataset.pqLaunchQueued" in workbench
+    assert "Search controls took too long to load. Select Launch search to retry." in workbench
+    assert "root.dataset.pqWorkbenchController = 'loaded';" in workbench_script
+    assert "root.dispatchEvent(new CustomEvent('propertyquarry:workbench-ready'));" in workbench_script
     assert "'[data-pqx-save-what-matters]'" in loader
     assert "'[data-pqx-load-what-matters]'" in loader
 
@@ -28013,14 +28032,20 @@ def test_propertyquarry_packet_enriches_sparse_candidate_facts_for_investment(mo
             "location_query": "Wien",
             "selected_platforms": ["willhaben"],
             "preference_person_id": "self",
-            "property_commercial": {
-                "status": "active",
-                "active_plan_key": "agent",
-                "active_until": "2099-12-31T23:59:59+00:00",
-            },
         },
     )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "status": "active",
+        "active_plan_key": "agent",
+        "active_until": "2099-12-31T23:59:59+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     sparse_candidate = {
         "title": "Familien-Maisonette mit weitläufiger Terrasse und drei Zimmern, 88,48 m², € 659.000,-, (1160 Wien) - willhaben",
@@ -28136,14 +28161,20 @@ def test_propertyquarry_research_packet_shows_auction_investment_context_when_be
             "location_query": "Wien",
             "selected_platforms": ["justiz_edikte_at"],
             "preference_person_id": "self",
-            "property_commercial": {
-                "status": "active",
-                "active_plan_key": "agent",
-                "active_until": "2099-12-31T23:59:59+00:00",
-            },
         },
     )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "status": "active",
+        "active_plan_key": "agent",
+        "active_until": "2099-12-31T23:59:59+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     auction_candidate = {
         "title": "BG Innere Stadt Wien, 001 50 E 30/25a",
@@ -28223,14 +28254,20 @@ def test_propertyquarry_research_packet_shows_cooperative_investment_context_whe
             "location_query": "Wien",
             "selected_platforms": ["genossenschaften_at"],
             "preference_person_id": "self",
-            "property_commercial": {
-                "status": "active",
-                "active_plan_key": "agent",
-                "active_until": "2099-12-31T23:59:59+00:00",
-            },
         },
     )
     assert stored.status_code == 200, stored.text
+    trusted_preferences = dict(stored.json()["property_search_preferences"])
+    trusted_preferences["property_commercial"] = {
+        "status": "active",
+        "active_plan_key": "agent",
+        "active_until": "2099-12-31T23:59:59+00:00",
+    }
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json=trusted_preferences,
+        trusted_commercial_update=True,
+    )
 
     coop_candidate = {
         "title": "1210 Wien | Antonie-Lehr-Straße 18 / Leopoldauer Haide Gasse 12",

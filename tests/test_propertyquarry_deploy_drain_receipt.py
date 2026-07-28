@@ -53,6 +53,7 @@ def bindings() -> DrainReceiptBindings:
         compose_project="property",
         public_origin="https://propertyquarry.com",
         api_container="propertyquarry-api",
+        worker_container="propertyquarry-worker",
         scheduler_container="propertyquarry-scheduler",
         render_container="propertyquarry-render-tools",
         ingress_container="propertyquarry-cloudflared",
@@ -170,6 +171,41 @@ def test_signed_receipt_verifies_only_for_exact_release_target_actor_and_time(
     wrong_actor = DrainReceiptBindings(**{**bindings.__dict__, "actor_id": "different-operator"})
     with pytest.raises(DrainReceiptError, match="actor_id"):
         verify_drain_receipt(receipt_path, wrong_actor, now=now + timedelta(seconds=10))
+
+    wrong_worker = DrainReceiptBindings(
+        **{**bindings.__dict__, "worker_container": "propertyquarry-worker-other"}
+    )
+    with pytest.raises(DrainReceiptError, match="target binding"):
+        verify_drain_receipt(receipt_path, wrong_worker, now=now + timedelta(seconds=10))
+
+
+def test_database_fence_policy_tracks_every_long_lived_database_writer() -> None:
+    root = Path(__file__).resolve().parents[1]
+    topology = json.loads(
+        (root / "config/release/propertyquarry_deploy_writer_topology.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    policy = json.loads(
+        (root / "config/release/propertyquarry_database_fence_policy.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    runtime_writers = {
+        role
+        for role, contract in topology["target"].items()
+        if contract["database_writer"] is True and role != "migration"
+    }
+
+    assert runtime_writers == {"api", "worker", "scheduler"}
+    assert {
+        key.removesuffix("_runtime_epoch_prefix")
+        for key in policy["roles"]
+        if key.endswith("_runtime_epoch_prefix")
+    } == runtime_writers
+    assert set(policy["secrets"]["application_allowed_credentials"]) == {
+        f"{role}_runtime_epoch" for role in runtime_writers
+    }
 
 
 def test_receipt_rejects_tampering_expiry_future_and_unsigned_fields(

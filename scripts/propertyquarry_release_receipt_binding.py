@@ -6,13 +6,22 @@ import json
 import os
 import stat
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 if __package__:
     from . import propertyquarry_release_proof_baseline as release_proof_baseline
+    from .check_property_release_hygiene import (
+        RELEASE_GIT_COMMAND,
+        release_git_environment,
+    )
 else:
     import propertyquarry_release_proof_baseline as release_proof_baseline
+    from check_property_release_hygiene import (
+        RELEASE_GIT_COMMAND,
+        release_git_environment,
+    )
 
 
 CANONICAL_SEED = Path(".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json")
@@ -36,8 +45,110 @@ class ReleaseBindingError(ValueError):
     pass
 
 
+FileIdentity = tuple[int, int, int, int, int, int]
+
+
+def _file_identity(metadata: os.stat_result) -> FileIdentity:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+@dataclass(frozen=True)
+class StableFileSnapshot:
+    path: Path
+    identity: FileIdentity
+    payload: bytes
+
+    def assert_unchanged(self) -> None:
+        try:
+            resolved = self.path.resolve(strict=True)
+            observed = self.path.lstat()
+        except OSError as exc:
+            raise ReleaseBindingError(
+                f"release evidence changed after it was read: {self.path}"
+            ) from exc
+        if (
+            resolved != self.path
+            or not stat.S_ISREG(observed.st_mode)
+            or _file_identity(observed) != self.identity
+        ):
+            raise ReleaseBindingError(
+                f"release evidence changed after it was read: {self.path}"
+            )
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError(f"duplicate JSON key: {key}")
+        payload[key] = value
+    return payload
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
+
+
 def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def read_stable_regular_file(path: Path) -> StableFileSnapshot:
+    lexical = Path(os.path.abspath(os.path.normpath(path)))
+    try:
+        resolved = lexical.resolve(strict=True)
+    except OSError as exc:
+        raise ReleaseBindingError(
+            f"release evidence file is missing or unreadable: {path}"
+        ) from exc
+    if resolved != lexical:
+        raise ReleaseBindingError(
+            f"release evidence path contains a symlink: {path}"
+        )
+
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        file_descriptor = os.open(lexical, flags)
+    except OSError as exc:
+        raise ReleaseBindingError(
+            f"release evidence file is missing or unreadable: {path}"
+        ) from exc
+    try:
+        before = os.fstat(file_descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise ReleaseBindingError(
+                f"release evidence path is not a regular file: {path}"
+            )
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(file_descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(file_descriptor)
+    finally:
+        os.close(file_descriptor)
+
+    payload = b"".join(chunks)
+    identity = _file_identity(before)
+    if identity != _file_identity(after) or len(payload) != before.st_size:
+        raise ReleaseBindingError(
+            f"release evidence changed while it was being read: {path}"
+        )
+    snapshot = StableFileSnapshot(
+        path=lexical,
+        identity=identity,
+        payload=payload,
+    )
+    snapshot.assert_unchanged()
+    return snapshot
 
 
 def _safe_relative_path(value: Path | str) -> Path:
@@ -72,8 +183,9 @@ def canonical_regular_file(root: Path, relative_path: Path | str) -> Path:
 
 def git_bytes(root: Path, *args: str) -> bytes:
     completed = subprocess.run(
-        ["git", *args],
+        [*RELEASE_GIT_COMMAND, *args],
         cwd=root,
+        env=release_git_environment(),
         capture_output=True,
         check=False,
     )
@@ -209,18 +321,48 @@ def commit_file_oid(root: Path, commit: str, relative_path: Path | str) -> str:
 
 
 def working_file_oid(root: Path, relative_path: Path | str) -> str:
+    snapshot, binding = file_snapshot_binding(root, relative_path)
+    snapshot.assert_unchanged()
+    return binding["git_blob_oid"]
+
+
+def git_blob_oid_bytes(root: Path, payload: bytes) -> str:
+    completed = subprocess.run(
+        [*RELEASE_GIT_COMMAND, "hash-object", "--no-filters", "--stdin"],
+        cwd=root,
+        env=release_git_environment(),
+        input=payload,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise ReleaseBindingError(
+            "git hash-object --no-filters --stdin failed: "
+            f"{detail or 'unknown git error'}"
+        )
+    return completed.stdout.decode("ascii", errors="strict").strip().lower()
+
+
+def file_snapshot_binding(
+    root: Path,
+    relative_path: Path | str,
+) -> tuple[StableFileSnapshot, dict[str, str]]:
+    relative_path = _safe_relative_path(relative_path)
     path = canonical_regular_file(root, relative_path)
-    return git_text(root, "hash-object", "--no-filters", path.as_posix()).lower()
+    snapshot = read_stable_regular_file(path)
+    binding = {
+        "path": relative_path.as_posix(),
+        "sha256": sha256_bytes(snapshot.payload),
+        "git_blob_oid": git_blob_oid_bytes(root, snapshot.payload),
+    }
+    snapshot.assert_unchanged()
+    return snapshot, binding
 
 
 def file_digest_binding(root: Path, relative_path: Path | str) -> dict[str, str]:
-    relative_path = _safe_relative_path(relative_path)
-    path = canonical_regular_file(root, relative_path)
-    return {
-        "path": relative_path.as_posix(),
-        "sha256": sha256_bytes(path.read_bytes()),
-        "git_blob_oid": working_file_oid(root, relative_path),
-    }
+    _snapshot, binding = file_snapshot_binding(root, relative_path)
+    return binding
 
 
 def _commit_bound_file(root: Path, relative_path: Path, code_commit: str) -> dict[str, str]:
@@ -235,6 +377,120 @@ def _commit_bound_file(root: Path, relative_path: Path, code_commit: str) -> dic
         "path": relative_path.as_posix(),
         "sha256": sha256_bytes(working_bytes),
         "git_blob_oid": commit_file_oid(root, code_commit, relative_path),
+    }
+
+
+def _commit_file_binding(
+    root: Path,
+    relative_path: Path,
+    code_commit: str,
+) -> dict[str, str]:
+    committed_bytes = commit_file_bytes(root, code_commit, relative_path)
+    return {
+        "path": relative_path.as_posix(),
+        "sha256": sha256_bytes(committed_bytes),
+        "git_blob_oid": commit_file_oid(root, code_commit, relative_path),
+    }
+
+
+def committed_source_binding(
+    root: Path,
+    *,
+    seed_path: Path | str,
+    evidence_sources: object,
+    code_commit: str | None = None,
+) -> dict[str, Any]:
+    """Build an immutable source binding using only bytes from a committed candidate."""
+    root = root.resolve(strict=True)
+    seed_path = _safe_relative_path(seed_path)
+    code_commit = resolve_source_binding_commit(
+        root,
+        code_commit if code_commit is not None else "HEAD",
+    )
+    try:
+        seed_payload = json.loads(
+            commit_file_bytes(root, code_commit, seed_path).decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ReleaseBindingError(
+            f"committed flagship seed is invalid canonical JSON at {code_commit}: "
+            f"{seed_path.as_posix()}"
+        ) from exc
+    if not isinstance(seed_payload, dict):
+        raise ReleaseBindingError("committed flagship seed must contain a JSON object")
+    seed_baseline_blockers = release_proof_baseline.approved_seed_baseline_blockers(
+        seed_payload
+    )
+    if seed_baseline_blockers:
+        raise ReleaseBindingError("; ".join(seed_baseline_blockers))
+    seed_proof_contract = seed_payload.get("browser_workflow_proof")
+    declared_evidence_sources = (
+        seed_proof_contract.get("evidence_sources")
+        if isinstance(seed_proof_contract, dict)
+        else None
+    )
+    if evidence_sources != declared_evidence_sources:
+        raise ReleaseBindingError(
+            "supplied browser evidence sources do not match the immutable candidate seed "
+            "or approved baseline"
+        )
+    if not isinstance(evidence_sources, list):
+        raise ReleaseBindingError("flagship seed lacks browser evidence source nodes")
+    baseline_blockers = release_proof_baseline.approved_evidence_source_blockers(
+        evidence_sources
+    )
+    if baseline_blockers:
+        raise ReleaseBindingError("; ".join(baseline_blockers))
+
+    source_paths: list[Path] = []
+    for entry in evidence_sources:
+        if not isinstance(entry, dict):
+            raise ReleaseBindingError(
+                "flagship seed contains an invalid browser evidence source node"
+            )
+        source_path = _safe_relative_path(str(entry.get("file") or ""))
+        raw_cases = entry.get("cases")
+        cases = (
+            [item.strip() for item in raw_cases if isinstance(item, str) and item.strip()]
+            if isinstance(raw_cases, list)
+            else []
+        )
+        if (
+            not isinstance(raw_cases, list)
+            or not cases
+            or len(cases) != len(raw_cases)
+            or len(cases) != len(set(cases))
+        ):
+            raise ReleaseBindingError(
+                f"browser evidence source lacks required cases: "
+                f"{source_path.as_posix()}"
+            )
+        source_paths.append(source_path)
+    source_path_values = [path.as_posix() for path in source_paths]
+    source_backed_paths = [
+        path for path in source_path_values if "/e2e/" not in path
+    ]
+    real_browser_paths = [path for path in source_path_values if "/e2e/" in path]
+    if (
+        len(source_path_values) != len(set(source_path_values))
+        or not source_backed_paths
+        or len(real_browser_paths) != 1
+    ):
+        raise ReleaseBindingError(
+            "flagship seed must define distinct evidence sources with at least one "
+            "source-backed lane and exactly one real-browser lane"
+        )
+    return {
+        "version": SOURCE_BINDING_VERSION,
+        "approved_baseline": release_proof_baseline.approved_baseline_binding(),
+        "code_commit": code_commit,
+        "seed": _commit_file_binding(root, seed_path, code_commit),
+        "required_test_sources": [
+            _commit_file_binding(root, source_path, code_commit)
+            for source_path in source_paths
+        ],
     }
 
 
@@ -256,10 +512,9 @@ def build_source_binding(
             "release proof candidate has uncommitted non-metadata changes: "
             + ", ".join(unbound_changes)
         )
-    code_commit = (
-        resolve_commit(root, code_commit)
-        if code_commit is not None
-        else resolve_source_binding_commit(root)
+    code_commit = resolve_source_binding_commit(
+        root,
+        code_commit if code_commit is not None else "HEAD",
     )
     try:
         seed_payload = json.loads(canonical_regular_file(root, seed_path).read_text(encoding="utf-8"))

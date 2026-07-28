@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
+import time
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from app.product import property_search_schema as schema
 
 
@@ -199,6 +200,8 @@ class _FakeDatabase:
         self.triggers: set[tuple[str, str]] = set()
         self.erasure_key_id = ""
         self.admission_write_authority = True
+        self.admission_capacity = {"lease": 0, "quota": 0}
+        self.admission_actual_counts = {"lease": 0, "quota": 0}
         self.executed: list[tuple[str, tuple[object, ...]]] = []
         self.commits = 0
         self.rollbacks = 0
@@ -224,6 +227,8 @@ class _FakeConnection:
             deepcopy(database.ledger),
             set(database.relations),
             set(database.triggers),
+            dict(database.admission_capacity),
+            dict(database.admission_actual_counts),
         )
 
     def cursor(self):
@@ -242,6 +247,8 @@ class _FakeConnection:
             deepcopy(self.database.ledger),
             set(self.database.relations),
             set(self.database.triggers),
+            dict(self.database.admission_capacity),
+            dict(self.database.admission_actual_counts),
         )
 
     def rollback(self) -> None:
@@ -249,6 +256,8 @@ class _FakeConnection:
         self.database.ledger = deepcopy(self._snapshot[0])
         self.database.relations = set(self._snapshot[1])
         self.database.triggers = set(self._snapshot[2])
+        self.database.admission_capacity = dict(self._snapshot[3])
+        self.database.admission_actual_counts = dict(self._snapshot[4])
 
     def close(self) -> None:
         self.closed = True
@@ -302,6 +311,27 @@ class _FakeCursor:
             return
         if normalized.startswith("SELECT has_table_privilege"):
             self._rows = [(self.database.admission_write_authority,)]
+            return
+        if normalized.startswith(
+            "SELECT capacity_key, row_count, row_limit"
+        ):
+            include_actual_count = "AS actual_row_count" in normalized
+            rows: list[tuple[object, ...]] = []
+            for capacity_key, row_limit in (
+                ("lease", schema.ADMISSION_LEASE_ROW_LIMIT),
+                ("quota", schema.ADMISSION_QUOTA_ROW_LIMIT),
+            ):
+                row: tuple[object, ...] = (
+                    capacity_key,
+                    self.database.admission_capacity[capacity_key],
+                    row_limit,
+                )
+                if include_actual_count:
+                    row += (
+                        self.database.admission_actual_counts[capacity_key],
+                    )
+                rows.append(row)
+            self._rows = rows
             return
         for migration in schema.PROPERTY_SEARCH_MIGRATIONS:
             if str(sql) == migration.sql:
@@ -1125,6 +1155,47 @@ def test_schema_readiness_is_mandatory_in_prod_and_opt_in_for_dev() -> None:
     )
 
 
+def test_schema_capacity_reconciliation_is_atomic_and_optional_for_hot_probes() -> None:
+    database = _FakeDatabase()
+    for version in range(1, schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION + 1):
+        database.seed_migration(version)
+    database.admission_capacity["lease"] = 1
+    database.admission_actual_counts["lease"] = 2
+
+    deep_cursor = _FakeCursor(database)
+    deep_status = schema.inspect_property_search_schema_cursor(deep_cursor)
+
+    assert deep_status.ready is False
+    assert deep_status.reason == "ingress_admission_capacity_count_mismatch:lease"
+    deep_capacity_queries = [
+        sql
+        for sql, _params in database.executed
+        if sql.startswith(
+            "SELECT capacity_key, row_count, row_limit"
+        )
+    ]
+    assert len(deep_capacity_queries) == 1
+    assert "AS actual_row_count" in deep_capacity_queries[0]
+
+    database.executed.clear()
+    hot_cursor = _FakeCursor(database)
+    hot_status = schema.inspect_property_search_schema_cursor(
+        hot_cursor,
+        verify_capacity_counts=False,
+    )
+
+    assert hot_status.ready is True
+    hot_capacity_queries = [
+        sql
+        for sql, _params in database.executed
+        if sql.startswith(
+            "SELECT capacity_key, row_count, row_limit"
+        )
+    ]
+    assert len(hot_capacity_queries) == 1
+    assert "COUNT(*)" not in hot_capacity_queries[0]
+
+
 def test_container_readiness_requires_current_schema_in_prod(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1213,9 +1284,13 @@ def test_container_readiness_requires_current_schema_in_prod(
     )
 
 
-def test_health_ready_reports_authoritative_property_search_schema_version() -> None:
+def test_health_ready_reports_authoritative_property_search_schema_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.api.routes.health import health_ready
 
+    monkeypatch.setenv("PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED", "0")
+    monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED", "0")
     container = SimpleNamespace(
         readiness=SimpleNamespace(
             check=lambda: (True, "postgres_ready:property_search_schema_v14")
@@ -1231,11 +1306,151 @@ def test_health_ready_reports_authoritative_property_search_schema_version() -> 
     }
 
 
+def test_health_ready_accepts_required_fresh_worker_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.api.routes.health import health_ready
+
+    heartbeat_path = tmp_path / "worker-heartbeat.json"
+    heartbeat_path.write_text(
+        json.dumps({"role": "worker", "epoch": time.time(), "pid": 42}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED", "1")
+    monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED", "0")
+    monkeypatch.setenv("EA_WORKER_HEARTBEAT_PATH", str(heartbeat_path))
+    monkeypatch.setenv("EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS", "30")
+    container = SimpleNamespace(
+        readiness=SimpleNamespace(
+            check=lambda: (True, "postgres_ready:property_search_schema_v15")
+        )
+    )
+
+    payload = asyncio.run(health_ready(container))
+
+    assert payload["status"] == "ready"
+    assert payload["reason"] == "postgres_ready:property_search_schema_v15"
+
+
+@pytest.mark.parametrize(
+    ("heartbeat_state", "expected_reason"),
+    (
+        ("missing", "worker_heartbeat_missing_or_invalid"),
+        ("malformed", "worker_heartbeat_missing_or_invalid"),
+        ("oversized", "worker_heartbeat_missing_or_invalid"),
+        ("wrong_role", "worker_heartbeat_stale_or_invalid"),
+        ("future", "worker_heartbeat_stale_or_invalid"),
+        ("stale", "worker_heartbeat_stale_or_invalid"),
+    ),
+)
+def test_health_ready_fails_closed_for_unhealthy_required_worker_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    heartbeat_state: str,
+    expected_reason: str,
+) -> None:
+    from fastapi import HTTPException
+
+    from app.api.routes.health import health_ready
+
+    heartbeat_path = tmp_path / "worker-heartbeat.json"
+    if heartbeat_state == "malformed":
+        heartbeat_path.write_text("{", encoding="utf-8")
+    elif heartbeat_state == "oversized":
+        heartbeat_path.write_bytes(b"x" * ((64 * 1024) + 1))
+    elif heartbeat_state == "wrong_role":
+        heartbeat_path.write_text(
+            json.dumps({"role": "scheduler", "epoch": time.time()}),
+            encoding="utf-8",
+        )
+    elif heartbeat_state == "future":
+        heartbeat_path.write_text(
+            json.dumps({"role": "worker", "epoch": time.time() + 60}),
+            encoding="utf-8",
+        )
+    elif heartbeat_state == "stale":
+        heartbeat_path.write_text(
+            json.dumps({"role": "worker", "epoch": time.time() - 60}),
+            encoding="utf-8",
+        )
+    monkeypatch.setenv("PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED", "1")
+    monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED", "0")
+    monkeypatch.setenv("EA_WORKER_HEARTBEAT_PATH", str(heartbeat_path))
+    monkeypatch.setenv("EA_WORKER_HEARTBEAT_MAX_AGE_SECONDS", "30")
+    container = SimpleNamespace(
+        readiness=SimpleNamespace(
+            check=lambda: (True, "postgres_ready:property_search_schema_v15")
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(health_ready(container))
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == f"not_ready:{expected_reason}"
+
+
+def test_health_ready_accepts_required_fresh_scheduler_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.api.routes.health import health_ready
+
+    heartbeat_path = tmp_path / "scheduler-heartbeat.json"
+    heartbeat_path.write_text(
+        json.dumps({"role": "scheduler", "epoch": time.time(), "pid": 43}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED", "0")
+    monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED", "1")
+    monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_PATH", str(heartbeat_path))
+    monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_MAX_AGE_SECONDS", "30")
+    container = SimpleNamespace(
+        readiness=SimpleNamespace(
+            check=lambda: (True, "postgres_ready:property_search_schema_v15")
+        )
+    )
+
+    payload = asyncio.run(health_ready(container))
+
+    assert payload["status"] == "ready"
+    assert payload["reason"] == "postgres_ready:property_search_schema_v15"
+
+
+def test_health_ready_fails_closed_for_missing_required_scheduler_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from fastapi import HTTPException
+
+    from app.api.routes.health import health_ready
+
+    monkeypatch.setenv("PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED", "0")
+    monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED", "1")
+    monkeypatch.setenv(
+        "EA_SCHEDULER_HEARTBEAT_PATH",
+        str(tmp_path / "missing-scheduler-heartbeat.json"),
+    )
+    container = SimpleNamespace(
+        readiness=SimpleNamespace(
+            check=lambda: (True, "postgres_ready:property_search_schema_v15")
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(health_ready(container))
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "not_ready:scheduler_heartbeat_missing_or_invalid"
+
+
 def test_release_manifest_parser_maps_complete_authority_envelope() -> None:
     from app.api.routes.health import (
         _load_release_manifest_values,
         _release_manifest_sha256,
     )
+
     from scripts.verify_generated_release_artifacts_clean import (
         RELEASE_MANIFEST_FIELDS,
         release_manifest_sha256,
