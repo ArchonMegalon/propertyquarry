@@ -1,20 +1,20 @@
 {
   "contract_name": "ea.weekly_product_pulse",
   "contract_version": 2,
-  "generated_at": "2026-07-25T05:54:44Z",
-  "as_of": "2026-07-25",
+  "generated_at": "2026-07-28T05:30:10Z",
+  "as_of": "2026-07-28",
   "scorecard_source": ".codex-design/product/PRODUCT_HEALTH_SCORECARD.yaml",
   "release_truth_source": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
   "release_truth_provenance": {
-    "source_path": "/docker/property/state/runtime/propertyquarry-release-build-v2.private/prerequisite-deadlock-M2.Fv4S7uhf/worktree/.codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
-    "resolved_path": "/docker/property/state/runtime/propertyquarry-release-build-v2.private/prerequisite-deadlock-M2.Fv4S7uhf/worktree/.codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
+    "source_path": "/docker/property/.codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
+    "resolved_path": "/docker/property/.codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
     "present": true,
     "size_bytes": 23528,
-    "mtime_utc": "2026-07-25T05:54:44Z",
-    "sha256": "4fd8c2aaca263109a0de7fafede6b8de12d051594caf0dae9a34e522b87d164c",
-    "git_repo_root": "/docker/property/state/runtime/propertyquarry-release-build-v2.private/prerequisite-deadlock-M2.Fv4S7uhf/worktree",
-    "git_head": "75ab46151aa5e13c8ecfed20b26acc82e18e3bec",
-    "git_branch": "codex/prerequisite-downstream-pending-m2",
+    "mtime_utc": "2026-07-28T05:28:21Z",
+    "sha256": "bcdfe847fa624894c25ac4e9e317544203e74171aab0584a692192ea863db9f1",
+    "git_repo_root": "/docker/property",
+    "git_head": "bf13494d95fc8d8e044d139d840e3f6353df4b2d",
+    "git_branch": "integration/property-origin-main-20260728",
     "repo_relative_path": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json"
   },
   "readiness_scope": "source_and_browser_proof",
@@ -39,25 +39,25 @@
   "journey_gate_scope": "supporting_external_fleet_context",
   "journey_gate_authority": "non_authoritative_for_propertyquarry_launch",
   "journey_gate_snapshot_policy": "carry_forward_committed_snapshot_only",
-  "summary": "PropertyQuarry source/browser candidate proof is blocked; protected live readiness is not_evaluated, so production launch remains blocked.",
+  "summary": "PropertyQuarry source/browser candidate proof is green, but protected live readiness is not_evaluated; this pulse does not support a production launch claim.",
   "active_wave": "PropertyQuarry flagship receipt closeout",
   "active_wave_status": "active",
   "release_health": {
     "state": "blocked",
     "scope": "production_launch",
-    "candidate_state": "blocked",
+    "candidate_state": "clear",
     "reported_live_readiness_state": "not_passed",
     "production_launch_state": "blocked",
-    "reason": "The PropertyQuarry flagship receipt is blocked by the current browser workflow proof or release evidence.",
-    "flagship_receipt_status": "blocked"
+    "reason": "The PropertyQuarry source/browser candidate receipt is published, but protected live and deployment authority are not validated by this pulse.",
+    "flagship_receipt_status": "pass"
   },
   "flagship_readiness": {
     "state": "blocked",
     "scope": "production_launch",
-    "candidate_state": "blocked",
+    "candidate_state": "clear",
     "reported_live_readiness_state": "not_passed",
     "production_launch_state": "blocked",
-    "reason": "Browser workflow proof is currently blocked, so the flagship receipt cannot support wider release claims."
+    "reason": "Source/browser candidate receipt and browser proof are aligned; protected live and deployment authority are not validated by this pulse."
   },
   "rule_environment_trust": {
     "state": "monitor",
@@ -79,7 +79,7 @@
   "top_support_or_feedback_clusters": [
     {
       "cluster_id": "ea_flagship_receipt_closeout",
-      "summary": "The weekly pulse now anchors to the PropertyQuarry flagship receipt generated from local truth surfaces, but browser execution proof is still pending.",
+      "summary": "The weekly pulse now anchors to the PropertyQuarry flagship receipt generated from local truth surfaces, and the browser execution proof is published.",
       "source_paths": [
         ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
         "README.md",
@@ -114,9 +114,9 @@
     {
       "decision_id": "2026-04-10-focus-ea-flagship-receipt-closeout",
       "action": "focus_shift",
-      "reason": "Keep the weekly pulse anchored to the PropertyQuarry source/browser receipt without treating external fleet journey context as launch authority. The receipt is blocked and protected live readiness is not_evaluated.",
+      "reason": "Keep the weekly pulse anchored to the PropertyQuarry source/browser receipt without treating external fleet journey context as launch authority. The receipt is pass and protected live readiness is not_evaluated.",
       "cited_signals": [
-        "flagship_receipt_status=blocked",
+        "flagship_receipt_status=pass",
         "supporting_external_fleet_journey_state=ready",
         "supporting_external_fleet_blocked_count=0",
         "supporting_external_fleet_ready_count=6",
@@ -130,9 +130,9 @@
     {
       "decision_id": "2026-04-10-freeze-launch-expansion",
       "action": "freeze_launch",
-      "reason": "Freeze production launch until source/browser candidate proof and protected live readiness both pass.",
+      "reason": "Freeze production launch until protected live readiness passes.",
       "cited_signals": [
-        "flagship_receipt_status=blocked",
+        "flagship_receipt_status=pass",
         "browser_execution_receipt_present=True",
         "supporting_external_fleet_blocked_count=0",
         "live_readiness_status=not_evaluated",
@@ -140,28 +140,28 @@
       ]
     }
   ],
-  "next_checkpoint_question": "What source/browser evidence is still needed to promote the PropertyQuarry candidate receipt to pass?",
+  "next_checkpoint_question": "Which protected production receipt or deployment input is the next blocker to clear?",
   "supporting_signals": {
     "current_recommended_wave": "PropertyQuarry flagship receipt closeout",
     "overall_progress_percent": null,
     "overall_progress_status": "production_launch_progress_not_evaluated",
     "external_fleet_journey_ready_share_percent": 100,
-    "phase_label": "Source/browser candidate closeout",
+    "phase_label": "Protected live evidence closeout",
     "history_snapshot_count": 1,
-    "longest_pole": "browser execution proof",
-    "launch_readiness": "Hold production launch pending complete source/browser candidate proof and protected live evidence.",
+    "longest_pole": "protected live production evidence",
+    "launch_readiness": "Source/browser candidate proof is green; hold production launch until protected live readiness passes.",
     "readiness_scope": "source_and_browser_proof",
     "live_readiness_status": "not_evaluated",
     "provider_route_stewardship": {
       "default_status": "PropertyQuarry routes are governed by local truth surfaces.",
       "canary_status": "Browser execution proof is published for the source/browser candidate; protected live evidence remains separate.",
-      "review_due": "2026-08-01T05:54:44Z",
+      "review_due": "2026-08-04T05:30:10Z",
       "next_decision": "Complete the protected launch profile and live receipts, then re-materialize this pulse."
     },
     "journey_gate_source": "/docker/fleet/.codex-studio/published/JOURNEY_GATES.generated.json",
     "journey_gate_git_head": "99f7fc42bac6a172d4ec2c02ed59807461d10038",
     "flagship_release_receipt_source": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
-    "flagship_release_receipt_git_head": "75ab46151aa5e13c8ecfed20b26acc82e18e3bec",
+    "flagship_release_receipt_git_head": "bf13494d95fc8d8e044d139d840e3f6353df4b2d",
     "scorecard_source": ".codex-design/product/PRODUCT_HEALTH_SCORECARD.yaml",
     "release_pipeline_source": ".codex-design/product/RELEASE_PIPELINE.md",
     "governor_loop_source": ".codex-design/product/PRODUCT_GOVERNOR_AND_AUTOPILOT_LOOP.md",
@@ -173,19 +173,19 @@
     "release_health": {
       "state": "blocked",
       "scope": "production_launch",
-      "candidate_state": "blocked",
+      "candidate_state": "clear",
       "reported_live_readiness_state": "not_passed",
       "production_launch_state": "blocked",
-      "reason": "The PropertyQuarry flagship receipt is materialized, but it is still preview_only until browser execution proof is published.",
-      "flagship_receipt_status": "blocked"
+      "reason": "The PropertyQuarry source/browser candidate receipt is published, but protected live and deployment authority are not validated by this pulse.",
+      "flagship_receipt_status": "pass"
     },
     "flagship_readiness": {
       "state": "blocked",
       "scope": "production_launch",
-      "candidate_state": "blocked",
+      "candidate_state": "clear",
       "reported_live_readiness_state": "not_passed",
       "production_launch_state": "blocked",
-      "reason": "Browser execution proof is missing or incomplete, so the flagship receipt cannot yet claim pass status."
+      "reason": "Source/browser candidate receipt and browser proof are aligned; protected live and deployment authority are not validated by this pulse."
     },
     "rule_environment_trust": {
       "state": "monitor",
@@ -207,7 +207,7 @@
     "top_support_or_feedback_clusters": [
       {
         "cluster_id": "ea_flagship_receipt_closeout",
-        "summary": "The weekly pulse now anchors to the PropertyQuarry flagship receipt generated from local truth surfaces, but browser execution proof is still pending.",
+        "summary": "The weekly pulse now anchors to the PropertyQuarry flagship receipt generated from local truth surfaces, and the browser execution proof is published.",
         "source_paths": [
           ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
           "README.md",
@@ -242,9 +242,9 @@
       {
         "decision_id": "2026-04-10-focus-ea-flagship-receipt-closeout",
         "action": "focus_shift",
-        "reason": "Keep the weekly pulse anchored to the PropertyQuarry source/browser receipt without treating external fleet journey context as launch authority. The receipt is blocked and protected live readiness is not_evaluated.",
+        "reason": "Keep the weekly pulse anchored to the PropertyQuarry source/browser receipt without treating external fleet journey context as launch authority. The receipt is pass and protected live readiness is not_evaluated.",
         "cited_signals": [
-          "flagship_receipt_status=blocked",
+          "flagship_receipt_status=pass",
           "supporting_external_fleet_journey_state=ready",
           "supporting_external_fleet_blocked_count=0",
           "supporting_external_fleet_ready_count=6",
@@ -258,9 +258,9 @@
       {
         "decision_id": "2026-04-10-freeze-launch-expansion",
         "action": "freeze_launch",
-        "reason": "Freeze production launch until source/browser candidate proof and protected live readiness both pass.",
+        "reason": "Freeze production launch until protected live readiness passes.",
         "cited_signals": [
-          "flagship_receipt_status=blocked",
+          "flagship_receipt_status=pass",
           "browser_execution_receipt_present=True",
           "supporting_external_fleet_blocked_count=0",
           "live_readiness_status=not_evaluated",
@@ -268,7 +268,7 @@
         ]
       }
     ],
-    "next_checkpoint_question": "What source/browser evidence is still needed to promote the PropertyQuarry candidate receipt to pass?"
+    "next_checkpoint_question": "Which protected production receipt or deployment input is the next blocker to clear?"
   },
   "release_wave": {
     "current_recommended_wave": "PropertyQuarry flagship receipt closeout",
