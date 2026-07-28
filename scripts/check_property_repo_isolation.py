@@ -56,7 +56,7 @@ PROPERTYQUARRY_AUTHORITY_FILES = (
     "ea/app/product/property_tour_hosting.py",
     "ea/app/services/public_branding.py",
     "ea/app/services/public_clickrank.py",
-    "scripts/check_property_mirror_role.py",
+    "scripts/check_property_repository_role.py",
     "scripts/verify_generated_release_artifacts_clean.py",
 )
 

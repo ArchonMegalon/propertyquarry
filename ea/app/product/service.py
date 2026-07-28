@@ -47852,11 +47852,12 @@ class ProductService:
                     external_processing_consent_granted=external_processing_consent_granted,
                 ) or {})
                 flythrough_result = _normalize_property_flythrough_result(raw_flythrough_result)
-                flythrough_url = _hosted_property_tour_walkthrough_asset_url(payload.get("tour_url")) or _published_walkthrough_asset_url(
-                    flythrough_result.get("flythrough_url") or flythrough_result.get("video_url") or ""
+                flythrough_url = _hosted_property_tour_walkthrough_asset_url(
+                    payload.get("tour_url")
                 )
                 flythrough_status = str(flythrough_result.get("status") or "").strip().lower()
                 payload["flythrough_url"] = flythrough_url
+                payload["customer_claim_ready"] = bool(flythrough_url)
                 payload["flythrough_status"] = flythrough_status
                 payload["flythrough_reason"] = str(flythrough_result.get("reason") or "").strip()
                 payload["flythrough_raw_status"] = str(raw_flythrough_result.get("status") or "").strip().lower()
@@ -48387,7 +48388,7 @@ class ProductService:
                 if ready_tour_url:
                     return ready_tour_url
             if normalized_kind == "flythrough":
-                return _hosted_property_tour_walkthrough_asset_url(tour_url) or _published_walkthrough_asset_url(flythrough_url)
+                return _hosted_property_tour_walkthrough_asset_url(tour_url)
             return ""
 
         ready_url = _resolved_ready_url()
@@ -48757,6 +48758,11 @@ class ProductService:
                 )
                 or ""
             ).strip()
+        response_flythrough_url = (
+            ready_url
+            if normalized_kind == "flythrough"
+            else _hosted_property_tour_walkthrough_asset_url(tour_url)
+        )
         return {
             "generated_at": _now_iso(),
             "status": response_status,
@@ -48783,7 +48789,8 @@ class ProductService:
             "generated_reconstruction_url": generated_reconstruction_url,
             "layout_preview_url": layout_preview_url if normalized_kind == "tour" else "",
             "layout_preview_status": layout_preview_status if normalized_kind == "tour" else "",
-            "flythrough_url": ready_url if normalized_kind == "flythrough" else _published_walkthrough_asset_url(flythrough_url),
+            "flythrough_url": response_flythrough_url,
+            "customer_claim_ready": bool(response_flythrough_url),
             "tour_status": response_tour_status,
             "upstream_tour_status": upstream_tour_status,
             "flythrough_status": status_value if normalized_kind == "flythrough" else flythrough_status,

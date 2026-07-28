@@ -391,6 +391,32 @@ _PUBLIC_TOUR_COARSE_LOCATION_FACT_KEYS = frozenset(
         "postal_name",
     }
 )
+_PUBLIC_TOUR_UNIQUENESS_SENSITIVE_FACT_KEYS = frozenset(
+    {
+        "area_sqm",
+        "district",
+        "district_name",
+        "floor",
+        "municipality",
+        "postal_name",
+        "price_eur",
+        "purchase_price_eur",
+        "total_rent_eur",
+    }
+)
+_PUBLIC_TOUR_UNIQUENESS_RISK_LABELS = frozenset(
+    {
+        "high",
+        "rare",
+        "rare_listing",
+        "small_market",
+        "small_municipality",
+        "unique",
+    }
+)
+_PUBLIC_TOUR_SMALL_MUNICIPALITY_POPULATION = 20_000
+_PUBLIC_TOUR_HIGH_PURCHASE_PRICE_EUR = 2_000_000
+_PUBLIC_TOUR_HIGH_MONTHLY_RENT_EUR = 5_000
 _PUBLIC_TOUR_PUBLIC_ASSESSMENT_KEYS = frozenset(
     {
         "adjusted_fit_score",
@@ -1349,6 +1375,77 @@ def redact_public_tour_value(value: object) -> object:
     return value
 
 
+def public_tour_anonymous_uniqueness_risk(
+    payload: dict[str, object],
+    facts: dict[str, object],
+) -> bool:
+    """Return whether an anonymous fact combination can identify one listing.
+
+    The filter deliberately requires both a precision pair (area plus floor)
+    and a rarity signal. Producers can provide an explicit risk label/flag;
+    small-municipality population and high purchase/rent values are conservative
+    built-in signals when a producer has not classified the listing.
+    """
+
+    source = dict(facts or {})
+
+    def _truthy(value: object) -> bool:
+        return value is True or str(value or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def _number(value: object) -> float | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            candidate = float(value)
+        except (TypeError, ValueError):
+            return None
+        return candidate if math.isfinite(candidate) else None
+
+    area = _number(source.get("area_sqm"))
+    floor = source.get("floor")
+    precise_pair = area is not None and area > 0 and bool(str(floor or "").strip())
+    if not precise_pair:
+        return False
+
+    risk_label = str(
+        payload.get("public_uniqueness_risk")
+        or source.get("uniqueness_risk")
+        or ""
+    ).strip().lower()
+    explicit_risk = (
+        risk_label in _PUBLIC_TOUR_UNIQUENESS_RISK_LABELS
+        or _truthy(payload.get("rare_listing"))
+        or _truthy(source.get("rare_listing"))
+        or _truthy(payload.get("small_municipality"))
+        or _truthy(source.get("small_municipality"))
+    )
+    municipality_population = _number(
+        payload.get("municipality_population")
+        or source.get("municipality_population")
+    )
+    small_municipality = (
+        municipality_population is not None
+        and 0 < municipality_population <= _PUBLIC_TOUR_SMALL_MUNICIPALITY_POPULATION
+    )
+    purchase_price = _number(
+        source.get("purchase_price_eur") or source.get("price_eur")
+    )
+    monthly_rent = _number(source.get("total_rent_eur"))
+    high_price = (
+        purchase_price is not None
+        and purchase_price >= _PUBLIC_TOUR_HIGH_PURCHASE_PRICE_EUR
+    ) or (
+        monthly_rent is not None
+        and monthly_rent >= _PUBLIC_TOUR_HIGH_MONTHLY_RENT_EUR
+    )
+    return explicit_risk or small_municipality or high_price
+
+
 def redacted_public_tour_facts(
     payload: dict[str, object],
     facts: dict[str, object],
@@ -1373,9 +1470,18 @@ def redacted_public_tour_facts(
         }
 
     public_facts: dict[str, object] = {}
+    suppress_uniqueness_facts = public_tour_anonymous_uniqueness_risk(
+        payload,
+        redacted,
+    )
     for key, value in redacted.items():
         normalized_key = str(key or "").strip().lower()
         if normalized_key in _PUBLIC_TOUR_EXACT_LOCATION_FACT_KEYS:
+            continue
+        if (
+            suppress_uniqueness_facts
+            and normalized_key in _PUBLIC_TOUR_UNIQUENESS_SENSITIVE_FACT_KEYS
+        ):
             continue
         if normalized_key.startswith("nearest_") or normalized_key in _PUBLIC_TOUR_ANONYMOUS_FACT_KEYS:
             if normalized_key == "personal_fit_assessment" and isinstance(value, dict):
@@ -1393,6 +1499,8 @@ def redacted_public_tour_facts(
                 public_facts[str(key)] = _redacted_public_livability(value)
             else:
                 public_facts[str(key)] = value
+    if suppress_uniqueness_facts:
+        public_facts["public_fact_precision"] = "reduced_for_uniqueness"
     return public_facts
 
 

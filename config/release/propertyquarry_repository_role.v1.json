@@ -1,0 +1,23 @@
+{
+  "canonical": {
+    "branch": "main",
+    "release_authority": true,
+    "repository": "ArchonMegalon/propertyquarry",
+    "url": "https://github.com/ArchonMegalon/propertyquarry.git"
+  },
+  "legacy": {
+    "branch": "main",
+    "release_authority": false,
+    "repository": "ArchonMegalon/property",
+    "required_posture": "noncanonical_verifier_only",
+    "url": "https://github.com/ArchonMegalon/property.git"
+  },
+  "policy": {
+    "allow_legacy_release_manifest": false,
+    "allow_legacy_release_workflows": false,
+    "canonical_may_require_legacy_runtime": false,
+    "require_distinct_repositories": true
+  },
+  "product": "PropertyQuarry",
+  "schema": "propertyquarry.repository_role_policy.v1"
+}

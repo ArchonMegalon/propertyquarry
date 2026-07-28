@@ -185,7 +185,7 @@ jobs:
           print("ok: protected dispatch inputs are canonical and exact")
           PY
 
-  propertyquarry-mirror-role-contract:
+  propertyquarry-repository-role-contract:
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -194,37 +194,34 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Initialize sanitized canonical/mirror evidence
+      - name: Initialize sanitized repository-role evidence
         run: |
-          mkdir -p "${RUNNER_TEMP}/propertyquarry_mirror_role"
+          mkdir -p "${RUNNER_TEMP}/propertyquarry_repository_role"
           python3 - <<'PY'
           import json
           import os
           from pathlib import Path
 
           payload = {
-              "schema": "propertyquarry.mirror_role.ci_preflight.v1",
+              "schema": "propertyquarry.repository_role.ci_preflight.v1",
               "product": "PropertyQuarry",
               "observation_scope": "ci_fetch_and_offline_gate",
               "fetch_performed_by_gate": False,
               "network_freshness_proven": False,
               "passed": False,
               "failures": [],
-              "operational_errors": ["ci_mirror_fetch_or_gate_not_completed"],
+              "operational_errors": ["ci_repository_role_gate_not_completed"],
           }
-          (Path(os.environ["RUNNER_TEMP"]) / "propertyquarry_mirror_role" / "receipt.json").write_text(
+          (Path(os.environ["RUNNER_TEMP"]) / "propertyquarry_repository_role" / "receipt.json").write_text(
               json.dumps(payload, indent=2, sort_keys=True) + "\n",
               encoding="utf-8",
           )
           PY
-      - name: Fetch and prove exact canonical/mirror main identity
+      - name: Prove canonical repository release authority
         env:
           PROPERTYQUARRY_WORKFLOW_SHA: ${{ github.sha }}
           PROPERTYQUARRY_WORKFLOW_EVENT: ${{ github.event_name }}
           PROPERTYQUARRY_WORKFLOW_REPOSITORY: ${{ github.repository }}
-          PROPERTYQUARRY_PR_BASE_REF: ${{ github.base_ref }}
-          PROPERTYQUARRY_PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          PROPERTYQUARRY_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GIT_TERMINAL_PROMPT: "0"
         run: |
           set -euo pipefail
@@ -245,58 +242,31 @@ jobs:
               ):
                   rewrites.append(key)
           if rewrites:
-              raise SystemExit("refusing mirror fetch while Git URL rewrite rules are configured")
+              raise SystemExit("refusing repository-role proof while Git URL rewrite rules are configured")
           PY
-          git config --unset-all remote.origin.url || true
-          git config --unset-all remote.origin.pushurl || true
-          git config --add remote.origin.url https://github.com/ArchonMegalon/propertyquarry.git
-          git config --remove-section remote.propertyquarry || true
-          git remote add propertyquarry https://github.com/ArchonMegalon/propertyquarry.git
-          git fetch --no-tags --prune origin \
-            +refs/heads/main:refs/remotes/origin/main
-          git fetch --no-tags --prune propertyquarry \
-            +refs/heads/main:refs/remotes/propertyquarry/main
-          expected_args=()
-          candidate_args=()
           case "${PROPERTYQUARRY_WORKFLOW_EVENT}:${PROPERTYQUARRY_WORKFLOW_REPOSITORY}" in
-            pull_request:ArchonMegalon/propertyquarry)
-              if [[ "${PROPERTYQUARRY_PR_BASE_REF}" != "main" ]]; then
-                echo "PropertyQuarry PR candidates must target canonical main" >&2
-                exit 1
-              fi
-              if [[ "${PROPERTYQUARRY_PR_HEAD_REPOSITORY}" != "ArchonMegalon/propertyquarry" ]]; then
-                echo "PropertyQuarry PR candidates must originate in ArchonMegalon/propertyquarry" >&2
-                exit 1
-              fi
-              if [[ ! "${PROPERTYQUARRY_PR_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-                echo "PropertyQuarry PR candidate SHA is missing or malformed" >&2
-                exit 1
-              fi
-              candidate_args+=(
-                --mirror-candidate-ref "${PROPERTYQUARRY_PR_HEAD_SHA}"
-                --expected-candidate-sha "${PROPERTYQUARRY_PR_HEAD_SHA}"
-                --candidate-validation-mode pull-request-descendant
-              )
-              ;;
-            push:ArchonMegalon/propertyquarry|workflow_dispatch:ArchonMegalon/propertyquarry)
-              expected_args+=(--expected-canonical-sha "${PROPERTYQUARRY_WORKFLOW_SHA}")
+            pull_request:ArchonMegalon/propertyquarry|push:ArchonMegalon/propertyquarry|workflow_dispatch:ArchonMegalon/propertyquarry)
               ;;
             *)
-              echo "unsupported repository/event for canonical mirror proof" >&2
+              echo "unsupported repository/event for canonical repository-role proof" >&2
               exit 1
               ;;
           esac
-          python3 scripts/check_property_mirror_role.py \
-            --require-single-worktree \
-            --write "${RUNNER_TEMP}/propertyquarry_mirror_role/receipt.json" \
-            "${candidate_args[@]}" \
-            "${expected_args[@]}"
-      - name: Preserve canonical/mirror identity evidence
+          git config --unset-all remote.origin.url || true
+          git config --unset-all remote.origin.pushurl || true
+          git config --add remote.origin.url https://github.com/ArchonMegalon/propertyquarry.git
+          python3 scripts/check_property_repository_role.py \
+            --expected-repository ArchonMegalon/propertyquarry \
+            --expected-role canonical \
+            --expected-head-sha "${PROPERTYQUARRY_WORKFLOW_SHA}" \
+            --require-clean-worktree \
+            --write "${RUNNER_TEMP}/propertyquarry_repository_role/receipt.json"
+      - name: Preserve repository-role evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: propertyquarry-mirror-role-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/propertyquarry_mirror_role
+          name: propertyquarry-repository-role-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/propertyquarry_repository_role
           if-no-files-found: error
           retention-days: 30
 
@@ -1271,7 +1241,7 @@ jobs:
     needs:
       - property-security-posture
       - security-static
-      - propertyquarry-mirror-role-contract
+      - propertyquarry-repository-role-contract
       - smoke-runtime-api
       - propertyquarry-browser-contracts
       - product-browser-e2e

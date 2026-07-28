@@ -2244,7 +2244,7 @@ def test_smoke_runtime_routes_release_from_ordinary_ci_to_one_atomic_v2_lane() -
     required_jobs = (
         "property-security-posture",
         "security-static",
-        "propertyquarry-mirror-role-contract",
+        "propertyquarry-repository-role-contract",
         "smoke-runtime-api",
         "propertyquarry-browser-contracts",
         "product-browser-e2e",

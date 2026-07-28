@@ -2880,17 +2880,43 @@ def _hosted_property_tour_walkthrough_asset_url(tour_url: object) -> str:
 def _hosted_property_tour_walkthrough_open_url(tour_url: object, walkthrough_url: object = "") -> str:
     normalized_tour_url = str(tour_url or "").strip()
     normalized_walkthrough_url = str(walkthrough_url or "").strip()
-    verified_walkthrough_url = _hosted_property_tour_walkthrough_asset_url(normalized_tour_url) if normalized_tour_url else ""
-    published_walkthrough_url = _published_walkthrough_asset_url(normalized_walkthrough_url)
-    if not published_walkthrough_url and normalized_walkthrough_url.startswith("/tours/"):
-        published_walkthrough_url = normalized_walkthrough_url
-    canonical_walkthrough_url = verified_walkthrough_url or published_walkthrough_url
+    verified_tour_source = normalized_tour_url
+    if not verified_tour_source and normalized_walkthrough_url:
+        walkthrough_slug = _hosted_property_tour_slug_from_url(
+            normalized_walkthrough_url
+        )
+        if walkthrough_slug:
+            parsed_walkthrough = urllib.parse.urlparse(
+                normalized_walkthrough_url
+            )
+            verified_tour_source = (
+                urllib.parse.urlunparse(
+                    (
+                        parsed_walkthrough.scheme,
+                        parsed_walkthrough.netloc,
+                        f"/tours/{walkthrough_slug}",
+                        "",
+                        "",
+                        "",
+                    )
+                )
+                if parsed_walkthrough.scheme and parsed_walkthrough.netloc
+                else f"/tours/{walkthrough_slug}"
+            )
+    # A caller-provided MP4 URL is not a customer-ready claim. Readiness must
+    # come from the exact hosted bundle, whose provider receipt, playable asset,
+    # coverage proof, and publication posture are revalidated above.
+    canonical_walkthrough_url = (
+        _hosted_property_tour_walkthrough_asset_url(verified_tour_source)
+        if verified_tour_source
+        else ""
+    )
     if not canonical_walkthrough_url:
         return ""
-    slug = _hosted_property_tour_slug_from_url(normalized_tour_url) or _hosted_property_tour_slug_from_url(canonical_walkthrough_url)
+    slug = _hosted_property_tour_slug_from_url(verified_tour_source) or _hosted_property_tour_slug_from_url(canonical_walkthrough_url)
     if not slug:
         return canonical_walkthrough_url
-    for source_url in (normalized_tour_url, canonical_walkthrough_url):
+    for source_url in (verified_tour_source, canonical_walkthrough_url):
         normalized_source = str(source_url or "").strip()
         if not normalized_source:
             continue

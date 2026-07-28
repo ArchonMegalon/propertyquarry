@@ -10,6 +10,10 @@ This repository now contains the runnable product runtime that had previously li
 
 The canonical release graph structurally gates `propertyquarry-release-v2` on the same-run `propertyquarry-security-bootstrap-attestation` job. The release job requires that dependency to succeed and binds its attestation SHA-256, bootstrap run ID, and artifact digest before requesting protected preflight. The separate manual bootstrap workflow additionally records exact protected-runner consumption, but neither a bootstrap artifact nor its consumption receipt is standalone release authority; production remains blocked until every other candidate-bound launch and protected-live gate also passes.
 
+For the current operator truth in one view, run
+`python3 scripts/propertyquarry_launch_room.py` or open
+[`docs/PROPERTYQUARRY_LAUNCH_ROOM.md`](docs/PROPERTYQUARRY_LAUNCH_ROOM.md).
+
 ## What is in this repo
 
 - public product surface for `propertyquarry.com`

@@ -209,7 +209,7 @@ def _make_diorama(packet: dict[str, Any], listing: ListingSpec, hero_path: Path,
         [
             "Layout-first preview with route emphasis,",
             "floor-plan context, and a direct review path into the",
-            "hosted 3D tour and walkthrough.",
+            "hosted 3D tour. Walkthroughs appear only after proof.",
         ]
     ):
         draw.text((84, 522 + idx * 28), line, fill=(225, 221, 218), font=small_font)

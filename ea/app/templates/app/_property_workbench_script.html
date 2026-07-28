@@ -1652,12 +1652,14 @@
     const visualStateFromPayload = (requestKind, payload, fallbackLabel = '') => {
       const kind = String(requestKind || 'tour').trim().toLowerCase();
       if (isWalkthroughRequestKind(kind)) {
-        const resolvedUrl = directHostedWalkthroughUrl(
-          payload?.flythrough_url,
-          payload?.tour_url,
-          payload?.verified_tour_url,
-          payload?.open_tour_url,
-        );
+        const resolvedUrl = payload?.customer_claim_ready === true
+          ? directHostedWalkthroughUrl(
+              payload?.flythrough_url,
+              payload?.tour_url,
+              payload?.verified_tour_url,
+              payload?.open_tour_url,
+            )
+          : '';
         const rawFlythroughState = String(payload?.flythrough_status || payload?.status || '').trim().toLowerCase();
         const malformedReadyState = rawFlythroughState === 'ready' && !resolvedUrl;
         const state = String(
@@ -1988,16 +1990,20 @@
         const nextTourDetail = nextTourLabel === 'Open AI-generated 3D tour'
           ? 'AI-generated from the floor plan and listing photos; not a captured 360° tour.'
           : String(payload.status_detail || '').trim();
-        const nextFlythroughUrl = directHostedWalkthroughUrl(
-          payload.flythrough_url,
-          payload.tour_url,
-          payload.verified_tour_url,
-          payload.open_tour_url,
-          candidate.flythrough_url,
-          candidate.tour_url,
-          candidate.tour?.url,
-          candidate.tour?.embed_url
-        );
+        const nextFlythroughClaimReady = payload.customer_claim_ready === true
+          || candidate.flythrough?.customer_claim_ready === true;
+        const nextFlythroughUrl = nextFlythroughClaimReady
+          ? directHostedWalkthroughUrl(
+              payload.flythrough_url,
+              payload.tour_url,
+              payload.verified_tour_url,
+              payload.open_tour_url,
+              candidate.flythrough_url,
+              candidate.tour_url,
+              candidate.tour?.url,
+              candidate.tour?.embed_url
+            )
+          : '';
         const nextTourStatus = String(payload.tour_status || payload.status || candidate.tour?.status || '').trim().toLowerCase();
         const nextFlythroughStatus = String(payload.flythrough_status || candidate.flythrough_status || '').trim().toLowerCase();
         if (!candidate.tour || typeof candidate.tour !== 'object') candidate.tour = {};
@@ -2055,6 +2061,7 @@
           detail: flythroughDetail,
           eta_label: flythroughEtaLabel,
           progress_pct: flythroughProgress,
+          customer_claim_ready: Boolean(nextFlythroughUrl),
           poll_after_seconds: requestKind === 'flythrough'
             ? Math.max(0, Number(payload.poll_after_seconds || 0) || 0)
             : Math.max(0, Number(candidate.flythrough?.poll_after_seconds || 0) || 0),
@@ -3647,13 +3654,15 @@
           ? Math.max(0, Math.min(100, tourProgressRaw))
           : (tourUrl ? 100 : 0);
         const flythrough = (candidate?.flythrough && typeof candidate.flythrough === 'object') ? candidate.flythrough : {};
-        const flythroughUrl = directHostedWalkthroughUrl(
-          candidate?.flythrough_url,
-          flythrough.url,
-          candidate?.tour_url,
-          candidate?.tour?.url,
-          candidate?.tour?.embed_url
-        );
+        const flythroughUrl = flythrough.customer_claim_ready === true
+          ? directHostedWalkthroughUrl(
+              candidate?.flythrough_url,
+              flythrough.url,
+              candidate?.tour_url,
+              candidate?.tour?.url,
+              candidate?.tour?.embed_url
+            )
+          : '';
         const flythroughStatus = String(candidate?.flythrough_status || flythrough.status || '').trim().toLowerCase();
         const flythroughPending = ['queued', 'pending', 'processing', 'running', 'in_progress', 'started', 'rendering', 'repairing'].includes(flythroughStatus);
         const flythroughLabel = String(

@@ -16,6 +16,34 @@ PropertyQuarry is a source/browser candidate, not a production launch:
 - **Advanced Visual Gold** is a separate opt-in claim scope. It fails closed unless every claimed MagicFit/Magic/OMagic lane has exact candidate-bound provider provenance, accepted playback, quota/account state, privacy, isolation, source-receipt hashes, and media-artifact hashes. Adapter configuration or a generated file alone is never Advanced Visual Gold evidence.
 - The current Advanced Visual producer receipts do not yet carry source-side `release_commit_sha` + `image_digest` identities and exact verifier/source packet hashes. Therefore this candidate records Advanced Visual Gold as `unavailable_unbound_producer_receipts`. The aggregate rejects these legacy/current shapes and never relabels them from its own CLI arguments; Core Gold remains independently eligible.
 
+## Repository authority transition
+
+`ArchonMegalon/propertyquarry` is the sole canonical repository under
+`config/release/propertyquarry_repository_role.v1.json`. The historical
+`ArchonMegalon/property` repository is a noncanonical verifier only, has no
+release/image/security workflow authority, and is not an exact mirror.
+
+The legacy repo's formerly recorded runtime candidate
+`8b9b2dd7e7d2df6e52c51572e4c44cbdff53a8e1` and envelope head
+`6e28833e06e31703b59fca11e4bed0d2c16e3cc7` are retired provenance, not
+alternate release candidates. The canonical candidate is only the exact
+`release_commit_sha` in the marked object below. Different canonical and legacy
+heads are therefore expected; neither equality nor a second candidate identity
+is required or permitted.
+
+## Evidence-count history
+
+No governed source case was removed. The current and archived source-backed
+contract both select seven cases (`7/7`). The separate journey matrix contains
+eight required product journeys, which is the historical `8/8` often quoted in
+release notes. The old real-browser lane also selected eight cases; it has since
+expanded to sixteen (`16/16`) without changing the seven-case source contract.
+The three counts are intentionally reported separately:
+
+- governed source cases: `7/7`;
+- product journey rows: `8/8`; and
+- current real-browser cases: `16/16`.
+
 ## Candidate binding
 
 The marked JSON object is the single canonical release authority consumed by the runtime and release verifier. Its exact field set and canonical SHA-256 fail closed on missing, duplicate, unexpected, empty, or mismatched fields.

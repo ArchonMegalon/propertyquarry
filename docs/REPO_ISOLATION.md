@@ -46,31 +46,39 @@ publication must originate from this repository. Packages linked to the former
 combined repository are outside the standalone release plane even when their
 names contain `propertyquarry`.
 
-Run the offline repository-identity gate after fetching the canonical repository
-through both compatibility-named local refs:
+Run the offline repository-role gate in the canonical checkout:
 
 ```text
-python3 scripts/check_property_mirror_role.py \
-  --canonical-ref refs/remotes/origin/main \
-  --mirror-ref refs/remotes/propertyquarry/main \
-  --write _completion/propertyquarry_mirror_role/receipt.json
+python3 scripts/check_property_repository_role.py \
+  --expected-repository ArchonMegalon/propertyquarry \
+  --expected-role canonical \
+  --require-clean-worktree \
+  --write _completion/propertyquarry_repository_role/receipt.json
 ```
 
-The compatibility-named gate never fetches, and both URL constants resolve to
-`https://github.com/ArchonMegalon/propertyquarry.git`. It proves exact commit
-identity and clean local state without granting authority to another repository.
-Its receipt is deliberately scoped to local Git config, objects, and refs and
-always reports `network_freshness_proven: false`. The corresponding CI lane
-rejects Git URL rewrites, fetches standalone PropertyQuarry `main`, runs the
-offline gate in a single-worktree checkout, and preserves the receipt. A
-malformed manifest, wrong remote, missing history, dirty worktree, or unexpected
-extra worktree blocks the ordinary-CI aggregate and therefore blocks release.
+The gate reads
+`config/release/propertyquarry_repository_role.v1.json`, whose canonical and
+legacy repositories must be distinct. It proves that this checkout's exact
+origin, manifest authority, release workflows, and expected role agree with
+that shared policy. Its receipt is deliberately scoped to local policy, Git
+config, checkout, and release surfaces and always reports
+`network_freshness_proven: false`. The corresponding CI lane rejects Git URL
+rewrites, binds the exact event SHA and repository identity, and preserves the
+receipt. A malformed policy, self-reference, wrong remote, noncanonical
+manifest, dirty worktree, or missing canonical workflow blocks ordinary CI and
+therefore blocks release.
 
 A pull request in `ArchonMegalon/propertyquarry` is review evidence only. Push
 and workflow-dispatch release events require exact standalone `main` identity;
 no commit from another repository can satisfy the gate. Fetch remains an
 explicit operator step, so the offline receipt never claims lasting network
 freshness.
+
+`ArchonMegalon/property` is a legacy, noncanonical verifier-only repository. It
+may point operators to this repository, but it must contain no canonical
+release-manifest markers, protected release workflow, security-runner bootstrap,
+or runtime-image publication workflow. Different legacy and canonical heads are
+expected; the legacy head is never a second release candidate.
 
 ## Release-control v2 authority status
 

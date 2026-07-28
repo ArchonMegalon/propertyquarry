@@ -12889,6 +12889,7 @@
         {% set selected_tour = selected.get('tour', {}) %}
         {% set selected_tour_url = selected.get('verified_tour_url') or selected.get('open_tour_url') or selected_tour.get('url') or selected.get('tour_url') or '' %}
         {% set selected_flythrough = selected.get('flythrough', {}) %}
+        {%- set selected_flythrough_claim_ready = selected_flythrough.get('customer_claim_ready') == true -%}
         {% set selected_visual_media_ready = selected.get('floorplan_url') or selected.get('source_virtual_tour_url') or selected.get('vendor_tour_url') %}
         {% set selected_visual_request_ready = selected_visual_property_url and selected_visual_media_ready and not mobile_is_shortlist_surface %}
         {% set selected_tour_status = (selected_tour.get('status') or '')|lower %}
@@ -12908,19 +12909,19 @@
         {% set selected_visual_status = selected_tour.get('status_detail') or selected_tour.get('detail') or selected_tour.get('eta_label') or '3D tour not available yet.' %}
         {% elif selected_flythrough_terminal %}
         {% set selected_visual_status = selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or 'Walkthrough not available yet.' %}
-        {% elif mobile_is_shortlist_surface and selected_tour_url and selected_flythrough.get('url') %}
+        {% elif mobile_is_shortlist_surface and selected_tour_url and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
         {% set selected_visual_status = '3D tour and walkthrough ready.' %}
         {% elif mobile_is_shortlist_surface and selected_tour_url %}
         {% set selected_visual_status = '3D tour ready.' %}
-        {% elif mobile_is_shortlist_surface and selected_flythrough.get('url') %}
+        {% elif mobile_is_shortlist_surface and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
         {% set selected_visual_status = 'Walkthrough ready.' %}
         {% endif %}
         {% set mobile_visual_preview = '' %}
-        {% if selected_tour_url and selected_flythrough.get('url') %}
+        {% if selected_tour_url and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
         {% set mobile_visual_preview = '3D tour and walkthrough available' %}
         {% elif selected_tour_url %}
         {% set mobile_visual_preview = '3D tour available' %}
-        {% elif selected_flythrough.get('url') %}
+        {% elif selected_flythrough_claim_ready and selected_flythrough.get('url') %}
         {% set mobile_visual_preview = 'Walkthrough available' %}
         {% elif selected_tour_pending %}
         {% set mobile_visual_preview = selected_tour.get('label') or '3D tour in progress' %}
@@ -13015,7 +13016,7 @@
             </div>
           </details>
           {% endif %}
-          {% if selected_tour.get('url') or selected_tour_pending or selected_tour_terminal or selected_flythrough.get('url') or selected_flythrough_pending or selected_flythrough_terminal or (selected_visual_property_url and not mobile_is_shortlist_surface) %}
+          {% if selected_tour.get('url') or selected_tour_pending or selected_tour_terminal or (selected_flythrough_claim_ready and selected_flythrough.get('url')) or selected_flythrough_pending or selected_flythrough_terminal or (selected_visual_property_url and not mobile_is_shortlist_surface) %}
           <details class="pqx-card pqx-mobile-review-more pqx-mobile-fold">
             <summary>
               <span class="pqx-mobile-review-copy">
@@ -13033,7 +13034,7 @@
               {% elif selected_visual_request_ready %}
               <button class="pqx-button" type="button" data-pw-visual-request="tour" data-pw-visual-style-required="1" data-property-url="{{ selected_visual_property_url }}" data-source-ref="{{ selected.get('source_ref') or '' }}" data-candidate-ref="{{ selected.get('candidate_ref') or '' }}" data-run-id="{{ run_payload.get('run_id') or '' }}" data-rybbit-event="pq.tour.opened" data-rybbit-prop-cta-key="request_tour" data-rybbit-prop-surface="selected_review">Request 3D tour</button>
               {% endif %}
-              {% if selected_flythrough.get('url') %}
+              {% if selected_flythrough_claim_ready and selected_flythrough.get('url') %}
               <a class="pqx-link-button" href="{{ selected_flythrough.get('url') }}">Open walkthrough</a>
               {% elif selected_flythrough_pending %}
               <button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: {{ selected_flythrough_progress }}%;" title="{{ (selected_flythrough.get('detail') or selected_flythrough.get('label') or 'Preparing walkthrough.') ~ ((' · ETA ' ~ selected_flythrough.get('eta_label')) if selected_flythrough.get('eta_label') else '') }}" data-pw-visual-request="flythrough" data-pw-visual-style-required="1" data-pw-walkthrough-provider="default" data-pw-visual-state="{{ selected_flythrough_status or 'queued' }}" data-pw-visual-progress="{{ selected_flythrough_progress }}" data-pw-visual-eta="{{ selected_flythrough.get('eta_label') or '' }}" data-pw-visual-detail="{{ selected_flythrough.get('detail') or selected_flythrough.get('label') or '' }}" data-pw-visual-poll-seconds="10" data-property-url="{{ selected_visual_property_url }}" data-source-ref="{{ selected.get('source_ref') or '' }}" data-candidate-ref="{{ selected.get('candidate_ref') or '' }}" data-run-id="{{ run_payload.get('run_id') or '' }}">{{ selected_flythrough.get('label') or 'Walkthrough queued' }}</button>

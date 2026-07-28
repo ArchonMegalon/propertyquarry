@@ -61,6 +61,7 @@
       {% set selected_tour = selected.get('tour', {}) %}
       {% set selected_tour_url = selected.get('verified_tour_url') or selected.get('open_tour_url') or selected_tour.get('url') or selected.get('tour_url') or '' %}
       {% set selected_flythrough = selected.get('flythrough', {}) %}
+      {%- set selected_flythrough_claim_ready = selected_flythrough.get('customer_claim_ready') == true -%}
       {% set selected_tour_status = (selected_tour.get('status') or '')|lower %}
       {% set selected_flythrough_status = (selected_flythrough.get('status') or '')|lower %}
       {% set selected_tour_pending = selected_tour_status in ['queued', 'pending', 'processing', 'running', 'in_progress', 'started', 'rendering', 'repairing'] %}
@@ -78,11 +79,11 @@
         {% set selected_visual_status = selected_tour.get('status_detail') or selected_tour.get('detail') or selected_tour.get('eta_label') or '3D tour not available yet.' %}
       {% elif selected_flythrough_terminal %}
         {% set selected_visual_status = selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or 'Walkthrough not available yet.' %}
-      {% elif is_shortlist_surface and selected_tour_url and selected_flythrough.get('url') %}
+      {% elif is_shortlist_surface and selected_tour_url and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
         {% set selected_visual_status = '3D tour and walkthrough ready.' %}
       {% elif is_shortlist_surface and selected_tour_url %}
         {% set selected_visual_status = '3D tour ready.' %}
-      {% elif is_shortlist_surface and selected_flythrough.get('url') %}
+      {% elif is_shortlist_surface and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
         {% set selected_visual_status = 'Walkthrough ready.' %}
       {% endif %}
       <div class="pqx-context-actions" data-pw-actions>
@@ -97,7 +98,7 @@
         {% elif selected_visual_request_ready %}
         <button class="pqx-button" id="tour-preview" type="button" data-pw-visual-request="tour" data-pw-visual-style-required="1" data-property-url="{{ selected_visual_property_url }}" data-source-ref="{{ selected.get('source_ref') or '' }}" data-candidate-ref="{{ selected.get('candidate_ref') or '' }}" data-run-id="{{ run_payload.get('run_id') or '' }}" data-rybbit-event="pq.tour.opened" data-rybbit-prop-cta-key="request_tour" data-rybbit-prop-surface="selected_review">Request 3D tour</button>
         {% endif %}
-        {% if selected_flythrough.get('url') and not is_shortlist_surface %}
+        {% if selected_flythrough_claim_ready and selected_flythrough.get('url') and not is_shortlist_surface %}
         <a class="pqx-progress-button is-ready" id="walkthrough-preview" href="{{ selected_flythrough.get('url') }}" title="{{ selected_flythrough.get('detail') or 'Walkthrough available' }}" aria-label="{{ selected_flythrough.get('detail') or 'Walkthrough available' }}">Open walkthrough</a>
         {% elif selected_flythrough_pending and selected_visual_media_ready and not is_shortlist_surface %}
         <button class="pqx-progress-button is-processing" id="walkthrough-preview" type="button" disabled style="--pqx-fill: {{ selected_flythrough_progress }}%;" title="{{ (selected_flythrough.get('detail') or selected_flythrough.get('label') or 'Preparing walkthrough.') ~ ((' · ETA ' ~ selected_flythrough.get('eta_label')) if selected_flythrough.get('eta_label') else '') }}" data-pw-visual-request="flythrough" data-pw-visual-style-required="1" data-pw-visual-state="{{ selected_flythrough_status or 'queued' }}" data-pw-visual-progress="{{ selected_flythrough_progress }}" data-pw-visual-eta="{{ selected_flythrough.get('eta_label') or '' }}" data-pw-visual-detail="{{ selected_flythrough.get('detail') or selected_flythrough.get('label') or '' }}" data-pw-visual-poll-seconds="10" data-property-url="{{ selected_visual_property_url }}" data-source-ref="{{ selected.get('source_ref') or '' }}" data-candidate-ref="{{ selected.get('candidate_ref') or '' }}" data-run-id="{{ run_payload.get('run_id') or '' }}">{{ selected_flythrough.get('label') or 'Walkthrough queued' }}</button>

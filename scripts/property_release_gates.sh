@@ -328,11 +328,12 @@ mkdir -p _completion/security _completion/release_hygiene _completion/whole_proj
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_security_posture.py \
   --write _completion/security/property-security-posture-release-gate.json
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_repo_isolation.py
-mkdir -p _completion/propertyquarry_mirror_role
-PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_mirror_role.py \
-  --require-head-at-canonical \
+mkdir -p _completion/propertyquarry_repository_role
+PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_repository_role.py \
+  --expected-repository ArchonMegalon/propertyquarry \
+  --expected-role canonical \
   --require-clean-worktree \
-  --write _completion/propertyquarry_mirror_role/release-gate.json
+  --write _completion/propertyquarry_repository_role/release-gate.json
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_release_hygiene.py \
   --write _completion/release_hygiene/property-release-hygiene-release-gate.json
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_whole_project_scope.py \

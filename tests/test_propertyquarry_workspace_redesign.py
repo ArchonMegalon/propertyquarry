@@ -6937,10 +6937,10 @@ def test_propertyquarry_search_page_uses_external_workbench_asset() -> None:
     assert "Saved durably. Profile now has" not in response.text
     assert "data-location-map-path" not in response.text
     assert "data-provider-homepage-link" not in response.text
-    # HEAD already rendered 362,192 raw bytes. The compact distance contract
-    # moves that to 365,948 while adding only 281 bytes at gzip level 6.
+    # Keep a tight compressed-page budget while allowing the explicit
+    # customer-claim-ready walkthrough guard in the server-rendered review.
     assert len(response.content) <= 370_000
-    assert len(gzip.compress(response.content, compresslevel=6, mtime=0)) <= 38_500
+    assert len(gzip.compress(response.content, compresslevel=6, mtime=0)) <= 38_550
 
 
 def test_propertyquarry_home_example_shortlist_labels_are_clickable(monkeypatch) -> None:
@@ -13989,7 +13989,7 @@ def test_property_workspace_payload_keeps_visual_requests_active_across_reload_s
     assert terminal["flythrough"]["status_detail"] == "Walkthrough could not be rendered from this listing yet."
 
 
-def test_property_workspace_payload_exposes_visual_provider_labels_for_ready_delivery() -> None:
+def test_property_workspace_payload_rejects_unbound_walkthrough_ready_claim() -> None:
     payload = landing_property_workspace_payload.property_workspace_payload(
         "shortlist",
         status={},
@@ -14041,7 +14041,10 @@ def test_property_workspace_payload_exposes_visual_provider_labels_for_ready_del
     assert result["tour"]["label"] == "Original tour"
     assert "no in-page 3D tour is ready yet" in result["tour"]["status_detail"]
     assert result["flythrough"]["provider_label"] == "Walkthrough"
-    assert result["flythrough"]["detail"] == "Walkthrough available"
+    assert result["flythrough"]["status"] == "missing"
+    assert result["flythrough"]["url"] == ""
+    assert result["flythrough"]["detail"] == ""
+    assert result["flythrough"].get("customer_claim_ready") is not True
 
 
 def test_property_workspace_payload_does_not_count_raw_provider_tour_as_ready() -> None:
@@ -28805,7 +28808,7 @@ def test_property_workbench_client_payload_preserves_only_validated_nested_visua
     assert payload["tour_url"] == provider_viewer_url
     assert payload["verified_tour_url"] == provider_viewer_url
     assert payload["open_tour_url"] == provider_viewer_url
-    assert payload["flythrough_url"] == walkthrough_url
+    assert "flythrough_url" not in payload
     assert payload["preview_image_url"] == preview_url
     assert payload["diorama_preview_url"] == diorama_url
     assert payload["orientation_preview"] == {"image_url": map_preview_url}
@@ -28814,9 +28817,10 @@ def test_property_workbench_client_payload_preserves_only_validated_nested_visua
     assert payload["tour"]["embed_url"] == provider_viewer_url
     assert payload["tour"]["provider_url"] == provider_viewer_url
     assert payload["tour"]["status"] == "source"
-    assert payload["flythrough"]["url"] == walkthrough_url
-    assert payload["flythrough"]["embed_url"] == walkthrough_url
-    assert payload["flythrough"]["status"] == "ready"
+    assert payload["flythrough"]["status"] == "unavailable"
+    assert "url" not in payload["flythrough"]
+    assert "embed_url" not in payload["flythrough"]
+    assert payload["flythrough"].get("customer_claim_ready") is not True
     assert payload["property_facts"]["media_urls_json"] == [preview_url]
     assert payload["property_facts"]["floorplan_urls_json"] == [floorplan_url]
 

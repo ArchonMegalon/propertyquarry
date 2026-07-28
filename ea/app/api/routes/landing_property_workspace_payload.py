@@ -348,6 +348,14 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
             normalized_candidate_url
         ):
             continue
+        # A recognized public provider viewer is a valid original-tour target.
+        # It is distinct from a first-party hosted-tour proof, but may be
+        # projected as the verified customer-safe source URL.
+        safe_provider_candidate = _property_workbench_client_provider_viewer_url(
+            normalized_candidate_url
+        )
+        if safe_provider_candidate:
+            return safe_provider_candidate
         ready_tour_url = _property_visual_ready_tour_url(
             tour_url=normalized_candidate_url,
             open_tour_url=normalized_candidate_url,
@@ -362,9 +370,6 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
         safe_hosted_url = _property_workbench_client_safe_web_or_local_url(verified_hosted_url)
         if safe_hosted_url and not _property_workbench_client_url_is_tracking(safe_hosted_url):
             return safe_hosted_url
-        safe_provider_url = _property_workbench_client_provider_viewer_url(safe_ready_tour_url)
-        if safe_provider_url:
-            return safe_provider_url
     return ""
 
 
@@ -420,9 +425,8 @@ def _property_workbench_candidate_flythrough_url(
         or raw_flythrough.get("embed_url")
         or raw_flythrough.get("provider_url")
     )
-    direct_asset_url = _property_workbench_client_asset_url(raw_url, kind="video")
-    if direct_asset_url:
-        return direct_asset_url
+    # Never turn a loose video URL into customer-ready walkthrough copy. The
+    # hosted bundle verifier below is the only authority for that claim.
     if not ready_tour_url:
         return ""
     resolved_url = property_tour_hosting._hosted_property_tour_walkthrough_open_url(
@@ -715,6 +719,8 @@ def _property_workbench_client_tour_payload(
     if safe_validated_url and not _property_workbench_client_url_is_tracking(safe_validated_url):
         compact["url"] = safe_validated_url
         compact["embed_url"] = safe_validated_url
+        if normalized_kind == "flythrough":
+            compact["customer_claim_ready"] = True
     if safe_provider_url:
         compact["provider_url"] = safe_provider_url
     if generated_reconstruction_ready and safe_validated_url:
@@ -3683,6 +3689,7 @@ def property_workspace_payload(
                 "eta_label": visual_runtime["eta_label"],
                 "provider_label": provider_label,
                 "provider_key": provider,
+                "customer_claim_ready": True,
                 "status_detail": "Walkthrough is ready.",
                 "recovery_label": "",
             }
