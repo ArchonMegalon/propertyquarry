@@ -5,14 +5,11 @@ PropertyQuarry runtime images. It does not inspect the legacy EA Compose stack
 or unrelated host images. The controller installs nothing and never pulls an
 image or vulnerability database.
 
-## Flagship controller contract
+## Local Docker security contract
 
-The installed v2 release controller must run this gate as a protected security
-phase before it admits a candidate. The `propertyquarry-release-v2` workflow
-hands the immutable GitHub candidate identity to that controller; it does not
-execute scanners from the checkout. The disabled legacy
-`propertyquarry-flagship-security` CI job is retained only as inert migration
-history and is not release evidence.
+The governed local operator runs this gate before deploying a candidate.
+GitHub Actions, hosted runners, workflow dispatch, and GitHub identity are not
+part of the trust boundary.
 
 Provision the protected security runtime with:
 
@@ -32,23 +29,20 @@ Provision the protected security runtime with:
   command flags.
 
 Scanner installation, image loading, and vulnerability-database refresh are
-separate governed controller-maintenance actions. They do not occur in the
-candidate checkout or release workflow. Missing tools, local images, databases,
+separate governed local maintenance actions. They do not occur in a remote
+workflow. Missing tools, local images, databases,
 scanner output, or valid SBOMs fail flagship mode closed and still produce an
 atomic receipt where Python can start.
 
-Configure the controller's canonical release plan with immutable image
-references, not mutable tags:
+The local deploy resolves immutable image IDs, not mutable tags:
 
 ```text
-PROPERTYQUARRY_WEB_IMAGE=registry.example/propertyquarry-web@sha256:<64-hex>
-PROPERTYQUARRY_RENDER_IMAGE=registry.example/propertyquarry-render@sha256:<64-hex>
+PROPERTYQUARRY_WEB_IMAGE=sha256:<64-hex>
+PROPERTYQUARRY_RENDER_IMAGE=sha256:<64-hex>
 ```
 
-The release commit is the full candidate SHA authenticated by the installed
-controller. The controller-owned security receipt must pass and bind that SHA
-plus both immutable image identities before migration or promotion authority
-can be consumed.
+The local deployment receipt must pass and bind the full candidate SHA plus
+both immutable image identities, migration, health, and localhost readiness.
 
 ## Web runtime construction
 

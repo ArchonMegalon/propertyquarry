@@ -46,17 +46,14 @@ def _controller_config() -> dict[str, object]:
         "identity_policy": {
             "repository": "ArchonMegalon/propertyquarry",
             "ref": "refs/heads/main",
-            "workflow_ref": (
-                "ArchonMegalon/propertyquarry/.github/workflows/"
-                "smoke-runtime.yml@refs/heads/main"
-            ),
+            "workflow_ref": "local-docker://propertyquarry/release@refs/heads/main",
             "workflow_sha": "a" * 40,
-            "job": "propertyquarry-release-v2",
+            "job": "propertyquarry-local-docker-release",
             "environment": "propertyquarry-production",
         },
         "oidc": {
             "allowed_request_url_origin": (
-                "https://vstoken.actions.githubusercontent.com"
+                "https://propertyquarry-local-authority.invalid/oidc"
             ),
             "audience": "propertyquarry-release-control-v2",
         },

@@ -38,11 +38,8 @@ def _trusted() -> SimpleNamespace:
         repository="ArchonMegalon/propertyquarry",
         git_ref="refs/heads/main",
         git_head_sha="a" * 40,
-        workflow_ref=(
-            "ArchonMegalon/propertyquarry/.github/workflows/"
-            "smoke-runtime.yml@refs/heads/main"
-        ),
-        job="propertyquarry-release-v2",
+        workflow_ref="local-docker://propertyquarry/release@refs/heads/main",
+        job="propertyquarry-local-docker-release",
         environment="propertyquarry-production",
         review_receipt_sha256="b" * 64,
         web_image=(

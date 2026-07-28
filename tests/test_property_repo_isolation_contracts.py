@@ -12,7 +12,7 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_repo_isolation_requires_the_governed_deploy_handoff() -> None:
+def test_repo_isolation_requires_the_local_docker_deploy_entrypoint() -> None:
     assert repo_isolation._makefile_deploy_uses_governed_handoff(
         "deploy:\n\t./scripts/deploy_propertyquarry.sh\n"
     )
@@ -112,32 +112,22 @@ def test_property_release_gates_include_phase_and_master_regressions() -> None:
         assert required in script
 
 
-def test_property_release_workflow_runs_the_gold_gate_bundle() -> None:
-    workflow = _read(".github/workflows/smoke-runtime.yml")
+def test_property_local_docker_release_runs_the_gold_gate_bundle() -> None:
+    deploy = _read("scripts/deploy_propertyquarry.sh")
     release_gate = _read("scripts/property_release_gates.sh")
 
     for required in (
-        "push:",
-        "pull_request:",
-        "workflow_dispatch:",
-        "property-security-posture:",
-        "security-static:",
-        "propertyquarry-browser-contracts:",
-        "product-browser-e2e:",
-        "browser-engine: [chromium, firefox, webkit]",
-        "test_propertyquarry_flagship_operating_loop_in_browser",
-        "propertyquarry-live-release-gates:",
-        "PROPERTYQUARRY_LIVE_MOBILE_REQUIRED_BROWSER_ENGINES: chromium,firefox,webkit",
-        "run: ./scripts/propertyquarry_live_release_gates.sh",
-        "scripts/propertyquarry_release_make_dispatch.py property-release-gates",
-        "smoke-runtime-api:",
-        "smoke-runtime-postgres:",
-        "postgres-runtime-contracts:",
+        "docker-compose.property.yml",
+        "docker-compose.cloudflared.yml",
+        "scripts/check_property_repository_role.py",
+        "scripts/propertyquarry_local_deployment_receipt.py",
+        "--remove-orphans",
+        "--wait",
+        "PROPERTYQUARRY_RELEASE_COMMIT_SHA",
+        "PROPERTYQUARRY_RELEASE_IMAGE_DIGEST",
     ):
-        assert required in workflow
-    assert workflow.count(
-        "shell: /bin/bash --noprofile --norc -p -e -u -o pipefail {0}"
-    ) == 2
+        assert required in deploy
+    assert "GitHub Actions and remote runners are not used." in deploy
     for required in (
         "tests/test_dossier_writer.py",
         "tests/test_dadan_video_request_workflow.py",

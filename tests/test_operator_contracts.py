@@ -331,27 +331,13 @@ def test_makefile_selects_a_pytest_capable_python_for_local_tests() -> None:
 
 def test_core_ci_gate_is_bounded_and_reports_slow_tests_without_reducing_coverage() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    workflow = yaml.safe_load(
-        (ROOT / ".github/workflows/smoke-runtime.yml").read_text(encoding="utf-8")
+    deploy = (ROOT / "scripts/deploy_propertyquarry.sh").read_text(
+        encoding="utf-8"
     )
-
-    job = workflow["jobs"]["smoke-runtime-api"]
-    assert job["timeout-minutes"] == 120
-    assert [
-        step
-        for step in job["steps"]
-        if step.get("name") == "Run read-only authenticated core CI gates"
-    ] == [
-        {
-            "name": "Run read-only authenticated core CI gates",
-            "working-directory": "/docker/property",
-            "run": (
-                "./scripts/propertyquarry_release_python.sh "
-                "scripts/propertyquarry_release_make_dispatch.py "
-                "ci-gates-authenticated"
-            ),
-        }
-    ]
+    workflows = ROOT / ".github/workflows"
+    assert not workflows.exists() or not any(workflows.iterdir())
+    assert "scripts/check_property_repository_role.py" in deploy
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
 
     isolated_test_prefix = [
         "\t@set -eu; \\",
@@ -650,15 +636,13 @@ def test_cloudflared_tunnel_is_only_available_via_override() -> None:
     assert "docker-compose.cloudflared.yml" in readme
 
 
-def test_deploy_propertyquarry_delegates_immutable_cloudflared_plan() -> None:
+def test_deploy_propertyquarry_uses_fixed_immutable_cloudflared_plan() -> None:
     deploy = (ROOT / "scripts" / "deploy_propertyquarry.sh").read_text(encoding="utf-8")
     overlay = (ROOT / "docker-compose.cloudflared.yml").read_text(encoding="utf-8")
 
-    assert "--canonical-compose-plan" in deploy
-    assert "--require-cloudflared-immutable-digest-and-config-binding" in deploy
-    assert "--forbid-caller-compose" in deploy
+    assert "--file docker-compose.property.yml" in deploy
+    assert "--file docker-compose.cloudflared.yml" in deploy
     assert "PROPERTYQUARRY_ENABLE_CLOUDFLARED" not in deploy
-    assert "docker-compose.cloudflared.yml" not in deploy
     assert "cloudflare/cloudflared@sha256:" in overlay
     assert "cloudflare/cloudflared:latest" not in overlay
 
@@ -997,7 +981,6 @@ def test_postgres_contract_script_help_and_wiring() -> None:
         text=True,
         check=True,
     )
-    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text(encoding="utf-8")
     smoke_help = (ROOT / "scripts/smoke_help.sh").read_text(encoding="utf-8")
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     script = (ROOT / "scripts/test_postgres_contracts.sh").read_text(encoding="utf-8")
@@ -1005,7 +988,7 @@ def test_postgres_contract_script_help_and_wiring() -> None:
     assert "EA_TEST_POSTGRES_DB" in result.stdout
     assert "scripts/test_postgres_contracts.sh" in smoke_help
     assert "test-postgres-contracts:" in makefile
-    assert "bash scripts/test_postgres_contracts.sh" in workflow
+    assert "bash scripts/test_postgres_contracts.sh" in makefile
     assert "tests/test_postgres_contract_matrix_integration.py" in script
     assert "tests/test_generic_async_dependency_projection_contracts.py" in script
     assert "tests/test_memory_router_contracts.py" in script
@@ -3904,7 +3887,7 @@ def test_postgres_contract_matrix_release_baseline_is_documented_and_guarded() -
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     runbook = (ROOT / "RUNBOOK.md").read_text(encoding="utf-8")
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text(encoding="utf-8")
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     script = (ROOT / "scripts/test_postgres_contracts.sh").read_text(encoding="utf-8")
     postgres_matrix = (ROOT / "tests/test_postgres_contract_matrix_integration.py").read_text(encoding="utf-8")
     milestone = json.loads((ROOT / "MILESTONE.json").read_text(encoding="utf-8"))
@@ -3912,7 +3895,7 @@ def test_postgres_contract_matrix_release_baseline_is_documented_and_guarded() -
 
     assert "current matrix covers artifacts, channel runtime, approvals, policy decisions, and task contracts" in readme
     assert "Current `scripts/test_postgres_contracts.sh` coverage includes artifacts, channel runtime, approvals, policy decisions, and task contracts." in runbook
-    assert "bash scripts/test_postgres_contracts.sh" in workflow
+    assert "bash scripts/test_postgres_contracts.sh" in makefile
     assert "tests/test_postgres_contract_matrix_integration.py" in script
     assert "test_postgres_approvals_create_decide_and_list_history" in postgres_matrix
     assert "test_postgres_policy_decisions_append_and_filter_recent" in postgres_matrix

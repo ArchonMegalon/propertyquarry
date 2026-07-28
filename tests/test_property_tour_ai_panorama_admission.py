@@ -2463,8 +2463,7 @@ def test_independent_golden_signature_vector() -> None:
     assert (
         envelope["permit"]["workflow_ref"]
         == admission.CANONICAL_WORKFLOW_REF
-        == "ArchonMegalon/propertyquarry/.github/workflows/"
-        "smoke-runtime.yml@refs/heads/main"
+        == "local-docker://propertyquarry/release@refs/heads/main"
     )
     assert (
         envelope["permit"]["volume_id"]

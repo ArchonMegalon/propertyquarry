@@ -637,8 +637,8 @@ fi
 
 PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
   tests/test_property_release_protocol_contracts.py \
-  tests/test_property_deploy_handoff_adversarial.py \
   tests/test_property_deploy_operator_contracts.py \
+  tests/test_propertyquarry_local_deployment_receipt.py \
   tests/test_propertyquarry_release_authority_receipts.py \
   tests/test_propertyquarry_release_request_signature.py \
   tests/test_propertyquarry_flagship_operations_evidence.py \
@@ -650,7 +650,6 @@ PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
   tests/test_propertyquarry_slo_evidence.py \
   tests/test_propertyquarry_slo_release_integration.py \
   tests/test_propertyquarry_deploy_drain_receipt.py \
-  tests/test_propertyquarry_deploy_controller_guard.py \
   tests/test_propertyquarry_deploy_drain_keyring.py \
   tests/test_propertyquarry_deploy_monotonic_state.py \
   tests/test_propertyquarry_deploy_writer_topology.py \

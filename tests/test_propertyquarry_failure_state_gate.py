@@ -404,11 +404,10 @@ def test_workbench_failure_states_expose_semantic_markers_and_calm_network_recov
     assert "Failed to fetch" not in script
 
 
-def test_failure_state_gate_has_a_narrow_non_live_ci_contract() -> None:
-    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text(encoding="utf-8")
+def test_failure_state_gate_has_a_local_release_receipt_contract() -> None:
+    release_gate = (ROOT / "scripts/property_release_gates.sh").read_text(
+        encoding="utf-8"
+    )
 
-    assert "propertyquarry-failure-state-contracts:" in workflow
-    assert "tests/test_propertyquarry_failure_state_gate.py" in workflow
-    job = workflow.split("propertyquarry-failure-state-contracts:", 1)[1].split("\n  propertyquarry-", 1)[0]
-    assert "environment:" not in job
-    assert "python scripts/propertyquarry_failure_state_gate.py" not in job
+    assert "PROPERTYQUARRY_FAILURE_STATE_RECEIPT" in release_gate
+    assert "failure_state_receipt" in release_gate

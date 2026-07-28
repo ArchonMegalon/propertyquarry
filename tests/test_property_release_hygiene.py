@@ -56,7 +56,9 @@ def test_release_hygiene_classifies_untracked_inputs_fail_closed() -> None:
         "packaging/propertyquarry-release-control-v2/systemd/propertyquarry-release-control-v2@.service",
         "config/monitoring/propertyquarry_flagship_operations.v1.json",
         "config/propertyquarry_security_runner_requirements.lock",
-        ".github/workflows/smoke-runtime.yml",
+        ".github/NO_GITHUB_ACTIONS.md",
+        "scripts/deploy_propertyquarry.sh",
+        "scripts/propertyquarry_local_deployment_receipt.py",
         "pytest.ini",
         "unclassified/release-input.bin",
     )

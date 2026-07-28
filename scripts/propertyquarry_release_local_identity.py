@@ -598,17 +598,14 @@ def _controller_config(*, workflow_sha: str) -> dict[str, object]:
         "identity_policy": {
             "repository": "ArchonMegalon/propertyquarry",
             "ref": "refs/heads/main",
-            "workflow_ref": (
-                "ArchonMegalon/propertyquarry/.github/workflows/"
-                "smoke-runtime.yml@refs/heads/main"
-            ),
+            "workflow_ref": "local-docker://propertyquarry/release@refs/heads/main",
             "workflow_sha": workflow_sha,
-            "job": "propertyquarry-release-v2",
+            "job": "propertyquarry-local-docker-release",
             "environment": "propertyquarry-production",
         },
         "oidc": {
             "allowed_request_url_origin": (
-                "https://vstoken.actions.githubusercontent.com"
+                "https://propertyquarry-local-authority.invalid/oidc"
             ),
             "audience": "propertyquarry-release-control-v2",
         },
@@ -737,14 +734,11 @@ def _root_policy(*, candidate_sha: str, workflow_sha: str) -> dict[str, object]:
             "repository": "ArchonMegalon/propertyquarry",
             "ref": "refs/heads/main",
             "candidate_sha": candidate_sha,
-            "workflow_ref": (
-                "ArchonMegalon/propertyquarry/.github/workflows/"
-                "smoke-runtime.yml@refs/heads/main"
-            ),
+            "workflow_ref": "local-docker://propertyquarry/release@refs/heads/main",
             "workflow_sha": workflow_sha,
             "run_id": "local-authority-bootstrap-v2",
             "run_attempt": 1,
-            "job": "propertyquarry-release-v2",
+            "job": "propertyquarry-local-docker-release",
             "environment": "propertyquarry-production",
         },
         "required_checks": list(preflight.REQUIRED_CHECK_IDS),

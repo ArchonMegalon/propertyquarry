@@ -65,7 +65,7 @@ RELEASE_MANIFEST_FIELDS = (
 RELEASE_MANIFEST_STATIC_VALUES = {
     "release_manifest_schema": RELEASE_MANIFEST_SCHEMA,
     "release_product": "PropertyQuarry",
-    "release_candidate_status": "source-browser-candidate-pending-protected-live-evidence",
+    "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
     "release_repository": "ArchonMegalon/propertyquarry",
     "release_repository_origin": "https://github.com/ArchonMegalon/propertyquarry.git",
     "release_branch": "main",

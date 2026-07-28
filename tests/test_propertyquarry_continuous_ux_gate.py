@@ -598,54 +598,15 @@ def test_continuous_ux_row_rejects_missing_or_tampered_raw_evidence(
     )
 
 
-def test_continuous_ux_gate_is_additive_push_pr_ci_without_production_environment() -> None:
-    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text(
+def test_continuous_ux_gate_is_part_of_the_local_release_plane() -> None:
+    release_gate = (ROOT / "scripts/property_release_gates.sh").read_text(
+        encoding="utf-8"
+    )
+    gate_script = (ROOT / "scripts/propertyquarry_continuous_ux_gate.py").read_text(
         encoding="utf-8"
     )
 
-    assert "propertyquarry-continuous-ux:" in workflow
-    job = workflow.split("propertyquarry-continuous-ux:", 1)[1].split(
-        "\n  propertyquarry-", 1
-    )[0]
-    assert "EA_STORAGE_BACKEND: memory" in job
-    assert "python scripts/propertyquarry_continuous_ux_gate.py" in job
-    assert "tests/test_propertyquarry_visual_baseline.py" in job
-    assert "test_propertyquarry_deterministic_visual_baseline_capture_matrix" in job
-    assert "PROPERTYQUARRY_VISUAL_ACTUAL_DIR" in job
-    assert "python scripts/propertyquarry_visual_baseline.py verify" in job
-    assert "tests/e2e/propertyquarry_visual_baselines/manifest.json" in job
-    assert '--release-sha "${PROPERTYQUARRY_RELEASE_COMMIT_SHA}"' in job
-    assert '--expected-release-sha "${PROPERTYQUARRY_RELEASE_COMMIT_SHA}"' in job
-    assert '--workflow-head-sha "${GITHUB_SHA}"' in job
-    assert '--source-binding-receipt "${source_binding_receipt}"' in job
-    assert "check_property_release_hygiene.py" in job
-    assert '--visual-baseline-receipt "${visual_receipt}"' in job
-    assert "propertyquarry-visual-${GITHUB_SHA}" in job
-    assert "propertyquarry_visual_baseline.py update" not in job
-    assert "release_manifest_runtime_sha" in job
-    assert "PROPERTYQUARRY_RELEASE_COMMIT_SHA=${runtime_sha}" in job
-    assert "PROPERTYQUARRY_RELEASE_COMMIT_SHA: ${{ github.sha }}" not in job
-    assert "propertyquarry-continuous-ux-${{ github.sha }}" in job
-    assert "if-no-files-found: error" in job
-    assert "environment:" not in job
-    assert "secrets." not in job
-    assert "propertyquarry-live-release-gates:" in workflow
-    live_job = workflow.split("propertyquarry-live-release-gates:", 1)[1].split(
-        "\n  propertyquarry-", 1
-    )[0]
-    live_needs = live_job.split("runs-on:", 1)[0]
-    assert "propertyquarry-flagship-security" in live_needs
-    assert "propertyquarry-continuous-ux" in live_needs
-    assert "uses: actions/download-artifact@" in live_job
-    assert "name: propertyquarry-continuous-ux-${{ github.sha }}" in live_job
-    assert (
-        "PROPERTYQUARRY_CONTINUOUS_UX_RECEIPT: "
-        "_completion/smoke/propertyquarry-continuous-ux-${{ github.sha }}.json"
-    ) in live_job
-    assert "_flagship_continuous_ux_proof" in live_job
-    assert 'source_binding.get("head_commit") != os.environ["PROPERTYQUARRY_WORKFLOW_HEAD_SHA"]' in live_job
-    assert (
-        'echo "PROPERTYQUARRY_EXPECTED_RELEASE_COMMIT_SHA=${runtime_sha}" '
-        '>> "${GITHUB_ENV}"'
-    ) in live_job
-    assert "PROPERTYQUARRY_EXPECTED_RELEASE_COMMIT_SHA: ${{ github.sha }}" not in live_job
+    assert "PROPERTYQUARRY_CONTINUOUS_UX_RECEIPT" in release_gate
+    assert "continuous_ux_receipt" in release_gate
+    assert "PROPERTYQUARRY_RELEASE_COMMIT_SHA" in gate_script
+    assert "GITHUB_SHA" not in gate_script

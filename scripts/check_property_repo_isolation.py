@@ -41,6 +41,7 @@ DOCKER_CONTEXT_EXCLUSIONS = (
 
 RUNTIME_RELEASE_FILES = (
     "docker-compose.property.yml",
+    "docker-compose.cloudflared.yml",
     "docker-compose.property-legacy-edge.yml",
     "ea/Dockerfile.property",
     "ea/Dockerfile.property-web",
@@ -49,14 +50,13 @@ RUNTIME_RELEASE_FILES = (
 )
 
 PROPERTYQUARRY_AUTHORITY_FILES = (
-    ".github/workflows/propertyquarry-publish-runtime-images.yml",
-    ".github/workflows/smoke-runtime.yml",
+    ".github/NO_GITHUB_ACTIONS.md",
     "docs/PROPERTYQUARRY_RELEASE_MANIFEST.md",
     "ea/app/api/routes/health.py",
     "ea/app/product/property_tour_hosting.py",
     "ea/app/services/public_branding.py",
     "ea/app/services/public_clickrank.py",
-    "scripts/check_property_repository_role.py",
+    "scripts/propertyquarry_local_deployment_receipt.py",
     "scripts/verify_generated_release_artifacts_clean.py",
 )
 
@@ -146,7 +146,7 @@ def main() -> int:
                 )
 
     for path in (
-        ".github/workflows/propertyquarry-publish-runtime-images.yml",
+        ".github/NO_GITHUB_ACTIONS.md",
         "docs/PROPERTYQUARRY_RELEASE_MANIFEST.md",
         "scripts/verify_generated_release_artifacts_clean.py",
     ):

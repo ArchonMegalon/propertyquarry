@@ -107,7 +107,7 @@ propertyquarry-release-preflight:
 	$(MAKE) property-release-gates
 
 propertyquarry-release-protocol-contracts:
-	./scripts/propertyquarry_release_python.sh -m pytest -q tests/test_property_release_protocol_contracts.py tests/test_property_deploy_handoff_adversarial.py tests/test_property_deploy_operator_contracts.py tests/test_propertyquarry_release_gate_entrypoints.py
+	./scripts/propertyquarry_release_python.sh -m pytest -q tests/test_property_release_protocol_contracts.py tests/test_property_deploy_operator_contracts.py tests/test_propertyquarry_local_deployment_receipt.py tests/test_propertyquarry_release_gate_entrypoints.py
 
 propertyquarry-native-release-control-gates:
 	./scripts/propertyquarry_release_python.sh scripts/propertyquarry_native_release_control_gates.py

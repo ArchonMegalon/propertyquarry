@@ -747,22 +747,12 @@ def test_accessibility_400_percent_reflow_requires_observed_320px_geometry(
     assert "zoom_400_reflow" in failed
 
 
-def test_accessibility_gate_is_wired_to_narrow_ci_and_protected_release() -> None:
-    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text(encoding="utf-8")
+def test_accessibility_gate_is_wired_to_local_release() -> None:
     release_gate = (ROOT / "scripts/propertyquarry_live_release_gates.sh").read_text(encoding="utf-8")
 
-    assert "propertyquarry-accessibility-contracts:" in workflow
-    assert "tests/test_propertyquarry_accessibility_gate.py" in workflow
-    assert f"axe-core@{gate.AXE_CORE_VERSION}" in workflow
-    accessibility_job = workflow.split(
-        "  propertyquarry-accessibility-contracts:\n", 1
-    )[1].split("\n  propertyquarry-failure-state-contracts:\n", 1)[0]
-    assert "python -m playwright install --with-deps chromium firefox webkit" in accessibility_job
-    assert "scripts/propertyquarry_accessibility_gate.py" in accessibility_job
-    assert '--browser-engines "${PROPERTYQUARRY_ACCESSIBILITY_BROWSER_ENGINES}"' in accessibility_job
-    assert "PROPERTYQUARRY_ACCESSIBILITY_BROWSER_ENGINES: chromium,firefox,webkit" in accessibility_job
-    assert "Preserve governed accessibility evidence" in accessibility_job
     assert "scripts/propertyquarry_accessibility_gate.py" in release_gate
+    assert "PROPERTYQUARRY_LIVE_MOBILE_REQUIRED_BROWSER_ENGINES" in release_gate
+    assert "chromium,firefox,webkit" in release_gate
     assert "PROPERTYQUARRY_ACCESSIBILITY_RESEARCH_DETAIL_ROUTE" in release_gate
     assert "PROPERTYQUARRY_ACCESSIBILITY_SHORTLIST_RUN_ROUTE" in release_gate
     assert "PROPERTYQUARRY_ACCESSIBILITY_PUBLIC_TOUR_ROUTE" in release_gate

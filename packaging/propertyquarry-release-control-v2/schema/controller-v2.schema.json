@@ -46,10 +46,10 @@
       "additionalProperties": false,
       "properties": {
         "environment": {"const": "propertyquarry-production"},
-        "job": {"const": "propertyquarry-release-v2"},
+        "job": {"const": "propertyquarry-local-docker-release"},
         "ref": {"const": "refs/heads/main"},
         "repository": {"const": "ArchonMegalon/propertyquarry"},
-        "workflow_ref": {"const": "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"},
+        "workflow_ref": {"const": "local-docker://propertyquarry/release@refs/heads/main"},
         "workflow_sha": {"pattern": "^[0-9a-f]{40}$", "type": "string"}
       },
       "required": ["repository", "ref", "workflow_ref", "workflow_sha", "job", "environment"],
@@ -71,7 +71,7 @@
     "oidc": {
       "additionalProperties": false,
       "properties": {
-        "allowed_request_url_origin": {"const": "https://vstoken.actions.githubusercontent.com"},
+        "allowed_request_url_origin": {"const": "https://propertyquarry-local-authority.invalid/oidc"},
         "audience": {"const": "propertyquarry-release-control-v2"}
       },
       "required": ["allowed_request_url_origin", "audience"],

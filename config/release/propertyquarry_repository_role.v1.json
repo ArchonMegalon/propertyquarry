@@ -16,6 +16,8 @@
     "allow_legacy_release_manifest": false,
     "allow_legacy_release_workflows": false,
     "canonical_may_require_legacy_runtime": false,
+    "github_actions_release_authority": false,
+    "release_proof_plane": "local_docker_operator_receipts",
     "require_distinct_repositories": true
   },
   "product": "PropertyQuarry",

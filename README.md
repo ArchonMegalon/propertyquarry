@@ -8,7 +8,10 @@ This repository now contains the runnable product runtime that had previously li
 
 [`ArchonMegalon/propertyquarry`](https://github.com/ArchonMegalon/propertyquarry) is the sole canonical PropertyQuarry source and release repository. PropertyQuarry builds, tests, publishes images, and deploys from this repository without release authority, commits, or runtime dependencies from MyExternalBrain or `ArchonMegalon/property`.
 
-The canonical release graph structurally gates `propertyquarry-release-v2` on the same-run `propertyquarry-security-bootstrap-attestation` job. The release job requires that dependency to succeed and binds its attestation SHA-256, bootstrap run ID, and artifact digest before requesting protected preflight. The separate manual bootstrap workflow additionally records exact protected-runner consumption, but neither a bootstrap artifact nor its consumption receipt is standalone release authority; production remains blocked until every other candidate-bound launch and protected-live gate also passes.
+GitHub is a source remote only. This repository intentionally contains no
+GitHub Actions workflows. Build, test, image, migration, deployment, health,
+rollback, and recovery proof is produced by the governed local Docker operator
+plane and its hash-bound receipts.
 
 For the current operator truth in one view, run
 `python3 scripts/propertyquarry_launch_room.py` or open
@@ -66,8 +69,8 @@ These hard-exit and LTD verifier scripts remain part of the operator contract ev
 Release preflight now keys off the EA flagship truth plane, gate seed, generated release receipt, and weekly pulse; `MILESTONE.json` remains supporting delivery history.
 The weekly pulse lives at `.codex-design/product/WEEKLY_PRODUCT_PULSE.generated.json` and is refreshed with `scripts/materialize_weekly_product_pulse.py`.
 Release preflight checklist includes the EA flagship truth-plane contract in `RELEASE_CHECKLIST.md`.
-Recommended sequencing: run `make release-docs` before dispatching the
-authenticated `release-preflight` target.
+Recommended sequencing: run `make release-docs` before the authenticated local
+`release-preflight` target.
 Local and CI-parity targets use the selected development Python. Before an
 authenticated repository preflight, use the real `/docker/property` checkout
 on the pinned Linux host, run
@@ -81,9 +84,9 @@ The current authenticated requirements input and compiled lock include
 the release interpreter can collect tests.
 That authenticated preflight validates the already-materialized generated
 receipts without refreshing or restoring their canonical files.
-When a standalone authenticated evidence refresh is intentional, dispatch
-`materialize-release-assets-authenticated` explicitly before dispatching the
-read-only `verify-flagship-release-readiness-authenticated` target.
+When a standalone authenticated evidence refresh is intentional, run
+`materialize-release-assets-authenticated` explicitly before the read-only
+`verify-flagship-release-readiness-authenticated` target.
 The closed dispatcher constructs the only accepted Make invocation; direct
 Make targets remain non-authoritative developer facades because GNU Make
 parses caller-provided startup files, eval expressions, and alternate
@@ -130,11 +133,10 @@ make runtime-hard-exit-gates
 
 That optional branch runs the public runtime smoke plus the authenticated, seeded all-surface mobile, and provider-catalog smokes against the deployed PropertyQuarry service.
 
-## Disposable local development
+## Local Docker development
 
-Direct Compose commands are for a disposable local development target only.
-They do not produce release evidence and must never point at production
-databases, credentials, containers, or traffic:
+Direct Compose commands remain useful for disposable development. They do not
+produce an authoritative deployment receipt:
 
 ```bash
 cp .env.example .env
@@ -175,52 +177,38 @@ For the disposable local topology, open:
 - `http://localhost:8090/register`
 - `http://localhost:8090/app/properties`
 
-## Production release handoff
+## Authoritative local Docker deployment
 
-Production deploy, recovery, and traffic authority belongs to the independently
-installed release controller. The checkout is only an unprivileged handoff
-client. Obtain a short-lived signed request from release control, place it in an
-invoking-user-owned, single-link, mode-`0400` file outside the checkout, and run
-the read-only disposition first:
+Production is deployed on the governed local Docker host. The release command
+loads the usual ignored `.env` and `.env.local` credentials, preserves the
+existing role-specific database bindings during upgrades, requires a clean
+canonical checkout, builds exact local web/render images, runs migrations,
+starts the complete Compose topology, waits for health, probes localhost, and
+writes a secret-free mode-`0600` deployment receipt.
 
-```bash
-EA_RUNTIME_MODE=prod \
-PROPERTYQUARRY_DEPLOY_SIGNED_REQUEST=/run/user/$(id -u)/propertyquarry-deploy-preflight-request.json \
-  ./scripts/deploy_propertyquarry.sh --preflight-only
-```
-
-A preflight request is operation-bound and non-authorizing; it cannot be reused
-to deploy. After reviewing a `READY` disposition, obtain a distinct, fresh
-`deploy-run` signed request from release control and invoke the handoff without
-`--preflight-only`:
+Run the read-only preflight and then deploy:
 
 ```bash
-EA_RUNTIME_MODE=prod \
-PROPERTYQUARRY_DEPLOY_SIGNED_REQUEST=/run/user/$(id -u)/propertyquarry-deploy-run-request.json \
-  ./scripts/deploy_propertyquarry.sh
+scripts/deploy_propertyquarry.sh --preflight-only
+scripts/deploy_propertyquarry.sh
+python3 scripts/propertyquarry_launch_room.py
 ```
 
-The caller must remain unprivileged, have no Docker daemon authority, and must
-not export database or traffic credentials. The handoff rejects caller-selected
-Compose files, Docker contexts, database URLs, tunnel tokens, verifier paths,
-receipt outputs, and trust/key paths. Host ports, project/container identities,
-provider matrices, migrations, health gates, rollback, and traffic selection
-come only from the signed request and the controller's root-managed canonical
-configuration; checkout environment overrides have no production authority.
+The authoritative receipt is ignored from Git and lives at:
 
-The closed v1 wire contract is documented in
-[`docs/PROPERTYQUARRY_RELEASE_CONTROL_PROTOCOL_V1.md`](docs/PROPERTYQUARRY_RELEASE_CONTROL_PROTOCOL_V1.md).
-Run
-`./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py propertyquarry-release-protocol-contracts`
-for its offline schema, binding, and handoff checks. The validator proves
-document conformance only; it
-does not verify signatures, establish trust, authorize an operation, or contact
-the release controller.
+```text
+state/release/propertyquarry-local-deployment.v1.json
+```
 
-Until the fixed controller, manifest, digest pin, Compose plan, database fence,
-keyring, gateway trust, monitoring topology/tools, signer, and external
-monotonic authority are independently provisioned and attested, production
-deployment remains blocked. There is no local Compose fallback.
+The deployment refuses remote Docker contexts, unexpected services sharing the
+`property` Compose project, dirty or noncanonical checkouts, missing
+least-privilege database roles, missing identity/render/tunnel secrets, image
+ID drift, failed migration, unhealthy containers, privileged containers,
+Docker-socket mounts, release-identity mismatches, and failed localhost
+readiness. GitHub Actions and remote runners are not involved.
+
+The complete receipt and launch-room contract is documented in
+[`docs/PROPERTYQUARRY_LAUNCH_ROOM.md`](docs/PROPERTYQUARRY_LAUNCH_ROOM.md).
 
 The inherited EA mega-stack deploy script remains in the repo for disposable
 migration and compatibility work. It has no PropertyQuarry production release

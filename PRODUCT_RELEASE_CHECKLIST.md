@@ -99,8 +99,8 @@ identity.
 
 Any unavailable, degraded, preview-only, or operator-dependent capability is
 named in the release manifest and customer experience. PropertyQuarry is live
-only when terminal hosted CI, protected production gates, controller receipts,
-public runtime evidence, and the verified rollback path agree.
+only when authenticated local gates, the exact-candidate Docker deployment
+receipt, public runtime evidence, and the verified rollback path agree.
 
 Global flagship completion is governed by
 `docs/PROPERTYQUARRY_GLOBAL_FLAGSHIP_GOAL.md`, not by a passing source or browser

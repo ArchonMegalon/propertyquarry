@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Render one fail-closed PropertyQuarry operator truth view.
-
-The report combines only checked-in candidate evidence and local Git state. It
-never treats either as current GitHub Actions, deployment, or public-edge proof.
-"""
+"""Render one fail-closed PropertyQuarry local-Docker operator truth view."""
 
 from __future__ import annotations
 
@@ -30,6 +26,10 @@ BROWSER_PROOF_PATH = Path(
 MANIFEST_START = "<!-- propertyquarry-release-manifest-json:start -->"
 MANIFEST_END = "<!-- propertyquarry-release-manifest-json:end -->"
 SCHEMA = "propertyquarry.launch_room.v1"
+DEFAULT_DEPLOYMENT_RECEIPT = Path(
+    "state/release/propertyquarry-local-deployment.v1.json"
+)
+DEPLOYMENT_SCHEMA = "propertyquarry.local_docker_deployment.v1"
 
 
 class LaunchRoomError(RuntimeError):
@@ -123,7 +123,66 @@ def _proof_counts(proof: dict[str, object]) -> dict[str, object]:
     }
 
 
-def build_launch_room(root: Path = ROOT) -> dict[str, object]:
+def _deployment_status(path: Path, runtime_sha: str) -> dict[str, object]:
+    if not path.is_file():
+        return {
+            "status": "missing_local_docker_deployment_receipt",
+            "production_launch": False,
+            "receipt_path": str(path),
+        }
+    receipt = _object(path)
+    authority = (
+        dict(receipt.get("authority") or {})
+        if isinstance(receipt.get("authority"), dict)
+        else {}
+    )
+    services = (
+        dict(receipt.get("services") or {})
+        if isinstance(receipt.get("services"), dict)
+        else {}
+    )
+    required_services = {
+        "propertyquarry-api",
+        "propertyquarry-migrate",
+        "propertyquarry-worker",
+        "propertyquarry-scheduler",
+        "propertyquarry-render-tools",
+        "propertyquarry-db",
+        "propertyquarry-cloudflared",
+    }
+    passed = (
+        receipt.get("schema") == DEPLOYMENT_SCHEMA
+        and receipt.get("passed") is True
+        and receipt.get("secret_values_recorded") is False
+        and receipt.get("runtime_commit_sha") == runtime_sha
+        and authority.get("scope") == "local_docker"
+        and authority.get("proof_plane") == "local_docker_operator_receipts"
+        and authority.get("github_actions_used") is False
+        and authority.get("canonical_repository")
+        == "ArchonMegalon/propertyquarry"
+        and set(services) == required_services
+        and dict(receipt.get("local_probe") or {}).get("status") == "pass"
+    )
+    return {
+        "status": (
+            "healthy_exact_candidate_local_docker"
+            if passed
+            else "blocked_local_docker_receipt_invalid_or_stale"
+        ),
+        "production_launch": passed,
+        "receipt_path": str(path),
+        "runtime_candidate_bound": receipt.get("runtime_commit_sha") == runtime_sha,
+        "compose_project": dict(receipt.get("compose") or {}).get("project"),
+        "service_count": len(services),
+        "observed_at": receipt.get("observed_at"),
+    }
+
+
+def build_launch_room(
+    root: Path = ROOT,
+    *,
+    deployment_receipt_path: Path | None = None,
+) -> dict[str, object]:
     root = root.resolve(strict=True)
     policy = _object(root / ROLE_POLICY_PATH)
     canonical = dict(policy.get("canonical") or {})
@@ -174,6 +233,18 @@ def build_launch_room(root: Path = ROOT) -> dict[str, object]:
         "--verify",
         "refs/remotes/legacy-property/main^{commit}",
     )
+    if deployment_receipt_path is None:
+        configured = os.environ.get("PROPERTYQUARRY_LOCAL_DEPLOYMENT_RECEIPT", "")
+        deployment_receipt_path = (
+            Path(configured)
+            if configured
+            else root / DEFAULT_DEPLOYMENT_RECEIPT
+        )
+    elif not deployment_receipt_path.is_absolute():
+        deployment_receipt_path = root / deployment_receipt_path
+    deployment = _deployment_status(deployment_receipt_path, runtime_sha)
+    deployment_green = deployment["production_launch"] is True
+    production_ready = candidate_proof_green and deployment_green and not dirty
     return {
         "schema": SCHEMA,
         "observed_at": datetime.now(timezone.utc)
@@ -196,46 +267,44 @@ def build_launch_room(root: Path = ROOT) -> dict[str, object]:
             "candidate_bound": candidate_bound,
             **proof_counts,
         },
-        "github_actions": {
-            "status": "missing_current_protected_actions_evidence",
-            "network_freshness_proven": False,
+        "release_proof_plane": {
+            "status": "local_docker_operator_receipts",
+            "github_actions_used": False,
         },
         "core_gold": {
             "status": (
-                "candidate_eligible_production_blocked"
+                "local_docker_deployed"
+                if candidate_proof_green and deployment_green
+                else "candidate_eligible_local_deployment_missing"
                 if candidate_proof_green
                 else "blocked_candidate_proof"
             ),
-            "production_claim": False,
+            "production_claim": production_ready,
         },
         "advanced_visual_gold": {
             "status": "unavailable_unbound_producer_receipts",
             "production_claim": False,
         },
-        "live_deployment": {
-            "status": "missing_exact_candidate_protected_receipt",
-            "production_launch": False,
-        },
+        "live_deployment": deployment,
         "public_edge": {
-            "status": "historical_only_current_proof_missing",
+            "status": (
+                "local_cloudflared_container_running"
+                if deployment_green
+                else "blocked_until_local_docker_receipt_passes"
+            ),
             "network_freshness_proven": False,
         },
         "next_action": (
-            (
-                "Commit and reseal the canonical candidate, then dispatch "
-                "smoke-runtime on ArchonMegalon/propertyquarry main"
-            )
+            "Commit, rebuild, and redeploy the local Docker stack."
             if dirty
+            else "Run scripts/deploy_propertyquarry.sh on the local Docker host."
+            if not deployment_green
             else (
-                "Dispatch smoke-runtime on ArchonMegalon/propertyquarry main"
+                "Monitor the local Compose services and refresh the deployment "
+                "receipt after any image, configuration, or container change."
             )
-        )
-        + (
-            " with the one-time release/security runner labels and "
-            "release-runner ticket; preserve ordinary-CI, "
-            "bootstrap-attestation, image, live, rollback, and DR receipts."
         ),
-        "production_launch_ready": False,
+        "production_launch_ready": production_ready,
     }
 
 
@@ -256,7 +325,7 @@ def render_markdown(report: dict[str, object]) -> str:
             f"{journeys['selected']}/{journeys['required']} journeys; "
             f"{browser['selected']}/{browser['required']} browser",
         ),
-        ("GitHub Actions", dict(report["github_actions"])["status"]),
+        ("Release proof plane", dict(report["release_proof_plane"])["status"]),
         ("Core Gold", dict(report["core_gold"])["status"]),
         (
             "Advanced Visual Gold",
@@ -264,7 +333,10 @@ def render_markdown(report: dict[str, object]) -> str:
         ),
         ("Live deployment", dict(report["live_deployment"])["status"]),
         ("Public edge", dict(report["public_edge"])["status"]),
-        ("Production launch", "BLOCKED"),
+        (
+            "Production launch",
+            "READY" if report["production_launch_ready"] else "BLOCKED",
+        ),
     )
     table = "\n".join(f"| {key} | `{value}` |" for key, value in rows)
     return (
@@ -302,11 +374,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Render the fail-closed PropertyQuarry launch-room truth."
     )
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument(
+        "--deployment-receipt",
+        type=Path,
+        help=(
+            "Local Docker deployment receipt; defaults to "
+            "state/release/propertyquarry-local-deployment.v1.json"
+        ),
+    )
     parser.add_argument("--format", choices=("json", "markdown"), default="markdown")
     parser.add_argument("--write", type=Path)
     args = parser.parse_args(argv)
     try:
-        report = build_launch_room(args.root)
+        report = build_launch_room(
+            args.root,
+            deployment_receipt_path=args.deployment_receipt,
+        )
     except (OSError, LaunchRoomError) as exc:
         print(f"launch-room audit failed: {exc}", file=sys.stderr)
         return 2

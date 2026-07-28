@@ -37,13 +37,14 @@ POLICY_SCHEMA = "propertyquarry.repository_role_policy.v1"
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 ROLE_VALUES = ("canonical", "legacy")
-LEGACY_FORBIDDEN_WORKFLOWS = (
-    Path(".github/workflows/smoke-runtime.yml"),
-    Path(".github/workflows/propertyquarry-publish-runtime-images.yml"),
-    Path(".github/workflows/propertyquarry-security-runner-bootstrap.yml"),
-)
-LEGACY_ALLOWED_WORKFLOW = Path(
-    ".github/workflows/propertyquarry-noncanonical.yml"
+NO_GITHUB_ACTIONS_MARKER = Path(".github/NO_GITHUB_ACTIONS.md")
+CANONICAL_LOCAL_AUTHORITY_SURFACES = (
+    Path("docker-compose.property.yml"),
+    Path("docker-compose.cloudflared.yml"),
+    Path("scripts/deploy_propertyquarry.sh"),
+    Path("scripts/propertyquarry_local_deployment_receipt.py"),
+    Path("scripts/propertyquarry_release_local_container_gate.py"),
+    Path("scripts/propertyquarry_release_local_runtime_gate.py"),
 )
 
 
@@ -103,6 +104,8 @@ def load_policy(root: Path = ROOT) -> dict[str, object]:
         "allow_legacy_release_manifest": False,
         "allow_legacy_release_workflows": False,
         "canonical_may_require_legacy_runtime": False,
+        "github_actions_release_authority": False,
+        "release_proof_plane": "local_docker_operator_receipts",
         "require_distinct_repositories": True,
     }
     if canonical != expected_canonical:
@@ -201,24 +204,27 @@ def _manifest_issues(root: Path, *, role: str) -> list[str]:
 
 
 def _workflow_issues(root: Path, *, role: str) -> list[str]:
+    issues: list[str] = []
+    workflows = root / ".github" / "workflows"
+    if workflows.is_symlink():
+        issues.append("github_actions_workflow_directory_symlink")
+    elif workflows.exists():
+        if not workflows.is_dir():
+            issues.append("github_actions_workflow_path_not_directory")
+        else:
+            for entry in sorted(workflows.iterdir(), key=lambda item: item.name):
+                if entry.suffix.lower() in {".yml", ".yaml"}:
+                    issues.append(
+                        f"github_actions_workflow_present:{entry.relative_to(root)}"
+                    )
+    if not (root / NO_GITHUB_ACTIONS_MARKER).is_file():
+        issues.append("no_github_actions_marker_missing")
     if role == "canonical":
-        required = (
-            Path(".github/workflows/smoke-runtime.yml"),
-            Path(".github/workflows/propertyquarry-publish-runtime-images.yml"),
-            Path(".github/workflows/propertyquarry-security-runner-bootstrap.yml"),
-        )
-        return [
-            f"canonical_release_workflow_missing:{path}"
-            for path in required
+        issues.extend(
+            f"canonical_local_authority_surface_missing:{path}"
+            for path in CANONICAL_LOCAL_AUTHORITY_SURFACES
             if not (root / path).is_file()
-        ]
-    issues = [
-        f"legacy_release_workflow_present:{path}"
-        for path in LEGACY_FORBIDDEN_WORKFLOWS
-        if (root / path).exists()
-    ]
-    if not (root / LEGACY_ALLOWED_WORKFLOW).is_file():
-        issues.append("legacy_noncanonical_workflow_missing")
+        )
     return issues
 
 
@@ -234,7 +240,11 @@ def audit_repository_role(
     policy = load_policy(root)
     canonical = dict(policy["canonical"])  # type: ignore[arg-type]
     legacy = dict(policy["legacy"])  # type: ignore[arg-type]
-    repository = str(expected_repository or os.environ.get("GITHUB_REPOSITORY") or "")
+    repository = str(
+        expected_repository
+        or os.environ.get("PROPERTYQUARRY_REPOSITORY")
+        or ""
+    )
     if not repository:
         origin = _origin_url(root)
         matches = [
@@ -300,7 +310,9 @@ def audit_repository_role(
         "head_sha": head_sha,
         "clean": clean,
         "policy_path": POLICY_PATH.as_posix(),
-        "observation_scope": "local_policy_git_config_checkout_and_release_surfaces",
+        "release_proof_plane": "local_docker_operator_receipts",
+        "github_actions_release_authority": False,
+        "observation_scope": "local_policy_git_config_checkout_and_docker_release_surfaces",
         "network_freshness_proven": False,
         "passed": not unique_failures,
         "failures": unique_failures,

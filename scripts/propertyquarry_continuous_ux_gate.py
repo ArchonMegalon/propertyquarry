@@ -1666,8 +1666,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--release-sha",
-        default=os.environ.get("PROPERTYQUARRY_RELEASE_COMMIT_SHA")
-        or os.environ.get("GITHUB_SHA", ""),
+        default=os.environ.get("PROPERTYQUARRY_RELEASE_COMMIT_SHA", ""),
     )
     parser.add_argument(
         "--api-token",

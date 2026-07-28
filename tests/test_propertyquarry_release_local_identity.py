@@ -101,8 +101,7 @@ def test_bootstrap_creates_six_distinct_keys_and_exact_public_bundle(
 
     expected_repository = "ArchonMegalon/propertyquarry"
     expected_workflow_ref = (
-        "ArchonMegalon/propertyquarry/.github/workflows/"
-        "smoke-runtime.yml@refs/heads/main"
+        "local-docker://propertyquarry/release@refs/heads/main"
     )
     controller = json.loads(
         (package_input / "controller-v2.json").read_bytes()

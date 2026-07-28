@@ -76,7 +76,7 @@ def test_legacy_migration_regression_smoke_contract_is_wired() -> None:
     smoke = (ROOT / "scripts/smoke_postgres.sh").read_text()
     smoke_api = (ROOT / "scripts/smoke_api.sh").read_text()
     postgres_contracts = (ROOT / "scripts/test_postgres_contracts.sh").read_text()
-    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text()
+    makefile = (ROOT / "Makefile").read_text()
 
     assert "--legacy-fixture" in smoke
     assert "apply_legacy_fixture()" in smoke
@@ -140,8 +140,8 @@ def test_legacy_migration_regression_smoke_contract_is_wired() -> None:
     assert "consecutive=$((consecutive + 1))" in smoke
     assert "compose up (api + worker)" in smoke
     assert '"${DC[@]}" up -d --no-deps --build --force-recreate "${API_SERVICE}" "${WORKER_SERVICE}"' in smoke
-    assert "bash scripts/smoke_postgres.sh --legacy-fixture" in workflow
-    assert "python -m playwright install --with-deps chromium" in workflow
+    assert "bash scripts/smoke_postgres.sh --legacy-fixture" in makefile
+    assert "smoke-postgres-legacy:" in makefile
 
 
 def test_postgres_smoke_resolves_default_and_propertyquarry_service_aliases() -> None:
@@ -282,7 +282,7 @@ def test_local_gate_bundles_include_flagship_readiness_and_generated_cleanliness
     makefile = (ROOT / "Makefile").read_text()
     readme = (ROOT / "README.md").read_text()
     runbook = (ROOT / "RUNBOOK.md").read_text()
-    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text()
+    deploy = (ROOT / "scripts/deploy_propertyquarry.sh").read_text()
 
     ci_gates = _make_target_body(makefile, "ci-gates")
     all_local = _make_target_body(makefile, "all-local")
@@ -302,11 +302,8 @@ def test_local_gate_bundles_include_flagship_readiness_and_generated_cleanliness
     for target in ("verify-release-assets", "verify-flagship-release-readiness", "test-api"):
         assert "materialize-release-assets" not in _make_target_body(makefile, target)
 
-    assert (
-        "./scripts/propertyquarry_release_python.sh "
-        "scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated"
-        in workflow
-    )
+    assert "scripts/check_property_repository_role.py" in deploy
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
     assert "flagship release-readiness verification" in readme
     assert "generated release artifact cleanliness" in readme
     assert "flagship release readiness" in runbook

@@ -4,13 +4,14 @@ This file is the concise, current release authority. Detailed dated notes are ar
 
 ## Current state
 
-PropertyQuarry is a source/browser candidate, not a production launch:
+PropertyQuarry is a source/browser candidate whose production state is decided
+by the current local Docker deployment receipt:
 
-- The locally materialized candidate receipt covers `7/7` source cases, `16/16` real-browser cases, and all eight required product journeys for the exact source identity recorded below. It has not been published or accepted by protected release authority. This candidate includes explicit hosted/generated/blocked/expired 3D-tour truth, attributable unavailable/stale/verified area-evidence states, in-place shortlist history, protected Telegram delivery proof, production-mode PostgreSQL storage/browser parity with internal-only CI session provisioning, immutable CI actions, fail-closed production registration delivery, and a signed controller profile that preserves the canonical public-tour volume and permits only journaled ownership repair.
+- The locally materialized candidate receipt covers `7/7` source cases, `16/16` real-browser cases, and all eight required product journeys for the exact source identity recorded below. Local Compose deployment and its mode-`0600` operator receipt—not GitHub Actions—decide whether that candidate is live. This candidate includes explicit hosted/generated/blocked/expired 3D-tour truth, attributable unavailable/stale/verified area-evidence states, in-place shortlist history, Telegram delivery proof, production-mode PostgreSQL storage/browser parity, fail-closed production registration delivery, and canonical public-tour volume controls.
 - Candidate/browser proof does not prove deployment, production storage, authentication, external delivery, observability, rollback, or disaster recovery.
 - A prior, separately observed public-edge check returned `200` for `/` after a narrow generated-tour permission repair and received a response from `/health/ready`; the observation has no current timestamp, immutable image binding, or exact-candidate authority and is therefore historical context only. At that observation, `/version` reported an incomplete release manifest without canonical release identity. None of those checks is deployment proof for this candidate.
-- Production promotion remains blocked on the independent release-controller artifact, an approved `propertyquarry-security` runner, and distinct digest-pinned web/render images.
-- ID Austria is optional and unconfigured. Another supported sign-in path still needs protected live activation proof.
+- Production promotion requires a passing exact-candidate local Docker receipt with distinct immutable web/render image IDs, completed migration, healthy services, and localhost readiness.
+- ID Austria is optional and unconfigured. Another supported sign-in path must pass the local live activation proof.
 - External notification release evidence is Telegram-only. WhatsApp is outside the current launch evidence.
 - Release claims are split. **Core Gold** covers search, shortlist, property detail, first-party 3DVista/public-tour delivery, dossier, decision, and governed delivery evidence. Missing or unconfigured MagicFit, Magic, OMagic, generated scene-video, or other advanced visual lanes do not block Core Gold and must remain unavailable in customer copy.
 - **Advanced Visual Gold** is a separate opt-in claim scope. It fails closed unless every claimed MagicFit/Magic/OMagic lane has exact candidate-bound provider provenance, accepted playback, quota/account state, privacy, isolation, source-receipt hashes, and media-artifact hashes. Adapter configuration or a generated file alone is never Advanced Visual Gold evidence.
@@ -21,7 +22,7 @@ PropertyQuarry is a source/browser candidate, not a production launch:
 `ArchonMegalon/propertyquarry` is the sole canonical repository under
 `config/release/propertyquarry_repository_role.v1.json`. The historical
 `ArchonMegalon/property` repository is a noncanonical verifier only, has no
-release/image/security workflow authority, and is not an exact mirror.
+release/image/deployment authority, and is not an exact mirror.
 
 The legacy repo's formerly recorded runtime candidate
 `8b9b2dd7e7d2df6e52c51572e4c44cbdff53a8e1` and envelope head
@@ -53,7 +54,7 @@ The marked JSON object is the single canonical release authority consumed by the
 {
   "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:48b40a10f8626578b868d1bec38867d6421757908a637bd16741b305892e6ce4",
   "release_branch": "main",
-  "release_candidate_status": "source-browser-candidate-pending-protected-live-evidence",
+  "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
   "release_commit_sha": "96005865adbb165da95f9906ec51992ff14407db",
   "release_deployment_id": "propertyquarry-governed-deploy-96005865adbb",
   "release_generated_at": "2026-07-28T12:03:56Z",
@@ -74,12 +75,12 @@ The artifact-set identity covers the exact tracked bytes of the flagship release
 
 Production stays fail-closed until every item is bound to the exact runtime candidate:
 
-1. Both ordinary hosted CI lanes are terminal and green for the final runtime and receipt envelope.
-2. The independently produced and authenticated `propertyquarry-release-controller-v2` authority is installed at `/usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2`, registered on the protected `propertyquarry-release-controller-v2` runner label, and enforces `PROPERTYQUARRY_PUBLIC_TOUR_VOLUME_PROFILE_V1.md`, including canonical-volume identity, pre/post manifests, ownership-only repair, mode preservation, and rollback evidence. The repository-native non-authoritative bootstrap binary is not a substitute.
-3. The protected environment has an approved `propertyquarry-security` runner and distinct digest-pinned `PROPERTYQUARRY_WEB_IMAGE` and `PROPERTYQUARRY_RENDER_IMAGE` inputs.
+1. The authenticated local release gate bundle is green for the final runtime and receipt envelope, with no accepted skips or mutable generated state.
+2. The local Docker operator deploys only the canonical Compose files, preserves the canonical public-tour volume, and writes a secret-free receipt binding image IDs, Compose hashes, service topology, migration, health, and security posture.
+3. The local image store contains distinct immutable `PROPERTYQUARRY_WEB_IMAGE` and `PROPERTYQUARRY_RENDER_IMAGE` IDs built from the canonical checkout.
 4. Dependency, container, policy, and SBOM scans pass without stale databases or weakened gates.
 5. The governed deployment preserves the canonical public-tour inventory, repairs only journaled legacy ownership, and completes; `/version` reports the approved runtime SHA and complete manifest; `/` remains healthy without generated-bundle permission errors or path disclosure.
-6. A supported sign-in path, lifecycle controls, Telegram delivery, PostgreSQL durability, and the customer search-to-decision journeys pass protected live verification.
+6. A supported sign-in path, lifecycle controls, Telegram delivery, PostgreSQL durability, and the customer search-to-decision journeys pass local live verification.
 7. Observability, alerting, rollback, disaster recovery, post-promotion smoke, and Cloudflare/public-origin receipts pass.
 8. Billing, analytics, and Core Gold limitations are resolved with evidence or excluded from the launch claim. Advanced scene-video/provider-media limitations may be excluded only by selecting Core Gold and keeping every affected customer claim unavailable; an Advanced Visual Gold claim remains blocked.
 
@@ -94,15 +95,15 @@ Production stays fail-closed until every item is bound to the exact runtime cand
 
 ## Whole-project Gold boundary
 
-- Evidence-map overlay source and browser UI proof is green for unavailable, stale, and verified states. Whole-project Gold remains blocked until protected live authenticated source coverage and candidate-bound cache-recency, source-time/reference-period, and performance receipts cover environmental quality, heat, traffic/noise, mobility, schools, official aggregate safety context, media-attention statistics with article links, and fiber/broadband coverage.
+- Evidence-map overlay source and browser UI proof is green for unavailable, stale, and verified states. Whole-project Gold remains blocked until local live authenticated source coverage and candidate-bound cache-recency, source-time/reference-period, and performance receipts cover environmental quality, heat, traffic/noise, mobility, schools, official aggregate safety context, media-attention statistics with article links, and fiber/broadband coverage.
 - Rybbit remains a whole-project gold blocker until dashboard/API receipts prove the approved taxonomy across conversion, product engagement, billing, tours, support/recovery, and activation without private candidate, listing, or contact payloads.
 - Production security remains a whole-project gold blocker until runtime/container hardening, reproducible supply chain, dependency/container scans, SBOM, durable RBAC/session revocation, key rotation, and disabled production override receipts are current.
-- Remote candidate CI and deployed/live receipts remain required before launch authority can be granted.
+- The authenticated local candidate gates and deployed/live receipts remain required before launch authority can be granted.
 
 ## Rules
 
 - Update this file only from current candidate and production evidence.
 - Treat a tracked-`main`/runtime SHA mismatch as blocked until governed deployment reconciles it.
-- Store detailed machine receipts in completion artifacts or CI, not in this document.
+- Store detailed machine receipts in the local mode-`0600` receipt store, not in this document.
 - Never include credentials, tokens, cookies, license keys, or customer data.
-- Never bypass the release controller, security runner, provenance, rollback, or disaster-recovery gates.
+- Never bypass the local Docker receipt, provenance, rollback, or disaster-recovery gates.

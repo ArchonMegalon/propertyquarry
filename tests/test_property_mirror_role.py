@@ -6,8 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import yaml
-
 from scripts.check_property_mirror_role import (
     CANONICAL_REPOSITORY,
     CANONICAL_URL,
@@ -15,8 +13,8 @@ from scripts.check_property_mirror_role import (
     MIRROR_URL,
 )
 from scripts.check_property_repository_role import (
-    LEGACY_ALLOWED_WORKFLOW,
-    LEGACY_FORBIDDEN_WORKFLOWS,
+    CANONICAL_LOCAL_AUTHORITY_SURFACES,
+    NO_GITHUB_ACTIONS_MARKER,
     POLICY_PATH,
     load_policy,
 )
@@ -76,23 +74,21 @@ def _fixture_repo(tmp_path: Path, *, role: str) -> Path:
     policy_target.write_bytes((ROOT / POLICY_PATH).read_bytes())
     manifest = repo / "docs" / "PROPERTYQUARRY_RELEASE_MANIFEST.md"
     manifest.parent.mkdir(parents=True)
-    workflows = repo / ".github" / "workflows"
-    workflows.mkdir(parents=True)
+    marker = repo / NO_GITHUB_ACTIONS_MARKER
+    marker.parent.mkdir(parents=True)
+    marker.write_text("# No GitHub Actions\n", encoding="utf-8")
     if role == "canonical":
         manifest.write_text(_manifest(), encoding="utf-8")
-        for path in LEGACY_FORBIDDEN_WORKFLOWS:
+        for path in CANONICAL_LOCAL_AUTHORITY_SURFACES:
             target = repo / path
-            target.write_text("name: canonical\n", encoding="utf-8")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("local authority surface\n", encoding="utf-8")
         repository_url = CANONICAL_URL
     else:
         manifest.write_text(
             "# NONCANONICAL PropertyQuarry repository\n\n"
             "This legacy checkout has no release authority. The sole canonical "
             "repository is ArchonMegalon/propertyquarry.\n",
-            encoding="utf-8",
-        )
-        (repo / LEGACY_ALLOWED_WORKFLOW).write_text(
-            "name: propertyquarry-noncanonical\n",
             encoding="utf-8",
         )
         repository_url = MIRROR_URL
@@ -160,6 +156,8 @@ def test_shared_policy_has_distinct_fail_closed_repository_roles() -> None:
         "allow_legacy_release_manifest": False,
         "allow_legacy_release_workflows": False,
         "canonical_may_require_legacy_runtime": False,
+        "github_actions_release_authority": False,
+        "release_proof_plane": "local_docker_operator_receipts",
         "require_distinct_repositories": True,
     }
 
@@ -245,9 +243,10 @@ def test_legacy_manifest_authority_marker_fails_closed(tmp_path: Path) -> None:
     )
 
 
-def test_legacy_release_workflow_fails_closed(tmp_path: Path) -> None:
+def test_any_github_actions_workflow_fails_closed(tmp_path: Path) -> None:
     repo = _fixture_repo(tmp_path, role="legacy")
-    forbidden = repo / LEGACY_FORBIDDEN_WORKFLOWS[0]
+    forbidden = repo / ".github/workflows/forbidden.yml"
+    forbidden.parent.mkdir(parents=True)
     forbidden.write_text("name: forbidden release\n", encoding="utf-8")
     result, receipt = _run(
         repo,
@@ -259,7 +258,7 @@ def test_legacy_release_workflow_fails_closed(tmp_path: Path) -> None:
 
     assert result.returncode == 2
     assert any(
-        str(item).startswith("legacy_release_workflow_present:")
+        str(item).startswith("github_actions_workflow_present:")
         for item in receipt["failures"]
     )
 
@@ -296,34 +295,7 @@ def test_dirty_canonical_checkout_cannot_emit_release_role_proof(
     assert "worktree_not_clean" in receipt["failures"]
 
 
-def test_workflow_and_release_bundle_use_repository_role_not_self_mirror() -> None:
-    workflow = yaml.safe_load(
-        (ROOT / ".github/workflows/smoke-runtime.yml").read_text(
-            encoding="utf-8"
-        )
-    )
-    jobs = workflow["jobs"]
-    role_job = jobs["propertyquarry-repository-role-contract"]
-    assert role_job["permissions"] == {"contents": "read"}
-    assert role_job["runs-on"] == "ubuntu-latest"
-    checkout = role_job["steps"][0]
-    assert checkout["with"] == {
-        "fetch-depth": 0,
-        "persist-credentials": False,
-    }
-    initialized = role_job["steps"][1]["run"]
-    assert "propertyquarry.repository_role.ci_preflight.v1" in initialized
-    gate_run = role_job["steps"][2]["run"]
-    assert "scripts/check_property_repository_role.py" in gate_run
-    assert "--expected-repository ArchonMegalon/propertyquarry" in gate_run
-    assert "--expected-role canonical" in gate_run
-    assert "--expected-head-sha" in gate_run
-    assert "remote.propertyquarry" not in gate_run
-    assert "check_property_mirror_role.py" not in gate_run
-    assert "propertyquarry-repository-role-contract" in jobs[
-        "propertyquarry-ordinary-ci-success"
-    ]["needs"]
-
+def test_local_docker_release_bundle_uses_repository_role_not_self_mirror() -> None:
     release_gate = (ROOT / "scripts/property_release_gates.sh").read_text(
         encoding="utf-8"
     )
@@ -331,6 +303,17 @@ def test_workflow_and_release_bundle_use_repository_role_not_self_mirror() -> No
     assert "--expected-role canonical" in release_gate
     assert "--require-clean-worktree" in release_gate
     assert "scripts/check_property_mirror_role.py" not in release_gate
+    deploy = (ROOT / "scripts/deploy_propertyquarry.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "scripts/check_property_repository_role.py" in deploy
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
+    assert "docker compose" in deploy
+    assert "GitHub Actions and remote runners are not used." in deploy
+    assert not any(
+        path.suffix in {".yml", ".yaml"}
+        for path in (ROOT / ".github/workflows").iterdir()
+    )
 
     isolation = (ROOT / "docs/REPO_ISOLATION.md").read_text(encoding="utf-8")
     assert "`ArchonMegalon/propertyquarry` is the sole canonical" in isolation

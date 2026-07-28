@@ -24,7 +24,7 @@
       "git_ref": "refs/heads/main",
       "issued_at": "2026-07-24T08:00:00Z",
       "issuer": "propertyquarry-release-control",
-      "job": "propertyquarry-release-v2",
+      "job": "propertyquarry-local-docker-release",
       "key_epoch": 7,
       "key_sha256": "56475aa75463474c0285df5dbf2bcab73da651358839e9b77481b2eab107708c",
       "key_usage": "propertyquarry.ai-panorama-install-permit.signing.v1",
@@ -47,18 +47,18 @@
       "volume_profile_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "web_image": "ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
       "web_image_id": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-      "workflow_ref": "ArchonMegalon/propertyquarry/.github/workflows/smoke-runtime.yml@refs/heads/main"
+      "workflow_ref": "local-docker://propertyquarry/release@refs/heads/main"
     },
     "schema": "propertyquarry.ai-panorama-install-permit.v2",
     "signature": {
       "algorithm": "Ed25519",
       "encoding": "base64url",
       "key_id": "release-control-golden-key",
-      "value": "ND6EFk-sP-htTQw2_c8CTGN5LP6m5s0M99-2Zy_5Tsn-6VEbZeaVaT4z5A14odl_iMHbVUViQtPzNnpQ8MtGDQ"
+      "value": "vyCRs4hRnFtnhASsQh_n19HtULFD6bfMVFE9VMgf6cOOetTb1Xcfs_kjyH3bCEPPkXyA4UywNXzruF6lmPtkAQ"
     },
     "version": 2
   },
-  "preimage_sha256": "44875b2a0427adf8adfcd007330c4f3e046e32d897db3ba5f24e269f4c757269",
-  "public_key_base64url": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
-  "seed_sha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd"
+  "preimage_sha256": "31e25e9c97b7a0c66d0c85d3b0bff8f555392359292ad401696d72a495c4ae8d",
+  "public_key_base64url": "Sv-awF0vXfvIsEoRv7pckwPjDGjjwJY4i8IG1MZNaOI",
+  "seed_sha256": "a3882fa1bb077f5f155b91aec71e189e98a6ffc0dbe625b8126f5f28d46e3ceb"
 }

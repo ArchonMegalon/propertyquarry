@@ -477,27 +477,11 @@ def test_greenfield_browser_fixture_honors_requested_core_engine(monkeypatch) ->
     assert "--no-sandbox" in observed["args"]
 
 
-def test_smoke_runtime_matrix_installs_and_selects_every_core_browser_engine() -> None:
-    workflow = (ROOT / ".github/workflows/smoke-runtime.yml").read_text(
+def test_local_playwright_runtime_supports_every_core_browser_engine() -> None:
+    runtime = (ROOT / "scripts/propertyquarry_playwright_runtime.py").read_text(
         encoding="utf-8"
     )
 
-    assert "browser-engine: [chromium, firefox, webkit]" in workflow
-    assert (
-        'python -m playwright install --with-deps "${{ matrix.browser-engine }}"'
-        in workflow
-    )
-    assert (
-        "PROPERTYQUARRY_CORE_BROWSER_ENGINE: ${{ matrix.browser-engine }}"
-        in workflow
-    )
-    assert (
-        "tests/e2e/test_propertyquarry_greenfield_browser.py::"
-        "test_propertyquarry_workbench_candidate_history_stays_in_place"
-        in workflow
-    )
-    assert (
-        "tests/e2e/test_propertyquarry_greenfield_browser.py::"
-        "test_propertyquarry_flagship_operating_loop_in_browser"
-        in workflow
-    )
+    for engine in ("chromium", "firefox", "webkit"):
+        assert engine in runtime
+    assert 'SUPPORTED_PLAYWRIGHT_ENGINES = ("chromium", "firefox", "webkit")' in runtime

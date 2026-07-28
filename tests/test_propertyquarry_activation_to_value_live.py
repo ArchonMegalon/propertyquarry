@@ -370,47 +370,15 @@ def test_activation_live_source_forbids_test_auth_and_provider_mock_boundaries()
     assert "request_workspace_sign_in_email_links" not in source
 
 
-def test_activation_workflow_is_contract_only_by_default_and_live_only_by_explicit_approval() -> None:
-    source = (ROOT / ".github/workflows/smoke-runtime.yml").read_text(encoding="utf-8")
-    contract_job = source.split("  propertyquarry-activation-contracts:", 1)[1].split(
-        "  propertyquarry-live-release-gates:", 1
-    )[0]
-    live_job = source.split("  propertyquarry-live-activation-to-value:", 1)[1].split(
-        "  propertyquarry-launch-controller-preflight:", 1
-    )[0]
-    live_release_job = source.split("  propertyquarry-live-release-gates:", 1)[1].split(
-        "  propertyquarry-live-activation-to-value:", 1
-    )[0]
-    release_v2_job = source.split("  propertyquarry-release-v2:", 1)[1].split(
-        "  propertyquarry-live-release-gates:", 1
-    )[0]
+def test_activation_is_live_only_through_local_release_receipts() -> None:
+    release_gate = (ROOT / "scripts/property_release_gates.sh").read_text(
+        encoding="utf-8"
+    )
+    deploy = (ROOT / "scripts/deploy_propertyquarry.sh").read_text(
+        encoding="utf-8"
+    )
 
-    assert "tests/test_propertyquarry_activation_to_value_live.py" in contract_job
-    assert "PROPERTYQUARRY_ACTIVATION_PERSONA_EMAIL" not in contract_job
-    assert "if: ${{ false }}" in live_job
-    assert "github.event_name == 'workflow_dispatch'" not in live_job
-    assert "inputs.run_activation_journey == true" not in live_job
-    assert "name: propertyquarry-production" in live_job
-    assert "needs: propertyquarry-live-release-gates" in live_job
-    assert "PROPERTYQUARRY_ACTIVATION_LIVE_RUN: \"1\"" in live_job
-    assert "PROPERTYQUARRY_ACTIVATION_ALLOW_ACCOUNT_CREATE: \"0\"" in live_job
-    assert "PROPERTYQUARRY_RELEASE_COMMIT_SHA=${runtime_sha}" in live_job
-    assert "--confirm-live" in live_job
-    assert '--release-sha "${PROPERTYQUARRY_RELEASE_COMMIT_SHA}"' in live_job
-    assert re.search(r"actions/cache/restore@[0-9a-f]{40}\s+# v4", live_job)
-    assert re.search(r"actions/cache/save@[0-9a-f]{40}\s+# v4", live_job)
-    assert "X-EA-Principal-ID" not in live_job
-    assert "PROPERTYQUARRY_LIVE_PRINCIPAL_ID" not in live_job
-    assert "github.event_name == 'workflow_dispatch'" in release_v2_job
-    assert "inputs.run_launch_authority == true" in release_v2_job
-    assert "name: propertyquarry-production" in release_v2_job
-    assert (
-        "/usr/libexec/propertyquarry-release-control/"
-        "propertyquarry-release-single-host-v2"
-    ) in release_v2_job
-    assert "release-run" in release_v2_job
-    assert "actions/checkout@" not in release_v2_job
-    assert "  propertyquarry-flagship-security:" in source
-    assert "if: ${{ false }}" in live_release_job
-    assert "propertyquarry-flagship-security" in live_release_job
-    assert "propertyquarry-continuous-ux" in live_release_job
+    assert "PROPERTYQUARRY_ACTIVATION_TO_VALUE_RECEIPT" in release_gate
+    assert "activation_to_value_receipt" in release_gate
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
+    assert "workflow_dispatch" not in deploy

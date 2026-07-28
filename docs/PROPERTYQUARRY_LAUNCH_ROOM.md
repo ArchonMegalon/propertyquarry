@@ -1,33 +1,50 @@
 # PropertyQuarry launch room
 
-This is the one-page operator entrypoint for current release truth:
+PropertyQuarry has one release proof plane: the governed local Docker host.
+GitHub stores source and accepts pushes, but GitHub Actions, hosted runners,
+workflow dispatch, and Actions artifacts are not used.
+
+The local operator entrypoint is:
 
 ```text
+scripts/deploy_propertyquarry.sh --preflight-only
+scripts/deploy_propertyquarry.sh
 python3 scripts/propertyquarry_launch_room.py
-python3 scripts/propertyquarry_launch_room.py \
-  --format json \
-  --write _completion/propertyquarry_launch_room/current.json
 ```
 
-The view reads the shared repository-role policy, canonical marked release
-manifest, exact candidate-bound browser receipt, and local Git state. It reports
-the canonical and legacy roles, envelope/runtime identities, separate source /
-journey / browser counts, Core and Advanced Visual posture, current protected
-Actions evidence, live deployment, public edge, and the next operator action.
+Deployment builds immutable local web and render images, runs the migration,
+starts the complete Compose topology, waits for health, probes localhost, and
+writes the ignored mode-`0600` receipt:
 
-It is deliberately fail-closed:
+```text
+state/release/propertyquarry-local-deployment.v1.json
+```
 
-- `ArchonMegalon/propertyquarry` is the only canonical release authority.
-- `ArchonMegalon/property` is a noncanonical verifier, not an exact mirror or a
-  second candidate.
-- checked-in source/browser receipts are candidate proof, not hosted CI or
-  deployment proof;
-- absence of exact current protected Actions, deployment, rollback, DR, or edge
-  receipts is shown as missing, never inferred from historical observations;
-- Core Gold can be candidate-eligible while production remains blocked; and
-- Advanced Visual Gold remains
-  `unavailable_unbound_producer_receipts` until its additive evidence is bound.
+`scripts/propertyquarry_local_deployment_receipt.py` binds that receipt to:
 
-The report always sets `production_launch_ready` to false unless a future,
-separately reviewed version consumes and validates the complete protected/live
-receipt set. The current tool makes no network-freshness claim.
+- the canonical runtime commit and current release envelope;
+- exact web and render image IDs;
+- SHA-256 values for both Compose files;
+- the `property` Compose project and exactly seven expected services;
+- successful one-shot migration;
+- healthy API, worker, scheduler, and Postgres containers;
+- running render and Cloudflare tunnel containers;
+- numeric non-root application users, no privileged containers, no Docker
+  socket mounts, and `no-new-privileges`;
+- the localhost `/health/ready` probe; and
+- `github_actions_used: false`.
+
+No database URL, provider credential, OAuth secret, tunnel token, or reusable
+environment value is serialized into the receipt.
+
+The launch-room view combines this deployment receipt with the shared
+repository-role policy, marked release manifest, exact candidate-bound browser
+proof, and local Git state. It reports separate source, journey, and browser
+counts, Core versus Advanced Visual posture, local deployment state, and the
+next local operator action.
+
+Core Gold may be production-ready when the exact candidate proof and local
+Docker receipt both pass. Advanced Visual Gold remains additive and
+`unavailable_unbound_producer_receipts` until its provider evidence is bound.
+The running local Cloudflare container proves local tunnel process health; it
+does not by itself claim fresh public-network reachability.

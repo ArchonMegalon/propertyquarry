@@ -414,6 +414,17 @@ def test_native_release_gate_keeps_success_and_failure_state_outside_repository(
         "_revalidate_input",
         lambda *_args, **_kwargs: None,
     )
+    verified_interpreter = subprocess.run(
+        [
+            str(ROOT / "scripts" / "propertyquarry_release_python.sh"),
+            "--print-interpreter",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.setattr(native_gate.sys, "executable", verified_interpreter)
     before = snapshot()
 
     status = native_gate.run_native_gate(
@@ -522,8 +533,8 @@ def test_every_release_entrypoint_runs_complete_protocol_and_native_gates() -> N
     native = _make_target(makefile, "propertyquarry-native-release-control-gates")
     protocol_contracts = (
         "tests/test_property_release_protocol_contracts.py",
-        "tests/test_property_deploy_handoff_adversarial.py",
         "tests/test_property_deploy_operator_contracts.py",
+        "tests/test_propertyquarry_local_deployment_receipt.py",
         "tests/test_propertyquarry_release_gate_entrypoints.py",
     )
     focused_publication_contracts = (
@@ -1858,7 +1869,7 @@ def test_release_dispatch_child_environment_rejects_unknown_target() -> None:
         make_dispatch.child_environment({}, target="not-a-release-target")
 
 
-def test_release_guidance_uses_authenticated_dispatch_and_privileged_shebangs() -> None:
+def test_release_guidance_uses_authenticated_dispatch_and_local_docker_authority() -> None:
     authenticated_property_gate = (
         "./scripts/propertyquarry_release_python.sh "
         "scripts/propertyquarry_release_make_dispatch.py "
@@ -1929,13 +1940,19 @@ def test_release_guidance_uses_authenticated_dispatch_and_privileged_shebangs() 
         for forbidden in forbidden_values:
             assert forbidden not in documents[path]
 
-    workflow = (ROOT / ".github" / "workflows" / "smoke-runtime.yml").read_text(
+    marker = (ROOT / ".github" / "NO_GITHUB_ACTIONS.md").read_text(
         encoding="utf-8"
     )
-    assert "run: ./scripts/propertyquarry_live_release_gates.sh" in workflow
-    assert "run: bash scripts/propertyquarry_live_release_gates.sh" not in workflow
-    assert f"run: {authenticated_property_gate}" in workflow
-    assert "run: bash scripts/property_release_gates.sh" not in workflow
+    deploy = (ROOT / "scripts" / "deploy_propertyquarry.sh").read_text(
+        encoding="utf-8"
+    )
+    workflows = ROOT / ".github" / "workflows"
+    assert "not as an execution or\nrelease-authority plane" in marker
+    assert not list(workflows.glob("*.yml"))
+    assert not list(workflows.glob("*.yaml"))
+    assert "check_property_repository_role.py" in deploy
+    assert "propertyquarry_local_deployment_receipt.py" in deploy
+    assert "GitHub Actions and remote runners are not used." in deploy
 
 
 @pytest.mark.parametrize(
@@ -3092,70 +3109,21 @@ def test_release_asset_verifier_has_no_bare_python_command() -> None:
     assert bare_python.findall(script) == []
 
 
-def test_smoke_runtime_bootstraps_and_runs_from_real_canonical_checkout() -> None:
-    workflow = (
-        ROOT / ".github" / "workflows" / "smoke-runtime.yml"
-    ).read_text(encoding="utf-8")
-    job_start = workflow.index("  smoke-runtime-api:")
-    job_end = workflow.index("\n  propertyquarry-browser-contracts:", job_start)
-    job = workflow[job_start:job_end]
+def test_local_docker_deploy_runs_from_real_canonical_checkout() -> None:
+    deploy = (ROOT / "scripts/deploy_propertyquarry.sh").read_text(
+        encoding="utf-8"
+    )
 
-    prepare = job.index("- name: Prepare canonical repository path")
-    bootstrap = job.index("- name: Bootstrap hash-locked release verifier")
-    chromium = job.index("- name: Install Chromium in canonical release cache")
-    reproduce = job.index(
-        "- name: Reproduce canonical release receipts in disposable checkout"
-    )
-    verify_reproduction = job.index(
-        "- name: Verify reproduced release receipts match HEAD"
-    )
-    core = job.index("- name: Run read-only authenticated core CI gates")
-    assert prepare < bootstrap < chromium < reproduce < verify_reproduction < core
-    assert 'test ! -e /docker/property' in job
-    assert 'install -d -m 0755 /docker/property' in job
-    assert 'cp -a "$GITHUB_WORKSPACE/." /docker/property/' in job
-    assert 'ln -sfn "$GITHUB_WORKSPACE" /docker/property' not in job
-    assert "working-directory: /docker/property" in job[bootstrap:reproduce]
-    assert (
-        "./scripts/bootstrap_propertyquarry_release_python.sh"
-        in job[bootstrap:reproduce]
-    )
-    assert "make " not in job[bootstrap:core]
-    assert (
-        "PLAYWRIGHT_BROWSERS_PATH: "
-        "/docker/property/.propertyquarry_release_tools/ms-playwright"
-        in job[chromium:reproduce]
-    )
-    assert (
-        "python -m playwright install --with-deps chromium"
-        in job[chromium:reproduce]
-    )
-    assert job.count(
-        "- name: Reproduce canonical release receipts in disposable checkout"
-    ) == 1
-    assert (
-        "working-directory: /docker/property" in job[reproduce:verify_reproduction]
-    )
-    assert (
-        "run: ./scripts/propertyquarry_release_python.sh "
-        "scripts/propertyquarry_release_make_dispatch.py "
-        "materialize-release-assets-authenticated"
-        in job[reproduce:verify_reproduction]
-    )
-    assert job.count("- name: Verify reproduced release receipts match HEAD") == 1
-    assert "working-directory: /docker/property" in job[verify_reproduction:core]
-    assert (
-        "run: ./scripts/propertyquarry_release_python.sh "
-        "scripts/propertyquarry_release_make_dispatch.py "
-        "verify-generated-release-artifacts-clean-authenticated"
-        in job[verify_reproduction:core]
-    )
-    assert "working-directory: /docker/property" in job[core:]
-    assert (
-        "run: ./scripts/propertyquarry_release_python.sh "
-        "scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated"
-        in job[core:]
-    )
+    role = deploy.index("scripts/check_property_repository_role.py")
+    build = deploy.index("build propertyquarry-api propertyquarry-render-tools")
+    config = deploy.index("config --quiet")
+    up = deploy.index("up --detach --remove-orphans --wait")
+    receipt = deploy.index("scripts/propertyquarry_local_deployment_receipt.py")
+    assert role < build < config < up < receipt
+    assert "--require-clean-worktree" in deploy
+    assert "--file docker-compose.property.yml" in deploy
+    assert "--file docker-compose.cloudflared.yml" in deploy
+    assert "workflow_dispatch" not in deploy
 
 
 def test_gold_publication_occurs_only_after_every_release_gate() -> None:

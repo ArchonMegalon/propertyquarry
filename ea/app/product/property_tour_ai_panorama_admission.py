@@ -78,11 +78,8 @@ CANONICAL_CANDIDATE_MARKER_RELPATH = (
 )
 CANONICAL_REPOSITORY = "ArchonMegalon/propertyquarry"
 CANONICAL_GIT_REF = "refs/heads/main"
-CANONICAL_WORKFLOW_REF = (
-    "ArchonMegalon/propertyquarry/.github/workflows/"
-    "smoke-runtime.yml@refs/heads/main"
-)
-CANONICAL_JOB = "propertyquarry-release-v2"
+CANONICAL_WORKFLOW_REF = "local-docker://propertyquarry/release@refs/heads/main"
+CANONICAL_JOB = "propertyquarry-local-docker-release"
 CANONICAL_ENVIRONMENT = "propertyquarry-production"
 CANONICAL_SUBJECT = (
     "repo:ArchonMegalon@11421547/propertyquarry@1257593732:"
@@ -219,7 +216,7 @@ class AiPanoramaInstallExpectedBindings:
     request_id: str
     repository: str
     git_ref: str
-    # The authenticated protected-workflow candidate SHA
+    # The authenticated local-Docker operator candidate SHA
     # (native Identity.CandidateSHA == Config.WorkflowSHA).
     git_head_sha: str
     workflow_ref: str

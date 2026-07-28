@@ -1811,25 +1811,17 @@ def test_launch_authority_rejects_invalid_gold_operations_evidence(
     assert expected_failure in envelope["failures"]
 
 
-def test_release_shell_forwards_operations_receipts_without_policy_override() -> None:
+def test_local_release_shell_forwards_operations_receipts_without_policy_override() -> None:
     repository_root = Path(__file__).parents[1]
     shell = (repository_root / "scripts/property_release_gates.sh").read_text(
         encoding="utf-8"
     )
-    workflow = (
-        repository_root / ".github/workflows/smoke-runtime.yml"
+    deploy = (
+        repository_root / "scripts/deploy_propertyquarry.sh"
     ).read_text(encoding="utf-8")
     environment_example = (repository_root / ".env.example").read_text(
         encoding="utf-8"
     )
-    active_v2_job = workflow.split(
-        "  propertyquarry-release-v2:", maxsplit=1
-    )[1].split(
-        "  # Legacy candidate-executed production jobs", maxsplit=1
-    )[0]
-    legacy_launch_job = workflow.split(
-        "  propertyquarry-launch-gold:", maxsplit=1
-    )[1].split("  smoke-runtime-postgres:", maxsplit=1)[0]
     receipt_contracts = (
         (
             "PROPERTYQUARRY_DASHBOARD_RENDER_RECEIPT",
@@ -1849,18 +1841,10 @@ def test_release_shell_forwards_operations_receipts_without_policy_override() ->
     )
 
     assert '! -r "${required_monitoring_input}"' in shell
-    assert active_v2_job.count("/usr/bin/env -i") == 3
-    assert "if: ${{ false }}" in legacy_launch_job
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
     for environment_name, shell_name, flag_name in receipt_contracts:
         assert environment_example.count(f"{environment_name}=") == 1
         assert f'{shell_name}="${{{environment_name}:-}}"' in shell
         assert f'--{flag_name} "${{{shell_name}}}"' in shell
-        assert (
-            f"{environment_name}: "
-            f"${{{{ vars.{environment_name} }}}}"
-        ) in legacy_launch_job
-        assert legacy_launch_job.count(f"--{flag_name}") == 2
-        assert environment_name not in active_v2_job
-        assert f"--{flag_name}" not in active_v2_job
     assert "FLAGSHIP_OPERATIONS_POLICY" not in shell
-    assert "FLAGSHIP_OPERATIONS_POLICY" not in legacy_launch_job
+    assert "GITHUB_ACTIONS" not in deploy

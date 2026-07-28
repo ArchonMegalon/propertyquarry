@@ -255,7 +255,9 @@ required_files=(
   ".codex-design/ea/SURFACE_DESIGN_SYSTEM.md"
   ".codex-design/ea/LTD_INTEGRATION_MAP.md"
   ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json"
-  ".github/workflows/propertyquarry-publish-runtime-images.yml"
+  ".github/NO_GITHUB_ACTIONS.md"
+  "scripts/deploy_propertyquarry.sh"
+  "scripts/propertyquarry_local_deployment_receipt.py"
   ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json"
   ".codex-design/product/PUBLIC_GUIDE_IMAGE_CURATION.yaml"
   ".codex-design/product/TELEGRAM_FLAGSHIP_RUNTIME_DESIGN.md"
@@ -539,7 +541,9 @@ if release_truth_head and current_head and release_truth_head != current_head:
         "Makefile",
         "CHANGELOG.md",
         "LTDs.md",
-        ".github/workflows/smoke-runtime.yml",
+        ".github/NO_GITHUB_ACTIONS.md",
+        "scripts/deploy_propertyquarry.sh",
+        "scripts/propertyquarry_local_deployment_receipt.py",
         "ea/app/api/routes/plans.py",
         "ea/app/services/execution_approval_pause_service.py",
         "scripts/materialize_ea_browser_workflow_proof.py",
@@ -966,9 +970,9 @@ else
 fi
 
 if grep -Fq \
-  "Recommended sequencing: run \`make release-docs\` before dispatching the" \
+  "Recommended sequencing: run \`make release-docs\` before the authenticated local" \
   "README.md" && \
-   grep -Fq "authenticated \`release-preflight\` target." "README.md"; then
+   grep -Fq "\`release-preflight\` target." "README.md"; then
   echo "ok: README release-docs sequencing note"
 else
   echo "missing: README release-docs sequencing note" >&2
@@ -1166,28 +1170,25 @@ else
   echo "ok: release guidance preserves the privileged asset-verifier shebang"
 fi
 
-if grep -Fq "run: bash scripts/propertyquarry_live_release_gates.sh" \
-     ".github/workflows/smoke-runtime.yml"; then
-  echo "stale: live release workflow bypasses the privileged gate shebang" >&2
+if find ".github/workflows" -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) \
+     -print -quit 2>/dev/null | grep -q .; then
+  echo "stale: GitHub Actions workflow exists in a local-Docker-only release" >&2
   missing=1
-elif grep -Fq "run: ./scripts/propertyquarry_live_release_gates.sh" \
-       ".github/workflows/smoke-runtime.yml"; then
-  echo "ok: live release workflow preserves the privileged gate shebang"
+elif grep -Fq "GitHub Actions and remote runners are not used." \
+       "scripts/deploy_propertyquarry.sh"; then
+  echo "ok: release is explicitly local-Docker-only"
 else
-  echo "missing: live release workflow direct privileged gate invocation" >&2
+  echo "missing: local-Docker-only release declaration" >&2
   missing=1
 fi
 
-if grep -Fq "run: bash scripts/property_release_gates.sh" \
-     ".github/workflows/smoke-runtime.yml"; then
-  echo "stale: release workflow bypasses the authenticated PropertyQuarry dispatcher" >&2
-  missing=1
-elif grep -Fq \
-       "run: ./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py property-release-gates" \
-       ".github/workflows/smoke-runtime.yml"; then
-  echo "ok: release workflow uses the authenticated PropertyQuarry dispatcher"
+if grep -Fq "scripts/check_property_repository_role.py" \
+     "scripts/deploy_propertyquarry.sh" && \
+   grep -Fq "scripts/propertyquarry_local_deployment_receipt.py" \
+     "scripts/deploy_propertyquarry.sh"; then
+  echo "ok: local Docker deploy binds repository role and deployment receipt"
 else
-  echo "missing: release workflow authenticated PropertyQuarry dispatcher" >&2
+  echo "missing: local Docker deploy role/receipt binding" >&2
   missing=1
 fi
 
@@ -1549,39 +1550,32 @@ else
   missing=1
 fi
 
-if grep -Fq "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py ci-gates-authenticated" ".github/workflows/smoke-runtime.yml" && \
-   grep -Fq "ci-gates-authenticated:" "Makefile"; then
-  echo "ok: smoke-runtime workflow uses authenticated ci-gates"
+if grep -Fq "ci-gates-authenticated:" "Makefile" && \
+   grep -Fq "scripts/deploy_propertyquarry.sh" "README.md"; then
+  echo "ok: authenticated local gates and Docker deploy are documented"
 else
-  echo "missing: smoke-runtime workflow ci-gates usage" >&2
+  echo "missing: authenticated local gates or Docker deploy documentation" >&2
   missing=1
 fi
 
-if grep -Fq "python -m playwright install --with-deps chromium" ".github/workflows/smoke-runtime.yml"; then
-  echo "ok: smoke-runtime workflow installs playwright browsers for real-browser gates"
+if grep -Fq "scripts/smoke_postgres.sh" "Makefile"; then
+  echo "ok: local gate surface includes postgres smoke"
 else
-  echo "missing: smoke-runtime workflow playwright browser install" >&2
+  echo "missing: local postgres smoke gate" >&2
   missing=1
 fi
 
-if grep -Fq "scripts/smoke_postgres.sh" ".github/workflows/smoke-runtime.yml"; then
-  echo "ok: smoke-runtime workflow includes postgres smoke job"
+if grep -Fq "scripts/test_postgres_contracts.sh" "Makefile"; then
+  echo "ok: local gate surface includes postgres contracts"
 else
-  echo "missing: smoke-runtime workflow postgres smoke job" >&2
+  echo "missing: local postgres contract gate" >&2
   missing=1
 fi
 
-if grep -Fq "scripts/test_postgres_contracts.sh" ".github/workflows/smoke-runtime.yml"; then
-  echo "ok: smoke-runtime workflow includes postgres contract job"
+if grep -Fq -- "--legacy-fixture" "scripts/smoke_postgres.sh"; then
+  echo "ok: local postgres smoke includes legacy migration fixture"
 else
-  echo "missing: smoke-runtime workflow postgres contract job" >&2
-  missing=1
-fi
-
-if grep -Fq -- "--legacy-fixture" ".github/workflows/smoke-runtime.yml"; then
-  echo "ok: smoke-runtime workflow includes legacy migration smoke job"
-else
-  echo "missing: smoke-runtime workflow legacy migration smoke job" >&2
+  echo "missing: local legacy migration smoke" >&2
   missing=1
 fi
 
@@ -4317,7 +4311,7 @@ PY
 then
   if grep -Fq "current matrix covers artifacts, channel runtime, approvals, policy decisions, and task contracts" "README.md" && \
      grep -Fq 'Current `scripts/test_postgres_contracts.sh` coverage includes artifacts, channel runtime, approvals, policy decisions, and task contracts.' "RUNBOOK.md" && \
-     grep -Fq "bash scripts/test_postgres_contracts.sh" ".github/workflows/smoke-runtime.yml" && \
+     grep -Fq "bash scripts/test_postgres_contracts.sh" "Makefile" && \
      grep -Fq "tests/test_postgres_contract_matrix_integration.py" "scripts/test_postgres_contracts.sh" && \
      grep -Fq "test_postgres_approvals_create_decide_and_list_history" "tests/test_postgres_contract_matrix_integration.py" && \
      grep -Fq "test_postgres_policy_decisions_append_and_filter_recent" "tests/test_postgres_contract_matrix_integration.py" && \

@@ -4,10 +4,11 @@ PropertyQuarry is the standalone product runtime. The active release surface is 
 
 - `ea/` application runtime used by the property API and scheduler
 - `docker-compose.property.yml`
+- `docker-compose.cloudflared.yml`
 - `docker-compose.property-legacy-edge.yml` only when an intentional legacy edge alias is still required
 - `ea/Dockerfile.property`
 - `config/`, `docs/`, `scripts/`, and `tests/` that are property-facing
-- `.github/workflows/smoke-runtime.yml`
+- `.github/NO_GITHUB_ACTIONS.md`
 
 The extraction still carries inherited archives from the broader EA and Chummer work. These are not part of the PropertyQuarry runtime path and must not be referenced by the property compose file, hardened Dockerfile, or property release gates:
 
@@ -39,12 +40,10 @@ repository. PropertyQuarry does not accept release identity, commits, manifests,
 container provenance, runtime configuration, or deploy authority from
 MyExternalBrain or `ArchonMegalon/property`.
 
-The only publishable runtime packages are
-`ghcr.io/archonmegalon/propertyquarry-standalone-web-runtime` and
-`ghcr.io/archonmegalon/propertyquarry-standalone-render-runtime`. Their first
-publication must originate from this repository. Packages linked to the former
-combined repository are outside the standalone release plane even when their
-names contain `propertyquarry`.
+The authoritative runtime packages are immutable local image IDs built as
+`propertyquarry-standalone-web-runtime` and
+`propertyquarry-standalone-render-runtime`. A registry copy may be used for
+backup or transfer, but a registry and GitHub are not release authority.
 
 Run the offline repository-role gate in the canonical checkout:
 
@@ -59,36 +58,31 @@ python3 scripts/check_property_repository_role.py \
 The gate reads
 `config/release/propertyquarry_repository_role.v1.json`, whose canonical and
 legacy repositories must be distinct. It proves that this checkout's exact
-origin, manifest authority, release workflows, and expected role agree with
+origin, manifest authority, absence of GitHub workflows, local Docker authority
+surfaces, and expected role agree with
 that shared policy. Its receipt is deliberately scoped to local policy, Git
-config, checkout, and release surfaces and always reports
-`network_freshness_proven: false`. The corresponding CI lane rejects Git URL
-rewrites, binds the exact event SHA and repository identity, and preserves the
-receipt. A malformed policy, self-reference, wrong remote, noncanonical
-manifest, dirty worktree, or missing canonical workflow blocks ordinary CI and
-therefore blocks release.
+config, checkout, and Docker release surfaces and always reports
+`network_freshness_proven: false`. A malformed policy, self-reference, wrong
+remote, noncanonical manifest, dirty worktree, GitHub Actions workflow, or
+missing local authority surface blocks deployment.
 
-A pull request in `ArchonMegalon/propertyquarry` is review evidence only. Push
-and workflow-dispatch release events require exact standalone `main` identity;
-no commit from another repository can satisfy the gate. Fetch remains an
-explicit operator step, so the offline receipt never claims lasting network
-freshness.
+Pushing source does not deploy it. `scripts/deploy_propertyquarry.sh` builds and
+deploys on the local Docker host, and
+`scripts/propertyquarry_local_deployment_receipt.py` binds exact images,
+Compose files, services, migration, health, security posture, and localhost
+readiness to the canonical runtime commit.
 
 `ArchonMegalon/property` is a legacy, noncanonical verifier-only repository. It
 may point operators to this repository, but it must contain no canonical
-release-manifest markers, protected release workflow, security-runner bootstrap,
-or runtime-image publication workflow. Different legacy and canonical heads are
-expected; the legacy head is never a second release candidate.
+release-manifest markers, workflow, image publication, deploy, or runtime
+authority. Different legacy and canonical heads are expected; the legacy head
+is never a second release candidate.
 
-## Release-control v2 authority status
+## Local Docker authority status
 
-The checked-in v2 supervisor is non-authoritative and inert. Its
-`release-preflight` and `release-run` entrypoints consume and dispose of the
-bounded bearer channel, perform no release effect, and return the protocol
-failure class. The workflow lane is therefore a fail-closed integration
-contract, not production launch evidence. A requested legacy activation is
-rejected explicitly, and an always-running requested-action result job prevents
-skipped security, activation, or launch work from producing a green requested
-release run. Production authority remains blocked until a separately installed,
-authenticated supervisor implements and proves the complete live-evidence,
-activation, rollback, and lifecycle contract.
+The authenticated local OCI controller package remains an additional
+verification/control component. Application release authority is the complete
+local Compose deployment receipt, not an absent external controller or remote
+runner. Core production readiness requires the exact candidate proof plus a
+passing current local Docker receipt. Advanced Visual stays additive and fails
+closed until its provider receipts are bound.

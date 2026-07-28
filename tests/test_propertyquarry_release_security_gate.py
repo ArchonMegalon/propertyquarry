@@ -1347,85 +1347,22 @@ def _workflow_job(workflow: str, job_name: str) -> str:
     return workflow[start:end]
 
 
-def test_ci_flagship_security_job_is_protected_and_blocks_v2_release_authority() -> None:
-    workflow = (gate.APP_ROOT / ".github/workflows/smoke-runtime.yml").read_text(
+def test_local_docker_security_and_deployment_receipts_block_authority() -> None:
+    deploy = (gate.APP_ROOT / "scripts/deploy_propertyquarry.sh").read_text(
         encoding="utf-8"
     )
-    preflight_job = _workflow_job(workflow, "propertyquarry-protected-dispatch-inputs")
-    job = _workflow_job(workflow, "propertyquarry-flagship-security")
-    release_job = _workflow_job(workflow, "propertyquarry-release-v2")
+    receipt = (
+        gate.APP_ROOT / "scripts/propertyquarry_local_deployment_receipt.py"
+    ).read_text(encoding="utf-8")
+    security = (
+        gate.APP_ROOT / "docs/PROPERTYQUARRY_RELEASE_SECURITY.md"
+    ).read_text(encoding="utf-8")
 
-    assert "environment:\n      name: propertyquarry-production" in preflight_job
-    assert "security_runner_label: ${{ steps.validate.outputs.security_runner_label }}" in preflight_job
-    assert (
-        "PROPERTYQUARRY_APPROVED_SECURITY_RUNNER_LABEL: "
-        "${{ vars.PROPERTYQUARRY_SECURITY_RUNNER_LABEL }}"
-        in preflight_job
-    )
-    assert "security_runner_label_does_not_match_protected_environment" in preflight_job
-    assert "def write_output(output, key: str, value: str) -> None:" in preflight_job
-    assert 're.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", key)' in preflight_job
-    assert "not 1 <= len(value) <= 256" in preflight_job
-    assert '"\\n" in value or "\\r" in value' in preflight_job
-    assert 'output.write(f"{key}={value}\\n")' in preflight_job
-    assert 'write_output(output, "security_runner_label", approved_label)' in preflight_job
-    assert re.search(
-        r'write_output\(\s*output,\s*"security_runner_token_expires_at",\s*'
-        r"canonical_token_expires_at,?\s*\)",
-        preflight_job,
-    )
-    assert 'output.write(f"security_runner_label=' not in preflight_job
-    assert 'output.write(f"security_runner_token_expires_at=' not in preflight_job
-    assert "workflow_dispatch" in job
-    assert "github.ref == 'refs/heads/main'" in job
-    assert "startsWith(inputs.security_runner_label, 'pqsec-')" in job
-    assert "environment:\n      name: propertyquarry-production" in job
-    assert "permissions:\n      contents: read" in job
-    validated_label = (
-        "${{ needs['propertyquarry-protected-dispatch-inputs'].outputs."
-        "security_runner_label }}"
-    )
-    assert f'runs-on: [self-hosted, propertyquarry-security, "{validated_label}"]' in job
-    assert f"PROPERTYQUARRY_SECURITY_RUNNER_LABEL: {validated_label}" in job
-    assert 'runs-on: [self-hosted, propertyquarry-security, "${{ inputs.security_runner_label }}"]' not in job
-    assert "PROPERTYQUARRY_SECURITY_RUNNER_LABEL: ${{ inputs.security_runner_label }}" not in job
-    assert "persist-credentials: false" in job
-    assert "command -v pip-audit" not in job
-    assert "command -v syft" not in job
-    assert "command -v trivy" not in job
-    assert "PROPERTYQUARRY_WEB_IMAGE: ${{ vars.PROPERTYQUARRY_WEB_IMAGE }}" in job
-    assert "PROPERTYQUARRY_RENDER_IMAGE: ${{ vars.PROPERTYQUARRY_RENDER_IMAGE }}" in job
-    assert "--severity-threshold HIGH" in job
-    assert "--flagship" in job
-    assert "propertyquarry_security_waivers.json" in job
-    assert (
-        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4"
-        in job
-    )
-    assert "pip install" not in job
-    assert "apt-get" not in job
-    assert "docker pull" not in job
-    assert "docker compose" not in job
-    assert "ea-api" not in job
-    assert (
-        "needs:\n"
-        "      - propertyquarry-protected-dispatch-inputs\n"
-        "      - propertyquarry-ordinary-ci-success\n"
-        "      - propertyquarry-flagship-security\n"
-        "      - propertyquarry-security-bootstrap-attestation\n"
-        "      - propertyquarry-continuous-ux"
-        in release_job
-    )
-    assert "needs['propertyquarry-ordinary-ci-success'].result == 'success'" in release_job
-    assert "needs['propertyquarry-flagship-security'].result == 'success'" in release_job
-    assert (
-        "needs['propertyquarry-security-bootstrap-attestation'].result == 'success'"
-        in release_job
-    )
-    assert "needs['propertyquarry-continuous-ux'].result == 'success'" in release_job
-    assert "secrets." not in release_job
-    assert "vars." not in release_job
-    assert "actions/checkout" not in release_job
-    assert "PROPERTYQUARRY_WORKFLOW_HEAD_SHA: ${{ github.sha }}" in job
-    assert "release_manifest_runtime_sha" in job
-    assert "workflow-binding.json" in job
+    assert "PROPERTYQUARRY_WEB_IMAGE" in deploy
+    assert "PROPERTYQUARRY_RENDER_IMAGE" in deploy
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
+    assert "HEALTHY_SERVICES" in receipt
+    assert "docker_socket_mounted" in receipt
+    assert "release_commit_mismatch" in receipt
+    assert "release_image_binding_mismatch" in receipt
+    assert "GitHub Actions, hosted runners" in security
