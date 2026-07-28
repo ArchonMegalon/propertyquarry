@@ -2047,6 +2047,50 @@ def resolve_api_admission_database_url(
     raise RuntimeError("propertyquarry_api_admission_database_url_required")
 
 
+def resolve_api_ingress_database_url(
+    *,
+    runtime_mode: str,
+    primary_database_url: str,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Resolve public-ingress accounting without sharing another authority.
+
+    The API's internal admission backend and its internet-facing ingress
+    accounting use different schemas and different roles.  Production must
+    provide the ingress-specific DSN and may not reuse either the primary
+    application DSN or the internal admission DSN.
+    """
+
+    env = environ if environ is not None else os.environ
+    mode = str(runtime_mode or "").strip().lower()
+    primary_url = str(primary_database_url or "").strip()
+    dedicated_url = str(
+        env.get("PROPERTYQUARRY_API_INGRESS_DATABASE_URL") or ""
+    ).strip()
+    internal_admission_url = str(
+        env.get("PROPERTYQUARRY_API_ADMISSION_DATABASE_URL") or ""
+    ).strip()
+
+    if mode not in {"dev", "test"}:
+        if not dedicated_url:
+            raise RuntimeError(
+                "propertyquarry_api_ingress_database_url_required"
+            )
+        if primary_url and dedicated_url == primary_url:
+            raise RuntimeError(
+                "propertyquarry_api_ingress_database_url_must_be_dedicated"
+            )
+        if internal_admission_url and dedicated_url == internal_admission_url:
+            raise RuntimeError(
+                "propertyquarry_api_ingress_database_url_must_be_role_separated"
+            )
+        return dedicated_url
+
+    if dedicated_url:
+        return dedicated_url
+    return primary_url
+
+
 def build_admission_backend(
     *,
     runtime_mode: str,

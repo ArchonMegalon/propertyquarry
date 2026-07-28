@@ -375,7 +375,11 @@ def test_app_store_builder_uses_postgres_without_memory_fallback(
     monkeypatch.setenv("EA_RUNTIME_MODE", "prod")
     monkeypatch.setenv(
         "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
-        "postgresql://admission/propertyquarry_admission",
+        "postgresql://internal-admission/propertyquarry_admission",
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
+        "postgresql://ingress/propertyquarry_admission",
     )
     monkeypatch.setenv(
         "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET",
@@ -404,7 +408,7 @@ def test_app_store_builder_uses_postgres_without_memory_fallback(
         (
             "postgres",
             (
-                "postgresql://admission/propertyquarry_admission",
+                "postgresql://ingress/propertyquarry_admission",
                 32,
                 64,
                 True,

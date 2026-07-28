@@ -299,7 +299,9 @@ ROLE_KEYS = {
     "PROPERTYQUARRY_MIGRATION_DATABASE_URL": MIGRATOR_ROLE,
 }
 ADMISSION_KEY = "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"
+INGRESS_ADMISSION_KEY = "PROPERTYQUARRY_API_INGRESS_DATABASE_URL"
 RENDER_KEY = "PROPERTYQUARRY_RENDER_DATABASE_URL"
+INGRESS_ADMISSION_RUNTIME_ROLE = "propertyquarry_ingress_runtime"
 PASSWORD_RE = re.compile(r"^[A-Za-z0-9_-]{48,128}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -422,19 +424,27 @@ def _migrator_url(*, password: str) -> str:
     return f"{_runtime_url(role=MIGRATOR_ROLE, password=password)}?{query}"
 
 
-def _admission_url(*, password: str) -> str:
+def _admission_url(
+    *,
+    password: str,
+    role: str = ADMISSION_RUNTIME_ROLE,
+) -> str:
     return (
-        f"postgresql://{ADMISSION_RUNTIME_ROLE}:{quote(password, safe='')}@"
+        f"postgresql://{role}:{quote(password, safe='')}@"
         f"{DATABASE_HOST}:5432/{ADMISSION_DATABASE}"
     )
 
 
-def _parse_admission_url(value: str) -> str:
+def _parse_admission_url(
+    value: str,
+    *,
+    expected_role: str = ADMISSION_RUNTIME_ROLE,
+) -> str:
     parsed = urlsplit(value)
     password = unquote(parsed.password or "")
     if (
         parsed.scheme != "postgresql"
-        or parsed.username != ADMISSION_RUNTIME_ROLE
+        or parsed.username != expected_role
         or parsed.hostname != DATABASE_HOST
         or parsed.port != 5432
         or parsed.path != f"/{ADMISSION_DATABASE}"
@@ -443,7 +453,7 @@ def _parse_admission_url(value: str) -> str:
         or not PASSWORD_RE.fullmatch(password)
     ):
         raise RuntimeDatabaseError("admission_database_url_invalid")
-    if value != _admission_url(password=password):
+    if value != _admission_url(password=password, role=expected_role):
         raise RuntimeDatabaseError("admission_database_url_noncanonical")
     return password
 
@@ -524,16 +534,30 @@ def _load_or_create_values(
     admission_env_file: Path,
 ) -> tuple[dict[str, str], bool, bool]:
     admission = _read_regular_env(admission_env_file)
-    if set(admission) != {ADMISSION_KEY}:
+    if set(admission) != {ADMISSION_KEY, INGRESS_ADMISSION_KEY}:
         raise RuntimeDatabaseError("admission_env_fields_invalid")
     admission_url = admission[ADMISSION_KEY]
+    ingress_admission_url = admission[INGRESS_ADMISSION_KEY]
     _parse_admission_url(admission_url)
+    _parse_admission_url(
+        ingress_admission_url,
+        expected_role=INGRESS_ADMISSION_RUNTIME_ROLE,
+    )
     if env_file.exists() or env_file.is_symlink():
         values = _read_regular_env(env_file)
-        expected = {*ROLE_KEYS, ADMISSION_KEY, RENDER_KEY, ERASURE_KEY}
-        if set(values) != expected:
+        expected = {
+            *ROLE_KEYS,
+            ADMISSION_KEY,
+            INGRESS_ADMISSION_KEY,
+            RENDER_KEY,
+            ERASURE_KEY,
+        }
+        legacy_expected = expected - {INGRESS_ADMISSION_KEY}
+        observed = set(values)
+        if observed != expected and observed != legacy_expected:
             raise RuntimeDatabaseError("runtime_env_fields_invalid")
-        repaired = False
+        repaired = INGRESS_ADMISSION_KEY not in values
+        values[INGRESS_ADMISSION_KEY] = ingress_admission_url
         for key, role in ROLE_KEYS.items():
             password = _parse_database_url(
                 values[key],
@@ -546,11 +570,16 @@ def _load_or_create_values(
                 values[key] = canonical
         if (
             values[ADMISSION_KEY] != admission_url
+            or values[INGRESS_ADMISSION_KEY] != ingress_admission_url
             or values[RENDER_KEY] != admission_url
             or not PASSWORD_RE.fullmatch(values[ERASURE_KEY])
         ):
             raise RuntimeDatabaseError("runtime_env_authority_mismatch")
         _parse_admission_url(values[ADMISSION_KEY])
+        _parse_admission_url(
+            values[INGRESS_ADMISSION_KEY],
+            expected_role=INGRESS_ADMISSION_RUNTIME_ROLE,
+        )
         _parse_admission_url(values[RENDER_KEY])
         return values, True, repaired
 
@@ -563,6 +592,7 @@ def _load_or_create_values(
             else _runtime_url(role=role, password=password)
         )
     values[ADMISSION_KEY] = admission_url
+    values[INGRESS_ADMISSION_KEY] = ingress_admission_url
     values[RENDER_KEY] = admission_url
     values[ERASURE_KEY] = _password()
     return values, False, False
@@ -1340,11 +1370,17 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
     )
     passwords = _passwords(values)
     admission_password = _parse_admission_url(values[ADMISSION_KEY])
+    ingress_admission_password = _parse_admission_url(
+        values[INGRESS_ADMISSION_KEY],
+        expected_role=INGRESS_ADMISSION_RUNTIME_ROLE,
+    )
     hidden = (
         *passwords.values(),
         admission_password,
+        ingress_admission_password,
         values[ERASURE_KEY],
         values[ADMISSION_KEY],
+        values[INGRESS_ADMISSION_KEY],
     )
 
     if args.operation == "prepare":

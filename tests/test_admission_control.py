@@ -18,6 +18,7 @@ from app.services.admission_control import (
     build_admission_backend,
     probe_admission_cursor,
     resolve_api_admission_database_url,
+    resolve_api_ingress_database_url,
 )
 
 
@@ -269,6 +270,36 @@ def test_api_admission_primary_database_fallback_is_explicit_and_non_prod_only(
         )
 
 
+def test_api_ingress_database_resolution_is_role_separated_in_production() -> (
+    None
+):
+    primary = "postgresql://api-runtime/property"
+    internal = "postgresql://api-admission/propertyquarry_admission"
+    ingress = "postgresql://api-ingress/propertyquarry_admission"
+
+    assert (
+        resolve_api_ingress_database_url(
+            runtime_mode="prod",
+            primary_database_url=primary,
+            environ={
+                "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": internal,
+                "PROPERTYQUARRY_API_INGRESS_DATABASE_URL": ingress,
+            },
+        )
+        == ingress
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="propertyquarry_api_ingress_database_url_must_be_role_separated",
+    ):
+        resolve_api_ingress_database_url(
+            runtime_mode="prod",
+            primary_database_url=primary,
+            environ={
+                "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": internal,
+                "PROPERTYQUARRY_API_INGRESS_DATABASE_URL": internal,
+            },
+        )
 def test_invalid_admission_keys_fail_closed() -> None:
     backend = MemoryAdmissionBackend()
 

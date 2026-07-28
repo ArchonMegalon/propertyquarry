@@ -530,6 +530,9 @@ def _runtime_containers(
             environment["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"] = database[
                 "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"
             ]
+            environment["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"] = database[
+                "PROPERTYQUARRY_API_INGRESS_DATABASE_URL"
+            ]
             environment.update(
                 {
                     "PROPERTYQUARRY_GOVERNED_RENDER_API_URL": (
@@ -582,6 +585,7 @@ def _runtime_containers(
             for key in (
                 "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
                 "PROPERTYQUARRY_API_DATABASE_URL",
+                "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
                 "PROPERTYQUARRY_MIGRATION_DATABASE_URL",
                 "PROPERTYQUARRY_RENDER_DATABASE_URL",
                 "PROPERTYQUARRY_SCHEDULER_DATABASE_URL",
@@ -715,7 +719,10 @@ def _runtime_files(
         {
             "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": database_values[
                 "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"
-            ]
+            ],
+            "PROPERTYQUARRY_API_INGRESS_DATABASE_URL": database_values[
+                "PROPERTYQUARRY_API_INGRESS_DATABASE_URL"
+            ],
         },
     )
     for constant, path in paths.items():
@@ -765,12 +772,14 @@ def _database_env_bytes() -> bytes:
         "api": "B" * 48,
         "migration": "C" * 48,
         "erasure": "D" * 48,
+        "ingress": "G" * 48,
         "scheduler": "E" * 48,
         "worker": "F" * 48,
     }
     values = {
         "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": f"postgresql://propertyquarry_admission_runtime:{passwords['admission']}@propertyquarry-db:5432/propertyquarry_admission",
         "PROPERTYQUARRY_API_DATABASE_URL": f"postgresql://propertyquarry_api:{passwords['api']}@propertyquarry-db:5432/propertyquarry",
+        "PROPERTYQUARRY_API_INGRESS_DATABASE_URL": f"postgresql://propertyquarry_ingress_runtime:{passwords['ingress']}@propertyquarry-db:5432/propertyquarry_admission",
         "PROPERTYQUARRY_MIGRATION_DATABASE_URL": f"postgresql://propertyquarry_migrator:{passwords['migration']}@propertyquarry-db:5432/propertyquarry?options=-c%20role%3Dpropertyquarry_owner%20-c%20search_path%3Dpublic%2Cpg_catalog",
         "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET": passwords["erasure"],
         "PROPERTYQUARRY_RENDER_DATABASE_URL": f"postgresql://propertyquarry_admission_runtime:{passwords['admission']}@propertyquarry-db:5432/propertyquarry_admission",

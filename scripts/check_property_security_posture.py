@@ -918,6 +918,7 @@ def build_security_posture_receipt() -> dict[str, object]:
     for env_name in (
         "PROPERTYQUARRY_API_DATABASE_URL",
         "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
+        "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
         "PROPERTYQUARRY_WORKER_DATABASE_URL",
         "PROPERTYQUARRY_SCHEDULER_DATABASE_URL",
         "PROPERTYQUARRY_RENDER_DATABASE_URL",
@@ -1108,11 +1109,13 @@ def build_security_posture_receipt() -> dict[str, object]:
     if (
         'PROPERTYQUARRY_API_ADMISSION_DATABASE_URL: '
         '"${PROPERTYQUARRY_API_ADMISSION_DATABASE_URL:?' not in api_section
+        or 'PROPERTYQUARRY_API_INGRESS_DATABASE_URL: '
+        '"${PROPERTYQUARRY_API_INGRESS_DATABASE_URL:?' not in api_section
         or 'PROPERTYQUARRY_ADMISSION_BACKEND: "postgres"' not in api_section
     ):
         failures.append(
             "docker-compose.property.yml API must require its dedicated "
-            "PostgreSQL admission DSN"
+            "role-separated PostgreSQL admission DSNs"
         )
     for service_name in (
         "propertyquarry-api",

@@ -239,6 +239,7 @@ ISOLATION_COMMON_BINDING_KEYS = (
 DATABASE_ENV_KEYS = (
     "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
     "PROPERTYQUARRY_API_DATABASE_URL",
+    "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
     "PROPERTYQUARRY_MIGRATION_DATABASE_URL",
     "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET",
     "PROPERTYQUARRY_RENDER_DATABASE_URL",
@@ -2491,9 +2492,15 @@ def _runtime_exposure(
     database_values = _database_environment(database_raw)
     admission_values, admission_raw = _strict_env(ADMISSION_ENV)
     if (
-        set(admission_values) != {"PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"}
+        set(admission_values)
+        != {
+            "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
+            "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
+        }
         or admission_values["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"]
         != database_values["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"]
+        or admission_values["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"]
+        != database_values["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"]
     ):
         raise IsolationError("admission_environment_binding_invalid")
     root_raw = _read_regular(
@@ -2825,6 +2832,10 @@ def _runtime_exposure(
             "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"
         ) != database_values["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"]:
             raise IsolationError("api_admission_database_role_invalid")
+        if name == "propertyquarry-api-live" and env.get(
+            "PROPERTYQUARRY_API_INGRESS_DATABASE_URL"
+        ) != database_values["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"]:
+            raise IsolationError("api_ingress_database_role_invalid")
         if name in {
             "propertyquarry-api-live",
             "propertyquarry-worker-live",
@@ -2849,6 +2860,9 @@ def _runtime_exposure(
             ]
             allowed_protected["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"] = (
                 database_values["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"]
+            )
+            allowed_protected["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"] = (
+                database_values["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"]
             )
             allowed_protected["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"] = (
                 database_values["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"]
@@ -2997,6 +3011,7 @@ def _runtime_exposure(
                 for key in (
                     "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
                     "PROPERTYQUARRY_API_DATABASE_URL",
+                    "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
                     "PROPERTYQUARRY_MIGRATION_DATABASE_URL",
                     "PROPERTYQUARRY_RENDER_DATABASE_URL",
                     "PROPERTYQUARRY_SCHEDULER_DATABASE_URL",
@@ -3388,6 +3403,7 @@ def _database_environment(raw: bytes) -> dict[str, str]:
     password = r"[A-Za-z0-9_-]{48,128}"
     patterns = {
         "PROPERTYQUARRY_API_DATABASE_URL": rf"postgresql://propertyquarry_api:{password}@propertyquarry-db:5432/propertyquarry",
+        "PROPERTYQUARRY_API_INGRESS_DATABASE_URL": rf"postgresql://propertyquarry_ingress_runtime:{password}@propertyquarry-db:5432/propertyquarry_admission",
         "PROPERTYQUARRY_SCHEDULER_DATABASE_URL": rf"postgresql://propertyquarry_scheduler:{password}@propertyquarry-db:5432/propertyquarry",
         "PROPERTYQUARRY_WORKER_DATABASE_URL": rf"postgresql://propertyquarry_worker:{password}@propertyquarry-db:5432/propertyquarry",
         "PROPERTYQUARRY_MIGRATION_DATABASE_URL": rf"postgresql://propertyquarry_migrator:{password}@propertyquarry-db:5432/propertyquarry\?options=-c%20role%3Dpropertyquarry_owner%20-c%20search_path%3Dpublic%2Cpg_catalog",
@@ -3395,6 +3411,7 @@ def _database_environment(raw: bytes) -> dict[str, str]:
     if any(re.fullmatch(pattern, values[key]) is None for key, pattern in patterns.items()):
         raise IsolationError("database_environment_url_invalid")
     admission = values["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"]
+    ingress_admission = values["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"]
     if (
         re.fullmatch(
             rf"postgresql://propertyquarry_admission_runtime:{password}@propertyquarry-db:5432/propertyquarry_admission",
@@ -3402,6 +3419,12 @@ def _database_environment(raw: bytes) -> dict[str, str]:
         )
         is None
         or values["PROPERTYQUARRY_RENDER_DATABASE_URL"] != admission
+        or re.fullmatch(
+            rf"postgresql://propertyquarry_ingress_runtime:{password}@propertyquarry-db:5432/propertyquarry_admission",
+            ingress_admission,
+        )
+        is None
+        or ingress_admission == admission
         or re.fullmatch(
             password,
             values["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"],

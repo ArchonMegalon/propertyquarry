@@ -30,6 +30,7 @@ SERVICE_DSN_INPUTS = {
 }
 DATABASE_SECRET_INPUTS = frozenset(SERVICE_DSN_INPUTS.values()) | {
     "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
+    "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
 }
 
 
@@ -72,6 +73,9 @@ def test_compose_maps_each_database_secret_to_only_its_service_lane() -> None:
     assert api_environment["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"].startswith(
         "${PROPERTYQUARRY_API_ADMISSION_DATABASE_URL:?"
     )
+    assert api_environment["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"].startswith(
+        "${PROPERTYQUARRY_API_INGRESS_DATABASE_URL:?"
+    )
     assert api_environment["PROPERTYQUARRY_ADMISSION_BACKEND"] == "postgres"
     assert services["propertyquarry-migrate"]["restart"] == "no"
 
@@ -98,7 +102,11 @@ def test_long_lived_services_do_not_load_the_broad_dotenv_or_migration_dsn() -> 
             for dsn_input in DATABASE_SECRET_INPUTS:
                 if (
                     service_name == "propertyquarry-api"
-                    and dsn_input == "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"
+                    and dsn_input
+                    in {
+                        "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
+                        "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
+                    }
                 ):
                     continue
                 assert environment.get(dsn_input) == ""
@@ -120,9 +128,12 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
         "PROPERTYQUARRY_API_DATABASE_URL": (
             "postgresql://pq_api:review-only@db/property"
         ),
-        "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": (
-            "postgresql://pq_api_admission:review-only@db/property"
-        ),
+            "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": (
+                "postgresql://pq_api_admission:review-only@db/property"
+            ),
+            "PROPERTYQUARRY_API_INGRESS_DATABASE_URL": (
+                "postgresql://pq_api_ingress:review-only@db/property"
+            ),
         "PROPERTYQUARRY_WORKER_DATABASE_URL": (
             "postgresql://pq_worker:review-only@db/property"
         ),

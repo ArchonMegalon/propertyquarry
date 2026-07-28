@@ -68,6 +68,10 @@ def _runtime_values(*, migrator_url: str | None = None) -> dict[str, str]:
         f"{PASSWORD_B}@propertyquarry-db:5432/propertyquarry_admission"
     )
     values[runtime.ADMISSION_KEY] = admission_url
+    values[runtime.INGRESS_ADMISSION_KEY] = runtime._admission_url(
+        password=PASSWORD_A,
+        role=runtime.INGRESS_ADMISSION_RUNTIME_ROLE,
+    )
     values[runtime.RENDER_KEY] = admission_url
     values[runtime.ERASURE_KEY] = "E" * 48
     return values
@@ -81,6 +85,11 @@ def test_admission_env_is_published_atomically_with_strict_metadata(
         password=PASSWORD_A,
         database_url=admission._database_url(
             password=PASSWORD_A,
+            host=admission.DEFAULT_DATABASE_HOST,
+        ),
+        ingress_password=PASSWORD_B,
+        ingress_database_url=admission._ingress_database_url(
+            password=PASSWORD_B,
             host=admission.DEFAULT_DATABASE_HOST,
         ),
     )
@@ -133,6 +142,11 @@ def test_admission_probe_is_digest_pinned_and_keeps_secret_out_of_argv(
             password=PASSWORD_A,
             host=admission.DEFAULT_DATABASE_HOST,
         ),
+        ingress_password=PASSWORD_B,
+        ingress_database_url=admission._ingress_database_url(
+            password=PASSWORD_B,
+            host=admission.DEFAULT_DATABASE_HOST,
+        ),
     )
     observed: dict[str, object] = {}
 
@@ -165,6 +179,8 @@ def test_admission_probe_is_digest_pinned_and_keeps_secret_out_of_argv(
     assert observed["kwargs"]["secrets_to_hide"] == (
         credential.password,
         credential.database_url,
+        credential.ingress_password,
+        credential.ingress_database_url,
     )
 
     admission._probe_runtime(
@@ -190,7 +206,7 @@ def test_admission_database_creation_runs_only_the_required_migrations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, str]] = []
-    results = iter(("absent", "", "0|0|0", ""))
+    results = iter(("absent", "", "0|0|0|0|0|0", ""))
 
     def fake_psql(*, database: str, sql: str, **_kwargs: object) -> str:
         calls.append((database, sql))
@@ -198,7 +214,12 @@ def test_admission_database_creation_runs_only_the_required_migrations(
 
     monkeypatch.setattr(admission, "_psql", fake_psql)
     monkeypatch.setattr(admission, "_migration_sql", lambda: "MIGRATIONS_16_AND_17")
-    credential = admission.RuntimeCredential(PASSWORD_A, "unused-in-this-test")
+    credential = admission.RuntimeCredential(
+        PASSWORD_A,
+        "unused-in-this-test",
+        PASSWORD_B,
+        "unused-ingress-in-this-test",
+    )
 
     admission._provision_database(
         container="propertyquarry-db-live", credential=credential
@@ -214,8 +235,65 @@ def test_admission_database_creation_runs_only_the_required_migrations(
     assert calls[3][1] == "MIGRATIONS_16_AND_17"
 
 
+def test_admission_database_upgrades_legacy_schema_with_ingress_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    results = iter(("present", "1|1|1|0|0|0", ""))
+
+    def fake_psql(*, database: str, sql: str, **_kwargs: object) -> str:
+        calls.append((database, sql))
+        return next(results)
+
+    monkeypatch.setattr(admission, "_psql", fake_psql)
+    monkeypatch.setattr(admission, "_ingress_migration_sql", lambda: "INGRESS_SCHEMA")
+
+    admission._provision_database(
+        container="propertyquarry-db-live",
+        credential=admission.RuntimeCredential(
+            PASSWORD_A,
+            "unused-in-this-test",
+            PASSWORD_B,
+            "unused-ingress-in-this-test",
+        ),
+    )
+
+    assert [database for database, _sql in calls] == [
+        "template1",
+        admission.DATABASE_NAME,
+        admission.DATABASE_NAME,
+    ]
+    assert calls[-1][1] == "INGRESS_SCHEMA"
+
+
+def test_ingress_admission_schema_is_bounded_and_role_separated() -> None:
+    migration = admission._ingress_migration_sql()
+
+    for relation in (
+        admission.INGRESS_QUOTA_TABLE,
+        admission.INGRESS_LEASE_TABLE,
+        admission.INGRESS_CAPACITY_TABLE,
+    ):
+        assert f"CREATE TABLE {relation}" in migration
+    assert "hard_limit = 1000000" in migration
+    assert "hard_limit = 100000" in migration
+    assert "contract_version = 1" in migration
+    assert migration.count("SECURITY DEFINER") == 3
+    assert migration.count(f"OWNER TO {admission.CAPACITY_OWNER_ROLE}") == 3
+    assert (
+        f"GRANT SELECT, INSERT, UPDATE, DELETE\n"
+        f"    ON TABLE {admission.SCHEMA_NAME}.{admission.INGRESS_QUOTA_TABLE},"
+        in migration
+    )
+    assert (
+        f"GRANT SELECT\n"
+        f"    ON TABLE {admission.SCHEMA_NAME}.{admission.INGRESS_CAPACITY_TABLE}"
+        in migration
+    )
+
+
 def test_admission_role_sql_rejects_excess_authority_memberships() -> None:
-    role_sql = admission._role_sql(PASSWORD_A)
+    role_sql = admission._role_sql(PASSWORD_A, PASSWORD_B)
 
     assert "unsafe admission owner memberships" in role_sql
     assert "unsafe admission capacity owner memberships" in role_sql
@@ -319,7 +397,11 @@ def test_existing_legacy_migrator_url_is_repaired_in_memory(
     runtime_env = tmp_path / "runtime.env"
     _write_mode_0600(
         admission_env,
-        f"{runtime.ADMISSION_KEY}={values[runtime.ADMISSION_KEY]}\n",
+        (
+            f"{runtime.ADMISSION_KEY}={values[runtime.ADMISSION_KEY]}\n"
+            f"{runtime.INGRESS_ADMISSION_KEY}="
+            f"{values[runtime.INGRESS_ADMISSION_KEY]}\n"
+        ),
     )
     _write_mode_0600(
         runtime_env,
@@ -982,7 +1064,7 @@ def test_runtime_database_provisioner_on_disposable_postgres(
             container=container,
             database="template1",
             password=PASSWORD_B,
-            sql=admission._role_sql(PASSWORD_B),
+            sql=admission._role_sql(PASSWORD_B, PASSWORD_A),
         )
         runtime._psql(
             container=container,
@@ -1001,7 +1083,7 @@ GRANT propertyquarry_admission_excess_owner TO {admission.OWNER_ROLE};
                 container=container,
                 database="template1",
                 password=PASSWORD_B,
-                sql=admission._role_sql(PASSWORD_B),
+                sql=admission._role_sql(PASSWORD_B, PASSWORD_A),
             )
         runtime._psql(
             container=container,
@@ -1023,7 +1105,7 @@ GRANT propertyquarry_admission_excess_capacity
                 container=container,
                 database="template1",
                 password=PASSWORD_B,
-                sql=admission._role_sql(PASSWORD_B),
+                sql=admission._role_sql(PASSWORD_B, PASSWORD_A),
             )
         runtime._psql(
             container=container,
@@ -1049,7 +1131,12 @@ CREATE DATABASE {runtime.ADMISSION_DATABASE}
         receipt = tmp_path / "receipt.json"
         _write_mode_0600(
             admission_env,
-            f"{runtime.ADMISSION_KEY}={runtime._admission_url(password=PASSWORD_B)}\n",
+            (
+                f"{runtime.ADMISSION_KEY}="
+                f"{runtime._admission_url(password=PASSWORD_B)}\n"
+                f"{runtime.INGRESS_ADMISSION_KEY}="
+                f"{runtime._admission_url(password=PASSWORD_A, role=runtime.INGRESS_ADMISSION_RUNTIME_ROLE)}\n"
+            ),
         )
 
         def execute(operation: str) -> dict[str, object]:

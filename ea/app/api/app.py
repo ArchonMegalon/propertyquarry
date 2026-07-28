@@ -39,7 +39,7 @@ from app.api.propertyquarry_localization import PropertyQuarryLocalizationMiddle
 from app.api.threadpool_compat import inline_sync_handlers_enabled, install_inline_threadpool_compat
 from app.container import build_container
 from app.observability import RuntimeMetrics
-from app.services.admission_control import resolve_api_admission_database_url
+from app.services.admission_control import resolve_api_ingress_database_url
 from app.settings import get_settings, validate_startup_settings
 
 _PROPERTY_SEARCH_PREWARM_CONTAINER = None
@@ -571,7 +571,7 @@ def _build_ingress_admission_store(  # type: ignore[no-untyped-def]
         ).strip()
         runtime_mode = str(os.environ.get("EA_RUNTIME_MODE") or "").strip()
         database_url = (
-            resolve_api_admission_database_url(
+            resolve_api_ingress_database_url(
                 runtime_mode=runtime_mode,
                 primary_database_url=primary_database_url,
             )
