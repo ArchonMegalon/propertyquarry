@@ -272,7 +272,8 @@ def _public_tour_volume_privacy(container_name: str) -> dict[str, object]:
             "exec",
             container_name,
             "python",
-            "/app/scripts/propertyquarry_public_tour_volume_privacy.py",
+            "-m",
+            "scripts.propertyquarry_public_tour_volume_privacy",
             "--root",
             "/data/public_property_tours",
         )

@@ -140,15 +140,23 @@ def _canonical_public_payload(
     *,
     bundle_dir: Path,
 ) -> dict[str, object]:
-    slug = str(payload.get("slug") or "").strip()
-    return build_public_tour_manifest(
-        payload,
-        expose_asset_relpaths=True,
-        url_allowed=lambda _url: False,
-        bundle_dir_resolver=lambda requested_slug: (
-            bundle_dir if str(requested_slug or "").strip() == slug else None
-        ),
-    ).as_dict()
+    current = dict(payload)
+    for _attempt in range(4):
+        slug = str(current.get("slug") or "").strip()
+        canonical = build_public_tour_manifest(
+            current,
+            expose_asset_relpaths=True,
+            url_allowed=lambda _url: False,
+            bundle_dir_resolver=lambda requested_slug: (
+                bundle_dir
+                if str(requested_slug or "").strip() == slug
+                else None
+            ),
+        ).as_dict()
+        if canonical == current:
+            return canonical
+        current = canonical
+    raise ValueError("public_manifest_canonicalization_did_not_converge")
 
 
 def _merge_private_receipt(
@@ -269,10 +277,15 @@ def audit_or_repair(
         counts["bundles"] += 1
         try:
             payload = _read_object(manifest_path)
-            if str(payload.get("slug") or "").strip() != slug:
+            declared_slug = str(payload.get("slug") or "").strip()
+            slug_mismatch = declared_slug != slug
+            if slug_mismatch and not apply:
                 raise ValueError("manifest_slug_mismatch")
+            public_payload = dict(payload)
+            if slug_mismatch:
+                public_payload["slug"] = slug
             canonical = _canonical_public_payload(
-                payload,
+                public_payload,
                 bundle_dir=manifest_path.parent,
             )
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
@@ -290,6 +303,8 @@ def audit_or_repair(
             if stat.S_IMODE(private_path.stat().st_mode) != 0o600:
                 counts["private_mode_violations"] += 1
 
+        if slug_mismatch and declared_slug:
+            existing_private.setdefault("legacy_declared_slug", declared_slug)
         has_private = _contains_private_key(payload)
         noncanonical = canonical != payload
         counts["private_key_manifests"] += int(has_private)

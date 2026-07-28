@@ -170,3 +170,38 @@ def test_local_docker_receipt_fails_closed_on_image_drift(
 
     assert result["passed"] is False
     assert "propertyquarry-api:web_image_mismatch" in result["failures"]
+
+
+def test_public_tour_privacy_auditor_runs_as_importable_module(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def run(command) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(command))
+        payload = {
+            "schema": "propertyquarry-public-tour-volume-privacy-v1",
+            "status": "pass",
+            "mode": "audit",
+            "counts": {"bundles": 1},
+            "secret_values_recorded": False,
+        }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(receipt, "_run", run)
+
+    result = receipt._public_tour_volume_privacy("propertyquarry-api")
+
+    assert result["status"] == "pass"
+    assert calls == [
+        (
+            "/usr/bin/docker",
+            "exec",
+            "propertyquarry-api",
+            "python",
+            "-m",
+            "scripts.propertyquarry_public_tour_volume_privacy",
+            "--root",
+            "/data/public_property_tours",
+        )
+    ]
