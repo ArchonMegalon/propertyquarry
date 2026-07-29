@@ -160,6 +160,12 @@
           ? `${preparedPreviews[1]} von ${preparedPreviews[2]} Inseratsvorschauen von ${preparedPreviews[3]} vorbereitet.`
           : `Se prepararon ${preparedPreviews[1]} de ${preparedPreviews[2]} vistas previas de anuncios de ${preparedPreviews[3]}.`;
       }
+      const checkingFit = text.match(/^Checking fit for (.+?) \((\d+) of (\d+)\) from (.+?)\.?$/i);
+      if (checkingFit) {
+        return clientLocale.startsWith('de')
+          ? `Eignung wird geprüft: ${checkingFit[1]} (${checkingFit[2]} von ${checkingFit[3]}) von ${checkingFit[4]}.`
+          : `Comprobando la idoneidad de ${checkingFit[1]} (${checkingFit[2]} de ${checkingFit[3]}) de ${checkingFit[4]}.`;
+      }
       let localized = text;
       const replacementPairs = [
         [/\b(\d+) homes? found\b/gi, (_match, count) => (

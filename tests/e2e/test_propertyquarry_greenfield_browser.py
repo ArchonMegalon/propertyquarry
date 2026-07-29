@@ -1799,6 +1799,13 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
                 {
                     "step": "queued",
                     "message": "Queued for execution.",
+                },
+                {
+                    "step": "source_assessing",
+                    "message": (
+                        "Checking fit for Kleine Mietwohnung in Spielberg "
+                        "(25 of 30) from Willhaben."
+                    ),
                 }
             ],
             "research_tasks": [],
@@ -1834,6 +1841,10 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
         expect(page.locator("[data-pqx-run-events]")).to_contain_text(
             "Zur Ausführung eingeplant."
         )
+        expect(page.locator("[data-pqx-run-events]")).to_contain_text(
+            "Eignung wird geprüft: Kleine Mietwohnung in Spielberg "
+            "(25 von 30) von Willhaben."
+        )
         expect(page.locator("[data-pqx-run-summary]")).to_contain_text("3 Quellen offen")
         expect(board).to_contain_text("Immobilien")
         expect(board).to_contain_text("Zu prüfen")
@@ -1854,6 +1865,7 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
             "Prepared 20 of 30 listing preview(s) from Willhaben.",
             "about 5 min",
             "Queued for execution.",
+            "Checking fit for",
             "Browser alerts off",
             "Dark mode",
         ):
