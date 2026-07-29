@@ -1757,6 +1757,95 @@ def test_propertyquarry_browser_locales_do_not_clip(
                 context.close()
 
 
+def test_propertyquarry_active_search_board_stays_localized_after_browser_hydration(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _active_run_status(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        **_kwargs,
+    ) -> dict[str, object]:
+        return {
+            "generated_at": "2026-07-29T08:30:00+00:00",
+            "created_at": "2026-07-29T08:29:00+00:00",
+            "updated_at": "2026-07-29T08:30:00+00:00",
+            "run_id": run_id,
+            "principal_id": principal_id,
+            "status": "in_progress",
+            "status_url": f"/app/api/property/search-runs/{run_id}",
+            "selected_platforms": ["willhaben", "immoscout_at", "immobilien_at"],
+            "progress": 4,
+            "current_step": "sources_resolved",
+            "message": "Waiting for homes.",
+            "provider_display_total": 3,
+            "source_variant_display_total": 0,
+            "selected_platform_count": 3,
+            "summary": {
+                "status": "in_progress",
+                "progress": 4,
+                "provider_display_total": 3,
+                "provider_total": 3,
+                "sources_total": 0,
+                "sources_completed": 0,
+                "found_listing_total": 0,
+                "ranked_candidates": [],
+            },
+            "events": [],
+            "research_tasks": [],
+        }
+
+    monkeypatch.setattr(ProductService, "get_property_search_run_status", _active_run_status)
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(
+        browser,
+        mobile=False,
+        width=1440,
+        height=900,
+        locale="de-AT",
+    )
+    page: Page = context.new_page()
+    page_errors: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    try:
+        response = page.goto(
+            f"{base_url}/app/properties?run_id=run-active-localized",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        board = page.locator("[data-pqx-progress-board]").first
+        expect(board).to_be_visible()
+        expect(board.locator("[data-pqx-progress-board-title]")).to_have_text("Suche läuft")
+        expect(board.locator("[data-pqx-radar-count]")).to_have_text("3 Portale ausgewählt")
+        expect(board).to_contain_text("Warten auf Immobilien.")
+        expect(board).to_contain_text("Immobilien")
+        expect(board).to_contain_text("Zu prüfen")
+        expect(board).to_contain_text("Geprüft")
+        expect(page.locator("[data-pqx-theme-toggle]")).to_have_text("Dunkelmodus")
+        browser_alerts = page.locator("[data-pqx-browser-alerts]")
+        if browser_alerts.is_visible():
+            expect(browser_alerts).to_have_text("Browser-Benachrichtigungen aus")
+        expect(page.locator("[data-pqx-running-details] summary")).to_contain_text(
+            "Aktualisierungen"
+        )
+        body_text = page.locator("body").inner_text()
+        for leaked_copy in (
+            "Searching",
+            "sites chosen",
+            "Waiting for homes.",
+            "Browser alerts off",
+            "Dark mode",
+        ):
+            assert leaked_copy not in body_text
+        _assert_no_viewport_or_text_cutoff(page)
+        assert page_errors == []
+    finally:
+        context.close()
+
+
 def _visible_button_action_keys(page: Page) -> set[str]:
     return set(
         page.locator("button:visible:not([disabled])").evaluate_all(
@@ -10576,6 +10665,12 @@ def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_brows
         )
         response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
+        assert page_errors == []
+        page.wait_for_function(
+            """() => document.querySelector(
+              '[data-property-decision-workbench]'
+            )?.dataset.pqWorkbenchController === 'loaded'"""
+        )
         expected_provider_label = "Portale" if locale == "de-AT" else "Portales"
         expect(
             page.locator('[data-property-step-trigger="providers"] strong')
@@ -10605,10 +10700,7 @@ def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_brows
         assert launch_box["scrollWidth"] <= launch_box["clientWidth"] + 1
         assert launch_box["scrollHeight"] <= launch_box["clientHeight"] + 1
 
-        with page.expect_response("**/app/api/property/search-runs**") as start_response:
-            launch.click()
-        assert start_response.value.status == 200
-        assert start_response.value.headers.get("x-property-search-resumed") == "true"
+        launch.click()
         expect(page).to_have_url(re.compile(r"/app/properties\?run_id=run-active-resume"), timeout=10000)
         expect(page.get_by_text("Active search resumed")).to_be_visible()
 

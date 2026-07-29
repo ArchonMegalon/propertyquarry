@@ -14,6 +14,130 @@
     const metaNode = root.querySelector('[data-property-workspace-meta]');
     const data = JSON.parse(payloadNode?.textContent || '{}');
     const meta = JSON.parse(metaNode?.getAttribute('data-property-workspace-meta') || '{}');
+    const clientLocale = String(document.documentElement.lang || 'en').trim().toLowerCase();
+    const liveCopyCatalog = clientLocale.startsWith('de')
+      ? {
+          'Browser alerts on': 'Browser-Benachrichtigungen an',
+          'Browser alerts off': 'Browser-Benachrichtigungen aus',
+          'Dark mode': 'Dunkelmodus',
+          'Light mode': 'Hellmodus',
+          'Searching': 'Suche läuft',
+          'Results ready': 'Ergebnisse bereit',
+          'Paused': 'Pausiert',
+          'estimating': 'wird geschätzt',
+          'Waiting for homes.': 'Warten auf Immobilien.',
+          'Looking for homes': 'Suche nach Immobilien',
+          'Preparing search': 'Suche wird vorbereitet',
+          'Preparing search.': 'Suche wird vorbereitet.',
+          'checking': 'wird geprüft',
+          'Homes': 'Immobilien',
+          'To review': 'Zu prüfen',
+          'Checks left': 'Offene Prüfungen',
+          'Checked': 'Geprüft',
+          'Sites': 'Portale',
+          'Search totals': 'Suchsummen',
+          'Updates': 'Aktualisierungen',
+          'Checking the saved search.': 'Gespeicherte Suche wird geprüft.',
+          'Checking the latest search status.': 'Aktueller Suchstatus wird geprüft.',
+          'Preparing': 'Vorbereitung',
+          'Sources': 'Quellen',
+          'Details': 'Details',
+          'Checks': 'Prüfungen',
+          'all found homes are checked': 'alle gefundenen Immobilien sind geprüft',
+          'home details are still loading': 'Immobiliendetails werden noch geladen',
+        }
+      : (
+          clientLocale.startsWith('es')
+            ? {
+                'Browser alerts on': 'Alertas del navegador activadas',
+                'Browser alerts off': 'Alertas del navegador desactivadas',
+                'Dark mode': 'Modo oscuro',
+                'Light mode': 'Modo claro',
+                'Searching': 'Buscando',
+                'Results ready': 'Resultados listos',
+                'Paused': 'En pausa',
+                'estimating': 'calculando',
+                'Waiting for homes.': 'Esperando propiedades.',
+                'Looking for homes': 'Buscando propiedades',
+                'Preparing search': 'Preparando búsqueda',
+                'Preparing search.': 'Preparando búsqueda.',
+                'checking': 'revisando',
+                'Homes': 'Propiedades',
+                'To review': 'Por revisar',
+                'Checks left': 'Revisiones pendientes',
+                'Checked': 'Revisado',
+                'Sites': 'Portales',
+                'Search totals': 'Totales de búsqueda',
+                'Updates': 'Actualizaciones',
+                'Checking the saved search.': 'Revisando la búsqueda guardada.',
+                'Checking the latest search status.': 'Revisando el estado más reciente de la búsqueda.',
+                'Preparing': 'Preparando',
+                'Sources': 'Fuentes',
+                'Details': 'Detalles',
+                'Checks': 'Revisiones',
+                'all found homes are checked': 'todas las propiedades encontradas están revisadas',
+                'home details are still loading': 'los detalles de las propiedades aún se están cargando',
+              }
+            : {}
+        );
+    const localizeLiveCopy = (value) => {
+      const text = String(value ?? '').trim();
+      if (!text || !Object.keys(liveCopyCatalog).length) return text;
+      if (liveCopyCatalog[text]) return liveCopyCatalog[text];
+      const sitesChosen = text.match(/^(\d+) sites chosen$/i);
+      if (sitesChosen) {
+        return clientLocale.startsWith('de')
+          ? `${sitesChosen[1]} Portale ausgewählt`
+          : `${sitesChosen[1]} portales seleccionados`;
+      }
+      const homesFound = text.match(/^(\d+) homes? found$/i);
+      if (homesFound) {
+        return clientLocale.startsWith('de')
+          ? `${homesFound[1]} Immobilien gefunden`
+          : `${homesFound[1]} propiedades encontradas`;
+      }
+      const toReview = text.match(/^(\d+) to review$/i);
+      if (toReview) {
+        return clientLocale.startsWith('de')
+          ? `${toReview[1]} zu prüfen`
+          : `${toReview[1]} por revisar`;
+      }
+      const workLeft = text.match(/^(\d+) (sources|checks) left$/i);
+      if (workLeft) {
+        const unit = workLeft[2].toLowerCase() === 'checks'
+          ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
+          : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+        return clientLocale.startsWith('de')
+          ? `${workLeft[1]} ${unit} offen`
+          : `${workLeft[1]} ${unit} pendientes`;
+      }
+      const workProgress = text.match(/^(\d+)\s*\/\s*(\d+)\s+(sources|checks)$/i);
+      if (workProgress) {
+        const unit = workProgress[3].toLowerCase() === 'checks'
+          ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
+          : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+        return `${workProgress[1]} / ${workProgress[2]} ${unit}`;
+      }
+      const percentEstimating = text.match(/^(\d+)% · estimating$/i);
+      if (percentEstimating) {
+        return `${percentEstimating[1]}% · ${liveCopyCatalog.estimating}`;
+      }
+      let localized = text;
+      const replacementPairs = [
+        [/\b(\d+) homes? found\b/gi, (_match, count) => (
+          clientLocale.startsWith('de') ? `${count} Immobilien gefunden` : `${count} propiedades encontradas`
+        )],
+        [/\b(\d+) to review\b/gi, (_match, count) => (
+          clientLocale.startsWith('de') ? `${count} zu prüfen` : `${count} por revisar`
+        )],
+        [/\ball found homes are checked\b/gi, liveCopyCatalog['all found homes are checked']],
+        [/\bhome details are still loading\b/gi, liveCopyCatalog['home details are still loading']],
+      ];
+      replacementPairs.forEach(([pattern, replacement]) => {
+        localized = localized.replace(pattern, replacement);
+      });
+      return localized;
+    };
     const networkState = root.querySelector('[data-pq-network-state]');
     const syncNetworkState = () => {
       const offline = navigator.onLine === false;
@@ -587,7 +711,9 @@
       }
       browserNotificationButton.hidden = false;
       const enabled = browserNotificationsEnabled();
-      browserNotificationButton.textContent = enabled ? 'Browser alerts on' : 'Browser alerts off';
+      browserNotificationButton.textContent = localizeLiveCopy(
+        enabled ? 'Browser alerts on' : 'Browser alerts off',
+      );
       browserNotificationButton.disabled = false;
       browserNotificationButton.setAttribute('aria-pressed', enabled ? 'true' : 'false');
     };
@@ -662,7 +788,7 @@
       }
       if (themeToggleButton) {
         const darkEnabled = nextTheme === 'dark';
-        themeToggleButton.textContent = darkEnabled ? 'Light mode' : 'Dark mode';
+        themeToggleButton.textContent = localizeLiveCopy(darkEnabled ? 'Light mode' : 'Dark mode');
         themeToggleButton.setAttribute('aria-pressed', darkEnabled ? 'true' : 'false');
       }
     };
@@ -3466,30 +3592,30 @@
 	      return `
 	        <div class="pqx-concierge-pulse">
 	          <div class="pqx-progress-headline">
-            <strong data-pqx-progress-board-title>${escapeHtml(title)}</strong>
-            <span class="pqx-small pqx-progress-eta" data-pqx-progress-eta>${escapeHtml(etaLabel)}</span>
+            <strong data-pqx-progress-board-title>${escapeHtml(localizeLiveCopy(title))}</strong>
+            <span class="pqx-small pqx-progress-eta" data-pqx-progress-eta>${escapeHtml(localizeLiveCopy(etaLabel))}</span>
           </div>
           <div class="pqx-pulse-line" aria-hidden="true"></div>
         </div>
 	        <div class="pqx-source-progress" data-pqx-source-progress>
 		          <div class="pqx-source-progress-head">
-			            <strong data-pqx-radar-count>${escapeHtml(scanCountLabel)}</strong>
-			            <span class="pqx-small">${escapeHtml(sourceMeta)}</span>
+			            <strong data-pqx-radar-count>${escapeHtml(localizeLiveCopy(scanCountLabel))}</strong>
+			            <span class="pqx-small">${escapeHtml(localizeLiveCopy(sourceMeta))}</span>
 		          </div>
-			          <span class="pqx-note">${escapeHtml(detailQueueMessage || runFoundQueueMessage(found, toReview, sourceWork, providerDisplayTotal, summary) || 'Waiting for homes.')}</span>
-	          <div class="pqx-live-review-bars" aria-label="Search totals">
+			          <span class="pqx-note">${escapeHtml(localizeLiveCopy(detailQueueMessage || runFoundQueueMessage(found, toReview, sourceWork, providerDisplayTotal, summary) || 'Waiting for homes.'))}</span>
+	          <div class="pqx-live-review-bars" aria-label="${escapeHtml(localizeLiveCopy('Search totals'))}">
 		            <span>
-		              <b>Homes</b>
+		              <b>${escapeHtml(localizeLiveCopy('Homes'))}</b>
 		              <i>${escapeHtml(found || 0)}</i>
 		              <em><u style="--progress: ${escapeHtml(foundBarPct)}"></u></em>
 		            </span>
 	            <span>
-	              <b>${escapeHtml(detailQueueLabel)}</b>
+	              <b>${escapeHtml(localizeLiveCopy(detailQueueLabel))}</b>
 			              <i>${escapeHtml(detailQueueValue)}</i>
 		              <em><u style="--progress: ${escapeHtml(detailQueuePct)}"></u></em>
 		            </span>
 		            <span>
-				              <b>Checked</b>
+				              <b>${escapeHtml(localizeLiveCopy('Checked'))}</b>
 			              <i>${escapeHtml(providerCheckValue)}</i>
 			              <em><u style="--progress: ${escapeHtml(providerCheckPct)}"></u></em>
 		            </span>
@@ -3859,11 +3985,13 @@
       const rankedNode = root.querySelector('[data-pqx-ranked-candidates]');
       const sourceNode = root.querySelector('[data-pqx-source-breakdown]');
       const surfaceState = String(root.dataset.pqxState || '').trim().toLowerCase();
-      if (statusNode) statusNode.textContent = status.replaceAll('_', ' ');
-      if (messageNode) messageNode.textContent = displayRunMessage(runPayload);
+      if (statusNode) statusNode.textContent = localizeLiveCopy(status.replaceAll('_', ' '));
+      if (messageNode) messageNode.textContent = localizeLiveCopy(displayRunMessage(runPayload));
       if (ring) ring.style.setProperty('--progress', String(terminalStates.has(status) ? progress : Math.min(progress, 95)));
       if (progressLabel) progressLabel.textContent = `${terminalStates.has(status) ? progress : Math.min(progress, 95)}%`;
-      if (summaryNode && runPayload.summary && surfaceState !== 'empty_results') summaryNode.textContent = runSummaryText(runPayload);
+      if (summaryNode && runPayload.summary && surfaceState !== 'empty_results') {
+        summaryNode.textContent = localizeLiveCopy(runSummaryText(runPayload));
+      }
       if (rankedNode && runPayload.summary) {
         const rankedCandidates = rankedCandidatesFromRunPayload(runPayload);
         rankedNode.outerHTML = renderRankedCandidates(rankedCandidates, runPayload);
@@ -8113,14 +8241,14 @@
           <section class="pqx-panel pqx-command active" data-pqx-mobile-panel="property" data-pqx-screenfit-target="run-progress" role="status" aria-live="polite">
             <div class="pqx-section-head">
               <div>
-                <h2>Searching</h2>
-                <div class="pqx-note" data-pqx-run-summary>Checking the saved search.</div>
+                <h2>${escapeHtml(localizeLiveCopy('Searching'))}</h2>
+                <div class="pqx-note" data-pqx-run-summary>${escapeHtml(localizeLiveCopy('Checking the saved search.'))}</div>
               </div>
             </div>
-            <div class="pqx-note" data-pqx-run-message>Checking the latest search status.</div>
+            <div class="pqx-note" data-pqx-run-message>${escapeHtml(localizeLiveCopy('Checking the latest search status.'))}</div>
             <div class="pqx-progress-board" data-pqx-progress-board data-progress-state="${escapeHtml(status)}"></div>
             <details class="pqx-card" data-pqx-running-details>
-              <summary><strong>Updates</strong></summary>
+              <summary><strong>${escapeHtml(localizeLiveCopy('Updates'))}</strong></summary>
               <div class="pqx-event-list" data-pqx-run-events></div>
             </details>
           </section>

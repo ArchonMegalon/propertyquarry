@@ -556,13 +556,19 @@
     (() => {
       if (window.__propertyquarryThemeControllerBound) return;
       window.__propertyquarryThemeControllerBound = true;
+      const themeLabel = (dark) => {
+        const locale = String(document.documentElement.lang || 'en').trim().toLowerCase();
+        if (locale.startsWith('de')) return dark ? 'Hellmodus' : 'Dunkelmodus';
+        if (locale.startsWith('es')) return dark ? 'Modo claro' : 'Modo oscuro';
+        return dark ? 'Light mode' : 'Dark mode';
+      };
       const applyTheme = (theme) => {
         const dark = theme === 'dark';
         document.documentElement.setAttribute('data-pq-theme', dark ? 'dark' : 'light');
         document.querySelectorAll('[data-pqx-theme-toggle]').forEach((button) => {
           if (!(button instanceof HTMLButtonElement)) return;
           const pressed = dark ? 'true' : 'false';
-          const label = dark ? 'Light mode' : 'Dark mode';
+          const label = themeLabel(dark);
           if (button.getAttribute('aria-pressed') !== pressed) {
             button.setAttribute('aria-pressed', pressed);
           }
