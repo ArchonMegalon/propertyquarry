@@ -524,6 +524,7 @@ def _write_descriptor_route_bundle(root: Path, slug: str, body: bytes) -> Path:
                 "slug": slug,
                 "title": "Descriptor-bound route",
                 "video_relpath": "media/asset.mp4",
+                "video_sidecar_relpath": "media/asset.quality.json",
                 "scenes": [
                     {
                         "name": "Living room",
@@ -531,6 +532,15 @@ def _write_descriptor_route_bundle(root: Path, slug: str, body: bytes) -> Path:
                         "asset_relpath": "media/asset.mp4",
                     }
                 ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (bundle / "media" / "asset.quality.json").write_text(
+        json.dumps(
+            {
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
             }
         ),
         encoding="utf-8",

@@ -34,6 +34,29 @@ def test_public_tour_manifest_allowlist_excludes_private_source_fields() -> None
     assert forbidden.isdisjoint(public_tour_payloads._PUBLIC_TOUR_TOP_LEVEL_KEYS)
 
 
+def test_public_tour_projection_drops_private_video_provider_fields() -> None:
+    payload = {
+        "slug": "private-video-provider-contract",
+        "title": "Private provider contract",
+        "video_provider": "internal_renderer",
+        "video_provider_key": "internal_renderer_key",
+        "video_render_provider": "internal_render_lane",
+        "video_coverage_proof": "internal_acceptance_receipt",
+    }
+
+    projection = public_tour_payloads.build_public_tour_manifest(
+        payload,
+        url_allowed=lambda _value: False,
+        bundle_dir_resolver=lambda _slug: None,
+    ).as_dict()
+
+    assert "video_provider" not in projection
+    assert "video_provider_key" not in projection
+    assert "video_render_provider" not in projection
+    assert "video_coverage_proof" not in projection
+    assert "internal_renderer" not in json.dumps(projection)
+
+
 def test_governed_public_projection_drops_external_media_and_embedded_authority_marker() -> None:
     payload = {
         "slug": "governed-tour",

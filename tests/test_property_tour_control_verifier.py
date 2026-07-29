@@ -16,7 +16,10 @@ from fastapi import HTTPException
 from PIL import Image
 
 from app.api.routes.public_tour_payloads import require_public_tour_viewable
-from app.api.routes.public_tours import _tour_control_external_iframe_html
+from app.api.routes.public_tours import (
+    _PUBLIC_TOUR_RUNTIME_ACCEPTANCE_TOKEN,
+    _tour_control_external_iframe_html,
+)
 from scripts.property_tour_3dvista_provenance import (
     THREE_D_VISTA_TARGET_PROVENANCE_SCHEMA,
     export_tree_sha256,
@@ -798,6 +801,14 @@ def test_public_tour_control_labels_manual_video_as_video_evidence_not_walkthrou
             "slug": "manual-media-loft",
             "video_provider": "manual_upload",
             "video_relpath": "tour.mp4",
+            "_walkthrough_runtime_acceptance": {
+                "allowed": True,
+                "declared": True,
+                "status": "accepted",
+            },
+            "_walkthrough_runtime_acceptance_token": (
+                _PUBLIC_TOUR_RUNTIME_ACCEPTANCE_TOKEN
+            ),
             "scenes": [{"name": "Living room", "asset_relpath": "living.jpg", "role": "photo"}],
         },
     )
