@@ -7675,7 +7675,7 @@
     .pqx-result {
       width: 100%;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) minmax(164px, 190px);
       gap: 8px;
       align-items: start;
       padding: 12px;
@@ -7685,6 +7685,9 @@
       content-visibility: auto;
       contain-intrinsic-size: 176px;
       scroll-margin-top: 96px;
+    }
+    .pqx-result-panel.is-single-result .pqx-result {
+      grid-template-columns: minmax(0, 1fr);
     }
     .pqx-shell[data-pqx-surface="shortlist"] .pqx-result {
       gap: 6px;
@@ -8140,6 +8143,11 @@
       cursor: pointer;
       font: inherit;
       text-align: left;
+      white-space: normal;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      text-overflow: clip;
+      line-height: 1.2;
     }
     a.pqx-result-fact,
     button.pqx-result-fact,

@@ -81,6 +81,9 @@
           'Open area map for': 'Gebietskarte öffnen:',
           'Tune search': 'Suche anpassen',
           'Hide search settings': 'Sucheinstellungen ausblenden',
+          'Best so far': 'Bisher am besten',
+          'Current property': 'Aktuelle Immobilie',
+          'Provider': 'Anbieter',
           'all found homes are checked': 'alle gefundenen Immobilien sind geprüft',
           'home details are still loading': 'Immobiliendetails werden noch geladen',
           'complete': 'abgeschlossen',
@@ -155,6 +158,9 @@
                 'Open area map for': 'Abrir mapa de la zona:',
                 'Tune search': 'Ajustar búsqueda',
                 'Hide search settings': 'Ocultar configuración de búsqueda',
+                'Best so far': 'La mejor hasta ahora',
+                'Current property': 'Propiedad actual',
+                'Provider': 'Proveedor',
                 'all found homes are checked': 'todas las propiedades encontradas están revisadas',
                 'home details are still loading': 'los detalles de las propiedades aún se están cargando',
                 'complete': 'completado',
@@ -3533,13 +3539,13 @@
       ].map((value) => String(value || '').trim()).find(Boolean) || '';
       const areaValue = facts.area_m2 ?? facts.area_sqm;
       const roomsValue = facts.rooms;
-      const layoutDisplay = String(
+      const layoutDisplay = localizeLiveCopy(String(
         candidate.layout_display
         || [
           String(roomsValue || '').trim() ? `${roomsValue} rooms` : '',
           String(areaValue || '').trim() ? `${areaValue} m2` : '',
         ].filter(Boolean).join(' | ')
-      ).trim();
+      ).trim());
       const priceDisplay = String(candidate.price_display || facts.price_display || facts.rent_display || '').trim();
       const orientationPreview = candidate.orientation_preview && typeof candidate.orientation_preview === 'object'
         ? candidate.orientation_preview
@@ -3548,12 +3554,17 @@
       const mapUrl = String(candidate.map_url || orientationPreview.map_url || '').trim()
         || (mapQuery ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQuery)}` : '');
       return {
-        status_label: Array.isArray(runPayload?.summary?.ranked_candidates) && runPayload.summary.ranked_candidates.length
-          ? 'Best so far'
-          : 'Current property',
-        status_detail: String(candidate.compare_reason || candidate.fit_summary || candidate.summary || locationLabel || layoutDisplay || priceDisplay).trim(),
+        status_label: localizeLiveCopy(
+          Array.isArray(runPayload?.summary?.ranked_candidates) && runPayload.summary.ranked_candidates.length
+            ? 'Best so far'
+            : 'Current property'
+        ),
+        status_detail: localizedLiveMessage(
+          candidate.compare_reason || candidate.fit_summary || candidate.summary || locationLabel || layoutDisplay || priceDisplay,
+          'Open the property page for more context.'
+        ),
         title: String(candidate.title || candidate.property_url || 'Property').trim() || 'Property',
-        source_label: compactProviderLabel(candidate.source_label || candidate.source_platform || ''),
+        source_label: localizeLiveCopy(compactProviderLabel(candidate.source_label || candidate.source_platform || '')),
         location_label: locationLabel,
         price_display: priceDisplay,
         layout_display: layoutDisplay,

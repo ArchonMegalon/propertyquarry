@@ -854,6 +854,9 @@ def propertyquarry_browser_server(
                                     "rooms": 3,
                                     "area_m2": 78,
                                     "postal_name": "Berlin Mitte",
+                                    "country_code": "DE",
+                                    "map_lat": 52.52,
+                                    "map_lng": 13.405,
                                     "nearest_supermarket_m": 280,
                                     "nearest_pharmacy_m": 410,
                                     "nearest_playground_m": 520,
@@ -1913,6 +1916,7 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
         "fit_summary": "It is meaningfully cheaper.",
         "source_url": "https://example.com/listing",
         "property_url": "https://example.com/listing",
+        "floorplan_url": "https://example.com/floorplan.jpg",
         "tour_status": "unavailable",
         "property_facts": {
             "rooms": 2,
@@ -1920,6 +1924,15 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
             "monthly_total_eur": 690,
         },
     }
+    second_candidate = {
+        **candidate,
+        "rank": 2,
+        "candidate_ref": "localized-result-2",
+        "title": "Ruhige Wohnung am Park",
+        "layout_display": "3.0 rooms | 67.0 m2",
+        "floorplan_url": "https://example.com/floorplan-2.jpg",
+    }
+    ranked_candidates = [candidate, second_candidate]
 
     def _processed_run_status(
         self,
@@ -1950,9 +1963,9 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                 "found_listing_total": 1,
                 "scanned_listing_total": 1,
                 "to_review_listing_total": 0,
-                "ranked_candidates": [candidate],
+                "ranked_candidates": ranked_candidates,
             },
-            "ranked_candidates": [candidate],
+            "ranked_candidates": ranked_candidates,
             "events": [],
             "research_tasks": [],
         }
@@ -1973,7 +1986,6 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                 "Eignung 56",
                 "Deutlich günstiger.",
                 "Angebot öffnen",
-                "Medienvorschau noch nicht verfügbar.",
                 "Größter Vorteil",
                 "Zu beachten",
                 "Preisniveau",
@@ -1984,6 +1996,11 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                 "Archiviert",
                 "Premium-Marktbericht",
                 "Zur Kasse",
+                "Bisher am besten",
+                "Anbieter",
+                "Warum sie passt",
+                "Visualisierungen",
+                "2 Treffer",
             ),
         ),
         (
@@ -1999,7 +2016,6 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                 "Compatibilidad 56",
                 "Es considerablemente más económica.",
                 "Abrir anuncio",
-                "La vista previa multimedia aún no está disponible.",
                 "Punto fuerte",
                 "Tenga en cuenta",
                 "Nivel de precio",
@@ -2010,6 +2026,11 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                 "Archivada",
                 "Informe de mercado premium",
                 "Ir al pago",
+                "La mejor hasta ahora",
+                "Proveedor",
+                "Por qué funciona",
+                "Visualizaciones",
+                "2 coincidencias",
             ),
         ),
     )
@@ -2053,6 +2074,12 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                 "Offer candidate",
                 "Premium market report",
                 "Open checkout",
+                "Best so far",
+                "Provider",
+                "Why it works",
+                "Things to watch",
+                "Visuals",
+                "2 matches",
             ):
                 assert leaked_copy not in body_text
             _assert_no_viewport_or_text_cutoff(page)
