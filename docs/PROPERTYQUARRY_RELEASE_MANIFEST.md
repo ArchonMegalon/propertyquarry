@@ -13,7 +13,7 @@ by the current local Docker deployment receipt:
 - Production promotion requires a passing exact-candidate local Docker receipt with distinct immutable web/render image IDs, completed migration, healthy services, and localhost readiness.
 - ID Austria is optional and unconfigured. Another supported sign-in path must pass the local live activation proof.
 - External notification release evidence is Telegram-only. WhatsApp is outside the current launch evidence.
-- Release claims are split. **Core Gold** covers search, shortlist, property detail, topology-verified Matterport/public-tour delivery, dossier, decision, and governed delivery evidence. 3DVista remains an optional import lane and only counts as walkable when multiple spatial panorama nodes are present. Missing or unconfigured MagicFit, Magic, OMagic, generated scene-video, or other advanced visual lanes do not block Core Gold and must remain unavailable in customer copy.
+- Release claims are split. **Core Gold** covers search, shortlist, property detail, topology-verified Matterport/public-tour delivery, dossier, decision, and governed delivery evidence. Captured Matterport topology remains eligible for 30 days while live viewer availability stays provider-controlled; 3DVista remains an optional import lane and only counts as walkable when multiple spatial panorama nodes are present. Missing or unconfigured MagicFit, Magic, OMagic, generated scene-video, or other advanced visual lanes do not block Core Gold and must remain unavailable in customer copy.
 - **Advanced Visual Gold** is a separate opt-in claim scope. It fails closed unless every claimed MagicFit/Magic/OMagic lane has exact candidate-bound provider provenance, accepted playback, quota/account state, privacy, isolation, source-receipt hashes, and media-artifact hashes. Adapter configuration or a generated file alone is never Advanced Visual Gold evidence.
 - The current Advanced Visual producer receipts do not yet carry source-side `release_commit_sha` + `image_digest` identities and exact verifier/source packet hashes. Therefore this candidate records Advanced Visual Gold as `unavailable_unbound_producer_receipts`. The aggregate rejects these legacy/current shapes and never relabels them from its own CLI arguments; Core Gold remains independently eligible.
 
@@ -55,10 +55,10 @@ The marked JSON object is the single canonical release authority consumed by the
   "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:052954ad46194684f3bf302e62dfaacf3956d90cd535bddfbd15841447f3e263",
   "release_branch": "main",
   "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
-  "release_commit_sha": "2d92cb8f4a8c4c0bdf2671c0c20ca28d03029499",
-  "release_deployment_id": "propertyquarry-governed-deploy-2d92cb8f4a8c",
-  "release_generated_at": "2026-07-29T17:28:01Z",
-  "release_label": "propertyquarry-source-browser-candidate-2d92cb8f4a8c",
+  "release_commit_sha": "9764a8c795575012803becd62e404e30ddd19ed6",
+  "release_deployment_id": "propertyquarry-governed-deploy-9764a8c79557",
+  "release_generated_at": "2026-07-29T17:40:21Z",
+  "release_label": "propertyquarry-source-browser-candidate-9764a8c79557",
   "release_manifest_schema": "propertyquarry.release_manifest.v1",
   "release_product": "PropertyQuarry",
   "release_public_origin": "https://propertyquarry.com",
@@ -87,7 +87,7 @@ Production stays fail-closed until every item is bound to the exact runtime cand
 ## Gold evidence tier and claim scope
 
 - Evidence tier (`standard|flagship|launch`) is independent from claim scope (`core|advanced_visual`). Production release always uses `launch`; standard preserves operator-summary semantics and cannot make a release claim.
-- `core_gold` is a strict compatibility alias for `launch` + `core`. It requires the first-party customer operating loop, every Core launch/UX receipt, and verified 3DVista/public-tour evidence. Its provider fields are `core_required_provider_modes` and `core_missing_provider_modes`.
+- `core_gold` is a strict compatibility alias for `launch` + `core`. It requires the first-party customer operating loop, every Core launch/UX receipt, and topology-verified Matterport/public-tour evidence. Its provider fields are `core_required_provider_modes` and `core_missing_provider_modes`.
 - `advanced_visual_gold` is a strict compatibility alias for `launch` + `advanced_visual`. It adds governed MagicFit, Magic, and OMagic evidence plus an offline aggregate binding to the exact release SHA/image, current source receipts, provider artifact hashes, quota/account state, privacy, and isolation. Its provider fields are `advanced_visual_required_provider_modes` and `advanced_visual_missing_provider_modes`.
 - Every authoritative Advanced Visual source must carry its expected schema plus source-side `release_commit_sha` and `image_digest`. Every derived verifier/status/packet must also bind the exact upstream receipt or packet SHA-256. Missing or replayed identities yield `unavailable_unbound_producer_receipts`; freshness plus aggregate CLI arguments are not release authority.
 - Legacy `required_provider_modes` / `missing_provider_modes` remain a combined operator envelope. They must not be used to make a Core Gold decision; operator dashboards consume the explicit combined `operator_*` fields.
