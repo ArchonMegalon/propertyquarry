@@ -261,6 +261,10 @@ _PRIVATE_TOUR_RECEIPT_ALLOWED_KEYS = frozenset(
         "threedvista_entry_relpath",
         "threedvista_export_root_relpath",
         "threedvista_url",
+        "video_coverage_proof",
+        "video_provider",
+        "video_provider_key",
+        "video_render_provider",
     }
 )
 _3DVISTA_EXPORT_ALLOWED_EXTENSIONS = frozenset(

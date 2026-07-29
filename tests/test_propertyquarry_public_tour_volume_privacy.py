@@ -271,15 +271,14 @@ def test_repair_preserves_governed_generated_viewer_contract(
     private = json.loads(
         (bundle / "tour.private.json").read_text(encoding="utf-8")
     )
-    private_fields = private["legacy_private_fields"]
-    assert private_fields["video_provider"] == (
+    assert private["video_provider"] == (
         "propertyquarry_generated_reconstruction"
     )
-    assert private_fields["video_provider_key"] == (
+    assert private["video_provider_key"] == (
         "propertyquarry_generated_reconstruction"
     )
-    assert private_fields["video_render_provider"] == "internal_render_lane"
-    assert private_fields["video_coverage_proof"] == (
+    assert private["video_render_provider"] == "internal_render_lane"
+    assert private["video_coverage_proof"] == (
         "boundary_verified_frame_continuation"
     )
     assert stat.S_IMODE((bundle / "tour.private.json").stat().st_mode) == 0o600

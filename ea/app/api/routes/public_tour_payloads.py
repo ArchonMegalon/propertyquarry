@@ -41,6 +41,10 @@ class PrivateTourReceipt:
     three_d_vista_entry_relpath: str = ""
     three_d_vista_url: str = ""
     matterport_url: str = ""
+    video_provider: str = ""
+    video_provider_key: str = ""
+    video_render_provider: str = ""
+    video_coverage_proof: str = ""
     private_exact_location: dict[str, object] = field(default_factory=dict)
 
     @classmethod
@@ -83,6 +87,14 @@ class PrivateTourReceipt:
             ).strip(),
             three_d_vista_url=str(source.get("three_d_vista_url") or "").strip(),
             matterport_url=str(source.get("matterport_url") or "").strip(),
+            video_provider=str(source.get("video_provider") or "").strip(),
+            video_provider_key=str(source.get("video_provider_key") or "").strip(),
+            video_render_provider=str(
+                source.get("video_render_provider") or ""
+            ).strip(),
+            video_coverage_proof=str(
+                source.get("video_coverage_proof") or ""
+            ).strip(),
             private_exact_location=private_tour_exact_location_snapshot(source),
         )
 
@@ -107,6 +119,10 @@ class PrivateTourReceipt:
             "three_d_vista_entry_relpath": self.three_d_vista_entry_relpath,
             "three_d_vista_url": self.three_d_vista_url,
             "matterport_url": self.matterport_url,
+            "video_provider": self.video_provider,
+            "video_provider_key": self.video_provider_key,
+            "video_render_provider": self.video_render_provider,
+            "video_coverage_proof": self.video_coverage_proof,
             "private_exact_location": self.private_exact_location,
         }
 
@@ -149,6 +165,10 @@ _PUBLIC_TOUR_PRIVATE_KEYS = frozenset(
         "shortlist_context",
         "source_ref",
         "token",
+        "video_coverage_proof",
+        "video_provider",
+        "video_provider_key",
+        "video_render_provider",
     }
 )
 _PUBLIC_TOUR_PRIVATE_KEY_MARKERS = (

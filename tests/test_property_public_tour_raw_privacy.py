@@ -18,6 +18,10 @@ PRIVATE_MARKERS = (
     "external_id",
     "recipient_email",
     "source_virtual_tour_url",
+    "video_provider",
+    "video_provider_key",
+    "video_render_provider",
+    "video_coverage_proof",
 )
 
 
@@ -39,6 +43,10 @@ def _write_bundle(monkeypatch, tmp_path: Path, *, slug: str = "raw-privacy") -> 
             "external_id": "external-private-1",
             "recipient_email": "owner@example.test",
             "source_virtual_tour_url": "https://vendor.example.test/private-tour",
+            "video_provider": "internal_renderer",
+            "video_provider_key": "internal_renderer_key",
+            "video_render_provider": "internal_render_lane",
+            "video_coverage_proof": "internal_acceptance_receipt",
             "facts": {
                 "rooms": 4,
                 "area_sqm": 180,
@@ -125,7 +133,34 @@ def test_private_tour_receipt_contains_private_fields_with_0600_permissions(
     assert private_payload["source_virtual_tour_url"].startswith(
         "https://vendor.example.test/"
     )
+    assert private_payload["video_provider"] == "internal_renderer"
+    assert private_payload["video_provider_key"] == "internal_renderer_key"
+    assert private_payload["video_render_provider"] == "internal_render_lane"
+    assert private_payload["video_coverage_proof"] == (
+        "internal_acceptance_receipt"
+    )
     assert private_payload["private_exact_location"]
+
+
+def test_internal_tour_loader_restores_private_video_contract_fields(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_bundle(monkeypatch, tmp_path)
+
+    public_payload = public_tours._load_tour("raw-privacy")
+    internal_payload = public_tours._load_tour_with_private_receipt(
+        "raw-privacy"
+    )
+
+    for marker in PRIVATE_MARKERS:
+        assert marker not in public_payload
+    assert internal_payload["video_provider"] == "internal_renderer"
+    assert internal_payload["video_provider_key"] == "internal_renderer_key"
+    assert internal_payload["video_render_provider"] == "internal_render_lane"
+    assert internal_payload["video_coverage_proof"] == (
+        "internal_acceptance_receipt"
+    )
 
 
 def test_public_payload_endpoint_never_merges_private_receipt_without_owner_principal(

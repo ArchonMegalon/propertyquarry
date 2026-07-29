@@ -56,6 +56,16 @@ def test_public_tour_projection_drops_private_video_provider_fields() -> None:
     assert "video_coverage_proof" not in projection
     assert "internal_renderer" not in json.dumps(projection)
 
+    private_receipt = public_tour_payloads.PrivateTourReceipt.from_payload(
+        payload
+    ).as_dict()
+    assert private_receipt["video_provider"] == "internal_renderer"
+    assert private_receipt["video_provider_key"] == "internal_renderer_key"
+    assert private_receipt["video_render_provider"] == "internal_render_lane"
+    assert private_receipt["video_coverage_proof"] == (
+        "internal_acceptance_receipt"
+    )
+
 
 def test_governed_public_projection_drops_external_media_and_embedded_authority_marker() -> None:
     payload = {
