@@ -3,7 +3,7 @@
   "surface": "propertyquarry_flagship_release_control",
   "version": 2,
   "kind": "release_receipt",
-  "generated_at": "2026-07-29T08:48:45Z",
+  "generated_at": "2026-07-29T09:12:12Z",
   "generated_by": "scripts/materialize_ea_flagship_release_gate.py",
   "approved_baseline": {
     "id": "propertyquarry.release-proof.v1",
@@ -28,7 +28,7 @@
       "id": "propertyquarry.release-proof.v1",
       "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
     },
-    "code_commit": "aba450007320ab62e3d97326b00fe7f30db827de",
+    "code_commit": "af8ce150f9e82339b1212473a11f4355d2fae94d",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
@@ -42,8 +42,8 @@
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
-        "sha256": "a3046d28ebe2bb03ec24e5d4b7a097548eeae8c9f2e7e211c875a1c9df347764",
-        "git_blob_oid": "ca2d358d86d6e77bfc655cc5030bc4e1399ca70e"
+        "sha256": "1aff2c19c39c78e51f9670d47a5393a4d796a8b0c21cd85d6acd50c887b0e454",
+        "git_blob_oid": "fb284b9c24531057899f9c8a2a28320f062d1b93"
       },
       {
         "path": "tests/test_property_evidence_overlays.py",
@@ -54,8 +54,8 @@
   },
   "browser_receipt_binding": {
     "path": ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json",
-    "sha256": "2a3c2761bc532c575b7cb926e63158cada8ccb087b33b5a87478f6dc75dd8d0a",
-    "git_blob_oid": "fb00e2ec7da09fab9ea5e46271ad50d1c6eaf929"
+    "sha256": "9c73973403610c1d3104dda07b7e6bbe3eb8ae3875955ae4ae55bb6f4537345d",
+    "git_blob_oid": "48ddd6aa1660fa4450eb5a50bf584d6ce9cb4030"
   },
   "operator_summary": "PropertyQuarry source/browser checkpoint is published and green; this does not establish global launch authority, and final live readiness is not evaluated by this receipt.",
   "truth_plane": {
@@ -307,7 +307,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "aba450007320ab62e3d97326b00fe7f30db827de",
+    "runtime_commit_sha": "af8ce150f9e82339b1212473a11f4355d2fae94d",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
