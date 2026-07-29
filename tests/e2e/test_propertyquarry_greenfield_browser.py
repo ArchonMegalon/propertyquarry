@@ -1778,20 +1778,21 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
             "status": "in_progress",
             "status_url": f"/app/api/property/search-runs/{run_id}",
             "selected_platforms": ["willhaben", "immoscout_at", "immobilien_at"],
-            "progress": 4,
+            "progress": 3,
             "current_step": "sources_resolved",
-            "message": "Waiting for homes.",
+            "message": "Prepared 20 of 30 listing preview(s) from Willhaben.",
             "provider_display_total": 3,
             "source_variant_display_total": 0,
             "selected_platform_count": 3,
             "summary": {
                 "status": "in_progress",
-                "progress": 4,
+                "progress": 3,
                 "provider_display_total": 3,
                 "provider_total": 3,
-                "sources_total": 0,
+                "sources_total": 3,
                 "sources_completed": 0,
-                "found_listing_total": 0,
+                "found_listing_total": 54,
+                "to_review_listing_total": 54,
                 "ranked_candidates": [],
             },
             "events": [],
@@ -1819,8 +1820,13 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
         board = page.locator("[data-pqx-progress-board]").first
         expect(board).to_be_visible()
         expect(board.locator("[data-pqx-progress-board-title]")).to_have_text("Suche läuft")
-        expect(board.locator("[data-pqx-radar-count]")).to_have_text("3 Portale ausgewählt")
-        expect(board).to_contain_text("Warten auf Immobilien.")
+        expect(board.locator("[data-pqx-radar-count]")).to_have_text("0 / 3 Quellen")
+        expect(board.locator("[data-pqx-progress-eta]")).to_have_text("3% · ca. 5 Min.")
+        expect(board).to_contain_text("54 Immobilien gefunden")
+        expect(page.locator("[data-pqx-run-message]")).to_have_text(
+            "20 von 30 Inseratsvorschauen von Willhaben vorbereitet."
+        )
+        expect(page.locator("[data-pqx-run-summary]")).to_contain_text("3 Quellen offen")
         expect(board).to_contain_text("Immobilien")
         expect(board).to_contain_text("Zu prüfen")
         expect(board).to_contain_text("Geprüft")
@@ -1836,6 +1842,9 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
             "Searching",
             "sites chosen",
             "Waiting for homes.",
+            "sources left",
+            "Prepared 20 of 30 listing preview(s) from Willhaben.",
+            "about 5 min",
             "Browser alerts off",
             "Dark mode",
         ):

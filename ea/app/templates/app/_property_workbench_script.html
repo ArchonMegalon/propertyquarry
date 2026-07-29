@@ -45,6 +45,10 @@
           'Checks': 'Prüfungen',
           'all found homes are checked': 'alle gefundenen Immobilien sind geprüft',
           'home details are still loading': 'Immobiliendetails werden noch geladen',
+          'complete': 'abgeschlossen',
+          'failed': 'fehlgeschlagen',
+          'stopped': 'gestoppt',
+          'details updating': 'Details werden aktualisiert',
         }
       : (
           clientLocale.startsWith('es')
@@ -77,6 +81,10 @@
                 'Checks': 'Revisiones',
                 'all found homes are checked': 'todas las propiedades encontradas están revisadas',
                 'home details are still loading': 'los detalles de las propiedades aún se están cargando',
+                'complete': 'completado',
+                'failed': 'fallido',
+                'stopped': 'detenido',
+                'details updating': 'actualizando detalles',
               }
             : {}
         );
@@ -122,6 +130,34 @@
       if (percentEstimating) {
         return `${percentEstimating[1]}% · ${liveCopyCatalog.estimating}`;
       }
+      const percentEta = text.match(/^(\d+)% · about (?:(\d+)h(?: (\d+)m)?|(\d+) min)$/i);
+      if (percentEta) {
+        const duration = percentEta[2]
+          ? (
+              clientLocale.startsWith('de')
+                ? `${percentEta[2]} Std.${percentEta[3] ? ` ${percentEta[3]} Min.` : ''}`
+                : `${percentEta[2]} h${percentEta[3] ? ` ${percentEta[3]} min` : ''}`
+            )
+          : (
+              clientLocale.startsWith('de')
+                ? `${percentEta[4]} Min.`
+                : `${percentEta[4]} min`
+            );
+        return clientLocale.startsWith('de')
+          ? `${percentEta[1]}% · ca. ${duration}`
+          : `${percentEta[1]}% · aprox. ${duration}`;
+      }
+      const percentState = text.match(/^(\d+)% · (complete|failed|stopped|details updating)$/i);
+      if (percentState) {
+        const state = String(percentState[2] || '').toLowerCase();
+        return `${percentState[1]}% · ${liveCopyCatalog[state] || state}`;
+      }
+      const preparedPreviews = text.match(/^Prepared (\d+) of (\d+) listing preview\(s\) from (.+?)\.?$/i);
+      if (preparedPreviews) {
+        return clientLocale.startsWith('de')
+          ? `${preparedPreviews[1]} von ${preparedPreviews[2]} Inseratsvorschauen von ${preparedPreviews[3]} vorbereitet.`
+          : `Se prepararon ${preparedPreviews[1]} de ${preparedPreviews[2]} vistas previas de anuncios de ${preparedPreviews[3]}.`;
+      }
       let localized = text;
       const replacementPairs = [
         [/\b(\d+) homes? found\b/gi, (_match, count) => (
@@ -130,6 +166,14 @@
         [/\b(\d+) to review\b/gi, (_match, count) => (
           clientLocale.startsWith('de') ? `${count} zu prüfen` : `${count} por revisar`
         )],
+        [/\b(\d+) (sources|checks) left\b/gi, (_match, count, rawUnit) => {
+          const unit = String(rawUnit || '').toLowerCase() === 'checks'
+            ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
+            : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+          return clientLocale.startsWith('de')
+            ? `${count} ${unit} offen`
+            : `${count} ${unit} pendientes`;
+        }],
         [/\ball found homes are checked\b/gi, liveCopyCatalog['all found homes are checked']],
         [/\bhome details are still loading\b/gi, liveCopyCatalog['home details are still loading']],
       ];
@@ -3097,7 +3141,7 @@
 		      return rows.map((event) => {
 		        const label = labelRunEvent(event);
 		        const message = compactRunMessage(event?.message || 'Search is still running.');
-		        return `<div class="pqx-event-card"><strong>${escapeHtml(label)}</strong><span class="pqx-note">${escapeHtml(message)}</span></div>`;
+		        return `<div class="pqx-event-card"><strong>${escapeHtml(localizeLiveCopy(label))}</strong><span class="pqx-note">${escapeHtml(localizeLiveCopy(message))}</span></div>`;
 		      }).join('') || '<div class="pqx-empty">Waiting for the next useful update.</div>';
 	    };
     const displayRunMessage = (runPayload) => {
