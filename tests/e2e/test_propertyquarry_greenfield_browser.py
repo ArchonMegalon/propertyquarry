@@ -10332,11 +10332,25 @@ def test_propertyquarry_search_setup_fits_desktop_viewport_and_captures_screensh
                     topnavFirstLeft: topnavFirstRect ? topnavFirstRect.left : 0,
                     topLaunchWidth: topLaunchRect ? topLaunchRect.width : 0,
                     topLaunchRight: topLaunchRect ? topLaunchRect.right : 0,
-                        drawerScrollTopBeforeInteraction: drawerScrollTopInitial,
+                    drawerScrollTopBeforeInteraction: drawerScrollTopInitial,
                     railOverflowX: railStyle ? railStyle.overflowX : '',
+                    railDisplay: railStyle ? railStyle.display : '',
+                    railGridColumns: railStyle ? railStyle.gridTemplateColumns : '',
                     railScrollWidth: rail ? rail.scrollWidth : 0,
                     railClientWidth: rail ? rail.clientWidth : 0,
                     railPosition: railStyle ? railStyle.position : '',
+                    railLabelsFit: rail
+                        ? Array.from(rail.querySelectorAll('[data-property-step-trigger]')).every((button) => {
+                            const label = button.querySelector('strong');
+                            if (!label) return false;
+                            const buttonRect = button.getBoundingClientRect();
+                            const labelRect = label.getBoundingClientRect();
+                            return labelRect.left >= buttonRect.left - 1
+                                && labelRect.right <= buttonRect.right + 1
+                                && labelRect.top >= buttonRect.top - 1
+                                && labelRect.bottom <= buttonRect.bottom + 1;
+                        })
+                        : false,
                     legacyDockVisible: Boolean(legacyDock && legacyDock.getBoundingClientRect().height > 0),
                     viewportHeight: window.innerHeight,
                     resultWidth: resultRect ? resultRect.width : 0,
@@ -10422,9 +10436,12 @@ def test_propertyquarry_search_setup_fits_desktop_viewport_and_captures_screensh
         assert mobile_metrics["topnavFirstLeft"] >= -1
         assert mobile_metrics["topLaunchWidth"] <= 1
         assert mobile_metrics["drawerScrollTopBeforeInteraction"] <= 2
-        assert mobile_metrics["railOverflowX"] in {"auto", "scroll"}
-        assert mobile_metrics["railScrollWidth"] >= mobile_metrics["railClientWidth"]
+        assert mobile_metrics["railDisplay"] == "grid"
+        assert len(str(mobile_metrics["railGridColumns"]).split()) == 3
+        assert mobile_metrics["railOverflowX"] == "visible"
+        assert mobile_metrics["railScrollWidth"] <= mobile_metrics["railClientWidth"] + 1
         assert mobile_metrics["railPosition"] == "sticky"
+        assert mobile_metrics["railLabelsFit"] is True
         assert mobile_metrics["legacyDockVisible"] is False
         assert mobile_metrics["resultWidth"] <= mobile_metrics["viewportWidth"] + 1
         if mobile_metrics["thumbWidth"]:
@@ -10843,6 +10860,7 @@ def test_propertyquarry_search_launch_turns_quota_rejection_into_retryable_calm_
     ("mobile", "locale"),
     [
         (False, "de-AT"),
+        (True, "de-AT"),
         (True, "es-CR"),
     ],
 )
@@ -10920,6 +10938,42 @@ def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_brows
         ).to_have_text(expected_provider_label)
 
         if mobile:
+            mobile_layout = page.evaluate(
+                """() => {
+                  const rail = document.querySelector('[data-property-mobile-step-rail]');
+                  const next = document.querySelector('[data-property-step-next]:not([hidden])');
+                  const actions = next?.closest('.pqx-step-head-actions');
+                  const railStyle = rail ? getComputedStyle(rail) : null;
+                  const nextRect = next?.getBoundingClientRect() || null;
+                  const actionsRect = actions?.getBoundingClientRect() || null;
+                  const labelsFit = rail
+                    ? [...rail.querySelectorAll('[data-property-step-trigger]')].every((button) => {
+                        const label = button.querySelector('strong');
+                        if (!label) return false;
+                        const buttonRect = button.getBoundingClientRect();
+                        const labelRect = label.getBoundingClientRect();
+                        return labelRect.left >= buttonRect.left - 1
+                          && labelRect.right <= buttonRect.right + 1
+                          && labelRect.top >= buttonRect.top - 1
+                          && labelRect.bottom <= buttonRect.bottom + 1;
+                      })
+                    : false;
+                  return {
+                    railDisplay: railStyle?.display || '',
+                    railColumns: railStyle?.gridTemplateColumns || '',
+                    railScrollWidth: rail?.scrollWidth || 0,
+                    railClientWidth: rail?.clientWidth || 0,
+                    labelsFit,
+                    nextWidth: nextRect?.width || 0,
+                    actionsWidth: actionsRect?.width || 0,
+                  };
+                }"""
+            )
+            assert mobile_layout["railDisplay"] == "grid"
+            assert len(str(mobile_layout["railColumns"]).split()) == 3
+            assert mobile_layout["railScrollWidth"] <= mobile_layout["railClientWidth"] + 1
+            assert mobile_layout["labelsFit"] is True
+            assert mobile_layout["nextWidth"] >= mobile_layout["actionsWidth"] - 2
             page.locator('[data-property-step-trigger="providers"]').click()
             page.wait_for_function(
                 """() => document.querySelector(
@@ -10927,7 +10981,7 @@ def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_brows
                 )?.dataset.propertyActiveStep === 'providers'"""
             )
             launch = page.locator("[data-property-step-next]:visible")
-            expect(launch).to_have_text("Buscar")
+            expect(launch).to_have_text("Suche" if locale == "de-AT" else "Buscar")
         else:
             launch = page.locator("[data-property-start-top]")
             expect(launch).to_have_attribute("aria-label", "Suche starten")
@@ -14059,6 +14113,59 @@ def test_propertyquarry_flagship_operating_loop_in_browser(
         assert page.locator("body", has_text="Decision shortcut loaded from the email or shared link.").is_visible()
         assert page.locator("body", has_text="Question loaded from the email or shared link.").is_visible()
         assert page.locator("body", has_text="Follow-up").is_visible()
+    finally:
+        context.close()
+
+
+def test_propertyquarry_mobile_shortlist_prerenders_first_cards_and_preserves_diorama_artwork(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=True, width=390, height=844)
+    page: Page = context.new_page()
+    try:
+        response = page.goto(
+            f"{base_url}/app/shortlist?run_id=run-42&full=1",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        cards = page.locator("[data-workbench-row]")
+        expect(cards.nth(1)).to_contain_text("Family flat near Tiergarten")
+        first_cards = cards.evaluate_all(
+            """(nodes) => nodes.slice(0, 8).map((node) => ({
+              contentVisibility: getComputedStyle(node).contentVisibility,
+              text: String(node.textContent || '').trim(),
+              surface: node.closest('[data-pqx-surface]')?.getAttribute('data-pqx-surface') || '',
+              childIndex: Array.from(node.parentElement?.children || []).indexOf(node) + 1,
+            }))"""
+        )
+        assert len(first_cards) >= 2
+        assert all(item["contentVisibility"] == "visible" for item in first_cards), first_cards
+        assert all(item["text"] for item in first_cards)
+
+        diorama = cards.first.locator(".pqx-result-diorama:not(.is-placeholder)").first
+        expect(diorama).to_be_visible()
+        media_fit = diorama.evaluate(
+            """(node) => {
+              const image = node.querySelector('img');
+              const style = getComputedStyle(node);
+              const imageStyle = image ? getComputedStyle(image) : null;
+              return {
+                aspectRatio: style.aspectRatio,
+                imageObjectFit: imageStyle?.objectFit || '',
+                imageClientWidth: image?.clientWidth || 0,
+                imageScrollWidth: image?.scrollWidth || 0,
+                imageClientHeight: image?.clientHeight || 0,
+                imageScrollHeight: image?.scrollHeight || 0,
+              };
+            }"""
+        )
+        assert media_fit["aspectRatio"] == "16 / 10"
+        assert media_fit["imageObjectFit"] == "contain"
+        assert media_fit["imageScrollWidth"] <= media_fit["imageClientWidth"] + 1
+        assert media_fit["imageScrollHeight"] <= media_fit["imageClientHeight"] + 1
+        _assert_no_horizontal_overflow(page)
     finally:
         context.close()
 

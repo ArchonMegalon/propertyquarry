@@ -10965,6 +10965,57 @@
         min-height: 96px !important;
         height: 96px !important;
       }
+      .pqx-shell[data-pqx-surface="search"] [data-property-mobile-step-rail].pqx-workflow {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+        overflow: visible !important;
+        padding: 6px 0 8px;
+        scroll-snap-type: none;
+      }
+      .pqx-shell[data-pqx-surface="search"] [data-property-mobile-step-rail]::after {
+        display: none;
+      }
+      .pqx-shell[data-pqx-surface="search"] [data-property-mobile-step-rail] .pqx-workflow-step {
+        width: 100%;
+        min-width: 0 !important;
+        min-height: 48px;
+        padding: 5px 7px;
+        scroll-snap-align: none;
+      }
+      .pqx-shell[data-pqx-surface="search"] [data-property-mobile-step-rail] .pqx-workflow-step strong {
+        max-width: 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        hyphens: auto;
+      }
+      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions [data-property-step-back],
+      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions [data-property-step-next] {
+        width: auto !important;
+        min-width: 0 !important;
+        flex: 1 1 0 !important;
+      }
+      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions:has([data-property-step-back][hidden]) [data-property-step-next] {
+        width: 100% !important;
+        flex-basis: 100% !important;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-results-list > .pqx-result:nth-child(-n+8 of .pqx-result),
+      .pqx-shell[data-pqx-surface="properties"] .pqx-results-list > .pqx-result:nth-child(-n+8 of .pqx-result) {
+        content-visibility: visible;
+        contain-intrinsic-size: auto;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-media.has-diorama .pqx-result-diorama:not(.is-placeholder),
+      .pqx-shell[data-pqx-surface="properties"] .pqx-result-media.has-diorama .pqx-result-diorama:not(.is-placeholder) {
+        min-height: 0 !important;
+        aspect-ratio: 16 / 10;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-media.has-diorama .pqx-result-diorama:not(.is-placeholder) img,
+      .pqx-shell[data-pqx-surface="properties"] .pqx-result-media.has-diorama .pqx-result-diorama:not(.is-placeholder) img {
+        height: 100%;
+        min-height: 0 !important;
+        aspect-ratio: 16 / 10;
+        object-fit: contain;
+      }
     }
     @media (max-width: 760px), (pointer: coarse) {
       .pqx-shell[data-pqx-surface] :is(
@@ -11590,7 +11641,7 @@
             >
               <span class="pqx-small">Search health</span>
               <strong>{{ search_health_view.get('label') or 'Unavailable' }}</strong>
-              <span class="pqx-note">{{ search_health_view.get('detail') or 'Search status could not be confirmed. Please try again shortly.' }} · {{ search_health_view.get('freshness_label') or 'Status not checked' }}</span>
+              <span class="pqx-note">{{ search_health_view.get('detail') or 'Search status could not be confirmed. Please try again shortly.' }} {{ search_health_view.get('freshness_label') or 'Status not checked' }}</span>
             </div>
             {% endif %}
             <div class="pqx-dashboard-row">

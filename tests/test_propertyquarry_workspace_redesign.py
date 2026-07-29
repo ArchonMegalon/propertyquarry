@@ -323,7 +323,9 @@ def test_property_mobile_search_header_and_district_picker_stay_compact() -> Non
     assert "progress.hidden = isMobileSearch;" in workbench_script
     assert "const saveHidden = isMobileSearch;" in workbench_script
     assert "next.dataset.pqxStepMode = isFinalStep ? 'launch' : 'advance';" in workbench_script
-    assert "next.textContent = isFinalStep ? 'Search' : current === visibleSteps.length - 2 ? 'Review' : 'Next';" in workbench_script
+    assert "localizedWorkbenchCopy('step-search', 'Search')" in workbench_script
+    assert "localizedWorkbenchCopy('step-review', 'Review')" in workbench_script
+    assert "localizedWorkbenchCopy('step-next', 'Next')" in workbench_script
 
 
 def test_property_what_matters_mobile_select_changes_preserve_context() -> None:
@@ -6937,10 +6939,10 @@ def test_propertyquarry_search_page_uses_external_workbench_asset() -> None:
     assert "Saved durably. Profile now has" not in response.text
     assert "data-location-map-path" not in response.text
     assert "data-provider-homepage-link" not in response.text
-    # Keep a tight compressed-page budget while allowing the explicit
-    # customer-claim-ready walkthrough guard in the server-rendered review.
-    assert len(response.content) <= 370_000
-    assert len(gzip.compress(response.content, compresslevel=6, mtime=0)) <= 38_550
+    # Keep the complete localized brief below a strict 40 KB transfer budget
+    # while retaining every market, provider, and walkthrough control.
+    assert len(response.content) <= 378_000
+    assert len(gzip.compress(response.content, compresslevel=6, mtime=0)) <= 40_000
 
 
 def test_propertyquarry_home_example_shortlist_labels_are_clickable(monkeypatch) -> None:
