@@ -5,7 +5,11 @@ from app.api.routes.public_tour_payloads import (
     public_tour_collect_asset_refs,
     redacted_public_tour_payload,
 )
-from app.api.routes.public_tours import _public_tour_walkthrough_source_markup, _tour_html
+from app.api.routes.public_tours import (
+    _PUBLIC_TOUR_RUNTIME_ACCEPTANCE_TOKEN,
+    _public_tour_walkthrough_source_markup,
+    _tour_html,
+)
 
 
 def _payload() -> dict[str, object]:
@@ -18,9 +22,23 @@ def _payload() -> dict[str, object]:
     }
 
 
+def _accepted_payload() -> dict[str, object]:
+    return {
+        **_payload(),
+        "_walkthrough_runtime_acceptance": {
+            "allowed": True,
+            "declared": True,
+            "status": "accepted",
+        },
+        "_walkthrough_runtime_acceptance_token": (
+            _PUBLIC_TOUR_RUNTIME_ACCEPTANCE_TOKEN
+        ),
+    }
+
+
 def test_responsive_walkthrough_sources_put_mobile_60fps_first() -> None:
     markup = _public_tour_walkthrough_source_markup(
-        _payload(),
+        _accepted_payload(),
         video_url="/tours/danube-flats/walkthrough",
         video_mime_type="video/mp4",
     )
@@ -78,6 +96,11 @@ def test_provider_neutral_rendered_tour_page_embeds_mobile_then_desktop_walkthro
         payload,
         hostname="propertyquarry.com",
         path="/tours/danube-flats",
+        walkthrough_acceptance={
+            "allowed": True,
+            "declared": True,
+            "status": "accepted",
+        },
     )
 
     mobile_url = "/tours/files/danube-flats/walkthrough-mobile-720p60.mp4"

@@ -9336,7 +9336,7 @@ def _public_tour_walkthrough_acceptance(
         }
     if not raw_sidecar_relpath:
         return {
-            "allowed": True,
+            "allowed": False,
             "declared": False,
             "scope": scope,
             "asset_relpaths": sorted(asset_relpaths),
@@ -9378,8 +9378,12 @@ def _public_tour_walkthrough_acceptance(
         acceptance_status in {"disqualified", "rejected", "failed"}
         or sidecar.get("launch_eligible") is False
     )
+    accepted = (
+        acceptance_status == "accepted"
+        and sidecar.get("launch_eligible") is True
+    )
     return {
-        "allowed": not disqualified,
+        "allowed": accepted,
         "declared": True,
         "scope": scope,
         "asset_relpaths": sorted(asset_relpaths),

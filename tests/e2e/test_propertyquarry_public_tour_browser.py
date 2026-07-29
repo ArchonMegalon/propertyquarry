@@ -524,6 +524,19 @@ def _generate_reconstruction_bundle(
         stderr=subprocess.DEVNULL,
         timeout=_reconstruction_generation_timeout_seconds(skip_video=skip_video),
     )
+    if not skip_video:
+        sidecar_path = (
+            bundle_dir
+            / "generated-reconstruction"
+            / "generated-walkthrough.quality.json"
+        )
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["acceptance_status"] = "accepted"
+        sidecar["launch_eligible"] = True
+        sidecar_path.write_text(
+            json.dumps(sidecar, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
 
 def _video_frame_brightness(page) -> float:
@@ -1285,6 +1298,7 @@ def public_tour_browser_server(
                 "scene_strategy": "layout_first",
                 "creation_mode": "hosted_floorplan_tour",
                 "video_relpath": "tour.mp4",
+                "video_sidecar_relpath": "tour.walkthrough.json",
                 "scenes": [
                     {
                         "scene_id": "panorama-1",
@@ -1308,10 +1322,27 @@ def public_tour_browser_server(
         ),
         encoding="utf-8",
     )
+    (bundle_dir / "tour.walkthrough.json").write_text(
+        json.dumps(
+            {
+                "provider_key": "propertyquarry_fixture",
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     provider_slug = "real-browser-3dvista-tour"
     provider_bundle_dir = bundle_root / provider_slug
     provider_bundle_dir.mkdir(parents=True)
-    for asset_name in ("floorplan-01.png", "tour.mp4", "scene-01.png"):
+    for asset_name in (
+        "floorplan-01.png",
+        "tour.mp4",
+        "tour.walkthrough.json",
+        "scene-01.png",
+    ):
         shutil.copy2(bundle_dir / asset_name, provider_bundle_dir / asset_name)
     three_d_vista_dir = provider_bundle_dir / "3dvista"
     three_d_vista_dir.mkdir()
@@ -1590,6 +1621,7 @@ button:focus-visible { outline: 3px solid #315c8a; outline-offset: 3px; }
                 "scene_strategy": "layout_first",
                 "creation_mode": "hosted_floorplan_tour",
                 "video_relpath": "tour.mp4",
+                "video_sidecar_relpath": "tour.walkthrough.json",
                 "scenes": [
                     {
                         "scene_id": "panorama-1",
@@ -1607,6 +1639,75 @@ button:focus-visible { outline: 3px solid #315c8a; outline-offset: 3px; }
                         "mime_type": "image/png",
                     },
                 ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (video_bundle_dir / "tour.walkthrough.json").write_text(
+        json.dumps(
+            {
+                "provider_key": "propertyquarry_fixture",
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    unreviewed_video_slug = "real-browser-unreviewed-video-tour"
+    unreviewed_video_bundle = bundle_root / unreviewed_video_slug
+    unreviewed_video_bundle.mkdir(parents=True, exist_ok=True)
+    for asset_name in ("floorplan-01.png", "tour.mp4", "scene-01.png"):
+        shutil.copy2(
+            bundle_dir / asset_name,
+            unreviewed_video_bundle / asset_name,
+        )
+    (unreviewed_video_bundle / "tour.json").write_text(
+        json.dumps(
+            {
+                "slug": unreviewed_video_slug,
+                "title": "Unreviewed Browser Video Tour",
+                "display_title": "Unreviewed Browser Video Tour",
+                "hosted_url": (
+                    f"https://propertyquarry.com/tours/{unreviewed_video_slug}"
+                ),
+                "public_url": (
+                    f"https://propertyquarry.com/tours/{unreviewed_video_slug}"
+                ),
+                "scene_strategy": "layout_first",
+                "creation_mode": "hosted_floorplan_tour",
+                "video_relpath": "tour.mp4",
+                "video_sidecar_relpath": "tour.walkthrough.json",
+                "scenes": [
+                    {
+                        "scene_id": "panorama-1",
+                        "name": "Living room anchor",
+                        "role": "photo",
+                        "asset_relpath": "scene-01.png",
+                        "mime_type": "image/png",
+                    },
+                    {
+                        "scene_id": "floorplan-1",
+                        "name": "Main floorplan",
+                        "role": "floorplan",
+                        "asset_relpath": "floorplan-01.png",
+                        "mime_type": "image/png",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (unreviewed_video_bundle / "tour.walkthrough.json").write_text(
+        json.dumps(
+            {
+                "provider_key": "propertyquarry_fixture",
+                "acceptance_status": "unreviewed",
             },
             ensure_ascii=False,
             indent=2,
@@ -1732,6 +1833,7 @@ button:focus-visible { outline: 3px solid #315c8a; outline-offset: 3px; }
         "provider_slug": provider_slug,
         "pano2vr_slug": pano2vr_slug,
         "video_slug": video_slug,
+        "unreviewed_video_slug": unreviewed_video_slug,
         "matterport_verified_slug": matterport_verified_slug,
         "generated_reconstruction_slug": generated_reconstruction_slug,
         "generated_reconstruction_viewer_url": generated_reconstruction_viewer_url,
@@ -2054,6 +2156,8 @@ def _write_generated_reconstruction_public_shell_bundle(
                 "route_labels": walkthrough_route_labels,
                 "covered_route_labels": walkthrough_route_labels,
                 "walkthrough_coverage_proof": coverage_proof,
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
             },
             ensure_ascii=False,
             indent=2,
@@ -2424,6 +2528,8 @@ def generated_reconstruction_shell_server(
             {
                 "route_labels": walkthrough_route_labels,
                 "covered_route_labels": walkthrough_route_labels,
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
                 "walkthrough_coverage_proof": {
                     "status": "pass",
                     "segments_expected": walkthrough_route_labels,
@@ -3039,6 +3145,35 @@ def test_public_tour_flythrough_video_decodes_and_advances_in_real_browser(
         assert dropped_delta <= 16, profile
     assert page.locator("#tour-video source").get_attribute("type") == "video/mp4"
     assert not [message for message in console_errors if "MEDIA" in message.upper() or "decode" in message.lower()]
+    context.close()
+
+
+def test_unreviewed_walkthrough_is_fail_closed_in_real_browser(
+    public_tour_browser_server: dict[str, str],
+    browser: Browser,
+) -> None:
+    context = _new_context(browser)
+    page = context.new_page()
+    slug = public_tour_browser_server["unreviewed_video_slug"]
+    launch_url = (
+        f"{public_tour_browser_server['base_url']}/tours/{slug}"
+        "?pane=flythrough-pane&autoplay=1"
+    )
+
+    response = page.goto(launch_url, wait_until="networkidle")
+
+    assert response is not None
+    assert response.status == 200
+    assert page.locator("#tour-video").count() == 0
+    assert page.get_by_role("link", name="Open walkthrough").count() == 0
+    walkthrough = context.request.get(
+        f"{public_tour_browser_server['base_url']}/tours/{slug}/walkthrough"
+    )
+    assert walkthrough.status == 404
+    direct_asset = context.request.get(
+        f"{public_tour_browser_server['base_url']}/tours/files/{slug}/tour.mp4"
+    )
+    assert direct_asset.status == 410
     context.close()
 
 
