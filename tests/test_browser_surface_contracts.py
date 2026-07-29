@@ -375,6 +375,7 @@ def test_propertyquarry_exposes_privacy_safe_pwa_shell() -> None:
     app_page = client.get("/app/search")
     manifest = client.get("/manifest.webmanifest")
     service_worker = client.get("/service-worker.js")
+    favicon = client.get("/favicon.ico")
     icon_192 = client.get("/pwa-icon-192.png")
     icon_512 = client.get("/pwa-icon-512.png")
 
@@ -418,6 +419,9 @@ def test_propertyquarry_exposes_privacy_safe_pwa_shell() -> None:
     assert service_worker.headers["x-content-type-options"] == "nosniff"
     assert service_worker.headers["referrer-policy"] == "strict-origin-when-cross-origin"
     assert "caches.open" not in service_worker.text
+    assert favicon.status_code == 200
+    assert favicon.headers["content-type"].startswith("image/svg+xml")
+    assert 'aria-label="PropertyQuarry"' in favicon.text
     assert "cache.put" not in service_worker.text
     assert "fetch(event.request)" not in service_worker.text
     assert icon_192.status_code == 200

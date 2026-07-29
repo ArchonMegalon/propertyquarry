@@ -2669,6 +2669,11 @@ def propertyquarry_pwa_icon() -> Response:
     return Response(content=svg, media_type="image/svg+xml")
 
 
+@router.get("/favicon.ico", response_class=Response, include_in_schema=False)
+def propertyquarry_favicon() -> Response:
+    return propertyquarry_pwa_icon()
+
+
 @lru_cache(maxsize=2)
 def _propertyquarry_pwa_png_icon(size: int) -> bytes:
     from PIL import Image, ImageDraw

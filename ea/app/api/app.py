@@ -79,6 +79,7 @@ _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS = frozenset(
         "/directory/profile/{profile_id}",
         "/disclaimers",
         "/docs",
+        "/favicon.ico",
         "/get-started",
         "/google/callback",
         "/google/connect",
