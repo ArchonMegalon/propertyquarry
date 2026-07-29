@@ -702,6 +702,7 @@ def propertyquarry_browser_server(
                 "scene_strategy": "layout_first",
                 "creation_mode": "hosted_listing_tour",
                 "video_relpath": "tour.mp4",
+                "video_sidecar_relpath": "tour.walkthrough.json",
                 "video_provider": "manual_upload",
                 "three_d_vista_entry_relpath": "3dvista/index.htm",
                 "three_d_vista_import": {"source_project": "propertyquarry"},
@@ -735,6 +736,18 @@ def propertyquarry_browser_server(
                         "mime_type": "image/png",
                     },
                 ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (bundle_dir / "tour.walkthrough.json").write_text(
+        json.dumps(
+            {
+                "provider_key": "manual_upload",
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
             },
             ensure_ascii=False,
             indent=2,
