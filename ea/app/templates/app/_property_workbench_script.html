@@ -380,7 +380,9 @@
         return await fetch(resource, { ...options, signal: controller.signal });
       } catch (error) {
         if (timedOut) {
-          throw new Error('The request took too long. Try again; accepted work is unchanged.');
+          const timeoutError = new Error('The request took too long. Try again; accepted work is unchanged.');
+          timeoutError.propertyRequestTimedOut = true;
+          throw timeoutError;
         }
         throw error;
       } finally {
@@ -7235,7 +7237,16 @@
         setSearchLaunchBusy('preparing');
         setPropertyInlineStatus(localizedWorkbenchCopy('starting-search', 'Starting search...'));
         setPropertyInlineError('');
-        const body = await savePreferences();
+        let body;
+        try {
+          body = await savePreferences();
+        } catch (saveError) {
+          if (!saveError?.propertyRequestTimedOut) throw saveError;
+          // The launch request already carries the complete current brief.
+          // A slow standalone save must not strand an otherwise resumable
+          // active search behind a second principal-scoped database write.
+          body = collectPayload(form);
+        }
         setSearchLaunchBusy('launching');
         setPropertyInlineStatus(localizedWorkbenchCopy('launching-search', 'Launching search...'));
         const launch = await postSearchLaunch(String(meta.start_endpoint || data.endpoints?.start || ''), body);

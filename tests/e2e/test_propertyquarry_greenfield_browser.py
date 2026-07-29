@@ -11046,6 +11046,73 @@ def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_brows
         context.close()
 
 
+def test_propertyquarry_search_launch_continues_when_preference_save_times_out(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False, width=1440, height=900, locale="de-AT")
+    page: Page = context.new_page()
+    preference_requests = 0
+    launch_requests: list[dict[str, object]] = []
+    try:
+        def _stall_preferences(_route) -> None:
+            nonlocal preference_requests
+            preference_requests += 1
+            # Leave the request pending so the browser exercises the real
+            # client timeout instead of a synthetic HTTP failure.
+
+        def _resume_active_run(route) -> None:
+            launch_requests.append(route.request.post_data_json or {})
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                headers={"x-property-search-resumed": "true"},
+                body=json.dumps(
+                    {
+                        "run_id": "run-save-timeout-resume",
+                        "status": "in_progress",
+                        "status_url": "/app/api/property/search-runs/run-save-timeout-resume",
+                        "resumed": True,
+                    }
+                ),
+            )
+
+        page.route("**/v1/onboarding/property-search/preferences", _stall_preferences)
+        page.route("**/app/api/property/search-runs**", _resume_active_run)
+        page.route(
+            "**/app/properties?run_id=run-save-timeout-resume",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/html",
+                body="<html><body><main>Active search resumed after save timeout</main></body></html>",
+            ),
+        )
+        response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
+        assert response is not None and response.ok
+        page.wait_for_function(
+            """() => document.querySelector(
+              '[data-property-decision-workbench]'
+            )?.dataset.pqWorkbenchController === 'loaded'"""
+        )
+
+        launch = page.locator("[data-property-start-top]")
+        expect(launch).to_be_enabled()
+        launch.click()
+        expect(page).to_have_url(
+            re.compile(r"/app/properties\?run_id=run-save-timeout-resume"),
+            timeout=25_000,
+        )
+        expect(page.get_by_text("Active search resumed after save timeout")).to_be_visible()
+
+        assert preference_requests == 1
+        assert len(launch_requests) == 1
+        assert launch_requests[0].get("property_preferences")
+        assert launch_requests[0].get("selected_platforms")
+    finally:
+        context.close()
+
+
 def test_propertyquarry_app_search_launch_uses_any_property_type_when_all_boxes_are_clear(
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
