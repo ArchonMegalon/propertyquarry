@@ -1155,6 +1155,35 @@ def _public_tour_env_truthy(raw: object) -> bool:
     return _payload_public_tour_env_truthy(raw)
 
 
+def _public_tour_presentation_title(
+    value: object,
+    *,
+    fallback: str = "Property tour",
+    limit: int = 96,
+) -> str:
+    """Return a concise public title without exposing generated slug tails."""
+
+    normalized = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
+    normalized = re.sub(r"\s+", " ", normalized).strip() or fallback
+    readable_tokens: list[str] = []
+    for token in normalized.split():
+        compact = token.strip("()[]{}.,:;!?")
+        if len(compact) >= 32 and compact.count("-") >= 3:
+            break
+        readable_tokens.append(token)
+
+    candidate = " ".join(readable_tokens).strip()
+    if len(candidate) < 8:
+        candidate = normalized
+    if len(candidate) <= limit:
+        return candidate
+
+    clipped = candidate[: limit + 1].rsplit(" ", 1)[0].rstrip(" -–—,:;")
+    if len(clipped) < max(24, limit // 2):
+        clipped = candidate[:limit].rstrip(" -–—,:;")
+    return f"{clipped}…"
+
+
 def _public_tour_prod_mode_enabled() -> bool:
     return str(os.getenv("EA_RUNTIME_MODE") or "").strip().lower() == "prod"
 
@@ -4228,7 +4257,12 @@ def _tour_html(
     scenes = [dict(row) for row in (payload.get("scenes") or []) if isinstance(row, dict)]
     control_mode = str(payload.get("control_mode") or "").strip().lower()
     if control_mode == "walkable_3d" or isinstance(payload.get("walkable_scene"), dict):
-        safe_title = html.escape(str(payload.get("display_title") or payload.get("title") or payload.get("slug") or "Property tour").strip())
+        safe_title = html.escape(
+            _public_tour_presentation_title(
+                payload.get("display_title") or payload.get("title") or payload.get("slug"),
+                fallback="Property tour",
+            )
+        )
         video_provider = str(
             payload.get("video_provider")
             or payload.get("video_provider_key")
@@ -4295,8 +4329,11 @@ def _tour_html(
     filter_context = _filter_panel_context(facts=facts)
     shortlist_compare = dict(payload.get("_shortlist_compare") or {}) if isinstance(payload.get("_shortlist_compare"), dict) else {}
     brief = dict(payload.get("brief") or {})
-    title = str(payload.get("title") or payload.get("tour_title") or payload.get("slug") or "Property Tour").strip()
-    display_title = str(payload.get("display_title") or title).strip() or title
+    title = _public_tour_presentation_title(
+        payload.get("title") or payload.get("tour_title") or payload.get("slug"),
+        fallback="Property Tour",
+    )
+    display_title = _public_tour_presentation_title(payload.get("display_title"), fallback=title)
     listing_url = _public_tour_safe_navigation_url(payload.get("listing_url"))
     hosted_url = _payload_public_tour_canonical_path(slug)
     external_live_360_url = _embedded_live_360_url(payload)
@@ -9644,7 +9681,10 @@ def _generated_reconstruction_layout_preview_html(*, slug: str, payload: dict[st
 def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, nonce: str = "") -> str:
     nonce_attr = html.escape(_public_tour_normalized_nonce(nonce) or _public_tour_csp_nonce(), quote=True)
     slug = str(payload.get("slug") or "").strip()
-    title_text = str(payload.get("display_title") or payload.get("title") or slug or "Layout walkthrough").strip()
+    title_text = _public_tour_presentation_title(
+        payload.get("display_title") or payload.get("title") or slug,
+        fallback="Layout walkthrough",
+    )
     title = html.escape(title_text)
     layout_focus = bool(payload.get("_generated_reconstruction_layout_focus"))
     launch_mode = "layout_preview" if layout_focus else "tour_public_launch"
@@ -9828,7 +9868,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       .card {{ border:1px solid var(--line); border-radius:28px; background:var(--card); box-shadow:var(--shadow); }}
       .hero-main {{ padding:24px; display:grid; gap:14px; }}
       .eyebrow {{ color:var(--muted); font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }}
-      h1 {{ margin:0; font-family:Georgia, ui-serif, serif; font-size:clamp(34px, 5vw, 62px); line-height:.92; letter-spacing:-.055em; }}
+      h1 {{ margin:0; max-width:18ch; overflow-wrap:anywhere; text-wrap:balance; font-family:Georgia, ui-serif, serif; font-size:clamp(34px, 5vw, 62px); line-height:.92; letter-spacing:-.055em; }}
       .sub {{ margin:0; color:var(--muted); font-size:15px; line-height:1.5; max-width:52ch; }}
       .actions {{ display:flex; flex-wrap:wrap; gap:10px; }}
       .btn {{ min-height:46px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:0 16px; font:inherit; font-weight:700; text-decoration:none; border:1px solid var(--line); }}
