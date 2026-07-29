@@ -4939,12 +4939,14 @@ def test_generated_reconstruction_viewer_guided_route_runs_in_real_browser(tmp_p
             browser = playwright.chromium.launch(**launch_kwargs)
             try:
                 page = None
+                page_errors: list[str] = []
                 viewer_url = f"{base_url}/{viewer_relpath}?guided=1"
                 for attempt in range(3):
                     page = browser.new_page(
                         viewport={"width": 1280, "height": 720},
                         device_scale_factor=1,
                     )
+                    page.on("pageerror", lambda error: page_errors.append(str(error)))
                     try:
                         page.goto(
                             viewer_url,
@@ -5031,6 +5033,88 @@ def test_generated_reconstruction_viewer_guided_route_runs_in_real_browser(tmp_p
                 assert stopped_metrics["metrics"]["guidedRouteActive"] is False
                 assert "Guide me" in str(stopped_metrics["label"])
 
+                button_inventory = page.locator("button:visible").evaluate_all(
+                    """buttons => buttons.map((button) => ({
+                        id: String(button.id || ''),
+                        className: String(button.className || ''),
+                        routeIndex: String(button.dataset.routeIndex || ''),
+                    }))"""
+                )
+                assert isinstance(button_inventory, list)
+                assert {
+                    str(entry.get("id") or "")
+                    for entry in button_inventory
+                    if isinstance(entry, dict) and entry.get("id")
+                } == {
+                    "view-overview",
+                    "view-dollhouse",
+                    "view-inside",
+                    "view-guided-route",
+                    "view-floorplan-reference",
+                }
+                route_button_count = page.locator(".route-button:visible").count()
+                floorplan_button_count = page.locator(".floorplan-stop:visible").count()
+                assert route_button_count == 3
+                assert floorplan_button_count == route_button_count
+                assert len(button_inventory) == 5 + route_button_count + floorplan_button_count
+
+                for selector, expected_view_mode in (
+                    ("#view-overview", "overview"),
+                    ("#view-dollhouse", "dollhouse"),
+                    ("#view-inside", "room"),
+                ):
+                    page.locator(selector).click()
+                    _wait_for_playwright_condition(
+                        page,
+                        f"""() => {{
+                            const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.() || {{}};
+                            return metrics.viewMode === {json.dumps(expected_view_mode)}
+                              && metrics.isTransitioning === false;
+                        }}""",
+                    )
+                    assert page.locator(selector).get_attribute("aria-pressed") == "true"
+                    assert page.locator(selector).get_attribute("data-active") == "true"
+
+                floorplan_toggle = page.locator("#view-floorplan-reference")
+                floorplan_toggle.click()
+                _wait_for_playwright_condition(
+                    page,
+                    """() => {
+                        const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.() || {};
+                        return metrics.floorplanLayerState === 'on';
+                    }""",
+                )
+                assert floorplan_toggle.get_attribute("aria-pressed") == "true"
+                assert floorplan_toggle.get_attribute("data-active") == "true"
+                floorplan_toggle.click()
+                _wait_for_playwright_condition(
+                    page,
+                    """() => {
+                        const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.() || {};
+                        return metrics.floorplanLayerState === 'off';
+                    }""",
+                )
+                assert floorplan_toggle.get_attribute("aria-pressed") == "false"
+                assert floorplan_toggle.get_attribute("data-active") == "false"
+
+                for button_selector in (".route-button", ".floorplan-stop"):
+                    for route_index in range(route_button_count):
+                        target = page.locator(
+                            f'{button_selector}[data-route-index="{route_index}"]'
+                        )
+                        assert target.count() == 1
+                        target.click()
+                        _wait_for_playwright_condition(
+                            page,
+                            f"""() => {{
+                                const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.() || {{}};
+                                return Number(metrics.activeRouteIndex) === {route_index}
+                                  && metrics.isTransitioning === false;
+                            }}""",
+                        )
+                        assert target.get_attribute("aria-current") == "step"
+                        assert target.get_attribute("data-active") == "true"
+
                 page.evaluate(
                     """() => {
                         const button = document.getElementById('view-guided-route');
@@ -5061,6 +5145,7 @@ def test_generated_reconstruction_viewer_guided_route_runs_in_real_browser(tmp_p
                     ensure_ascii=False,
                 )
                 assert mobile_accessibility["horizontalOverflowPx"] == 0
+                assert page_errors == []
             finally:
                 browser.close()
 
