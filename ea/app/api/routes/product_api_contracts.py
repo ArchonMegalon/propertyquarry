@@ -1997,7 +1997,7 @@ class PropertySearchRunStartIn(StrictMutationIn):
         # country eligibility remain enforced at the service boundary.
         max_length=PROPERTY_SEARCH_RUN_MAX_SELECTED_PLATFORMS,
     )
-    property_preferences: dict[str, object] = Field(default_factory=dict, max_length=128)
+    property_preferences: dict[str, object] = Field(default_factory=dict, max_length=256)
     force_refresh: bool = False
     max_results_per_source: int | None = Field(default=None, ge=1, le=200)
     dispatch_only: bool = False

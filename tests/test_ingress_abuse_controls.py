@@ -725,14 +725,20 @@ def test_high_cost_input_schemas_forbid_extra_and_bound_nested_work() -> None:
     with pytest.raises(ValidationError, match="extra_forbidden"):
         PropertySearchRunStartIn.model_validate({"unexpected": True})
     accepted_all_market_providers = PropertySearchRunStartIn.model_validate(
-        {"selected_platforms": [f"source-{index}" for index in range(38)]}
+        {
+            "selected_platforms": [f"source-{index}" for index in range(38)],
+            "property_preferences": {
+                f"preference-{index}": index for index in range(133)
+            },
+        }
     )
     assert len(accepted_all_market_providers.selected_platforms) == 38
+    assert len(accepted_all_market_providers.property_preferences) == 133
     with pytest.raises(ValidationError, match="too_long"):
         PropertySearchRunStartIn.model_validate({"selected_platforms": [f"source-{index}" for index in range(65)]})
     with pytest.raises(ValidationError, match="too_long"):
         PropertySearchRunStartIn.model_validate(
-            {"property_preferences": {f"key-{index}": index for index in range(129)}}
+            {"property_preferences": {f"key-{index}": index for index in range(257)}}
         )
     with pytest.raises(ValidationError, match="min_rooms_out_of_range"):
         PropertySearchRunStartIn.model_validate({"property_preferences": {"min_rooms": 101}})
