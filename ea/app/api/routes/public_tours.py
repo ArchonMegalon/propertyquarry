@@ -10910,6 +10910,29 @@ def _tour_control_external_iframe_html(
     nonce_attr = html.escape(_public_tour_normalized_nonce(nonce) or _public_tour_csp_nonce(), quote=True)
     payload = payload or {}
     scene_data, video_url, video_mime_type = _tour_control_media_context(payload)
+    scene_roles = {
+        str(scene.get("role") or "").strip().lower()
+        for scene in scene_data
+        if str(scene.get("role") or "").strip()
+    }
+    role_filter_options: list[tuple[str, str]] = []
+    if len(scene_roles) > 1:
+        role_filter_options.append(("all", "All"))
+        if "photo" in scene_roles:
+            role_filter_options.append(("photo", "Photos"))
+        if "floorplan" in scene_roles:
+            role_filter_options.append(("floorplan", "Floor plans"))
+    role_filter_html = (
+        '<div class="tour-toolbar"><div class="toggle" id="role-filter">'
+        + "".join(
+            f"""<button type="button"{' class="active"' if index == 0 else ""} """
+            f"""data-role="{role}">{label}</button>"""
+            for index, (role, label) in enumerate(role_filter_options)
+        )
+        + "</div></div>"
+        if len(role_filter_options) > 1
+        else ""
+    )
     video_source_markup = _public_tour_walkthrough_source_markup(
         payload,
         video_url=video_url,
@@ -10970,13 +10993,7 @@ def _tour_control_external_iframe_html(
             else ""
         )
         scene_viewer_html = (
-            f"""<div class="tour-toolbar">
-            <div class="toggle" id="role-filter">
-              <button type="button" class="active" data-role="all">All</button>
-              <button type="button" data-role="photo">Photos</button>
-              <button type="button" data-role="floorplan">Floor plans</button>
-            </div>
-          </div>
+            f"""{role_filter_html}
           <div id="viewer" class="viewer">
             <img id="stage-image" src="{html.escape(first_scene.get("image_url", ""))}" alt="{html.escape(first_scene.get("name", title))}" referrerpolicy="no-referrer">
             <iframe src="" id="stage-frame" title="{html.escape(first_scene.get("name", title))}" referrerpolicy="no-referrer" hidden></iframe>
@@ -11098,6 +11115,7 @@ def _tour_control_external_iframe_html(
             </div>
             <div class="provider-actions">
               <a href="{clean_fullscreen_href}">Full screen</a>
+              <a href="{html.escape(initial_provider_src_raw, quote=True)}" target="_blank" rel="noopener noreferrer">Open 3D tour in new tab</a>
             </div>
           </div>
           <div class="provider-frame-wrap" aria-busy="true" data-provider-state="loading">

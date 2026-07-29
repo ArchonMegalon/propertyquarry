@@ -3304,6 +3304,32 @@ def test_public_tour_topology_verified_matterport_launches_in_real_browser(
     _assert_no_horizontal_overflow(page)
     _assert_visible_controls_meet_mobile_target_floor(page)
 
+    direct_link = page.get_by_role("link", name="Open 3D tour in new tab")
+    expect(direct_link).to_be_visible()
+    assert direct_link.get_attribute("href") == (
+        "https://my.matterport.com/show/?m=CAPTURED123"
+    )
+    with context.expect_page() as popup_info:
+        direct_link.click()
+    popup = popup_info.value
+    popup.wait_for_load_state("domcontentloaded")
+    assert popup.url == "https://my.matterport.com/show/?m=CAPTURED123"
+    popup.close()
+
+    role_filter = page.locator("#role-filter")
+    role_filter.locator('button[data-role="photo"]').click()
+    assert page.locator("#stage-role").inner_text().lower() == "photo"
+    assert page.locator("#thumbs .thumb:not(.hidden)").count() == 1
+    role_filter.locator('button[data-role="floorplan"]').click()
+    assert page.locator("#stage-role").inner_text().lower() == "floorplan"
+    assert page.locator("#thumbs .thumb:not(.hidden)").count() == 1
+    role_filter.locator('button[data-role="all"]').click()
+    expected_roles = ("photo", "floorplan")
+    for index, expected_role in enumerate(expected_roles):
+        page.locator("#thumbs .thumb").nth(index).click()
+        assert page.locator("#stage-role").inner_text().lower() == expected_role
+        assert page.locator("#thumbs .thumb.active").count() == 1
+
     embedded_page = context.new_page()
     embedded_response = embedded_page.goto(
         f"{public_tour_browser_server['base_url']}/tours/{slug}"

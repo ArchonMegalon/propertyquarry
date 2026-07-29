@@ -13,6 +13,7 @@ from scripts.materialize_propertyquarry_matterport_model_publication import (
     build_publication_contract,
 )
 
+from app.api.routes import public_tours
 from app.api.routes.public_tour_payloads import _PUBLIC_TOUR_TOP_LEVEL_KEYS
 from app.api.routes.public_tours import (
     _MATTERPORT_SDK_BOOTSTRAP_URL,
@@ -288,6 +289,40 @@ def test_public_matterport_control_requires_multi_room_connected_capture() -> No
         "room_count": 1,
     }
     assert _matterport_public_control_context(single_room) == {}
+
+
+def test_public_matterport_control_hides_empty_media_filters_and_exposes_direct_fallback(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        public_tours,
+        "_tour_control_media_context",
+        lambda _payload: (
+            [
+                {
+                    "name": "Living room",
+                    "role": "photo",
+                    "image_url": "/tours/files/sdk-loft/living-room.jpg",
+                    "mime_type": "image/jpeg",
+                }
+            ],
+            "",
+            "",
+        ),
+    )
+
+    body = public_tours._tour_control_external_iframe_html(
+        title="SDK Loft",
+        iframe_src="https://my.matterport.com/show/?m=MODEL123",
+        badge="Captured 3D Tour",
+        payload=_payload(requested=False),
+        fullscreen_href="/tours/sdk-loft/control/matterport?fullscreen=1",
+    )
+
+    assert 'id="role-filter"' not in body
+    assert ">Floor plans</button>" not in body
+    assert "Open 3D tour in new tab" in body
+    assert 'target="_blank"' in body
 
 
 def test_sdk_walkthrough_browser_executes_only_fly_moves(monkeypatch) -> None:
