@@ -626,9 +626,13 @@ def _assert_generated_reconstruction_public_launch_shell(
         f"/tours/files/{slug}/generated-reconstruction/viewer.html"
     )
     if expect_video:
+        assert _selector_text(page, "#walkthrough h2") == "Walkthrough"
         assert page.locator("#tour-video").count() == 1
         assert page.locator("#tour-video source").get_attribute("src").endswith(f"/tours/{slug}/walkthrough")
     else:
+        assert _selector_text(page, "#walkthrough h2") == "Planning route"
+        assert "not captured or measured walkthrough footage" in body_text
+        assert "the walkthrough follows the room route" not in body_text
         assert page.locator("#tour-video").count() == 0
 
 

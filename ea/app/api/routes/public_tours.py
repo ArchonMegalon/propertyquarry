@@ -9930,6 +9930,19 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
     lead_preview_title = "Start in the styled 3D scene"
     lead_preview_copy = (
         "Open the styled reconstruction first, then use the optional plan overlay, walkthrough, and source deck to cross-check room order and adjacency."
+        if video_url
+        else "Open the styled reconstruction first, then use the optional plan overlay, planning route, and source deck to cross-check room order and adjacency."
+    )
+    route_panel_title = "Walkthrough" if video_url else "Planning route"
+    route_progress_label = (
+        "Walkthrough route progress"
+        if video_url
+        else "Planning route progress"
+    )
+    route_note = (
+        "The walkthrough follows the room route and keeps the floorplan visible as a secondary cue."
+        if video_url
+        else "This planning route moves between reference stops; it is not captured or measured walkthrough footage."
     )
     primary_cta_href = (
         "#layout-viewer"
@@ -9970,7 +9983,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
           <div class="stack">
             <div class="eyebrow">{html.escape(selected_style_label)} · generated reconstruction</div>
             <h2>Explore the styled 3D reconstruction</h2>
-            <p class="layout-viewer-note">The styled scene is the main entrypoint. The floorplan is an optional reference overlay; use the walkthrough and source deck below to cross-check the generated layout.</p>
+            <p class="layout-viewer-note">The styled scene is the main entrypoint. The floorplan is an optional reference overlay; use the {html.escape("walkthrough" if video_url else "planning route")} and source deck below to cross-check the generated layout.</p>
           </div>
           <a class="mini-btn" id="layout-viewer-open" href="{layout_viewer_open_url}" target="_blank" rel="noopener noreferrer">Open full viewer</a>
         </div>
@@ -10152,7 +10165,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       <section class="stage">
         <div class="stage-column stage-primary">
           <div class="card video-card" id="walkthrough">
-            <h2>Walkthrough</h2>
+            <h2>{html.escape(route_panel_title)}</h2>
             {f'''<div class="video-stage">
               <div class="walkthrough-hud" id="walkthrough-hud" aria-live="polite" aria-atomic="true">
                 <div class="walkthrough-chip-row">
@@ -10179,7 +10192,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
               </div>
               <div class="walkthrough-route-summary" id="walkthrough-route-summary">{initial_route_summary}</div>
             </div>
-            <div class="walkthrough-progress" aria-label="Walkthrough route progress">
+            <div class="walkthrough-progress" aria-label="{html.escape(route_progress_label)}">
               <div class="walkthrough-progress-head">
                 <span id="walkthrough-progress-status">Route progress</span>
                 <span id="walkthrough-progress-time">0:00 / 0:00</span>
@@ -10188,7 +10201,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
                 <span class="walkthrough-progress-fill" id="walkthrough-progress-fill"></span>
               </div>
             </div>
-            <p class="video-note">The walkthrough follows the room route and keeps the floorplan visible as a secondary cue instead of pretending to be a captured 360 tour.</p>
+            <p class="video-note">{html.escape(route_note)}</p>
           </div>
           <section class="card sidebar-block sidebar-route">
             <h2>Room route</h2>
