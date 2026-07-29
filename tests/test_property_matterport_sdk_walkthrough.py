@@ -156,10 +156,24 @@ def test_sdk_context_requires_fresh_matching_model_publication(monkeypatch) -> N
         == {}
     )
 
+    current = _payload()
+    current_publication = _publication_contract()
+    current_publication["checked_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=29)
+    ).isoformat().replace("+00:00", "Z")
+    current_publication["proof_valid_until"] = (
+        datetime.now(timezone.utc) + timedelta(hours=12)
+    ).isoformat().replace("+00:00", "Z")
+    current["matterport_model_publication"] = current_publication
+    assert _matterport_sdk_walkthrough_context(
+        current,
+        external_url="https://my.matterport.com/show/?m=MODEL123",
+    )
+
     stale = _payload()
     stale_publication = _publication_contract()
     stale_publication["checked_at"] = (
-        datetime.now(timezone.utc) - timedelta(days=2)
+        datetime.now(timezone.utc) - timedelta(days=31)
     ).isoformat().replace("+00:00", "Z")
     stale["matterport_model_publication"] = stale_publication
     assert (
@@ -573,10 +587,11 @@ def test_model_publication_materializer_requires_connected_available_sweeps(
     }
     source_path.write_text(json.dumps(topology), encoding="utf-8")
 
+    observed_at = datetime.now(timezone.utc).replace(microsecond=0)
     contract = build_publication_contract(
         topology,
         source_path=source_path,
-        checked_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        checked_at=observed_at.isoformat().replace("+00:00", "Z"),
     )
 
     assert contract["status"] == "pass"
@@ -586,6 +601,9 @@ def test_model_publication_materializer_requires_connected_available_sweeps(
     assert contract["room_count"] == 2
     assert contract["navigation_edge_count"] == 2
     assert contract["source_sha256"]
+    assert datetime.fromisoformat(
+        str(contract["proof_valid_until"]).replace("Z", "+00:00")
+    ) == observed_at + timedelta(days=30)
 
     topology["locations"][0]["neighbors"] = []
     topology["locations"][1]["neighbors"] = []

@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+_MATTERPORT_PUBLICATION_PROOF_LIFETIME = timedelta(days=30)
+
 
 def _parse_timestamp(value: object) -> datetime | None:
     raw = str(value or "").strip()
@@ -113,7 +115,9 @@ def build_publication_contract(
         "checked_at": source_checked_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "asset_valid_until": asset_valid_until.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "capture_asset_valid_until": asset_valid_until.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-        "proof_valid_until": (source_checked_at + timedelta(hours=24)).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "proof_valid_until": (
+            source_checked_at + _MATTERPORT_PUBLICATION_PROOF_LIFETIME
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "enabled_sweep_count": len(locations),
         "connected_component_count": component_count,
         "available_sweep_count": len(available_until),

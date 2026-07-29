@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+_MATTERPORT_PUBLICATION_PROOF_MAX_AGE = timedelta(days=30)
+
 try:
     from scripts.property_magicfit_public_eligibility import (
         evaluate_magicfit_public_eligibility,
@@ -1207,7 +1209,9 @@ def _matterport_public_control_ready(payload: dict[str, object]) -> bool:
     now = datetime.now(timezone.utc)
     source_sha256 = str(publication.get("source_sha256") or "").strip().lower()
     return bool(
-        now - timedelta(hours=24) <= checked_at <= now + timedelta(minutes=5)
+        now - _MATTERPORT_PUBLICATION_PROOF_MAX_AGE
+        <= checked_at
+        <= now + timedelta(minutes=5)
         and proof_valid_until > now
         and enabled_sweep_count >= 3
         and available_sweep_count >= 3

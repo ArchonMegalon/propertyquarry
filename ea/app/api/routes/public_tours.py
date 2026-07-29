@@ -171,9 +171,10 @@ _PUBLIC_TOUR_PROVIDER_CSP_ORIGINS = (
     "https://*.3dvista.com",
 )
 _MATTERPORT_PUBLIC_CSP_ORIGIN = "https://my.matterport.com"
+_MATTERPORT_PUBLICATION_PROOF_MAX_AGE = timedelta(days=30)
 # This bootstrap is retained solely for the private, receipt-backed SDK
 # walkthrough proof helper below. Public routing uses the provider-hosted
-# showcase only after a fresh topology-backed publication receipt passes.
+# showcase only after a current topology-backed publication receipt passes.
 _MATTERPORT_SDK_BOOTSTRAP_URL = "https://static.matterport.com/showcase-sdk/latest.js"
 _PUBLIC_TOUR_CSP_REPORT_PATH = "/tours/security/csp-report"
 _PUBLIC_TOUR_NONCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
@@ -8992,7 +8993,7 @@ def _matterport_model_publication_contract(
     now = datetime.now(timezone.utc)
     if (
         checked_at is None
-        or checked_at < now - timedelta(hours=24)
+        or checked_at < now - _MATTERPORT_PUBLICATION_PROOF_MAX_AGE
         or checked_at > now + timedelta(minutes=5)
         or proof_valid_until is None
         or proof_valid_until <= now
