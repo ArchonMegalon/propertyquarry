@@ -326,6 +326,8 @@ fi
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_docs_links.py
 mkdir -p _completion/security _completion/release_hygiene _completion/whole_project_scope
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_security_posture.py \
+  --release-commit-sha "${dr_release_commit_sha}" \
+  --image-digest "${dr_release_image_digest}" \
   --write _completion/security/property-security-posture-release-gate.json
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_repo_isolation.py
 mkdir -p _completion/propertyquarry_repository_role
@@ -344,7 +346,15 @@ PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_ranking_benchmark.py
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_teable_portability.py
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_search_storage_schema.py
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_public_tour_manifest_contract.py
-mkdir -p _completion/property_tour_controls _completion/tours _completion/smoke _completion/property_gold_status _completion/repair _completion/provider_smoke _completion/furniture_styles _completion/bts_methodology _completion/tour_delivery
+mkdir -p _completion/property_tour_controls _completion/tours _completion/smoke _completion/property_gold_status _completion/repair _completion/provider_smoke _completion/furniture_styles _completion/bts_methodology _completion/tour_delivery _completion/scene_video_readiness
+if [[ "${gold_scope}" == "advanced_visual" ]]; then
+  PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_scene_video_balance_probe.py \
+    --providers magicfit,omagic \
+    --release-commit-sha "${dr_release_commit_sha}" \
+    --image-digest "${dr_release_image_digest}" \
+    --write _completion/scene_video_readiness/provider-balance-probe-release-gate.json \
+    > /dev/null
+fi
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_furniture_style_contract.py \
   --write _completion/furniture_styles/property-furniture-style-contract-release-gate.json
 PYTHONPATH=ea "${PYTHON_BIN}" scripts/check_property_bts_methodology_contract.py \
@@ -391,10 +401,17 @@ if command -v docker >/dev/null 2>&1 && docker inspect "${property_api_container
       --runtime-container "${property_api_container}" \
       --write _completion/tours/property-tour-vendor-tooling-current.json \
       > /dev/null
+    docker cp _completion/scene_video_readiness/provider-balance-probe-release-gate.json \
+      "${property_api_container}:/data/artifacts/property-scene-video-provider-balance-probe-release-gate.json"
     docker_exec_scene_video_python "${property_api_container}" /app/scripts/property_scene_video_readiness_report.py \
+      --providers magicfit,magic,omagic \
+      --release-commit-sha "${dr_release_commit_sha}" \
+      --image-digest "${dr_release_image_digest}" \
+      --balance-probe-receipt /data/artifacts/property-scene-video-provider-balance-probe-release-gate.json \
       --output /data/artifacts/property-scene-video-readiness-release-gate-live-container.json
     docker_exec_scene_video_python "${property_api_container}" /app/scripts/verify_property_scene_video_readiness.py \
       --receipt /data/artifacts/property-scene-video-readiness-release-gate-live-container.json \
+      --required-providers magicfit,magic,omagic \
       --output /data/artifacts/property-scene-video-readiness-release-gate-verifier-live-container.json \
       > /dev/null
     docker_exec_scene_video_python "${property_api_container}" /app/scripts/property_scene_video_runtime_status.py \
@@ -439,9 +456,14 @@ else
       > /dev/null
     PYTHONPATH=ea "${PYTHON_BIN}" scripts/property_scene_video_readiness_report.py \
       --load-shared-env \
+      --providers magicfit,magic,omagic \
+      --release-commit-sha "${dr_release_commit_sha}" \
+      --image-digest "${dr_release_image_digest}" \
+      --balance-probe-receipt _completion/scene_video_readiness/provider-balance-probe-release-gate.json \
       --output _completion/scene_video_readiness/release-gate.json
     PYTHONPATH=ea "${PYTHON_BIN}" scripts/verify_property_scene_video_readiness.py \
       --receipt _completion/scene_video_readiness/release-gate.json \
+      --required-providers magicfit,magic,omagic \
       --output _completion/scene_video_readiness/release-gate-verifier.json \
       > /dev/null
     PYTHONPATH=ea "${PYTHON_BIN}" scripts/property_scene_video_runtime_status.py \
@@ -536,6 +558,8 @@ if [[ "${gold_scope}" == "advanced_visual" ]]; then
   walkthrough_quality_frame_sample_timeout_seconds="${PROPERTYQUARRY_WALKTHROUGH_QUALITY_FRAME_SAMPLE_TIMEOUT_SECONDS:-45}"
   if ! PYTHONPATH=ea timeout "${walkthrough_provider_proof_timeout_seconds}" "${PYTHON_BIN}" scripts/propertyquarry_walkthrough_provider_proof_gate.py \
     --tour-root "${walkthrough_provider_proof_tour_root}" \
+    --release-commit-sha "${dr_release_commit_sha}" \
+    --image-digest "${dr_release_image_digest}" \
     --write _completion/smoke/property-live-walkthrough-provider-proof-release-gate.json \
     > /dev/null; then
     echo "error: PropertyQuarry MagicFit/OMagic walkthrough provider proof gate failed or timed out." >&2
@@ -545,6 +569,8 @@ if [[ "${gold_scope}" == "advanced_visual" ]]; then
   if ! PYTHONPATH=ea timeout "${walkthrough_quality_process_timeout_seconds}" "${PYTHON_BIN}" scripts/propertyquarry_walkthrough_quality_gate.py \
     --tour-root "${walkthrough_provider_proof_tour_root}" \
     --provider-proof-receipt _completion/smoke/property-live-walkthrough-provider-proof-release-gate.json \
+    --release-commit-sha "${dr_release_commit_sha}" \
+    --image-digest "${dr_release_image_digest}" \
     --ffprobe-timeout-seconds "${walkthrough_quality_ffprobe_timeout_seconds}" \
     --frame-sample-timeout-seconds "${walkthrough_quality_frame_sample_timeout_seconds}" \
     --write _completion/smoke/property-live-walkthrough-quality-release-gate.json \

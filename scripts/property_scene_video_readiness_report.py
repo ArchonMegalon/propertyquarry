@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -27,6 +28,8 @@ SAFE_CHECK_KEYS = {
     "credit_marker_path",
     "credit_probe_source",
     "credit_state",
+    "quota_capability_state",
+    "balance_probe_status",
     "credentials_configured",
     "docker_cli_configured",
     "docker_cli_path",
@@ -119,6 +122,51 @@ EXPECTED_ACCOUNT_COUNT_ENV_NAMES = {
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    return dict(loaded) if isinstance(loaded, dict) else {}
+
+
+def _apply_balance_probe(
+    rows: list[dict[str, Any]],
+    balance_probe: dict[str, Any],
+) -> None:
+    if balance_probe.get("status") != "pass":
+        return
+    results = {
+        str(row.get("provider") or "").strip().lower(): dict(row)
+        for row in list(balance_probe.get("provider_results") or [])
+        if isinstance(row, dict) and row.get("status") == "pass"
+    }
+    for row in rows:
+        requested = str(row.get("requested_provider") or "").strip().lower()
+        provider = "omagic" if requested in {"magic", "omagic"} else requested
+        balance = results.get(provider)
+        if balance is None:
+            continue
+        credit_state = str(balance.get("credit_state") or "").strip().lower()
+        capability_state = str(balance.get("capability_state") or "").strip()
+        if credit_state:
+            row["credit_state"] = credit_state
+        if capability_state:
+            row["quota_capability_state"] = capability_state
+        checks = dict(row.get("checks") or {})
+        checks["balance_probe_status"] = "pass"
+        if credit_state:
+            checks["credit_state"] = credit_state
+        if capability_state:
+            checks["quota_capability_state"] = capability_state
+        row["checks"] = checks
 
 
 def _default_output_path() -> Path:
@@ -721,14 +769,28 @@ def _provider_next_actions(rows: list[dict[str, Any]], telegram_readiness: dict[
     return actions
 
 
-def build_report(*, providers: tuple[str, ...] = DEFAULT_PROVIDERS) -> dict[str, Any]:
+def build_report(
+    *,
+    providers: tuple[str, ...] = DEFAULT_PROVIDERS,
+    release_commit_sha: str = "",
+    image_digest: str = "",
+    balance_probe: dict[str, Any] | None = None,
+    balance_probe_ref: str = "",
+    balance_probe_sha256: str = "",
+) -> dict[str, Any]:
     rows = [_provider_row(provider) for provider in providers]
+    if balance_probe is not None:
+        _apply_balance_probe(rows, balance_probe)
     ready_count = sum(1 for row in rows if row.get("ready") is True)
     blocked = [row for row in rows if row.get("ready") is not True]
     telegram_readiness = telegram_delivery_readiness()
     return {
         "contract_name": "propertyquarry.scene_video_readiness.v1",
         "generated_at": _utc_now(),
+        "release_commit_sha": str(release_commit_sha or "").strip().lower(),
+        "image_digest": str(image_digest or "").strip().lower(),
+        "balance_probe_ref": str(balance_probe_ref or "").strip(),
+        "balance_probe_sha256": str(balance_probe_sha256 or "").strip().lower(),
         "providers": rows,
         "summary": {
             "provider_count": len(rows),
@@ -752,6 +814,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Write a secret-safe PropertyQuarry scene-video readiness receipt.")
     parser.add_argument("--providers", default=",".join(DEFAULT_PROVIDERS))
     parser.add_argument("--output", default=str(_default_output_path()))
+    parser.add_argument("--release-commit-sha", default="")
+    parser.add_argument("--image-digest", default="")
+    parser.add_argument("--balance-probe-receipt", default="")
     parser.add_argument(
         "--load-shared-env",
         action="store_true",
@@ -763,7 +828,27 @@ def main() -> int:
 
         load_shared_env()
     providers = _csv_values(args.providers) or DEFAULT_PROVIDERS
-    output_path = write_report(build_report(providers=providers), Path(args.output).expanduser())
+    balance_path = (
+        Path(args.balance_probe_receipt).expanduser()
+        if str(args.balance_probe_receipt or "").strip()
+        else None
+    )
+    balance_probe = _load_json(balance_path) if balance_path is not None else None
+    output_path = write_report(
+        build_report(
+            providers=providers,
+            release_commit_sha=args.release_commit_sha,
+            image_digest=args.image_digest,
+            balance_probe=balance_probe,
+            balance_probe_ref=str(balance_path) if balance_path is not None else "",
+            balance_probe_sha256=(
+                _sha256(balance_path)
+                if balance_path is not None and balance_path.is_file()
+                else ""
+            ),
+        ),
+        Path(args.output).expanduser(),
+    )
     print(json.dumps({"status": "pass", "output": str(output_path), "providers": list(providers)}, sort_keys=True))
     return 0
 

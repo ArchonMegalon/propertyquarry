@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from datetime import UTC, datetime
@@ -22,10 +23,21 @@ REQUIRED_EXPECTED_ACCOUNT_COUNTS = {"magicfit": 3, "omagic": 8}
 FILE_ENV_FLAG = "--write-file-env"
 FILE_ENV_HOST_TARGET = "state/incoming_property_tours/_operator-import-lane/scene_video_provider_accounts"
 FILE_ENV_RUNTIME_TARGET = "/data/incoming_property_tours/_operator-import-lane/scene_video_provider_accounts"
+VERIFIER_CONTRACT_NAME = (
+    "propertyquarry.scene_video_provider_refresh_packet_verifier.v1"
+)
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _default_packet_path() -> Path:
@@ -200,6 +212,17 @@ def _source_receipt_truth_blockers(packet: dict[str, Any]) -> list[str]:
     source_generated_at = str(source_receipt.get("generated_at") or "").strip()
     if packet_generated_at != source_generated_at:
         blockers.append("source_receipt_generated_at_mismatch")
+    if str(packet.get("source_receipt_sha256") or "").strip().lower() != _sha256(
+        receipt_ref
+    ):
+        blockers.append("source_receipt_sha256_mismatch")
+    if (
+        str(packet.get("release_commit_sha") or "").strip()
+        != str(source_receipt.get("release_commit_sha") or "").strip()
+        or str(packet.get("image_digest") or "").strip()
+        != str(source_receipt.get("image_digest") or "").strip()
+    ):
+        blockers.append("source_receipt_release_identity_mismatch")
 
     source_rows = _source_receipt_provider_rows(source_receipt)
     providers = _providers_by_name(packet)
@@ -363,8 +386,11 @@ def verify_packet(packet: dict[str, Any], *, packet_path: str | None = None) -> 
 
     status = "fail" if blockers else "pass"
     receipt: dict[str, Any] = {
+        "contract_name": VERIFIER_CONTRACT_NAME,
         "generated_at": _utc_now(),
         "status": status,
+        "release_commit_sha": str(packet.get("release_commit_sha") or "").strip(),
+        "image_digest": str(packet.get("image_digest") or "").strip(),
         "blockers": blockers,
         "checked_providers": sorted(providers),
         "provider_count": len(providers),
@@ -372,6 +398,9 @@ def verify_packet(packet: dict[str, Any], *, packet_path: str | None = None) -> 
     }
     if packet_path:
         receipt["packet"] = packet_path
+        packet_file = Path(packet_path).expanduser()
+        if packet_file.is_file():
+            receipt["source_packet_sha256"] = _sha256(packet_file)
     return receipt
 
 
@@ -387,6 +416,7 @@ def main() -> int:
         receipt = verify_packet(packet, packet_path=str(packet_path))
     except Exception as exc:
         receipt = {
+            "contract_name": VERIFIER_CONTRACT_NAME,
             "generated_at": _utc_now(),
             "status": "fail",
             "blockers": [f"packet_load_failed:{exc.__class__.__name__}"],

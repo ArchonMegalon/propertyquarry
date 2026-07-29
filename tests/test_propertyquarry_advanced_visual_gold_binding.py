@@ -179,6 +179,33 @@ def test_advanced_visual_binding_is_exact_offline_candidate_authority(
     ) == []
 
 
+def test_advanced_visual_binding_accepts_authenticated_omagic_without_balance_api(
+    tmp_path: Path,
+) -> None:
+    source_paths = _source_paths(tmp_path)
+    runtime_path = source_paths["scene_video_runtime_status"]
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    for row in runtime["providers"]:
+        if row["provider"] in {"magic", "omagic"}:
+            row["credit_state"] = "not_exposed_by_configured_api"
+            row["quota_capability_state"] = (
+                "authenticated_model_template_ready"
+            )
+    _write_json(runtime_path, runtime)
+
+    receipt = build_advanced_visual_binding_receipt(
+        release_commit_sha=RELEASE_SHA,
+        release_image_digest=IMAGE_DIGEST,
+        source_receipt_paths=source_paths,
+        max_age_hours=1,
+        now=NOW,
+    )
+
+    assert receipt["status"] == "pass"
+    assert receipt["account_quota_state"]["magic"]["ready"] is True
+    assert receipt["account_quota_state"]["omagic"]["ready"] is True
+
+
 def test_advanced_visual_binding_rejects_stale_candidate_receipt(
     tmp_path: Path,
 ) -> None:

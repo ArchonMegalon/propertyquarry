@@ -442,6 +442,8 @@ def build_walkthrough_provider_proof_receipt(
     required_providers: tuple[str, ...] = REQUIRED_PROVIDERS,
     ffprobe_timeout_seconds: float = 20.0,
     decode_timeout_seconds: float = 30.0,
+    release_commit_sha: str = "",
+    image_digest: str = "",
 ) -> dict[str, object]:
     resolved_root = tour_root.expanduser().resolve()
     disqualified_hashes, disqualified_family_fingerprints = _disqualified_media_registry(
@@ -561,6 +563,8 @@ def build_walkthrough_provider_proof_receipt(
     return {
         "contract_name": "propertyquarry.walkthrough_provider_proof_gate.v1",
         "generated_at": _utc_now(),
+        "release_commit_sha": str(release_commit_sha or "").strip().lower(),
+        "image_digest": str(image_digest or "").strip().lower(),
         "status": gate_status,
         "tour_root": str(resolved_root),
         "required_providers": list(required_providers),
@@ -593,6 +597,8 @@ def main() -> int:
     parser.add_argument("--providers", default=",".join(REQUIRED_PROVIDERS))
     parser.add_argument("--ffprobe-timeout-seconds", type=float, default=20.0)
     parser.add_argument("--decode-timeout-seconds", type=float, default=30.0)
+    parser.add_argument("--release-commit-sha", default="")
+    parser.add_argument("--image-digest", default="")
     parser.add_argument("--write", default="_completion/smoke/property-live-walkthrough-provider-proof-latest.json")
     args = parser.parse_args()
     providers = tuple(
@@ -605,6 +611,8 @@ def main() -> int:
         required_providers=providers or REQUIRED_PROVIDERS,
         ffprobe_timeout_seconds=max(1.0, float(args.ffprobe_timeout_seconds or 20.0)),
         decode_timeout_seconds=max(1.0, float(args.decode_timeout_seconds or 30.0)),
+        release_commit_sha=args.release_commit_sha,
+        image_digest=args.image_digest,
     )
     output = json.dumps(receipt, ensure_ascii=True, indent=2, sort_keys=True)
     if args.write:

@@ -14,6 +14,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+try:
+    from propertyquarry_advanced_visual_gold_binding import (
+        verify_advanced_visual_binding_receipt,
+    )
+except ModuleNotFoundError:
+    from scripts.propertyquarry_advanced_visual_gold_binding import (
+        verify_advanced_visual_binding_receipt,
+    )
 
 ROOT = Path(__file__).resolve().parents[1]
 ROLE_POLICY_PATH = Path(
@@ -29,6 +37,35 @@ SCHEMA = "propertyquarry.launch_room.v1"
 DEFAULT_DEPLOYMENT_RECEIPT = Path(
     "state/release/propertyquarry-local-deployment.v1.json"
 )
+DEFAULT_ADVANCED_VISUAL_BINDING_RECEIPT = Path(
+    "_completion/property_gold_status/advanced-visual-candidate-binding.json"
+)
+ADVANCED_VISUAL_SOURCE_RECEIPTS = {
+    "walkthrough_quality": Path(
+        "_completion/smoke/property-live-walkthrough-quality-release-gate.json"
+    ),
+    "walkthrough_provider_proof": Path(
+        "_completion/smoke/property-live-walkthrough-provider-proof-release-gate.json"
+    ),
+    "scene_video_readiness": Path(
+        "_completion/scene_video_readiness/release-gate.json"
+    ),
+    "scene_video_readiness_verifier": Path(
+        "_completion/scene_video_readiness/release-gate-verifier.json"
+    ),
+    "scene_video_runtime_status": Path(
+        "_completion/scene_video_readiness/runtime-status.json"
+    ),
+    "scene_video_provider_refresh_packet": Path(
+        "_completion/scene_video_readiness/provider-refresh-packet.json"
+    ),
+    "scene_video_provider_refresh_packet_verifier": Path(
+        "_completion/scene_video_readiness/provider-refresh-packet-verifier.json"
+    ),
+    "privacy": Path(
+        "_completion/security/property-security-posture-release-gate.json"
+    ),
+}
 DEPLOYMENT_SCHEMA = "propertyquarry.local_docker_deployment.v1"
 
 
@@ -175,6 +212,44 @@ def _deployment_status(path: Path, runtime_sha: str) -> dict[str, object]:
         "compose_project": dict(receipt.get("compose") or {}).get("project"),
         "service_count": len(services),
         "observed_at": receipt.get("observed_at"),
+        "release_image_digest": str(
+            dict(receipt.get("local_probe") or {})
+            .get("release_identity", {})
+            .get("release_image_digest", "")
+        ),
+    }
+
+
+def _advanced_visual_status(
+    *,
+    root: Path,
+    path: Path,
+    runtime_sha: str,
+    image_digest: str,
+) -> dict[str, object]:
+    if not path.is_file():
+        return {
+            "status": "unavailable_unbound_producer_receipts",
+            "production_claim": False,
+        }
+    try:
+        receipt = _object(path)
+        errors = verify_advanced_visual_binding_receipt(
+            receipt,
+            expected_release_commit_sha=runtime_sha,
+            expected_release_image_digest=image_digest,
+            source_receipt_paths={
+                name: root / source_path
+                for name, source_path in ADVANCED_VISUAL_SOURCE_RECEIPTS.items()
+            },
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        errors = [f"binding_verifier_error:{type(exc).__name__}"]
+    return {
+        "status": "bound" if not errors else "unavailable_unbound_producer_receipts",
+        "production_claim": not errors,
+        "receipt_path": str(path),
+        "errors": errors,
     }
 
 
@@ -182,6 +257,7 @@ def build_launch_room(
     root: Path = ROOT,
     *,
     deployment_receipt_path: Path | None = None,
+    advanced_visual_binding_receipt_path: Path | None = None,
 ) -> dict[str, object]:
     root = root.resolve(strict=True)
     policy = _object(root / ROLE_POLICY_PATH)
@@ -245,6 +321,23 @@ def build_launch_room(
     deployment = _deployment_status(deployment_receipt_path, runtime_sha)
     deployment_green = deployment["production_launch"] is True
     production_ready = candidate_proof_green and deployment_green and not dirty
+    if advanced_visual_binding_receipt_path is None:
+        advanced_visual_binding_receipt_path = (
+            root / DEFAULT_ADVANCED_VISUAL_BINDING_RECEIPT
+        )
+    elif not advanced_visual_binding_receipt_path.is_absolute():
+        advanced_visual_binding_receipt_path = (
+            root / advanced_visual_binding_receipt_path
+        )
+    advanced_visual = _advanced_visual_status(
+        root=root,
+        path=advanced_visual_binding_receipt_path,
+        runtime_sha=runtime_sha,
+        image_digest=str(deployment.get("release_image_digest") or ""),
+    )
+    advanced_visual["production_claim"] = bool(
+        production_ready and advanced_visual.get("production_claim") is True
+    )
     return {
         "schema": SCHEMA,
         "observed_at": datetime.now(timezone.utc)
@@ -281,10 +374,7 @@ def build_launch_room(
             ),
             "production_claim": production_ready,
         },
-        "advanced_visual_gold": {
-            "status": "unavailable_unbound_producer_receipts",
-            "production_claim": False,
-        },
+        "advanced_visual_gold": advanced_visual,
         "live_deployment": deployment,
         "public_edge": {
             "status": (
@@ -382,6 +472,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             "state/release/propertyquarry-local-deployment.v1.json"
         ),
     )
+    parser.add_argument(
+        "--advanced-visual-binding-receipt",
+        type=Path,
+        help=(
+            "Exact-candidate Advanced Visual Gold binding; defaults to "
+            "_completion/property_gold_status/advanced-visual-candidate-binding.json"
+        ),
+    )
     parser.add_argument("--format", choices=("json", "markdown"), default="markdown")
     parser.add_argument("--write", type=Path)
     parser.add_argument(
@@ -397,6 +495,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = build_launch_room(
             args.root,
             deployment_receipt_path=args.deployment_receipt,
+            advanced_visual_binding_receipt_path=(
+                args.advanced_visual_binding_receipt
+            ),
         )
     except (OSError, LaunchRoomError) as exc:
         print(f"launch-room audit failed: {exc}", file=sys.stderr)

@@ -91,6 +91,24 @@ def test_scene_video_readiness_verifier_passes_known_healthy_gaps() -> None:
     assert result["blockers"] == []
 
 
+def test_scene_video_readiness_verifier_can_scope_advanced_visual_providers() -> None:
+    module = _load_script()
+    receipt = _receipt()
+    receipt["providers"] = [  # type: ignore[index]
+        row
+        for row in receipt["providers"]  # type: ignore[index]
+        if row["requested_provider"] in {"magicfit", "magic", "omagic"}
+    ]
+
+    result = module.validate_receipt(
+        receipt,
+        required_providers=("magicfit", "magic", "omagic"),
+    )
+
+    assert result["status"] == "pass"
+    assert result["checked_providers"] == ["magicfit", "magic", "omagic"]
+
+
 def test_scene_video_readiness_verifier_rejects_magic_routed_to_onemin() -> None:
     module = _load_script()
     receipt = _receipt()

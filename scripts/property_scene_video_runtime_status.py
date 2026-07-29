@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -31,6 +32,14 @@ def _csv_values(raw: str) -> tuple[str, ...]:
 def _load_receipt(path: Path) -> dict[str, Any]:
     loaded = json.loads(path.read_text(encoding="utf-8"))
     return dict(loaded) if isinstance(loaded, dict) else {}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _build_live_report(*, providers: tuple[str, ...], load_shared_env: bool) -> dict[str, Any]:
@@ -72,6 +81,7 @@ def build_runtime_status(
     *,
     source_kind: str,
     source_ref: str,
+    source_receipt_sha256: str = "",
 ) -> dict[str, Any]:
     generated_at = str(report.get("generated_at") or "").strip()
     next_action_by_provider = _next_action_map(report)
@@ -100,6 +110,7 @@ def build_runtime_status(
             "execution_lane": str(row.get("execution_lane") or row.get("provider_backend_key") or provider_key).strip(),
             "runtime_account_count": row.get("runtime_account_count"),
             "credit_state": row.get("credit_state"),
+            "quota_capability_state": row.get("quota_capability_state"),
             "blocking_reason": blockers[0] if blockers else "",
             "blockers": blockers,
             "progress_pct": 100 if bool(row.get("ready")) else 0,
@@ -148,6 +159,9 @@ def build_runtime_status(
     return {
         "contract_name": "propertyquarry.scene_video_runtime_status.v1",
         "generated_at": generated_at,
+        "release_commit_sha": str(report.get("release_commit_sha") or "").strip(),
+        "image_digest": str(report.get("image_digest") or "").strip(),
+        "source_receipt_sha256": str(source_receipt_sha256 or "").strip().lower(),
         "source_contract_name": str(report.get("contract_name") or "").strip(),
         "source_kind": source_kind,
         "source_ref": source_ref,
@@ -249,16 +263,19 @@ def main() -> int:
         report = _load_receipt(receipt_path)
         source_kind = "receipt_file"
         source_ref = str(receipt_path)
+        source_receipt_sha256 = _sha256(receipt_path)
     else:
         providers = _csv_values(args.providers) or DEFAULT_PROVIDERS
         load_shared_env = True if args.load_shared_env is None else bool(args.load_shared_env)
         report = _build_live_report(providers=providers, load_shared_env=load_shared_env)
         source_kind = "live_runtime"
         source_ref = "property_scene_video_readiness_report.build_report"
+        source_receipt_sha256 = ""
     status = build_runtime_status(
         report,
         source_kind=source_kind,
         source_ref=source_ref,
+        source_receipt_sha256=source_receipt_sha256,
     )
     output_path = Path(str(args.output or "").strip()).expanduser() if str(args.output or "").strip() else None
     if args.format == "operator":

@@ -905,7 +905,11 @@ def _web_wheelhouse_install_contract_present(dockerfile: str) -> bool:
     )
 
 
-def build_security_posture_receipt() -> dict[str, object]:
+def build_security_posture_receipt(
+    *,
+    release_commit_sha: str = "",
+    image_digest: str = "",
+) -> dict[str, object]:
     failures: list[str] = []
     env_example = _read(".env.example")
     if "property@propertyquery.com" in env_example:
@@ -1482,6 +1486,8 @@ def build_security_posture_receipt() -> dict[str, object]:
     return {
         "schema": "propertyquarry.security_posture_receipt.v1",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "release_commit_sha": str(release_commit_sha or "").strip().lower(),
+        "image_digest": str(image_digest or "").strip().lower(),
         "status": "pass" if not failures else "fail",
         "required_checks": required_checks,
         "failure_count": len(failures),
@@ -1492,10 +1498,15 @@ def build_security_posture_receipt() -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check PropertyQuarry production security posture.")
+    parser.add_argument("--release-commit-sha", default="")
+    parser.add_argument("--image-digest", default="")
     parser.add_argument("--write", default="", help="Optional path for a JSON receipt.")
     args = parser.parse_args()
 
-    receipt = build_security_posture_receipt()
+    receipt = build_security_posture_receipt(
+        release_commit_sha=args.release_commit_sha,
+        image_digest=args.image_digest,
+    )
     failures = list(receipt.get("failures") or [])
     if args.write:
         out_path = Path(args.write)

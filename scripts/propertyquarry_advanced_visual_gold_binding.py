@@ -87,6 +87,8 @@ SOURCE_RECEIPT_LINKS = (
 REQUIRED_RUNTIME_PROVIDERS = ("magicfit", "magic", "omagic")
 REQUIRED_MEDIA_PROVIDERS = ("magicfit", "omagic")
 READY_CREDIT_STATES = {"funded", "available", "ready", "sufficient"}
+AUTHENTICATED_NO_BALANCE_API_STATE = "authenticated_model_template_ready"
+NO_BALANCE_API_CREDIT_STATE = "not_exposed_by_configured_api"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -293,20 +295,30 @@ def build_advanced_visual_binding_receipt(
             runtime_account_count = 0
             visible_account_gap = -1
         credit_state = str(row.get("credit_state") or "").strip().lower()
+        capability_state = str(
+            row.get("quota_capability_state") or ""
+        ).strip()
+        credit_ready = credit_state in READY_CREDIT_STATES
+        if provider in {"magic", "omagic"}:
+            credit_ready = credit_ready or (
+                credit_state == NO_BALANCE_API_CREDIT_STATE
+                and capability_state == AUTHENTICATED_NO_BALANCE_API_STATE
+            )
         ready = (
             row.get("ready") is True
             and str(row.get("status") or "").strip().lower() == "ready"
             and runtime_account_count > 0
             and visible_account_gap == 0
-            and credit_state in READY_CREDIT_STATES
+            and credit_ready
         )
         account_quota_state[provider] = {
             "ready": ready,
             "runtime_account_count": runtime_account_count,
             "visible_account_gap": visible_account_gap,
             "credit_state": credit_state
-            if credit_state in READY_CREDIT_STATES
+            if credit_ready
             else "invalid",
+            "quota_capability_state": capability_state,
         }
         if not ready:
             errors.append(f"{provider}:runtime_account_or_quota_not_ready")

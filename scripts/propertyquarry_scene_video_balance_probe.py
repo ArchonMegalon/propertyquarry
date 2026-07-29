@@ -295,7 +295,13 @@ def _probe_omagic(values: dict[str, str]) -> dict[str, object]:
     }
 
 
-def build_balance_probe_receipt(*, providers: tuple[str, ...], shared_env_file: Path) -> dict[str, object]:
+def build_balance_probe_receipt(
+    *,
+    providers: tuple[str, ...],
+    shared_env_file: Path,
+    release_commit_sha: str = "",
+    image_digest: str = "",
+) -> dict[str, object]:
     values, _sources = discover_magicfit_env((shared_env_file,))
     results: list[dict[str, object]] = []
     for provider in providers:
@@ -307,6 +313,8 @@ def build_balance_probe_receipt(*, providers: tuple[str, ...], shared_env_file: 
     return {
         "contract_name": "propertyquarry.scene_video_provider_balance_probe.v1",
         "generated_at": _utc_now(),
+        "release_commit_sha": str(release_commit_sha or "").strip().lower(),
+        "image_digest": str(image_digest or "").strip().lower(),
         "status": "pass" if results and not failed else "fail",
         "failed_count": len(failed),
         "provider_count": len(results),
@@ -326,6 +334,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Probe PropertyQuarry scene-video provider state without rendering.")
     parser.add_argument("--providers", default=",".join(SUPPORTED_PROVIDERS))
     parser.add_argument("--shared-env-file", default=str(DEFAULT_SHARED_ENV_FILE))
+    parser.add_argument("--release-commit-sha", default="")
+    parser.add_argument("--image-digest", default="")
     parser.add_argument("--write", default="")
     return parser
 
@@ -342,6 +352,8 @@ def main() -> int:
     receipt = build_balance_probe_receipt(
         providers=providers,
         shared_env_file=Path(args.shared_env_file).expanduser(),
+        release_commit_sha=args.release_commit_sha,
+        image_digest=args.image_digest,
     )
     output = json.dumps(receipt, indent=2, sort_keys=True)
     if args.write:

@@ -724,6 +724,8 @@ def build_walkthrough_quality_receipt(
     frame_sample_timeout_seconds: float = 45.0,
     service_generated_reconstruction_receipt_path: str = "",
     provider_proof_receipt_path: str = "",
+    release_commit_sha: str = "",
+    image_digest: str = "",
 ) -> dict[str, object]:
     service_receipt_path = Path(str(service_generated_reconstruction_receipt_path or "").strip()) if str(service_generated_reconstruction_receipt_path or "").strip() else None
     service_receipt = _load_json(service_receipt_path) if service_receipt_path is not None and service_receipt_path.is_file() else {}
@@ -988,6 +990,8 @@ def build_walkthrough_quality_receipt(
         return {
             "contract_name": "propertyquarry.walkthrough_quality_gate.v1",
             "generated_at": _utc_now(),
+            "release_commit_sha": str(release_commit_sha or "").strip().lower(),
+            "image_digest": str(image_digest or "").strip().lower(),
             "status": "pass" if not failed else "fail",
             "tour_root": str(root),
             "demo_slug": slug,
@@ -996,6 +1000,11 @@ def build_walkthrough_quality_receipt(
             "service_generated_reconstruction_slug": service_slug,
             "service_generated_reconstruction_receipt_path": str(service_receipt_path) if service_receipt_path is not None else "",
             "provider_proof_receipt_path": str(provider_receipt_path) if provider_receipt_path is not None else "",
+            "provider_proof_receipt_sha256": (
+                _sha256(provider_receipt_path)
+                if provider_receipt_path is not None and provider_receipt_path.is_file()
+                else ""
+            ),
             "video_relpath": video_relpath,
             "video_sha256": actual_video_sha256,
             "provider_media_binding": provider_media_binding,
@@ -1032,6 +1041,8 @@ def main() -> int:
     )
     parser.add_argument("--service-generated-reconstruction-receipt", default="")
     parser.add_argument("--provider-proof-receipt", default="")
+    parser.add_argument("--release-commit-sha", default="")
+    parser.add_argument("--image-digest", default="")
     parser.add_argument("--write", default="_completion/smoke/property-live-walkthrough-quality-latest.json")
     args = parser.parse_args()
     receipt = build_walkthrough_quality_receipt(
@@ -1043,6 +1054,8 @@ def main() -> int:
         frame_sample_timeout_seconds=max(1.0, float(args.frame_sample_timeout_seconds or 45.0)),
         service_generated_reconstruction_receipt_path=str(args.service_generated_reconstruction_receipt or "").strip(),
         provider_proof_receipt_path=str(args.provider_proof_receipt or "").strip(),
+        release_commit_sha=args.release_commit_sha,
+        image_digest=args.image_digest,
     )
     output = json.dumps(receipt, ensure_ascii=True, indent=2, sort_keys=True)
     if args.write:

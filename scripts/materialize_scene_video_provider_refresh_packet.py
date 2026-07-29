@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,14 @@ FILE_ENV_RUNTIME_TARGET = "/data/incoming_property_tours/_operator-import-lane/s
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _default_receipt_path() -> Path:
@@ -220,7 +229,12 @@ def build_packet(receipt: dict[str, Any], *, receipt_path: Path) -> dict[str, An
     return {
         "contract_name": "propertyquarry.scene_video_provider_refresh_packet.v1",
         "generated_at": _utc_now(),
+        "release_commit_sha": str(receipt.get("release_commit_sha") or "").strip(),
+        "image_digest": str(receipt.get("image_digest") or "").strip(),
         "source_receipt": str(receipt_path),
+        "source_receipt_sha256": (
+            _sha256(receipt_path) if receipt_path.is_file() else ""
+        ),
         "source_receipt_contract_name": str(receipt.get("contract_name") or ""),
         "source_receipt_generated_at": str(receipt.get("generated_at") or ""),
         "secret_boundary": "This packet names env keys and JSON shapes only; it never contains account emails, passwords, API keys, session cookies, or 1min credentials.",
