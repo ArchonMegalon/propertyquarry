@@ -1294,14 +1294,14 @@ def test_gold_compatibility_aliases_are_strict_launch_tier_claims(
         {
             "generated_at": "2026-07-19T06:00:00+00:00",
             "status": "blocked_missing_provider_modes",
-            "provider_counts": {"3dvista": 1, "magicfit": 0},
-            "ready_provider_modes": ["3dvista"],
-            "core_required_provider_modes": ["3dvista"],
+            "provider_counts": {"matterport": 1, "magicfit": 0},
+            "ready_provider_modes": ["matterport"],
+            "core_required_provider_modes": ["matterport"],
             "advanced_visual_required_provider_modes": ["magicfit"],
             "core_missing_provider_modes": [],
             "advanced_visual_missing_provider_modes": ["magicfit"],
             "operator_missing_provider_modes": ["magicfit"],
-            "required_provider_modes": ["3dvista", "magicfit"],
+            "required_provider_modes": ["matterport", "magicfit"],
             "missing_provider_modes": ["magicfit"],
             "magicfit_playback": {
                 "playback_ok": True,
@@ -5259,9 +5259,13 @@ def test_gold_status_blocks_when_required_tour_provider_modes_are_missing(tmp_pa
         tmp_path / "tour-controls.json",
         {
             "status": "pass",
-            "provider_counts": {"matterport": 1, "3dvista": 0, "pano2vr": 0, "krpano": 0, "magicfit": 0},
-            "ready_provider_modes": ["matterport"],
-            "missing_provider_modes": ["3dvista", "pano2vr", "krpano", "magicfit"],
+            "provider_counts": {"matterport": 0, "3dvista": 0, "pano2vr": 0, "krpano": 0, "magicfit": 0},
+            "ready_provider_modes": [],
+            "core_required_provider_modes": ["matterport"],
+            "core_missing_provider_modes": ["matterport"],
+            "advanced_visual_required_provider_modes": ["magicfit"],
+            "advanced_visual_missing_provider_modes": ["magicfit"],
+            "missing_provider_modes": ["matterport", "magicfit"],
             "next_required_actions": [{"provider": "magicfit", "action": "import a walkthrough"}],
             "delivery_contracts": {
                 "3dvista": {
@@ -5336,7 +5340,11 @@ def test_gold_status_blocks_when_required_tour_provider_modes_are_missing(tmp_pa
     assert receipt["provider_matrix"]["dispatch_acceptance_complete"] is True
     assert receipt["provider_matrix"]["status_readback_complete"] is True
     assert receipt["provider_matrix"]["payload_contracts_ok"] is True
-    assert receipt["tour_controls"]["missing_provider_modes"] == ["3dvista", "magicfit"]
+    assert receipt["tour_controls"]["missing_provider_modes"] == [
+        "matterport",
+        "3dvista",
+        "magicfit",
+    ]
     assert receipt["tour_controls"]["delivery_contracts"]["3dvista"]["blocked_reason"] == "missing_3dvista_export"
     assert "verified non-trial 3DVista" in receipt["tour_controls"]["delivery_contracts"]["3dvista"]["required_to_send"][0]
     assert receipt["operator_import_manifest"]["ready_for_exports"] is True
@@ -5376,7 +5384,7 @@ def test_gold_status_default_live_mobile_receipt_includes_postdeploy_names(tmp_p
     assert _default_receipt_path("live_mobile") == newer.resolve()
 
 
-def test_gold_status_missing_tour_action_excludes_already_verified_modes(tmp_path: Path) -> None:
+def test_gold_status_ignores_missing_optional_tour_provider_modes(tmp_path: Path) -> None:
     performance = _write_json(tmp_path / "performance.json", _performance_payload())
     tour_controls = _write_json(
         tmp_path / "tour-controls.json",
@@ -5443,23 +5451,17 @@ def test_gold_status_missing_tour_action_excludes_already_verified_modes(tmp_pat
         provider_matrix_receipt_path=provider_matrix,
     )
 
-    blocker = next(row for row in receipt["blockers"] if row["area"] == "verified_tour_provider_modes")
-    assert blocker["missing_provider_modes"] == ["3dvista"]
+    assert not any(
+        row["area"] == "verified_tour_provider_modes"
+        for row in receipt["blockers"]
+    )
+    assert receipt["tour_controls"]["core_missing_provider_modes"] == []
     assert receipt["tour_controls"]["provider_blockers"]["krpano"]["reasons"][0]["reason"] == "missing_walkable_scene"
-    assert "MagicFit" not in blocker["action"]
-    assert "Matterport" not in blocker["action"]
-    assert "3DVista" in blocker["action"]
-    assert "Pano2VR" not in blocker["action"]
-    assert "krpano" not in blocker["action"]
-    aggregate_action = receipt["next_required_actions"][-1]
-    assert aggregate_action["provider"] == "3dvista"
-    assert "rejected_sample" not in aggregate_action
-    assert aggregate_action["action"] == "import a verified 3DVista export"
     assert receipt["notes"][0] == "Gold remains blocked until every failing gate below is repaired."
     missing_note = receipt["notes"][-1]
     assert "MagicFit" not in missing_note
     assert "Matterport" not in missing_note
-    assert "3DVista" in missing_note
+    assert "3DVista" not in missing_note
     assert "krpano" not in missing_note
 
 
@@ -6996,7 +6998,7 @@ def test_gold_status_blocks_when_tour_delivery_contract_fails(tmp_path: Path) ->
     assert receipt["status"] == "blocked"
     assert receipt["tour_delivery_contract_shape"]["status"] == "fail"
     assert blocker["matterport_ready_count"] == 0
-    assert "first-party 3DVista readiness" in blocker["action"]
+    assert "topology-verified Matterport readiness" in blocker["action"]
 
 
 def test_gold_status_blocks_when_public_sign_in_account_creation_smoke_is_missing(tmp_path: Path) -> None:

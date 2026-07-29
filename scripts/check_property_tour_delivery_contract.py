@@ -11,9 +11,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_MODES = ("matterport", "3dvista", "pano2vr", "krpano", "magicfit")
-PUBLIC_REQUIRED_PROVIDER_MODES = ("matterport", "3dvista", "magicfit")
+PUBLIC_REQUIRED_PROVIDER_MODES = ("matterport", "magicfit")
 RETIRED_PROVIDER_MODES: tuple[str, ...] = ()
-OPTIONAL_PROVIDER_MODES = ("pano2vr", "krpano")
+OPTIONAL_PROVIDER_MODES = ("3dvista", "pano2vr", "krpano")
 REQUIRED_CONTRACT_KEYS = (
     "schema",
     "provider",

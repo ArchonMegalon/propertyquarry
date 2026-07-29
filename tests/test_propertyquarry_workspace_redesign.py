@@ -21267,7 +21267,8 @@ def test_property_search_agents_have_dedicated_management_page() -> None:
     assert 'data-pqx-launch-top' not in template
     assert 'data-property-start aria-label' not in template
     assert "event.preventDefault();" in script
-    assert "setSearchLaunchBusy(true);" in script
+    assert "setSearchLaunchBusy('preparing');" in script
+    assert "setSearchLaunchBusy('launching');" in script
     assert "searchLaunchInFlight" in script
     assert "root.querySelector('[data-pqx-launch-top]')?.addEventListener('click'" not in script
     assert "const setPropertyInlineStatus = (message) => {" in script
@@ -21990,7 +21991,11 @@ def test_property_shortlist_surface_keeps_results_first_and_restores_desktop_rev
     assert "provisional_facts.get('price_eur')" in body
     assert 'data-candidate-listing-url="${escapeHtml(propertyUrl)}"' in body
     assert "const openRowTarget = () => {" not in body
-    assert 'packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">Open property</a>`' in body
+    assert (
+        'packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">'
+        "${escapeHtml(localizeLiveCopy('Open property'))}</a>`"
+        in body
+    )
     assert 'data-rybbit-prop-cta-key="open_listing" data-rybbit-prop-surface="selected_review">Open listing</a>' in body
     assert (
         "const interactiveTarget = event.target?.closest?.('a, button, input, "
@@ -22001,7 +22006,11 @@ def test_property_shortlist_surface_keeps_results_first_and_restores_desktop_rev
     assert 'aria-current="${index === 0 ? \'true\' : \'false\'}"' in body
     assert body.count("data-workbench-select-candidate") >= 3
     assert 'aria-label="Review {{ candidate.get(\'title\') or \'property\' }}"' in body
-    assert 'aria-label="Review ${escapeHtml(title)}"' in body
+    assert (
+        "aria-label=\"${escapeHtml(localizeLiveCopy('Review'))} "
+        '${escapeHtml(title)}"'
+        in body
+    )
     assert "const selectTrigger = event.target?.closest?.('[data-workbench-select-candidate]');" in body
     assert "selectCandidate(selectTrigger.getAttribute('data-candidate-ref') || row.getAttribute('data-candidate-ref'));" in body
     assert "if (interactiveTarget && interactiveTarget !== row) return;" in body
@@ -26687,7 +26696,12 @@ def test_propertyquarry_workspace_exposes_investment_goal_and_guardrails() -> No
     assert "investment_strategy: investmentResearchEnabled" in brief_script
     assert "min_dscr: investmentResearchEnabled" in brief_script
     assert "const searchGoalField = form.querySelector('select[name=\"search_goal\"]');" in workbench_script
-    assert "{ label: 'What', detail: 'Type, budget, size, move-in.' }" in workbench_script
+    assert "label: localizedWorkbenchCopy('wizard-what', 'What')" in workbench_script
+    assert (
+        "detail: localizedWorkbenchCopy('wizard-what-detail', "
+        "'Type, budget, size, move-in.')"
+        in workbench_script
+    )
     assert "form.dataset.propertyExcludedSteps = 'children,reachability';" in workbench_script
     assert "form.dataset.propertyExcludedSteps = 'areas';" in workbench_script
     assert "const isSearchStep = !activeStep || activeStep === 'search' || activeStep === 'areas';" in workbench_script

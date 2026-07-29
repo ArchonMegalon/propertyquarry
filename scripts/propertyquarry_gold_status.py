@@ -100,7 +100,7 @@ else:
 
 
 GOLD_STATUS_SCHEMA = "propertyquarry.gold_status.v1"
-CORE_REQUIRED_TOUR_PROVIDER_MODES = ("3dvista",)
+CORE_REQUIRED_TOUR_PROVIDER_MODES = ("matterport",)
 ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES = ("magicfit", "magic", "omagic")
 # Legacy combined/operator vocabulary. New release decisions must use the
 # explicit core/advanced fields below rather than inferring policy from it.
@@ -7608,7 +7608,7 @@ def build_gold_status_receipt(
                 "core_required_provider_modes": list(CORE_REQUIRED_TOUR_PROVIDER_MODES),
                 "missing_provider_modes": tour_delivery_contract.get("missing_provider_modes") or [],
                 "failures": list(tour_delivery_contract.get("failures") or [])[:12],
-                "action": "rerun check_property_tour_delivery_contract.py --write and keep public-safe ready_payload, blocked_reason, required_to_send, white-label separation, and first-party 3DVista readiness passing",
+                "action": "rerun check_property_tour_delivery_contract.py --write and keep public-safe ready_payload, blocked_reason, required_to_send, white-label separation, and topology-verified Matterport readiness passing",
             }
         )
     if not receipt_freshness_ok:
@@ -8914,7 +8914,7 @@ def build_gold_status_receipt(
             "failure_count": len(list(tour_delivery_contract.get("failures") or [])) if tour_delivery_contract_receipt_path is not None else None,
             "failures": list(tour_delivery_contract.get("failures") or [])[:12] if tour_delivery_contract_receipt_path is not None else [],
             "receipt_path": str(tour_delivery_contract_receipt_path) if tour_delivery_contract_receipt_path is not None else "",
-            "note": "Public-safe tour delivery contract shape gate: Core Gold requires first-party 3DVista; advanced walkthrough providers remain a separately governed claim.",
+            "note": "Public-safe tour delivery contract shape gate: Core Gold requires topology-verified Matterport; advanced walkthrough providers remain a separately governed claim.",
         },
         "global_market_envelope": {
             **global_market_envelope_details,

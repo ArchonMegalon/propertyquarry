@@ -3304,6 +3304,27 @@ def test_public_tour_topology_verified_matterport_launches_in_real_browser(
     _assert_no_horizontal_overflow(page)
     _assert_visible_controls_meet_mobile_target_floor(page)
 
+    embedded_page = context.new_page()
+    embedded_response = embedded_page.goto(
+        f"{public_tour_browser_server['base_url']}/tours/{slug}"
+        "?pane=floorplan-pane",
+        wait_until="networkidle",
+    )
+    assert embedded_response is not None
+    assert embedded_response.status == 200
+    assert embedded_page.url.endswith(
+        f"/tours/{slug}?pane=floorplan-pane"
+    )
+    embedded_link = embedded_page.get_by_role(
+        "link",
+        name="Open 3D tour",
+    ).first
+    expect(embedded_link).to_be_visible()
+    assert embedded_link.get_attribute("href") == (
+        f"/tours/{slug}/control/matterport"
+    )
+    embedded_page.close()
+
     page.get_by_role("link", name="Full screen").click()
     page.wait_for_url(f"**/tours/{slug}/control/matterport?fullscreen=1")
     expect(page.locator("#provider-frame")).to_be_visible()

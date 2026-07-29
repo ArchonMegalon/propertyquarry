@@ -104,7 +104,7 @@ except ModuleNotFoundError:
 
 
 PROVIDER_MODES = ("matterport", "3dvista", "pano2vr", "krpano", "magicfit")
-CORE_REQUIRED_PROVIDER_MODES = ("3dvista",)
+CORE_REQUIRED_PROVIDER_MODES = ("matterport",)
 ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES = ("magicfit",)
 # Compatibility envelope for operator tooling that historically treated the
 # interactive tour and walkthrough lanes as one Gold requirement.
@@ -1643,9 +1643,7 @@ def _provider_delivery_contracts(
             provider not in missing
             and int(provider_counts.get(provider) or 0) > 0
         )
-        surface_blocker = provider in missing or (
-            provider == "matterport" and not provider_is_ready
-        )
+        surface_blocker = not provider_is_ready
         contracts[provider] = {
             "schema": "propertyquarry.tour_delivery_contract.v1",
             "provider": provider,
@@ -2034,8 +2032,8 @@ def build_property_tour_control_receipt(
             "require_all_provider_modes": bool(require_all_provider_modes),
             "tours": tours,
             "notes": [
-                "Core Gold requires verified first-party 3DVista for interactive customer tour delivery.",
-                "Matterport is retained for historical/internal audit only and does not satisfy or block the public delivery gate.",
+                "Core Gold requires a fresh topology-verified Matterport capture for interactive customer tour delivery.",
+                "3DVista remains an optional provider lane and a walkable claim is rejected unless its export contains multiple spatial panorama nodes.",
                 "Pano2VR is tracked as an optional/internal export lane and does not block the public tour-control gold gate.",
                 "Optional panorama export lanes can count as ready from verified local evidence even when the panorama control shell stays intentionally hidden on the public route.",
                 "MagicFit is an Advanced Visual Gold walkthrough lane and is ready only when the manifest points to a receipt-backed local playable video asset or a live-probed allowlisted hosted video URL with provider=magicfit.",

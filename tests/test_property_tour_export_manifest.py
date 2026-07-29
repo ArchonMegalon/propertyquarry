@@ -282,7 +282,7 @@ def test_materialize_property_tour_export_manifest_prepares_drop_dir_readmes(tmp
         assert "Missing now:" in body
         assert "import_property_tour_exports.py" in body
         assert "Single-provider dry import example:" in body
-        assert "Core Gold requires the verified first-party 3DVista customer tour" in body
+        assert "Core Gold requires a fresh topology-verified Matterport customer tour" in body
         assert "MagicFit is prepared here for the separate Advanced Visual Gold lane" in body
         assert "exact receipt, playback, quota, privacy, and isolation evidence" in body
         assert "Pano2VR is an optional/internal export lane" in body

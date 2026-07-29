@@ -4259,6 +4259,7 @@ def _tour_html(
     hostname: str = "",
     path: str = "",
     nonce: str = "",
+    validated_matterport_control_path: str = "",
     validated_3dvista_control_path: str = "",
     walkthrough_acceptance: dict[str, object] | None = None,
 ) -> str:
@@ -4284,11 +4285,16 @@ def _tour_html(
             _PUBLIC_TOUR_RUNTIME_ACCEPTANCE_TOKEN
         )
     slug = str(payload.get("slug") or "").strip()
-    # Retired Matterport receipts may remain in historical bundles, but they
-    # are not a public control or CTA authority.
     matterport_url = ""
     three_d_vista_url = ""
     if slug:
+        expected_matterport_control_path = (
+            f"/tours/{urllib.parse.quote(slug, safe='')}/control/matterport"
+        )
+        if validated_matterport_control_path == expected_matterport_control_path:
+            # The private URL and topology receipt were validated before
+            # redaction. Render only the same-origin control path.
+            matterport_url = expected_matterport_control_path
         expected_3dvista_control_path = f"/tours/{urllib.parse.quote(slug, safe='')}/control/3dvista"
         if validated_3dvista_control_path == expected_3dvista_control_path:
             # The raw private receipt was validated before the HTML payload
@@ -12668,6 +12674,11 @@ def public_tour_page(
             hostname=hostname,
             path=request_path(request),
             nonce=nonce,
+            validated_matterport_control_path=(
+                primary_control_path
+                if primary_control_path.endswith("/control/matterport")
+                else ""
+            ),
             validated_3dvista_control_path=(
                 primary_control_path
                 if primary_control_path.endswith("/control/3dvista")

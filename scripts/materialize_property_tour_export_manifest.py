@@ -165,7 +165,7 @@ def _drop_readme_body(*, row: dict[str, Any], provider: str, slug: str, drop_sta
             "",
             f"After exports are copied, run: {manifest.get('next_command')}",
             "Then rerun: python /app/scripts/verify_property_tour_controls.py --tour-root /data/public_property_tours --require-all-provider-modes --summary-only",
-            "Core Gold requires the verified first-party 3DVista customer tour. MagicFit is prepared here for the separate Advanced Visual Gold lane; Magic and OMagic remain governed scene-video providers outside this import folder.",
+            "Core Gold requires a fresh topology-verified Matterport customer tour. 3DVista remains an optional import lane and must contain multiple spatial panorama nodes for a walkable claim. MagicFit is prepared here for the separate Advanced Visual Gold lane; Magic and OMagic remain governed scene-video providers outside this import folder.",
             "Advanced Visual Gold must stay unavailable until every claimed provider has exact receipt, playback, quota, privacy, and isolation evidence.",
             "Pano2VR is an optional/internal export lane and must stay hidden unless a clean verified export is deliberately enabled.",
             "",
