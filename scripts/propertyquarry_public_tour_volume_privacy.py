@@ -46,6 +46,10 @@ EXPLICIT_PRIVATE_KEYS = frozenset(
         "source_ref",
         "source_virtual_tour_url",
         "private_exact_location",
+        "video_coverage_proof",
+        "video_provider",
+        "video_provider_key",
+        "video_render_provider",
     }
 )
 PRIVATE_KEY_MARKERS = (

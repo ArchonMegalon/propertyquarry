@@ -191,6 +191,7 @@ def test_repair_preserves_governed_generated_viewer_contract(
                 ),
                 "video_provider": "propertyquarry_generated_reconstruction",
                 "video_provider_key": "propertyquarry_generated_reconstruction",
+                "video_render_provider": "internal_render_lane",
                 "video_coverage_proof": "boundary_verified_frame_continuation",
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
@@ -237,6 +238,13 @@ def test_repair_preserves_governed_generated_viewer_contract(
     assert reconstruction["walkthrough_sidecar_relpath"] == (
         "generated-reconstruction/walkthrough.quality.json"
     )
+    for key in (
+        "video_provider",
+        "video_provider_key",
+        "video_render_provider",
+        "video_coverage_proof",
+    ):
+        assert key not in public
     assert "recipient_email" not in reconstruction["walkable_scene"]
     assert {
         row["path"] for row in public["public_assets"]
@@ -260,4 +268,19 @@ def test_repair_preserves_governed_generated_viewer_contract(
     )
     assert "manifest_relpath" not in public_api_reconstruction
     assert "walkthrough_sidecar_relpath" not in public_api_reconstruction
+    private = json.loads(
+        (bundle / "tour.private.json").read_text(encoding="utf-8")
+    )
+    private_fields = private["legacy_private_fields"]
+    assert private_fields["video_provider"] == (
+        "propertyquarry_generated_reconstruction"
+    )
+    assert private_fields["video_provider_key"] == (
+        "propertyquarry_generated_reconstruction"
+    )
+    assert private_fields["video_render_provider"] == "internal_render_lane"
+    assert private_fields["video_coverage_proof"] == (
+        "boundary_verified_frame_continuation"
+    )
+    assert stat.S_IMODE((bundle / "tour.private.json").stat().st_mode) == 0o600
     assert audit_or_repair(root)["status"] == "pass"
