@@ -60,6 +60,27 @@
           'Sending': 'Wird gesendet',
           'Checking again': 'Erneute Prüfung',
           'Update': 'Aktualisierung',
+          'Review': 'Prüfen',
+          'Open property': 'Immobilie öffnen',
+          'Open listing': 'Angebot öffnen',
+          'matching homes': 'passende Immobilien',
+          'matching opportunities': 'passende Anlagechancen',
+          'saved homes': 'gespeicherte Immobilien',
+          'saved opportunities': 'gespeicherte Anlagechancen',
+          'Fit': 'Eignung',
+          'Open the property page for more context.': 'Öffnen Sie die Immobilienseite für weitere Details.',
+          'No price published': 'Kein Preis veröffentlicht',
+          '3D tour available': '3D-Tour verfügbar',
+          '3D tour queued': '3D-Tour eingeplant',
+          'Request 3D tour': '3D-Tour anfordern',
+          'Preparing 3D tour.': '3D-Tour wird vorbereitet.',
+          'Walkthrough available': 'Rundgang verfügbar',
+          'Walkthrough queued': 'Rundgang eingeplant',
+          'Request walkthrough': 'Rundgang anfordern',
+          'Request when you want a guided walkthrough.': 'Fordern Sie bei Bedarf einen geführten Rundgang an.',
+          'Open area map for': 'Gebietskarte öffnen:',
+          'Tune search': 'Suche anpassen',
+          'Hide search settings': 'Sucheinstellungen ausblenden',
           'all found homes are checked': 'alle gefundenen Immobilien sind geprüft',
           'home details are still loading': 'Immobiliendetails werden noch geladen',
           'complete': 'abgeschlossen',
@@ -113,6 +134,27 @@
                 'Sending': 'Enviando',
                 'Checking again': 'Revisando de nuevo',
                 'Update': 'Actualización',
+                'Review': 'Revisar',
+                'Open property': 'Abrir propiedad',
+                'Open listing': 'Abrir anuncio',
+                'matching homes': 'propiedades adecuadas',
+                'matching opportunities': 'oportunidades adecuadas',
+                'saved homes': 'propiedades guardadas',
+                'saved opportunities': 'oportunidades guardadas',
+                'Fit': 'Compatibilidad',
+                'Open the property page for more context.': 'Abra la página de la propiedad para ver más detalles.',
+                'No price published': 'Precio no publicado',
+                '3D tour available': 'Recorrido 3D disponible',
+                '3D tour queued': 'Recorrido 3D en cola',
+                'Request 3D tour': 'Solicitar recorrido 3D',
+                'Preparing 3D tour.': 'Preparando recorrido 3D.',
+                'Walkthrough available': 'Recorrido guiado disponible',
+                'Walkthrough queued': 'Recorrido guiado en cola',
+                'Request walkthrough': 'Solicitar recorrido guiado',
+                'Request when you want a guided walkthrough.': 'Solicítelo cuando desee un recorrido guiado.',
+                'Open area map for': 'Abrir mapa de la zona:',
+                'Tune search': 'Ajustar búsqueda',
+                'Hide search settings': 'Ocultar configuración de búsqueda',
                 'all found homes are checked': 'todas las propiedades encontradas están revisadas',
                 'home details are still loading': 'los detalles de las propiedades aún se están cargando',
                 'complete': 'completado',
@@ -137,6 +179,21 @@
         return clientLocale.startsWith('de')
           ? `${homesFound[1]} Immobilien gefunden`
           : `${homesFound[1]} propiedades encontradas`;
+      }
+      const matchingTotal = text.match(/^(\d+) (matching homes|matching opportunities|saved homes|saved opportunities)$/i);
+      if (matchingTotal) {
+        return `${matchingTotal[1]} ${liveCopyCatalog[String(matchingTotal[2]).toLowerCase()] || matchingTotal[2]}`;
+      }
+      const roomsLabel = text.match(/^(\d+(?:[.,]\d+)?) rooms?(\s*\|\s*.+)?$/i);
+      if (roomsLabel) {
+        const unit = clientLocale.startsWith('de')
+          ? 'Zimmer'
+          : (roomsLabel[1] === '1' ? 'habitación' : 'habitaciones');
+        return `${roomsLabel[1]} ${unit}${roomsLabel[2] || ''}`;
+      }
+      const fitScore = text.match(/^Fit (\d+)$/i);
+      if (fitScore) {
+        return `${liveCopyCatalog.Fit} ${fitScore[1]}`;
       }
       const toReview = text.match(/^(\d+) to review$/i);
       if (toReview) {
@@ -1372,7 +1429,9 @@
       const isOpen = Boolean(open);
       finetunePanelNode.hidden = !isOpen;
       finetuneToggleNode.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-      finetuneToggleNode.textContent = isOpen ? 'Hide search settings' : 'Tune search';
+      finetuneToggleNode.textContent = localizeLiveCopy(
+        isOpen ? 'Hide search settings' : 'Tune search'
+      );
     };
     finetuneToggleNode?.addEventListener('click', () => {
       setFinetunePanelOpen(finetunePanelNode?.hidden);
@@ -3839,7 +3898,7 @@
           || '';
         const primaryPrice = typeof derivedPrimaryPrice === 'number'
           ? `${String(candidate?.currency_code || facts?.currency_code || 'EUR').trim() || 'EUR'} ${Math.round(derivedPrimaryPrice).toLocaleString('en-US')}`
-          : String(derivedPrimaryPrice || '').trim() || 'No price published';
+          : String(derivedPrimaryPrice || '').trim() || localizeLiveCopy('No price published');
         const secondaryPrice = String(candidate?.costs_display || candidate?.price_per_sqm_display || candidate?.rent_display || facts?.price_per_sqm_display || '').trim();
         const layout = String(candidate?.layout_display || '').trim();
         const fitSummary = summarizeCandidateCopy(
@@ -3850,9 +3909,9 @@
           || 'Open the property page for more context.'
         );
 	        const thumb = shortlistSurface
-	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="Open area map for ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span>'}</button>`
+	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span>'}</button>`
 	          : (previewUrl
-	            ? `<span class="pqx-thumb"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="Open area map for ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async"></button></span>`
+	            ? `<span class="pqx-thumb"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async"></button></span>`
 	            : '');
         const tour = (candidate?.tour && typeof candidate.tour === 'object') ? candidate.tour : {};
         const tourUrl = directHostedTourUrl(tour.url, candidate?.tour_url, tour.embed_url, tour.provider_url, candidate?.vendor_tour_url, candidate?.source_virtual_tour_url);
@@ -3897,20 +3956,20 @@
           ? Math.max(0, Math.min(100, flythroughProgressRaw))
           : (flythroughUrl ? 100 : 0);
         const factChips = [
-          layout ? `<span class="pqx-result-fact">${escapeHtml(layout)}</span>` : '',
+          layout ? `<span class="pqx-result-fact">${escapeHtml(localizeLiveCopy(layout))}</span>` : '',
           tourUrl
-            ? `<a class="pqx-result-fact pqx-result-tour-link" href="${escapeHtml(tourUrl)}" title="${escapeHtml(tourDetail || '3D tour available')}" aria-label="3D tour available">3D tour available</a>`
+            ? `<a class="pqx-result-fact pqx-result-tour-link" href="${escapeHtml(tourUrl)}" title="${escapeHtml(localizeLiveCopy(tourDetail || '3D tour available'))}" aria-label="${escapeHtml(localizeLiveCopy('3D tour available'))}">${escapeHtml(localizeLiveCopy('3D tour available'))}</a>`
             : '',
           flythroughUrl
-            ? `<a class="pqx-result-fact pqx-result-tour-link" href="${escapeHtml(flythroughUrl)}" title="${escapeHtml(flythroughDetail || 'Walkthrough available')}" aria-label="Walkthrough available">Walkthrough available</a>`
+            ? `<a class="pqx-result-fact pqx-result-tour-link" href="${escapeHtml(flythroughUrl)}" title="${escapeHtml(localizeLiveCopy(flythroughDetail || 'Walkthrough available'))}" aria-label="${escapeHtml(localizeLiveCopy('Walkthrough available'))}">${escapeHtml(localizeLiveCopy('Walkthrough available'))}</a>`
             : '',
         ].filter(Boolean).join('');
         const actions = [
-          `<button class="pqx-result-open pqx-result-open-button" type="button" data-workbench-select-candidate data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="Review ${escapeHtml(title)}">Review</button>`,
-          packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">Open property</a>` : '',
-          propertyUrl && !shortlistSurface ? `<a class="pqx-result-open" href="${escapeHtml(propertyUrl)}" target="_blank" rel="noopener noreferrer">Open listing</a>` : '',
-          tourPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(tourProgress)}%;" title="${escapeHtml(tourTooltip)}" aria-label="${escapeHtml(tourTooltip)}">${escapeHtml(tourLabel)}</button>` : '',
-          flythroughPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(flythroughProgress)}%;" title="${escapeHtml(flythroughTooltip)}" aria-label="${escapeHtml(flythroughTooltip)}">${escapeHtml(flythroughLabel)}</button>` : '',
+          `<button class="pqx-result-open pqx-result-open-button" type="button" data-workbench-select-candidate data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Review'))} ${escapeHtml(title)}">${escapeHtml(localizeLiveCopy('Review'))}</button>`,
+          packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">${escapeHtml(localizeLiveCopy('Open property'))}</a>` : '',
+          propertyUrl && !shortlistSurface ? `<a class="pqx-result-open" href="${escapeHtml(propertyUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(localizeLiveCopy('Open listing'))}</a>` : '',
+          tourPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(tourProgress)}%;" title="${escapeHtml(localizeLiveCopy(tourTooltip))}" aria-label="${escapeHtml(localizeLiveCopy(tourTooltip))}">${escapeHtml(localizeLiveCopy(tourLabel))}</button>` : '',
+          flythroughPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(flythroughProgress)}%;" title="${escapeHtml(localizeLiveCopy(flythroughTooltip))}" aria-label="${escapeHtml(localizeLiveCopy(flythroughTooltip))}">${escapeHtml(localizeLiveCopy(flythroughLabel))}</button>` : '',
           shortlistSurface ? `<button class="pqx-result-open pqx-result-open-button" type="button" data-pw-decision-state="archived" data-candidate-ref="${escapeHtml(candidateRef)}" data-pw-remove-row>Remove</button>` : '',
         ].filter(Boolean).join('');
         const personalFitScore = candidatePersonalFitScore(candidate);
@@ -3923,14 +3982,14 @@
                   <span class="pqx-result-kicker"><span class="pqx-rank">#${escapeHtml(candidate?.rank || index + 1)}</span>${location ? `<span>${escapeHtml(location)}</span>` : ''}</span>
                   <span class="pqx-result-title">${escapeHtml(title)}</span>
                   <span class="pqx-result-facts">${factChips}</span>
-                  <span class="pqx-note">${escapeHtml(fitSummary)}</span>
+                  <span class="pqx-note">${escapeHtml(localizedLiveMessage(fitSummary, 'Open the property page for more context.'))}</span>
                 </span>
               </span>
             </span>
             <span class="pqx-result-aside">
               <span class="pqx-result-value-row">
                 <strong class="pqx-result-price">${escapeHtml(primaryPrice)}</strong>
-                ${personalFitScore !== null ? `<span class="pqx-result-fit-score">Fit ${escapeHtml(personalFitScore)}</span>` : ''}
+                ${personalFitScore !== null ? `<span class="pqx-result-fit-score">${escapeHtml(localizeLiveCopy(`Fit ${personalFitScore}`))}</span>` : ''}
               </span>
               ${secondaryPrice ? `<span class="pqx-result-secondary">${escapeHtml(secondaryPrice)}</span>` : ''}
               <span class="pqx-result-actions">${actions}</span>
@@ -3943,7 +4002,7 @@
           <div class="pqx-result-panel-head">
             <div class="pqx-results-headline">
               <div class="pqx-note pqx-results-summary-row">
-                <a class="pqx-results-summary-link" href="#results-list"><b>${rows.length}</b> ${summaryLabel}</a>
+                <a class="pqx-results-summary-link" href="#results-list"><b>${rows.length}</b> ${escapeHtml(localizeLiveCopy(summaryLabel))}</a>
                 ${filteredLabel}
                 ${scoreDemotedLabel}
               </div>

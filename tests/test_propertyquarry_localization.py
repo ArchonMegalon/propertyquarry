@@ -161,6 +161,110 @@ def test_locale_cookie_is_host_only_http_only_lax_and_secure_on_https() -> None:
     assert "Secure" not in local_cookie
 
 
+def test_terminal_result_shell_localizes_dynamic_counts_facts_and_actions() -> None:
+    source = _propertyquarry_document(
+        """
+        <a>Saved pages</a><a>Edit search</a><h2>At a glance</h2>
+        <h2>Next step</h2><h2>Premium next step</h2><strong>Best so far</strong>
+        <span>40 matching homes</span><span>2 rooms | 80.0 m2</span>
+        <span>Fit 56</span><span>Monthly total EUR 690</span>
+        <p>It is meaningfully cheaper.</p><p>Tour not available yet.</p>
+        <a>Open listing</a><section aria-label="Selected property">
+        <span>Media preview not available.</span><span>Best part</span>
+        <span>Keep in mind</span><span>Price level</span><span>Not available yet.</span>
+        <button>Adjust search</button><button>Viewing requested</button>
+        <button>Documents requested</button><button>Offer candidate</button>
+        <button>Archived</button><h2>Premium market report</h2>
+        <a>Open checkout</a>
+        <button aria-label="Review Helle Gartenwohnung">Review</button>
+        <button aria-label="Open area map for Helle Gartenwohnung">Map</button>
+        <span>Missing 360 pending, address, heating</span>
+        <small>EUR 49 | Use only if Helle Gartenwohnung needs wider market context before deciding.</small>
+        </section>
+        """
+    ).decode("utf-8")
+
+    german = localize_propertyquarry_html(
+        source,
+        locale="de-AT",
+        path="/app/properties",
+        query_string=b"",
+    )
+    for expected in (
+        "Gespeicherte Seiten",
+        "Suche bearbeiten",
+        "Auf einen Blick",
+        "Nächster Schritt",
+        "Premium-Nächster Schritt",
+        "Bisher am besten",
+        "40 passende Immobilien",
+        "2 Zimmer | 80.0 m2",
+        "Eignung 56",
+        "Monatlich gesamt EUR 690",
+        "Deutlich günstiger.",
+        "Noch keine Tour verfügbar.",
+        "Angebot öffnen",
+        'aria-label="Ausgewählte Immobilie"',
+        "Medienvorschau noch nicht verfügbar.",
+        "Größter Vorteil",
+        "Zu beachten",
+        "Preisniveau",
+        "Noch nicht verfügbar.",
+        "Suche anpassen",
+        "Besichtigung angefragt",
+        "Unterlagen angefragt",
+        "Kaufangebot erwägen",
+        "Archiviert",
+        "Premium-Marktbericht",
+        "Zur Kasse",
+        'aria-label="Prüfen: Helle Gartenwohnung"',
+        'aria-label="Gebietskarte öffnen: Helle Gartenwohnung"',
+        "Fehlend: 360°-Ansicht ausstehend, Adresse, Heizung",
+        "EUR 49 | Nur verwenden, wenn Helle Gartenwohnung vor der Entscheidung einen breiteren Marktkontext benötigt.",
+    ):
+        assert expected in german
+
+    spanish = localize_propertyquarry_html(
+        source,
+        locale="es-CR",
+        path="/app/properties",
+        query_string=b"",
+    )
+    for expected in (
+        "Páginas guardadas",
+        "Editar búsqueda",
+        "De un vistazo",
+        "Siguiente paso",
+        "Siguiente paso premium",
+        "La mejor hasta ahora",
+        "40 propiedades adecuadas",
+        "2 habitaciones | 80.0 m2",
+        "Compatibilidad 56",
+        "Total mensual EUR 690",
+        "Es considerablemente más económica.",
+        "El recorrido aún no está disponible.",
+        "Abrir anuncio",
+        'aria-label="Propiedad seleccionada"',
+        "La vista previa multimedia aún no está disponible.",
+        "Punto fuerte",
+        "Tenga en cuenta",
+        "Nivel de precio",
+        "Aún no disponible.",
+        "Ajustar búsqueda",
+        "Visita solicitada",
+        "Documentos solicitados",
+        "Candidata para oferta",
+        "Archivada",
+        "Informe de mercado premium",
+        "Ir al pago",
+        'aria-label="Revisar: Helle Gartenwohnung"',
+        'aria-label="Abrir mapa de la zona: Helle Gartenwohnung"',
+        "Falta: vista 360 pendiente, dirección, calefacción",
+        "EUR 49 | Úselo solo si Helle Gartenwohnung necesita un contexto de mercado más amplio antes de decidir.",
+    ):
+        assert expected in spanish
+
+
 def test_all_public_catalogs_cover_the_global_route_shell_without_review_claim() -> None:
     for locale in PROPERTYQUARRY_PUBLIC_LOCALES:
         coverage = propertyquarry_translation_coverage(locale)

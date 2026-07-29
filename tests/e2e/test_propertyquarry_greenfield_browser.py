@@ -1896,6 +1896,171 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
         context.close()
 
 
+def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = {
+        "rank": 1,
+        "candidate_ref": "localized-result-1",
+        "title": "Helle Gartenwohnung",
+        "location_label": "8052 Graz",
+        "price_display": "€ 690",
+        "layout_display": "2 rooms | 80.0 m2",
+        "fit_score": 56,
+        "personal_fit_score": 56,
+        "fit_summary": "It is meaningfully cheaper.",
+        "source_url": "https://example.com/listing",
+        "property_url": "https://example.com/listing",
+        "tour_status": "unavailable",
+        "property_facts": {
+            "rooms": 2,
+            "area_sqm": 80,
+            "monthly_total_eur": 690,
+        },
+    }
+
+    def _processed_run_status(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        **_kwargs,
+    ) -> dict[str, object]:
+        return {
+            "generated_at": "2026-07-29T09:00:00+00:00",
+            "created_at": "2026-07-29T08:55:00+00:00",
+            "updated_at": "2026-07-29T09:00:00+00:00",
+            "run_id": run_id,
+            "principal_id": principal_id,
+            "status": "processed",
+            "progress": 100,
+            "current_step": "results_finalizing",
+            "message": "This search used an earlier brief.",
+            "provider_display_total": 1,
+            "selected_platform_count": 1,
+            "summary": {
+                "status": "processed",
+                "progress": 100,
+                "provider_display_total": 1,
+                "provider_total": 1,
+                "sources_total": 1,
+                "sources_completed": 1,
+                "found_listing_total": 1,
+                "scanned_listing_total": 1,
+                "to_review_listing_total": 0,
+                "ranked_candidates": [candidate],
+            },
+            "ranked_candidates": [candidate],
+            "events": [],
+            "research_tasks": [],
+        }
+
+    monkeypatch.setattr(ProductService, "get_property_search_run_status", _processed_run_status)
+    base_url = str(propertyquarry_browser_server["base_url"])
+    cases = (
+        (
+            "de-AT",
+            False,
+            1440,
+            900,
+            (
+                "Gespeicherte Seiten",
+                "Suche bearbeiten",
+                "passende Immobilien",
+                "2 Zimmer | 80.0 m2",
+                "Eignung 56",
+                "Deutlich günstiger.",
+                "Angebot öffnen",
+                "Medienvorschau noch nicht verfügbar.",
+                "Größter Vorteil",
+                "Zu beachten",
+                "Preisniveau",
+                "Suche anpassen",
+                "Besichtigung angefragt",
+                "Unterlagen angefragt",
+                "Kaufangebot erwägen",
+                "Archiviert",
+                "Premium-Marktbericht",
+                "Zur Kasse",
+            ),
+        ),
+        (
+            "es-CR",
+            True,
+            390,
+            844,
+            (
+                "Páginas guardadas",
+                "Editar búsqueda",
+                "propiedades adecuadas",
+                "2 habitaciones | 80.0 m2",
+                "Compatibilidad 56",
+                "Es considerablemente más económica.",
+                "Abrir anuncio",
+                "La vista previa multimedia aún no está disponible.",
+                "Punto fuerte",
+                "Tenga en cuenta",
+                "Nivel de precio",
+                "Ajustar búsqueda",
+                "Visita solicitada",
+                "Documentos solicitados",
+                "Candidata para oferta",
+                "Archivada",
+                "Informe de mercado premium",
+                "Ir al pago",
+            ),
+        ),
+    )
+    for locale, mobile, width, height, expected_copy in cases:
+        context = _new_context(
+            browser,
+            mobile=mobile,
+            width=width,
+            height=height,
+            locale=locale,
+        )
+        page = context.new_page()
+        page_errors: list[str] = []
+        page.on("pageerror", lambda error: page_errors.append(str(error)))
+        try:
+            response = page.goto(
+                f"{base_url}/app/properties?run_id=run-processed-localized",
+                wait_until="domcontentloaded",
+            )
+            assert response is not None and response.ok
+            expect(page.locator("#results-list")).to_be_visible()
+            for copy in expected_copy:
+                expect(page.locator("body")).to_contain_text(copy)
+            body_text = page.locator("body").inner_text()
+            for leaked_copy in (
+                "Saved pages",
+                "Edit search",
+                "matching homes",
+                "2 rooms",
+                "Fit 56",
+                "It is meaningfully cheaper.",
+                "Tour not available yet.",
+                "Open listing",
+                "Media preview not available.",
+                "Best part",
+                "Keep in mind",
+                "Price level",
+                "Adjust search",
+                "Viewing requested",
+                "Documents requested",
+                "Offer candidate",
+                "Premium market report",
+                "Open checkout",
+            ):
+                assert leaked_copy not in body_text
+            _assert_no_viewport_or_text_cutoff(page)
+            assert page_errors == []
+        finally:
+            context.close()
+
+
 def _visible_button_action_keys(page: Page) -> set[str]:
     return set(
         page.locator("button:visible:not([disabled])").evaluate_all(

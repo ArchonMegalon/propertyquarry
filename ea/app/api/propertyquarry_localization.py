@@ -201,6 +201,79 @@ _DE_AT = {
     "Strong wish": "Starker Wunsch",
     "Must have": "Unverzichtbar",
     "saved homes": "gespeicherte Immobilien",
+    "matching homes": "passende Immobilien",
+    "matching opportunities": "passende Anlagechancen",
+    "Saved pages": "Gespeicherte Seiten",
+    "Edit search": "Suche bearbeiten",
+    "At a glance": "Auf einen Blick",
+    "Next step": "Nächster Schritt",
+    "Premium next step": "Premium-Nächster Schritt",
+    "Best so far": "Bisher am besten",
+    "Fit": "Eignung",
+    "Monthly total": "Monatlich gesamt",
+    "It is meaningfully cheaper.": "Deutlich günstiger.",
+    "Tour not available yet.": "Noch keine Tour verfügbar.",
+    "Open listing": "Angebot öffnen",
+    "Open the property page for more context.": "Öffnen Sie die Immobilienseite für weitere Details.",
+    "No price published": "Kein Preis veröffentlicht",
+    "3D tour available": "3D-Tour verfügbar",
+    "3D tour queued": "3D-Tour eingeplant",
+    "Request 3D tour": "3D-Tour anfordern",
+    "Preparing 3D tour.": "3D-Tour wird vorbereitet.",
+    "Walkthrough available": "Rundgang verfügbar",
+    "Walkthrough queued": "Rundgang eingeplant",
+    "Request walkthrough": "Rundgang anfordern",
+    "Request when you want a guided walkthrough.": "Fordern Sie bei Bedarf einen geführten Rundgang an.",
+    "More": "Mehr",
+    "Selected property": "Ausgewählte Immobilie",
+    "Provider": "Anbieter",
+    "Operating costs not listed": "Betriebskosten nicht angegeben",
+    "Media preview not available.": "Medienvorschau noch nicht verfügbar.",
+    "The listing is still available, and your saved property details are unchanged.": "Das Angebot ist weiterhin verfügbar; Ihre gespeicherten Immobiliendetails bleiben unverändert.",
+    "Best part": "Größter Vorteil",
+    "Keep in mind": "Zu beachten",
+    "Price level": "Preisniveau",
+    "Return": "Rendite",
+    "Not available yet.": "Noch nicht verfügbar.",
+    "This home matches the current brief.": "Diese Immobilie entspricht dem aktuellen Suchprofil.",
+    "This opportunity matches the current brief.": "Diese Anlagechance entspricht dem aktuellen Suchprofil.",
+    "No major drawback yet.": "Noch kein wesentlicher Nachteil erkannt.",
+    "Next question": "Nächste Frage",
+    "Next to check": "Als Nächstes prüfen",
+    "Financial picture": "Finanzübersicht",
+    "Market data": "Marktdaten",
+    "Adjust search": "Suche anpassen",
+    "Tune search": "Suche anpassen",
+    "Hide search settings": "Sucheinstellungen ausblenden",
+    "Viewing requested": "Besichtigung angefragt",
+    "Documents requested": "Unterlagen angefragt",
+    "Offer candidate": "Kaufangebot erwägen",
+    "Archived": "Archiviert",
+    "Property decision reaction": "Reaktion auf die Immobilie",
+    "Yes": "Ja",
+    "Maybe": "Vielleicht",
+    "No": "Nein",
+    "Hide": "Ausblenden",
+    "Choose one so the next search gets better.": "Wählen Sie eine Option, damit die nächste Suche besser wird.",
+    "What worked": "Was überzeugt hat",
+    "Loading the next things to check.": "Die nächsten Prüfpunkte werden geladen.",
+    "What should change next time?": "Was soll sich bei der nächsten Suche ändern?",
+    "Save decision": "Entscheidung speichern",
+    "Save": "Speichern",
+    "Only pay for the next move when the finished search or selected home needs it.": "Zahlen Sie nur für den nächsten Schritt, wenn die abgeschlossene Suche oder die ausgewählte Immobilie ihn benötigt.",
+    "Upgrade": "Upgrade",
+    "Premium market report": "Premium-Marktbericht",
+    "Offer": "Angebot",
+    "Open checkout": "Zur Kasse",
+    "Concierge shortlist refresh": "Concierge-Aktualisierung der Auswahlliste",
+    "EUR 99 | Use a paid rerun only when this shortlist needs a sharper second pass.": "EUR 99 | Nutzen Sie einen bezahlten Neulauf nur, wenn diese Auswahlliste einen präziseren zweiten Durchgang benötigt.",
+    "Agent-ready export": "Maklerfertiger Export",
+    "EUR 19 | Export the selected result only when a tighter handoff would save real time.": "EUR 19 | Exportieren Sie das ausgewählte Ergebnis nur, wenn eine kompaktere Übergabe wirklich Zeit spart.",
+    "Share this home": "Diese Immobilie teilen",
+    "Share results": "Ergebnisse teilen",
+    "Best points": "Die wichtigsten Vorteile",
+    "No match notes yet.": "Noch keine Hinweise zur Eignung.",
+    "Facts": "Fakten",
     "Open score guide": "Bewertungsleitfaden öffnen",
     "Start search": "Suche starten",
     "Property research": "Immobilienrecherche",
@@ -358,6 +431,79 @@ _ES_CR = {
     "Strong wish": "Muy deseable",
     "Must have": "Indispensable",
     "saved homes": "viviendas guardadas",
+    "matching homes": "propiedades adecuadas",
+    "matching opportunities": "oportunidades adecuadas",
+    "Saved pages": "Páginas guardadas",
+    "Edit search": "Editar búsqueda",
+    "At a glance": "De un vistazo",
+    "Next step": "Siguiente paso",
+    "Premium next step": "Siguiente paso premium",
+    "Best so far": "La mejor hasta ahora",
+    "Fit": "Compatibilidad",
+    "Monthly total": "Total mensual",
+    "It is meaningfully cheaper.": "Es considerablemente más económica.",
+    "Tour not available yet.": "El recorrido aún no está disponible.",
+    "Open listing": "Abrir anuncio",
+    "Open the property page for more context.": "Abra la página de la propiedad para ver más detalles.",
+    "No price published": "Precio no publicado",
+    "3D tour available": "Recorrido 3D disponible",
+    "3D tour queued": "Recorrido 3D en cola",
+    "Request 3D tour": "Solicitar recorrido 3D",
+    "Preparing 3D tour.": "Preparando recorrido 3D.",
+    "Walkthrough available": "Recorrido guiado disponible",
+    "Walkthrough queued": "Recorrido guiado en cola",
+    "Request walkthrough": "Solicitar recorrido guiado",
+    "Request when you want a guided walkthrough.": "Solicítelo cuando desee un recorrido guiado.",
+    "More": "Más",
+    "Selected property": "Propiedad seleccionada",
+    "Provider": "Proveedor",
+    "Operating costs not listed": "Gastos operativos no indicados",
+    "Media preview not available.": "La vista previa multimedia aún no está disponible.",
+    "The listing is still available, and your saved property details are unchanged.": "El anuncio sigue disponible y los detalles guardados de la propiedad no cambiaron.",
+    "Best part": "Punto fuerte",
+    "Keep in mind": "Tenga en cuenta",
+    "Price level": "Nivel de precio",
+    "Return": "Rendimiento",
+    "Not available yet.": "Aún no disponible.",
+    "This home matches the current brief.": "Esta propiedad coincide con el perfil de búsqueda actual.",
+    "This opportunity matches the current brief.": "Esta oportunidad coincide con el perfil de búsqueda actual.",
+    "No major drawback yet.": "Aún no se detectó una desventaja importante.",
+    "Next question": "Siguiente pregunta",
+    "Next to check": "Siguiente verificación",
+    "Financial picture": "Panorama financiero",
+    "Market data": "Datos del mercado",
+    "Adjust search": "Ajustar búsqueda",
+    "Tune search": "Ajustar búsqueda",
+    "Hide search settings": "Ocultar configuración de búsqueda",
+    "Viewing requested": "Visita solicitada",
+    "Documents requested": "Documentos solicitados",
+    "Offer candidate": "Candidata para oferta",
+    "Archived": "Archivada",
+    "Property decision reaction": "Reacción sobre la propiedad",
+    "Yes": "Sí",
+    "Maybe": "Tal vez",
+    "No": "No",
+    "Hide": "Ocultar",
+    "Choose one so the next search gets better.": "Elija una opción para mejorar la próxima búsqueda.",
+    "What worked": "Lo que funcionó",
+    "Loading the next things to check.": "Cargando los siguientes puntos por verificar.",
+    "What should change next time?": "¿Qué debería cambiar la próxima vez?",
+    "Save decision": "Guardar decisión",
+    "Save": "Guardar",
+    "Only pay for the next move when the finished search or selected home needs it.": "Pague solo por el siguiente paso cuando la búsqueda terminada o la propiedad seleccionada lo necesiten.",
+    "Upgrade": "Mejorar plan",
+    "Premium market report": "Informe de mercado premium",
+    "Offer": "Oferta",
+    "Open checkout": "Ir al pago",
+    "Concierge shortlist refresh": "Actualización concierge de preselección",
+    "EUR 99 | Use a paid rerun only when this shortlist needs a sharper second pass.": "EUR 99 | Use una repetición de pago solo si esta preselección necesita una segunda revisión más precisa.",
+    "Agent-ready export": "Exportación lista para agente",
+    "EUR 19 | Export the selected result only when a tighter handoff would save real time.": "EUR 19 | Exporte el resultado seleccionado solo si una entrega más concisa realmente ahorra tiempo.",
+    "Share this home": "Compartir esta propiedad",
+    "Share results": "Compartir resultados",
+    "Best points": "Puntos destacados",
+    "No match notes yet.": "Aún no hay notas de compatibilidad.",
+    "Facts": "Datos",
     "Open score guide": "Abrir guía de puntaje",
     "Start search": "Iniciar búsqueda",
     "Property research": "Investigación de la propiedad",
@@ -828,7 +974,86 @@ def propertyquarry_translation(value: str, *, locale: str) -> str:
         return _pseudo_localize(str(value))
     if normalized == "en":
         return str(value)
-    return _TRANSLATIONS[normalized].get(str(value), str(value))
+    source = str(value)
+    translated = _TRANSLATIONS[normalized].get(source)
+    if translated is not None:
+        return translated
+    is_german = normalized.startswith("de-")
+    matching_total = re.fullmatch(
+        r"(\d+)\s+(matching homes|matching opportunities|saved homes|saved opportunities)",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if matching_total:
+        unit = matching_total.group(2).casefold()
+        if is_german:
+            label = {
+                "matching homes": "passende Immobilien",
+                "matching opportunities": "passende Anlagechancen",
+                "saved homes": "gespeicherte Immobilien",
+                "saved opportunities": "gespeicherte Anlagechancen",
+            }[unit]
+        else:
+            label = {
+                "matching homes": "propiedades adecuadas",
+                "matching opportunities": "oportunidades adecuadas",
+                "saved homes": "propiedades guardadas",
+                "saved opportunities": "oportunidades guardadas",
+            }[unit]
+        return f"{matching_total.group(1)} {label}"
+    rooms = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s+rooms?(\s*\|\s*.+)?", source, flags=re.IGNORECASE)
+    if rooms:
+        unit = "Zimmer" if is_german else ("habitación" if rooms.group(1) == "1" else "habitaciones")
+        return f"{rooms.group(1)} {unit}{rooms.group(2) or ''}"
+    fit_score = re.fullmatch(r"Fit\s+(\d+)", source, flags=re.IGNORECASE)
+    if fit_score:
+        return f"{'Eignung' if is_german else 'Compatibilidad'} {fit_score.group(1)}"
+    monthly_total = re.fullmatch(r"Monthly total\s+(.+)", source, flags=re.IGNORECASE)
+    if monthly_total:
+        return f"{'Monatlich gesamt' if is_german else 'Total mensual'} {monthly_total.group(1)}"
+    review_title = re.fullmatch(r"Review\s+(.+)", source, flags=re.IGNORECASE)
+    if review_title:
+        return f"{'Prüfen' if is_german else 'Revisar'}: {review_title.group(1)}"
+    area_map_title = re.fullmatch(r"Open area map for\s+(.+)", source, flags=re.IGNORECASE)
+    if area_map_title:
+        return (
+            f"Gebietskarte öffnen: {area_map_title.group(1)}"
+            if is_german
+            else f"Abrir mapa de la zona: {area_map_title.group(1)}"
+        )
+    premium_market_context = re.fullmatch(
+        r"(EUR\s+\d+(?:[.,]\d+)?\s*\|\s*)Use only if\s+(.+)\s+needs wider market context before deciding\.",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if premium_market_context:
+        prefix, title = premium_market_context.groups()
+        return (
+            f"{prefix}Nur verwenden, wenn {title} vor der Entscheidung einen breiteren Marktkontext benötigt."
+            if is_german
+            else f"{prefix}Úselo solo si {title} necesita un contexto de mercado más amplio antes de decidir."
+        )
+    missing_fields = re.fullmatch(r"Missing\s+(.+)", source, flags=re.IGNORECASE)
+    if missing_fields:
+        replacements = (
+            {
+                "360 pending": "360°-Ansicht ausstehend",
+                "address": "Adresse",
+                "heating": "Heizung",
+            }
+            if is_german
+            else {
+                "360 pending": "vista 360 pendiente",
+                "address": "dirección",
+                "heating": "calefacción",
+            }
+        )
+        fields = ", ".join(
+            replacements.get(part.strip().casefold(), part.strip())
+            for part in missing_fields.group(1).split(",")
+        )
+        return f"{'Fehlend' if is_german else 'Falta'}: {fields}"
+    return source
 
 
 def propertyquarry_translation_coverage(locale: str) -> dict[str, object]:
