@@ -4229,10 +4229,10 @@
       <section class="prd-decision-card prd-decision-primary">
       <h3>Your take</h3>
       <div class="object-feedback-row" aria-label="Property feedback reaction">
-        <button class="object-feedback-button" type="button" data-object-feedback-reaction="like">Yes</button>
-        <button class="object-feedback-button" type="button" data-object-feedback-reaction="maybe">Maybe</button>
-        <button class="object-feedback-button" type="button" data-object-feedback-reaction="dislike">No</button>
-        <button class="object-feedback-button" type="button" data-object-feedback-reaction="hide">Hide</button>
+        <button class="object-feedback-button" type="button" data-object-feedback-reaction="like" aria-pressed="false">Yes</button>
+        <button class="object-feedback-button" type="button" data-object-feedback-reaction="maybe" aria-pressed="false">Maybe</button>
+        <button class="object-feedback-button" type="button" data-object-feedback-reaction="dislike" aria-pressed="false">No</button>
+        <button class="object-feedback-button" type="button" data-object-feedback-reaction="hide" aria-pressed="false">Hide</button>
       </div>
       </section>
       <div class="prd-decision-savebar">
@@ -4246,7 +4246,7 @@
       {% set research_feedback_suggestions = (research_feedback.get('suggestions') or {}) %}
       {% set research_agent_questions = research_feedback_suggestions.get('agent_questions') or [] %}
       {% set research_followup_rows = research_feedback.get('followup_rows') or [] %}
-      <details class="prd-feedback-details prd-decision-advanced">
+      <details class="prd-feedback-details prd-decision-advanced" data-object-feedback-advanced>
       <summary>Adjust next search</summary>
       <div class="prd-feedback-body">
       <section class="prd-decision-card">

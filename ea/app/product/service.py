@@ -7797,6 +7797,23 @@ def _property_scout_listing_urls_for_source(
     return listing_urls, cache_state
 
 
+def _property_scout_response_max_bytes() -> int:
+    raw_value = str(os.getenv("PROPERTYQUARRY_SEARCH_HTML_MAX_BYTES") or "").strip()
+    if not raw_value:
+        return 8 * 1024 * 1024
+    try:
+        parsed = int(raw_value)
+    except Exception:
+        return 8 * 1024 * 1024
+    return max(256 * 1024, min(parsed, 32 * 1024 * 1024))
+
+
+def _property_scout_assert_bounded_content(content: bytes, *, max_bytes: int) -> bytes:
+    if len(content) > max_bytes:
+        raise ValueError(f"property_scout_response_too_large:max_bytes={max_bytes}")
+    return content
+
+
 def _property_scout_fetch_html(url: str, *, timeout_seconds: float = 60.0) -> str:
     from .outbound_url_security import (
         OutboundUrlRejected,
@@ -7808,6 +7825,7 @@ def _property_scout_fetch_html(url: str, *, timeout_seconds: float = 60.0) -> st
     )
 
     normalized_url = str(url or "").strip()
+    max_response_bytes = _property_scout_response_max_bytes()
     parsed = urllib.parse.urlparse(normalized_url)
     hostname = canonical_http_hostname(normalized_url)
     if not hostname:
@@ -7827,9 +7845,13 @@ def _property_scout_fetch_html(url: str, *, timeout_seconds: float = 60.0) -> st
                     timeout=float(timeout_seconds),
                 )
                 page.raise_for_status()
+                page_content = _property_scout_assert_bounded_content(
+                    bytes(page.content or b""),
+                    max_bytes=max_response_bytes,
+                )
                 view_state_match = re.search(
                     r'name="javax\.faces\.ViewState"[^>]*value="([^"]+)"',
-                    page.text,
+                    page_content.decode(page.encoding or "utf-8", "replace"),
                     flags=re.IGNORECASE,
                 )
                 if view_state_match:
@@ -7858,7 +7880,15 @@ def _property_scout_fetch_html(url: str, *, timeout_seconds: float = 60.0) -> st
                     if int(ajax_response.status_code or 0) in {301, 302, 303, 307, 308}:
                         raise OutboundUrlRejected("outbound_url_post_redirect_forbidden")
                     ajax_response.raise_for_status()
-                    body_match = re.search(r"<!\[CDATA\[(.*)\]\]>", ajax_response.text, flags=re.IGNORECASE | re.DOTALL)
+                    ajax_content = _property_scout_assert_bounded_content(
+                        bytes(ajax_response.content or b""),
+                        max_bytes=max_response_bytes,
+                    )
+                    body_match = re.search(
+                        r"<!\[CDATA\[(.*)\]\]>",
+                        ajax_content.decode(ajax_response.encoding or "utf-8", "replace"),
+                        flags=re.IGNORECASE | re.DOTALL,
+                    )
                     if body_match:
                         return str(body_match.group(1) or "")
     request = urllib.request.Request(
@@ -7873,7 +7903,8 @@ def _property_scout_fetch_html(url: str, *, timeout_seconds: float = 60.0) -> st
         timeout=float(timeout_seconds),
         allowed_hosts=redirect_hosts,
     ) as response:
-        content = response.read()
+        content = response.read(max_response_bytes + 1)
+    _property_scout_assert_bounded_content(content, max_bytes=max_response_bytes)
     return content.decode("utf-8", "ignore")
 
 

@@ -7742,10 +7742,43 @@
       scopeLightboxZoomable.dataset.scale = String(nextScale);
       scopeLightboxZoomable.style.transform = `translate3d(0px, 0px, 0) scale(${nextScale})`;
     }, { passive: false });
+    const ensureScopeLightbox = () => {
+      const existing = document.querySelector('[data-pqx-scope-lightbox]');
+      if (existing instanceof HTMLDialogElement) return existing;
+      const dialog = document.createElement('dialog');
+      dialog.className = 'pqx-scope-lightbox';
+      dialog.setAttribute('data-pqx-scope-lightbox', '');
+      dialog.setAttribute('aria-label', 'Property preview');
+      dialog.innerHTML = `
+        <div class="pqx-scope-lightbox-card">
+          <div class="pqx-scope-lightbox-head">
+            <div>
+              <strong data-pqx-scope-lightbox-title>Property preview</strong>
+              <span class="pqx-note" data-pqx-scope-lightbox-caption></span>
+            </div>
+            <button class="pqx-scope-lightbox-close" type="button" data-pqx-scope-lightbox-close aria-label="Close preview">×</button>
+          </div>
+          <div class="pqx-scope-lightbox-stage" data-pqx-scope-lightbox-stage>
+            <div class="pqx-scope-lightbox-zoomable" data-pqx-scope-lightbox-zoomable>
+              <img class="pqx-scope-lightbox-image" data-pqx-scope-lightbox-image src="" alt="">
+              <svg class="pqx-scope-lightbox-overlay" data-pqx-scope-lightbox-overlay viewBox="0 0 640 368" preserveAspectRatio="none" aria-hidden="true"></svg>
+              <div class="pqx-scope-lightbox-tooltip" data-pqx-scope-lightbox-tooltip></div>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(dialog);
+      return dialog;
+    };
     const openScopeLightboxFromTrigger = (button) => {
       if (!(button instanceof HTMLElement)) return false;
       const imageUrl = String(button.getAttribute('data-pqx-scope-image') || '').trim();
-      if (!scopeLightbox || !scopeLightboxImage || !imageUrl) return false;
+      const activeScopeLightbox = ensureScopeLightbox();
+      const activeScopeLightboxImage = activeScopeLightbox?.querySelector('[data-pqx-scope-lightbox-image]');
+      const activeScopeLightboxZoomable = activeScopeLightbox?.querySelector('[data-pqx-scope-lightbox-zoomable]');
+      const activeScopeLightboxOverlay = activeScopeLightbox?.querySelector('[data-pqx-scope-lightbox-overlay]');
+      const activeScopeLightboxTitle = activeScopeLightbox?.querySelector('[data-pqx-scope-lightbox-title]');
+      const activeScopeLightboxCaption = activeScopeLightbox?.querySelector('[data-pqx-scope-lightbox-caption]');
+      if (!activeScopeLightbox || !activeScopeLightboxImage || !imageUrl) return false;
       const alt = String(button.getAttribute('data-pqx-scope-alt') || 'Search area preview').trim() || 'Search area preview';
       const title = String(button.getAttribute('data-pqx-scope-title') || 'Search area preview').trim() || 'Search area preview';
       const caption = String(button.getAttribute('data-pqx-scope-caption') || '').trim();
@@ -7755,12 +7788,12 @@
       } catch (_error) {
         overlayRows = [];
       }
-      scopeLightboxImage.setAttribute('src', imageUrl);
-      scopeLightboxImage.setAttribute('alt', alt);
-      if (scopeLightboxTitle) scopeLightboxTitle.textContent = title;
-      if (scopeLightboxCaption) scopeLightboxCaption.textContent = caption;
-      if (scopeLightboxOverlay) {
-        while (scopeLightboxOverlay.firstChild) scopeLightboxOverlay.removeChild(scopeLightboxOverlay.firstChild);
+      activeScopeLightboxImage.setAttribute('src', imageUrl);
+      activeScopeLightboxImage.setAttribute('alt', alt);
+      if (activeScopeLightboxTitle) activeScopeLightboxTitle.textContent = title;
+      if (activeScopeLightboxCaption) activeScopeLightboxCaption.textContent = caption;
+      if (activeScopeLightboxOverlay) {
+        while (activeScopeLightboxOverlay.firstChild) activeScopeLightboxOverlay.removeChild(activeScopeLightboxOverlay.firstChild);
         if (Array.isArray(overlayRows)) {
           overlayRows
             .filter((row) => row && typeof row === 'object' && String(row.path || '').trim())
@@ -7772,28 +7805,31 @@
               const titleNode = document.createElementNS('http://www.w3.org/2000/svg', 'title');
               titleNode.textContent = String(row.label || 'Area');
               path.appendChild(titleNode);
-              scopeLightboxOverlay.appendChild(path);
+              activeScopeLightboxOverlay.appendChild(path);
             });
         }
       }
-      resetScopeLightboxZoom();
-      if (typeof scopeLightbox.showModal === 'function') {
+      if (activeScopeLightboxZoomable) {
+        activeScopeLightboxZoomable.dataset.scale = '1';
+        activeScopeLightboxZoomable.style.transform = 'translate3d(0px, 0px, 0) scale(1)';
+      }
+      if (typeof activeScopeLightbox.showModal === 'function') {
         try {
-          if (!scopeLightbox.open) scopeLightbox.showModal();
+          if (!activeScopeLightbox.open) activeScopeLightbox.showModal();
           return true;
         } catch (_error) {
           // Fall through to attribute-based opening below.
         }
       }
-      if (typeof scopeLightbox.show === 'function') {
+      if (typeof activeScopeLightbox.show === 'function') {
         try {
-          if (!scopeLightbox.open) scopeLightbox.show();
+          if (!activeScopeLightbox.open) activeScopeLightbox.show();
           return true;
         } catch (_error) {
           // Fall through to attribute-based opening below.
         }
       }
-      scopeLightbox.setAttribute('open', 'open');
+      activeScopeLightbox.setAttribute('open', 'open');
       return true;
     };
     const handleScopeLightboxTriggerClick = (event, button) => {
@@ -7835,6 +7871,17 @@
       scopeLightboxTriggerObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
     }
     document.addEventListener('click', (event) => {
+      const closeButton = event.target?.closest?.('[data-pqx-scope-lightbox-close]');
+      if (closeButton) {
+        const activeScopeLightbox = closeButton.closest('[data-pqx-scope-lightbox]');
+        if (activeScopeLightbox && typeof activeScopeLightbox.close === 'function' && activeScopeLightbox.open) {
+          activeScopeLightbox.close();
+        } else {
+          activeScopeLightbox?.removeAttribute('open');
+        }
+        event.preventDefault();
+        return;
+      }
       const button = event.target?.closest?.('[data-pqx-scope-open]');
       if (!button) return;
       handleScopeLightboxTriggerClick(event, button);
@@ -7981,6 +8028,13 @@
         if (!candidate || !decisionState) return;
         const result = await recordDecisionState(candidate, decisionState, decisionStateStatusNode);
         if (!result) return;
+        if (!button.hasAttribute('data-pw-remove-row')) {
+          root.querySelectorAll('[data-pw-decision-state]:not([data-pw-remove-row])').forEach((stateButton) => {
+            const selected = stateButton === button;
+            stateButton.setAttribute('aria-pressed', selected ? 'true' : 'false');
+            stateButton.classList.toggle('is-selected', selected);
+          });
+        }
         const archivedCandidateRef = String(explicitCandidateRef || candidate.candidate_ref || '').trim();
         if (shortlistSurface && decisionState === 'archived') {
           reconcileShortlistArchive(archivedCandidateRef);

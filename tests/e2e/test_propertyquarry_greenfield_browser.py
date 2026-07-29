@@ -1035,6 +1035,7 @@ def _new_context(
     mobile: bool = False,
     width: int | None = None,
     height: int | None = None,
+    locale: str = "en-US",
 ) -> BrowserContext:
     return browser.new_context(
         viewport={
@@ -1042,6 +1043,7 @@ def _new_context(
             "height": height if height is not None else (932 if mobile else 1100),
         },
         extra_http_headers={"X-EA-Principal-ID": "pq-greenfield-browser"},
+        locale=locale,
         # Keep route-backed fixtures deterministic across browser engines. WebKit
         # otherwise lets an installed service worker consume intercepted media
         # and API requests before Playwright's context routes can observe them.
@@ -1493,6 +1495,454 @@ def test_propertyquarry_ai_panorama_mobile_hotspot_labels_stay_inside_viewport(
         assert disclosure in page.locator(".identity span").inner_text()
         assert not page_errors
         assert not failed_requests
+    finally:
+        context.close()
+
+
+def _assert_no_viewport_or_text_cutoff(page: Page) -> None:
+    report = page.evaluate(
+        """() => {
+          const root = document.documentElement;
+          const viewportWidth = root.clientWidth;
+          const horizontalDocumentOverflow = root.scrollWidth - viewportWidth;
+          const selectors = [
+            'button', 'a', 'label', 'legend', 'summary',
+            'h1', 'h2', 'h3', 'h4', '[role="button"]',
+            '.pq-copy', '.pqx-note', '.pqx-small', '.prd-row'
+          ];
+          const offenders = [];
+          for (const element of document.querySelectorAll(selectors.join(','))) {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            if (
+              rect.width <= 0 ||
+              rect.height <= 0 ||
+              style.visibility === 'hidden' ||
+              style.display === 'none'
+            ) continue;
+            const intentionallyVisuallyHidden =
+              rect.width <= 2 &&
+              rect.height <= 2 &&
+              style.position === 'absolute' &&
+              ['hidden', 'clip'].includes(style.overflow);
+            if (intentionallyVisuallyHidden) continue;
+            const closedDetails = element.closest('details:not([open])');
+            if (closedDetails && !element.closest('summary')) continue;
+            const text = (element.textContent || element.getAttribute('aria-label') || '').trim();
+            if (!text) continue;
+            let withinHorizontalScroller = false;
+            for (
+              let ancestor = element.parentElement;
+              ancestor && ancestor !== document.body;
+              ancestor = ancestor.parentElement
+            ) {
+              const ancestorStyle = getComputedStyle(ancestor);
+              if (
+                ancestor.scrollWidth > ancestor.clientWidth + 2 &&
+                ['auto', 'scroll'].includes(ancestorStyle.overflowX)
+              ) {
+                withinHorizontalScroller = true;
+                break;
+              }
+            }
+            const outsideViewport =
+              !withinHorizontalScroller &&
+              (rect.left < -1 || rect.right > viewportWidth + 1);
+            const clippedX =
+              element.scrollWidth > element.clientWidth + 2 &&
+              ['hidden', 'clip'].includes(style.overflowX);
+            const clippedY =
+              element.scrollHeight > element.clientHeight + 2 &&
+              ['hidden', 'clip'].includes(style.overflowY);
+            if (outsideViewport || clippedX || clippedY) {
+              offenders.push({
+                tag: element.tagName,
+                text: text.slice(0, 120),
+                outsideViewport,
+                clippedX,
+                clippedY,
+                withinHorizontalScroller,
+                left: Math.round(rect.left),
+                right: Math.round(rect.right),
+                clientWidth: element.clientWidth,
+                scrollWidth: element.scrollWidth,
+                clientHeight: element.clientHeight,
+                scrollHeight: element.scrollHeight,
+              });
+            }
+          }
+          return {
+            viewportWidth,
+            documentScrollWidth: root.scrollWidth,
+            horizontalDocumentOverflow,
+            offenders: offenders.slice(0, 30),
+          };
+        }"""
+    )
+    assert int(report["horizontalDocumentOverflow"]) <= 1, report
+    if report["offenders"]:
+        raise AssertionError(json.dumps(report, indent=2, ensure_ascii=False))
+
+
+def _active_property_setup_step(page: Page) -> str:
+    return str(
+        page.evaluate(
+            """() => document.querySelector(
+              '[data-console-form-variant="property_search"]'
+            )?.dataset.propertyActiveStep || ''"""
+        )
+    )
+
+
+def test_propertyquarry_every_search_setup_button_works_in_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False)
+    page = context.new_page()
+    page_errors: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    try:
+        response = page.goto(f"{base_url}/app/properties", wait_until="networkidle")
+        assert response is not None and response.ok
+
+        theme_toggle = page.locator("[data-pqx-theme-toggle]")
+        expect(theme_toggle).to_have_text("Dark mode")
+        theme_toggle.click()
+        expect(theme_toggle).to_have_text("Light mode")
+        theme_toggle.click()
+        expect(theme_toggle).to_have_text("Dark mode")
+
+        scope_preview = page.locator("[data-pqx-scope-open]").first
+        scope_preview.click()
+        expect(page.get_by_role("dialog")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("dialog")).not_to_be_visible()
+        page.wait_for_function(
+            """() => Boolean(document.querySelector(
+              '[data-console-form-variant="property_search"]'
+            )?.dataset.propertyActiveStep)"""
+        )
+
+        step_names = ("search", "what", "children", "reachability", "research", "providers")
+        for step_name in step_names:
+            page.locator(f'[data-property-step-trigger="{step_name}"]').click()
+            assert _active_property_setup_step(page) == step_name
+
+        page.locator('[data-property-step-trigger="what"]').click()
+        page.locator("[data-property-step-back]").click()
+        assert _active_property_setup_step(page) == "search"
+        page.locator("[data-property-step-next]").click()
+        assert _active_property_setup_step(page) == "what"
+
+        page.locator('[data-property-step-trigger="search"]').click()
+        page.locator('[data-location-mode-button="map"]').click()
+        expect(page.locator('[data-location-mode-button="map"]')).to_have_attribute(
+            "aria-pressed", "true"
+        )
+        page.locator('[data-location-mode-button="list"]').click()
+        expect(page.locator('[data-location-mode-button="list"]')).to_have_attribute(
+            "aria-pressed", "true"
+        )
+
+        all_areas = page.locator('[data-checkbox-group-select-all="location_query"]')
+        clear_areas = page.locator('[data-checkbox-group-clear-all="location_query"]')
+        all_areas.click()
+        assert page.locator('input[name="location_query"]:checked').count() > 0
+        clear_areas.click()
+        assert page.locator('input[name="location_query"]:checked').count() == 0
+
+        page.locator('[data-location-mode-button="map"]').click()
+        page.locator("[data-location-map-open]").click()
+        expect(page.get_by_role("dialog")).to_be_visible()
+        page.keyboard.press("Escape")
+
+        page.locator('[data-property-step-trigger="what"]').click()
+        tooltip_triggers = page.locator("[data-tooltip-trigger]:visible")
+        assert tooltip_triggers.count() > 0
+        for index in range(tooltip_triggers.count()):
+            trigger = tooltip_triggers.nth(index)
+            trigger.click()
+            expect(trigger).to_have_attribute("data-tooltip-open", "true")
+            trigger.click()
+
+        page.locator('[data-property-step-trigger="children"]').click()
+        page.locator("[data-pqx-save-what-matters]:visible").click()
+        page.locator("[data-pqx-load-what-matters]:visible").click()
+
+        page.locator('[data-property-step-trigger="providers"]').click()
+        provider_select_all = page.locator(
+            '[data-checkbox-group-select-all="selected_platforms"]'
+        )
+        provider_select_all.click()
+        checked_provider_total = page.locator(
+            'input[name="selected_platforms"]:checked'
+        ).count()
+        assert checked_provider_total > 0
+
+        provider_groups = page.locator("[data-provider-group-panel]")
+        assert provider_groups.count() > 0
+        for index in range(provider_groups.count()):
+            group = provider_groups.nth(index)
+            group.locator("summary").click()
+            add_family = group.get_by_role("button", name="Add family")
+            clear_family = group.get_by_role("button", name="Clear family")
+            if add_family.is_visible():
+                add_family.click()
+            if clear_family.is_visible():
+                clear_family.click()
+            if group.get_attribute("open") is not None:
+                group.locator("summary").click()
+
+        page.locator("[data-property-save-top]").click()
+        expect(page.locator("[data-property-inline-status]")).not_to_be_empty()
+        _assert_no_viewport_or_text_cutoff(page)
+        assert page_errors == []
+    finally:
+        context.close()
+
+
+def test_propertyquarry_browser_locales_do_not_clip(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    browser_locales = (
+        ("en-US", "en"),
+        ("de-AT", "de-AT"),
+        ("de-DE", "de-DE"),
+        ("es-CR", "es-CR"),
+        ("fr-FR", "en"),
+        ("it-IT", "en"),
+        ("nl-NL", "en"),
+        ("pt-PT", "en"),
+        ("pl-PL", "en"),
+        ("sv-SE", "en"),
+    )
+    step_names = ("search", "what", "children", "reachability", "research", "providers")
+    for mobile in (False, True):
+        for browser_locale, expected_document_language in browser_locales:
+            context = _new_context(browser, mobile=mobile, locale=browser_locale)
+            page = context.new_page()
+            page_errors: list[str] = []
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            try:
+                response = page.goto(
+                    f"{base_url}/app/properties",
+                    wait_until="networkidle",
+                )
+                assert response is not None and response.ok
+                assert page.evaluate("() => navigator.language") == browser_locale
+                document_language = str(
+                    page.locator("html").get_attribute("lang") or ""
+                )
+                assert document_language == expected_document_language
+                page.wait_for_function(
+                    """() => Boolean(document.querySelector(
+                      '[data-console-form-variant="property_search"]'
+                    )?.dataset.propertyActiveStep)"""
+                )
+
+                for step_name in step_names:
+                    page.locator(f'[data-property-step-trigger="{step_name}"]').click()
+                    assert _active_property_setup_step(page) == step_name
+                    _assert_no_viewport_or_text_cutoff(page)
+                assert page_errors == [], {
+                    "browser_locale": browser_locale,
+                    "mobile": mobile,
+                    "page_errors": page_errors,
+                }
+            finally:
+                context.close()
+
+
+def _visible_button_action_keys(page: Page) -> set[str]:
+    return set(
+        page.locator("button:visible:not([disabled])").evaluate_all(
+            """buttons => buttons.flatMap((button) =>
+              [...button.attributes]
+                .map((attribute) => attribute.name)
+                .filter((name) =>
+                  name.startsWith('data-') &&
+                  ![
+                    'data-candidate-ref',
+                    'data-pqx-scope-alt',
+                    'data-pqx-scope-caption',
+                    'data-pqx-scope-image',
+                    'data-pqx-scope-overlay',
+                    'data-pqx-scope-title',
+                    'data-pqx-scope-lightbox-bound',
+                    'data-pqx-deferred-preview-host',
+                    'data-pqx-shortlist-diorama',
+                    'data-prd-map-overlay',
+                    'data-prd-map-src',
+                    'data-prd-map-title',
+                  ].includes(name)
+                )
+            )"""
+        )
+    )
+
+
+def _best_match_packet_url(page: Page, *, base_url: str) -> str:
+    packet_path = page.locator(
+        "[data-workbench-row]",
+        has_text="Altbau near U6",
+    ).first.get_attribute("data-candidate-packet-url")
+    assert packet_path
+    return packet_path if packet_path.startswith("http") else f"{base_url}{packet_path}"
+
+
+def test_propertyquarry_every_results_and_research_button_works_in_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False)
+    context.grant_permissions(
+        ["clipboard-read", "clipboard-write", "notifications"],
+        origin=base_url,
+    )
+    page = context.new_page()
+    page_errors: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    shortlist_url = f"{base_url}/app/shortlist?run_id=run-42&full=1"
+    try:
+        response = page.goto(shortlist_url, wait_until="networkidle")
+        assert response is not None and response.ok
+        assert _visible_button_action_keys(page) == {
+            "data-pqx-theme-toggle",
+            "data-pqx-browser-alerts",
+            "data-pqx-atlas-open",
+            "data-pqx-scope-open",
+            "data-workbench-select-candidate",
+            "data-pw-remove-row",
+            "data-pw-finetune-toggle",
+            "data-pw-decision-state",
+        }
+
+        theme_toggle = page.locator("[data-pqx-theme-toggle]")
+        theme_toggle.click()
+        expect(theme_toggle).to_have_text("Light mode")
+        theme_toggle.click()
+
+        browser_alerts = page.locator("[data-pqx-browser-alerts]")
+        expect(browser_alerts).to_be_visible()
+        browser_alerts.click()
+        expect(browser_alerts).to_have_text(re.compile(r"Browser alerts (on|enabled)"))
+
+        atlas_buttons = page.locator("[data-pqx-atlas-open]:visible")
+        atlas_refs = atlas_buttons.evaluate_all(
+            "buttons => buttons.map((button) => button.getAttribute('data-candidate-ref'))"
+        )
+        assert len(atlas_refs) == 3
+        for candidate_ref in atlas_refs:
+            page.locator(
+                f'[data-pqx-atlas-open][data-candidate-ref="{candidate_ref}"]'
+            ).click()
+            expect(page.get_by_role("dialog")).to_be_visible()
+            page.keyboard.press("Escape")
+
+        floorplan_preview = page.locator("[data-pqx-scope-open]:visible")
+        expect(floorplan_preview).to_have_count(1)
+        floorplan_preview.click()
+        expect(page.get_by_role("dialog")).to_be_visible()
+        page.keyboard.press("Escape")
+
+        candidate_refs = page.locator(
+            "[data-workbench-select-candidate]:visible"
+        ).evaluate_all(
+            "buttons => buttons.map((button) => button.getAttribute('data-candidate-ref'))"
+        )
+        assert len(candidate_refs) == 3
+        for candidate_ref in candidate_refs:
+            page.locator(
+                f'[data-workbench-select-candidate][data-candidate-ref="{candidate_ref}"]'
+            ).click()
+            expect(page).to_have_url(re.compile(rf"candidate={re.escape(str(candidate_ref))}"))
+            response = page.goto(shortlist_url, wait_until="networkidle")
+            assert response is not None and response.ok
+
+        remove_refs = page.locator("[data-pw-remove-row]:visible").evaluate_all(
+            "buttons => buttons.map((button) => button.getAttribute('data-candidate-ref'))"
+        )
+        assert len(remove_refs) == 3
+        for candidate_ref in remove_refs:
+            row = page.locator(
+                f'[data-workbench-row][data-candidate-ref="{candidate_ref}"]'
+            )
+            with page.expect_response("**/app/api/property-feedback") as feedback_response:
+                page.locator(
+                    f'[data-pw-remove-row][data-candidate-ref="{candidate_ref}"]'
+                ).click()
+            assert feedback_response.value.ok
+            expect(row).not_to_be_visible()
+            response = page.goto(shortlist_url, wait_until="networkidle")
+            assert response is not None and response.ok
+
+        fine_tune = page.locator("[data-pw-finetune-toggle]")
+        fine_tune.click()
+        expect(fine_tune).to_have_attribute("aria-expanded", "true")
+
+        decision_buttons = page.locator(
+            "[data-pw-decision-state]:visible:not([data-pw-remove-row])"
+        )
+        decision_states = decision_buttons.evaluate_all(
+            "buttons => buttons.map((button) => button.getAttribute('data-pw-decision-state'))"
+        )
+        assert decision_states == [
+            "viewing_requested",
+            "documents_requested",
+            "offer_candidate",
+            "archived",
+        ]
+        for decision_state in decision_states:
+            button = page.locator(
+                f'[data-pw-decision-state="{decision_state}"]:visible:not([data-pw-remove-row])'
+            )
+            with page.expect_response("**/app/api/property-feedback") as feedback_response:
+                button.click()
+            assert feedback_response.value.ok
+            expect(button).to_have_attribute("aria-pressed", "true")
+
+        response = page.goto(shortlist_url, wait_until="networkidle")
+        assert response is not None and response.ok
+        packet_url = _best_match_packet_url(page, base_url=base_url)
+        response = page.goto(packet_url, wait_until="networkidle")
+        assert response is not None and response.ok
+        assert _visible_button_action_keys(page) == {
+            "data-prd-copy-link",
+            "data-prd-map-open",
+            "data-object-feedback-reaction",
+            "data-object-feedback-save",
+            "data-object-feedback-open-advanced",
+        }
+
+        copy_link = page.locator("[data-prd-copy-link]")
+        copy_link.click()
+        copied = page.evaluate("() => navigator.clipboard.readText()")
+        assert "/app/research/" in str(copied)
+
+        page.locator("[data-prd-map-open]").click()
+        expect(page.get_by_role("dialog")).to_be_visible()
+        page.keyboard.press("Escape")
+
+        feedback_reactions = ("like", "maybe", "dislike", "hide")
+        for reaction in feedback_reactions:
+            reaction_button = page.locator(
+                f'[data-object-feedback-reaction="{reaction}"]'
+            )
+            reaction_button.click()
+            expect(reaction_button).to_have_attribute("aria-pressed", "true")
+
+        page.locator("[data-object-feedback-save]").click()
+        expect(page.locator("[data-object-feedback-status]")).not_to_be_empty()
+        page.locator("[data-object-feedback-open-advanced]").click()
+        expect(page.locator("[data-object-feedback-advanced]")).to_be_visible()
+
+        _assert_no_viewport_or_text_cutoff(page)
+        assert page_errors == []
     finally:
         context.close()
 
@@ -2447,54 +2897,82 @@ def test_propertyquarry_research_market_formats_are_visible_in_declared_locales(
         }
 
     monkeypatch.setattr(ProductService, "get_property_search_run_status", _market_run_status)
-    context = _new_context(browser, mobile=False, width=1280, height=900)
-    try:
-        _issue_browser_workspace_session(client=client, context=context, base_url=base_url)
-        for index, case in enumerate(cases):
-            workspace_case = cases[(index + 1) % len(cases)]
-            stored = client.post(
-                "/v1/onboarding/property-search/preferences",
-                json={
-                    "country_code": workspace_case["country_code"],
-                    "language_code": workspace_case["language_code"],
-                    "listing_mode": "buy",
-                    "search_goal": "home",
-                    "location_query": workspace_case["location"],
-                    "selected_platforms": [workspace_case["platform"]],
-                },
+    for mobile in (False, True):
+        context = _new_context(
+            browser,
+            mobile=mobile,
+            width=None if mobile else 1280,
+            height=None if mobile else 900,
+        )
+        try:
+            _issue_browser_workspace_session(
+                client=client,
+                context=context,
+                base_url=base_url,
             )
-            assert stored.status_code == 200, stored.text
-            market_key = str(case["country_code"]).lower()
-            page = context.new_page()
-            try:
-                response = page.goto(
-                    f"{base_url}/app/research/market-{market_key}?run_id=run-market-{market_key}&lang={case['locale']}",
-                    wait_until="commit",
+            for index, case in enumerate(cases):
+                workspace_case = cases[(index + 1) % len(cases)]
+                stored = client.post(
+                    "/v1/onboarding/property-search/preferences",
+                    json={
+                        "country_code": workspace_case["country_code"],
+                        "language_code": workspace_case["language_code"],
+                        "listing_mode": "buy",
+                        "search_goal": "home",
+                        "location_query": workspace_case["location"],
+                        "selected_platforms": [workspace_case["platform"]],
+                    },
                 )
-                assert response is not None and response.ok
-                assert page.locator("html").get_attribute("lang") == case["locale"]
-                market_context = page.locator("[data-property-market-context]")
-                expect(market_context).to_be_visible()
-                assert market_context.get_attribute("data-property-market-country") == case["country_code"]
-                assert market_context.get_attribute("data-property-market-locale") == case["locale"]
-                assert market_context.get_attribute("data-property-market-currency") == case["currency_code"]
-                assert market_context.get_attribute("data-property-market-timezone") == case["timezone"]
-                expect(page.locator("[data-property-market-locale-label]")).to_have_text(
-                    str(case["locale_label"])
-                )
-                expect(page.locator("[data-property-market-updated]")).to_have_text(str(case["updated"]))
-                expect(market_context).to_contain_text(str(case["updated_label"]))
-                assert page.locator(".prd-price").inner_text().replace("\u00a0", " ") == case["price"]
-                hero_facts = page.locator(".prd-headline-panel .prd-facts").inner_text().replace(
-                    "\u00a0", " "
-                )
-                assert "78,5 m²" in hero_facts
-                assert "3,5" in hero_facts
-                assert "1,234,567" not in page.locator("[data-property-research-detail]").inner_text()
-            finally:
-                page.close()
-    finally:
-        context.close()
+                assert stored.status_code == 200, stored.text
+                market_key = str(case["country_code"]).lower()
+                page = context.new_page()
+                try:
+                    response = page.goto(
+                        f"{base_url}/app/research/market-{market_key}?run_id=run-market-{market_key}&lang={case['locale']}",
+                        wait_until="networkidle",
+                    )
+                    assert response is not None and response.ok
+                    assert page.locator("html").get_attribute("lang") == case["locale"]
+                    market_context = page.locator("[data-property-market-context]")
+                    expect(market_context).to_be_visible()
+                    assert market_context.get_attribute(
+                        "data-property-market-country"
+                    ) == case["country_code"]
+                    assert market_context.get_attribute(
+                        "data-property-market-locale"
+                    ) == case["locale"]
+                    assert market_context.get_attribute(
+                        "data-property-market-currency"
+                    ) == case["currency_code"]
+                    assert market_context.get_attribute(
+                        "data-property-market-timezone"
+                    ) == case["timezone"]
+                    expect(
+                        page.locator("[data-property-market-locale-label]")
+                    ).to_have_text(str(case["locale_label"]))
+                    expect(page.locator("[data-property-market-updated]")).to_have_text(
+                        str(case["updated"])
+                    )
+                    expect(market_context).to_contain_text(
+                        str(case["updated_label"])
+                    )
+                    assert (
+                        page.locator(".prd-price").inner_text().replace("\u00a0", " ")
+                        == case["price"]
+                    )
+                    hero_facts = page.locator(
+                        ".prd-headline-panel .prd-facts"
+                    ).inner_text().replace("\u00a0", " ")
+                    assert "78,5 m²" in hero_facts
+                    assert "3,5" in hero_facts
+                    assert "1,234,567" not in page.locator(
+                        "[data-property-research-detail]"
+                    ).inner_text()
+                    _assert_no_viewport_or_text_cutoff(page)
+                finally:
+                    page.close()
+        finally:
+            context.close()
 
 
 def test_propertyquarry_public_home_and_sign_in_capture_polish_screenshots(
@@ -11175,6 +11653,33 @@ def test_propertyquarry_launch_posts_real_start_payload_and_shows_run_status(
         assert selected_query.get("run_id", [""])[0] == run_id
         assert selected_query.get("candidate", [""])[0]
         assert page.locator("body", has_text="Altbau near U6").is_visible()
+
+        bottom_launch_page = context.new_page()
+        response = bottom_launch_page.goto(
+            f"{base_url}/app/properties",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        bottom_launch_page.select_option('select[name="country_code"]', "AT")
+        bottom_launch_page.get_by_role(
+            "button", name="Select all areas", exact=True
+        ).click()
+        bottom_launch_page.locator('[data-property-step-trigger="providers"]').click()
+        bottom_launch_page.locator(
+            '[data-checkbox-group-select-all="selected_platforms"]'
+        ).click()
+        with bottom_launch_page.expect_response(
+            "**/app/api/property/search-runs"
+        ) as bottom_start_response:
+            bottom_launch_page.locator("[data-property-step-next]:visible").click()
+        assert bottom_start_response.value.ok
+        bottom_launch_page.wait_for_url(
+            re.compile(r".*/app/(properties|shortlist)\?run_id=.*"),
+            timeout=10000,
+        )
+        assert "Could not start property search" not in bottom_launch_page.locator(
+            "body"
+        ).inner_text()
     finally:
         context.close()
 

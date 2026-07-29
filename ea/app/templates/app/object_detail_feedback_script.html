@@ -319,7 +319,9 @@
         if (action === 'mark_blocker' && row.reason_key) {
           reaction = String(row.reaction || 'dislike').trim() || 'dislike';
           root.querySelectorAll('[data-object-feedback-reaction]').forEach((candidate) => {
-            candidate.classList.toggle('active', candidate.getAttribute('data-object-feedback-reaction') === reaction);
+            const selected = candidate.getAttribute('data-object-feedback-reaction') === reaction;
+            candidate.classList.toggle('active', selected);
+            candidate.setAttribute('aria-pressed', selected ? 'true' : 'false');
           });
           const reasonButton = root.querySelector(`[data-object-feedback-reason="${CSS.escape(String(row.reason_key || ''))}"]`);
           if (reasonButton) {
@@ -557,7 +559,9 @@
     button.addEventListener('click', () => {
       reaction = String(button.getAttribute('data-object-feedback-reaction') || '').trim();
       root.querySelectorAll('[data-object-feedback-reaction]').forEach((candidate) => {
-        candidate.classList.toggle('active', candidate === button);
+        const selected = candidate === button;
+        candidate.classList.toggle('active', selected);
+        candidate.setAttribute('aria-pressed', selected ? 'true' : 'false');
       });
     });
   });
@@ -621,7 +625,9 @@
   if (decisionMap[presetDecision]) {
     reaction = decisionMap[presetDecision];
     root.querySelectorAll('[data-object-feedback-reaction]').forEach((candidate) => {
-      candidate.classList.toggle('active', candidate.getAttribute('data-object-feedback-reaction') === reaction);
+      const selected = candidate.getAttribute('data-object-feedback-reaction') === reaction;
+      candidate.classList.toggle('active', selected);
+      candidate.setAttribute('aria-pressed', selected ? 'true' : 'false');
     });
     if (status) status.textContent = 'Decision shortcut loaded from the email or shared link. Save when ready.';
   }

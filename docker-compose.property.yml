@@ -238,7 +238,7 @@ services:
     security_opt:
       - "no-new-privileges:true"
     read_only: true
-    restart: "${PROPERTYQUARRY_WORKER_RESTART_POLICY:-on-failure:3}"
+    restart: "${PROPERTYQUARRY_WORKER_RESTART_POLICY:-unless-stopped}"
     init: true
     stop_grace_period: 45s
     environment:
@@ -276,6 +276,7 @@ services:
       PROPERTYQUARRY_SEARCH_WORK_MAX_ATTEMPTS: "${PROPERTYQUARRY_SEARCH_WORK_MAX_ATTEMPTS:-3}"
       PROPERTYQUARRY_SEARCH_WORK_BACKOFF_BASE_SECONDS: "${PROPERTYQUARRY_SEARCH_WORK_BACKOFF_BASE_SECONDS:-15}"
       PROPERTYQUARRY_SEARCH_WORK_BACKOFF_MAX_SECONDS: "${PROPERTYQUARRY_SEARCH_WORK_BACKOFF_MAX_SECONDS:-300}"
+      PROPERTYQUARRY_SEARCH_HTML_MAX_BYTES: "${PROPERTYQUARRY_SEARCH_HTML_MAX_BYTES:-8388608}"
       DATABASE_URL: "${PROPERTYQUARRY_WORKER_DATABASE_URL:?Set a non-owner PROPERTYQUARRY_WORKER_DATABASE_URL for the durable worker}"
       PROPERTYQUARRY_RELEASE_COMMIT_SHA: "${PROPERTYQUARRY_RELEASE_COMMIT_SHA:-}"
       PROPERTYQUARRY_RELEASE_IMAGE_DIGEST: "${PROPERTYQUARRY_RELEASE_IMAGE_DIGEST:-}"
@@ -284,9 +285,13 @@ services:
       TZ: Europe/Vienna
     cpu_shares: ${PROPERTYQUARRY_WORKER_CPU_SHARES:-512}
     cpus: ${PROPERTYQUARRY_WORKER_CPUS:-1.0}
-    mem_limit: "${PROPERTYQUARRY_WORKER_MEMORY_LIMIT:-1536m}"
-    mem_reservation: "${PROPERTYQUARRY_WORKER_MEMORY_RESERVATION:-256m}"
-    memswap_limit: "${PROPERTYQUARRY_WORKER_MEMORY_LIMIT:-1536m}"
+    # Four browser-backed provider lanes peak near 2.3 GiB in the governed
+    # live-search acceptance run. Keep headroom for scoring and cleanup, and
+    # give the kernel a bounded swap cushion rather than killing the durable
+    # worker mid-run.
+    mem_limit: "${PROPERTYQUARRY_WORKER_MEMORY_LIMIT:-4g}"
+    mem_reservation: "${PROPERTYQUARRY_WORKER_MEMORY_RESERVATION:-1g}"
+    memswap_limit: "${PROPERTYQUARRY_WORKER_MEMORY_SWAP_LIMIT:-6g}"
     pids_limit: ${PROPERTYQUARRY_WORKER_PIDS_LIMIT:-128}
     oom_score_adj: 500
     tmpfs:

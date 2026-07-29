@@ -554,13 +554,59 @@
   {{ rybbit_head_snippet(request) }}
   <script>
     (() => {
+      if (window.__propertyquarryThemeControllerBound) return;
+      window.__propertyquarryThemeControllerBound = true;
+      const applyTheme = (theme) => {
+        const dark = theme === 'dark';
+        document.documentElement.setAttribute('data-pq-theme', dark ? 'dark' : 'light');
+        document.querySelectorAll('[data-pqx-theme-toggle]').forEach((button) => {
+          if (!(button instanceof HTMLButtonElement)) return;
+          const pressed = dark ? 'true' : 'false';
+          const label = dark ? 'Light mode' : 'Dark mode';
+          if (button.getAttribute('aria-pressed') !== pressed) {
+            button.setAttribute('aria-pressed', pressed);
+          }
+          if (button.textContent !== label) {
+            button.textContent = label;
+          }
+        });
+      };
       try {
         const stored = window.localStorage.getItem('propertyquarry.theme');
-        const theme = stored === 'dark' ? 'dark' : 'light';
-        document.documentElement.setAttribute('data-pq-theme', theme);
+        applyTheme(stored === 'dark' ? 'dark' : 'light');
       } catch (_error) {
-        document.documentElement.setAttribute('data-pq-theme', 'light');
+        applyTheme('light');
       }
+      document.addEventListener('click', (event) => {
+        const button = event.target instanceof Element
+          ? event.target.closest('[data-pqx-theme-toggle]')
+          : null;
+        if (!(button instanceof HTMLButtonElement)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const nextTheme =
+          document.documentElement.getAttribute('data-pq-theme') === 'dark'
+            ? 'light'
+            : 'dark';
+        applyTheme(nextTheme);
+        try {
+          window.localStorage.setItem('propertyquarry.theme', nextTheme);
+        } catch (_error) {
+          // The visible theme remains functional when storage is blocked.
+        }
+      }, true);
+      document.addEventListener('DOMContentLoaded', () => {
+        const syncTheme = () => applyTheme(
+          document.documentElement.getAttribute('data-pq-theme') === 'dark'
+            ? 'dark'
+            : 'light'
+        );
+        syncTheme();
+        new MutationObserver(syncTheme).observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+      });
     })();
   </script>
   {# PQ_WORKBENCH_CSS_START
@@ -11696,24 +11742,6 @@
           </details>
           {% endif %}
           {% endif %}
-          <dialog class="pqx-scope-lightbox" data-pqx-scope-lightbox aria-label="Search area preview">
-            <div class="pqx-scope-lightbox-card">
-              <div class="pqx-scope-lightbox-head">
-                <div>
-                  <strong data-pqx-scope-lightbox-title>Search area preview</strong>
-                  <span class="pqx-note" data-pqx-scope-lightbox-caption></span>
-                </div>
-                <button class="pqx-scope-lightbox-close" type="button" data-pqx-scope-lightbox-close aria-label="Close preview">×</button>
-              </div>
-              <div class="pqx-scope-lightbox-stage" data-pqx-scope-lightbox-stage>
-                <div class="pqx-scope-lightbox-zoomable" data-pqx-scope-lightbox-zoomable>
-                  <img class="pqx-scope-lightbox-image" data-pqx-scope-lightbox-image src="" alt="">
-                  <svg class="pqx-scope-lightbox-overlay" data-pqx-scope-lightbox-overlay viewBox="0 0 640 368" preserveAspectRatio="none" aria-hidden="true"></svg>
-                  <div class="pqx-scope-lightbox-tooltip" data-pqx-scope-lightbox-tooltip></div>
-                </div>
-              </div>
-            </div>
-          </dialog>
           {{ filtered_recovery_dialog(counterfactual_rows, suppression_rows) }}
           {% if recent_packets and surface_mode not in ['search', 'agents'] %}
           <div class="pqx-brief-stack">
@@ -11729,6 +11757,25 @@
           {% endif %}
           {% endif %}
         </aside>
+
+        <dialog class="pqx-scope-lightbox" data-pqx-scope-lightbox aria-label="Search area preview">
+          <div class="pqx-scope-lightbox-card">
+            <div class="pqx-scope-lightbox-head">
+              <div>
+                <strong data-pqx-scope-lightbox-title>Search area preview</strong>
+                <span class="pqx-note" data-pqx-scope-lightbox-caption></span>
+              </div>
+              <button class="pqx-scope-lightbox-close" type="button" data-pqx-scope-lightbox-close aria-label="Close preview">×</button>
+            </div>
+            <div class="pqx-scope-lightbox-stage" data-pqx-scope-lightbox-stage>
+              <div class="pqx-scope-lightbox-zoomable" data-pqx-scope-lightbox-zoomable>
+                <img class="pqx-scope-lightbox-image" data-pqx-scope-lightbox-image src="" alt="">
+                <svg class="pqx-scope-lightbox-overlay" data-pqx-scope-lightbox-overlay viewBox="0 0 640 368" preserveAspectRatio="none" aria-hidden="true"></svg>
+                <div class="pqx-scope-lightbox-tooltip" data-pqx-scope-lightbox-tooltip></div>
+              </div>
+            </div>
+          </div>
+        </dialog>
 
         <section class="pqx-command pqx-brief-drawer-panel{% if setup_mobile_primary == 'brief' %} active{% endif %}" data-pqx-mobile-panel="brief" data-workbench-brief-drawer>
           {% if surface_mode != 'agents' %}
