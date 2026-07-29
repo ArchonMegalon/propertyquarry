@@ -10943,9 +10943,42 @@ def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_brows
         assert launch_box["scrollWidth"] <= launch_box["clientWidth"] + 1
         assert launch_box["scrollHeight"] <= launch_box["clientHeight"] + 1
 
+        page.evaluate(
+            """() => {
+              sessionStorage.removeItem('pq-launch-copy-receipt');
+              const record = () => {
+                const rows = Array.from(document.querySelectorAll(
+                  '[data-property-top-launch-status], [data-property-launch-status], [data-property-inline-status]'
+                ))
+                  .map((node) => String(node.textContent || '').trim())
+                  .filter(Boolean);
+                if (rows.length) {
+                  const existing = JSON.parse(sessionStorage.getItem('pq-launch-copy-receipt') || '[]');
+                  sessionStorage.setItem(
+                    'pq-launch-copy-receipt',
+                    JSON.stringify([...existing, ...rows])
+                  );
+                }
+              };
+              new MutationObserver(record).observe(document.body, {
+                subtree: true,
+                childList: true,
+                characterData: true,
+              });
+            }"""
+        )
         launch.click()
         expect(page).to_have_url(re.compile(r"/app/properties\?run_id=run-active-resume"), timeout=10000)
         expect(page.get_by_text("Active search resumed")).to_be_visible()
+        launch_copy_receipt = page.evaluate(
+            "() => JSON.parse(sessionStorage.getItem('pq-launch-copy-receipt') || '[]')"
+        )
+        expected_opening_copy = (
+            "Laufende Suche wird geöffnet…"
+            if locale == "de-AT"
+            else "Abriendo la búsqueda activa…"
+        )
+        assert expected_opening_copy in launch_copy_receipt
 
         assert launch_requests == ["POST"]
         assert console_errors == []
@@ -11927,7 +11960,10 @@ def test_propertyquarry_start_failure_explains_backend_reason(
         inline_error = page.locator("[data-property-inline-error]")
         expect(inline_error).to_contain_text("Upgrade required for this search")
         expect(inline_error).to_contain_text("plus plan")
-        expect(page.locator("[data-property-start-top]")).to_have_attribute("aria-busy", "false")
+        launch_button = page.locator("[data-property-start-top]")
+        expect(launch_button).to_have_attribute("aria-busy", "false")
+        expect(launch_button.locator(".pqx-top-start-label-full")).to_have_text("Launch search")
+        expect(launch_button.locator(".pqx-top-start-label-short")).to_have_text("Search")
     finally:
         context.close()
 

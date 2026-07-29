@@ -42,15 +42,23 @@
     '[data-search-agent-reset]',
   ].join(',');
 
+  const hydrationIdlePresentation = new WeakMap();
   const setBusy = (target, busy) => {
     if (!(target instanceof HTMLElement)) return;
-    if (!target.dataset.pqHydrationLabel) {
-      target.dataset.pqHydrationLabel = String(target.getAttribute('aria-label') || target.textContent || '').trim();
+    if (!hydrationIdlePresentation.has(target)) {
+      hydrationIdlePresentation.set(target, {
+        markup: target.innerHTML,
+        label: String(target.getAttribute('aria-label') || target.textContent || '').trim(),
+      });
     }
+    const idle = hydrationIdlePresentation.get(target);
     target.toggleAttribute('disabled', Boolean(busy));
     target.setAttribute('aria-busy', busy ? 'true' : 'false');
-    if (busy && target.textContent) target.textContent = 'Preparing...';
-    if (!busy && target.dataset.pqHydrationLabel) target.textContent = target.dataset.pqHydrationLabel;
+    if (busy && target.textContent) target.replaceChildren(document.createTextNode('Preparing...'));
+    if (!busy) {
+      target.innerHTML = String(idle?.markup || '');
+      if (idle?.label) target.setAttribute('aria-label', String(idle.label));
+    }
   };
 
   const loadWorkbench = () => {

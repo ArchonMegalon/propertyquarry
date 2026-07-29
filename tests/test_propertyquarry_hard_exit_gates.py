@@ -215,6 +215,7 @@ def test_3d_browser_gate_persists_3dvista_browser_render_proof_in_private_receip
         "providers": ["matterport", "3dvista"],
         "checks": [
             {"name": "3dvista_rendered_viewer", "ok": True},
+            {"name": "3dvista_drag_changes_view", "ok": True},
             {"name": "3dvista_control_page_ok", "ok": True},
         ],
         "provider_results": [
@@ -250,7 +251,10 @@ def test_3d_browser_gate_requires_explicit_persistence_target() -> None:
         "browser_base_url": "http://propertyquarry.com:18097",
         "demo_slug": "candidate-demo",
         "providers": ["3dvista"],
-        "checks": [{"name": "3dvista_rendered_viewer", "ok": True}],
+        "checks": [
+            {"name": "3dvista_rendered_viewer", "ok": True},
+            {"name": "3dvista_drag_changes_view", "ok": True},
+        ],
         "provider_results": [{"provider": "3dvista", "status": "pass", "state": {}}],
     }
 

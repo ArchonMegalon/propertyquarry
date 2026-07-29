@@ -32105,7 +32105,8 @@ def test_public_tour_control_embeds_external_3dvista_url() -> None:
     assert public_tours._public_tour_primary_control_path(payload) == (
         "/tours/3dvista-external/control/3dvista"
     )
-    assert "3DVista Control" in html
+    assert "3D Tour" in html
+    assert "3DVista Control" not in html
     assert 'src="https://example.3dvista.com/tours/top22/index.html"' in html
 
 
@@ -33922,7 +33923,8 @@ def test_public_tour_control_does_not_embed_walkthrough_when_explicit_floorplan_
     response = client.get(f"/tours/{slug}/control/3dvista?pane=floorplan-pane&autoplay=1")
 
     assert response.status_code == 200
-    assert "3DVista Control" in response.text
+    assert "3D Tour" in response.text
+    assert "3DVista Control" not in response.text
     assert f'src="/tours/3dvista/{slug}/3dvista/index.htm"' in response.text
     assert "<video" not in response.text
     assert 'id="tour-video"' not in response.text
@@ -34364,7 +34366,8 @@ def test_public_tour_control_3dvista_route_serves_only_declared_export(
     provenance_response = client.get(f"/tours/3dvista/{slug}/3dvista/provenance.json")
 
     assert control_response.status_code == 200
-    assert "3DVista Control" in control_response.text
+    assert "3D Tour" in control_response.text
+    assert "3DVista Control" not in control_response.text
     assert f"/tours/3dvista/{slug}/3dvista/index.htm" in control_response.text
     assert entry_response.status_code == 200
     assert "3DVista" in entry_response.text
@@ -34525,7 +34528,8 @@ def test_public_tour_forced_provider_route_fails_closed_when_provider_missing(
     assert wrong_response.status_code == 404
     assert wrong_response.json()["error"]["code"] == "tour_control_provider_retired"
     assert right_response.status_code == 200
-    assert "3DVista Control" in right_response.text
+    assert "3D Tour" in right_response.text
+    assert "3DVista Control" not in right_response.text
 
 
 def test_public_tour_matterport_control_uses_private_receipt_without_public_json_leak(
@@ -34611,9 +34615,11 @@ def test_public_tour_3dvista_control_uses_private_receipt_without_public_json_le
     assert page_response.status_code == 302
     assert page_response.headers["location"] == f"/tours/{slug}/control/3dvista"
     assert generic_control_response.status_code == 200
-    assert "3DVista Control" in generic_control_response.text
+    assert "3D Tour" in generic_control_response.text
+    assert "3DVista Control" not in generic_control_response.text
     assert control_response.status_code == 200
-    assert "3DVista Control" in control_response.text
+    assert "3D Tour" in control_response.text
+    assert "3DVista Control" not in control_response.text
     assert 'src="https://example.3dvista.com/tours/private-receipt/index.html"' in control_response.text
 
 

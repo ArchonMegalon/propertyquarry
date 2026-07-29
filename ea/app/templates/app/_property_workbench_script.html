@@ -7176,7 +7176,7 @@
     };
     const savePreferences = async () => {
       if (!form) return;
-      setPropertyInlineStatus('Saving...');
+      setPropertyInlineStatus(localizedWorkbenchCopy('saving', 'Saving...'));
       setPropertyInlineError('');
       const body = collectPayload(form);
       const response = await fetchWithTimeout(String(meta.preferences_endpoint || data.endpoints?.preferences || ''), {
@@ -7191,27 +7191,40 @@
         if (Number(response.status || 0) === 429) throw quotaBlockedError(message);
         throw new Error(message);
       }
-      setPropertyInlineStatus('Saved.');
+      setPropertyInlineStatus(localizedWorkbenchCopy('saved', 'Saved.'));
       return body;
     };
     let searchLaunchInFlight = false;
+    const searchLaunchIdlePresentation = new WeakMap();
     const launchButtons = () => [
       ...root.querySelectorAll('[data-property-start-top]'),
     ];
-    const setSearchLaunchBusy = (busy) => {
+    const setSearchLaunchBusy = (state = '') => {
       launchButtons().forEach((button) => {
         if (!button) return;
-        const isBusy = Boolean(busy);
-        if (!button.dataset.pqxIdleLabel) {
-          button.dataset.pqxIdleLabel = String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search';
+        const isBusy = Boolean(state);
+        if (!searchLaunchIdlePresentation.has(button)) {
+          searchLaunchIdlePresentation.set(button, {
+            markup: button.innerHTML,
+            label: String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search',
+          });
         }
+        const idle = searchLaunchIdlePresentation.get(button);
+        const busyLabel = state === 'opening'
+          ? localizedWorkbenchCopy('opening-results', 'Opening results...')
+          : state === 'preparing'
+            ? localizedWorkbenchCopy('preparing-search', 'Preparing search...')
+            : localizedWorkbenchCopy('launching', 'Launching...');
         button.toggleAttribute('disabled', isBusy);
         button.setAttribute('aria-disabled', isBusy ? 'true' : 'false');
         button.setAttribute('aria-busy', isBusy ? 'true' : 'false');
         button.dataset.pqxLoading = isBusy ? 'true' : 'false';
-        button.textContent = isBusy
-          ? localizedWorkbenchCopy('launching', 'Launching...')
-          : button.dataset.pqxIdleLabel;
+        if (isBusy) {
+          button.replaceChildren(document.createTextNode(busyLabel));
+        } else {
+          button.innerHTML = String(idle?.markup || '');
+          button.setAttribute('aria-label', String(idle?.label || 'Launch search'));
+        }
       });
     };
     const startSearch = async () => {
@@ -7219,10 +7232,11 @@
       if (searchLaunchInFlight) return;
       try {
         searchLaunchInFlight = true;
-        setSearchLaunchBusy(true);
+        setSearchLaunchBusy('preparing');
         setPropertyInlineStatus(localizedWorkbenchCopy('starting-search', 'Starting search...'));
         setPropertyInlineError('');
         const body = await savePreferences();
+        setSearchLaunchBusy('launching');
         setPropertyInlineStatus(localizedWorkbenchCopy('launching-search', 'Launching search...'));
         const launch = await postSearchLaunch(String(meta.start_endpoint || data.endpoints?.start || ''), body);
         const runResponse = launch.response;
@@ -7246,11 +7260,16 @@
         if (runBody.bootstrap_required) {
           setPropertyInlineStatus(readableErrorDetail(runBody.message || `Initialization required for ${runBody.bootstrap_country_label || runBody.bootstrap_country_code || 'this market'}.`, 'Market initialization is required before this search can run.'));
           searchLaunchInFlight = false;
-          setSearchLaunchBusy(false);
+          setSearchLaunchBusy('');
           return;
         }
         if (runBody.run_id) {
-          window.location.href = `/app/properties?run_id=${encodeURIComponent(runBody.run_id)}`;
+          const openingCopy = Number(runResponse.status || 0) === 200
+            ? localizedWorkbenchCopy('opening-active-search', 'Opening active search...')
+            : localizedWorkbenchCopy('search-started-opening-results', 'Search started. Opening results...');
+          setSearchLaunchBusy('opening');
+          setPropertyInlineStatus(openingCopy);
+          window.location.assign(`/app/properties?run_id=${encodeURIComponent(runBody.run_id)}`);
           return;
         }
         pollRun(String(runBody.status_url || ''));
@@ -7267,7 +7286,7 @@
         }
         setPropertyInlineStatus('');
         searchLaunchInFlight = false;
-        setSearchLaunchBusy(false);
+        setSearchLaunchBusy('');
       }
     };
     root.querySelectorAll('[data-property-save], [data-property-save-top]').forEach((button) => {

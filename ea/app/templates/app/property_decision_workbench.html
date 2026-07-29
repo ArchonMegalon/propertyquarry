@@ -11110,6 +11110,7 @@
             const status = root?.querySelector?.('[data-property-top-launch-status]');
             if (!(button instanceof HTMLButtonElement) || !(root instanceof HTMLElement)) return;
             const idleLabel = String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search';
+            const idleMarkup = button.innerHTML;
             let timeoutId = 0;
             const setStatus = (message, tone = '') => {
               if (!(status instanceof HTMLElement)) return;
@@ -11121,7 +11122,8 @@
               button.disabled = false;
               button.setAttribute('aria-disabled', 'false');
               button.setAttribute('aria-busy', 'false');
-              button.textContent = idleLabel;
+              button.innerHTML = idleMarkup;
+              button.setAttribute('aria-label', idleLabel);
             };
             const releaseGuard = () => {
               window.clearTimeout(timeoutId);
@@ -11866,8 +11868,14 @@
                 <span data-property-copy="step-review" aria-label="Review"></span>
                 <span data-property-copy="step-search" aria-label="Search"></span>
                 <span data-property-copy="launching" aria-label="Launching..."></span>
+                <span data-property-copy="preparing-search" aria-label="Preparing search..."></span>
                 <span data-property-copy="starting-search" aria-label="Starting search..."></span>
                 <span data-property-copy="launching-search" aria-label="Launching search..."></span>
+                <span data-property-copy="opening-results" aria-label="Opening results..."></span>
+                <span data-property-copy="opening-active-search" aria-label="Opening active search..."></span>
+                <span data-property-copy="search-started-opening-results" aria-label="Search started. Opening results..."></span>
+                <span data-property-copy="saving" aria-label="Saving..."></span>
+                <span data-property-copy="saved" aria-label="Saved."></span>
               </span>
               <span class="pqx-inline-status pqx-launch-status" data-property-launch-status aria-live="polite"></span>
               {% if surface_mode == 'search' %}

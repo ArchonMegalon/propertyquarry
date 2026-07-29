@@ -54,7 +54,11 @@ def _provider_receipt(*, provider_status: str, rendered: bool) -> dict[str, obje
             {
                 "name": "3dvista_rendered_viewer",
                 "ok": rendered,
-            }
+            },
+            {
+                "name": "3dvista_drag_changes_view",
+                "ok": rendered,
+            },
         ],
         "provider_results": [
             {
@@ -157,6 +161,42 @@ def test_failed_or_unrendered_provider_receipt_never_mutates_proof(
     }
 
 
+def test_rendered_but_noninteractive_provider_receipt_never_mutates_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_mutation(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("noninteractive viewer proof must not be persisted")
+
+    receipt = _provider_receipt(provider_status="pass", rendered=True)
+    next(
+        row
+        for row in receipt["checks"]
+        if row["name"] == "3dvista_drag_changes_view"
+    )["ok"] = False
+    monkeypatch.setattr(gate, "_candidate_public_tour_roots", unexpected_mutation)
+    monkeypatch.setattr(
+        gate,
+        "persist_hosted_property_tour_browser_render_proof",
+        unexpected_mutation,
+    )
+    monkeypatch.setattr(
+        gate,
+        "_persist_3dvista_browser_render_proof_in_runtime_container",
+        unexpected_mutation,
+    )
+
+    result = gate.persist_3dvista_browser_render_proof_from_receipt(
+        receipt,
+        runtime_container="propertyquarry-api",
+    )
+
+    assert result == {
+        "status": "provider_result_not_pass_rendered",
+        "provider": "3dvista",
+        "slug": SLUG,
+    }
+
+
 def test_runtime_proof_persistence_executes_as_configured_container_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -165,7 +205,11 @@ def test_runtime_proof_persistence_executes_as_configured_container_user(
         "provider": "3dvista",
         "status": "pass",
         "rendered_viewer": True,
-        "checks": [{"name": "3dvista_rendered_viewer", "ok": True}],
+        "interactive_viewer": True,
+        "checks": [
+            {"name": "3dvista_rendered_viewer", "ok": True},
+            {"name": "3dvista_drag_changes_view", "ok": True},
+        ],
     }
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:

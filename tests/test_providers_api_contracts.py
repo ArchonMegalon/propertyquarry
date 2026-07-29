@@ -8935,7 +8935,8 @@ def test_public_tour_routes_expose_propertyquarry_3dvista_private_viewer_proof(
     assert "Property Tour" not in page.text
     assert "Load 3D tour" not in page.text
     assert control.status_code == 200
-    assert "3DVista Control" in control.text
+    assert "3D Tour" in control.text
+    assert "3DVista Control" not in control.text
     assert "Property Tour" not in control.text
     assert "Open fullscreen" not in control.text
     assert f"/tours/3dvista/{slug}/3dvista/index.htm" in control.text

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -67,8 +68,9 @@ def main():
         if (
             str(proof.get("status") or "").strip().lower() != "pass"
             or proof.get("rendered_viewer") is not True
+            or proof.get("interactive_viewer") is not True
         ):
-            emit("invalid_request", reason="proof_not_pass_rendered")
+            emit("invalid_request", reason="proof_not_pass_rendered_interactive")
             return 2
 
         root = Path("/data/public_property_tours").resolve()
@@ -508,6 +510,63 @@ def _provider_rendered_ok(provider: str, state: dict[str, object]) -> bool:
     return True
 
 
+def _exercise_provider_drag(page: Any, *, provider: str) -> dict[str, object]:
+    if str(provider or "").strip().lower() != "3dvista":
+        return {}
+    frame = page.locator("iframe.provider-frame").first
+    if frame.count() != 1 or not frame.is_visible():
+        return {
+            "drag_performed": False,
+            "visual_changed": False,
+            "error": "provider_frame_not_visible",
+        }
+    try:
+        box = frame.bounding_box()
+        if not box or float(box.get("width") or 0) < 120 or float(box.get("height") or 0) < 120:
+            return {
+                "drag_performed": False,
+                "visual_changed": False,
+                "error": "provider_frame_too_small",
+                "box": box or {},
+            }
+        before = frame.screenshot(caret="hide", animations="disabled")
+        center_x = float(box["x"]) + float(box["width"]) * 0.5
+        center_y = float(box["y"]) + float(box["height"]) * 0.5
+        page.mouse.move(center_x, center_y)
+        page.mouse.down()
+        page.mouse.move(
+            center_x - max(80.0, float(box["width"]) * 0.28),
+            center_y,
+            steps=12,
+        )
+        page.mouse.up()
+        page.wait_for_timeout(700)
+        after = frame.screenshot(caret="hide", animations="disabled")
+        return {
+            "drag_performed": True,
+            "visual_changed": before != after,
+            "before_sha256": hashlib.sha256(before).hexdigest(),
+            "after_sha256": hashlib.sha256(after).hexdigest(),
+            "before_bytes": len(before),
+            "after_bytes": len(after),
+            "box": {
+                "width": round(float(box["width"]), 1),
+                "height": round(float(box["height"]), 1),
+            },
+            "error": "",
+        }
+    except Exception as exc:
+        try:
+            page.mouse.up()
+        except Exception:
+            pass
+        return {
+            "drag_performed": False,
+            "visual_changed": False,
+            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+        }
+
+
 def _wait_for_provider_rendered(page: Any, *, provider: str, timeout_ms: int) -> dict[str, object]:
     poll_ms = 500
     if str(provider or "").strip().lower() == "matterport":
@@ -676,12 +735,18 @@ def _persistable_3dvista_browser_proof(receipt: dict[str, object]) -> dict[str, 
         str(row.get("name") or "").strip().lower() == "3dvista_rendered_viewer" and row.get("ok") is True
         for row in provider_checks
     )
-    if not provider_passed or not rendered:
+    interactive = any(
+        str(row.get("name") or "").strip().lower() == "3dvista_drag_changes_view"
+        and row.get("ok") is True
+        for row in provider_checks
+    )
+    if not provider_passed or not rendered or not interactive:
         return {}
     proof = {
         "provider": "3dvista",
         "status": "pass",
         "rendered_viewer": True,
+        "interactive_viewer": True,
         "checks": provider_checks,
         "generated_at": receipt.get("generated_at") or _utc_now(),
         "browser_gate_contract_name": receipt.get("contract_name") or "propertyquarry.3d_browser_gate.v1",
@@ -899,6 +964,7 @@ def build_browser_gate_receipt(
                     load_button.click(timeout=timeout_ms)
                 state = _wait_for_provider_rendered(page, provider=provider_key, timeout_ms=timeout_ms)
                 ux_state = _tour_shell_ux_state(page)
+                interaction_state = _exercise_provider_drag(page, provider=provider_key)
                 screenshot_error = ""
                 screenshot_path = screenshot_dir / f"{provider_key}.png" if screenshot_dir else None
                 if screenshot_dir:
@@ -970,6 +1036,12 @@ def build_browser_gate_receipt(
                 if provider_key == "3dvista":
                     provider_checks.extend(
                         [
+                            _check(
+                                "3dvista_drag_changes_view",
+                                interaction_state.get("drag_performed") is True
+                                and interaction_state.get("visual_changed") is True,
+                                state=interaction_state,
+                            ),
                             _check(
                                 "3dvista_offline_recovery_visible",
                                 recovery_state.get("recovery_visible") is True

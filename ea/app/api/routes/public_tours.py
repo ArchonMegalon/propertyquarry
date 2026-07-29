@@ -10616,7 +10616,7 @@ def _tour_control_provider_layers(
             "label": "As listed",
             "src": safe_default_src,
             "provider": "3D tour",
-            "disclosure": "Current view.",
+            "disclosure": "Drag to look around. Scroll or pinch to zoom.",
         }
     ]
     if _safe_matterport_external_url(safe_default_src):
@@ -10695,10 +10695,10 @@ def _tour_control_provider_recovery_html(*, direct_href: str) -> str:
               <div class="provider-loading" data-provider-loading>Loading 3D tour...</div>
               <div class="provider-recovery" data-provider-recovery hidden>
                 <strong>3D tour unavailable</strong>
-                <span>Try again or open the provider directly.</span>
+                <span>Try again or open the tour in a new tab.</span>
                 <div class="provider-recovery-actions">
                   <button type="button" data-provider-retry>Retry</button>
-                  <a href="{html.escape(safe_direct_href)}" data-provider-direct target="_blank" rel="noopener noreferrer">Open directly</a>
+                  <a href="{html.escape(safe_direct_href)}" data-provider-direct target="_blank" rel="noopener noreferrer">Open in new tab</a>
                 </div>
               </div>
             </div>"""
@@ -10939,7 +10939,8 @@ def _tour_control_external_iframe_html(
         .toggle {{ width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); border-radius: 8px; }}
         .toggle button {{ min-height: 48px; padding: 0 8px; border-radius: 6px; }}
         #stage-image, #stage-frame {{ min-height: 280px; max-height: 52vh; }}
-        .thumbs {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+        .thumbs {{ display: flex; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; padding: 3px 3px 8px; scrollbar-color: var(--line) transparent; }}
+        .thumb {{ flex: 0 0 min(42vw, 170px); scroll-snap-align: start; }}
       }}
       @media (prefers-reduced-motion: reduce) {{
         *, *::before, *::after {{ animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .001ms !important; }}
@@ -11214,7 +11215,7 @@ def _tour_control_3dvista_html(payload: dict[str, object], *, nonce: str = "") -
         return _tour_control_external_iframe_html(
             title=title,
             iframe_src=iframe_src,
-            badge="3DVista Control",
+            badge="3D Tour",
             payload=payload,
             fullscreen_href=f"/tours/{urllib.parse.quote(raw_slug, safe='')}/control/3dvista?fullscreen=1" if raw_slug else iframe_src,
             fullscreen=bool(payload.get("_tour_control_fullscreen")),

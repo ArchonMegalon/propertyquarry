@@ -3125,7 +3125,10 @@ def test_public_tour_provider_control_is_mobile_safe_and_opens_verified_3dvista_
         assert "'sha256-" in policy
         assert "'unsafe-inline'" not in policy
     assert "Property Tour" not in page.locator("body").inner_text()
-    assert page.locator(".badge").inner_text().lower() == "3dvista control"
+    assert page.locator(".badge").inner_text().lower() == "3d tour"
+    assert page.locator("#provider-layer-note").inner_text() == (
+        "Drag to look around. Scroll or pinch to zoom."
+    )
     assert "MagicFit" not in page.locator("body").inner_text()
     assert page.locator("#load-provider").count() == 0
     provider_frame = page.locator("#provider-frame")
@@ -3149,6 +3152,19 @@ def test_public_tour_provider_control_is_mobile_safe_and_opens_verified_3dvista_
     )
     natural_width = page.evaluate("() => document.getElementById('stage-image')?.naturalWidth || 0")
     assert natural_width >= 1000
+    thumb_strip = page.locator("#thumbs")
+    thumb_strip_metrics = thumb_strip.evaluate(
+        """(node) => ({
+          display: getComputedStyle(node).display,
+          overflowX: getComputedStyle(node).overflowX,
+          scrollSnapType: getComputedStyle(node).scrollSnapType,
+          clientWidth: node.clientWidth,
+          scrollWidth: node.scrollWidth,
+        })"""
+    )
+    assert thumb_strip_metrics["display"] == "flex"
+    assert thumb_strip_metrics["overflowX"] == "auto"
+    assert thumb_strip_metrics["scrollSnapType"].startswith("x")
     _assert_no_horizontal_overflow(page)
     _assert_visible_controls_meet_mobile_target_floor(page)
     assert not [
@@ -3213,7 +3229,7 @@ def test_public_tour_provider_control_accessibility_and_recovery_journey(
     assert page.get_by_role("main").count() == 1
     provider_frame = page.locator("#provider-frame")
     assert provider_frame.get_attribute("title")
-    assert provider_frame.get_attribute("aria-label").startswith("3DVista Control:")
+    assert provider_frame.get_attribute("aria-label").startswith("3D Tour:")
     assert page.locator("[data-provider-status]").get_attribute("role") == "status"
     assert page.evaluate("() => matchMedia('(prefers-reduced-motion: reduce)').matches") is True
 
@@ -3249,7 +3265,7 @@ def test_public_tour_provider_control_accessibility_and_recovery_journey(
     assert recovery.is_visible()
     assert "3D tour unavailable" in recovery.inner_text()
     retry_button = page.get_by_role("button", name="Retry")
-    direct_link = page.get_by_role("link", name="Open directly")
+    direct_link = page.get_by_role("link", name="Open in new tab")
     assert retry_button.is_visible()
     assert direct_link.is_visible()
     assert direct_link.get_attribute("href").endswith(
