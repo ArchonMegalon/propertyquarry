@@ -8813,11 +8813,16 @@ def test_propertyquarry_3d_tour_request_is_user_initiated_in_real_browser(
             updated_button.click()
         page.locator("h1").wait_for()
         assert page.locator("body", has_text="Altbau near U6").is_visible()
-        assert page.locator(".badge").inner_text().lower() == "3dvista control"
+        assert page.locator(".badge").inner_text().lower() == "3d tour"
+        provider_frame = page.frame_locator("#provider-frame")
+        expect(provider_frame.locator("#tour-viewer")).to_have_text("3D tour ready")
+        assert provider_frame.locator("body").evaluate(
+            "() => Boolean(window.TDVPlayer && window.TDVPlayer.ready)"
+        )
         assert page.locator("#load-provider").count() == 0
         expected_provider_src = "/tours/3dvista/altbau-u6/3dvista/index.htm"
-        expect(page.locator(".provider-frame")).to_have_attribute("src", expected_provider_src, timeout=5000)
-        expect(page.locator(".provider-frame")).to_have_attribute("data-src", expected_provider_src)
+        expect(page.locator("#provider-frame")).to_have_attribute("src", expected_provider_src, timeout=5000)
+        expect(page.locator("#provider-frame")).to_have_attribute("data-src", expected_provider_src)
         response = page.goto(packet_url, wait_until="domcontentloaded")
         assert response is not None and response.ok
         expect(page.locator("[data-property-research-detail]")).to_be_visible()
