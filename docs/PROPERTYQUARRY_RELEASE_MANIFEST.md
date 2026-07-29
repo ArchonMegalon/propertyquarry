@@ -7,13 +7,13 @@ This file is the concise, current release authority. Detailed dated notes are ar
 PropertyQuarry is a source/browser candidate whose production state is decided
 by the current local Docker deployment receipt:
 
-- The locally materialized candidate receipt covers `7/7` source cases, `16/16` real-browser cases, and all eight required product journeys for the exact source identity recorded below. Local Compose deployment and its mode-`0600` operator receipt—not GitHub Actions—decide whether that candidate is live. This candidate includes explicit hosted/generated/blocked/expired 3D-tour truth, attributable unavailable/stale/verified area-evidence states, in-place shortlist history, Telegram delivery proof, production-mode PostgreSQL storage/browser parity, fail-closed production registration delivery, and canonical public-tour volume controls.
+- The locally materialized candidate receipt covers `7/7` source cases, `16/16` flagship real-browser cases, and all eight required product journeys for the exact source identity recorded below. Local Compose deployment and its mode-`0600` operator receipt—not GitHub Actions—decide whether that candidate is live. This candidate includes explicit hosted/generated/blocked/expired 3D-tour truth, a topology-gated captured Matterport control, multi-node enforcement for 3DVista walkable claims, attributable unavailable/stale/verified area-evidence states, in-place shortlist history, Telegram delivery proof, production-mode PostgreSQL storage/browser parity, fail-closed production registration delivery, and canonical public-tour volume controls.
 - Candidate/browser proof does not prove deployment, production storage, authentication, external delivery, observability, rollback, or disaster recovery.
 - A prior, separately observed public-edge check returned `200` for `/` after a narrow generated-tour permission repair and received a response from `/health/ready`; the observation has no current timestamp, immutable image binding, or exact-candidate authority and is therefore historical context only. At that observation, `/version` reported an incomplete release manifest without canonical release identity. None of those checks is deployment proof for this candidate.
 - Production promotion requires a passing exact-candidate local Docker receipt with distinct immutable web/render image IDs, completed migration, healthy services, and localhost readiness.
 - ID Austria is optional and unconfigured. Another supported sign-in path must pass the local live activation proof.
 - External notification release evidence is Telegram-only. WhatsApp is outside the current launch evidence.
-- Release claims are split. **Core Gold** covers search, shortlist, property detail, first-party 3DVista/public-tour delivery, dossier, decision, and governed delivery evidence. Missing or unconfigured MagicFit, Magic, OMagic, generated scene-video, or other advanced visual lanes do not block Core Gold and must remain unavailable in customer copy.
+- Release claims are split. **Core Gold** covers search, shortlist, property detail, topology-verified Matterport and first-party 3DVista/public-tour delivery, dossier, decision, and governed delivery evidence. Missing or unconfigured MagicFit, Magic, OMagic, generated scene-video, or other advanced visual lanes do not block Core Gold and must remain unavailable in customer copy.
 - **Advanced Visual Gold** is a separate opt-in claim scope. It fails closed unless every claimed MagicFit/Magic/OMagic lane has exact candidate-bound provider provenance, accepted playback, quota/account state, privacy, isolation, source-receipt hashes, and media-artifact hashes. Adapter configuration or a generated file alone is never Advanced Visual Gold evidence.
 - The current Advanced Visual producer receipts do not yet carry source-side `release_commit_sha` + `image_digest` identities and exact verifier/source packet hashes. Therefore this candidate records Advanced Visual Gold as `unavailable_unbound_producer_receipts`. The aggregate rejects these legacy/current shapes and never relabels them from its own CLI arguments; Core Gold remains independently eligible.
 
@@ -55,10 +55,10 @@ The marked JSON object is the single canonical release authority consumed by the
   "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:052954ad46194684f3bf302e62dfaacf3956d90cd535bddfbd15841447f3e263",
   "release_branch": "main",
   "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
-  "release_commit_sha": "be708847d9e381474c7c2f774b89ba9425c5ae17",
-  "release_deployment_id": "propertyquarry-governed-deploy-be708847d9e3",
-  "release_generated_at": "2026-07-29T15:59:57Z",
-  "release_label": "propertyquarry-source-browser-candidate-be708847d9e3",
+  "release_commit_sha": "ef279d3d9928c25b19f3c84aa4b7f256841cee7c",
+  "release_deployment_id": "propertyquarry-governed-deploy-ef279d3d9928",
+  "release_generated_at": "2026-07-29T17:13:09Z",
+  "release_label": "propertyquarry-source-browser-candidate-ef279d3d9928",
   "release_manifest_schema": "propertyquarry.release_manifest.v1",
   "release_product": "PropertyQuarry",
   "release_public_origin": "https://propertyquarry.com",
