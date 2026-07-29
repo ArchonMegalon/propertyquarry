@@ -724,8 +724,12 @@ def test_ingress_rejections_keep_correlation_and_browser_security_headers() -> N
 def test_high_cost_input_schemas_forbid_extra_and_bound_nested_work() -> None:
     with pytest.raises(ValidationError, match="extra_forbidden"):
         PropertySearchRunStartIn.model_validate({"unexpected": True})
+    accepted_all_market_providers = PropertySearchRunStartIn.model_validate(
+        {"selected_platforms": [f"source-{index}" for index in range(38)]}
+    )
+    assert len(accepted_all_market_providers.selected_platforms) == 38
     with pytest.raises(ValidationError, match="too_long"):
-        PropertySearchRunStartIn.model_validate({"selected_platforms": [f"source-{index}" for index in range(25)]})
+        PropertySearchRunStartIn.model_validate({"selected_platforms": [f"source-{index}" for index in range(65)]})
     with pytest.raises(ValidationError, match="too_long"):
         PropertySearchRunStartIn.model_validate(
             {"property_preferences": {f"key-{index}": index for index in range(129)}}

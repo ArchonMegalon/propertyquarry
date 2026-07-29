@@ -39,6 +39,7 @@ from app.property_distance_preferences import (
 from app.product import property_evidence_overlays as evidence_overlays
 from app.product.models import HandoffNote
 from app.product.service import ProductService
+from app.services.property_market_catalog import selectable_property_platform_keys
 from app.services.public_tour_release_policy import (
     PUBLIC_TOUR_GENERATED_VIEWER_RELEASE_CONTRACT,
 )
@@ -11927,6 +11928,80 @@ def test_propertyquarry_start_failure_explains_backend_reason(
         expect(inline_error).to_contain_text("Upgrade required for this search")
         expect(inline_error).to_contain_text("plus plan")
         expect(page.locator("[data-property-start-top]")).to_have_attribute("aria-busy", "false")
+    finally:
+        context.close()
+
+
+def test_propertyquarry_agent_can_launch_all_austria_providers_from_real_browser(
+    monkeypatch: pytest.MonkeyPatch,
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    selected_platforms = list(
+        selectable_property_platform_keys(country_code="AT", listing_mode="rent")
+    )
+    assert 24 < len(selected_platforms) <= 64
+    client = propertyquarry_browser_server["client"]
+    assert isinstance(client, TestClient)
+    stored = client.post(
+        "/v1/onboarding/property-search/preferences",
+        json={
+            "country_code": "AT",
+            "language_code": "en",
+            "listing_mode": "rent",
+            "property_type": ["apartment"],
+            "region_code": "vienna",
+            "location_query": "Vienna",
+            "selected_location_values": ["1020 Vienna"],
+            "selected_platforms": selected_platforms,
+            "property_commercial": {
+                "active_plan_key": "agent",
+                "status": "active",
+                "active_until": "2999-01-01T00:00:00+00:00",
+            },
+        },
+    )
+    assert stored.status_code == 200, stored.text
+
+    monkeypatch.setattr(
+        ProductService,
+        "sync_direct_property_scout",
+        lambda self, **_kwargs: {
+            "generated_at": "2026-07-29T12:30:00+00:00",
+            "status": "processed",
+            "sources_total": len(selected_platforms),
+            "listing_total": 0,
+            "review_created_total": 0,
+            "review_existing_total": 0,
+            "notified_total": 0,
+            "email_notified_total": 0,
+            "tour_created_total": 0,
+            "tour_existing_total": 0,
+            "high_fit_total": 0,
+            "watch_notified_total": 0,
+            "sources": [],
+        },
+    )
+
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False)
+    page: Page = context.new_page()
+    try:
+        response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
+        assert response is not None and response.ok
+        expect(page.locator('input[name="selected_platforms"]:checked')).to_have_count(
+            len(selected_platforms)
+        )
+
+        with page.expect_response("**/app/api/property/search-runs") as start_response:
+            page.locator("[data-property-start-top]").click()
+
+        assert start_response.value.status == 202
+        page.wait_for_url(
+            re.compile(r".*/app/properties\?run_id=.*"),
+            timeout=10_000,
+        )
+        assert "Could not start property search" not in page.locator("body").inner_text()
     finally:
         context.close()
 

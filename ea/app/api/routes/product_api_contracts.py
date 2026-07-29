@@ -1985,10 +1985,17 @@ class PropertyScoutSyncOut(BaseModel):
     sources: list[PropertyScoutSourceOut] = Field(default_factory=list)
 
 
+PROPERTY_SEARCH_RUN_MAX_SELECTED_PLATFORMS = 64
+
+
 class PropertySearchRunStartIn(StrictMutationIn):
     selected_platforms: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
         default_factory=list,
-        max_length=24,
+        # Agent plans may select every provider available in one market.
+        # Austria currently exceeds the historical 24-provider transport cap,
+        # so keep the request bounded above the catalog size while plan and
+        # country eligibility remain enforced at the service boundary.
+        max_length=PROPERTY_SEARCH_RUN_MAX_SELECTED_PLATFORMS,
     )
     property_preferences: dict[str, object] = Field(default_factory=dict, max_length=128)
     force_refresh: bool = False
