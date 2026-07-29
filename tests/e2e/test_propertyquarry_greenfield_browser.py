@@ -1853,6 +1853,10 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
             "Eignung wird geprüft: Kleine Mietwohnung in Spielberg "
             "(25 von 30) von Willhaben."
         )
+        fit_event = page.locator("[data-pqx-run-events] .pqx-event-card").filter(
+            has_text="Kleine Mietwohnung in Spielberg"
+        )
+        expect(fit_event.locator("strong")).to_have_text("Eignung")
         expect(page.locator("[data-pqx-run-events]")).to_contain_text(
             "20 von 30 Inseratsvorschauen von Willhaben vorbereitet."
         )
@@ -1881,6 +1885,7 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
             "Queued for execution.",
             "Checking fit for",
             "Untranslated future provider",
+            "Property fit",
             "Browser alerts off",
             "Dark mode",
         ):
