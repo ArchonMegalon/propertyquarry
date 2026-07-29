@@ -9888,8 +9888,9 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       .stack {{ display:grid; gap:10px; }}
       .kv {{ display:grid; gap:4px; border:1px solid var(--line); border-radius:18px; padding:12px 13px; background:rgba(255,255,255,.44); }}
       .kv b {{ font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }}
-      .stage {{ display:grid; grid-template-columns:minmax(0, 1.15fr) minmax(320px, .85fr); gap:18px; }}
-      .video-card {{ padding:16px; display:grid; gap:12px; }}
+      .stage {{ display:grid; grid-template-columns:minmax(0, 1.15fr) minmax(320px, .85fr); gap:18px; align-items:start; }}
+      .stage-column {{ min-width:0; display:grid; gap:18px; align-content:start; }}
+      .video-card {{ padding:16px; display:grid; gap:12px; align-content:start; }}
       .video-stage {{ position:relative; overflow:hidden; border-radius:22px; border:1px solid var(--line); background:#111; }}
       .video-stage video, .video-stage img {{ display:block; width:100%; min-height:360px; max-height:62vh; object-fit:cover; background:#111; }}
       .walkthrough-hud {{ position:absolute; top:16px; left:16px; z-index:2; display:grid; gap:8px; max-width:min(72%, 460px); padding:14px 16px; border-radius:18px; background:linear-gradient(180deg, rgba(23,19,12,.78), rgba(23,19,12,.46)); color:#fff7eb; box-shadow:0 18px 40px rgba(16,12,7,.24); backdrop-filter:blur(10px); pointer-events:none; }}
@@ -9910,12 +9911,12 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       .walkthrough-progress-marker[data-focus-mode="floorplan"] {{ background:rgba(99,126,172,.5); }}
       .walkthrough-progress-marker.is-active {{ background:#17130c; box-shadow:0 0 0 3px rgba(167,124,43,.22); }}
       .video-note {{ margin:0; color:var(--muted); font-size:13px; line-height:1.45; }}
-      .sidebar {{ padding:18px; display:grid; gap:16px; align-content:start; }}
-      .sidebar-block {{ display:grid; gap:10px; align-content:start; }}
+      .sidebar {{ display:grid; gap:18px; align-content:start; }}
+      .sidebar-block {{ padding:18px; display:grid; gap:10px; align-content:start; }}
       .sidebar h2 {{ margin:0; font-size:16px; letter-spacing:-.02em; }}
       .reference-focus {{ display:grid; gap:10px; }}
-      .reference-shell {{ overflow:hidden; border-radius:20px; border:1px solid var(--line); background:rgba(255,255,255,.58); min-height:220px; display:grid; }}
-      .reference-shell img {{ display:block; width:100%; min-height:220px; height:100%; object-fit:cover; background:#fff; }}
+      .reference-shell {{ overflow:hidden; border-radius:20px; border:1px solid var(--line); background:rgba(255,255,255,.58); min-height:220px; aspect-ratio:16 / 9; display:grid; }}
+      .reference-shell img {{ display:block; width:100%; min-height:0; height:100%; object-fit:cover; background:#fff; }}
       .reference-shell-doc {{ min-height:220px; padding:18px; display:grid; align-content:center; gap:10px; background:linear-gradient(160deg, rgba(255,255,255,.72), rgba(247,239,225,.88)); }}
       .reference-shell-doc strong {{ font-size:14px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }}
       .reference-shell-doc b {{ font-family:Georgia, ui-serif, serif; font-size:28px; line-height:1; }}
@@ -9925,7 +9926,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       .reference-meta b {{ font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }}
       .reference-meta strong {{ font-size:17px; line-height:1.2; }}
       .reference-meta a {{ min-height:44px; display:inline-flex; align-items:center; justify-content:center; width:fit-content; max-width:100%; padding:0 16px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.58); color:#6c4c16; font-weight:700; text-decoration:none; }}
-      .route-list {{ margin:0; padding-left:20px; display:grid; gap:8px; color:var(--ink); }}
+      .route-list {{ margin:0; padding:0; list-style:none; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; color:var(--ink); }}
       .route-list li {{ line-height:1.35; }}
       .route-action {{ width:100%; display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:center; text-align:left; border:1px solid var(--line); border-radius:16px; background:rgba(255,255,255,.46); padding:10px 12px; color:inherit; font:inherit; cursor:pointer; }}
       .route-action.is-active {{ border-color:rgba(108,76,22,.46); box-shadow:0 0 0 2px rgba(167,124,43,.16); background:rgba(255,255,255,.78); }}
@@ -9935,7 +9936,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       .route-meta {{ display:flex; flex-wrap:wrap; gap:6px; }}
       .route-pill {{ min-height:24px; display:inline-flex; align-items:center; padding:0 8px; border-radius:999px; background:rgba(167,124,43,.14); color:#6c4c16; font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }}
       .route-pill.muted {{ background:rgba(23,19,12,.06); color:var(--muted); }}
-      .media-grid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }}
+      .media-grid {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }}
       .media-card {{ width:100%; text-align:left; border:1px solid var(--line); border-radius:18px; background:rgba(255,255,255,.42); padding:0; color:inherit; cursor:pointer; overflow:hidden; }}
       .media-card img {{ display:block; width:100%; aspect-ratio:1.25; object-fit:cover; background:#fff; }}
       .media-card strong, .media-card .doc-mark {{ display:block; padding:10px 12px 12px; }}
@@ -9960,9 +9961,8 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       @media (max-width: 980px) {{
         body {{ padding:10px; }}
         .hero, .stage {{ grid-template-columns:1fr; }}
-        .sidebar-route {{ order:1; }}
-        .sidebar-reference {{ order:2; }}
-        .sidebar-deck {{ order:3; }}
+        .reference-shell, .reference-shell-doc {{ min-height:0; }}
+        .route-list {{ grid-template-columns:1fr; }}
         .media-grid {{ grid-template-columns:repeat(2, minmax(0,1fr)); }}
         .video-stage video, .video-stage img {{ min-height:280px; max-height:42vh; }}
         .walkthrough-hud {{ max-width:calc(100% - 32px); }}
@@ -9970,7 +9970,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
         .layout-viewer-shell iframe {{ min-height:460px; height:66vh; }}
       }}
       @media (max-width: 620px) {{
-        .hero-main, .hero-side, .video-card, .sidebar {{ border-radius:22px; }}
+        .hero-main, .hero-side, .video-card, .sidebar-block {{ border-radius:22px; }}
         .lead-preview-shell, .lead-preview-shell img {{ min-height:320px; }}
         .media-grid {{ grid-template-columns:1fr 1fr; }}
         .walkthrough-hud {{ top:12px; left:12px; right:12px; padding:12px 13px; }}
@@ -10012,47 +10012,53 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
       </section>
       {layout_viewer_section if layout_focus else ''}
       <section class="stage">
-        <div class="card video-card" id="walkthrough">
-          <h2>Walkthrough</h2>
-          {f'''<div class="video-stage">
-            <div class="walkthrough-hud" id="walkthrough-hud" aria-live="polite" aria-atomic="true">
-              <div class="walkthrough-chip-row">
-                <span class="walkthrough-chip" id="walkthrough-stop-position">{html.escape(initial_route_position)}</span>
-                <span class="walkthrough-chip muted" id="walkthrough-stop-mode">{html.escape(initial_route_mode)}</span>
+        <div class="stage-column stage-primary">
+          <div class="card video-card" id="walkthrough">
+            <h2>Walkthrough</h2>
+            {f'''<div class="video-stage">
+              <div class="walkthrough-hud" id="walkthrough-hud" aria-live="polite" aria-atomic="true">
+                <div class="walkthrough-chip-row">
+                  <span class="walkthrough-chip" id="walkthrough-stop-position">{html.escape(initial_route_position)}</span>
+                  <span class="walkthrough-chip muted" id="walkthrough-stop-mode">{html.escape(initial_route_mode)}</span>
+                </div>
+                <strong class="walkthrough-stop-label" id="walkthrough-stop-name">{initial_route_label}</strong>
               </div>
-              <strong class="walkthrough-stop-label" id="walkthrough-stop-name">{initial_route_label}</strong>
-            </div>
-            <video id="tour-video" controls playsinline webkit-playsinline="true" preload="metadata" poster="{first_scene_url}">{video_source_markup}</video>
-          </div>''' if video_url else f'''<div class="video-stage">
-            <div class="walkthrough-hud" id="walkthrough-hud" aria-live="polite" aria-atomic="true">
-              <div class="walkthrough-chip-row">
-                <span class="walkthrough-chip" id="walkthrough-stop-position">{html.escape(initial_route_position)}</span>
-                <span class="walkthrough-chip muted" id="walkthrough-stop-mode">{html.escape(initial_route_mode)}</span>
+              <video id="tour-video" controls playsinline webkit-playsinline="true" preload="metadata" poster="{first_scene_url}">{video_source_markup}</video>
+            </div>''' if video_url else f'''<div class="video-stage">
+              <div class="walkthrough-hud" id="walkthrough-hud" aria-live="polite" aria-atomic="true">
+                <div class="walkthrough-chip-row">
+                  <span class="walkthrough-chip" id="walkthrough-stop-position">{html.escape(initial_route_position)}</span>
+                  <span class="walkthrough-chip muted" id="walkthrough-stop-mode">{html.escape(initial_route_mode)}</span>
+                </div>
+                <strong class="walkthrough-stop-label" id="walkthrough-stop-name">{initial_route_label}</strong>
               </div>
-              <strong class="walkthrough-stop-label" id="walkthrough-stop-name">{initial_route_label}</strong>
+              <img src="{first_scene_url}" alt="{first_scene_name}">
+            </div>'''}
+            <div class="walkthrough-toolbar">
+              <div class="walkthrough-nav">
+                <button type="button" class="mini-btn" id="route-prev" aria-label="Go to previous route stop">Previous stop</button>
+                <button type="button" class="mini-btn" id="route-next" aria-label="Go to next route stop">Next stop</button>
+              </div>
+              <div class="walkthrough-route-summary" id="walkthrough-route-summary">{initial_route_summary}</div>
             </div>
-            <img src="{first_scene_url}" alt="{first_scene_name}">
-          </div>'''}
-          <div class="walkthrough-toolbar">
-            <div class="walkthrough-nav">
-              <button type="button" class="mini-btn" id="route-prev" aria-label="Go to previous route stop">Previous stop</button>
-              <button type="button" class="mini-btn" id="route-next" aria-label="Go to next route stop">Next stop</button>
+            <div class="walkthrough-progress" aria-label="Walkthrough route progress">
+              <div class="walkthrough-progress-head">
+                <span id="walkthrough-progress-status">Route progress</span>
+                <span id="walkthrough-progress-time">0:00 / 0:00</span>
+              </div>
+              <div class="walkthrough-progress-track" id="walkthrough-progress-track">
+                <span class="walkthrough-progress-fill" id="walkthrough-progress-fill"></span>
+              </div>
             </div>
-            <div class="walkthrough-route-summary" id="walkthrough-route-summary">{initial_route_summary}</div>
+            <p class="video-note">The walkthrough follows the room route and keeps the floorplan visible as a secondary cue instead of pretending to be a captured 360 tour.</p>
           </div>
-          <div class="walkthrough-progress" aria-label="Walkthrough route progress">
-            <div class="walkthrough-progress-head">
-              <span id="walkthrough-progress-status">Route progress</span>
-              <span id="walkthrough-progress-time">0:00 / 0:00</span>
-            </div>
-            <div class="walkthrough-progress-track" id="walkthrough-progress-track">
-              <span class="walkthrough-progress-fill" id="walkthrough-progress-fill"></span>
-            </div>
-          </div>
-          <p class="video-note">The walkthrough follows the room route and keeps the floorplan visible as a secondary cue instead of pretending to be a captured 360 tour.</p>
+          <section class="card sidebar-block sidebar-route">
+            <h2>Room route</h2>
+            <ol class="route-list">{route_markup or '<li>Route labels unavailable</li>'}</ol>
+          </section>
         </div>
-        <aside class="card sidebar">
-          <section class="reference-focus sidebar-block sidebar-reference" id="reference-focus">
+        <aside class="sidebar stage-column">
+          <section class="card reference-focus sidebar-block sidebar-reference" id="reference-focus">
             <h2>Reference focus</h2>
             <div class="reference-shell" id="reference-shell"></div>
             <div class="reference-meta">
@@ -10064,11 +10070,7 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
               <a id="reference-focus-open" href="#" target="_blank" rel="noopener noreferrer">Open source image</a>
             </div>
           </section>
-          <section class="sidebar-block sidebar-route">
-            <h2>Room route</h2>
-            <ol class="route-list">{route_markup or '<li>Route labels unavailable</li>'}</ol>
-          </section>
-          <section class="sidebar-block sidebar-deck" id="reference-deck">
+          <section class="card sidebar-block sidebar-deck" id="reference-deck">
             <h2>Reference deck</h2>
             <div class="media-grid" id="media-grid">{media_cards or '<p class="disclosure">Reference media unavailable.</p>'}</div>
           </section>
