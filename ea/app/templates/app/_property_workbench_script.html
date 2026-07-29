@@ -40,6 +40,7 @@
           'Updates': 'Aktualisierungen',
           'Checking the saved search.': 'Gespeicherte Suche wird geprüft.',
           'Checking the latest search status.': 'Aktueller Suchstatus wird geprüft.',
+          'Search is still running.': 'Suche läuft weiter.',
           'Preparing': 'Vorbereitung',
           'Sources': 'Quellen',
           'Details': 'Details',
@@ -77,6 +78,7 @@
                 'Updates': 'Actualizaciones',
                 'Checking the saved search.': 'Revisando la búsqueda guardada.',
                 'Checking the latest search status.': 'Revisando el estado más reciente de la búsqueda.',
+                'Search is still running.': 'La búsqueda sigue en curso.',
                 'Preparing': 'Preparando',
                 'Sources': 'Fuentes',
                 'Details': 'Detalles',
@@ -189,6 +191,13 @@
         localized = localized.replace(pattern, replacement);
       });
       return localized;
+    };
+    const localizedLiveMessage = (value, fallbackValue = 'Search is still running.') => {
+      const text = String(value ?? '').trim();
+      const localized = localizeLiveCopy(text);
+      if (!clientLocale.startsWith('de') && !clientLocale.startsWith('es')) return localized;
+      if (!text || localized !== text) return localized;
+      return localizeLiveCopy(fallbackValue);
     };
     const networkState = root.querySelector('[data-pq-network-state]');
     const syncNetworkState = () => {
@@ -3149,7 +3158,7 @@
 		      return rows.map((event) => {
 		        const label = labelRunEvent(event);
 		        const message = compactRunMessage(event?.message || 'Search is still running.');
-		        return `<div class="pqx-event-card"><strong>${escapeHtml(localizeLiveCopy(label))}</strong><span class="pqx-note">${escapeHtml(localizeLiveCopy(message))}</span></div>`;
+		        return `<div class="pqx-event-card"><strong>${escapeHtml(localizeLiveCopy(label))}</strong><span class="pqx-note">${escapeHtml(localizedLiveMessage(message))}</span></div>`;
 		      }).join('') || '<div class="pqx-empty">Waiting for the next useful update.</div>';
 	    };
     const displayRunMessage = (runPayload) => {
@@ -4038,7 +4047,12 @@
       const sourceNode = root.querySelector('[data-pqx-source-breakdown]');
       const surfaceState = String(root.dataset.pqxState || '').trim().toLowerCase();
       if (statusNode) statusNode.textContent = localizeLiveCopy(status.replaceAll('_', ' '));
-      if (messageNode) messageNode.textContent = localizeLiveCopy(displayRunMessage(runPayload));
+      if (messageNode) {
+        messageNode.textContent = localizedLiveMessage(
+          displayRunMessage(runPayload),
+          runSummaryText(runPayload),
+        );
+      }
       if (ring) ring.style.setProperty('--progress', String(terminalStates.has(status) ? progress : Math.min(progress, 95)));
       if (progressLabel) progressLabel.textContent = `${terminalStates.has(status) ? progress : Math.min(progress, 95)}%`;
       if (summaryNode && runPayload.summary && surfaceState !== 'empty_results') {

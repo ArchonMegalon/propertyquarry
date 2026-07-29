@@ -1780,7 +1780,7 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
             "selected_platforms": ["willhaben", "immoscout_at", "immobilien_at"],
             "progress": 3,
             "current_step": "sources_resolved",
-            "message": "Prepared 20 of 30 listing preview(s) from Willhaben.",
+            "message": "Untranslated future provider status.",
             "provider_display_total": 3,
             "source_variant_display_total": 0,
             "selected_platform_count": 3,
@@ -1806,6 +1806,14 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
                         "Checking fit for Kleine Mietwohnung in Spielberg "
                         "(25 of 30) from Willhaben."
                     ),
+                },
+                {
+                    "step": "source_preview_prepare",
+                    "message": "Prepared 20 of 30 listing preview(s) from Willhaben.",
+                },
+                {
+                    "step": "source_search",
+                    "message": "Untranslated future provider event.",
                 }
             ],
             "research_tasks": [],
@@ -1836,7 +1844,7 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
         expect(board.locator("[data-pqx-progress-eta]")).to_have_text("3% · ca. 5 Min.")
         expect(board).to_contain_text("54 Immobilien gefunden")
         expect(page.locator("[data-pqx-run-message]")).to_have_text(
-            "20 von 30 Inseratsvorschauen von Willhaben vorbereitet."
+            "54 Immobilien gefunden · 54 zu prüfen · 3 Quellen offen"
         )
         expect(page.locator("[data-pqx-run-events]")).to_contain_text(
             "Zur Ausführung eingeplant."
@@ -1844,6 +1852,12 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
         expect(page.locator("[data-pqx-run-events]")).to_contain_text(
             "Eignung wird geprüft: Kleine Mietwohnung in Spielberg "
             "(25 von 30) von Willhaben."
+        )
+        expect(page.locator("[data-pqx-run-events]")).to_contain_text(
+            "20 von 30 Inseratsvorschauen von Willhaben vorbereitet."
+        )
+        expect(page.locator("[data-pqx-run-events]")).to_contain_text(
+            "Suche läuft weiter."
         )
         expect(page.locator("[data-pqx-run-summary]")).to_contain_text("3 Quellen offen")
         expect(board).to_contain_text("Immobilien")
@@ -1866,6 +1880,7 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
             "about 5 min",
             "Queued for execution.",
             "Checking fit for",
+            "Untranslated future provider",
             "Browser alerts off",
             "Dark mode",
         ):
