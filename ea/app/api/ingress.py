@@ -12,8 +12,10 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from app.api.dependencies import RequestContext, get_request_context
@@ -551,7 +553,12 @@ def _request_context_sync(request: Request) -> RequestContext | None:
     return get_request_context(request=request, container=container)
 
 
-def _active_property_search_count_sync(request: Request, context: RequestContext, *, limit: int) -> int:
+def _active_property_search_count_sync(
+    request: Request,
+    context: RequestContext,
+    *,
+    limit: int,
+) -> int | dict[str, object]:
     container = getattr(request.app.state, "container", None)
     if container is None:
         return 0
@@ -561,7 +568,7 @@ def _active_property_search_count_sync(request: Request, context: RequestContext
             principal_id=context.principal_id,
             limit=8,
         )
-        return 1 if isinstance(active, dict) and active else 0
+        return dict(active) if isinstance(active, dict) and active else 0
     rows = service.list_property_search_runs(
         principal_id=context.principal_id,
         limit=max(int(limit) + 8, 12),
@@ -595,7 +602,11 @@ class IngressAbuseMiddleware:
         policy: IngressPolicy,
         clock: Callable[[], float] = time.monotonic,
         context_resolver: Callable[[Request], RequestContext | None] | None = None,
-        active_search_counter: Callable[[Request, RequestContext, int], int] | None = None,
+        active_search_counter: Callable[
+            [Request, RequestContext, int],
+            int | Mapping[str, object],
+        ]
+        | None = None,
         admission_store: IngressAdmissionStore | None = None,
     ) -> None:
         self.app = app
@@ -643,6 +654,37 @@ class IngressAbuseMiddleware:
         if app is not None:
             get_runtime_metrics(app).record_ingress_rejection(reason=code, dimension=dimension)
         await response(scope, receive, send)
+
+    async def _send_active_search_resume(
+        self,
+        *,
+        scope: dict[str, Any],
+        receive: Callable[..., Awaitable[dict[str, Any]]],
+        send: Callable[..., Awaitable[None]],
+        active_run: Mapping[str, object],
+    ) -> bool:
+        run_id = str(active_run.get("run_id") or "").strip()
+        if not run_id:
+            return False
+        encoded_run_id = quote(run_id, safe="")
+        canonical = str(scope.get("path") or "").rstrip("/") == "/app/api/property/search-runs"
+        payload = dict(active_run)
+        payload["run_id"] = run_id
+        payload["status_url"] = (
+            f"/app/api/property/search-runs/{encoded_run_id}"
+            if canonical
+            else f"/app/api/signals/property/search/run/{encoded_run_id}"
+        )
+        payload["resumed"] = True
+        payload["resume_url"] = f"/app/properties?run_id={encoded_run_id}"
+        response = JSONResponse(
+            status_code=200,
+            content=jsonable_encoder(payload),
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Property-Search-Resumed"] = "true"
+        await response(scope, receive, send)
+        return True
 
     def _admission_backend(self) -> AdmissionBackend:
         if isinstance(self._admission_store, InMemoryIngressAdmissionStore):
@@ -1276,14 +1318,14 @@ class IngressAbuseMiddleware:
                 request_for_active_check = Request(scope, receive=limited_receive)
                 try:
                     if self._active_search_counter is not None:
-                        active_count = await asyncio.to_thread(
+                        active_probe = await asyncio.to_thread(
                             self._active_search_counter,
                             request_for_active_check,
                             context,
                             self.policy.active_search_limit,
                         )
                     else:
-                        active_count = await asyncio.to_thread(
+                        active_probe = await asyncio.to_thread(
                             _active_property_search_count_sync,
                             request_for_active_check,
                             context,
@@ -1301,7 +1343,20 @@ class IngressAbuseMiddleware:
                         retry_after=5,
                     )
                     return
+                active_run = (
+                    dict(active_probe)
+                    if isinstance(active_probe, Mapping)
+                    else {}
+                )
+                active_count = 1 if active_run else int(active_probe or 0)
                 if active_count >= self.policy.active_search_limit:
+                    if active_run and await self._send_active_search_resume(
+                        scope=scope,
+                        receive=receive,
+                        send=response_send,
+                        active_run=active_run,
+                    ):
+                        return
                     await self._send_error(
                         scope=scope,
                         receive=receive,

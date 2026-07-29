@@ -597,6 +597,38 @@ def test_active_property_search_cap_rejects_before_route_dispatch() -> None:
     }
 
 
+def test_active_property_search_cap_resumes_existing_run_before_route_dispatch() -> None:
+    context = RequestContext(principal_id="search-account", authenticated=True, auth_source="test")
+    app = _app_with_ingress(
+        policy=_policy(),
+        context_resolver=lambda request: context,
+        active_search_counter=lambda request, resolved, limit: {
+            "generated_at": "2026-07-29T08:00:00+00:00",
+            "run_id": "active-run-42",
+            "principal_id": resolved.principal_id,
+            "status": "in_progress",
+            "message": "Reviewing live sources.",
+        },
+    )
+    client = TestClient(app)
+
+    resumed = client.post("/app/api/property/search-runs", json={})
+
+    assert resumed.status_code == 200
+    assert resumed.headers["X-Property-Search-Resumed"] == "true"
+    assert resumed.headers["Cache-Control"] == "no-store"
+    assert resumed.json() == {
+        "generated_at": "2026-07-29T08:00:00+00:00",
+        "run_id": "active-run-42",
+        "principal_id": "search-account",
+        "status": "in_progress",
+        "message": "Reviewing live sources.",
+        "status_url": "/app/api/property/search-runs/active-run-42",
+        "resumed": True,
+        "resume_url": "/app/properties?run_id=active-run-42",
+    }
+
+
 def test_active_search_check_and_dispatch_are_serialized_across_replicas() -> None:
     shared_admission = InMemoryIngressAdmissionStore(clock=lambda: 1.0)
     context = RequestContext(
@@ -616,16 +648,25 @@ def test_active_search_check_and_dispatch_are_serialized_across_replicas() -> No
             policy=_policy(active_search_limit=1),
             admission_store=shared_admission,
             context_resolver=lambda request: context,
-            active_search_counter=lambda request, resolved, limit: active_count[0],
+            active_search_counter=lambda request, resolved, limit: (
+                {
+                    "generated_at": "2026-07-29T08:00:00+00:00",
+                    "run_id": "shared-active-run",
+                    "principal_id": resolved.principal_id,
+                    "status": "in_progress",
+                }
+                if active_count[0]
+                else 0
+            ),
         )
 
         @app.post("/app/api/property/search-runs")
-        def start_search() -> dict[str, bool]:
+        def start_search() -> dict[str, object]:
             if blocking_route:
                 entered.set()
                 release.wait(timeout=3)
             active_count[0] += 1
-            return {"started": True}
+            return {"started": True, "run_id": "shared-active-run"}
 
         return app
 
@@ -657,8 +698,10 @@ def test_active_search_check_and_dispatch_are_serialized_across_replicas() -> No
     assert concurrent.status_code == 429
     assert concurrent.json()["error"]["code"] == "ingress_concurrency_limit_exceeded"
     assert first_result["response"].status_code == 200  # type: ignore[union-attr]
-    assert after_commit.status_code == 429
-    assert after_commit.json()["error"]["code"] == "active_search_limit_exceeded"
+    assert after_commit.status_code == 200
+    assert after_commit.headers["X-Property-Search-Resumed"] == "true"
+    assert after_commit.json()["run_id"] == "shared-active-run"
+    assert after_commit.json()["resume_url"] == "/app/properties?run_id=shared-active-run"
     assert active_count == [1]
 
 

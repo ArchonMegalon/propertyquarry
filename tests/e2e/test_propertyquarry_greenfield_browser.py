@@ -10507,6 +10507,118 @@ def test_propertyquarry_search_launch_turns_quota_rejection_into_retryable_calm_
         context.close()
 
 
+@pytest.mark.parametrize(
+    ("mobile", "locale"),
+    [
+        (False, "de-AT"),
+        (True, "es-CR"),
+    ],
+)
+def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+    mobile: bool,
+    locale: str,
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(
+        browser,
+        mobile=mobile,
+        width=390 if mobile else 1440,
+        height=844 if mobile else 900,
+        locale=locale,
+    )
+    page: Page = context.new_page()
+    launch_requests: list[str] = []
+    console_errors: list[str] = []
+    page_errors: list[str] = []
+    page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    try:
+        page.route(
+            "**/v1/onboarding/property-search/preferences",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"status": "saved"}),
+            ),
+        )
+
+        def _resume_active_run(route) -> None:
+            launch_requests.append(route.request.method)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                headers={
+                    "cache-control": "no-store",
+                    "x-property-search-resumed": "true",
+                },
+                body=json.dumps(
+                    {
+                        "generated_at": "2026-07-29T08:00:00+00:00",
+                        "run_id": "run-active-resume",
+                        "status": "in_progress",
+                        "status_url": "/app/api/property/search-runs/run-active-resume",
+                        "resumed": True,
+                        "resume_url": "/app/properties?run_id=run-active-resume",
+                    }
+                ),
+            )
+
+        page.route("**/app/api/property/search-runs**", _resume_active_run)
+        page.route(
+            "**/app/properties?run_id=run-active-resume",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/html",
+                body="<html><body><main>Active search resumed</main></body></html>",
+            ),
+        )
+        response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
+        assert response is not None and response.ok
+        expected_provider_label = "Portale" if locale == "de-AT" else "Portales"
+        expect(
+            page.locator('[data-property-step-trigger="providers"] strong')
+        ).to_have_text(expected_provider_label)
+
+        if mobile:
+            page.locator('[data-property-step-trigger="providers"]').click()
+            page.wait_for_function(
+                """() => document.querySelector(
+                  '[data-console-form-variant="property_search"]'
+                )?.dataset.propertyActiveStep === 'providers'"""
+            )
+            launch = page.locator("[data-property-step-next]:visible")
+            expect(launch).to_have_text("Buscar")
+        else:
+            launch = page.locator("[data-property-start-top]")
+            expect(launch).to_have_attribute("aria-label", "Suche starten")
+        expect(launch).to_be_visible()
+        launch_box = launch.evaluate(
+            """(button) => ({
+              clientWidth: button.clientWidth,
+              scrollWidth: button.scrollWidth,
+              clientHeight: button.clientHeight,
+              scrollHeight: button.scrollHeight,
+            })"""
+        )
+        assert launch_box["scrollWidth"] <= launch_box["clientWidth"] + 1
+        assert launch_box["scrollHeight"] <= launch_box["clientHeight"] + 1
+
+        with page.expect_response("**/app/api/property/search-runs**") as start_response:
+            launch.click()
+        assert start_response.value.status == 200
+        assert start_response.value.headers.get("x-property-search-resumed") == "true"
+        expect(page).to_have_url(re.compile(r"/app/properties\?run_id=run-active-resume"), timeout=10000)
+        expect(page.get_by_text("Active search resumed")).to_be_visible()
+
+        assert launch_requests == ["POST"]
+        assert console_errors == []
+        assert page_errors == []
+    finally:
+        context.close()
+
+
 def test_propertyquarry_app_search_launch_uses_any_property_type_when_all_boxes_are_clear(
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],

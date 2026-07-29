@@ -4420,26 +4420,82 @@
     window.setTimeout(normalizeMobileTopNavigation, 160);
     root.querySelector('[data-pqx-mobile-nav-menu]')?.addEventListener('toggle', normalizeMobileTopNavigation);
     window.addEventListener('resize', normalizeMobileTopNavigation);
+    const localizedWorkbenchCopy = (key, fallback) => {
+      const node = root.querySelector(`[data-property-copy="${String(key || '').trim()}"]`);
+      return String(node?.getAttribute?.('aria-label') || node?.textContent || fallback || '').trim()
+        || String(fallback || '');
+    };
     const wizardStepPresentation = (step, isInvestment) => {
       const key = String(step?.key || '').trim();
       const fallbackLabel = String(step?.label || 'Search').trim() || 'Search';
       const fallbackDetail = String(step?.detail || '').trim();
       const map = {
         search: isInvestment
-          ? { label: 'Market', detail: 'Market, listing mode, and budget.' }
-          : { label: 'Where', detail: 'Country, market, and target areas.' },
-        what: { label: 'What', detail: 'Type, budget, size, move-in.' },
-        areas: { label: 'Strategy', detail: 'Target areas, spillover distance, and investment guardrails.' },
+          ? {
+              label: localizedWorkbenchCopy('wizard-market', 'Market'),
+              detail: localizedWorkbenchCopy('wizard-market-detail', 'Market, listing mode, and budget.'),
+            }
+          : {
+              label: localizedWorkbenchCopy('wizard-where', 'Where'),
+              detail: localizedWorkbenchCopy('wizard-where-detail', 'Country, market, and target areas.'),
+            },
+        what: {
+          label: localizedWorkbenchCopy('wizard-what', 'What'),
+          detail: localizedWorkbenchCopy('wizard-what-detail', 'Type, budget, size, move-in.'),
+        },
+        areas: {
+          label: localizedWorkbenchCopy('wizard-strategy', 'Strategy'),
+          detail: localizedWorkbenchCopy(
+            'wizard-strategy-detail',
+            'Target areas, spillover distance, and investment guardrails.',
+          ),
+        },
         children: isInvestment
-          ? { label: 'Guardrails', detail: 'Execution risk, legal context, and which weak listings should be excluded.' }
-          : { label: 'What matters', detail: 'Preferences, family setup, errands, and local-fit rules.' },
+          ? {
+              label: localizedWorkbenchCopy('wizard-guardrails', 'Guardrails'),
+              detail: localizedWorkbenchCopy(
+                'wizard-guardrails-detail',
+                'Execution risk, legal context, and which weak listings should be excluded.',
+              ),
+            }
+          : {
+              label: localizedWorkbenchCopy('wizard-what-matters', 'What matters'),
+              detail: localizedWorkbenchCopy(
+                'wizard-what-matters-detail',
+                'Preferences, family setup, errands, and local-fit rules.',
+              ),
+            },
         reachability: isInvestment
-          ? { label: 'Details', detail: 'How much supporting detail the shortlist needs.' }
-          : { label: 'Reachability', detail: 'Destinations, travel modes, and time limits that change fit.' },
+          ? {
+              label: localizedWorkbenchCopy('wizard-details', 'Details'),
+              detail: localizedWorkbenchCopy(
+                'wizard-details-detail',
+                'How much supporting detail the shortlist needs.',
+              ),
+            }
+          : {
+              label: localizedWorkbenchCopy('wizard-reachability', 'Reachability'),
+              detail: localizedWorkbenchCopy(
+                'wizard-reachability-detail',
+                'Destinations, travel modes, and time limits that change fit.',
+              ),
+            },
         research: isInvestment
-          ? { label: 'Numbers', detail: 'Return, risk, and external data depth.' }
-          : { label: 'Research depth', detail: 'Risk, supply, and how much detail each strong match should carry.' },
-        providers: { label: 'Providers', detail: 'Choose providers.' },
+          ? {
+              label: localizedWorkbenchCopy('wizard-numbers', 'Numbers'),
+              detail: localizedWorkbenchCopy('wizard-numbers-detail', 'Return, risk, and external data depth.'),
+            }
+          : {
+              label: localizedWorkbenchCopy('wizard-research-depth', 'Research depth'),
+              detail: localizedWorkbenchCopy(
+                'wizard-research-depth-detail',
+                'Risk, supply, and how much detail each strong match should carry.',
+              ),
+            },
+        providers: {
+          label: localizedWorkbenchCopy('wizard-providers', 'Providers'),
+          detail: localizedWorkbenchCopy('wizard-providers-detail', 'Choose providers.'),
+        },
       };
       return map[key] || { label: fallbackLabel, detail: fallbackDetail };
     };
@@ -4532,7 +4588,11 @@
           const isFinalStep = current >= visibleSteps.length - 1;
           next.hidden = false;
           next.dataset.pqxStepMode = isFinalStep ? 'launch' : 'advance';
-          next.textContent = isFinalStep ? 'Search' : current === visibleSteps.length - 2 ? 'Review' : 'Next';
+          next.textContent = isFinalStep
+            ? localizedWorkbenchCopy('step-search', 'Search')
+            : current === visibleSteps.length - 2
+              ? localizedWorkbenchCopy('step-review', 'Review')
+              : localizedWorkbenchCopy('step-next', 'Next');
         }
         if (actions) actions.hidden = current !== visibleSteps.length - 1;
         if (!silent && stepNav && typeof stepNav.scrollIntoView === 'function') {
@@ -6855,7 +6915,9 @@
         button.setAttribute('aria-disabled', isBusy ? 'true' : 'false');
         button.setAttribute('aria-busy', isBusy ? 'true' : 'false');
         button.dataset.pqxLoading = isBusy ? 'true' : 'false';
-        button.textContent = isBusy ? 'Launching...' : button.dataset.pqxIdleLabel;
+        button.textContent = isBusy
+          ? localizedWorkbenchCopy('launching', 'Launching...')
+          : button.dataset.pqxIdleLabel;
       });
     };
     const startSearch = async () => {
@@ -6864,10 +6926,10 @@
       try {
         searchLaunchInFlight = true;
         setSearchLaunchBusy(true);
-        setPropertyInlineStatus('Starting search...');
+        setPropertyInlineStatus(localizedWorkbenchCopy('starting-search', 'Starting search...'));
         setPropertyInlineError('');
         const body = await savePreferences();
-        setPropertyInlineStatus('Launching search...');
+        setPropertyInlineStatus(localizedWorkbenchCopy('launching-search', 'Launching search...'));
         const launch = await postSearchLaunch(String(meta.start_endpoint || data.endpoints?.start || ''), body);
         const runResponse = launch.response;
         if (recoverExpiredSession(runResponse)) throw new Error('Your session ended. Sign in again to continue.');

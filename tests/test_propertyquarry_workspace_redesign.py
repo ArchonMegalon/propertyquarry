@@ -18412,7 +18412,8 @@ def test_propertyquarry_workspace_routes_render_greenfield_surfaces(monkeypatch)
     assert "Playground nearby means" not in setup.text
     assert "Library nearby means" not in setup.text
     assert "Supermarket radius" in setup.text
-    assert "providers: { label: 'Providers', detail: 'Choose providers.' }" in template
+    assert "localizedWorkbenchCopy('wizard-providers', 'Providers')" in template
+    assert "localizedWorkbenchCopy('wizard-providers-detail', 'Choose providers.')" in template
     assert "If good matches are scarce" in setup.text
     assert 'name="max_distance_to_zoo_m"' in setup.text
     assert 'name="max_distance_to_market_m"' in setup.text
