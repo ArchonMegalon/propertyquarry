@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -826,7 +827,7 @@ def test_3dvista_white_label_contract_requires_review_for_non_propertyquarry_sou
     assert proof_basis["ready_basis"] == []
 
 
-def test_tour_delivery_contract_reports_retired_matterport_public_safe_payload(
+def test_tour_delivery_contract_requires_topology_proof_for_matterport_payload(
     tmp_path: Path,
 ) -> None:
     slug = "matterport-contract"
@@ -846,9 +847,14 @@ def test_tour_delivery_contract_reports_retired_matterport_public_safe_payload(
     serialized_contract = json.dumps(matterport_contract)
 
     assert matterport_contract["status"] == "blocked"
-    assert matterport_contract["blocked_reason"] == "matterport_public_control_retired"
+    assert (
+        matterport_contract["blocked_reason"]
+        == "matterport_model_publication_missing_or_invalid"
+    )
     assert matterport_contract["required_to_send"]
-    assert "retired" in " ".join(matterport_contract["required_to_send"]).lower()
+    requirements = " ".join(matterport_contract["required_to_send"]).lower()
+    assert "connected" in requirements
+    assert "two rooms" in requirements
     assert matterport_contract["white_label_contract"]["status"] == "blocked"
     assert matterport_contract["white_label_contract"]["required_to_white_label"]
     assert matterport_contract["ready_payload"]["ready_count"] == 0
@@ -857,7 +863,7 @@ def test_tour_delivery_contract_reports_retired_matterport_public_safe_payload(
     assert "my.matterport.com" not in serialized_contract
 
 
-def test_tour_delivery_contract_checker_accepts_matterport_retired_and_3dvista_blocked(
+def test_tour_delivery_contract_checker_accepts_unproven_matterport_and_3dvista_blocked(
     tmp_path: Path,
 ) -> None:
     slug = "delivery-contract-checker"
@@ -882,11 +888,64 @@ def test_tour_delivery_contract_checker_accepts_matterport_retired_and_3dvista_b
     assert receipt["status"] == "pass"
     assert receipt["matterport_ready_count"] == 0
     assert "matterport" not in receipt["ready_provider_modes"]
-    assert receipt["retired_provider_modes"] == ["matterport"]
-    assert receipt["required_provider_modes"] == ["3dvista", "magicfit"]
+    assert receipt["retired_provider_modes"] == []
+    assert receipt["required_provider_modes"] == [
+        "matterport",
+        "3dvista",
+        "magicfit",
+    ]
     assert receipt["optional_provider_modes"] == ["pano2vr", "krpano"]
     assert set(receipt["missing_provider_modes"]) == {"3dvista", "magicfit"}
     assert receipt["failures"] == []
+
+
+def test_tour_delivery_contract_checker_accepts_topology_verified_matterport(
+    tmp_path: Path,
+) -> None:
+    slug = "topology-verified-matterport"
+    bundle_dir = _write_base_tour(tmp_path, slug)
+    observed_at = datetime.now(timezone.utc)
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "matterport_url": "https://my.matterport.com/show/?m=READY123",
+                "matterport_model_publication": {
+                    "status": "pass",
+                    "model_available": True,
+                    "model_sid": "READY123",
+                    "checked_at": observed_at.isoformat().replace("+00:00", "Z"),
+                    "proof_valid_until": (
+                        observed_at + timedelta(hours=24)
+                    ).isoformat().replace("+00:00", "Z"),
+                    "enabled_sweep_count": 23,
+                    "available_sweep_count": 23,
+                    "connected_component_count": 1,
+                    "room_count": 6,
+                    "navigation_edge_count": 49,
+                    "source_sha256": "a" * 64,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    tour_control_receipt = tmp_path / "tour-control.json"
+    tour_control_receipt.write_text(
+        json.dumps(
+            build_property_tour_control_receipt(
+                tour_root=tmp_path / "public_tours"
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    receipt = build_tour_delivery_contract_receipt(tour_control_receipt)
+
+    assert receipt["status"] == "pass"
+    assert receipt["matterport_ready_count"] == 1
+    assert "matterport" in receipt["ready_provider_modes"]
+    assert "matterport" not in receipt["missing_provider_modes"]
+    assert receipt["retired_provider_modes"] == []
+    assert "my.matterport.com" not in json.dumps(receipt)
 
 
 def test_tour_delivery_contract_checker_rejects_matterport_url_leak(tmp_path: Path) -> None:

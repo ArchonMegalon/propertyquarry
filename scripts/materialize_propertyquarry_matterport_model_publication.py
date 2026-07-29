@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +70,19 @@ def build_publication_contract(
     component_count = _connected_component_count(locations)
     if component_count != 1:
         raise RuntimeError("matterport_publication_topology_disconnected")
+    room_ids = {
+        str(dict(row.get("room") or {}).get("id") or "").strip()
+        for row in locations
+    }
+    room_ids.discard("")
+    navigation_edges = {
+        tuple(sorted((str(row.get("id") or "").strip(), str(neighbor or "").strip())))
+        for row in locations
+        for neighbor in list(row.get("neighbors") or [])
+        if str(row.get("id") or "").strip() and str(neighbor or "").strip()
+    }
+    if len(room_ids) < 2 or len(navigation_edges) < len(locations) - 1:
+        raise RuntimeError("matterport_publication_spatial_coverage_insufficient")
 
     available_until: list[datetime] = []
     for row in locations:
@@ -99,9 +112,13 @@ def build_publication_contract(
         "model_available": True,
         "checked_at": source_checked_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "asset_valid_until": asset_valid_until.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "capture_asset_valid_until": asset_valid_until.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "proof_valid_until": (source_checked_at + timedelta(hours=24)).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "enabled_sweep_count": len(locations),
         "connected_component_count": component_count,
         "available_sweep_count": len(available_until),
+        "room_count": len(room_ids),
+        "navigation_edge_count": len(navigation_edges),
         "source_kind": "matterport_topology_capture",
         "source_sha256": _sha256(source_path),
     }

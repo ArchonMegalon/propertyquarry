@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Iterator
 from contextlib import ExitStack
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1612,6 +1613,73 @@ button:focus-visible { outline: 3px solid #315c8a; outline-offset: 3px; }
         ),
         encoding="utf-8",
     )
+    matterport_verified_slug = "real-browser-captured-matterport-tour"
+    matterport_verified_bundle = bundle_root / matterport_verified_slug
+    matterport_verified_bundle.mkdir(parents=True)
+    for asset_name in ("floorplan-01.png", "scene-01.png"):
+        shutil.copy2(bundle_dir / asset_name, matterport_verified_bundle / asset_name)
+    (matterport_verified_bundle / "tour.json").write_text(
+        json.dumps(
+            {
+                "slug": matterport_verified_slug,
+                "title": "Captured Multi-room 3D Tour",
+                "display_title": "Captured Multi-room 3D Tour",
+                "hosted_url": f"https://propertyquarry.com/tours/{matterport_verified_slug}",
+                "public_url": f"https://propertyquarry.com/tours/{matterport_verified_slug}",
+                "scene_strategy": "layout_first",
+                "creation_mode": "provider_spatial_capture",
+                "scenes": [
+                    {
+                        "scene_id": "living-room",
+                        "name": "Living room",
+                        "role": "photo",
+                        "asset_relpath": "scene-01.png",
+                        "mime_type": "image/png",
+                    },
+                    {
+                        "scene_id": "floorplan",
+                        "name": "Main floorplan",
+                        "role": "floorplan",
+                        "asset_relpath": "floorplan-01.png",
+                        "mime_type": "image/png",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    matterport_now = datetime.now(timezone.utc)
+    (matterport_verified_bundle / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "matterport_url": "https://my.matterport.com/show/?m=CAPTURED123",
+                "matterport_model_publication": {
+                    "status": "pass",
+                    "model_sid": "CAPTURED123",
+                    "model_available": True,
+                    "checked_at": (
+                        matterport_now - timedelta(minutes=1)
+                    ).isoformat(),
+                    "asset_valid_until": (
+                        matterport_now + timedelta(minutes=5)
+                    ).isoformat(),
+                    "proof_valid_until": (
+                        matterport_now + timedelta(hours=12)
+                    ).isoformat(),
+                    "enabled_sweep_count": 23,
+                    "available_sweep_count": 23,
+                    "connected_component_count": 1,
+                    "room_count": 6,
+                    "navigation_edge_count": 49,
+                    "source_sha256": "a" * 64,
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     generated_reconstruction_slug = "generated-reconstruction-browser-tour"
     _generate_reconstruction_bundle(bundle_root=bundle_root, slug=generated_reconstruction_slug)
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(bundle_root))
@@ -1664,6 +1732,7 @@ button:focus-visible { outline: 3px solid #315c8a; outline-offset: 3px; }
         "provider_slug": provider_slug,
         "pano2vr_slug": pano2vr_slug,
         "video_slug": video_slug,
+        "matterport_verified_slug": matterport_verified_slug,
         "generated_reconstruction_slug": generated_reconstruction_slug,
         "generated_reconstruction_viewer_url": generated_reconstruction_viewer_url,
     }
@@ -3201,6 +3270,45 @@ def test_public_tour_historical_matterport_control_is_retired(
     assert response.status == 404
     assert page.locator("#provider-frame").count() == 0
     assert matterport_requests == []
+    context.close()
+
+
+def test_public_tour_topology_verified_matterport_launches_in_real_browser(
+    public_tour_browser_server: dict[str, str],
+    browser: Browser,
+) -> None:
+    context = _new_context(browser, mobile=True)
+    _stub_matterport_provider(context)
+    page = context.new_page()
+    slug = public_tour_browser_server["matterport_verified_slug"]
+
+    response = page.goto(
+        f"{public_tour_browser_server['base_url']}/tours/{slug}",
+        wait_until="networkidle",
+    )
+
+    assert response is not None
+    assert response.status == 200
+    assert page.url.endswith(f"/tours/{slug}/control/matterport")
+    assert page.get_by_text("Captured 3D Tour", exact=True).first.is_visible()
+    frame = page.locator("#provider-frame")
+    expect(frame).to_be_visible()
+    assert frame.get_attribute("src") == (
+        "https://my.matterport.com/show/?m=CAPTURED123"
+    )
+    assert frame.get_attribute("aria-busy") is None
+    csp = response.headers.get("content-security-policy", "")
+    assert "frame-src 'self'" in csp
+    assert "https://my.matterport.com" in csp
+    assert "https://*.matterport.com" not in csp
+    _assert_no_horizontal_overflow(page)
+    _assert_visible_controls_meet_mobile_target_floor(page)
+
+    page.get_by_role("link", name="Full screen").click()
+    page.wait_for_url(f"**/tours/{slug}/control/matterport?fullscreen=1")
+    expect(page.locator("#provider-frame")).to_be_visible()
+    expect(page.get_by_role("link", name="Back to tour")).to_be_visible()
+    _assert_no_horizontal_overflow(page)
     context.close()
 
 

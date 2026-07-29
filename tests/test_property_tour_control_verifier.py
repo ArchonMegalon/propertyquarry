@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -92,6 +92,24 @@ def _write_tour(root: Path, slug: str, payload: dict[str, object], files: dict[s
                 target_subdir=target_subdir,
             )
             (bundle / "tour.json").write_text(json.dumps(body), encoding="utf-8")
+
+
+def _matterport_publication(model_sid: str) -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    return {
+        "status": "pass",
+        "model_sid": model_sid,
+        "model_available": True,
+        "checked_at": (now - timedelta(minutes=1)).isoformat(),
+        "asset_valid_until": (now + timedelta(hours=6)).isoformat(),
+        "proof_valid_until": (now + timedelta(hours=6)).isoformat(),
+        "enabled_sweep_count": 23,
+        "available_sweep_count": 23,
+        "connected_component_count": 1,
+        "room_count": 6,
+        "navigation_edge_count": 49,
+        "source_sha256": "a" * 64,
+    }
 
 @pytest.mark.parametrize("publication_status", ["ready", "published", "active", " READY "])
 def test_public_tour_explicit_terminal_publication_status_is_viewable(
@@ -721,7 +739,7 @@ def test_property_tour_control_verifier_live_probe_prefers_runtime_root_when_no_
     assert receipt["provider_counts"]["matterport"] == 0
     assert receipt["provider_counts"]["3dvista"] == 0
     assert receipt["provider_blockers"]["matterport"]["reasons"][0]["reason"] == (
-        "matterport_public_control_retired"
+        "matterport_model_publication_missing_or_invalid"
     )
 
 
@@ -818,7 +836,7 @@ def test_public_tour_control_hides_unaccepted_magicfit_walkthrough() -> None:
     assert "Video evidence" not in html_body
 
 
-def test_property_tour_control_verifier_rejects_retired_private_matterport_control_without_url_leak(tmp_path: Path) -> None:
+def test_property_tour_control_verifier_rejects_unproven_private_matterport_control_without_url_leak(tmp_path: Path) -> None:
     _write_tour(tmp_path, "private-matterport", {})
     private_receipt = tmp_path / "private-matterport" / "tour.private.json"
     private_receipt.write_text(
@@ -832,9 +850,36 @@ def test_property_tour_control_verifier_rejects_retired_private_matterport_contr
     assert receipt["provider_counts"]["matterport"] == 0
     assert receipt["ready_provider_modes"] == []
     blocker = receipt["provider_blockers"]["matterport"]["reasons"][0]
-    assert blocker["reason"] == "matterport_public_control_retired"
-    assert "matterport_model_publication" in blocker["action"]
+    assert blocker["reason"] == "matterport_model_publication_missing_or_invalid"
+    assert "model-publication" in blocker["action"]
     assert "PRIVATE123" not in json.dumps(receipt)
+
+
+def test_property_tour_control_verifier_accepts_topology_verified_matterport(
+    tmp_path: Path,
+) -> None:
+    model_sid = "CAPTURED123"
+    _write_tour(tmp_path, "captured-matterport", {})
+    private_receipt = tmp_path / "captured-matterport" / "tour.private.json"
+    private_receipt.write_text(
+        json.dumps(
+            {
+                "matterport_url": f"https://my.matterport.com/show/?m={model_sid}",
+                "matterport_model_publication": _matterport_publication(model_sid),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    receipt = build_property_tour_control_receipt(tour_root=tmp_path)
+
+    assert receipt["provider_counts"]["matterport"] == 1
+    assert "matterport" in receipt["ready_provider_modes"]
+    control = receipt["delivery_contracts"]["matterport"]["ready_payload"][
+        "sample_controls"
+    ][0]
+    assert control["control_path"] == "/tours/captured-matterport/control/matterport"
+    assert model_sid not in json.dumps(receipt)
 
 
 def test_property_tour_control_verifier_cli_loads_krpano_license_defaults(
@@ -2375,7 +2420,7 @@ def test_property_tour_control_verifier_blocks_when_no_verified_controls(tmp_pat
     assert set(receipt["missing_provider_modes"]) == {"3dvista", "magicfit"}
 
 
-def test_matterport_delivery_contract_keeps_retirement_reason_for_mixed_tour_set(
+def test_matterport_delivery_contract_reports_dominant_missing_evidence_for_mixed_tour_set(
     tmp_path: Path,
 ) -> None:
     _write_tour(tmp_path, "without-matterport", {})
@@ -2396,7 +2441,7 @@ def test_matterport_delivery_contract_keeps_retirement_reason_for_mixed_tour_set
     assert blocker_reasons[0]["reason"] == "missing_matterport_url"
     contract = receipt["delivery_contracts"]["matterport"]
     assert contract["status"] == "blocked"
-    assert contract["blocked_reason"] == "matterport_public_control_retired"
+    assert contract["blocked_reason"] == "missing_matterport_url"
     assert contract["ready_payload"]["ready_count"] == 0
     assert contract["ready_payload"]["sample_controls"] == []
 

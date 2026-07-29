@@ -170,9 +170,10 @@ _PUBLIC_TOUR_PROVIDER_CSP_ORIGINS = (
     "https://3dvista.com",
     "https://*.3dvista.com",
 )
+_MATTERPORT_PUBLIC_CSP_ORIGIN = "https://my.matterport.com"
 # This bootstrap is retained solely for the private, receipt-backed SDK
-# walkthrough proof helper below.  Public tour routing deliberately rejects the
-# retired Matterport control and its CSP never grants this origin.
+# walkthrough proof helper below. Public routing uses the provider-hosted
+# showcase only after a fresh topology-backed publication receipt passes.
 _MATTERPORT_SDK_BOOTSTRAP_URL = "https://static.matterport.com/showcase-sdk/latest.js"
 _PUBLIC_TOUR_CSP_REPORT_PATH = "/tours/security/csp-report"
 _PUBLIC_TOUR_NONCE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
@@ -238,7 +239,9 @@ _PRIVATE_TOUR_RECEIPT_ALLOWED_KEYS = frozenset(
         "3dvista_export_root_relpath",
         "3dvista_url",
         "crezlo_public_url",
+        "matterport_model_publication",
         "matterport_url",
+        "matterport_walkthrough",
         "krpano_spatial_provenance",
         "pano2vr_entry_relpath",
         "pano2vr_export_entry_relpath",
@@ -2864,6 +2867,55 @@ def _3dvista_entry_ready(slug: object, payload: dict[str, object], entry_relpath
     return _3dvista_entry_export_ready(slug, payload, entry_relpath)
 
 
+def _3dvista_walkable_spatial_node_count(
+    slug: object,
+    payload: dict[str, object],
+    entry_relpath: str,
+) -> int:
+    claims_walkable = (
+        str(payload.get("scene_strategy") or "").strip().lower()
+        == "walkable_panorama"
+        or str(payload.get("creation_mode") or "").strip().lower()
+        in {"hosted_walkable_360", "walkable_360_tour"}
+    )
+    if not claims_walkable:
+        return 0
+    export_root_relpath = _public_tour_safe_asset_relpath(
+        str(
+            payload.get("three_d_vista_export_root_relpath")
+            or payload.get("threedvista_export_root_relpath")
+            or payload.get("3dvista_export_root_relpath")
+            or ""
+        ).strip()
+    )
+    if not export_root_relpath:
+        parent = PurePosixPath(entry_relpath).parent
+        export_root_relpath = "" if str(parent) == "." else str(parent)
+    bundle_dir = _tour_bundle_dir(str(slug or "").strip())
+    if bundle_dir is None:
+        return 0
+    media_dir = (bundle_dir / export_root_relpath / "media").resolve()
+    try:
+        bundle_root = bundle_dir.resolve()
+        if (
+            bundle_root not in media_dir.parents
+            or media_dir.is_symlink()
+            or not media_dir.is_dir()
+        ):
+            return 0
+        return sum(
+            1
+            for child in media_dir.iterdir()
+            if (
+                not child.is_symlink()
+                and child.is_dir()
+                and re.fullmatch(r"panorama_[A-Za-z0-9_-]+", child.name)
+            )
+        )
+    except OSError:
+        return 0
+
+
 def _3dvista_entry_export_ready(slug: object, payload: dict[str, object], entry_relpath: object) -> bool:
     relpath = _public_tour_safe_asset_relpath(str(entry_relpath or "").strip())
     if not relpath:
@@ -2875,6 +2927,18 @@ def _3dvista_entry_export_ready(slug: object, payload: dict[str, object], entry_
     ):
         return False
     if _local_tour_html_asset_has_marker(slug, relpath, markers=_3DVISTA_FORBIDDEN_PUBLIC_MARKERS):
+        return False
+    claims_walkable = (
+        str(payload.get("scene_strategy") or "").strip().lower()
+        == "walkable_panorama"
+        or str(payload.get("creation_mode") or "").strip().lower()
+        in {"hosted_walkable_360", "walkable_360_tour"}
+    )
+    if claims_walkable and _3dvista_walkable_spatial_node_count(
+        slug,
+        payload,
+        relpath,
+    ) < 2:
         return False
     return _local_tour_html_asset_has_marker(slug, relpath, markers=_3DVISTA_EXPORT_MARKERS)
 
@@ -3637,6 +3701,8 @@ def _public_tour_primary_control_path(payload: dict[str, object]) -> str:
     if not slug:
         return ""
     quoted_slug = urllib.parse.quote(slug, safe="")
+    if _matterport_public_control_context(payload):
+        return f"/tours/{quoted_slug}/control/matterport"
     local_3dvista_entry = _public_tour_safe_asset_relpath(
         str(
             payload.get("three_d_vista_entry_relpath")
@@ -7491,6 +7557,7 @@ def _public_tour_security_headers(
     allow_base_uri_self: bool = False,
     nonce: str = "",
     allow_jsdelivr: bool = False,
+    allow_matterport: bool = False,
     runtime_profile: str = "document",
     script_hashes: tuple[str, ...] = (),
     style_hashes: tuple[str, ...] = (),
@@ -7501,10 +7568,21 @@ def _public_tour_security_headers(
     self_only_runtime = normalized_profile in {"generated_viewer", "ai_panorama"}
     external_origins = () if self_only_runtime else _public_tour_external_csp_origins()
     media_sources = " ".join(("'self'", "data:", "blob:", *external_origins))
-    # Public control routes expose only local assets and verified 3DVista
-    # exports. Media host configuration must never silently expand iframe
-    # authority (or revive a retired provider).
-    frame_origins = () if self_only_runtime else _PUBLIC_TOUR_PROVIDER_CSP_ORIGINS
+    # Public controls expose local assets plus explicitly verified provider
+    # frames. Media-host configuration must never silently expand iframe
+    # authority; Matterport remains scoped to its receipt-backed control route.
+    frame_origins = (
+        ()
+        if self_only_runtime
+        else (
+            *_PUBLIC_TOUR_PROVIDER_CSP_ORIGINS,
+            *(
+                (_MATTERPORT_PUBLIC_CSP_ORIGIN,)
+                if allow_matterport
+                else ()
+            ),
+        )
+    )
     frame_sources = "'none'" if normalized_profile == "ai_panorama" else " ".join(("'self'", *frame_origins))
 
     script_sources: list[str] = ["'self'"]
@@ -7585,12 +7663,14 @@ def _public_tour_control_security_headers(
     html_body: str,
     nonce: str,
     ai_panorama: bool = False,
+    allow_matterport: bool = False,
 ) -> dict[str, str]:
     """Bind a freshly rendered control document to one strict CSP envelope."""
 
     return _public_tour_security_headers(
         nonce=nonce,
         allow_jsdelivr=(not ai_panorama and "https://cdn.jsdelivr.net/" in html_body),
+        allow_matterport=allow_matterport,
         runtime_profile="ai_panorama" if ai_panorama else "document",
         script_hashes=_public_tour_inline_csp_hashes(html_body, tag_name="script"),
         style_hashes=_public_tour_inline_csp_hashes(html_body, tag_name="style"),
@@ -8680,7 +8760,7 @@ def _tour_control_html(
     if forced_mode == "marzipano":
         raise HTTPException(status_code=410, detail="tour_control_legacy_viewer_removed")
     if forced_mode in {"matterport", "metaport"}:
-        raise HTTPException(status_code=404, detail="tour_control_provider_retired")
+        return _tour_control_public_matterport_html(payload, nonce=control_nonce)
     if forced_mode in {"3dvista", "3d_vista", "three_d_vista"}:
         return _tour_control_3dvista_html(payload, nonce=control_nonce)
     if forced_mode in {"pano2vr", "pano_2_vr", "krpano"}:
@@ -8688,6 +8768,8 @@ def _tour_control_html(
     control_mode = str(payload.get("control_mode") or "").strip().lower()
     if control_mode == "marzipano":
         raise HTTPException(status_code=410, detail="tour_control_legacy_viewer_removed")
+    if control_mode in {"matterport", "metaport"}:
+        return _tour_control_public_matterport_html(payload, nonce=control_nonce)
     if control_mode in {"3dvista", "3d_vista", "three_d_vista"}:
         return _tour_control_3dvista_html(payload, nonce=control_nonce)
     if control_mode in {"pano2vr", "pano_2_vr"}:
@@ -8897,27 +8979,68 @@ def _matterport_model_publication_contract(
     ):
         return {}
     checked_at = _matterport_sdk_timestamp(publication.get("checked_at"))
-    asset_valid_until = _matterport_sdk_timestamp(publication.get("asset_valid_until"))
+    proof_valid_until = _matterport_sdk_timestamp(
+        publication.get("proof_valid_until")
+        or publication.get("asset_valid_until")
+    )
     now = datetime.now(timezone.utc)
     if (
         checked_at is None
         or checked_at < now - timedelta(hours=24)
         or checked_at > now + timedelta(minutes=5)
-        or asset_valid_until is None
-        or asset_valid_until <= now
+        or proof_valid_until is None
+        or proof_valid_until <= now
     ):
         return {}
     try:
         enabled_sweep_count = int(publication.get("enabled_sweep_count") or 0)
+        available_sweep_count = int(publication.get("available_sweep_count") or 0)
         connected_component_count = int(publication.get("connected_component_count") or 0)
+        room_count = int(publication.get("room_count") or 0)
+        navigation_edge_count = int(publication.get("navigation_edge_count") or 0)
     except (TypeError, ValueError):
         return {}
-    if enabled_sweep_count < 2 or connected_component_count != 1:
+    if (
+        enabled_sweep_count < 3
+        or available_sweep_count < 3
+        or connected_component_count != 1
+        or room_count < 2
+        or navigation_edge_count < enabled_sweep_count - 1
+    ):
         return {}
     source_sha256 = str(publication.get("source_sha256") or "").strip().lower()
     if not re.fullmatch(r"[a-f0-9]{64}", source_sha256):
         return {}
     return publication
+
+
+def _matterport_public_control_context(payload: dict[str, object]) -> dict[str, object]:
+    """Return a provider URL only for a fresh, connected multi-room capture."""
+
+    external_url = ""
+    for key in ("matterport_url", "source_virtual_tour_url"):
+        external_url = _safe_matterport_external_url(payload.get(key))
+        if external_url:
+            break
+    if not external_url:
+        return {}
+    parsed_url = urllib.parse.urlparse(external_url)
+    model_sid = next(
+        (
+            value
+            for key, value in urllib.parse.parse_qsl(parsed_url.query, keep_blank_values=False)
+            if key == "m"
+        ),
+        "",
+    )
+    publication = _matterport_model_publication_contract(payload, model_sid=model_sid)
+    if not publication:
+        return {}
+    return {
+        "external_url": external_url,
+        "model_sid": model_sid,
+        "publication": publication,
+    }
 
 
 def _matterport_sdk_walkthrough_context(
@@ -10620,7 +10743,7 @@ def _tour_control_provider_layers(
         }
     ]
     if _safe_matterport_external_url(safe_default_src):
-        return []
+        return layers if _matterport_public_control_context(payload) else []
     seen = {layers[0]["src"]}
     raw_layers = payload.get("tour_layers") or payload.get("provider_layers") or payload.get("interactive_layers")
     if not isinstance(raw_layers, list):
@@ -11222,6 +11345,38 @@ def _tour_control_3dvista_html(payload: dict[str, object], *, nonce: str = "") -
             nonce=nonce,
         )
     raise HTTPException(status_code=404, detail="tour_control_3dvista_export_missing")
+
+
+def _tour_control_public_matterport_html(
+    payload: dict[str, object],
+    *,
+    nonce: str = "",
+) -> str:
+    context = _matterport_public_control_context(payload)
+    if not context:
+        raise HTTPException(status_code=404, detail="tour_control_matterport_evidence_missing")
+    title = html.escape(
+        str(
+            payload.get("display_title")
+            or payload.get("title")
+            or "3D tour control"
+        ).strip()
+    )
+    raw_slug = str(payload.get("slug") or "").strip()
+    iframe_src = str(context["external_url"])
+    return _tour_control_external_iframe_html(
+        title=title,
+        iframe_src=iframe_src,
+        badge="Captured 3D Tour",
+        payload=payload,
+        fullscreen_href=(
+            f"/tours/{urllib.parse.quote(raw_slug, safe='')}/control/matterport?fullscreen=1"
+            if raw_slug
+            else iframe_src
+        ),
+        fullscreen=bool(payload.get("_tour_control_fullscreen")),
+        nonce=nonce,
+    )
 
 
 def _tour_control_pano2vr_html(payload: dict[str, object], *, nonce: str = "") -> str:
@@ -12628,9 +12783,9 @@ def public_tour_control(slug: str, request: Request) -> HTMLResponse:
     primary_control_path = _public_tour_primary_control_path(payload)
     if isinstance(payload.get("walkable_scene"), dict) and not primary_control_path:
         raise HTTPException(status_code=404, detail="tour_control_acceptance_missing")
-    if primary_control_path.endswith("/control/3dvista"):
-        # Match the explicit 3DVista route: retain only the allowlisted private
-        # provider receipt fields long enough to revalidate target provenance.
+    if primary_control_path.endswith(("/control/3dvista", "/control/matterport")):
+        # Provider routes retain only allowlisted private receipt fields long
+        # enough to revalidate the target and topology evidence.
         rendered_payload = payload
     else:
         rendered_payload = _redacted_public_tour_payload(
@@ -12655,7 +12810,9 @@ def public_tour_control(slug: str, request: Request) -> HTMLResponse:
     html_body = _tour_control_html(
         rendered_payload,
         viewer_mode=(
-            "3dvista"
+            "matterport"
+            if primary_control_path.endswith("/control/matterport")
+            else "3dvista"
             if primary_control_path.endswith("/control/3dvista")
             else ""
         ),
@@ -12668,6 +12825,9 @@ def public_tour_control(slug: str, request: Request) -> HTMLResponse:
             html_body=html_body,
             nonce=nonce,
             ai_panorama=bool(_public_tour_ai_panorama_scene(payload)),
+            allow_matterport=primary_control_path.endswith(
+                "/control/matterport"
+            ),
         ),
     )
 
@@ -12681,8 +12841,6 @@ def public_tour_control_viewer(slug: str, viewer_mode: str, request: Request) ->
         raise HTTPException(status_code=404, detail="tour_disabled_fallback")
     normalized_viewer_mode = str(viewer_mode or "").strip().lower()
     fullscreen = str(request.query_params.get("fullscreen") or "").strip().lower() in {"1", "true", "yes", "on"}
-    if normalized_viewer_mode in {"matterport", "metaport"}:
-        raise HTTPException(status_code=404, detail="tour_control_provider_retired")
     if normalized_viewer_mode in {"pano2vr", "pano_2_vr", "krpano"}:
         raise HTTPException(status_code=404, detail="tour_control_panorama_export_hidden")
     if isinstance(payload.get("walkable_scene"), dict):
@@ -12690,7 +12848,13 @@ def public_tour_control_viewer(slug: str, viewer_mode: str, request: Request) ->
         if not primary_control_path:
             raise HTTPException(status_code=404, detail="tour_control_acceptance_missing")
     nonce = _public_tour_csp_nonce()
-    if normalized_viewer_mode in {"3dvista", "3d_vista", "three_d_vista"}:
+    if normalized_viewer_mode in {
+        "3dvista",
+        "3d_vista",
+        "three_d_vista",
+        "matterport",
+        "metaport",
+    }:
         # Provider controls need the verified private receipt URL server-side, but
         # the public JSON manifest must continue to omit source/provider URLs.
         rendered_payload = payload
@@ -12708,6 +12872,8 @@ def public_tour_control_viewer(slug: str, viewer_mode: str, request: Request) ->
                 html_body=html_body,
                 nonce=nonce,
                 ai_panorama=False,
+                allow_matterport=normalized_viewer_mode
+                in {"matterport", "metaport"},
             ),
         )
     rendered_payload = _redacted_public_tour_payload(
@@ -12738,6 +12904,7 @@ def public_tour_control_viewer(slug: str, viewer_mode: str, request: Request) ->
             html_body=html_body,
             nonce=nonce,
             ai_panorama=bool(_public_tour_ai_panorama_scene(payload)),
+            allow_matterport=False,
         ),
     )
 

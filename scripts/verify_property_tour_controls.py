@@ -144,9 +144,9 @@ OPTIONAL_PROVIDER_CONFIGURED_BLOCKER_REASONS = {
 }
 PROVIDER_DELIVERY_REQUIREMENTS = {
     "matterport": [
-        "Matterport public control is retired; an allowlisted model URL alone is not launch evidence",
-        "A deliberately restored PropertyQuarry route backed by fresh walkthrough and model-publication receipts",
-        "A passing browser/security review proving that the restored route serves the exact approved model",
+        "An allowlisted Matterport model URL backed by a fresh model-publication receipt",
+        "At least three available connected sweeps spanning two rooms with a declared navigation graph",
+        "A passing first-party browser/security review proving that the route serves the exact approved model",
     ],
     "3dvista": [
         "A verified non-trial 3DVista VT Pro export or allowlisted hosted 3dvista.com tour URL",
@@ -1127,7 +1127,9 @@ def _load_provider_receipt(bundle_dir: Path) -> dict[str, object]:
         "three_d_vista_white_label_proof",
         "three_d_vista_url",
         "threedvista_url",
+        "matterport_model_publication",
         "matterport_url",
+        "matterport_walkthrough",
     }
     return {key: receipt.get(key) for key in allowed_keys if str(receipt.get(key) or "").strip()}
 
@@ -1137,6 +1139,83 @@ def _payload_with_private_provider_receipt(bundle_dir: Path, payload: dict[str, 
     if not receipt:
         return payload
     return {**payload, **receipt}
+
+
+def _matterport_public_control_ready(payload: dict[str, object]) -> bool:
+    provider_url = ""
+    for key in ("matterport_url", "source_virtual_tour_url"):
+        provider_url = _safe_http_url(
+            payload.get(key),
+            allowed_hosts=("matterport.com",),
+        )
+        if provider_url:
+            break
+    if not provider_url:
+        return False
+    parsed_url = urllib.parse.urlparse(provider_url)
+    model_sid = ""
+    host = str(parsed_url.hostname or "").strip().lower().rstrip(".")
+    if host == "discover.matterport.com" and parsed_url.path.startswith("/space/"):
+        model_sid = parsed_url.path.rsplit("/", 1)[-1].strip()
+    elif host == "my.matterport.com" and parsed_url.path.startswith("/models/"):
+        model_sid = parsed_url.path.rsplit("/", 1)[-1].strip()
+    elif host == "my.matterport.com" and parsed_url.path.rstrip("/") == "/show":
+        model_sid = next(
+            (
+                value
+                for key, value in urllib.parse.parse_qsl(
+                    parsed_url.query,
+                    keep_blank_values=False,
+                )
+                if key == "m"
+            ),
+            "",
+        )
+    if not re.fullmatch(r"[A-Za-z0-9_-]{6,32}", model_sid):
+        return False
+    publication = payload.get("matterport_model_publication")
+    if not isinstance(publication, dict):
+        return False
+    if (
+        str(publication.get("status") or "").strip().lower() != "pass"
+        or publication.get("model_available") is not True
+        or str(publication.get("model_sid") or "").strip() != model_sid
+    ):
+        return False
+    try:
+        checked_at = datetime.fromisoformat(
+            str(publication.get("checked_at") or "").replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        proof_valid_until = datetime.fromisoformat(
+            str(
+                publication.get("proof_valid_until")
+                or publication.get("asset_valid_until")
+                or ""
+            ).replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        enabled_sweep_count = int(publication.get("enabled_sweep_count") or 0)
+        available_sweep_count = int(publication.get("available_sweep_count") or 0)
+        connected_component_count = int(
+            publication.get("connected_component_count") or 0
+        )
+        room_count = int(publication.get("room_count") or 0)
+        navigation_edge_count = int(
+            publication.get("navigation_edge_count") or 0
+        )
+    except (TypeError, ValueError):
+        return False
+    now = datetime.now(timezone.utc)
+    source_sha256 = str(publication.get("source_sha256") or "").strip().lower()
+    return bool(
+        now - timedelta(hours=24) <= checked_at <= now + timedelta(minutes=5)
+        and proof_valid_until > now
+        and enabled_sweep_count >= 3
+        and available_sweep_count >= 3
+        and connected_component_count == 1
+        and room_count >= 2
+        and navigation_edge_count >= enabled_sweep_count - 1
+        and re.fullmatch(r"[a-f0-9]{64}", source_sha256)
+    )
 
 
 def _provider_missing_evidence(bundle_dir: Path, payload: dict[str, object]) -> list[dict[str, str]]:
@@ -1152,11 +1231,14 @@ def _provider_missing_evidence(bundle_dir: Path, payload: dict[str, object]) -> 
         _safe_http_url(payload.get(key), allowed_hosts=("matterport.com",))
         for key in ("matterport_url", "source_virtual_tour_url", "crezlo_public_url")
     )
-    if matterport_url_ready:
-        reason = "matterport_public_control_retired"
+    if matterport_url_ready and _matterport_public_control_ready(payload):
+        reason = ""
+        action = ""
+    elif matterport_url_ready:
+        reason = "matterport_model_publication_missing_or_invalid"
         action = (
-            "keep the Matterport URL private, or deliberately restore the public route only after fresh "
-            "matterport_walkthrough and matterport_model_publication receipts plus passing browser/security proof"
+            "attach a fresh matching model-publication receipt proving at least "
+            "three connected sweeps, two rooms, and a sufficient navigation graph"
         )
     elif matterport_candidate:
         reason = "matterport_url_not_allowlisted_or_invalid"
@@ -1164,7 +1246,8 @@ def _provider_missing_evidence(bundle_dir: Path, payload: dict[str, object]) -> 
     else:
         reason = "missing_matterport_url"
         action = "add matterport_url or source_virtual_tour_url from a real Matterport model"
-    rows.append({"provider": "matterport", "reason": reason, "action": action})
+    if reason:
+        rows.append({"provider": "matterport", "reason": reason, "action": action})
 
     three_d_vista_entry = _three_d_vista_entry_relpath(payload)
     three_d_vista_url_ready = any(
@@ -1365,6 +1448,16 @@ def _control_candidates(*, slug: str, bundle_dir: Path, payload: dict[str, objec
     if _tour_payload_is_disabled_fallback(payload):
         return rows
 
+    if _matterport_public_control_ready(payload):
+        rows.append(
+            {
+                "provider": "matterport",
+                "status": "ready",
+                "control_path": f"/tours/{slug}/control/matterport",
+                "evidence": "topology_verified_matterport_model_publication",
+            }
+        )
+
     three_d_vista_url = ""
     for key in ("three_d_vista_url", "threedvista_url", "3dvista_url", "source_virtual_tour_url", "crezlo_public_url"):
         three_d_vista_url = _safe_http_url(payload.get(key), allowed_hosts=("3dvista.com",))
@@ -1496,8 +1589,8 @@ def _next_provider_action(
                         return action
     return {
         "matterport": (
-            "keep Matterport private unless its retired public route is deliberately restored with fresh "
-            "walkthrough, model-publication, and browser/security proof"
+            "provide a fresh matching Matterport model-publication receipt proving "
+            "a connected multi-room capture"
         ),
         "3dvista": (
             "provide a licensed 3DVista export or allowlisted 3dvista.com URL plus private target-bound "
@@ -1529,11 +1622,6 @@ def _provider_delivery_contracts(
             if reasons
             else (f"missing_{provider}_evidence" if provider in missing else "")
         )
-        if provider == "matterport":
-            # This aggregate contract describes public-route policy, not the
-            # most common per-tour data gap. Matterport remains retired even
-            # when most manifests do not contain a model URL.
-            blocked_reason = "matterport_public_control_retired"
         (
             white_label_status,
             white_label_required_to_white_label,

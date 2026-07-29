@@ -18,8 +18,10 @@ from app.api.routes.public_tours import (
     _MATTERPORT_SDK_BOOTSTRAP_URL,
     _matterport_sdk_walkthrough_context,
     _matterport_sdk_walkthrough_contract,
+    _matterport_public_control_context,
     _public_tour_security_headers,
     _public_tour_primary_control_path,
+    _tour_control_public_matterport_html,
     _tour_control_matterport_html,
 )
 
@@ -59,8 +61,12 @@ def _publication_contract(*, model_sid: str = "MODEL123") -> dict[str, object]:
         "model_available": True,
         "checked_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
         "asset_valid_until": (now + timedelta(hours=12)).isoformat().replace("+00:00", "Z"),
+        "proof_valid_until": (now + timedelta(hours=12)).isoformat().replace("+00:00", "Z"),
         "enabled_sweep_count": 23,
+        "available_sweep_count": 23,
         "connected_component_count": 1,
+        "room_count": 6,
+        "navigation_edge_count": 49,
         "source_sha256": "a" * 64,
     }
 
@@ -169,6 +175,9 @@ def test_sdk_context_requires_fresh_matching_model_publication(monkeypatch) -> N
     expired_publication["asset_valid_until"] = (
         datetime.now(timezone.utc) - timedelta(minutes=1)
     ).isoformat().replace("+00:00", "Z")
+    expired_publication["proof_valid_until"] = expired_publication[
+        "asset_valid_until"
+    ]
     expired["matterport_model_publication"] = expired_publication
     assert (
         _matterport_sdk_walkthrough_context(
@@ -229,21 +238,42 @@ def test_matterport_control_does_not_expose_sdk_key_during_manual_view(monkeypat
     assert "mpSdk.Sweep.moveTo" not in body
 
 
-def test_primary_tour_entry_never_selects_retired_matterport_control(monkeypatch) -> None:
+def test_primary_tour_entry_selects_topology_verified_matterport_control(monkeypatch) -> None:
     monkeypatch.delenv("MATTERPORT_SDK_KEY", raising=False)
     monkeypatch.delenv("MATTERPORT_APPLICATION_KEY", raising=False)
-    assert _public_tour_primary_control_path(_payload()) == ""
+    assert _public_tour_primary_control_path(_payload()) == "/tours/sdk-loft/control/matterport"
 
     monkeypatch.setenv("MATTERPORT_SDK_KEY", "domain-key-123")
-    assert _public_tour_primary_control_path(_payload()) == ""
+    assert _public_tour_primary_control_path(_payload()) == "/tours/sdk-loft/control/matterport"
 
 
-def test_sdk_private_route_is_not_public_and_csp_does_not_enable_retired_sdk() -> None:
+def test_public_route_keeps_receipts_private_and_csp_scopes_provider_exactly() -> None:
     assert "matterport_walkthrough" not in _PUBLIC_TOUR_TOP_LEVEL_KEYS
     assert "matterport_model_publication" not in _PUBLIC_TOUR_TOP_LEVEL_KEYS
     csp = _public_tour_security_headers()["Content-Security-Policy"]
     assert "https://static.matterport.com" not in csp
     assert "https://*.matterport.com" not in csp
+    assert "https://my.matterport.com" not in csp
+    matterport_csp = _public_tour_security_headers(
+        allow_matterport=True
+    )["Content-Security-Policy"]
+    assert "https://my.matterport.com" in matterport_csp
+
+
+def test_public_matterport_control_requires_multi_room_connected_capture() -> None:
+    payload = _payload(requested=False)
+    assert _matterport_public_control_context(payload)
+    body = _tour_control_public_matterport_html(payload, nonce="a" * 24)
+    assert "Captured 3D Tour" in body
+    assert "https://my.matterport.com/show/?m=MODEL123" in body
+    assert "MATTERPORT_SDK_KEY" not in body
+
+    single_room = _payload(requested=False)
+    single_room["matterport_model_publication"] = {
+        **_publication_contract(),
+        "room_count": 1,
+    }
+    assert _matterport_public_control_context(single_room) == {}
 
 
 def test_sdk_walkthrough_browser_executes_only_fly_moves(monkeypatch) -> None:
@@ -510,6 +540,7 @@ def test_model_publication_materializer_requires_connected_available_sweeps(
                 "id": "sweep-001",
                 "model": {"id": "MODEL123"},
                 "neighbors": ["sweep-002"],
+                "room": {"id": "room-aaa"},
                 "pano": {
                     "skyboxes": [
                         {"status": "available", "validUntil": valid_until}
@@ -519,7 +550,19 @@ def test_model_publication_materializer_requires_connected_available_sweeps(
             {
                 "id": "sweep-002",
                 "model": {"id": "MODEL123"},
-                "neighbors": ["sweep-001"],
+                "neighbors": ["sweep-001", "sweep-003"],
+                "room": {"id": "room-bbb"},
+                "pano": {
+                    "skyboxes": [
+                        {"status": "available", "validUntil": valid_until}
+                    ]
+                },
+            },
+            {
+                "id": "sweep-003",
+                "model": {"id": "MODEL123"},
+                "neighbors": ["sweep-002"],
+                "room": {"id": "room-bbb"},
                 "pano": {
                     "skyboxes": [
                         {"status": "available", "validUntil": valid_until}
@@ -538,12 +581,15 @@ def test_model_publication_materializer_requires_connected_available_sweeps(
 
     assert contract["status"] == "pass"
     assert contract["model_available"] is True
-    assert contract["enabled_sweep_count"] == 2
+    assert contract["enabled_sweep_count"] == 3
     assert contract["connected_component_count"] == 1
+    assert contract["room_count"] == 2
+    assert contract["navigation_edge_count"] == 2
     assert contract["source_sha256"]
 
     topology["locations"][0]["neighbors"] = []
     topology["locations"][1]["neighbors"] = []
+    topology["locations"][2]["neighbors"] = []
     try:
         build_publication_contract(
             topology,

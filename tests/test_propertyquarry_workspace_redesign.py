@@ -7521,6 +7521,8 @@ def test_propertyquarry_example_media_targets_prefer_3dvista_and_hide_unaccepted
     (bundle_dir / "walkthrough.mp4").write_bytes(b"video")
     (bundle_dir / "3dvista").mkdir()
     (bundle_dir / "3dvista" / "index.htm").write_text("<html><script>window.TDVPlayer = {}</script></html>", encoding="utf-8")
+    (bundle_dir / "3dvista" / "media" / "panorama_entry").mkdir(parents=True)
+    (bundle_dir / "3dvista" / "media" / "panorama_living").mkdir(parents=True)
     (bundle_dir / "tour.json").write_text(
         json.dumps(
             {
