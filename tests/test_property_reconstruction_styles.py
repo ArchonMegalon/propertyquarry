@@ -228,7 +228,7 @@ def test_all_catalog_styles_bind_exact_palette_instances_and_viewer_scene(style_
     assert styles.validate_style_scene(scene, expected_style=selected) == (True, "ready")
     assert set(scene["required_cues"]) == EXPECTED_CUES[style_id]
     assert scene["route_stop_count"] == 2
-    assert scene["minimum_instance_count"] == 8
+    assert scene["minimum_instance_count"] == 2 * scene["instances_per_route"]
     assert {row["route_index"] for row in scene["instances"]} == {0, 1}
     assert all(EXPECTED_CUES[style_id] <= {
         row["cue"] for row in scene["instances"] if row["route_index"] == route_index
@@ -268,6 +268,12 @@ def test_urban_jungle_has_visible_material_cues_not_a_label_only_scene() -> None
     assert by_cue["rattan"]["shape"] == "rattan_chair"
     assert by_cue["warm_wood"]["material"] == "timber"
     assert by_cue["linen"]["material"] == "textile"
+    assert scene["instances_per_route"] == 8
+    assert len(scene["instances"]) == 8
+    assert sum(row["shape"] == "plant" for row in scene["instances"]) == 2
+    assert {"layered_greenery", "natural_fibres", "warm_wood_detail", "botanical_objects"}.issubset(
+        {row["cue"] for row in scene["instances"]}
+    )
 
 
 @pytest.mark.parametrize(
@@ -451,10 +457,10 @@ def test_urban_jungle_browser_starts_styled_floor_with_visible_coverage(tmp_path
                 assert metrics["activeRouteIndex"] == 0
                 assert metrics["floorplanLayerState"] == "off"
                 assert metrics["floorColorHex"] == manifest["requested_style"]["palette"]["floor"].lower()
-                assert metrics["styledObjectCount"] == 8
-                assert int(metrics["visibleStyledObjectCount"]) == 4
+                assert metrics["styledObjectCount"] == 16
+                assert int(metrics["visibleStyledObjectCount"]) >= 4
                 assert float(metrics["projectedStyledCoveragePct"]) >= 5.0
-                assert set(metrics["styleCueKinds"]) == EXPECTED_CUES["urban_jungle"]
+                assert set(metrics["styleCueKinds"]) >= EXPECTED_CUES["urban_jungle"]
                 assert set(metrics["styledInstanceIds"]) == {
                     row["id"] for row in manifest["style_scene"]["instances"]
                 }
@@ -472,11 +478,39 @@ def test_urban_jungle_browser_starts_styled_floor_with_visible_coverage(tmp_path
                     )
                     assert float(metrics["visibleStyleCueRayPct"][cue]) > 0
                 assert metrics["photoPanelGroupVisible"] is False
-                assert metrics["semanticStagingGroupVisible"] is False
-                assert metrics["visibleSemanticStagingObjectCount"] == 0
+                assert metrics["semanticStagingGroupVisible"] is True
+                assert metrics["semanticStagingRouteGroupCount"] == 2
+                assert metrics["visibleSemanticStagingRouteGroupCount"] == 1
+                assert metrics["visibleSemanticStagingObjectCount"] >= 6
+                assert metrics["spatialNavigatorVisible"] is True
+                assert metrics["spatialNavigatorRoomLabel"] == "living kitchen"
+                assert metrics["spatialNavigatorProgress"] == "Room 1 of 2"
                 assert metrics["routeMarkerGroupVisible"] is False
                 assert metrics["visibleHotspotCount"] == 0
                 assert metrics["cameraInsideGeneratedDecor"] is False
+                page.click("#room-next")
+                page.wait_for_function(
+                    "() => window.__pqReconstructionDebug.getRenderMetrics().activeRouteIndex === 1"
+                    " && !window.__pqReconstructionDebug.getRenderMetrics().isTransitioning"
+                )
+                assert page.locator("#spatial-route-progress").inner_text() == "Room 2 of 2"
+                assert page.locator("#room-next").is_disabled()
+                page.click("#room-previous")
+                page.wait_for_function(
+                    "() => window.__pqReconstructionDebug.getRenderMetrics().activeRouteIndex === 0"
+                    " && !window.__pqReconstructionDebug.getRenderMetrics().isTransitioning"
+                )
+                assert page.locator("#room-previous").is_disabled()
+                page.keyboard.press("ArrowRight")
+                page.wait_for_function(
+                    "() => window.__pqReconstructionDebug.getRenderMetrics().activeRouteIndex === 1"
+                    " && !window.__pqReconstructionDebug.getRenderMetrics().isTransitioning"
+                )
+                page.keyboard.press("ArrowLeft")
+                page.wait_for_function(
+                    "() => window.__pqReconstructionDebug.getRenderMetrics().activeRouteIndex === 0"
+                    " && !window.__pqReconstructionDebug.getRenderMetrics().isTransitioning"
+                )
                 page.screenshot(path=str(tmp_path / "urban-jungle-initial-room.png"))
                 page.click("#view-floorplan-reference")
                 assert page.evaluate(
@@ -521,7 +555,8 @@ def test_urban_jungle_browser_starts_styled_floor_with_visible_coverage(tmp_path
                 assert metrics["missingVisibleStyleCues"] == []
                 assert metrics["styleCueVisibilityReady"] is True
                 assert metrics["photoPanelGroupVisible"] is False
-                assert metrics["visibleSemanticStagingObjectCount"] == 0
+                assert metrics["visibleSemanticStagingRouteGroupCount"] == 1
+                assert metrics["visibleSemanticStagingObjectCount"] >= 6
                 assert metrics["visibleHotspotCount"] == 0
                 assert metrics["cameraInsideGeneratedDecor"] is False
                 page.screenshot(path=str(tmp_path / "urban-jungle-room.png"))

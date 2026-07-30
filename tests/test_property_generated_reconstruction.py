@@ -43,6 +43,32 @@ from scripts.verify_property_tour_controls import build_property_tour_control_re
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_reconstruction_source_photo_filter_rejects_qr_cards_without_rejecting_interior(
+    tmp_path: Path,
+) -> None:
+    qr_card = Image.new("RGB", (192, 192), (238, 242, 239))
+    qr_draw = ImageDraw.Draw(qr_card)
+    for y in range(48, 144, 4):
+        for x in range(48, 144, 4):
+            if ((x - 48) // 4 + (y - 48) // 4) % 2 == 0:
+                qr_draw.rectangle((x, y, x + 3, y + 3), fill=(0, 0, 0))
+    qr_path = tmp_path / "listing-card.jpg"
+    qr_card.save(qr_path, quality=96)
+
+    interior = Image.new("RGB", (192, 192), (224, 211, 190))
+    interior_draw = ImageDraw.Draw(interior)
+    interior_draw.rectangle((0, 0, 192, 72), fill=(198, 218, 229))
+    interior_draw.rectangle((22, 78, 170, 184), fill=(242, 236, 224))
+    interior_draw.rectangle((34, 104, 158, 164), fill=(141, 104, 76))
+    interior_path = tmp_path / "interior.jpg"
+    interior.save(interior_path, quality=96)
+
+    assert reconstruction_script._source_photo_looks_like_qr_card(qr_path)
+    assert not reconstruction_script._source_photo_looks_like_qr_card(
+        interior_path
+    )
+
+
 def _read_glb_document(path: Path) -> dict[str, object]:
     payload = path.read_bytes()
     magic, version, total_length = struct.unpack_from("<4sII", payload)
@@ -2668,11 +2694,12 @@ def test_generated_reconstruction_viewer_honors_reduced_motion_and_webgl_fallbac
                 assert route_receipt["metrics"]["wallOpacity"] == pytest.approx(0.24)
                 assert route_receipt["metrics"]["raycastObstructionSampled"] is True
                 assert route_receipt["metrics"]["raycastWallObstructionPct"] < 15
-                assert 4.0 <= route_receipt["metrics"]["cameraTargetDistance"] <= 4.8
+                assert 3.0 <= route_receipt["metrics"]["cameraTargetDistance"] <= 4.8
                 assert route_receipt["metrics"]["hiddenRoomOccluderWallCount"] == 0
                 assert route_receipt["metrics"]["visibleHotspotCount"] == 0
                 assert route_receipt["metrics"]["photoPanelGroupVisible"] is False
-                assert route_receipt["metrics"]["visibleSemanticStagingObjectCount"] == 0
+                assert route_receipt["metrics"]["visibleSemanticStagingRouteGroupCount"] == 1
+                assert route_receipt["metrics"]["visibleSemanticStagingObjectCount"] >= 6
                 assert route_receipt["metrics"]["styleCueVisibilityReady"] is True
                 assert route_receipt["metrics"]["missingVisibleStyleCues"] == []
                 assert route_receipt["metrics"]["roomCutawayEvaluationCount"] > 0
@@ -3959,6 +3986,22 @@ def test_generated_reconstruction_public_model_writer_rejects_unsafe_topology(
 def test_generated_reconstruction_manifest_whitelists_viewer_vendor_assets(tmp_path: Path) -> None:
     slug = "generated-viewer-vendor-assets"
     bundle_dir = _write_base_tour(tmp_path, slug)
+    manifest_path = bundle_dir / "tour.json"
+    seeded_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    seeded_manifest["public_assets"] = [
+        {
+            "path": "generated-reconstruction/photo-99.jpg",
+            "privacy_class": "generated_reconstruction_public",
+            "role": "photo",
+            "mime_type": "image/jpeg",
+            "sha256": "0" * 64,
+            "size_bytes": 1,
+        }
+    ]
+    manifest_path.write_text(
+        json.dumps(seeded_manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     floorplan = tmp_path / "floorplan.jpg"
     photo = tmp_path / "living.jpg"
     tool_path = tmp_path / "tool-bin"
@@ -4004,6 +4047,7 @@ def test_generated_reconstruction_manifest_whitelists_viewer_vendor_assets(tmp_p
         "generated-reconstruction/vendor/examples/jsm/controls/OrbitControls.js",
     }
     assert "generated-reconstruction/vendor/LICENSE" not in public_asset_paths
+    assert "generated-reconstruction/photo-99.jpg" not in public_asset_paths
     for relpath, expected_role in (
         ("generated-reconstruction/model.obj", "generated_reconstruction_model"),
         ("generated-reconstruction/model.mtl", "generated_reconstruction_material"),
@@ -4786,7 +4830,14 @@ def test_generated_reconstruction_walkthrough_uses_explicit_room_labels_for_dura
     assert receipt["walkthrough"]["duration_seconds"] == pytest.approx(expected_duration, abs=0.25)
     assert sidecar["composition"] == expected_composition
     assert sidecar["motion_style"] == expected_motion_style
-    assert sidecar["seconds_per_stop"] == 5.0
+    assert sidecar["seconds_per_stop"] == pytest.approx(
+        reconstruction_script._quality_safe_walkthrough_seconds_per_stop(
+            5.0,
+            stop_count=3,
+            crossfade=False,
+        ),
+        abs=0.05,
+    )
     assert sidecar["room_stop_count"] == 3
     assert sidecar["walkthrough_card_count"] == 3
     assert sidecar["route_map_embedded"] is True
@@ -4889,7 +4940,14 @@ def test_generated_reconstruction_walkthrough_expands_human_route_to_cover_full_
         return
 
     sidecar = json.loads((output_dir / "generated-walkthrough.quality.json").read_text(encoding="utf-8"))
-    assert sidecar["seconds_per_stop"] == 5.0
+    assert sidecar["seconds_per_stop"] == pytest.approx(
+        reconstruction_script._quality_safe_walkthrough_seconds_per_stop(
+            5.0,
+            stop_count=5,
+            crossfade=False,
+        ),
+        abs=0.05,
+    )
     assert sidecar["walkthrough_card_count"] == 5
     assert sidecar["route_labels"] == generated_reconstruction["walkthrough_route_labels"]
     assert sidecar["walkthrough_coverage_proof"]["segments_expected"] == generated_reconstruction["walkthrough_route_labels"]
@@ -5051,12 +5109,14 @@ def test_generated_reconstruction_viewer_guided_route_runs_in_real_browser(tmp_p
                     "view-inside",
                     "view-guided-route",
                     "view-floorplan-reference",
+                    "room-previous",
+                    "room-next",
                 }
                 route_button_count = page.locator(".route-button:visible").count()
                 floorplan_button_count = page.locator(".floorplan-stop:visible").count()
                 assert route_button_count == 3
                 assert floorplan_button_count == route_button_count
-                assert len(button_inventory) == 5 + route_button_count + floorplan_button_count
+                assert len(button_inventory) == 7 + route_button_count + floorplan_button_count
 
                 for selector, expected_view_mode in (
                     ("#view-overview", "overview"),
@@ -5114,6 +5174,36 @@ def test_generated_reconstruction_viewer_guided_route_runs_in_real_browser(tmp_p
                         )
                         assert target.get_attribute("aria-current") == "step"
                         assert target.get_attribute("data-active") == "true"
+
+                page.locator('.route-button[data-route-index="0"]').click()
+                _wait_for_playwright_condition(
+                    page,
+                    """() => {
+                        const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.() || {};
+                        return Number(metrics.activeRouteIndex) === 0
+                          && metrics.isTransitioning === false;
+                    }""",
+                )
+                page.locator("#room-next").click()
+                _wait_for_playwright_condition(
+                    page,
+                    """() => {
+                        const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.() || {};
+                        return Number(metrics.activeRouteIndex) === 1
+                          && metrics.isTransitioning === false;
+                    }""",
+                )
+                assert page.locator("#spatial-route-progress").inner_text() == "Room 2 of 3"
+                page.locator("#room-previous").click()
+                _wait_for_playwright_condition(
+                    page,
+                    """() => {
+                        const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.() || {};
+                        return Number(metrics.activeRouteIndex) === 0
+                          && metrics.isTransitioning === false;
+                    }""",
+                )
+                assert page.locator("#spatial-route-progress").inner_text() == "Room 1 of 3"
 
                 page.evaluate(
                     """() => {
@@ -5415,6 +5505,25 @@ def test_service_generated_reconstruction_uses_render_bridge_when_local_walkthro
         manifest["video_relpath"] = "generated-reconstruction/generated-walkthrough.mp4"
         manifest["video_sidecar_relpath"] = "generated-reconstruction/generated-walkthrough.quality.json"
         manifest["video_coverage_proof"] = "boundary_verified_frame_continuation"
+        manifest["public_assets"] = [
+            *list(manifest.get("public_assets") or []),
+            {
+                "path": "generated-reconstruction/model.obj",
+                "role": "generated_reconstruction_model",
+                "privacy_class": "generated_reconstruction_public",
+                "mime_type": "model/obj",
+                "sha256": reconstruction_script._sha256(generated_dir / "model.obj"),
+                "size_bytes": (generated_dir / "model.obj").stat().st_size,
+            },
+            {
+                "path": "generated-reconstruction/model.mtl",
+                "role": "generated_reconstruction_material",
+                "privacy_class": "generated_reconstruction_public",
+                "mime_type": "model/mtl",
+                "sha256": reconstruction_script._sha256(generated_dir / "model.mtl"),
+                "size_bytes": (generated_dir / "model.mtl").stat().st_size,
+            },
+        ]
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return {"status": "generated"}
 

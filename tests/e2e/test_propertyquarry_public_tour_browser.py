@@ -785,6 +785,10 @@ def _canvas_visual_metrics(page, selector: str) -> dict[str, object]:
         "route_stop_count": float(metrics.get("routeStopCount") or 0),
         "active_route_index": float(0 if metrics.get("activeRouteIndex") is None else metrics.get("activeRouteIndex")),
         "view_mode": str(metrics.get("viewMode") or ""),
+        "guided_route_active": bool(metrics.get("guidedRouteActive")),
+        "guided_route_current_index": float(
+            -1 if metrics.get("guidedRouteCurrentIndex") is None else metrics.get("guidedRouteCurrentIndex")
+        ),
         "is_transitioning": bool(metrics.get("isTransitioning")),
         "transition_progress_pct": float(metrics.get("transitionProgressPct") or 0),
         "transition_target_route_index": float(
@@ -807,6 +811,19 @@ def _canvas_visual_metrics(page, selector: str) -> dict[str, object]:
         "shadow_map_enabled": bool(metrics.get("shadowMapEnabled")),
         "render_quality_tier": str(metrics.get("renderQualityTier") or ""),
         "apartment_plinth_visible": bool(metrics.get("apartmentPlinthVisible")),
+        "semantic_staging_group_visible": bool(metrics.get("semanticStagingGroupVisible")),
+        "semantic_staging_route_group_count": float(
+            metrics.get("semanticStagingRouteGroupCount") or 0
+        ),
+        "visible_semantic_staging_route_group_count": float(
+            metrics.get("visibleSemanticStagingRouteGroupCount") or 0
+        ),
+        "visible_semantic_staging_object_count": float(
+            metrics.get("visibleSemanticStagingObjectCount") or 0
+        ),
+        "spatial_navigator_visible": bool(metrics.get("spatialNavigatorVisible")),
+        "spatial_navigator_room_label": str(metrics.get("spatialNavigatorRoomLabel") or ""),
+        "spatial_navigator_progress": str(metrics.get("spatialNavigatorProgress") or ""),
         "style_key": str(metrics.get("styleKey") or ""),
         "style_signature": str(metrics.get("styleSignature") or ""),
         "style_evidence_ready": bool(metrics.get("styleEvidenceReady")),
@@ -980,6 +997,10 @@ def _normalized_metrics(metrics):
         "route_stop_count": float(metrics.get("routeStopCount") or 0),
         "active_route_index": float(0 if metrics.get("activeRouteIndex") is None else metrics.get("activeRouteIndex")),
         "view_mode": str(metrics.get("viewMode") or ""),
+        "guided_route_active": bool(metrics.get("guidedRouteActive")),
+        "guided_route_current_index": float(
+            -1 if metrics.get("guidedRouteCurrentIndex") is None else metrics.get("guidedRouteCurrentIndex")
+        ),
         "is_transitioning": bool(metrics.get("isTransitioning")),
         "transition_progress_pct": float(metrics.get("transitionProgressPct") or 0),
         "transition_target_route_index": float(
@@ -1002,6 +1023,19 @@ def _normalized_metrics(metrics):
         "shadow_map_enabled": bool(metrics.get("shadowMapEnabled")),
         "render_quality_tier": str(metrics.get("renderQualityTier") or ""),
         "apartment_plinth_visible": bool(metrics.get("apartmentPlinthVisible")),
+        "semantic_staging_group_visible": bool(metrics.get("semanticStagingGroupVisible")),
+        "semantic_staging_route_group_count": float(
+            metrics.get("semanticStagingRouteGroupCount") or 0
+        ),
+        "visible_semantic_staging_route_group_count": float(
+            metrics.get("visibleSemanticStagingRouteGroupCount") or 0
+        ),
+        "visible_semantic_staging_object_count": float(
+            metrics.get("visibleSemanticStagingObjectCount") or 0
+        ),
+        "spatial_navigator_visible": bool(metrics.get("spatialNavigatorVisible")),
+        "spatial_navigator_room_label": str(metrics.get("spatialNavigatorRoomLabel") or ""),
+        "spatial_navigator_progress": str(metrics.get("spatialNavigatorProgress") or ""),
         "style_key": str(metrics.get("styleKey") or ""),
         "style_signature": str(metrics.get("styleSignature") or ""),
         "style_evidence_ready": bool(metrics.get("styleEvidenceReady")),
@@ -1123,6 +1157,9 @@ with sync_playwright() as playwright:
                 routeButtonCount: document.querySelectorAll(".route-button").length,
                 floorplanStopCount: document.querySelectorAll(".floorplan-stop").length,
                 routeHotspotCount: document.querySelectorAll(".route-hotspot").length,
+                spatialNavigatorButtonCount: document.querySelectorAll(".spatial-nav-button").length,
+                previousRoomLabel: String(document.getElementById("room-previous")?.getAttribute("aria-label") || ""),
+                nextRoomLabel: String(document.getElementById("room-next")?.getAttribute("aria-label") || ""),
             })'''
         )
         or {}
@@ -1160,6 +1197,45 @@ with sync_playwright() as playwright:
         lambda metrics: int(metrics.get("activeRouteIndex") or 0) == 0
         and str(metrics.get("viewMode") or "") == "room"
         and not bool(metrics.get("isTransitioning")),
+    )
+
+    _viewer_dom_click(page, "#view-floorplan-reference")
+    floorplan_on_raw_metrics = _wait_for_metrics(
+        page,
+        lambda metrics: str(metrics.get("floorplanLayerState") or "") == "on",
+    )
+    _viewer_dom_click(page, "#view-floorplan-reference")
+    floorplan_off_raw_metrics = _wait_for_metrics(
+        page,
+        lambda metrics: str(metrics.get("floorplanLayerState") or "") == "off",
+    )
+
+    _viewer_dom_click(page, "#room-next")
+    navigator_next_raw_metrics = _wait_for_metrics(
+        page,
+        lambda metrics: int(metrics.get("activeRouteIndex") or -1) == 1
+        and not bool(metrics.get("isTransitioning")),
+    )
+    _viewer_dom_click(page, "#room-previous")
+    navigator_previous_raw_metrics = _wait_for_metrics(
+        page,
+        lambda metrics: int(
+            -1
+            if metrics.get("activeRouteIndex") is None
+            else metrics.get("activeRouteIndex")
+        ) == 0
+        and not bool(metrics.get("isTransitioning")),
+    )
+
+    _viewer_dom_click(page, "#view-guided-route")
+    guided_on_raw_metrics = _wait_for_metrics(
+        page,
+        lambda metrics: bool(metrics.get("guidedRouteActive")),
+    )
+    _viewer_dom_click(page, "#view-guided-route")
+    guided_off_raw_metrics = _wait_for_metrics(
+        page,
+        lambda metrics: not bool(metrics.get("guidedRouteActive")),
     )
 
     _viewer_dom_click(page, ".route-buttons .route-button:nth-child(2)")
@@ -1215,6 +1291,12 @@ payload = {
     "overview_metrics": _normalized_metrics(overview_raw_metrics),
     "dollhouse_metrics": _normalized_metrics(dollhouse_raw_metrics),
     "inside_metrics": _normalized_metrics(inside_raw_metrics),
+    "floorplan_on_metrics": _normalized_metrics(floorplan_on_raw_metrics),
+    "floorplan_off_metrics": _normalized_metrics(floorplan_off_raw_metrics),
+    "navigator_next_metrics": _normalized_metrics(navigator_next_raw_metrics),
+    "navigator_previous_metrics": _normalized_metrics(navigator_previous_raw_metrics),
+    "guided_on_metrics": _normalized_metrics(guided_on_raw_metrics),
+    "guided_off_metrics": _normalized_metrics(guided_off_raw_metrics),
     "route1_transition_metrics": None
     if route1_transition_raw_metrics is None
     else _normalized_metrics(route1_transition_raw_metrics),
@@ -4223,6 +4305,9 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     assert initial_dom["floorplanStopCount"] == 3
     assert initial_dom["routeHotspotCount"] == 3
     assert initial_dom["floorplanStopTexts"] == ["entry/hall", "living room", "bedroom"]
+    assert initial_dom["spatialNavigatorButtonCount"] == 2
+    assert initial_dom["previousRoomLabel"] == "Previous room"
+    assert initial_dom["nextRoomLabel"] == "Next room"
 
     initial_metrics = dict(probe["initial_metrics"])
     assert initial_metrics["ready"] is True
@@ -4296,6 +4381,29 @@ def test_generated_reconstruction_viewer_renders_routeable_layout_in_real_browse
     assert inside_metrics["photo_panel_group_visible"] is False
     assert inside_metrics["camera_position"] != overview_metrics["camera_position"]
     assert inside_metrics["projected_coverage_pct"] >= 0.5
+    assert inside_metrics["semantic_staging_group_visible"] is True
+    assert inside_metrics["semantic_staging_route_group_count"] == 3
+    assert inside_metrics["visible_semantic_staging_route_group_count"] == 1
+    assert inside_metrics["visible_semantic_staging_object_count"] >= 2
+    assert inside_metrics["spatial_navigator_visible"] is True
+    assert inside_metrics["spatial_navigator_progress"] == "Room 1 of 3"
+
+    floorplan_on_metrics = dict(probe["floorplan_on_metrics"])
+    floorplan_off_metrics = dict(probe["floorplan_off_metrics"])
+    assert floorplan_on_metrics["floorplan_layer_state"] == "on"
+    assert floorplan_off_metrics["floorplan_layer_state"] == "off"
+
+    navigator_next_metrics = dict(probe["navigator_next_metrics"])
+    navigator_previous_metrics = dict(probe["navigator_previous_metrics"])
+    assert navigator_next_metrics["active_route_index"] == 1
+    assert navigator_next_metrics["spatial_navigator_progress"] == "Room 2 of 3"
+    assert navigator_previous_metrics["active_route_index"] == 0
+    assert navigator_previous_metrics["spatial_navigator_progress"] == "Room 1 of 3"
+
+    guided_on_metrics = dict(probe["guided_on_metrics"])
+    guided_off_metrics = dict(probe["guided_off_metrics"])
+    assert guided_on_metrics["guided_route_active"] is True
+    assert guided_off_metrics["guided_route_active"] is False
 
     route1_transition_metrics = probe["route1_transition_metrics"]
     if route1_transition_metrics is not None:

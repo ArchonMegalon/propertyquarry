@@ -82,6 +82,10 @@ _PROPERTY_PUBLIC_TOUR_PRIVATE_RECEIPT_MERGE_KEYS = frozenset(
         "three_d_vista_entry_relpath",
         "three_d_vista_url",
         "matterport_url",
+        "video_provider",
+        "video_provider_key",
+        "video_render_provider",
+        "video_coverage_proof",
         "private_exact_location",
     }
 )
@@ -937,6 +941,8 @@ def _normalize_generated_reconstruction_bundle_permissions(bundle_dir: Path) -> 
 def _write_hosted_property_tour_payload_with_slug_lock_held(
     bundle_dir: Path,
     payload: dict[str, object],
+    *,
+    publication_authority_held: bool = False,
 ) -> None:
     _assert_governed_property_tour_slug_not_reserved(bundle_dir.name)
     _assert_governed_property_tour_slug_not_reserved(payload.get("slug"))
@@ -1003,7 +1009,7 @@ def _write_hosted_property_tour_payload_with_slug_lock_held(
             private_payload=private_payload,
         )
 
-    if incoming_owner:
+    if incoming_owner and not publication_authority_held:
         with property_account_publication_authority(
             incoming_owner,
             run_id=search_run_id,
@@ -3176,12 +3182,11 @@ def _hosted_property_tour_generated_reconstruction_contract(
         return {"ready": False}
     if str(payload.get("video_sidecar_relpath") or "").strip().lstrip("/") != walkthrough_sidecar_relpath:
         return {"ready": False}
-    if str(payload.get("video_provider") or "").strip() != "propertyquarry_generated_reconstruction":
-        return {"ready": False}
-    if str(payload.get("video_provider_key") or "").strip() != "propertyquarry_generated_reconstruction":
-        return {"ready": False}
-    if str(payload.get("video_coverage_proof") or "").strip() != "boundary_verified_frame_continuation":
-        return {"ready": False}
+    # Provider and render-receipt keys are deliberately private manifest data
+    # and canonical_public_tour_payload strips them before this final gate.
+    # Their public-safe equivalents are already bound above: the generated
+    # reconstruction provider, the exact video/sidecar paths, and a passing
+    # walkthrough coverage proof.
     walkable_scene = (
         dict(generated_reconstruction.get("walkable_scene") or {})
         if isinstance(generated_reconstruction.get("walkable_scene"), dict)

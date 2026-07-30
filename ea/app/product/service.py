@@ -226,6 +226,7 @@ from app.product.property_tour_hosting import (
     _write_hosted_floorplan_property_tour_bundle,
     _write_hosted_photo_gallery_property_tour_bundle,
     _write_hosted_property_tour_payload,
+    _write_hosted_property_tour_payload_with_slug_lock_held,
 )
 from app.product.property_search_storage import (
     _compare_and_swap_property_search_run_record,
@@ -21386,7 +21387,15 @@ def _write_generated_reconstruction_property_tour_bundle_with_lock_held(
             raise RuntimeError("property_reconstruction_publication_manifest_invalid") from exc
         if not isinstance(finalized_payload_raw, dict):
             raise RuntimeError("property_reconstruction_publication_manifest_invalid")
-        finalized_payload = dict(finalized_payload_raw)
+        finalized_payload = {
+            **_owned_hosted_property_tour_private_receipt(
+                bundle_dir,
+                principal_id=normalized_principal,
+            ),
+            **dict(finalized_payload_raw),
+            "principal_id": normalized_principal,
+            "search_run_id": normalized_search_run_id,
+        }
         # Rendering can outlive an account-erasure sweep and recreate files in
         # the canonical bundle path. Reacquire the same durable account
         # authority immediately before promotion; a recorded fence raises into
@@ -21396,25 +21405,15 @@ def _write_generated_reconstruction_property_tour_bundle_with_lock_held(
             run_id=normalized_search_run_id,
         ):
             finalized_payload["publication_status"] = "ready"
-            from app.api.routes.public_tour_payloads import (
-                canonical_public_tour_payload,
-            )
-
-            finalized_payload = canonical_public_tour_payload(
+            # Commit the canonical public manifest and its owner-only receipt
+            # together. The renderer adds video provenance after the initial
+            # generating manifest, so rewriting only tour.json here would
+            # either leak those private fields or discard them.
+            _write_hosted_property_tour_payload_with_slug_lock_held(
+                bundle_dir,
                 finalized_payload,
-                bundle_dir=bundle_dir,
+                publication_authority_held=True,
             )
-            pending_manifest_path = bundle_dir / f".tour.json.{uuid4().hex}.tmp"
-            try:
-                with pending_manifest_path.open("w", encoding="utf-8") as handle:
-                    json.dump(finalized_payload, handle, ensure_ascii=False, indent=2)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                pending_manifest_path.chmod(0o644)
-                os.replace(pending_manifest_path, manifest_path)
-                _fsync_directory(bundle_dir)
-            finally:
-                pending_manifest_path.unlink(missing_ok=True)
             if not _hosted_property_tour_generated_reconstruction_bundle_ready(tour_url):
                 raise RuntimeError("property_reconstruction_publication_not_ready")
             published_payload = _load_hosted_property_tour_payload(

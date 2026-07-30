@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import stat
+import statistics
 import struct
 import subprocess
 import sys
@@ -2788,11 +2789,37 @@ def _draw_style_scene_preview_vignette(
     draw.polygon(floor_polygon, fill=(*floor_preview_color, 255))
     draw.line((*floor_polygon, floor_polygon[0]), fill=(*color("edge", (121, 94, 62)), 255), width=3)
 
-    first_route_instances = [
+    first_route_instance_pool = [
         dict(row)
         for row in list(style_scene.get("instances") or [])
         if isinstance(row, dict) and int(row.get("route_index") or 0) == 0
     ]
+    required_preview_cues = [
+        str(value)
+        for value in list(style_scene.get("required_cues") or [])
+        if str(value)
+    ]
+    first_route_instances: list[dict[str, object]] = []
+    selected_preview_ids: set[str] = set()
+    for required_cue in required_preview_cues:
+        instance = next(
+            (
+                row
+                for row in first_route_instance_pool
+                if str(row.get("cue") or "") == required_cue
+            ),
+            None,
+        )
+        if instance is None:
+            continue
+        first_route_instances.append(instance)
+        selected_preview_ids.add(str(instance.get("id") or ""))
+    for instance in first_route_instance_pool:
+        if len(first_route_instances) >= 4:
+            break
+        if str(instance.get("id") or "") in selected_preview_ids:
+            continue
+        first_route_instances.append(instance)
     anchors = (
         (left + 94, top + 166),
         (left + 202, top + 156),
@@ -3606,11 +3633,9 @@ def _write_generated_reconstruction_diorama_preview(
                 for value in list(style_vignette.get("rendered_cues") or [])
             ]
             layout_checks["style_vignette_covers_required_cues"] = set(
-                rendered_style_cues
-            ) == set(
                 str(value)
                 for value in list(applied_style_scene.get("required_cues") or [])
-            )
+            ).issubset(set(rendered_style_cues))
             composition["checks"] = layout_checks
             failed_layout_checks = [name for name, passed in layout_checks.items() if not passed]
             if failed_layout_checks:
@@ -3937,9 +3962,10 @@ def _write_generated_reconstruction_diorama_preview(
             "style_vignette_fits_canvas": len(style_vignette_box) == 4
             and _preview_rect_contains(canvas_box, style_vignette_box),
             "style_vignette_covers_required_cues": set(
-                str(value) for value in list(style_vignette.get("rendered_cues") or [])
-            )
-            == set(str(value) for value in list(applied_style_scene.get("required_cues") or [])),
+                str(value) for value in list(applied_style_scene.get("required_cues") or [])
+            ).issubset(
+                set(str(value) for value in list(style_vignette.get("rendered_cues") or []))
+            ),
         }
         failed_layout_checks = [name for name, passed in layout_checks.items() if not passed]
         if failed_layout_checks:
@@ -5559,6 +5585,61 @@ def _image_metadata(path: Path) -> dict[str, object]:
             "height": int(image.height),
             "mode": str(image.mode),
         }
+
+
+def _source_photo_looks_like_qr_card(path: Path) -> bool:
+    normalized_name = path.name.lower()
+    if any(marker in normalized_name for marker in ("qr", "qrcode", "barcode")):
+        return True
+    try:
+        with _open_bounded_source_image(path) as image:
+            grayscale = ImageOps.fit(
+                ImageOps.exif_transpose(image).convert("L"),
+                (96, 96),
+                Image.Resampling.LANCZOS,
+            )
+        center = grayscale.crop((24, 24, 72, 72))
+        center_pixels = list(center.tobytes())
+        if not center_pixels:
+            return False
+        threshold = sum(center_pixels) / len(center_pixels)
+        bits = [1 if value > threshold else 0 for value in center_pixels]
+        transitions = 0
+        size = 48
+        for row_index in range(size):
+            row = bits[row_index * size : (row_index + 1) * size]
+            transitions += sum(
+                1 for left, right in zip(row, row[1:]) if left != right
+            )
+        for column_index in range(size):
+            column = [
+                bits[row_index * size + column_index]
+                for row_index in range(size)
+            ]
+            transitions += sum(
+                1 for top, bottom in zip(column, column[1:]) if top != bottom
+            )
+        dark_pixels = sum(1 for value in center_pixels if value < 70)
+        bright_pixels = sum(1 for value in center_pixels if value > 185)
+        outer_pixels: list[int] = []
+        for y in range(96):
+            for x in range(96):
+                if 24 <= x < 72 and 24 <= y < 72:
+                    continue
+                outer_pixels.append(int(grayscale.getpixel((x, y))))
+        outer_stdev = (
+            statistics.pstdev(outer_pixels)
+            if outer_pixels
+            else 0.0
+        )
+        return bool(
+            transitions >= 430
+            and dark_pixels >= 400
+            and bright_pixels >= 900
+            and outer_stdev <= 40.0
+        )
+    except (_SourceImageInvalid, MemoryError, OSError, ValueError):
+        return False
 
 
 def _copy_normalized_image(source: Path, target: Path) -> dict[str, object]:
@@ -7338,6 +7419,59 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
       backdrop-filter:blur(14px);
       z-index:2;
     }}
+    .spatial-navigator {{
+      position:absolute;
+      top:76px;
+      right:18px;
+      display:grid;
+      grid-template-columns:44px minmax(132px,auto) 44px;
+      align-items:center;
+      gap:4px;
+      padding:5px;
+      border:1px solid var(--line);
+      border-radius:6px;
+      background:rgba(23,32,28,.88);
+      color:#fbf6ef;
+      box-shadow:0 14px 36px rgba(23,32,28,.2);
+      backdrop-filter:blur(16px);
+      z-index:3;
+    }}
+    .spatial-navigator[hidden] {{ display:none; }}
+    .spatial-nav-button {{
+      display:grid;
+      place-items:center;
+      min-width:44px;
+      min-height:44px;
+      border:1px solid rgba(255,255,255,.18);
+      border-radius:4px;
+      background:rgba(255,255,255,.08);
+      color:#fff;
+      font:inherit;
+      font-size:24px;
+      line-height:1;
+      cursor:pointer;
+    }}
+    .spatial-nav-button:hover {{ background:rgba(255,255,255,.16); }}
+    .spatial-nav-button:disabled {{ opacity:.34; cursor:default; }}
+    .spatial-nav-copy {{
+      display:grid;
+      gap:2px;
+      min-width:0;
+      padding:2px 8px;
+    }}
+    .spatial-nav-copy span {{
+      color:rgba(251,246,239,.68);
+      font-size:11px;
+      line-height:1.2;
+    }}
+    .spatial-nav-copy strong {{
+      overflow:hidden;
+      max-width:220px;
+      font-size:13px;
+      line-height:1.25;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }}
     .capture-route-card {{
       position:absolute;
       right:24px;
@@ -7548,6 +7682,7 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
     }}
     html[data-capture-mode="true"] .stage-hotspots,
     html[data-capture-mode="true"] .viewer-actions,
+    html[data-capture-mode="true"] .spatial-navigator,
     html[data-capture-mode="true"] .hint-pill {{
       display:none;
     }}
@@ -7580,6 +7715,12 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
       h1 {{ font-size:27px; }}
       .title-card p {{ font-size:13px; }}
       .floorplan-stop-label {{ font-size:10px; }}
+      .spatial-navigator {{
+        top:136px;
+        right:12px;
+        grid-template-columns:44px minmax(116px,auto) 44px;
+      }}
+      .spatial-nav-copy strong {{ max-width:150px; }}
     }}
   </style>
 </head>
@@ -7606,6 +7747,15 @@ def _viewer_html(*, manifest: dict[str, object], three_relpath: str, orbit_contr
       <button class="viewer-chip" id="view-inside" type="button" aria-pressed="false">Room view</button>
       <button class="viewer-chip" id="view-guided-route" type="button" aria-pressed="false">Guide me</button>
       <button class="viewer-chip" id="view-floorplan-reference" type="button" aria-pressed="false">Plan overlay</button>
+    </div>
+    <div class="spatial-navigator" id="spatial-navigator" aria-label="Room-to-room navigation" hidden>
+      <button class="spatial-nav-button" id="room-previous" type="button" aria-label="Previous room">&#8249;</button>
+      <div class="spatial-nav-copy">
+        <span id="spatial-view-label">Spatial twin · room view</span>
+        <strong id="spatial-room-label">Choose a room</strong>
+        <span id="spatial-route-progress">Room 1 of 1</span>
+      </div>
+      <button class="spatial-nav-button" id="room-next" type="button" aria-label="Next room">&#8250;</button>
     </div>
     <div class="capture-route-card" id="capture-route-card" hidden>
       <span class="capture-route-kicker" id="capture-route-kicker">Layout flythrough</span>
@@ -7656,6 +7806,11 @@ const dollhouseButton = document.getElementById("view-dollhouse");
 const insideButton = document.getElementById("view-inside");
 const guideButton = document.getElementById("view-guided-route");
 const floorplanReferenceButton = document.getElementById("view-floorplan-reference");
+const spatialNavigator = document.getElementById("spatial-navigator");
+const previousRoomButton = document.getElementById("room-previous");
+const nextRoomButton = document.getElementById("room-next");
+const spatialRoomLabel = document.getElementById("spatial-room-label");
+const spatialRouteProgress = document.getElementById("spatial-route-progress");
 const wallRectangles = {_html_script_safe_json(wall_rectangles)};
 const walkableScene = {_html_script_safe_json(walkable_scene)};
 const styleScene = {_html_script_safe_json(style_scene)};
@@ -7723,7 +7878,7 @@ function showViewerFallback() {{
   if (viewerFallback) {{
     viewerFallback.hidden = false;
   }}
-  document.querySelectorAll(".viewer-chip, .route-button, .floorplan-stop").forEach((button) => {{
+  document.querySelectorAll(".viewer-chip, .route-button, .floorplan-stop, .spatial-nav-button").forEach((button) => {{
     button.disabled = true;
   }});
   announceViewerState("The interactive 3D preview is unavailable. Use the floorplan and listing photos instead.");
@@ -7980,6 +8135,7 @@ scene.add(stagingGroup);
 const semanticStagingGroup = new THREE.Group();
 semanticStagingGroup.name = "generated-semantic-staging";
 stagingGroup.add(semanticStagingGroup);
+const semanticStagingRouteGroups = [];
 const styleStagingGroup = new THREE.Group();
 styleStagingGroup.name = "generated-style-staging";
 stagingGroup.add(styleStagingGroup);
@@ -7993,12 +8149,39 @@ const stagingMaterials = {{
   stone: new THREE.MeshStandardMaterial({{ color: styleColor("stone", "#d7d0c3"), roughness: 0.82, metalness: 0.01 }}),
   accent: new THREE.MeshStandardMaterial({{ color: styleColor("accent", "#a77c2b"), roughness: 0.58, metalness: 0.03 }}),
   foliage: new THREE.MeshStandardMaterial({{ color: styleColor("foliage", "#6f8561"), roughness: 0.92, metalness: 0.0 }}),
+  foliageLight: new THREE.MeshStandardMaterial({{
+    color: new THREE.Color(styleColor("foliage", "#6f8561")).lerp(new THREE.Color("#a8bd82"), 0.28),
+    roughness: 0.9,
+    metalness: 0.0,
+  }}),
+  foliageDark: new THREE.MeshStandardMaterial({{
+    color: new THREE.Color(styleColor("foliage", "#6f8561")).lerp(new THREE.Color("#173d2a"), 0.24),
+    roughness: 0.94,
+    metalness: 0.0,
+  }}),
   rattan: new THREE.MeshStandardMaterial({{ color: styleColor("rattan", "#b78249"), roughness: 0.76, metalness: 0.0 }}),
   darkMetal: new THREE.MeshStandardMaterial({{ color: styleColor("metal", "#b59445"), roughness: 0.32, metalness: 0.72 }}),
+  glass: new THREE.MeshPhysicalMaterial({{
+    color: 0xe8f2ee,
+    roughness: 0.18,
+    metalness: 0.02,
+    transmission: constrainedDevice ? 0.0 : 0.38,
+    transparent: true,
+    opacity: constrainedDevice ? 0.62 : 0.78,
+    side: THREE.DoubleSide,
+  }}),
 }};
 
 function stagingKind(stop) {{
-  const raw = String(stop?.kind || stop?.label || stop?.room || stop?.name || "").toLowerCase();
+  const raw = [
+    stop?.kind,
+    stop?.label,
+    stop?.room,
+    stop?.name,
+  ].map((value) => String(value || "").trim()).filter(Boolean).join(" ").toLowerCase();
+  const hasKitchen = raw.includes("kitchen") || raw.includes("kuche") || raw.includes("kueche") || raw.includes("küche");
+  const hasLiving = raw.includes("living") || raw.includes("wohn");
+  if (hasKitchen && hasLiving) return "living_kitchen";
   if (raw.includes("kitchen") || raw.includes("kuche") || raw.includes("kueche") || raw.includes("küche")) return "kitchen";
   if (raw.includes("bed") || raw.includes("schlaf")) return "bedroom";
   if (raw.includes("bath") || raw.includes("bad") || raw.includes("wc") || raw.includes("toilet")) return "bath";
@@ -8044,6 +8227,29 @@ function addStagingRug(group, dimensions, position, material) {{
   return rug;
 }}
 
+function addStagingCapsule(group, name, radius, length, position, material, rotation = null) {{
+  const mesh = new THREE.Mesh(
+    new THREE.CapsuleGeometry(
+      Math.max(0.04, Number(radius || 0.1)),
+      Math.max(0.08, Number(length || 0.2)),
+      6,
+      18,
+    ),
+    material,
+  );
+  mesh.name = String(name || "generated-staging-capsule");
+  mesh.position.set(Number(position.x || 0), Number(position.y || 0), Number(position.z || 0));
+  if (rotation) {{
+    mesh.rotation.set(Number(rotation.x || 0), Number(rotation.y || 0), Number(rotation.z || 0));
+  }}
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+  stagingObjects.push(mesh);
+  semanticStagingObjects.push(mesh);
+  return mesh;
+}}
+
 function addStagingDetail(group, name, geometry, position, material, rotation = null) {{
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = String(name || "generated-staging-detail");
@@ -8067,13 +8273,14 @@ function addGeneratedStagingForStop(stop, index) {{
   const baseZ = Math.max(-(roomDepth * 0.38), Math.min(roomDepth * 0.38, Number(focus.z || 0)));
   group.position.set(baseX, 0, baseZ);
   group.rotation.y = (Number(index || 0) % 2 === 0 ? -0.22 : 0.18);
+  group.userData.routeIndex = Number(index || 0);
   const kind = stagingKind(stop);
-  if (kind === "living" || kind === "generic") {{
+  if (kind === "living" || kind === "living_kitchen" || kind === "generic") {{
     addStagingRug(group, {{ x: 1.62, z: 1.1 }}, {{ x: 0.05, z: 0.02 }}, stagingMaterials.paleTextile);
-    addStagingBox(group, "generated-sofa-seat", {{ x: 1.24, y: 0.28, z: 0.52 }}, {{ x: -0.22, y: 0.14, z: -0.22 }}, stagingMaterials.textile);
-    addStagingBox(group, "generated-sofa-back", {{ x: 1.24, y: 0.48, z: 0.12 }}, {{ x: -0.22, y: 0.38, z: -0.53 }}, stagingMaterials.textile);
-    addStagingBox(group, "generated-sofa-arm-left", {{ x: 0.12, y: 0.38, z: 0.58 }}, {{ x: -0.84, y: 0.25, z: -0.22 }}, stagingMaterials.textile);
-    addStagingBox(group, "generated-sofa-arm-right", {{ x: 0.12, y: 0.38, z: 0.58 }}, {{ x: 0.40, y: 0.25, z: -0.22 }}, stagingMaterials.textile);
+    addStagingCapsule(group, "generated-sofa-seat", 0.20, 0.84, {{ x: -0.22, y: 0.22, z: -0.22 }}, stagingMaterials.textile, {{ x: 0, y: 0, z: Math.PI * 0.5 }});
+    addStagingCapsule(group, "generated-sofa-back", 0.12, 1.0, {{ x: -0.22, y: 0.44, z: -0.50 }}, stagingMaterials.textile, {{ x: 0, y: 0, z: Math.PI * 0.5 }});
+    addStagingCapsule(group, "generated-sofa-arm-left", 0.10, 0.34, {{ x: -0.84, y: 0.28, z: -0.22 }}, stagingMaterials.textile, {{ x: Math.PI * 0.5, y: 0, z: 0 }});
+    addStagingCapsule(group, "generated-sofa-arm-right", 0.10, 0.34, {{ x: 0.40, y: 0.28, z: -0.22 }}, stagingMaterials.textile, {{ x: Math.PI * 0.5, y: 0, z: 0 }});
     addStagingDetail(group, "generated-sofa-cushion-left", new THREE.SphereGeometry(0.22, 20, 14), {{ x: -0.52, y: 0.38, z: -0.24 }}, stagingMaterials.paleTextile, {{ x: 0, y: 0, z: -0.12 }});
     addStagingDetail(group, "generated-sofa-cushion-right", new THREE.SphereGeometry(0.22, 20, 14), {{ x: 0.08, y: 0.38, z: -0.24 }}, stagingMaterials.paleTextile, {{ x: 0, y: 0, z: 0.12 }});
     addStagingBox(group, "generated-coffee-table", {{ x: 0.72, y: 0.2, z: 0.42 }}, {{ x: 0.26, y: 0.1, z: 0.34 }}, stagingMaterials.timber);
@@ -8120,6 +8327,7 @@ function addGeneratedStagingForStop(stop, index) {{
     addStagingBox(group, "generated-outdoor-chair-back", {{ x: 0.42, y: 0.5, z: 0.1 }}, {{ x: 0.74, y: 0.53, z: 0.08 }}, stagingMaterials.timber);
   }}
   semanticStagingGroup.add(group);
+  semanticStagingRouteGroups.push(group);
   return group;
 }}
 
@@ -8293,13 +8501,17 @@ function addStyledSceneInstance(instance) {{
         `${{baseName}}-stem-${{plantIndex + 1}}`,
         {{ x: plant.x, y: plantHeight * 0.48, z: plant.z }},
       );
-      for (let leafIndex = 0; leafIndex < 6; leafIndex += 1) {{
-        const angle = plant.phase + ((leafIndex / 6) * Math.PI * 2);
+      for (let leafIndex = 0; leafIndex < 8; leafIndex += 1) {{
+        const angle = plant.phase + ((leafIndex / 8) * Math.PI * 2);
         const radius = width * (leafIndex % 2 ? 0.25 : 0.16) * plant.scale;
         const leaf = addStyleMesh(
           group,
-          new THREE.SphereGeometry(width * 0.15 * plant.scale, 16, 10),
-          stagingMaterials.foliage,
+          new THREE.SphereGeometry(width * 0.16 * plant.scale, 18, 12),
+          leafIndex % 3 === 0
+            ? stagingMaterials.foliageLight
+            : leafIndex % 3 === 1
+              ? stagingMaterials.foliage
+              : stagingMaterials.foliageDark,
           `${{baseName}}-plant-${{plantIndex + 1}}-leaf-${{leafIndex + 1}}`,
           {{
             x: plant.x + (Math.cos(angle) * radius),
@@ -8307,8 +8519,8 @@ function addStyledSceneInstance(instance) {{
             z: plant.z + (Math.sin(angle) * radius),
           }},
         );
-        leaf.scale.set(1.08, 0.48, 0.72);
-        leaf.rotation.y = angle;
+        leaf.scale.set(1.46, 0.28, 0.68);
+        leaf.rotation.set(Math.sin(angle) * 0.18, angle, Math.cos(angle) * 0.34);
       }}
     }});
   }} else if (shape === "rattan_chair") {{
@@ -8347,6 +8559,27 @@ function addStyledSceneInstance(instance) {{
         {{ x: 0, y: height * (0.08 + (shelfIndex * 0.28)), z: 0 }},
       );
     }}
+    if (styleKey === "urban_jungle") {{
+      for (let planterIndex = 0; planterIndex < 2; planterIndex += 1) {{
+        const planterX = width * (planterIndex === 0 ? -0.22 : 0.24);
+        const planterY = height * (planterIndex === 0 ? 0.43 : 0.71);
+        addStyleMesh(
+          group,
+          new THREE.CylinderGeometry(width * 0.08, width * 0.11, height * 0.13, 16),
+          stagingMaterials.stone,
+          `${{baseName}}-shelf-planter-${{planterIndex + 1}}`,
+          {{ x: planterX, y: planterY, z: depth * 0.02 }},
+        );
+        const shelfPlant = addStyleMesh(
+          group,
+          new THREE.SphereGeometry(width * 0.16, 16, 10),
+          planterIndex === 0 ? stagingMaterials.foliageLight : stagingMaterials.foliageDark,
+          `${{baseName}}-shelf-foliage-${{planterIndex + 1}}`,
+          {{ x: planterX, y: planterY + (height * 0.13), z: depth * 0.02 }},
+        );
+        shelfPlant.scale.set(1.15, 0.72, 0.9);
+      }}
+    }}
   }} else if (shape === "vessels") {{
     for (let vesselIndex = 0; vesselIndex < 3; vesselIndex += 1) {{
       const vesselHeight = height * (0.52 + (vesselIndex * 0.18));
@@ -8379,18 +8612,28 @@ const styleEvidenceReady =
   styleSceneContractReady
   && styledSceneObjects.length === styleInstances.length
   && requiredStyleCues.every((cue) => observedStyleCues.has(cue));
+const roomStyleAccentCues = new Set([
+  ...requiredStyleCues,
+  "layered_greenery",
+]);
 
-function styledObjectsForRoute(routeIndex) {{
+function styledObjectsForRoute(routeIndex, options = {{}}) {{
   const boundedRouteIndex = Math.max(0, Number(routeIndex || 0));
+  const roomAccentsOnly = Boolean(options && options.roomAccentsOnly);
   return styledSceneObjects.filter(
-    (object) => Number(object.userData?.routeIndex ?? -1) === boundedRouteIndex,
+    (object) =>
+      Number(object.userData?.routeIndex ?? -1) === boundedRouteIndex
+      && (
+        !roomAccentsOnly
+        || roomStyleAccentCues.has(String(object.userData?.styleCue || ""))
+      ),
   );
 }}
 
 function styledBoundsForRoute(routeIndex) {{
   const bounds = new THREE.Box3();
   let hasBounds = false;
-  for (const object of styledObjectsForRoute(routeIndex)) {{
+  for (const object of styledObjectsForRoute(routeIndex, {{ roomAccentsOnly: true }})) {{
     const objectBounds = new THREE.Box3().setFromObject(object);
     if (objectBounds.isEmpty()) continue;
     if (!hasBounds) {{
@@ -8417,12 +8660,20 @@ function syncGeneratedSceneModeVisibility(mode = activeViewMode, routeIndex = ac
   const boundedRouteIndex = routeStops.length
     ? Math.max(0, Math.min(Number(routeIndex ?? 0), routeStops.length - 1))
     : 0;
-  semanticStagingGroup.visible = !roomMode;
+  semanticStagingGroup.visible = true;
+  semanticStagingRouteGroups.forEach((group) => {{
+    group.visible =
+      !roomMode
+      || Number(group.userData?.routeIndex ?? -1) === boundedRouteIndex;
+  }});
   routeMarkerGroup.visible = !roomMode;
   styledSceneObjects.forEach((object) => {{
     object.visible =
       !roomMode
-      || Number(object.userData?.routeIndex ?? -1) === boundedRouteIndex;
+      || (
+        Number(object.userData?.routeIndex ?? -1) === boundedRouteIndex
+        && roomStyleAccentCues.has(String(object.userData?.styleCue || ""))
+      );
   }});
   if (hotspotLayer) {{
     hotspotLayer.style.opacity = roomMode ? "0" : (mode === "dollhouse" ? "0.78" : "1");
@@ -8702,13 +8953,19 @@ function routePhotoPanelPosition(routeIndex) {{
 }}
 
 function styledSelfOccluderCount(position, routeIndex) {{
-  const routeObjects = styledObjectsForRoute(routeIndex);
+  const routeObjects = styledObjectsForRoute(routeIndex, {{ roomAccentsOnly: true }});
   const routeMeshes = [];
   for (const object of routeObjects) {{
     object.traverse((child) => {{
       if (child?.isMesh) routeMeshes.push(child);
     }});
   }}
+  const semanticRouteGroup = semanticStagingRouteGroups.find(
+    (group) => Number(group.userData?.routeIndex ?? -1) === Number(routeIndex ?? -1),
+  );
+  semanticRouteGroup?.traverse((child) => {{
+    if (child?.isMesh) routeMeshes.push(child);
+  }});
   if (!routeMeshes.length) return routeObjects.length;
   const raycaster = new THREE.Raycaster();
   let hiddenObjectCount = 0;
@@ -9129,6 +9386,26 @@ function setInsideView(options = {{}}) {{
 
 let activeRouteIndex = -1;
 let activeViewMode = "overview";
+function syncSpatialNavigator() {{
+  if (!spatialNavigator) return;
+  const hasRoute = routeStops.length > 0 && activeRouteIndex >= 0;
+  spatialNavigator.hidden = activeViewMode !== "room" || !hasRoute;
+  if (!hasRoute) return;
+  const activeStop = routeStops[activeRouteIndex] || {{}};
+  const activeLabel = String(
+    activeStop.label
+    || activeStop.room
+    || activeStop.name
+    || `Room ${{activeRouteIndex + 1}}`
+  ).trim();
+  if (spatialRoomLabel) spatialRoomLabel.textContent = activeLabel;
+  if (spatialRouteProgress) {{
+    spatialRouteProgress.textContent = `Room ${{activeRouteIndex + 1}} of ${{routeStops.length}}`;
+  }}
+  if (previousRoomButton) previousRoomButton.disabled = activeRouteIndex <= 0;
+  if (nextRoomButton) nextRoomButton.disabled = activeRouteIndex >= routeStops.length - 1;
+}}
+
 function setActiveViewChip(mode) {{
   const viewButtons = [
     [overviewButton, mode === "overview"],
@@ -9141,6 +9418,7 @@ function setActiveViewChip(mode) {{
     button.setAttribute("aria-pressed", active ? "true" : "false");
   }});
   setGuideChipState(guidedRouteState.active);
+  syncSpatialNavigator();
   const viewLabel = mode === "dollhouse" ? "Dollhouse view" : mode === "room" ? "Room view" : "Overview";
   announceViewerState(`${{viewLabel}} selected.`);
 }}
@@ -9270,6 +9548,7 @@ function setActiveRouteButton(index) {{
   activeRouteIndex = index;
   liveViewerState.activeRouteIndex = index;
   syncGeneratedSceneModeVisibility(activeViewMode, activeRouteIndex);
+  syncSpatialNavigator();
   syncCaptureRouteCard({{ routeIndex: index }});
   const activeStop = index >= 0 ? routeStops[index] : null;
   const activeLabel = String(activeStop?.label || activeStop?.room || activeStop?.name || `Stop ${{index + 1}}`);
@@ -9307,6 +9586,26 @@ guideButton?.addEventListener("click", () => {{
 }});
 routeButtons.forEach((button, index) => button.addEventListener("click", () => setRouteView(index)));
 floorplanStopButtons.forEach((button) => button.addEventListener("click", () => setRouteView(Number(button.dataset.routeIndex || 0))));
+previousRoomButton?.addEventListener("click", () => {{
+  if (activeRouteIndex > 0) setRouteView(activeRouteIndex - 1);
+}});
+nextRoomButton?.addEventListener("click", () => {{
+  if (activeRouteIndex >= 0 && activeRouteIndex < routeStops.length - 1) {{
+    setRouteView(activeRouteIndex + 1);
+  }}
+}});
+window.addEventListener("keydown", (event) => {{
+  if (activeViewMode !== "room" || event.altKey || event.ctrlKey || event.metaKey) return;
+  const targetTag = String(event.target?.tagName || "").toLowerCase();
+  if (["input", "select", "textarea"].includes(targetTag)) return;
+  if (event.key === "ArrowLeft" && activeRouteIndex > 0) {{
+    event.preventDefault();
+    setRouteView(activeRouteIndex - 1);
+  }} else if (event.key === "ArrowRight" && activeRouteIndex >= 0 && activeRouteIndex < routeStops.length - 1) {{
+    event.preventDefault();
+    setRouteView(activeRouteIndex + 1);
+  }}
+}});
 renderer.domElement.addEventListener("pointerdown", () => {{
   if (guidedRouteState.active) {{
     stopGuidedRoute();
@@ -9533,7 +9832,7 @@ function styleObjectRayVisibilityPct(object) {{
   const ownMeshSet = new Set(ownMeshes);
   const sceneMeshes = [
     ...wallMeshes.filter((mesh) => objectEffectivelyVisible(mesh)),
-    ...stagingObjects.filter((mesh) => objectEffectivelyVisible(mesh)),
+    ...ownMeshes,
   ];
   const sampleMeshes = ownMeshes.length <= 14
     ? ownMeshes
@@ -9833,9 +10132,16 @@ function getRenderMetrics(options = {{}}) {{
       shadowMapSize: Number(keyLight.shadow.mapSize.width || 0),
       apartmentPlinthVisible: Boolean(apartmentPlinth.visible),
       semanticStagingGroupVisible: Boolean(semanticStagingGroup.visible),
+      semanticStagingRouteGroupCount: Number(semanticStagingRouteGroups.length || 0),
+      visibleSemanticStagingRouteGroupCount: Number(
+        semanticStagingRouteGroups.filter((group) => objectEffectivelyVisible(group)).length,
+      ),
       visibleSemanticStagingObjectCount: Number(
         semanticStagingObjects.filter((object) => objectEffectivelyVisible(object)).length,
       ),
+      spatialNavigatorVisible: Boolean(spatialNavigator && !spatialNavigator.hidden),
+      spatialNavigatorRoomLabel: String(spatialRoomLabel?.textContent || "").trim(),
+      spatialNavigatorProgress: String(spatialRouteProgress?.textContent || "").trim(),
       routeMarkerGroupVisible: Boolean(routeMarkerGroup.visible),
       styleKey,
       styleSignature: String(styleScene.style_signature || ""),
@@ -10137,7 +10443,11 @@ def _write_viewer_walkthrough(
     duration_seconds = len(storyboard_steps) * seconds_per_stop
     if duration_seconds > MAX_WALKTHROUGH_DURATION_SECONDS:
         return {"status": "failed", "reason": "walkthrough_duration_limit_exceeded"}
-    input_fps = max(1.0, segment_frame_count / max(seconds_per_stop, 0.001))
+    # Six high-quality captured poses are stretched across each requested
+    # route dwell.  Sub-1fps raw input is valid in ffmpeg and is required when
+    # the 30-second quality floor raises a short route above six seconds per
+    # stop; clamping to 1fps silently shortened those walkthroughs.
+    input_fps = max(0.1, segment_frame_count / max(seconds_per_stop, 0.001))
     sidecar_path = target.with_suffix(".quality.json")
     target.unlink(missing_ok=True)
     sidecar_path.unlink(missing_ok=True)
@@ -11065,7 +11375,24 @@ def _generate_reconstruction_on_anchored_surface(
 ) -> tuple[int, dict[str, object] | None]:
     manifest_path = bundle_dir / "tour.json"
 
-    photo_sources = [Path(value).expanduser() for value in args.photo or []]
+    supplied_photo_sources = [
+        Path(value).expanduser()
+        for value in args.photo or []
+    ]
+    for index, source in enumerate(supplied_photo_sources, start=1):
+        if not source.is_file():
+            raise SystemExit(f"photo_missing:{index}")
+    excluded_photo_input_indexes = [
+        index
+        for index, source in enumerate(supplied_photo_sources, start=1)
+        if _source_photo_looks_like_qr_card(source)
+    ]
+    excluded_photo_input_index_set = set(excluded_photo_input_indexes)
+    photo_sources = [
+        source
+        for index, source in enumerate(supplied_photo_sources, start=1)
+        if index not in excluded_photo_input_index_set
+    ]
     floorplan_arg = str(args.floorplan or "").strip()
     if floorplan_arg:
         floorplan_source = Path(floorplan_arg).expanduser()
@@ -11085,8 +11412,6 @@ def _generate_reconstruction_on_anchored_surface(
     photo_rows: list[dict[str, object]] = []
     photo_paths: list[Path] = []
     for index, source in enumerate(photo_sources, start=1):
-        if not source.is_file():
-            raise SystemExit(f"photo_missing:{index}")
         target = output_dir / f"photo-{index:02d}{_web_safe_image_suffix(source)}"
         row = _copy_normalized_image(source, target)
         row["relpath"] = target.name
@@ -11138,10 +11463,10 @@ def _generate_reconstruction_on_anchored_surface(
             if not (
                 isinstance(row, dict)
                 and (
-                    str(row.get("relpath") or "").strip().startswith(
+                    str(row.get("path") or row.get("relpath") or "").strip().startswith(
                         f"{target_subdir}/"
                     )
-                    or str(row.get("relpath") or "").strip()
+                    or str(row.get("path") or row.get("relpath") or "").strip()
                     in {"diorama-preview.png", "telegram-preview.png"}
                 )
             )
@@ -11252,6 +11577,16 @@ def _generate_reconstruction_on_anchored_surface(
         },
         "floorplan": floorplan_meta,
         "photos": photo_rows,
+        "source_photo_filter": {
+            "status": "pass",
+            "method": "qr_card_content_filter_v1",
+            "supplied_count": len(supplied_photo_sources),
+            "accepted_count": len(photo_sources),
+            "rejected_non_property_card_count": len(
+                excluded_photo_input_indexes
+            ),
+            "rejected_input_indexes": excluded_photo_input_indexes,
+        },
         "walkable_scene": walkable_scene,
         "photo_reference_panels": photo_reference_panels,
         "model": {
