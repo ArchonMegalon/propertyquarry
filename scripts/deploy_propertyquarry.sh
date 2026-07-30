@@ -104,6 +104,7 @@ load_env_file "${APP_ROOT}/state/runtime/propertyquarry_auth.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_google_identity.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_registration_email.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_render_bridge.env"
+load_env_file "${APP_ROOT}/state/runtime/propertyquarry_magicfit_reviewer.env"
 import_existing_runtime_environment
 
 : "${PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID:=${EA_GOOGLE_OAUTH_CLIENT_ID:-}}"
@@ -220,6 +221,39 @@ export PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME="${PROPERTYQUARRY_SCHEDULER_CONTA
 export PROPERTYQUARRY_RENDER_CONTAINER_NAME="${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-live}"
 export EA_RUNTIME_MODE=prod
 
+release_compose_files=(
+  --file docker-compose.property.yml
+  --file docker-compose.cloudflared.yml
+)
+if [[ -n "${PROPERTYQUARRY_MAGICFIT_REVIEWER_TRUST_DIR:-}" ]]; then
+  reviewer_trust_dir="$(
+    /usr/bin/realpath -e -- "${PROPERTYQUARRY_MAGICFIT_REVIEWER_TRUST_DIR}"
+  )" || {
+    /usr/bin/printf '%s\n' \
+      "MagicFit reviewer trust directory must resolve to an existing path." >&2
+    exit 2
+  }
+  reviewer_trust_store="${reviewer_trust_dir}/trust-store.json"
+  reviewer_dir_mode="$((8#$(/usr/bin/stat -c '%a' "${reviewer_trust_dir}")))"
+  reviewer_file_mode="$((8#$(/usr/bin/stat -c '%a' "${reviewer_trust_store}")))"
+  if [[ "${reviewer_trust_dir}" != /* ]] ||
+     [[ -L "${PROPERTYQUARRY_MAGICFIT_REVIEWER_TRUST_DIR}" ]] ||
+     [[ ! -d "${reviewer_trust_dir}" ]] ||
+     [[ "$(/usr/bin/stat -c '%u' "${reviewer_trust_dir}")" != "0" ]] ||
+     ((reviewer_dir_mode & 8#022)) ||
+     [[ -L "${reviewer_trust_store}" ]] ||
+     [[ ! -f "${reviewer_trust_store}" ]] ||
+     [[ "$(/usr/bin/stat -c '%u' "${reviewer_trust_store}")" != "0" ]] ||
+     ((reviewer_file_mode & 8#022)); then
+    /usr/bin/printf '%s\n' \
+      "MagicFit reviewer trust must be a non-writable root-owned directory and regular trust-store file." >&2
+    exit 2
+  fi
+  PROPERTYQUARRY_MAGICFIT_REVIEWER_TRUST_DIR="${reviewer_trust_dir}"
+  export PROPERTYQUARRY_MAGICFIT_REVIEWER_TRUST_DIR
+  release_compose_files+=(--file docker-compose.property-magicfit-reviewer.yml)
+fi
+
 short_sha="${runtime_sha:0:12}"
 web_tag="propertyquarry-standalone-web-runtime:local-${short_sha}"
 render_tag="propertyquarry-standalone-render-runtime:local-${short_sha}"
@@ -262,8 +296,7 @@ export PROPERTYQUARRY_RELEASE_GENERATED_AT="${release_generated_at}"
 
 /usr/bin/docker compose \
   --project-name "${COMPOSE_PROJECT_NAME}" \
-  --file docker-compose.property.yml \
-  --file docker-compose.cloudflared.yml \
+  "${release_compose_files[@]}" \
   config --quiet
 
 if ((PREFLIGHT_ONLY == 1)); then
@@ -288,8 +321,7 @@ python3 scripts/provision_propertyquarry_admission_database.py \
 
 /usr/bin/docker compose \
   --project-name "${COMPOSE_PROJECT_NAME}" \
-  --file docker-compose.property.yml \
-  --file docker-compose.cloudflared.yml \
+  "${release_compose_files[@]}" \
   up --detach --remove-orphans --wait --wait-timeout 420
 
 local_port="${EA_HOST_PORT:-8097}"

@@ -112,6 +112,22 @@ def test_local_deploy_protects_project_scope_and_waits_for_health() -> None:
     assert "up --detach --remove-orphans --wait --wait-timeout 420" in deploy
 
 
+def test_local_deploy_persists_strict_magicfit_reviewer_trust_overlay() -> None:
+    deploy = _deploy()
+    assert "propertyquarry_magicfit_reviewer.env" in deploy
+    assert "release_compose_files=(" in deploy
+    assert "docker-compose.property-magicfit-reviewer.yml" in deploy
+    assert '[[ -n "${PROPERTYQUARRY_MAGICFIT_REVIEWER_TRUST_DIR:-}" ]]' in deploy
+    assert "/usr/bin/realpath -e --" in deploy
+    assert '[[ -L "${PROPERTYQUARRY_MAGICFIT_REVIEWER_TRUST_DIR}" ]]' in deploy
+    assert '[[ "$(/usr/bin/stat -c \'%u\' "${reviewer_trust_dir}")" != "0" ]]' in deploy
+    assert '((reviewer_dir_mode & 8#022))' in deploy
+    assert '[[ -L "${reviewer_trust_store}" ]]' in deploy
+    assert '[[ "$(/usr/bin/stat -c \'%u\' "${reviewer_trust_store}")" != "0" ]]' in deploy
+    assert '((reviewer_file_mode & 8#022))' in deploy
+    assert deploy.count('"${release_compose_files[@]}"') == 2
+
+
 def test_local_deploy_writes_the_exact_candidate_receipt() -> None:
     deploy = _deploy()
     assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy

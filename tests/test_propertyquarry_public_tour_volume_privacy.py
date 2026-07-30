@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.api.routes import public_tour_payloads
 from app.api.routes.public_tour_payloads import build_public_tour_manifest
@@ -56,6 +57,85 @@ def test_audit_fails_closed_without_mutating(tmp_path: Path) -> None:
     assert receipt["counts"]["private_key_manifests"] == 1
     assert receipt["counts"]["private_mode_violations"] == 1
     assert (bundle / "tour.json").read_bytes() == before
+
+
+def test_audit_preserves_only_strictly_accepted_magicfit_augmentation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "public"
+    bundle = root / "accepted-magicfit"
+    bundle.mkdir(parents=True)
+    payload = {
+        "slug": "accepted-magicfit",
+        "title": "Accepted walkthrough",
+        "scenes": [],
+        "magicfit_import": {"acceptance_status": "accepted_v4"},
+        "video_coverage_proof": "continuous_walkthrough",
+        "video_provider": "magicfit",
+        "video_provider_backend_key": "magicfit",
+        "video_relpath": "magicfit-media/walkthrough.mp4",
+        "video_sidecar_relpath": (
+            ".magicfit-deliveries/walkthrough.mp4.magicfit.json"
+        ),
+        "walkthrough_coverage_proof": "continuous_walkthrough",
+    }
+    manifest_path = bundle / "tour.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        privacy,
+        "evaluate_magicfit_public_eligibility",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            declared=True,
+            eligible=True,
+        ),
+    )
+
+    receipt = audit_or_repair(root)
+
+    assert receipt["status"] == "pass"
+    assert receipt["counts"]["accepted_magicfit_manifests"] == 1
+    assert receipt["counts"]["private_key_manifests"] == 0
+    assert receipt["counts"]["noncanonical_manifests"] == 0
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == payload
+
+
+def test_audit_rejects_unverified_magicfit_augmentation(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "public"
+    bundle = root / "unverified-magicfit"
+    bundle.mkdir(parents=True)
+    (bundle / "tour.json").write_text(
+        json.dumps(
+            {
+                "slug": "unverified-magicfit",
+                "title": "Unverified walkthrough",
+                "scenes": [],
+                "magicfit_import": {"acceptance_status": "accepted_v4"},
+                "video_provider": "magicfit",
+                "video_coverage_proof": "continuous_walkthrough",
+                "video_relpath": "magicfit-media/walkthrough.mp4",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        privacy,
+        "evaluate_magicfit_public_eligibility",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            declared=True,
+            eligible=False,
+        ),
+    )
+
+    receipt = audit_or_repair(root)
+
+    assert receipt["status"] == "fail"
+    assert receipt["counts"]["accepted_magicfit_manifests"] == 0
+    assert receipt["counts"]["private_key_manifests"] == 1
+    assert receipt["counts"]["noncanonical_manifests"] == 1
 
 
 def test_minimal_web_image_packages_the_live_volume_auditor() -> None:

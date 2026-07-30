@@ -16,10 +16,16 @@ import os
 import re
 import shutil
 import stat
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+EA_ROOT = ROOT / "ea"
+if EA_ROOT.is_dir() and str(EA_ROOT) not in sys.path:
+    sys.path.insert(0, str(EA_ROOT))
 
 from app.api.routes.public_tour_payloads import (
     PrivateTourReceipt,
@@ -27,9 +33,36 @@ from app.api.routes.public_tour_payloads import (
     public_tour_key_is_exact_location,
 )
 
+try:
+    from property_magicfit_public_eligibility import (
+        evaluate_magicfit_public_eligibility,
+        magicfit_footprint_present,
+    )
+except ModuleNotFoundError:
+    from scripts.property_magicfit_public_eligibility import (
+        evaluate_magicfit_public_eligibility,
+        magicfit_footprint_present,
+    )
+
 
 SCHEMA = "propertyquarry-public-tour-volume-privacy-v1"
 SAFE_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# Accepted MagicFit v4 deliveries deliberately retain this exact functional
+# augmentation in tour.json.  The shared eligibility validator binds every
+# field to the active manifest, media, audit evidence, signed reviewer
+# authority, and external trust store.  No unverified or partial footprint
+# receives this exception.
+ACCEPTED_MAGICFIT_AT_REST_FIELDS = frozenset(
+    {
+        "magicfit_import",
+        "video_coverage_proof",
+        "video_provider",
+        "video_provider_backend_key",
+        "video_relpath",
+        "video_sidecar_relpath",
+        "walkthrough_coverage_proof",
+    }
+)
 EXPLICIT_PRIVATE_KEYS = frozenset(
     {
         "candidate_ref",
@@ -147,6 +180,26 @@ def _canonical_public_payload(
     return canonical_public_tour_payload(payload, bundle_dir=bundle_dir)
 
 
+def _accepted_magicfit_at_rest_payload(
+    payload: dict[str, object],
+    *,
+    bundle_dir: Path,
+) -> tuple[bool, dict[str, object]]:
+    """Return privacy semantics for a fully accepted MagicFit augmentation."""
+
+    if not magicfit_footprint_present(payload):
+        return False, payload
+    eligibility = evaluate_magicfit_public_eligibility(bundle_dir, payload)
+    if not eligibility.declared or not eligibility.eligible:
+        return False, payload
+    privacy_payload = {
+        str(key): value
+        for key, value in payload.items()
+        if str(key) not in ACCEPTED_MAGICFIT_AT_REST_FIELDS
+    }
+    return True, privacy_payload
+
+
 def _merge_private_receipt(
     public_payload: dict[str, object],
     existing: dict[str, object],
@@ -253,6 +306,7 @@ def audit_or_repair(
         "private_key_manifests": 0,
         "noncanonical_manifests": 0,
         "private_mode_violations": 0,
+        "accepted_magicfit_manifests": 0,
         "repaired_manifests": 0,
         "repaired_private_receipts": 0,
     }
@@ -272,9 +326,19 @@ def audit_or_repair(
             public_payload = dict(payload)
             if slug_mismatch:
                 public_payload["slug"] = slug
-            canonical = _canonical_public_payload(
-                public_payload,
-                bundle_dir=manifest_path.parent,
+            accepted_magicfit, privacy_payload = (
+                _accepted_magicfit_at_rest_payload(
+                    public_payload,
+                    bundle_dir=manifest_path.parent,
+                )
+            )
+            canonical = (
+                public_payload
+                if accepted_magicfit
+                else _canonical_public_payload(
+                    public_payload,
+                    bundle_dir=manifest_path.parent,
+                )
             )
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
             counts["invalid_manifests"] += 1
@@ -293,14 +357,18 @@ def audit_or_repair(
 
         if slug_mismatch and declared_slug:
             existing_private.setdefault("legacy_declared_slug", declared_slug)
-        has_private = _contains_private_key(payload)
+        has_private = _contains_private_key(privacy_payload)
         noncanonical = canonical != payload
         counts["private_key_manifests"] += int(has_private)
         counts["noncanonical_manifests"] += int(noncanonical)
+        counts["accepted_magicfit_manifests"] += int(accepted_magicfit)
         if not apply:
             continue
 
-        merged_private = _merge_private_receipt(payload, existing_private)
+        merged_private = _merge_private_receipt(
+            privacy_payload,
+            existing_private,
+        )
         if noncanonical:
             public_bytes = _canonical_json_bytes(canonical)
             _write_atomic(manifest_path, public_bytes, mode=0o644)
