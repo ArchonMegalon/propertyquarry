@@ -1913,6 +1913,94 @@ def test_propertyquarry_active_search_board_stays_localized_after_browser_hydrat
         context.close()
 
 
+def test_propertyquarry_live_progress_uses_authoritative_query_count_in_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    materialized_sources = [
+        {
+            "source_label": f"Materialized query {index}",
+            "status": "completed",
+        }
+        for index in range(24)
+    ]
+
+    def _active_run_status(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        **_kwargs,
+    ) -> dict[str, object]:
+        return {
+            "generated_at": "2026-07-30T10:56:25+00:00",
+            "created_at": "2026-07-30T08:53:41+00:00",
+            "updated_at": "2026-07-30T10:56:25+00:00",
+            "run_id": run_id,
+            "principal_id": principal_id,
+            "status": "in_progress",
+            "status_url": f"/app/api/property/search-runs/{run_id}",
+            "progress": 74,
+            "current_step": "source_previewing",
+            "message": "Reviewing candidate 5 of 6 for EBG Wohnen.",
+            "provider_display_total": 28,
+            "summary": {
+                "status": "in_progress",
+                "progress": 74,
+                "provider_display_total": 28,
+                "provider_total": 28,
+                "source_variant_total": 185,
+                "sources_total": 185,
+                "sources_completed": 142,
+                "raw_listing_total": 2363,
+                "reviewed_listing_total": 576,
+                "to_review_listing_total": 1787,
+                "ranked_candidate_total": 6,
+                "ranked_candidates": [],
+                "sources": materialized_sources,
+            },
+            "events": [],
+            "research_tasks": [],
+        }
+
+    monkeypatch.setattr(
+        ProductService,
+        "get_property_search_run_status",
+        _active_run_status,
+    )
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(
+        browser,
+        mobile=False,
+        width=1440,
+        height=900,
+        locale="en-US",
+    )
+    page = context.new_page()
+    page_errors: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    try:
+        response = page.goto(
+            f"{base_url}/app/properties?run_id=run-authoritative-progress",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        board = page.locator("[data-pqx-progress-board]").first
+        expect(board).to_be_visible()
+        expect(board).to_contain_text("142 / 185")
+        expect(board).to_contain_text("Search queries")
+        expect(page.locator("[data-pqx-run-message]")).to_contain_text(
+            "2363 homes found · 576 checked · 1787 awaiting review"
+        )
+        body_text = page.locator("body").inner_text()
+        assert "24 / 185" not in body_text
+        _assert_no_viewport_or_text_cutoff(page)
+        assert page_errors == []
+    finally:
+        context.close()
+
+
 def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_browser(
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
@@ -2066,6 +2154,30 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
             )
             assert response is not None and response.ok
             expect(page.locator("#results-list")).to_be_visible()
+            best_so_far_link = page.locator(
+                ".pqx-current-property-link"
+            ).first
+            expect(best_so_far_link).to_have_attribute(
+                "href",
+                "/app/research/localized-result-1"
+                "?run_id=run-processed-localized",
+            )
+            assert "google" not in (
+                best_so_far_link.get_attribute("href") or ""
+            ).lower()
+            if locale == "de-AT":
+                with page.expect_navigation(
+                    wait_until="domcontentloaded"
+                ) as navigation:
+                    best_so_far_link.click()
+                assert navigation.value is not None
+                assert navigation.value.ok
+                assert page.url.endswith(
+                    "/app/research/localized-result-1"
+                    "?run_id=run-processed-localized"
+                )
+                page.go_back(wait_until="domcontentloaded")
+                expect(page.locator("#results-list")).to_be_visible()
             for copy in expected_copy:
                 expect(page.locator("body")).to_contain_text(copy)
             body_text = page.locator("body").inner_text()

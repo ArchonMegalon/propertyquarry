@@ -2491,8 +2491,24 @@
         .replace(/\blist update\b/ig, 'search update')
         .replace(/\bproviders\b/ig, 'sources')
         .replace(/\bprovider\b/ig, 'source');
+      const areaMatch = text.match(/^Confirming selected-area match for candidate\s+(\d+)\s+of\s+(\d+)\s+for\s+(.+?)\.?$/i);
+      if (areaMatch) {
+        return `Checking selected area ${areaMatch[1]} / ${areaMatch[2]} · ${compactProviderLabel(areaMatch[3])}`;
+      }
+      const fitMatch = text.match(/^Checking fit for\s+.+?\s+\((\d+)\s+of\s+(\d+)\)\s+from\s+(.+?)\.?$/i);
+      if (fitMatch) {
+        return `Checking shortlist fit ${fitMatch[1]} / ${fitMatch[2]} · ${compactProviderLabel(fitMatch[3])}`;
+      }
+      const finalShortlistMatch = text.match(/^Enriching top\s+(\d+)\s+candidate\(s\)\s+out of\s+\d+\s+for\s+(.+?)\s+before final shortlist scoring\.?$/i);
+      if (finalShortlistMatch) {
+        return `Preparing final shortlist · ${finalShortlistMatch[1]} homes · ${compactProviderLabel(finalShortlistMatch[2])}`;
+      }
       const candidateMatch = text.match(/(?:Reviewing(?: candidate)?|Scoring enriched candidate|Ranked|Scored)\s+(\d+)\s+(?:of)\s+(\d+)/i);
-      if (candidateMatch) return `Checking home details ${candidateMatch[1]} / ${candidateMatch[2]}`;
+      if (candidateMatch) {
+        const sourceMatch = text.match(/\sfor\s+(.+?)\.?$/i);
+        const sourceSuffix = sourceMatch ? ` · ${compactProviderLabel(sourceMatch[1])}` : '';
+        return `Checking home details ${candidateMatch[1]} / ${candidateMatch[2]}${sourceSuffix}`;
+      }
       const shortlistMatch = text.match(/^Built shortlist of\s+\d+\s+listing\(s\)\s+for\s+(.+)\.$/i);
       if (shortlistMatch) return 'Shortlist ready';
       return text;
@@ -3051,9 +3067,7 @@
       const summaryDone = Math.max(0, Number(summary?.sources_completed || summary?.completed_sources || 0));
       const status = String(statusValue || summary?.status || '').trim().toLowerCase();
       const terminal = ['processed', 'completed', 'completed_partial', 'noop', 'cancelled'].includes(status);
-      let done = explicitSourceStateTotal > 0 && !terminal
-        ? countedDone
-        : Math.max(summaryDone, countedDone);
+      let done = Math.max(summaryDone, countedDone);
       if (sourceTotal > 0) active = Math.min(active, Math.max(0, sourceTotal - done));
       if (sourceTotal > 0 && terminal) {
         done = sourceTotal;
@@ -3072,8 +3086,8 @@
     const runSourceUnitLabel = (summary = {}, total = 0, providerDisplayTotal = 0) => {
       const sourceVariantTotal = Math.max(0, Number(summary.source_variant_total || summary.sources_total || 0));
       const providerTotal = Math.max(0, Number(providerDisplayTotal || summary.provider_display_total || summary.provider_total || 0));
-      if (sourceVariantTotal > 0 && providerTotal > 0 && sourceVariantTotal > providerTotal) return 'checks';
-      if (Number(total || 0) > 0 && providerTotal > 0 && Number(total || 0) > providerTotal) return 'checks';
+      if (sourceVariantTotal > 0 && providerTotal > 0 && sourceVariantTotal > providerTotal) return 'search queries';
+      if (Number(total || 0) > 0 && providerTotal > 0 && Number(total || 0) > providerTotal) return 'search queries';
       return 'sources';
     };
     const runSourceWorkLabel = (counts, providerDisplayTotal = 0, summary = {}) => {
@@ -3081,7 +3095,7 @@
       const total = Math.max(countTotal, Math.max(0, Number(providerDisplayTotal || 0)));
       if (countTotal > 0 && total > 0) {
         const done = Math.min(total, Math.max(0, Number(counts?.done || 0)));
-        return `${done} / ${total} ${runSourceUnitLabel(summary, total, providerDisplayTotal)}`;
+        return `${done} / ${total} ${runSourceUnitLabel(summary, total, providerDisplayTotal)} complete`;
       }
       if (total > 0) return `${total} sites chosen`;
       return 'Preparing search';
@@ -3092,7 +3106,7 @@
       const done = Math.min(total, Math.max(0, Number(counts?.done || 0)));
       const left = Math.max(0, total - done);
       if (!(left > 0)) return '';
-      return `${left} ${runSourceUnitLabel(summary, total, providerDisplayTotal)} left`;
+      return `${left} ${runSourceUnitLabel(summary, total, providerDisplayTotal)} remaining`;
     };
     const runListingWorkCounts = (summary = {}) => {
       const asNumber = (value) => {
@@ -3124,8 +3138,8 @@
     };
     const runListingQueueMessage = (found, toReview) => {
       if (!(found > 0)) return 'checking';
-      if (toReview > 0) return `${found} homes found · ${toReview} to review`;
-      return `${found} homes found · all found homes are checked`;
+      const reviewed = Math.max(0, found - toReview);
+      return `${found} homes found · ${reviewed} checked · ${Math.max(0, toReview)} awaiting review`;
     };
 	    const runSourceMetaLabel = (counts, found = 0, toReview = 0, fallback = '', providerDisplayTotal = 0, summary = {}) => {
 	      if (found > 0 && toReview > 0) return `${toReview} to review`;
@@ -3138,13 +3152,11 @@
     };
     const runFoundQueueMessage = (found, toReview, sourceWork, providerDisplayTotal = 0, summary = {}) => {
 	      if (!(found > 0)) return '';
-      const sourceLeftLabel = sourceWork?.open > 0 ? runSourceWorkLeftLabel(sourceWork, providerDisplayTotal, summary) : '';
-      const queueLabel = toReview > 0 ? `${toReview} to review` : (sourceLeftLabel || 'all found homes are checked');
-      const queueMessage = `${found} homes found · ${queueLabel}`;
-      if (toReview > 0 && sourceLeftLabel) {
-        return `${queueMessage} · ${sourceLeftLabel}`;
-      }
-      return queueMessage;
+      const queueMessage = runListingQueueMessage(found, toReview);
+      const total = Math.max(0, Number(sourceWork?.total || 0), Number(providerDisplayTotal || 0));
+      if (!(total > 0)) return queueMessage;
+      const done = Math.min(total, Math.max(0, Number(sourceWork?.done || 0)));
+      return `${queueMessage} · ${done} / ${total} ${runSourceUnitLabel(summary, total, providerDisplayTotal)} complete`;
     };
     const runDetailQueueMessage = (summary = {}, status = '', rawMessage = '', providerDisplayTotal = 0) => {
       const listingWork = runListingWorkCounts(summary);
@@ -3206,8 +3218,8 @@
       }
       return `${scanLabel}${noPlan > 0 ? ` · ${noPlan} floorplans pending` : ''}`;
     };
-	    const renderRunEvents = (events) => {
-	      const rawRows = Array.isArray(events) ? [...events] : [];
+	    const renderRunEvents = (runPayload) => {
+	      const rawRows = Array.isArray(runPayload?.events) ? [...runPayload.events] : [];
 	      const labelRunEvent = (event) => {
 	        const step = String(event?.step || '').trim().toLowerCase();
 	        if (['queued', 'starting', 'sources_resolved', 'source_catalog_loading', 'source_started'].includes(step)) {
@@ -3219,12 +3231,13 @@
 	        if (['source_detail_check', 'listing_detail_check', 'source_fetch', 'source_fetch_page'].includes(step)) {
 	          return 'Details';
 	        }
-	        if (['source_fetching', 'source_extracting', 'source_preview_prepare', 'source_previewing', 'source_rank_prep'].includes(step)) {
-	          return 'Checks';
+	        if (['source_previewing', 'source_assessing', 'source_ranking'].includes(step)) {
+	          return 'Current check';
+	        }
+	        if (['source_fetching', 'source_extracting', 'source_preview_prepare', 'source_rank_prep'].includes(step)) {
+	          return 'Source scan';
 	        }
 	        if (step === 'source_shortlist') return 'Shortlist';
-	        if (step === 'source_assessing') return 'Property fit';
-	        if (step === 'source_ranking') return 'Ranking';
 	        if (['source_low_fit_ranked', 'source_discovery_penalty'].includes(step)) return 'Tradeoffs';
 	        if (step === 'shortlist_ready') return 'Shortlist';
 	        if (['source_review_packet', 'source_review_packet_failed'].includes(step)) return 'Property page';
@@ -3248,10 +3261,26 @@
           && !message.includes('checking run status')
           && !message.includes('suppressed_generic_listing_page')
           && !message.includes('starting property search run')
+          && !message.startsWith('checks:')
+          && !(message.includes('homes found') && (message.includes('to review') || message.includes('awaiting review')))
         );
       };
-	      const hasRealEvents = rawRows.some(isUsefulRunEvent);
-	      const rows = rawRows.filter(isUsefulRunEvent).reverse().slice(0, 10);
+      const eventGroup = (event) => {
+        const step = String(event?.step || '').trim().toLowerCase();
+        if (['source_shortlist', 'shortlist_ready'].includes(step)) return 'shortlist';
+        if (['source_previewing', 'source_assessing', 'source_ranking', 'source_area_filter', 'source_location_filter'].includes(step)) return 'current-check';
+        if (['source_fetching', 'source_extracting', 'source_preview_prepare', 'source_rank_prep', 'source_fetch', 'source_fetch_page'].includes(step)) return 'source-scan';
+        return step || 'update';
+      };
+      const seenGroups = new Set();
+      const rows = [];
+      rawRows.filter(isUsefulRunEvent).reverse().some((event) => {
+        const group = eventGroup(event);
+        if (seenGroups.has(group)) return false;
+        seenGroups.add(group);
+        rows.push(event);
+        return rows.length >= 6;
+      });
 		      return rows.map((event) => {
 		        const label = labelRunEvent(event);
 		        const message = compactRunMessage(event?.message || 'Search is still running.');
@@ -3286,9 +3315,6 @@
       if (replacementRunId) {
         return customerStatus || calmRepairCopy || 'A fresh search is checking your saved brief.';
       }
-      if (detailQueueMessage) {
-        return detailQueueMessage;
-      }
       if (
         status === 'failed'
         || repairStatus === 'repairing'
@@ -3298,6 +3324,9 @@
         if (customerStatus || calmRepairCopy || repairReason) {
           return customerStatus || calmRepairCopy || repairReason;
         }
+      }
+      if (found > 0) {
+        return runFoundQueueMessage(found, toReview, sourceWork, providerDisplayTotal, summary);
       }
       if (
         !raw
@@ -3555,6 +3584,27 @@
       const mapQuery = [facts.exact_address, facts.street_address || facts.address, facts.postal_name, candidate.title].filter(Boolean).join(', ');
       const mapUrl = String(candidate.map_url || orientationPreview.map_url || '').trim()
         || (mapQuery ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQuery)}` : '');
+      const candidateRef = String(
+        candidate.candidate_ref
+        || candidate.listing_id
+        || candidate.external_id
+        || candidate.source_ref
+        || ''
+      ).trim();
+      const runId = String(runPayload?.run_id || runPayload?.summary?.run_id || '').trim();
+      const detailUrl = String(candidate.packet_url || candidate.review_url || '').trim()
+        || (candidateRef
+          ? `/app/research/${encodeURIComponent(candidateRef)}${runId ? `?run_id=${encodeURIComponent(runId)}` : ''}`
+          : '');
+      const dioramaScene = candidate.diorama_scene && typeof candidate.diorama_scene === 'object'
+        ? candidate.diorama_scene
+        : {};
+      const dioramaPreviewUrl = String(
+        candidate.diorama_preview_url
+        || dioramaScene.image_url
+        || dioramaScene.preview_image_url
+        || ''
+      ).trim();
       return {
         status_label: localizeLiveCopy(
           Array.isArray(runPayload?.summary?.ranked_candidates) && runPayload.summary.ranked_candidates.length
@@ -3571,20 +3621,26 @@
         price_display: priceDisplay,
         layout_display: layoutDisplay,
         map_url: mapUrl,
-        preview_image_url: String(candidate.preview_image_url || '').trim(),
+        detail_url: detailUrl,
+        diorama_preview_url: dioramaPreviewUrl,
+        diorama_alt: String(candidate.diorama_alt || dioramaScene.alt || `Illustrative diorama of ${candidate.title || 'this property'}`).trim(),
+        diorama_representation: String(candidate.diorama_representation || dioramaScene.representation || '').trim(),
+        diorama_scene: dioramaScene,
+        diorama_status: dioramaPreviewUrl ? 'ready' : 'preparing',
         orientation_preview: orientationPreview,
       };
     };
     const currentPropertyImageUrl = (property) => String(
-      property?.orientation_preview?.thumb_image_url
-      || property?.orientation_preview?.image_url
-      || property?.preview_image_url
+      property?.diorama_preview_url
+      || property?.diorama_scene?.image_url
+      || property?.diorama_scene?.preview_image_url
       || ''
     ).trim();
     const currentPropertyImageAlt = (property) => String(
-      property?.orientation_preview?.alt
+      property?.diorama_alt
+      || property?.diorama_scene?.alt
       || property?.title
-      || 'Current property map preview'
+      || 'Illustrative property diorama'
     ).trim();
     const currentPropertyMeta = (property) => [
       property?.source_label,
@@ -3595,11 +3651,13 @@
     const renderCurrentPropertyCard = (runPayload) => {
       const property = currentPropertyCardPayload(runPayload);
       if (!property || typeof property !== 'object') return '';
-      const href = routePreviewHref(property?.map_url);
+      const href = routePreviewHref(property?.detail_url);
       const imageUrl = currentPropertyImageUrl(property);
       const meta = currentPropertyMeta(property);
       const inner = `
-        ${imageUrl ? `<img class="pqx-current-property-thumb" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(currentPropertyImageAlt(property))}">` : ''}
+        ${imageUrl
+          ? `<img class="pqx-current-property-thumb" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(currentPropertyImageAlt(property))}">`
+          : '<div class="pqx-current-property-thumb is-placeholder" role="img" aria-label="Diorama is being prepared"><span>Diorama<br>preparing</span></div>'}
         <div class="pqx-current-property-copy">
           <span class="pqx-small">${escapeHtml(String(property?.status_label || 'Current property').trim() || 'Current property')}</span>
           <strong>${escapeHtml(String(property?.title || 'Property under review').trim() || 'Property under review')}</strong>
@@ -3607,7 +3665,7 @@
           ${property?.status_detail ? `<p class="pqx-note">${escapeHtml(String(property.status_detail).trim())}</p>` : ''}
         </div>
       `;
-      return `<article class="pqx-current-property-card">${href ? `<a class="pqx-current-property-link" href="${escapeHtml(href)}" target="_blank" rel="noreferrer">${inner}</a>` : `<div class="pqx-current-property-link">${inner}</div>`}</article>`;
+      return `<article class="pqx-current-property-card">${href ? `<a class="pqx-current-property-link" href="${escapeHtml(href)}">${inner}</a>` : `<div class="pqx-current-property-link">${inner}</div>`}</article>`;
     };
     const renderRoutePreviewStrip = (runPayload) => {
       const currentProperty = renderCurrentPropertyCard(runPayload);
@@ -3743,15 +3801,10 @@
       );
 	      const providerCheckTotal = Math.max(0, Number(sourceWork.total || 0), Number(providerDisplayTotal || 0));
 	      const providerCheckDone = providerCheckTotal > 0 ? Math.min(providerCheckTotal, Math.max(0, Number(sourceWork.done || 0))) : 0;
-	      const providerCheckValue = providerCheckTotal > 0 ? `${providerCheckDone} / ${providerCheckTotal}` : '0';
+      const providerCheckValue = providerCheckTotal > 0 ? `${providerCheckDone} / ${providerCheckTotal}` : '0';
       const providerCheckPct = providerCheckTotal > 0 && providerCheckDone > 0 ? Math.round((providerCheckDone / providerCheckTotal) * 100) : 0;
-      const sourceLeft = Math.max(0, Number(sourceWork.open || 0));
-      const detailQueueIsSourceBacklog = !(toReview > 0) && Number(sourceWork.total || 0) > 0 && sourceLeft > 0;
-      const detailQueueLabel = detailQueueIsSourceBacklog ? 'Checks left' : 'To review';
-      const detailQueueValue = detailQueueIsSourceBacklog ? String(sourceLeft) : (toReview > 0 ? String(toReview) : '0');
-      const detailQueuePct = detailQueueIsSourceBacklog
-        ? (providerCheckTotal > 0 ? Math.round((sourceLeft / providerCheckTotal) * 100) : 0)
-        : (toReview > 0 ? Math.round((toReview / reviewDenominator) * 100) : 0);
+      const reviewedPct = reviewed > 0 ? Math.round((reviewed / reviewDenominator) * 100) : 0;
+      const matchingTotal = rankedTotalFromSummary(summary);
 	      return `
 	        <div class="pqx-concierge-pulse">
 	          <div class="pqx-progress-headline">
@@ -3759,26 +3812,25 @@
             <span class="pqx-small pqx-progress-eta" data-pqx-progress-eta>${escapeHtml(localizeLiveCopy(etaLabel))}</span>
           </div>
           <div class="pqx-pulse-line" aria-hidden="true"></div>
-        </div>
+	        </div>
 	        <div class="pqx-source-progress" data-pqx-source-progress>
 		          <div class="pqx-source-progress-head">
-			            <strong data-pqx-radar-count>${escapeHtml(localizeLiveCopy(scanCountLabel))}</strong>
-			            <span class="pqx-small">${escapeHtml(localizeLiveCopy(sourceMeta))}</span>
+			            <strong data-pqx-radar-count>${escapeHtml(localizeLiveCopy('Search progress'))}</strong>
+			            <span class="pqx-small">${escapeHtml(matchingTotal)} ${escapeHtml(localizeLiveCopy('matching homes'))}</span>
 		          </div>
-			          <span class="pqx-note">${escapeHtml(localizeLiveCopy(detailQueueMessage || runFoundQueueMessage(found, toReview, sourceWork, providerDisplayTotal, summary) || 'Waiting for homes.'))}</span>
 	          <div class="pqx-live-review-bars" aria-label="${escapeHtml(localizeLiveCopy('Search totals'))}">
 		            <span>
-		              <b>${escapeHtml(localizeLiveCopy('Homes'))}</b>
+		              <b>${escapeHtml(localizeLiveCopy('Homes found'))}</b>
 		              <i>${escapeHtml(found || 0)}</i>
 		              <em><u style="--progress: ${escapeHtml(foundBarPct)}"></u></em>
 		            </span>
 	            <span>
-	              <b>${escapeHtml(localizeLiveCopy(detailQueueLabel))}</b>
-			              <i>${escapeHtml(detailQueueValue)}</i>
-		              <em><u style="--progress: ${escapeHtml(detailQueuePct)}"></u></em>
+	              <b>${escapeHtml(localizeLiveCopy('Homes checked'))}</b>
+			              <i>${escapeHtml(reviewed)} / ${escapeHtml(found || 0)}</i>
+		              <em><u style="--progress: ${escapeHtml(reviewedPct)}"></u></em>
 		            </span>
 		            <span>
-				              <b>${escapeHtml(localizeLiveCopy('Checked'))}</b>
+				              <b>${escapeHtml(localizeLiveCopy(runSourceUnitLabel(summary, providerCheckTotal, providerDisplayTotal) === 'search queries' ? 'Search queries' : 'Sources'))}</b>
 			              <i>${escapeHtml(providerCheckValue)}</i>
 			              <em><u style="--progress: ${escapeHtml(providerCheckPct)}"></u></em>
 		            </span>
@@ -4208,7 +4260,7 @@
       }
       if (sourceNode && runPayload.summary) sourceNode.innerHTML = renderSourceBreakdown(runPayload.summary.sources);
       if (eventsNode && !shouldPreserveRenderedRunEvents(eventsNode, runPayload.events)) {
-        eventsNode.innerHTML = renderRunEvents(runPayload.events);
+        eventsNode.innerHTML = renderRunEvents(runPayload);
       }
       if (updatedNode) updatedNode.textContent = `Last update ${runPayload.updated_at || runPayload.generated_at || new Date().toLocaleTimeString()}`;
       updateProgressBoards(runPayload);

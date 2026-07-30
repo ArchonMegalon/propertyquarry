@@ -1471,6 +1471,7 @@ def _property_progress_primary_candidate(run_summary: dict[str, object]) -> tupl
 def _property_progress_current_property_card(
     *,
     run_summary: dict[str, object],
+    run_id: str = "",
 ) -> dict[str, object]:
     candidate, is_best_so_far = _property_progress_primary_candidate(run_summary)
     if not candidate:
@@ -1506,6 +1507,31 @@ def _property_progress_current_property_card(
         str(candidate.get("map_url") or "").strip()
         or _property_candidate_maps_url(candidate)
     )
+    detail_url = str(
+        candidate.get("packet_url") or candidate.get("review_url") or ""
+    ).strip()
+    if not (
+        detail_url.startswith("/app/research/")
+        and not detail_url.startswith("//")
+    ):
+        candidate_ref = str(
+            candidate.get("candidate_ref")
+            or candidate.get("listing_id")
+            or candidate.get("external_id")
+            or candidate.get("source_ref")
+            or ""
+        ).strip()
+        detail_url = (
+            f"/app/research/{urllib.parse.quote(candidate_ref, safe='')}"
+            if candidate_ref
+            else ""
+        )
+        normalized_run_id = str(run_id or "").strip()
+        if detail_url and normalized_run_id:
+            detail_url += (
+                "?run_id="
+                + urllib.parse.quote(normalized_run_id, safe="")
+            )
     orientation_preview = _property_progress_map_preview(
         candidate,
         facts=facts,
@@ -1521,10 +1547,35 @@ def _property_progress_current_property_card(
         "price_display": str(candidate.get("price_display") or facts.get("price_display") or facts.get("rent_display") or "").strip(),
         "layout_display": layout_display,
         "map_url": map_url,
+        "detail_url": detail_url,
     }
-    preview_image_url = _property_candidate_preview_image(candidate)
-    if preview_image_url:
-        card["preview_image_url"] = preview_image_url
+    diorama_scene = (
+        dict(candidate.get("diorama_scene") or {})
+        if isinstance(candidate.get("diorama_scene"), dict)
+        else {}
+    )
+    diorama_preview_url = str(
+        candidate.get("diorama_preview_url")
+        or diorama_scene.get("image_url")
+        or diorama_scene.get("preview_image_url")
+        or ""
+    ).strip()
+    if diorama_preview_url:
+        card["diorama_preview_url"] = diorama_preview_url
+        card["diorama_alt"] = str(
+            candidate.get("diorama_alt")
+            or diorama_scene.get("alt")
+            or f"Illustrative diorama of {title}"
+        ).strip()
+        card["diorama_representation"] = str(
+            candidate.get("diorama_representation")
+            or diorama_scene.get("representation")
+            or ""
+        ).strip()
+        if diorama_scene:
+            card["diorama_scene"] = diorama_scene
+    else:
+        card["diorama_status"] = "preparing"
     if orientation_preview:
         card["orientation_preview"] = orientation_preview
     return {

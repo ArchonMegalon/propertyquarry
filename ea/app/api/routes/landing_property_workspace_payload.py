@@ -2549,6 +2549,7 @@ def property_workspace_payload(
     run_in_progress = bool(run_id and bool(run_health.get("in_progress")))
     progress_current_property = _property_progress_current_property_card(
         run_summary=run_summary,
+        run_id=run_id,
     ) if wants_run_views else {}
     progress_route_previews = _property_progress_route_preview_rows(
         run_summary=run_summary,

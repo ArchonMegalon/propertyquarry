@@ -1,9 +1,9 @@
 {
   "contract_name": "propertyquarry.curated_diorama_previews.v2",
-  "generated_at": "2026-07-24T13:29:17Z",
+  "generated_at": "2026-07-30T10:39:32Z",
   "run_binding": {
     "run_id": "9dd6a4993d7245a0acf48aeb50c44a9b",
-    "candidate_count": 40
+    "candidate_count": 41
   },
   "entries": [
     {
@@ -2620,6 +2620,85 @@
             "generation_asset_sha256": "da85a86858850cd8ab4daa70ce606d0cf102d3ea134cc034f211b390f6abbd14",
             "source_basis": "listing_metadata_only",
             "source_sha256": "2b3ed37bf81ae2647e16c511a9a4946ac16aa12b011c98567d2848ecfd94b7fb"
+          }
+        }
+      }
+    },
+    {
+      "rank": 41,
+      "candidate_refs": [
+        "ad48357be22535c1"
+      ],
+      "listing_ids": [
+        "1536069684"
+      ],
+      "preview_kind": "rendered_diorama",
+      "representation": "illustrative",
+      "asset_url": "/static/property/research/ad48357be22535c1-ai-diorama.webp",
+      "asset_sha256": "68b366122d801e05f7b88fea33717411ca8c7a34eca0faa9e9081e13c280a74d",
+      "generation_asset_sha256": "ec988eb6b665029ea76f9ff21af68f71cba502cdc9410c5915db7fc143f42d06",
+      "source_asset_sha256s": [
+        "0f24dd8e6b6b7426de634fecd655d8b306af59abdc0c8dc2773c62ce716031e5",
+        "214daeb6936aff0d405a9f2b9ca69287684fb8fb17a0a6a6fe225744669f0c44",
+        "352917ac4357e79b7bc5584d893d6fa46f93e4315faf9646d0b04f61150d6263",
+        "3fed95246e1c993491a9ca7cad9371a52aa4129fd864fae90d51fc45a671a1a3",
+        "5141762bcd83fe7a0498c39113e74e324e499dd74857fe3d27ad18bb732449c8"
+      ],
+      "source_basis": "listing_floorplan_and_reference_images",
+      "truth_boundary": "AI-rendered illustrative reconstruction based on the listing floor plan and reference photos; it is not listing evidence, a captured 3D scan, or measured geometry.",
+      "alt": "Illustrative AI-reconstructed 3D diorama of the three-room Altbau apartment",
+      "governance": {
+        "rights": {
+          "status": "approved",
+          "basis": "User-authorized, project-bound generated thumbnail for authenticated shortlist research; private source references are not published.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-30T10:39:32Z",
+          "subject_sha256": "7fcc1e46061f9ad2228b6f808c9bf7d72cd734c101d799970d195660b2361df1",
+          "evidence_sha256": "deb1ec8116245d46231ef57801abfef921c51c969b9ab49bf57a9c71f2713edb",
+          "evidence": {
+            "review_type": "rights",
+            "surface": "authenticated_shortlist_research",
+            "user_request_sha256": "2cb65b78f1368ad6bd86a1983d439a701970752af70df6c5ba8c56632e7d1764",
+            "candidate_ref": "ad48357be22535c1",
+            "listing_id": "1536069684",
+            "source_handling": "private listing references excluded from release assets"
+          }
+        },
+        "privacy": {
+          "status": "approved",
+          "basis": "Visual review found no visible people, contact details, addresses, names, or listing logos in the release asset.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-30T10:39:32Z",
+          "subject_sha256": "7fcc1e46061f9ad2228b6f808c9bf7d72cd734c101d799970d195660b2361df1",
+          "evidence_sha256": "a1db5bb4fcbf1a07cc9c6f1dba19638512410c5317722b5bb87dd94d82f8633a",
+          "evidence": {
+            "review_type": "privacy",
+            "asset_sha256": "68b366122d801e05f7b88fea33717411ca8c7a34eca0faa9e9081e13c280a74d",
+            "generation_asset_sha256": "ec988eb6b665029ea76f9ff21af68f71cba502cdc9410c5915db7fc143f42d06",
+            "visual_review": "no people, names, addresses, contact details, or listing logos visible"
+          }
+        },
+        "provenance": {
+          "status": "verified",
+          "basis": "Candidate binding, listing floor plan, listing reference photos, generated original, and release asset are bound by SHA-256.",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-07-30T10:39:32Z",
+          "subject_sha256": "7fcc1e46061f9ad2228b6f808c9bf7d72cd734c101d799970d195660b2361df1",
+          "evidence_sha256": "88ff2bb7a58e2fbdced5e7c7adb6c5eeabaaa916172256f2baf2dd6abf4e7c32",
+          "evidence": {
+            "review_type": "provenance",
+            "candidate_ref": "ad48357be22535c1",
+            "listing_id": "1536069684",
+            "asset_sha256": "68b366122d801e05f7b88fea33717411ca8c7a34eca0faa9e9081e13c280a74d",
+            "generation_asset_sha256": "ec988eb6b665029ea76f9ff21af68f71cba502cdc9410c5915db7fc143f42d06",
+            "source_basis": "listing_floorplan_and_reference_images",
+            "source_asset_sha256s": [
+              "0f24dd8e6b6b7426de634fecd655d8b306af59abdc0c8dc2773c62ce716031e5",
+              "214daeb6936aff0d405a9f2b9ca69287684fb8fb17a0a6a6fe225744669f0c44",
+              "352917ac4357e79b7bc5584d893d6fa46f93e4315faf9646d0b04f61150d6263",
+              "3fed95246e1c993491a9ca7cad9371a52aa4129fd864fae90d51fc45a671a1a3",
+              "5141762bcd83fe7a0498c39113e74e324e499dd74857fe3d27ad18bb732449c8"
+            ]
           }
         }
       }

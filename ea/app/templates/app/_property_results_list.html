@@ -32,10 +32,11 @@
   {% set progress_current_property.card = visible_results[0] %}
 {% endif %}
 {% set current_property = progress_current_property.card %}
-{% set current_property_orientation = current_property.get('orientation_preview') or {} %}
-{% set current_property_image = current_property_orientation.get('thumb_image_url') or current_property_orientation.get('image_url') or current_property.get('preview_image_url') or '' %}
+{% set current_property_diorama = current_property.get('diorama_scene') or {} %}
+{% set current_property_image = current_property.get('diorama_preview_url') or current_property_diorama.get('image_url') or current_property_diorama.get('preview_image_url') or '' %}
 {% set current_property_status_label = current_property.get('status_label') or ('Best so far' if current_property else '') %}
 {% set current_property_status_detail = current_property.get('status_detail') or current_property.get('fit_summary') or current_property.get('summary') or '' %}
+{% set current_property_detail_url = current_property.get('detail_url') or current_property.get('packet_url') or current_property.get('review_url') or '' %}
 <section class="pqx-result-panel active{% if is_research_surface and not results %} is-empty-research{% endif %}" data-pqx-mobile-panel="results">
   <div class="pqx-result-panel-head">
     <div class="pqx-results-headline">
@@ -72,8 +73,12 @@
   <div class="pqx-route-preview-strip">
     {% if current_property %}
     <article class="pqx-current-property-card">
-      {% if current_property.get('map_url') %}<a class="pqx-current-property-link" href="{{ current_property.get('map_url') }}" target="_blank" rel="noreferrer">{% else %}<div class="pqx-current-property-link">{% endif %}
-        {% if current_property_image %}<img class="pqx-current-property-thumb" src="{{ current_property_image }}" alt="{{ current_property_orientation.get('alt') or current_property.get('title') or 'Current property map preview' }}">{% endif %}
+      {% if current_property_detail_url %}<a class="pqx-current-property-link" href="{{ current_property_detail_url }}">{% else %}<div class="pqx-current-property-link">{% endif %}
+        {% if current_property_image %}
+        <img class="pqx-current-property-thumb" src="{{ current_property_image }}" alt="{{ current_property.get('diorama_alt') or current_property_diorama.get('alt') or current_property.get('title') or 'Illustrative property diorama' }}">
+        {% else %}
+        <div class="pqx-current-property-thumb is-placeholder" role="img" aria-label="Diorama is being prepared"><span>Diorama<br>preparing</span></div>
+        {% endif %}
         <div class="pqx-current-property-copy">
           <span class="pqx-small">{{ current_property_status_label or 'Current property' }}</span>
           <strong>{{ current_property.get('title') or 'Property under review' }}</strong>
@@ -85,7 +90,7 @@
           </div>
           {% if current_property_status_detail %}<p class="pqx-note">{{ current_property_status_detail }}</p>{% endif %}
         </div>
-      {% if current_property.get('map_url') %}</a>{% else %}</div>{% endif %}
+      {% if current_property_detail_url %}</a>{% else %}</div>{% endif %}
     </article>
     {% endif %}
     {% for route in route_previews[:3] %}

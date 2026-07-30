@@ -1559,6 +1559,7 @@ def test_propertyquarry_route_previews_render_real_walk_thumbnails_when_geometry
         run_summary={
             "ranked_candidates": [
                 {
+                    "candidate_ref": "nordbahnviertel-family-flat",
                     "title": "Nordbahnviertel family flat",
                     "property_facts": {
                         "map_lat": 48.2210,
@@ -1592,11 +1593,15 @@ def test_propertyquarry_progress_current_property_restores_best_so_far_card(monk
         run_summary={
             "ranked_candidates": [
                 {
+                    "candidate_ref": "nordbahnviertel-family-flat",
                     "title": "Nordbahnviertel family flat",
                     "source_label": "Willhaben | Austria | Rent | 1020 Vienna",
                     "fit_summary": "Lift and transit fit.",
                     "price_display": "EUR 1,420",
                     "layout_display": "3 rooms | 78 m2",
+                    "preview_image_url": "https://cdn.example.test/random-listing-photo.jpg",
+                    "diorama_preview_url": "/static/property/research/nordbahn-diorama.webp",
+                    "diorama_alt": "Illustrative diorama of the Nordbahnviertel family flat",
                     "property_facts": {
                         "postal_name": "1020 Vienna",
                         "map_lat": 48.221,
@@ -1604,13 +1609,21 @@ def test_propertyquarry_progress_current_property_restores_best_so_far_card(monk
                     },
                 }
             ]
-        }
+        },
+        run_id="run-best-so-far",
     )
 
     assert card["status_label"] == "Best so far"
     assert card["title"] == "Nordbahnviertel family flat"
     assert card["location_label"] == "1020 Vienna"
     assert card["source_label"] == "Willhaben"
+    assert card["detail_url"] == (
+        "/app/research/nordbahnviertel-family-flat"
+        "?run_id=run-best-so-far"
+    )
+    assert "google" not in card["detail_url"].lower()
+    assert card["diorama_preview_url"] == "/static/property/research/nordbahn-diorama.webp"
+    assert "preview_image_url" not in card
     assert card["orientation_preview"]["image_url"] == "/app/api/property/map-previews/current-property.png"
 
 
@@ -1657,6 +1670,8 @@ def test_propertyquarry_browser_route_preview_uses_confirmed_distance_fallback_c
     assert "lowered.includes('google.com/maps')" in body
     assert "const href = routePreviewHref(route?.map_url);" in body
     assert "const currentPropertyCardPayload = (runPayload) => {" in body
+    assert "const href = routePreviewHref(property?.detail_url);" in body
+    assert "routePreviewHref(property?.map_url)" not in body
     assert "pqx-current-property-card" in body
     assert "pqx-route-preview-thumb" in body
     assert "const routePreviewPath = (originLat, originLng, targetLat, targetLng) => {" not in body
@@ -3998,7 +4013,7 @@ def test_propertyquarry_running_panel_replaces_internal_status_message_with_prog
     assert message_match
     visible_message = html.unescape(re.sub(r"<[^>]+>", " ", message_match.group("message")))
     assert "Could not load property search status." not in visible_message
-    assert "179 homes found · all found homes are checked" in visible_message
+    assert "179 homes found · 179 checked · 0 awaiting review · 0 / 29 sources complete" in visible_message
     source_match = re.search(
         r'<div class="pqx-source-progress"[^>]*>(?P<source>.*?)<div class="pqx-progress-meter under-source"',
         response.text,
@@ -4009,9 +4024,9 @@ def test_propertyquarry_running_panel_replaces_internal_status_message_with_prog
     assert "Could not load property search status." not in visible_source
     assert "Homes" in visible_source
     assert "179" in visible_source
-    assert "29 sites chosen" in visible_source
-    assert "Homes" in visible_source
-    assert "all found homes are checked" in visible_source
+    assert "Sources" in visible_source
+    assert "29" in visible_source
+    assert "Homes checked" in visible_source
     assert 'data-pqx-run-reliability' not in response.text
 
 
@@ -4052,7 +4067,7 @@ def test_propertyquarry_running_panel_separates_source_work_from_found_queue(mon
     message_match = re.search(r'<div class="pqx-note" data-pqx-run-message>(?P<message>.*?)</div>', response.text, re.S)
     assert message_match
     visible_message = html.unescape(re.sub(r"<[^>]+>", " ", message_match.group("message")))
-    assert "70 homes found · 180 checks left" in visible_message
+    assert "70 homes found · 70 checked · 0 awaiting review · 70 / 250 search queries complete" in visible_message
 
     source_match = re.search(
         r'<div class="pqx-source-progress"[^>]*>(?P<source>.*?)<div class="pqx-progress-meter under-source"',
@@ -4061,22 +4076,20 @@ def test_propertyquarry_running_panel_separates_source_work_from_found_queue(mon
     )
     assert source_match
     visible_source = html.unescape(re.sub(r"<[^>]+>", " ", source_match.group("source")))
-    assert "70 / 250 checks" in visible_source
-    assert "70 / 250 checked" not in visible_source
-    assert "Homes" in visible_source
-    assert "70" in visible_source
-    assert "Checks left" in visible_source
-    assert "180" in visible_source
+    assert "70 / 250" in visible_source
+    assert "Search queries" in visible_source
+    assert "Homes found" in visible_source
+    assert "Homes checked" in visible_source
     assert "0 to review" not in visible_source.lower()
     assert "Reviewed" not in visible_source
 
 
-def test_propertyquarry_running_panel_ignores_preseeded_completed_source_overcount(monkeypatch) -> None:
-    client = build_property_client(principal_id="pq-running-source-overcount")
-    start_workspace(client, mode="personal", workspace_name="Running Source Count Office")
+def test_propertyquarry_running_panel_uses_authoritative_completed_count_when_detail_rows_are_truncated(monkeypatch) -> None:
+    client = build_property_client(principal_id="pq-running-source-progress")
+    start_workspace(client, mode="personal", workspace_name="Running Source Progress Office")
 
     def _fake_active_run(self, *, principal_id: str):
-        return {"run_id": "run-live-source-overcount", "status": "in_progress"}
+        return {"run_id": "run-live-source-progress", "status": "in_progress"}
 
     def _fake_run_status(self, *, principal_id: str, run_id: str):
         return {
@@ -4088,23 +4101,20 @@ def test_propertyquarry_running_panel_ignores_preseeded_completed_source_overcou
             "message": "Reviewing candidate 10 of 10 for Century 21 Costa Rica · Puerto Viejo.",
             "summary": {
                 "status": "in_progress",
-                "provider_total": 5,
-                "provider_display_total": 5,
-                "source_variant_total": 10,
-                "sources_total": 10,
-                "sources_completed": 10,
+                "provider_total": 28,
+                "provider_display_total": 28,
+                "source_variant_total": 185,
+                "sources_total": 185,
+                "sources_completed": 142,
                 "raw_listing_total": 342,
                 "reviewed_listing_total": 342,
                 "ranked_candidates": [],
                 "sources": [
-                    *[
-                        {"source_label": f"Finished source {index}", "status": "completed"}
-                        for index in range(6)
-                    ],
-                    {"source_label": "Running source", "status": "in_progress"},
-                    {"source_label": "Starting source", "status": "starting"},
-                    {"source_label": "Queued source A", "status": "queued"},
-                    {"source_label": "Queued source B", "status": "queued"},
+                    {
+                        "source_label": f"Materialized source {index}",
+                        "status": "completed",
+                    }
+                    for index in range(24)
                 ],
             },
         }
@@ -4114,7 +4124,7 @@ def test_propertyquarry_running_panel_ignores_preseeded_completed_source_overcou
 
     response = client.get(
         "/app/properties",
-        params={"run_id": "run-live-source-overcount"},
+        params={"run_id": "run-live-source-progress"},
         headers={"host": "propertyquarry.com"},
     )
 
@@ -4126,12 +4136,11 @@ def test_propertyquarry_running_panel_ignores_preseeded_completed_source_overcou
     )
     assert source_match
     visible_source = html.unescape(re.sub(r"<[^>]+>", " ", source_match.group("source")))
-    assert re.search(r"6\s*/\s*\d+\s+(?:checks|sources)", visible_source)
-    assert not re.search(r"(\d+)\s*/\s*\1\s+(?:checks|providers)", visible_source)
-    assert "left" in visible_source
+    assert re.search(r"142\s*/\s*185", visible_source)
+    assert "Search queries" in visible_source
 
 
-def test_propertyquarry_search_dashboard_ignores_preseeded_completed_source_overcount() -> None:
+def test_propertyquarry_search_dashboard_uses_authoritative_completed_source_count() -> None:
     from jinja2 import Environment
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -4154,7 +4163,7 @@ def test_propertyquarry_search_dashboard_ignores_preseeded_completed_source_over
         run_summary={"sources_completed": 10, "completed_sources": 10},
     )
 
-    assert rendered.strip().endswith("6")
+    assert rendered.strip().endswith("10")
 
 
 def test_propertyquarry_running_panel_replaces_stale_zero_review_copy_while_pages_remain(monkeypatch) -> None:
@@ -4195,7 +4204,7 @@ def test_propertyquarry_running_panel_replaces_stale_zero_review_copy_while_page
     message_match = re.search(r'<div class="pqx-note" data-pqx-run-message>(?P<message>.*?)</div>', response.text, re.S)
     assert message_match
     visible_message = html.unescape(re.sub(r"<[^>]+>", " ", message_match.group("message")))
-    assert "4097 homes found · 6 checks left" in visible_message
+    assert "4097 homes found · 4097 checked · 0 awaiting review · 279 / 285 search queries complete" in visible_message
     assert "0 to review" not in visible_message.lower()
 
     source_match = re.search(
@@ -4205,9 +4214,8 @@ def test_propertyquarry_running_panel_replaces_stale_zero_review_copy_while_page
     )
     assert source_match
     visible_source = html.unescape(re.sub(r"<[^>]+>", " ", source_match.group("source")))
-    assert "279 / 285 checks" in visible_source
-    assert "Checks left" in visible_source
-    assert "6" in visible_source
+    assert "279 / 285" in visible_source
+    assert "Search queries" in visible_source
     assert "0 to review" not in visible_source.lower()
 
 
@@ -4255,12 +4263,12 @@ def test_propertyquarry_running_panel_explains_page_preparation_queue_without_ov
 
     assert response.status_code == 200
     visible = html.unescape(re.sub(r"<[^>]+>", " ", response.text))
-    assert "30 homes found · home details are still loading · 8 checks left" in visible
-    assert "Checks left" in visible
+    assert "30 homes found · 30 checked · 0 awaiting review · 223 / 231 search queries complete · property pages preparing" in visible
+    assert "Search queries" in visible
     eta_match = re.search(r'<span class="pqx-small pqx-progress-eta"[^>]*>(?P<eta>.*?)</span>', response.text, re.S)
     assert eta_match
     assert html.unescape(re.sub(r"<[^>]+>", " ", eta_match.group("eta"))).strip() == "93% · details updating"
-    assert "223 / 231 checks" in visible
+    assert "223 / 231" in visible
     assert "provider checks left" not in visible
     assert "Review page preparation timed out" not in visible
     assert "Lists open" not in visible
@@ -4301,7 +4309,7 @@ def test_propertyquarry_running_panel_does_not_treat_listing_total_as_reviewed(m
 
     assert response.status_code == 200
     visible = html.unescape(re.sub(r"<[^>]+>", " ", response.text))
-    assert "70 homes found · 70 to review · 180 checks left" in visible
+    assert "70 homes found · 0 checked · 70 awaiting review · 70 / 250 search queries complete" in visible
     assert "Reviewed" not in visible
 
 
@@ -4337,7 +4345,7 @@ def test_propertyquarry_running_panel_uses_compact_provider_fraction_summary(mon
     message_match = re.search(r'<div class="pqx-note" data-pqx-run-message>(?P<message>.*?)</div>', response.text, re.S)
     assert message_match
     visible_message = html.unescape(re.sub(r"<[^>]+>", " ", message_match.group("message")))
-    assert "102 homes found · all found homes are checked" in visible_message
+    assert "102 homes found · 102 checked · 0 awaiting review · 0 / 29 sources complete" in visible_message
     assert "Now: RE/MAX Austria" not in visible_message
 
 
@@ -4384,7 +4392,8 @@ def test_propertyquarry_running_panel_current_best_card_uses_summary_copy_not_ra
     assert "Searching" in rendered_html
     assert "179 homes found" in rendered_html
     assert "Homes" in rendered_html
-    assert "To review" in rendered_html
+    assert "Homes checked" in rendered_html
+    assert "Sources" in rendered_html
     assert "Altbau near U6" in rendered_html
     assert "Leading right now. Can still change before the search finishes." not in rendered_html
     assert "Could not load property search status." not in rendered_html

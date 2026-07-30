@@ -322,11 +322,7 @@
   {% endif %}
 {% endfor %}
 {% set source_terminal = status|lower in ['processed', 'completed', 'completed_partial', 'noop', 'cancelled'] %}
-{% if source_counts.observed > 0 and not source_terminal %}
-  {% set source_done_total = source_counts.done %}
-{% else %}
-  {% set source_done_total = source_completed if source_completed > source_counts.done else source_counts.done %}
-{% endif %}
+{% set source_done_total = source_completed if source_completed > source_counts.done else source_counts.done %}
 {% set source_remaining_capacity = source_variant_total - source_done_total if source_variant_total > source_done_total else 0 %}
 {% set source_active_total = source_counts.active if source_counts.active < source_remaining_capacity else source_remaining_capacity %}
 {% if source_terminal and source_variant_total > 0 %}
@@ -342,7 +338,7 @@
 {% set source_check_total = source_check_total if source_check_total > 0 else provider_display_total %}
 {% set source_check_done = source_done_total if source_done_total > 0 else 0 %}
 {% set source_check_done = source_check_done if source_check_total <= 0 or source_check_done < source_check_total else source_check_total %}
-{% set source_unit = 'checks' if source_variant_total > provider_display_total and provider_display_total > 0 else 'sources' %}
+{% set source_unit = 'search queries' if source_variant_total > provider_display_total and provider_display_total > 0 else 'sources' %}
 {% set source_check_label = source_check_done|string ~ ' / ' ~ source_check_total|string ~ ' ' ~ source_unit if source_check_total > 0 and source_variant_total > 0 else '' %}
 {% set raw_listing_total = (summary.get('found_listing_total') if summary.get('found_listing_total') is not none else (summary.get('raw_listing_total') or 0))|int %}
 {% set listing_total = (summary.get('listing_total') or 0)|int %}
@@ -373,8 +369,9 @@
 {% set eta_label = run.get('eta_label') or summary.get('eta_label') or '' %}
 {% set route_previews = run.get('route_previews') or [] %}
 {% set current_property = run.get('current_property') or {} %}
-{% set current_property_orientation = current_property.get('orientation_preview') or {} %}
-{% set current_property_image = current_property_orientation.get('thumb_image_url') or current_property_orientation.get('image_url') or current_property.get('preview_image_url') or '' %}
+{% set current_property_diorama = current_property.get('diorama_scene') or {} %}
+{% set current_property_image = current_property.get('diorama_preview_url') or current_property_diorama.get('image_url') or current_property_diorama.get('preview_image_url') or '' %}
+{% set current_property_detail_url = current_property.get('detail_url') or current_property.get('packet_url') or current_property.get('review_url') or '' %}
 {% set worker_state = run.get('worker_state') or summary.get('worker_state') or {} %}
 {% set reliability = run.get('reliability') or {} %}
 {% set progress_message_raw = (run.get('message') or '')|trim %}
@@ -384,16 +381,19 @@
 {% set progress_message_display = progress_customer_message if progress_has_repair_copy and progress_customer_message else progress_message_raw %}
 {% set progress_message_display = progress_message_display|replace('left to sort', 'to review')|replace('Left to sort', 'To review')|replace('lists left', 'checks waiting')|replace('Lists left', 'Checks waiting')|replace('lists open', 'checks still running')|replace('Lists open', 'Checks still running')|replace('providers', 'sources')|replace('Providers', 'Sources')|replace('provider', 'source')|replace('Provider', 'Source') %}
 {% set progress_message_display_lower = progress_message_display|lower %}
+{% if found_total > 0 and not progress_has_repair_copy %}
+  {% set progress_message_display = found_total|string ~ ' homes found · ' ~ reviewed_total|string ~ ' checked · ' ~ to_review_total|string ~ ' awaiting review' %}
+  {% if source_check_total > 0 %}
+    {% set progress_message_display = progress_message_display ~ ' · ' ~ source_check_done|string ~ ' / ' ~ source_check_total|string ~ ' ' ~ source_unit ~ ' complete' %}
+  {% endif %}
+  {% set progress_message_display_lower = progress_message_display|lower %}
+{% endif %}
 {% set progress_current_step = (summary.get('current_step') or run.get('current_step') or '')|lower %}
-{% set progress_detail_preparing = found_total > 0 and ('review page preparation timed out' in progress_message_display_lower or 'reviewing candidate' in progress_message_display_lower or progress_current_step in ['source_review_packet', 'source_review_packet_failed']) %}
+{% set progress_detail_preparing = found_total > 0 and ('review page preparation timed out' in progress_message_raw|lower or 'reviewing candidate' in progress_message_raw|lower or progress_current_step in ['source_review_packet', 'source_review_packet_failed']) %}
 {% set progress_source_left_total = source_check_total - source_check_done if source_check_total > source_check_done else 0 %}
 {% set progress_source_left_label = progress_source_left_total|string ~ ' ' ~ source_unit ~ ' left' if progress_source_left_total > 0 else '' %}
 {% if progress_detail_preparing %}
-  {% if source_open_total > 0 %}
-    {% set progress_message_display = found_total ~ ' homes found · home details are still loading · ' ~ (progress_source_left_label or source_check_label) %}
-  {% else %}
-    {% set progress_message_display = found_total ~ ' homes found · home details are still loading' %}
-  {% endif %}
+  {% set progress_message_display = progress_message_display ~ ' · property pages preparing' %}
   {% set progress_message_display_lower = progress_message_display|lower %}
 {% endif %}
 {% set progress_compact_found_message = found_total|string ~ ' homes found' %}
@@ -433,14 +433,7 @@
 {% else %}
   {% set progress_eta_display = 'estimating' %}
 {% endif %}
-{% set detail_queue_label = 'To review' %}
-{% set detail_queue_value = to_review_total if to_review_total > 0 else 0 %}
-{% set detail_queue_pct = to_review_bar_pct %}
-{% if to_review_total <= 0 and source_open_total > 0 and progress_source_left_total > 0 %}
-  {% set detail_queue_label = 'Checks left' %}
-  {% set detail_queue_value = progress_source_left_total %}
-  {% set detail_queue_pct = ((progress_source_left_total * 100) // source_check_total) if source_check_total > 0 else 0 %}
-{% endif %}
+{% set reviewed_bar_pct = ((reviewed_total * 100) // review_denominator) if reviewed_total > 0 else 0 %}
 <div class="pqx-progress-board" data-pqx-progress-board data-progress-state="{{ status }}">
   <div class="pqx-concierge-pulse">
     <div class="pqx-progress-headline">
@@ -451,24 +444,22 @@
   </div>
 		  <div class="pqx-source-progress" data-pqx-source-progress>
 		    <div class="pqx-source-progress-head">
-				      <strong data-pqx-radar-count>{{ scan_count_label }}</strong>
-							      <span class="pqx-small">{% if source_progress_label %}{{ source_progress_label }}{% elif found_total and to_review_total %}{{ to_review_total }} to review{% elif found_total and source_open_total > 0 %}{{ source_open_total }} {{ source_unit }} left{% elif found_total %}all found homes are checked{% elif provider_display_total %}{{ provider_display_total }} sites chosen{% else %}Looking for homes{% endif %}</span>
-						      {% if found_total and to_review_total %}<span hidden>{{ to_review_total }} homes to review</span>{% endif %}
+				      <strong data-pqx-radar-count>Search progress</strong>
+							      <span class="pqx-small">{{ (summary.get('ranked_candidate_total') or summary.get('ranked_total') or (summary.get('ranked_candidates') or [])|length or 0) }} matching homes</span>
 					    </div>
-				    <span class="pqx-note">{{ progress_message_display or 'Looking for the first homes.' }}</span>
 				    <div class="pqx-live-review-bars" aria-label="Search totals">
 		      <span>
-		        <b>Homes</b>
+		        <b>Homes found</b>
 		        <i>{{ found_total or 0 }}</i>
 		        <em><u style="--progress: {{ found_bar_pct }}"></u></em>
 			      </span>
 			      <span>
-				        <b>{{ detail_queue_label }}</b>
-			        <i>{{ detail_queue_value }}</i>
-			        <em><u style="--progress: {{ detail_queue_pct }}"></u></em>
+				        <b>Homes checked</b>
+			        <i>{{ reviewed_total }} / {{ found_total or 0 }}</i>
+			        <em><u style="--progress: {{ reviewed_bar_pct }}"></u></em>
 			      </span>
 		      <span>
-					        <b>{{ 'Checked' if source_unit == 'checks' else 'Sites' }}</b>
+					        <b>{{ 'Search queries' if source_unit == 'search queries' else 'Sources' }}</b>
 		        <i>{% if source_variant_total > 0 %}{{ source_check_done }} / {{ source_check_total }}{% else %}{{ provider_display_total or 0 }}{% endif %}</i>
 		        <em><u style="--progress: {{ ((source_check_done * 100) // source_check_total) if source_check_total > 0 and source_check_done > 0 else 0 }}"></u></em>
 		      </span>
@@ -496,8 +487,12 @@
 	  <div class="pqx-route-preview-strip" data-pqx-route-preview-strip{% if not current_property and not route_previews %} hidden{% endif %}>
 	    {% if current_property %}
 	    <article class="pqx-current-property-card">
-	      {% if current_property.get('map_url') %}<a class="pqx-current-property-link" href="{{ current_property.get('map_url') }}" target="_blank" rel="noreferrer">{% else %}<div class="pqx-current-property-link">{% endif %}
-	        {% if current_property_image %}<img class="pqx-current-property-thumb" src="{{ current_property_image }}" alt="{{ current_property_orientation.get('alt') or current_property.get('title') or 'Current property map preview' }}">{% endif %}
+	      {% if current_property_detail_url %}<a class="pqx-current-property-link" href="{{ current_property_detail_url }}">{% else %}<div class="pqx-current-property-link">{% endif %}
+	        {% if current_property_image %}
+	        <img class="pqx-current-property-thumb" src="{{ current_property_image }}" alt="{{ current_property.get('diorama_alt') or current_property_diorama.get('alt') or current_property.get('title') or 'Illustrative property diorama' }}">
+	        {% else %}
+	        <div class="pqx-current-property-thumb is-placeholder" role="img" aria-label="Diorama is being prepared"><span>Diorama<br>preparing</span></div>
+	        {% endif %}
 	        <div class="pqx-current-property-copy">
 	          <span class="pqx-small">{{ current_property.get('status_label') or 'Current property' }}</span>
 	          <strong>{{ current_property.get('title') or 'Property under review' }}</strong>
@@ -509,7 +504,7 @@
 	          </div>
 	          {% if current_property.get('status_detail') %}<p class="pqx-note">{{ current_property.get('status_detail') }}</p>{% endif %}
 	        </div>
-	      {% if current_property.get('map_url') %}</a>{% else %}</div>{% endif %}
+	      {% if current_property_detail_url %}</a>{% else %}</div>{% endif %}
 	    </article>
 	    {% endif %}
 	    {% for route in route_previews[:3] %}
@@ -6679,6 +6674,21 @@
       border: 1px solid rgba(255, 249, 237, 0.12);
       background: linear-gradient(180deg, rgba(255, 249, 237, 0.08), rgba(255, 249, 237, 0.14));
     }
+    .pqx-current-property-thumb.is-placeholder {
+      display: grid;
+      place-items: center;
+      padding: 8px;
+      color: var(--pq-muted);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      line-height: 1.25;
+      text-align: center;
+      text-transform: uppercase;
+      background:
+        linear-gradient(145deg, rgba(77, 110, 91, 0.12), rgba(255, 255, 255, 0.82)),
+        repeating-linear-gradient(45deg, transparent 0 8px, rgba(77, 110, 91, 0.07) 8px 9px);
+    }
     .pqx-current-property-copy {
       display: grid;
       gap: 4px;
@@ -11450,7 +11460,7 @@
             {% endif %}
           {% endfor %}
           {% set live_source_completed = (run_summary.get('sources_completed') or run_summary.get('completed_sources') or 0)|int %}
-          {% set live_source_done_total = live_source_counts.done if live_source_counts.explicit > 0 else live_source_completed %}
+          {% set live_source_done_total = live_source_completed if live_source_completed > live_source_counts.done else live_source_counts.done %}
           {% set live_source_remaining_capacity = live_source_total - live_source_done_total if live_source_total > live_source_done_total else 0 %}
           {% set live_source_active_total = live_source_counts.active if live_source_counts.active < live_source_remaining_capacity else live_source_remaining_capacity %}
           {% set live_source_waiting_raw = live_source_total - live_source_done_total - live_source_active_total %}

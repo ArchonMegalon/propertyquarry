@@ -27,11 +27,11 @@
 		          {% set run_source_check_done_head = run_source_check_total_head %}
 		        {% endif %}
 		        {% set run_source_check_done_head = run_source_check_done_head if run_source_check_total_head <= 0 or run_source_check_done_head < run_source_check_total_head else run_source_check_total_head %}
-			        {% set run_source_unit_head = 'checks' if run_source_total_head > run_provider_display_head and run_provider_display_head > 0 else 'sources' %}
+			        {% set run_source_unit_head = 'search queries' if run_source_total_head > run_provider_display_head and run_provider_display_head > 0 else 'sources' %}
 		        {% set run_source_check_label_head = run_source_check_done_head|string ~ ' / ' ~ run_source_check_total_head|string ~ ' ' ~ run_source_unit_head if run_source_check_total_head > 0 and run_source_total_head > 0 else '' %}
 		        {% set run_source_left_head = run_source_check_total_head - run_source_check_done_head if run_source_check_total_head > run_source_check_done_head else 0 %}
 		        {% set run_queue_label_head = run_to_review_head|string ~ ' to review' if run_to_review_head > 0 else (run_source_left_head|string ~ ' ' ~ run_source_unit_head ~ ' left' if run_source_total_head > 0 and run_source_left_head > 0 else 'all found homes are checked') %}
-        <div class="pqx-note" data-pqx-run-summary>
+        <div class="pqx-note" data-pqx-run-summary hidden>
           {% if run_found_head %}
           {{ run_found_head }} {{ 'home' if run_found_head == 1 else 'homes' }} found so far
           {% elif run_source_total_head and run_source_check_label_head %}
@@ -72,11 +72,7 @@
     {% endfor %}
     {% set run_source_completed = (run_summary.get('sources_completed') or run_summary.get('completed_sources') or 0)|int %}
     {% set run_status_value = (run.get('status') or run_summary.get('status') or '')|lower %}
-    {% if run_source_counts.observed > 0 and run_status_value not in ['processed', 'completed', 'completed_partial', 'noop', 'cancelled'] %}
-      {% set run_source_done_total = run_source_counts.done %}
-    {% else %}
-      {% set run_source_done_total = run_source_completed if run_source_completed > run_source_counts.done else run_source_counts.done %}
-    {% endif %}
+    {% set run_source_done_total = run_source_completed if run_source_completed > run_source_counts.done else run_source_counts.done %}
     {% set run_source_remaining_capacity = run_source_total - run_source_done_total if run_source_total > run_source_done_total else 0 %}
     {% set run_source_active_total = run_source_counts.active if run_source_counts.active < run_source_remaining_capacity else run_source_remaining_capacity %}
     {% set run_source_waiting_raw = run_source_total - run_source_done_total - run_source_active_total %}
@@ -87,7 +83,7 @@
     {% set run_source_check_total = run_source_total if run_source_total > run_provider_display_total else run_provider_display_total %}
     {% set run_source_check_done = run_source_done_total if run_source_done_total > 0 else 0 %}
     {% set run_source_check_done = run_source_check_done if run_source_check_total <= 0 or run_source_check_done < run_source_check_total else run_source_check_total %}
-    {% set run_source_unit = 'checks' if run_source_total > run_provider_display_total and run_provider_display_total > 0 else 'sources' %}
+    {% set run_source_unit = 'search queries' if run_source_total > run_provider_display_total and run_provider_display_total > 0 else 'sources' %}
     {% set run_source_check_label = run_source_check_done|string ~ ' / ' ~ run_source_check_total|string ~ ' ' ~ run_source_unit if run_source_check_total > 0 and run_source_total > 0 else '' %}
     {% set run_source_left_total = run_source_check_total - run_source_check_done if run_source_check_total > run_source_check_done else 0 %}
     {% set run_source_left_label = run_source_left_total|string ~ ' ' ~ run_source_unit ~ ' left' if run_source_left_total > 0 else '' %}
@@ -98,12 +94,15 @@
     {% set run_message_display = run_message_display|replace('left to sort', 'to review')|replace('Left to sort', 'To review')|replace('lists left', 'checks waiting')|replace('Lists left', 'Checks waiting')|replace('lists open', 'checks still running')|replace('Lists open', 'Checks still running')|replace('providers', 'sources')|replace('Providers', 'Sources')|replace('provider', 'source')|replace('Provider', 'Source') %}
     {% set run_message_display_lower = run_message_display|lower %}
     {% set run_prepared_total = ((run_summary.get('review_created_total') or 0)|int) + ((run_summary.get('review_existing_total') or 0)|int) %}
-    {% if run_found_total > 0 and run_prepared_total <= 0 and ('review page preparation timed out' in run_message_display_lower or 'reviewing candidate' in run_message_display_lower or (run_summary.get('current_step') or run.get('current_step') or '')|lower == 'source_review_packet') %}
-      {% if run_source_open_total > 0 %}
-        {% set run_message_display = run_found_total ~ ' homes found · home details are still loading · ' ~ run_source_check_label %}
-      {% else %}
-        {% set run_message_display = run_found_total ~ ' homes found · home details are still loading' %}
+    {% if run_found_total > 0 and not run_has_repair_copy %}
+      {% set run_message_display = run_found_total|string ~ ' homes found · ' ~ run_reviewed_total|string ~ ' checked · ' ~ run_to_review_total|string ~ ' awaiting review' %}
+      {% if run_source_check_total > 0 %}
+        {% set run_message_display = run_message_display ~ ' · ' ~ run_source_check_done|string ~ ' / ' ~ run_source_check_total|string ~ ' ' ~ run_source_unit ~ ' complete' %}
       {% endif %}
+      {% set run_message_display_lower = run_message_display|lower %}
+    {% endif %}
+    {% if run_found_total > 0 and run_prepared_total <= 0 and ('review page preparation timed out' in run_message_raw|lower or 'reviewing candidate' in run_message_raw|lower or (run_summary.get('current_step') or run.get('current_step') or '')|lower == 'source_review_packet') %}
+      {% set run_message_display = run_message_display ~ ' · property pages preparing' %}
       {% set run_message_display_lower = run_message_display|lower %}
     {% endif %}
     {% set run_compact_found_message = run_found_total|string ~ ' homes found' %}
@@ -132,13 +131,16 @@
       {% endif %}
       <div class="pqx-event-list" data-pqx-run-events>
         {% set visible_event_count = namespace(value=0) %}
+        {% set visible_event_steps = namespace(value='|') %}
         {% for event in (run.get('events') or [])|reverse %}
         {% set event_step = (event.get('step') or '')|lower %}
+        {% set event_step_key = 'shortlist' if event_step in ['source_shortlist', 'shortlist_ready'] else event_step %}
         {% set event_message = event.get('message') or '' %}
         {% set event_message_lower = event_message|lower %}
         {% set event_message_display = event_message|replace('homes reviewed', 'homes found')|replace('home reviewed', 'home found')|replace('reviewed so far', 'checked so far')|replace('list update', 'search update')|replace('search pages', 'checks')|replace('providers', 'sources')|replace('Providers', 'Sources')|replace('provider', 'source')|replace('Provider', 'Source') %}
-        {% if visible_event_count.value < 10 and not ('suppressed_generic_listing_page' in event_message_lower or 'could not load property search status' in event_message_lower or 'checking run status' in event_message_lower or 'starting property search run' in event_message_lower or (event_step == 'status_refresh')) %}
+        {% if visible_event_count.value < 6 and not ('|' ~ event_step_key ~ '|') in visible_event_steps.value and not ('suppressed_generic_listing_page' in event_message_lower or 'could not load property search status' in event_message_lower or 'checking run status' in event_message_lower or 'starting property search run' in event_message_lower or event_message_lower.startswith('checks:') or ('homes found' in event_message_lower and ('to review' in event_message_lower or 'awaiting review' in event_message_lower)) or (event_step == 'status_refresh')) %}
         {% set visible_event_count.value = visible_event_count.value + 1 %}
+        {% set visible_event_steps.value = visible_event_steps.value ~ event_step_key ~ '|' %}
         {% if event_step in ['queued', 'starting', 'sources_resolved', 'source_catalog_loading', 'source_started'] %}
         {% set event_label = 'Preparing' %}
         {% elif event_step in ['source_search', 'provider_search', 'search'] %}
