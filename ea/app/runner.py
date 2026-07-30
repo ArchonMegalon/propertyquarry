@@ -2537,38 +2537,90 @@ def _property_search_work_batch_concurrency() -> int:
     return max(1, min(parsed, 8))
 
 
-def _run_property_search_work_batch(
+def _run_property_search_work_slot(
     container,
     *,
     role: str,
     log: logging.Logger,
-) -> list[dict[str, object]]:  # type: ignore[no-untyped-def]
-    """Claim independent durable searches concurrently.
+    stop_event: threading.Event,
+) -> None:  # type: ignore[no-untyped-def]
+    idle_backoff_seconds = _IDLE_BACKOFF_START_SECONDS
+    while not stop_event.is_set():
+        try:
+            property_work = _run_property_search_work_once(
+                container,
+                role=role,
+                log=log,
+            )
+        except Exception:
+            _record_property_search_queue_metrics(None)
+            _write_scheduler_heartbeat(role=role, status="loop")
+            log.exception(
+                "role=%s property search work queue slot failed; retrying in %.1fs",
+                role,
+                _ERROR_BACKOFF_SECONDS,
+            )
+            stop_event.wait(_ERROR_BACKOFF_SECONDS)
+            continue
+        if bool(property_work.get("claimed")):
+            idle_backoff_seconds = _IDLE_BACKOFF_START_SECONDS
+            log.info(
+                "role=%s property search work job=%s run=%s status=%s attempt=%s",
+                role,
+                property_work.get("job_id"),
+                property_work.get("run_id"),
+                property_work.get("status"),
+                property_work.get("attempt_count"),
+            )
+            continue
+        stop_event.wait(idle_backoff_seconds)
+        idle_backoff_seconds = min(
+            idle_backoff_seconds * 2.0,
+            _IDLE_BACKOFF_MAX_SECONDS,
+        )
 
-    A search can spend several minutes reviewing provider pages. Running the
-    durable queue serially lets one deep search starve every later Launch
-    search request even though the service already enforces its own bounded
-    run semaphore. Keep one claim loop per configured run slot so slow
-    providers do not turn otherwise healthy launches into an unbounded queue.
+
+def _run_property_search_work_pool(
+    container,
+    *,
+    role: str,
+    log: logging.Logger,
+    stop_event: threading.Event,
+) -> None:  # type: ignore[no-untyped-def]
+    """Keep one independent durable claim loop alive per configured slot.
+
+    Deep provider work may take minutes, so a completed slot must claim the
+    next eligible tenant immediately instead of waiting for the slowest job in
+    a fixed batch. The queue itself serializes jobs for the same principal.
     """
 
     concurrency = _property_search_work_batch_concurrency()
-    if concurrency == 1:
-        return [_run_property_search_work_once(container, role=role, log=log)]
     with ThreadPoolExecutor(
         max_workers=concurrency,
         thread_name_prefix="property-search-work",
     ) as executor:
         futures = [
             executor.submit(
-                _run_property_search_work_once,
+                _run_property_search_work_slot,
                 container,
                 role=role,
                 log=log,
+                stop_event=stop_event,
             )
             for _slot in range(concurrency)
         ]
-        return [future.result() for future in futures]
+        while not stop_event.wait(0.5):
+            failed = next(
+                (
+                    future.exception()
+                    for future in futures
+                    if future.done() and future.exception() is not None
+                ),
+                None,
+            )
+            if failed is not None:
+                stop_event.set()
+                raise failed
 
 
 def _require_property_search_writer_readiness(container: object, *, role: str) -> None:
@@ -2619,6 +2671,17 @@ def _run_execution_worker(role: str) -> None:
     property_only_worker = role == "worker" and _worker_property_only_profile_enabled()
     log.info("role=%s started worker loop", role)
     _write_scheduler_heartbeat(role=role, status="started")
+    if property_only_worker:
+        try:
+            _run_property_search_work_pool(
+                container,
+                role=role,
+                log=log,
+                stop_event=stop_event,
+            )
+        finally:
+            _write_scheduler_heartbeat(role=role, status="stopped")
+        return
     while not stop_event.is_set():
         _write_scheduler_heartbeat(role=role, status="loop")
         if role == "scheduler":
@@ -2878,33 +2941,23 @@ def _run_execution_worker(role: str) -> None:
                 continue
         if role == "worker":
             try:
-                property_work_batch = _run_property_search_work_batch(
-                    container,
-                    role=role,
-                    log=log,
-                )
+                property_work = _run_property_search_work_once(container, role=role, log=log)
             except Exception:
                 _record_property_search_queue_metrics(None)
                 _write_scheduler_heartbeat(role=role, status="loop")
                 log.exception("role=%s property search work queue failed; retrying in %.1fs", role, _ERROR_BACKOFF_SECONDS)
                 stop_event.wait(_ERROR_BACKOFF_SECONDS)
                 continue
-            claimed_property_work = [
-                property_work
-                for property_work in property_work_batch
-                if bool(property_work.get("claimed"))
-            ]
-            if claimed_property_work:
+            if bool(property_work.get("claimed")):
                 idle_backoff_seconds = _IDLE_BACKOFF_START_SECONDS
-                for property_work in claimed_property_work:
-                    log.info(
-                        "role=%s property search work job=%s run=%s status=%s attempt=%s",
-                        role,
-                        property_work.get("job_id"),
-                        property_work.get("run_id"),
-                        property_work.get("status"),
-                        property_work.get("attempt_count"),
-                    )
+                log.info(
+                    "role=%s property search work job=%s run=%s status=%s attempt=%s",
+                    role,
+                    property_work.get("job_id"),
+                    property_work.get("run_id"),
+                    property_work.get("status"),
+                    property_work.get("attempt_count"),
+                )
                 continue
         if property_only_worker:
             log.debug("role=%s property-only worker skips inherited generic queue; sleeping %.1fs", role, idle_backoff_seconds)

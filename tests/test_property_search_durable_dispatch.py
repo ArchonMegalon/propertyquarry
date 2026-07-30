@@ -587,45 +587,75 @@ def test_worker_role_processes_property_job_on_main_execution_path(
     runner._record_property_search_queue_metrics(None)
 
 
-def test_worker_batch_claims_configured_search_slots_concurrently(
+def test_worker_pool_starts_configured_persistent_search_slots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app import runner
 
     monkeypatch.setenv("PROPERTYQUARRY_SEARCH_RUN_WORKER_CONCURRENCY", "3")
-    release = threading.Event()
     all_started = threading.Event()
+    stop_event = threading.Event()
     lock = threading.Lock()
     active = 0
     peak_active = 0
-    calls = 0
+    thread_ids: set[int] = set()
 
-    def _run_once(_container, *, role: str, log: logging.Logger) -> dict[str, object]:
-        nonlocal active, peak_active, calls
+    def _run_slot(
+        _container,
+        *,
+        role: str,
+        log: logging.Logger,
+        stop_event: threading.Event,
+    ) -> None:
+        nonlocal active, peak_active
         assert role == "worker"
         assert isinstance(log, logging.Logger)
         with lock:
-            calls += 1
             active += 1
             peak_active = max(peak_active, active)
+            thread_ids.add(threading.get_ident())
             if active == 3:
                 all_started.set()
         assert all_started.wait(timeout=2)
-        release.set()
-        assert release.wait(timeout=2)
+        stop_event.set()
         with lock:
             active -= 1
-        return {"claimed": True, "run_id": f"run-{calls}"}
 
-    monkeypatch.setattr(runner, "_run_property_search_work_once", _run_once)
+    monkeypatch.setattr(runner, "_run_property_search_work_slot", _run_slot)
 
-    results = runner._run_property_search_work_batch(
+    runner._run_property_search_work_pool(
         SimpleNamespace(),
         role="worker",
         log=logging.getLogger("test.property-search-worker-batch"),
+        stop_event=stop_event,
     )
 
-    assert len(results) == 3
-    assert all(result["claimed"] is True for result in results)
-    assert calls == 3
     assert peak_active == 3
+    assert len(thread_ids) == 3
+
+
+def test_worker_slot_claims_again_immediately_after_completed_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import runner
+
+    stop_event = threading.Event()
+    calls = 0
+
+    def _run_once(_container, *, role: str, log: logging.Logger) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            stop_event.set()
+        return {"claimed": True, "run_id": f"run-{calls}", "status": "completed"}
+
+    monkeypatch.setattr(runner, "_run_property_search_work_once", _run_once)
+
+    runner._run_property_search_work_slot(
+        SimpleNamespace(),
+        role="worker",
+        log=logging.getLogger("test.property-search-worker-slot"),
+        stop_event=stop_event,
+    )
+
+    assert calls == 2

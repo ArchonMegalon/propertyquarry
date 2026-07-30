@@ -754,6 +754,14 @@ class PostgresPropertySearchWorkQueue:
                                           AND jobs.attempt_count < jobs.max_attempts
                                       )
                                   )
+                                  AND NOT EXISTS (
+                                      SELECT 1
+                                      FROM property_search_work_jobs AS active_jobs
+                                      WHERE active_jobs.principal_id = jobs.principal_id
+                                        AND active_jobs.job_id <> jobs.job_id
+                                        AND active_jobs.status = 'leased'
+                                        AND active_jobs.lease_expires_at > NOW()
+                                  )
                                 RETURNING {self._RETURNING_JOB_COLUMNS}
                                 """,
                                 (
