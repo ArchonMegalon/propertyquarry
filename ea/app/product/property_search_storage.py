@@ -1842,6 +1842,204 @@ def property_account_publication_recovery_observation(  # type: ignore[no-untype
                 yield conn
 
 
+_PROPERTY_SEARCH_MONOTONIC_SUMMARY_FIELDS = (
+    "progress",
+    "progress_percent",
+    "source_total",
+    "source_variant_total",
+    "source_variant_display_total",
+    "sources_total",
+    "sources_completed",
+    "completed_sources",
+    "source_variant_completed_total",
+    "provider_total",
+    "provider_display_total",
+    "raw_listing_total",
+    "found_listing_total",
+    "listing_total",
+    "scanned_listing_total",
+    "reviewed_listing_total",
+    "ranked_candidate_total",
+    "review_created_total",
+    "review_existing_total",
+    "preview_prepared_total",
+    "floorplan_recovered_total",
+)
+
+
+def _greater_nonnegative_progress_value(
+    previous: object,
+    current: object,
+) -> object:
+    def _parsed(value: object) -> float:
+        if isinstance(value, bool):
+            return -1.0
+        try:
+            parsed = float(str(value or "").strip())
+        except (TypeError, ValueError):
+            return -1.0
+        return parsed if parsed >= 0.0 else -1.0
+
+    previous_number = _parsed(previous)
+    current_number = _parsed(current)
+    if previous_number > current_number:
+        return previous
+    if current_number >= 0.0:
+        return current
+    return previous
+
+
+def _merge_monotonic_property_search_run_progress(
+    previous: object,
+    current: object,
+) -> dict[str, object]:
+    """Prevent one run revision from losing already-observed search progress."""
+
+    current_record = dict(current) if isinstance(current, dict) else {}
+    if not isinstance(previous, dict):
+        return current_record
+    previous_run_id = str(previous.get("run_id") or "").strip()
+    current_run_id = str(current_record.get("run_id") or "").strip()
+    previous_principal = str(previous.get("principal_id") or "").strip()
+    current_principal = str(current_record.get("principal_id") or "").strip()
+    if (
+        previous_run_id
+        and current_run_id
+        and previous_run_id != current_run_id
+    ) or (
+        previous_principal
+        and current_principal
+        and previous_principal != current_principal
+    ):
+        return current_record
+
+    if "progress" in previous or "progress" in current_record:
+        current_record["progress"] = _greater_nonnegative_progress_value(
+            previous.get("progress"),
+            current_record.get("progress"),
+        )
+    previous_summary = (
+        dict(previous.get("summary") or {})
+        if isinstance(previous.get("summary"), dict)
+        else {}
+    )
+    current_summary = (
+        dict(current_record.get("summary") or {})
+        if isinstance(current_record.get("summary"), dict)
+        else {}
+    )
+    for key in _PROPERTY_SEARCH_MONOTONIC_SUMMARY_FIELDS:
+        if key not in previous_summary and key not in current_summary:
+            continue
+        current_summary[key] = _greater_nonnegative_progress_value(
+            previous_summary.get(key),
+            current_summary.get(key),
+        )
+
+    has_source_progress = any(
+        key in previous_summary or key in current_summary
+        for key in (
+            "sources_completed",
+            "completed_sources",
+            "source_variant_completed_total",
+            "source_variant_total",
+            "sources_total",
+            "source_total",
+        )
+    )
+    completed_number = 0
+    if has_source_progress:
+        completed = max(
+            (
+                _greater_nonnegative_progress_value(
+                    previous_summary.get(key),
+                    current_summary.get(key),
+                )
+                for key in (
+                    "sources_completed",
+                    "completed_sources",
+                    "source_variant_completed_total",
+                )
+            ),
+            key=lambda value: (
+                float(str(value or "").strip())
+                if str(value or "").strip().replace(".", "", 1).isdigit()
+                else -1.0
+            ),
+        )
+        try:
+            completed_number = max(0, int(float(str(completed or 0))))
+        except (TypeError, ValueError):
+            completed_number = 0
+    try:
+        source_total = max(
+            0,
+            int(
+                float(
+                    str(
+                        current_summary.get("source_variant_total")
+                        or current_summary.get("sources_total")
+                        or current_summary.get("source_total")
+                        or 0
+                    )
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        source_total = 0
+    if has_source_progress:
+        if source_total > 0:
+            completed_number = min(completed_number, source_total)
+        current_summary["sources_completed"] = completed_number
+        if (
+            "completed_sources" in previous_summary
+            or "completed_sources" in current_summary
+        ):
+            current_summary["completed_sources"] = completed_number
+        if (
+            "source_variant_completed_total" in previous_summary
+            or "source_variant_completed_total" in current_summary
+        ):
+            current_summary["source_variant_completed_total"] = completed_number
+
+    try:
+        found_total = max(
+            0,
+            int(
+                float(
+                    str(
+                        current_summary.get("found_listing_total")
+                        or current_summary.get("raw_listing_total")
+                        or current_summary.get("listing_total")
+                        or 0
+                    )
+                )
+            ),
+        )
+        reviewed_total = max(
+            0,
+            int(
+                float(
+                    str(
+                        current_summary.get("scanned_listing_total")
+                        or current_summary.get("reviewed_listing_total")
+                        or 0
+                    )
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        found_total = 0
+        reviewed_total = 0
+    if found_total > 0:
+        current_summary["to_review_listing_total"] = max(
+            0,
+            found_total - min(found_total, reviewed_total),
+        )
+    current_record["summary"] = current_summary
+    return current_record
+
+
 def _store_property_search_run_record(record: dict[str, object]) -> bool:
     if not _property_search_run_database_url():
         return True
@@ -1863,14 +2061,55 @@ def _store_property_search_run_record(record: dict[str, object]) -> bool:
     )
     from psycopg.types.json import Json
 
-    compact_record = _compact_property_search_run_record(normalized_record)
-    packet_links = project_property_research_packet_links(normalized_record)
-    status_value = str(compact_record.get("status") or "").strip() or None
     try:
         with _property_search_run_connect() as conn:
             with _property_search_run_transaction(conn):
                 with conn.cursor() as cur:
                     _set_property_search_writer_contract(cur)
+                    cur.execute(
+                        """
+                        SELECT payload_json, compact_json
+                        FROM property_search_runs
+                        WHERE principal_id = %s
+                          AND run_id = %s
+                        FOR UPDATE
+                        """,
+                        (principal_id, run_id),
+                    )
+                    prior_row = cur.fetchone()
+                    prior_payload = (
+                        dict(prior_row[0])
+                        if prior_row and isinstance(prior_row[0], dict)
+                        else {}
+                    )
+                    prior_compact = (
+                        dict(prior_row[1])
+                        if prior_row and isinstance(prior_row[1], dict)
+                        else {}
+                    )
+                    if prior_payload:
+                        normalized_record = (
+                            _merge_monotonic_property_search_run_progress(
+                                prior_payload,
+                                normalized_record,
+                            )
+                        )
+                    compact_record = _compact_property_search_run_record(
+                        normalized_record
+                    )
+                    if prior_compact:
+                        compact_record = (
+                            _merge_monotonic_property_search_run_progress(
+                                prior_compact,
+                                compact_record,
+                            )
+                        )
+                    packet_links = project_property_research_packet_links(
+                        normalized_record
+                    )
+                    status_value = (
+                        str(compact_record.get("status") or "").strip() or None
+                    )
                     cur.execute(
                         """
                     INSERT INTO property_search_runs (

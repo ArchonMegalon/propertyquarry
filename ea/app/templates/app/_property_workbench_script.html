@@ -3653,19 +3653,38 @@
       if (!property || typeof property !== 'object') return '';
       const href = routePreviewHref(property?.detail_url);
       const imageUrl = currentPropertyImageUrl(property);
+      if (!imageUrl) return '';
       const meta = currentPropertyMeta(property);
-      const inner = `
-        ${imageUrl
-          ? `<img class="pqx-current-property-thumb" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(currentPropertyImageAlt(property))}">`
-          : '<div class="pqx-current-property-thumb is-placeholder" role="img" aria-label="Diorama is being prepared"><span>Diorama<br>preparing</span></div>'}
+      const title = String(property?.title || 'Property under review').trim() || 'Property under review';
+      const imageAlt = currentPropertyImageAlt(property);
+      const caption = String(property?.location_label || property?.source_label || property?.status_label || 'Best so far').trim() || 'Best so far';
+      const detail = `
         <div class="pqx-current-property-copy">
           <span class="pqx-small">${escapeHtml(String(property?.status_label || 'Current property').trim() || 'Current property')}</span>
-          <strong>${escapeHtml(String(property?.title || 'Property under review').trim() || 'Property under review')}</strong>
+          <strong>${escapeHtml(title)}</strong>
           ${meta ? `<div class="pqx-current-property-meta"><span>${escapeHtml(meta)}</span></div>` : ''}
           ${property?.status_detail ? `<p class="pqx-note">${escapeHtml(String(property.status_detail).trim())}</p>` : ''}
         </div>
       `;
-      return `<article class="pqx-current-property-card">${href ? `<a class="pqx-current-property-link" href="${escapeHtml(href)}">${inner}</a>` : `<div class="pqx-current-property-link">${inner}</div>`}</article>`;
+      return `
+        <article class="pqx-current-property-card">
+          <button
+            class="pqx-current-property-diorama-button"
+            type="button"
+            data-pqx-scope-open
+            data-pqx-scope-kind="diorama"
+            data-pqx-scope-image="${escapeHtml(imageUrl)}"
+            data-pqx-scope-alt="${escapeHtml(imageAlt)}"
+            data-pqx-scope-title="${escapeHtml(title)}"
+            data-pqx-scope-caption="${escapeHtml(caption)}"
+            data-pqx-scope-overlay="[]"
+            aria-label="${escapeHtml(`Enlarge diorama for ${title}`)}"
+          >
+            <img class="pqx-current-property-thumb" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageAlt)}">
+          </button>
+          ${href ? `<a class="pqx-current-property-link" href="${escapeHtml(href)}">${detail}</a>` : `<div class="pqx-current-property-link">${detail}</div>`}
+        </article>
+      `;
     };
     const renderRoutePreviewStrip = (runPayload) => {
       const currentProperty = renderCurrentPropertyCard(runPayload);
@@ -8229,6 +8248,9 @@
       const activeScopeLightboxTitle = activeScopeLightbox?.querySelector('[data-pqx-scope-lightbox-title]');
       const activeScopeLightboxCaption = activeScopeLightbox?.querySelector('[data-pqx-scope-lightbox-caption]');
       if (!activeScopeLightbox || !activeScopeLightboxImage || !imageUrl) return false;
+      const scopeKind = String(button.getAttribute('data-pqx-scope-kind') || '').trim().toLowerCase();
+      if (scopeKind) activeScopeLightbox.setAttribute('data-pqx-scope-kind', scopeKind);
+      else activeScopeLightbox.removeAttribute('data-pqx-scope-kind');
       const alt = String(button.getAttribute('data-pqx-scope-alt') || 'Search area preview').trim() || 'Search area preview';
       const title = String(button.getAttribute('data-pqx-scope-title') || 'Search area preview').trim() || 'Search area preview';
       const caption = String(button.getAttribute('data-pqx-scope-caption') || '').trim();

@@ -2019,6 +2019,11 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
         "source_url": "https://example.com/listing",
         "property_url": "https://example.com/listing",
         "floorplan_url": "https://example.com/floorplan.jpg",
+        "diorama_preview_url": (
+            "/static/property/research/"
+            "ad48357be22535c1-ai-diorama.webp"
+        ),
+        "diorama_alt": "Angled apartment diorama",
         "tour_status": "unavailable",
         "property_facts": {
             "rooms": 2,
@@ -2166,6 +2171,62 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                 best_so_far_link.get_attribute("href") or ""
             ).lower()
             if locale == "de-AT":
+                diorama_button = page.locator(
+                    ".pqx-current-property-diorama-button"
+                ).first
+                expect(diorama_button).to_be_visible()
+                thumbnail = diorama_button.locator(
+                    ".pqx-current-property-thumb"
+                )
+                expect(thumbnail).to_be_visible()
+                expect(thumbnail).to_have_js_property("complete", True)
+                thumbnail_box = thumbnail.bounding_box()
+                button_box = diorama_button.bounding_box()
+                assert thumbnail_box is not None
+                assert button_box is not None
+                thumbnail_style = thumbnail.evaluate(
+                    """node => ({
+                        transform: getComputedStyle(node).transform,
+                        objectFit: getComputedStyle(node).objectFit,
+                    })"""
+                )
+                button_padding = diorama_button.evaluate(
+                    "node => parseFloat(getComputedStyle(node).paddingTop)"
+                )
+                assert thumbnail_style["transform"] != "none"
+                assert thumbnail_style["objectFit"] == "contain"
+                assert button_padding >= 6
+                assert thumbnail_box["height"] >= button_box["height"] - 20
+
+                diorama_button.click()
+                lightbox = page.locator(
+                    '[data-pqx-scope-lightbox][open]'
+                ).first
+                expect(lightbox).to_be_visible()
+                expect(lightbox).to_have_attribute(
+                    "data-pqx-scope-kind",
+                    "diorama",
+                )
+                enlarged = lightbox.locator(
+                    "[data-pqx-scope-lightbox-image]"
+                )
+                expect(enlarged).to_be_visible()
+                expect(enlarged).to_have_attribute(
+                    "src",
+                    re.compile("ad48357be22535c1-ai-diorama[.]webp$"),
+                )
+                expect(enlarged).to_have_js_property("complete", True)
+                enlarged_box = enlarged.bounding_box()
+                assert enlarged_box is not None
+                assert enlarged_box["height"] > thumbnail_box["height"] * 2
+                assert enlarged.evaluate(
+                    "node => getComputedStyle(node).objectFit"
+                ) == "contain"
+                lightbox.locator(
+                    "[data-pqx-scope-lightbox-close]"
+                ).click()
+                expect(lightbox).not_to_be_visible()
+
                 with page.expect_navigation(
                     wait_until="domcontentloaded"
                 ) as navigation:

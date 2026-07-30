@@ -3976,7 +3976,9 @@ def test_propertyquarry_running_panel_does_not_use_raw_url_as_best_summary(monke
     assert response.status_code == 200
     assert raw_url not in response.text
     rendered_html = re.sub(r"<script\b[^>]*>.*?</script>", " ", response.text, flags=re.IGNORECASE | re.DOTALL)
-    assert "Altbau near U6" in rendered_html
+    assert "Altbau near U6" not in rendered_html
+    assert "Diorama preparing" not in rendered_html
+    assert "Diorama is being prepared" not in rendered_html
 
 
 def test_propertyquarry_running_panel_replaces_internal_status_message_with_progress_summary(monkeypatch) -> None:
@@ -4369,14 +4371,19 @@ def test_propertyquarry_running_panel_current_best_card_uses_summary_copy_not_ra
                 "provider_total": 29,
                 "reviewed_listing_total": 179,
                 "ranked_candidates": [
-                    {
-                        "title": "Altbau near U6",
-                        "fit_score": 71.0,
-                        "source_label": "Willhaben | Austria | Rent | 1070 Vienna",
-                        "location_label": "1070 Vienna",
-                        "fit_summary": "Lift, U6, and school fit the brief.",
-                        "property_facts": {"total_rent_eur": 1180.0},
-                    }
+                        {
+                            "title": "Altbau near U6",
+                            "fit_score": 71.0,
+                            "source_label": "Willhaben | Austria | Rent | 1070 Vienna",
+                            "location_label": "1070 Vienna",
+                            "fit_summary": "Lift, U6, and school fit the brief.",
+                            "diorama_preview_url": (
+                                "/static/property/research/"
+                                "ad48357be22535c1-ai-diorama.webp"
+                            ),
+                            "diorama_alt": "Angled apartment diorama",
+                            "property_facts": {"total_rent_eur": 1180.0},
+                        }
                 ],
                 "sources": [],
             },

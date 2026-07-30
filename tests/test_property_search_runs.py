@@ -64,6 +64,57 @@ _TEST_DISTANCE_CLASSIFICATION_TAGS = {
 }
 
 
+def test_property_search_durable_write_merge_never_regresses_query_progress() -> None:
+    previous = {
+        "run_id": "run-monotonic",
+        "principal_id": "user-monotonic",
+        "progress": 82,
+        "summary": {
+            "progress": 82,
+            "progress_percent": 82,
+            "source_variant_total": 185,
+            "sources_total": 185,
+            "sources_completed": 156,
+            "source_variant_completed_total": 179,
+            "found_listing_total": 2363,
+            "scanned_listing_total": 641,
+            "to_review_listing_total": 1722,
+        },
+    }
+    restarted_worker_snapshot = {
+        "run_id": "run-monotonic",
+        "principal_id": "user-monotonic",
+        "progress": 3,
+        "summary": {
+            "progress": 3,
+            "progress_percent": 3,
+            "source_variant_total": 185,
+            "sources_total": 185,
+            "sources_completed": 64,
+            "source_variant_completed_total": 64,
+            "found_listing_total": 2363,
+            "scanned_listing_total": 641,
+            "to_review_listing_total": 1722,
+        },
+    }
+
+    merged = (
+        property_search_storage._merge_monotonic_property_search_run_progress(
+            previous,
+            restarted_worker_snapshot,
+        )
+    )
+
+    assert merged["progress"] == 82
+    assert merged["summary"]["progress"] == 82
+    assert merged["summary"]["progress_percent"] == 82
+    assert merged["summary"]["sources_completed"] == 179
+    assert merged["summary"]["source_variant_completed_total"] == 179
+    assert merged["summary"]["source_variant_total"] == 185
+    assert merged["summary"]["scanned_listing_total"] == 641
+    assert merged["summary"]["to_review_listing_total"] == 1722
+
+
 def test_property_search_persisted_refresh_keeps_progress_monotonic() -> None:
     cached = {
         "status": "in_progress",
