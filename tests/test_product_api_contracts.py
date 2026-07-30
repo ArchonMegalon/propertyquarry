@@ -32553,6 +32553,7 @@ def _write_test_ai_panorama_bundle(
         "slug": slug,
         "publication_status": "ready",
         "control_mode": "ai_panorama_360",
+        "diorama_preview_relpath": "diorama-preview.png",
         "scene_count": len(scene_ids),
         "property_url_sha256": property_sha256,
         "walkable_scene": {
@@ -32675,6 +32676,9 @@ def _write_test_ai_panorama_bundle(
     browser_path.write_text(
         json.dumps(browser_proof, sort_keys=True),
         encoding="utf-8",
+    )
+    (bundle_dir / "diorama-preview.png").write_bytes(
+        (proof_dir / "browser-dollhouse.png").read_bytes()
     )
 
     walkable_scene = payload["walkable_scene"]
@@ -33226,12 +33230,23 @@ def test_accepted_ai_panorama_route_uses_pinned_first_party_renderer_and_spatial
     assert "acceptance" not in public_walkable
     scene_asset_url = public_walkable["scenes"][0]["image_url"]
     floorplan_asset_url = public_walkable["floorplan_url"]
+    diorama_asset_url = public_payload.json()["diorama_preview_url"]
     assert re.search(r"\?v=[0-9a-f]{64}$", scene_asset_url)
     assert re.search(r"\?v=[0-9a-f]{64}$", floorplan_asset_url)
     scene_asset = client.get(scene_asset_url)
     floorplan_asset = client.get(floorplan_asset_url)
+    diorama_asset = client.get(diorama_asset_url)
     assert scene_asset.status_code == 200
     assert floorplan_asset.status_code == 200
+    assert diorama_asset.status_code == 200
+    assert diorama_asset.content == (
+        bundle_dir / "proof" / "browser-dollhouse.png"
+    ).read_bytes()
+    assert diorama_asset.headers["x-propertyquarry-asset-sha256"] == (
+        hashlib.sha256(diorama_asset.content).hexdigest()
+    )
+    (bundle_dir / "diorama-preview.png").write_bytes(b"tampered diorama")
+    assert client.get(diorama_asset_url).status_code == 404
     assert scene_asset.headers["cache-control"] == "public, max-age=31536000, immutable"
     assert floorplan_asset.headers["cache-control"] == "public, max-age=31536000, immutable"
     assert scene_asset.headers["cross-origin-resource-policy"] == "same-origin"

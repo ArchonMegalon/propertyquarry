@@ -3383,9 +3383,10 @@ def _public_tour_ai_panorama_asset_paths(
     """Return every AI scene ref and the strict contract-rendered subset.
 
     The generic public asset collector intentionally understands several scene
-    aliases.  An AI panorama acceptance receipt, however, validates exactly one
-    panorama per scene plus the shared floorplan.  Keep secondary aliases from
-    becoming an unverified side door to additional bundle files.
+    aliases. An AI panorama acceptance receipt, however, validates exactly one
+    panorama per scene, the shared floorplan, and the browser-proven dollhouse
+    promoted as the diorama preview. Keep secondary aliases from becoming an
+    unverified side door to additional bundle files.
     """
 
     walkable_scene = _public_tour_ai_panorama_scene(payload)
@@ -3406,6 +3407,15 @@ def _public_tour_ai_panorama_asset_paths(
     )
     if floorplan_relpath:
         accepted.add(floorplan_relpath)
+    # The materializer promotes the browser-proven dollhouse screenshot to the
+    # listing's diorama preview. It is safe to publish only when its bytes still
+    # match the digest sealed inside the accepted browser receipt.
+    diorama_preview_relpath = _add(
+        referenced,
+        payload.get("diorama_preview_relpath"),
+    )
+    if diorama_preview_relpath:
+        accepted.add(diorama_preview_relpath)
     raw_scenes = walkable_scene.get("scenes")
     if isinstance(raw_scenes, dict):
         scenes = [value for value in raw_scenes.values() if isinstance(value, dict)]
@@ -3506,6 +3516,40 @@ def _public_tour_ai_panorama_asset_digests(
             ).strip().lower()
             if re.fullmatch(r"[0-9a-f]{64}", floorplan_digest):
                 digests[floorplan_relpath] = floorplan_digest
+    diorama_preview_relpath = _public_tour_safe_asset_relpath(
+        payload.get("diorama_preview_relpath")
+    )
+    browser_receipt_relpath = _public_tour_safe_asset_relpath(
+        acceptance.get("browser_receipt_relpath")
+    )
+    if (
+        bundle_dir is not None
+        and diorama_preview_relpath
+        and browser_receipt_relpath
+    ):
+        root = bundle_dir.resolve()
+        browser_receipt_path = (root / browser_receipt_relpath).resolve()
+        if (
+            root in browser_receipt_path.parents
+            and browser_receipt_path.is_file()
+        ):
+            try:
+                browser_receipt = json.loads(
+                    browser_receipt_path.read_text(encoding="utf-8")
+                )
+            except (OSError, UnicodeError, ValueError):
+                browser_receipt = {}
+            dollhouse = (
+                browser_receipt.get("dollhouse")
+                if isinstance(browser_receipt, dict)
+                and isinstance(browser_receipt.get("dollhouse"), dict)
+                else {}
+            )
+            diorama_digest = str(
+                dollhouse.get("screenshot_sha256")
+            ).strip().lower()
+            if re.fullmatch(r"[0-9a-f]{64}", diorama_digest):
+                digests[diorama_preview_relpath] = diorama_digest
     return digests
 
 
@@ -3584,6 +3628,7 @@ def _public_tour_ai_panorama_contract_cache_fingerprint(
             "slug",
             "publication_status",
             "creation_mode",
+            "diorama_preview_relpath",
             "scene_count",
             "property_url_sha256",
             "walkable_scene",
