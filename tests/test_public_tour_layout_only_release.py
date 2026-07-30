@@ -520,10 +520,11 @@ def test_layout_only_routes_serve_only_verified_public_bytes(
         SLUG,
         _request(f"/tours/{SLUG}/layout-preview"),
     )
-    assert isinstance(root, RedirectResponse)
+    assert root.status_code == 404
+    assert b"This old link no longer opens as a 3D tour." in root.body
     assert isinstance(layout, RedirectResponse)
-    assert root.status_code == layout.status_code == 302
-    assert root.headers["location"] == layout.headers["location"] == viewer_url
+    assert layout.status_code == 302
+    assert layout.headers["location"] == viewer_url
 
     viewer = public_tours.public_tour_generated_reconstruction_preview_asset(
         SLUG,
@@ -1288,8 +1289,10 @@ def test_layout_only_terminal_release_renders_gone_and_provider_control_wins(
         SLUG,
         _request(f"/tours/{SLUG}/layout-preview"),
     )
-    assert root.status_code == layout.status_code == 410
-    assert b"Preview removed" in root.body
+    assert root.status_code == 404
+    assert layout.status_code == 410
+    assert b"This old link no longer opens as a 3D tour." in root.body
+    assert b"Preview removed" in layout.body
 
     payload["generated_viewer_release"]["revoked"] = False
     (bundle / "tour.json").write_text(

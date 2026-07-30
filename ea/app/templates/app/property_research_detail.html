@@ -4139,6 +4139,7 @@
           {% set visible_fact_state = 'queued' if raw_fact_state in ['unknown', 'stale'] and fact_enrichment.get('start_url') else raw_fact_state %}
           {% set field_pending = visible_fact_state in ['queued', 'running'] %}
           {% set field_error = field.get('error') or {} %}
+          {% set field_error_message = field_error.get('message') if field_error is mapping and field_error.get('message') is string else '' %}
           {% set field_provenance = field.get('provenance') or {} %}
           <article
             class="object-row prd-fact-row"
@@ -4156,7 +4157,7 @@
                 {% if visible_fact_state == 'resolved' %}{{ field.get('display_value') or field.get('value') }}{% elif visible_fact_state in ['queued', 'running'] %}Checking distance…{% elif visible_fact_state == 'retryable_error' %}Could not verify yet{% elif visible_fact_state == 'unavailable' %}Not available from current sources{% else %}Not checked yet{% endif %}
               </small>
               <span class="prd-fact-status" data-property-fact-status>
-                {% if visible_fact_state == 'queued' %}Queued{% elif visible_fact_state == 'running' %}Checking map sources{% elif visible_fact_state == 'retryable_error' %}{{ field_error.get('message') or 'The check did not finish. You can retry.' }}{% elif visible_fact_state == 'unavailable' %}{{ field_error.get('message') or 'The current sources could not verify this distance.' }}{% elif visible_fact_state == 'resolved' %}Available{% else %}Waiting to start{% endif %}
+                {% if visible_fact_state == 'queued' %}Queued{% elif visible_fact_state == 'running' %}Checking map sources{% elif visible_fact_state == 'retryable_error' %}{{ field_error_message or 'The check did not finish. You can retry.' }}{% elif visible_fact_state == 'unavailable' %}{{ field_error_message or 'The current sources could not verify this distance.' }}{% elif visible_fact_state == 'resolved' %}Available{% else %}Waiting to start{% endif %}
                 · {% if field.get('priority') == 'required' %}Required for ranking{% else %}Nice to have{% endif %}
               </span>
               <span class="prd-fact-provenance" data-property-fact-provenance{% if visible_fact_state != 'resolved' %} hidden{% endif %}>
@@ -4574,12 +4575,13 @@
   const fieldStatusLabel = (field) => {
     const state = normalizedState(field?.state);
     const error = field?.error && typeof field.error === 'object' ? field.error : {};
+    const errorMessage = typeof error.message === 'string' ? normalizedText(error.message) : '';
     let status = 'Waiting to start';
     if (state === 'queued') status = 'Queued';
     if (state === 'running') status = 'Checking map sources';
     if (state === 'resolved') status = 'Available';
-    if (state === 'retryable_error') status = normalizedText(error.message) || 'The check did not finish. You can retry.';
-    if (state === 'unavailable') status = normalizedText(error.message) || 'The current sources could not verify this distance.';
+    if (state === 'retryable_error') status = errorMessage || 'The check did not finish. You can retry.';
+    if (state === 'unavailable') status = errorMessage || 'The current sources could not verify this distance.';
     return `${status} · ${priorityLabel(field)}`;
   };
   const fieldProvenanceLabel = (field) => {

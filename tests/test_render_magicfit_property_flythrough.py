@@ -4,6 +4,7 @@ import json
 
 from scripts.render_magicfit_property_flythrough import (
     ASPECT_CURRENT_OPTIONS,
+    asset_picker_video_locator,
     extension_output_contract_matches,
     option_label_candidates,
     output_contract_matches,
@@ -13,6 +14,39 @@ from scripts.render_magicfit_property_flythrough import (
     wait_for_submit_ready,
     write_private_state_receipt,
 )
+
+
+def test_native_extend_source_is_scoped_to_visible_asset_picker() -> None:
+    calls: list[tuple[str, str]] = []
+    marker = object()
+
+    class FakeDialog:
+        last = None
+
+        def __init__(self) -> None:
+            self.last = self
+
+        def filter(self, *, has_text: str):
+            calls.append(("filter", has_text))
+            return self
+
+        def locator(self, selector: str):
+            calls.append(("dialog_locator", selector))
+            return marker
+
+    dialog = FakeDialog()
+
+    class FakePage:
+        def locator(self, selector: str):
+            calls.append(("page_locator", selector))
+            return dialog
+
+    assert asset_picker_video_locator(FakePage()) is marker
+    assert calls == [
+        ("page_locator", '[role="dialog"]'),
+        ("filter", "Select Asset"),
+        ("dialog_locator", "video"),
+    ]
 
 
 def test_persist_storage_state_keeps_provider_session_private(tmp_path: Path) -> None:

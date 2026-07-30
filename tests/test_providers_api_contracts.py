@@ -7675,7 +7675,7 @@ def test_public_tour_routes_serve_provider_neutral_responsive_walkthrough_varian
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
     client = _client(principal_id="exec-public-tour-responsive-walkthrough")
 
-    page = client.get(f"/tours/{slug}", headers={"host": "propertyquarry.com"})
+    page = client.get(f"/tours/{slug}", headers={"host": "myexternalbrain.com"})
     assert page.status_code == 200
     mobile_url = f"/tours/files/{slug}/walkthrough-mobile.mp4"
     desktop_url = f"/tours/{slug}/walkthrough"
@@ -10287,6 +10287,55 @@ def test_public_tour_routes_refuse_generated_fallback_tours(
     assert "Request a fresh 3D tour" in page.text
     assert payload.status_code == 404
     assert payload.json()["error"]["code"] == "tour_disabled_fallback"
+
+
+def test_public_tour_routes_refuse_unverified_generated_reconstruction_tours(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("EA_ENABLE_PUBLIC_TOURS", "1")
+    slug = "generated-reconstruction-disabled"
+    bundle_dir = tmp_path / slug
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "diorama-preview.png").write_bytes(b"fake-png-data")
+    (bundle_dir / "tour.json").write_text(
+        json.dumps(
+            {
+                "slug": slug,
+                "title": "Generated reconstruction",
+                "display_title": "Generated reconstruction",
+                "publication_status": "ready",
+                "creation_mode": "generated_reconstruction_tour",
+                "scene_strategy": "generated_reconstruction",
+                "generated_reconstruction": {
+                    "provider": "propertyquarry_generated_reconstruction",
+                    "verified_provider_capture": False,
+                    "satisfies_verified_tour_gate": False,
+                },
+                "scenes": [
+                    {
+                        "name": "Diorama",
+                        "role": "diorama",
+                        "asset_relpath": "diorama-preview.png",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
+
+    client = _client(principal_id="exec-generated-reconstruction-disabled")
+    page = client.get(f"/tours/{slug}", headers={"host": "propertyquarry.com"})
+    payload = client.get(f"/tours/{slug}.json")
+    walkthrough = client.get(f"/tours/{slug}/walkthrough")
+
+    assert page.status_code == 404
+    assert payload.status_code == 404
+    assert payload.json()["error"]["code"] == "tour_disabled_fallback"
+    assert walkthrough.status_code == 404
+    assert walkthrough.json()["error"]["code"] == "tour_disabled_fallback"
 
 
 def test_public_memorial_routes_render_original_voice_without_voice_clone(

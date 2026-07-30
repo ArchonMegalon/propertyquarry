@@ -46,6 +46,44 @@ def test_workspace_and_packet_dashboard_show_commercial_and_page_idea_language(m
     assert "Page ideas" in packets.text
 
 
+def test_agent_workspace_does_not_offer_already_included_premium_steps(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    principal_id = "pq-agent-no-premium-offer"
+    client = property_client_with_workspace(
+        principal_id=principal_id,
+        tmp_path=tmp_path,
+    )
+    client.app.state.container.onboarding.upsert_property_search_preferences(
+        principal_id=principal_id,
+        property_search_preferences_json={
+            "country_code": "AT",
+            "listing_mode": "rent",
+            "property_commercial": {
+                "active_plan_key": "agent",
+                "status": "active",
+                "active_until": "2999-01-01T00:00:00+00:00",
+            },
+        },
+        trusted_commercial_update=True,
+    )
+    install_property_run(
+        monkeypatch,
+        property_url="https://example.com/agent-listing",
+    )
+
+    workspace = client.get(
+        "/app/properties",
+        params={"run_id": "run-phase6"},
+    )
+
+    assert workspace.status_code == 200
+    assert "At a glance" in workspace.text
+    assert "Premium next step" not in workspace.text
+    assert "Open checkout" not in workspace.text
+
+
 def test_packet_dashboard_acknowledges_page_ideas_in_real_browser(
     browser,
     propertyquarry_browser_server: dict[str, object],

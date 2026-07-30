@@ -29,6 +29,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from app.api.dependencies import get_container
+from app.api.propertyquarry_localization import (
+    normalize_propertyquarry_locale,
+    resolve_propertyquarry_locale,
+)
 from app.container import AppContainer
 from app.api.routes.landing import _anonymous_onboarding_status, _public_context, templates as public_templates
 from app.api.routes.public_tour_payloads import (
@@ -1676,16 +1680,44 @@ def _tour_payload_is_disabled_fallback(payload: dict[str, object]) -> bool:
     scene_strategy = str(normalized.get("scene_strategy") or "").strip().lower()
     creation_mode = str(normalized.get("creation_mode") or "").strip().lower()
     control_mode = str(normalized.get("control_mode") or "").strip().lower()
+    generated_reconstruction = (
+        dict(normalized.get("generated_reconstruction") or {})
+        if isinstance(normalized.get("generated_reconstruction"), dict)
+        else {}
+    )
     if scene_strategy in {"generated_listing_summary", "photo_gallery_hosted", "floorplan_hosted", "pure_360_cube"}:
         return True
-    if creation_mode == "hosted_listing_fallback":
+    if scene_strategy == "generated_reconstruction":
+        return True
+    if creation_mode in {"hosted_listing_fallback", "generated_reconstruction_tour"}:
         return True
     if control_mode in {"walkable_3d", "internal_walkable_3d"}:
+        return True
+    if generated_reconstruction.get("satisfies_verified_tour_gate") is False:
         return True
     scenes = [dict(row) for row in (normalized.get("scenes") or []) if isinstance(row, dict)]
     if any(str(scene.get("role") or "").strip() == "generated_overview" for scene in scenes):
         return True
     return False
+
+
+def _public_tour_request_locale(request: Request | None) -> str:
+    if request is None:
+        return "en"
+    decision = resolve_propertyquarry_locale(
+        query_string=request.scope.get("query_string") or b"",
+        headers=request.scope.get("headers") or (),
+    )
+    return str(decision.locale or "en")
+
+
+def _public_tour_redirect_with_explicit_locale(path: str, request: Request) -> str:
+    raw_locale = str(request.query_params.get("lang") or "").strip()
+    locale = normalize_propertyquarry_locale(raw_locale)
+    if locale is None:
+        return path
+    separator = "&" if "?" in path else "?"
+    return f"{path}{separator}{urllib.parse.urlencode({'lang': locale})}"
 
 
 def _public_tour_rate_limit_dir() -> Path | None:
@@ -8672,9 +8704,13 @@ def public_tour_generated_layout_preview(slug: str, request: Request) -> HTMLRes
         payload = _load_tour_with_private_receipt(slug)
         _require_public_tour_viewable(payload)
         generated_reconstruction_only = _public_tour_is_generated_reconstruction_only(payload)
-        if _tour_payload_is_disabled_fallback(payload) and not generated_reconstruction_only:
-            raise HTTPException(status_code=404, detail="tour_disabled_fallback")
         primary_control_path = _public_tour_primary_control_path(payload)
+        if (
+            _tour_payload_is_disabled_fallback(payload)
+            and not generated_reconstruction_only
+            and not primary_control_path
+        ):
+            raise HTTPException(status_code=404, detail="tour_disabled_fallback")
         if primary_control_path:
             return RedirectResponse(
                 primary_control_path,
@@ -8763,6 +8799,7 @@ def _tour_control_html(
     viewer_mode: str = "",
     fullscreen: bool = False,
     nonce: str = "",
+    locale: str = "en",
 ) -> str:
     control_nonce = _public_tour_normalized_nonce(nonce) or _public_tour_csp_nonce()
     if fullscreen:
@@ -8797,6 +8834,7 @@ def _tour_control_html(
                 provider_label="PropertyQuarry AI 360",
                 viewer_name="propertyquarry-ai-panorama",
                 nonce=control_nonce,
+                locale=locale,
             )
         raise HTTPException(status_code=404, detail="tour_control_provider_export_missing")
     if str(payload.get("scene_strategy") or "").strip() == "pure_360_cube":
@@ -11733,6 +11771,7 @@ def _tour_control_panorama_html(
     provider_label: str,
     viewer_name: str,
     nonce: str,
+    locale: str = "en",
 ) -> str:
     nonce_attr = html.escape(_public_tour_normalized_nonce(nonce) or _public_tour_csp_nonce(), quote=True)
     title = html.escape(str(payload.get("display_title") or payload.get("title") or "360 tour").strip())
@@ -12494,7 +12533,7 @@ def _tour_control_panorama_html(
   </body>
 </html>"""
     disclosure_html = f" · {disclosure}" if disclosure else ""
-    return (
+    rendered = (
         document.replace("__PQ_NONCE__", nonce_attr)
         .replace("__PQ_TITLE__", title)
         .replace("__PQ_PROVIDER__", safe_provider_label)
@@ -12503,6 +12542,150 @@ def _tour_control_panorama_html(
         .replace("__PQ_THREE_MODULE__", _PUBLIC_TOUR_THREE_MODULE_PATH)
         .replace("__PQ_DATA__", data_json)
     )
+    normalized_locale = normalize_propertyquarry_locale(locale) or "en"
+    if normalized_locale == "en":
+        return rendered
+    copy = {
+        "de-AT": {
+            "dollhouse": "3D-Modell",
+            "tour": "Tour",
+            "map": "Karte",
+            "open_dollhouse": "3D-Modell öffnen",
+            "return_tour": "Zur Panorama-Tour zurückkehren",
+            "interactive_dollhouse": "Interaktives ungefähres 3D-Modell",
+            "interactive_view": "Interaktive 360-Grad-Ansicht der Immobilie",
+            "navigation_hotspots": "Navigationspunkte",
+            "dollhouse_navigation": "Raumnavigation im 3D-Modell",
+            "open_floorplan": "Grundriss öffnen",
+            "close_floorplan": "Grundriss schließen",
+            "fullscreen": "Vollbild öffnen",
+            "zoom_controls": "Zoom-Steuerung",
+            "zoom_in": "Vergrößern",
+            "zoom_out": "Verkleinern",
+            "tour_spaces": "Räume der Tour",
+            "floorplan": "Grundriss der Immobilie",
+            "dollhouse_note": "KI-Modell im Maßstab des Grundrisses · ungefähr, nicht vermessen",
+            "loading": "360°-Ansicht wird geladen…",
+            "load_error": "Dieses Panorama konnte nicht geladen werden.",
+            "overview": "3D-Modell im Überblick",
+            "opened": "Ungefähres 3D-Modell geöffnet",
+            "now_viewing": "Aktuelle Ansicht",
+            "space": "Raum",
+            "continue": "Weiter",
+            "unavailable": "Für diesen Raum ist kein Quellpanorama verfügbar.",
+        },
+        "de-DE": {
+            "dollhouse": "3D-Modell",
+            "tour": "Tour",
+            "map": "Karte",
+            "open_dollhouse": "3D-Modell öffnen",
+            "return_tour": "Zur Panorama-Tour zurückkehren",
+            "interactive_dollhouse": "Interaktives ungefähres 3D-Modell",
+            "interactive_view": "Interaktive 360-Grad-Ansicht der Immobilie",
+            "navigation_hotspots": "Navigationspunkte",
+            "dollhouse_navigation": "Raumnavigation im 3D-Modell",
+            "open_floorplan": "Grundriss öffnen",
+            "close_floorplan": "Grundriss schließen",
+            "fullscreen": "Vollbild öffnen",
+            "zoom_controls": "Zoom-Steuerung",
+            "zoom_in": "Vergrößern",
+            "zoom_out": "Verkleinern",
+            "tour_spaces": "Räume der Tour",
+            "floorplan": "Grundriss der Immobilie",
+            "dollhouse_note": "KI-Modell im Maßstab des Grundrisses · ungefähr, nicht vermessen",
+            "loading": "360°-Ansicht wird geladen…",
+            "load_error": "Dieses Panorama konnte nicht geladen werden.",
+            "overview": "3D-Modell im Überblick",
+            "opened": "Ungefähres 3D-Modell geöffnet",
+            "now_viewing": "Aktuelle Ansicht",
+            "space": "Raum",
+            "continue": "Weiter",
+            "unavailable": "Für diesen Raum ist kein Quellpanorama verfügbar.",
+        },
+        "es-CR": {
+            "dollhouse": "Modelo 3D",
+            "tour": "Recorrido",
+            "map": "Mapa",
+            "open_dollhouse": "Abrir modelo 3D",
+            "return_tour": "Volver al recorrido panorámico",
+            "interactive_dollhouse": "Modelo 3D aproximado interactivo",
+            "interactive_view": "Vista interactiva de 360 grados de la propiedad",
+            "navigation_hotspots": "Puntos de navegación",
+            "dollhouse_navigation": "Navegación por habitaciones del modelo 3D",
+            "open_floorplan": "Abrir plano",
+            "close_floorplan": "Cerrar plano",
+            "fullscreen": "Abrir pantalla completa",
+            "zoom_controls": "Controles de acercamiento",
+            "zoom_in": "Acercar",
+            "zoom_out": "Alejar",
+            "tour_spaces": "Espacios del recorrido",
+            "floorplan": "Plano de la propiedad",
+            "dollhouse_note": "Modelo de IA a escala del plano · aproximado, no medido",
+            "loading": "Cargando vista de 360°…",
+            "load_error": "No se pudo cargar este panorama.",
+            "overview": "Vista general del modelo 3D",
+            "opened": "Modelo 3D aproximado abierto",
+            "now_viewing": "Vista actual",
+            "space": "espacio",
+            "continue": "Continuar",
+            "unavailable": "No hay un panorama de origen disponible para este espacio.",
+        },
+    }[normalized_locale]
+    replacements = (
+        ('<html lang="en">', f'<html lang="{normalized_locale}">'),
+        ('aria-label="Interactive 360 degree property view"', f'aria-label="{copy["interactive_view"]}"'),
+        ('aria-label="Navigation hotspots"', f'aria-label="{copy["navigation_hotspots"]}"'),
+        ('aria-label="Dollhouse room navigation"', f'aria-label="{copy["dollhouse_navigation"]}"'),
+        ('aria-label="Open 3D dollhouse"', f'aria-label="{copy["open_dollhouse"]}"'),
+        ('>Dollhouse</button>', f'>{copy["dollhouse"]}</button>'),
+        ('aria-label="Open floor plan"', f'aria-label="{copy["open_floorplan"]}"'),
+        ('>Map</button>', f'>{copy["map"]}</button>'),
+        ('aria-label="Enter full screen"', f'aria-label="{copy["fullscreen"]}"'),
+        ('aria-label="View zoom controls"', f'aria-label="{copy["zoom_controls"]}"'),
+        ('aria-label="Zoom in"', f'aria-label="{copy["zoom_in"]}"'),
+        ('aria-label="Zoom out"', f'aria-label="{copy["zoom_out"]}"'),
+        ('aria-label="Tour spaces"', f'aria-label="{copy["tour_spaces"]}"'),
+        ('alt="Property floor plan"', f'alt="{copy["floorplan"]}"'),
+        (
+            "Floorplan-scaled AI model · approximate, not measured",
+            copy["dollhouse_note"],
+        ),
+        ("Loading 360° view…", copy["loading"]),
+        ("This panorama could not be loaded.", copy["load_error"]),
+        ("No source panorama is available for this space.", copy["unavailable"]),
+        (
+            "dollhouseToggle.textContent = inDollhouse ? 'Tour' : 'Dollhouse';",
+            f"dollhouseToggle.textContent = inDollhouse ? '{copy['tour']}' : '{copy['dollhouse']}';",
+        ),
+        (
+            "dollhouseToggle.setAttribute('aria-label', inDollhouse ? 'Return to panorama tour' : 'Open 3D dollhouse');",
+            f"dollhouseToggle.setAttribute('aria-label', inDollhouse ? '{copy['return_tour']}' : '{copy['open_dollhouse']}');",
+        ),
+        (
+            "viewer.setAttribute('aria-label', inDollhouse ? 'Interactive approximate 3D dollhouse' : 'Interactive 360 degree property view');",
+            f"viewer.setAttribute('aria-label', inDollhouse ? '{copy['interactive_dollhouse']}' : '{copy['interactive_view']}');",
+        ),
+        (
+            "sceneTitle.textContent = 'Dollhouse overview';",
+            f"sceneTitle.textContent = '{copy['overview']}';",
+        ),
+        (
+            "announcer.textContent = 'Approximate 3D dollhouse opened';",
+            f"announcer.textContent = '{copy['opened']}';",
+        ),
+        (
+            "announcer.textContent = `Now viewing ${activeNode.label || 'space'}`;",
+            f"announcer.textContent = `{copy['now_viewing']}: ${{activeNode.label || '{copy['space']}'}}`;",
+        ),
+        ("hotspot.label || 'Continue'", f"hotspot.label || '{copy['continue']}'"),
+        (
+            "mapToggle.setAttribute('aria-label', expanded ? 'Close floor plan' : 'Open floor plan');",
+            f"mapToggle.setAttribute('aria-label', expanded ? '{copy['close_floorplan']}' : '{copy['open_floorplan']}');",
+        ),
+    )
+    for source, target in replacements:
+        rendered = rendered.replace(source, target)
+    return rendered
 
 
 def _tour_control_walkable_html(
@@ -12512,6 +12695,7 @@ def _tour_control_walkable_html(
     license_config: dict[str, str] | None = None,
     viewer_name: str = "",
     nonce: str = "",
+    locale: str = "en",
 ) -> str:
     nonce_attr = html.escape(_public_tour_normalized_nonce(nonce) or _public_tour_csp_nonce(), quote=True)
     title = html.escape(str(payload.get("display_title") or payload.get("title") or "3D walk control").strip())
@@ -12527,6 +12711,7 @@ def _tour_control_walkable_html(
             provider_label=provider_label,
             viewer_name=viewer_name,
             nonce=nonce,
+            locale=locale,
         )
     public_walkable_scene = dict(walkable_scene)
     if "walkthrough_scene_images" not in public_walkable_scene and isinstance(public_walkable_scene.get("magicfit_scene_images"), list):
@@ -12704,12 +12889,15 @@ def public_tour_page(
         payload = _load_tour_with_private_receipt(slug)
         _require_public_tour_viewable(payload)
         generated_reconstruction_only = _public_tour_is_generated_reconstruction_only(payload)
-        if _tour_payload_is_disabled_fallback(payload) and not generated_reconstruction_only:
-            raise HTTPException(status_code=404, detail="tour_disabled_fallback")
         primary_control_path = _public_tour_primary_control_path(payload)
+        if _tour_payload_is_disabled_fallback(payload) and not primary_control_path:
+            raise HTTPException(status_code=404, detail="tour_disabled_fallback")
         if primary_control_path and not _public_tour_request_prefers_embedded_media(request):
             return RedirectResponse(
-                primary_control_path,
+                _public_tour_redirect_with_explicit_locale(
+                    primary_control_path,
+                    request,
+                ),
                 status_code=302,
                 headers=_public_tour_security_headers(),
             )
@@ -12933,6 +13121,7 @@ def public_tour_control(slug: str, request: Request) -> HTMLResponse:
         ),
         fullscreen=fullscreen,
         nonce=nonce,
+        locale=_public_tour_request_locale(request),
     )
     return HTMLResponse(
         html_body,

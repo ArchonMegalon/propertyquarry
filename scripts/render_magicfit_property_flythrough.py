@@ -596,6 +596,16 @@ def select_generator_mode(page, mode: str, *, attempts: int = 3) -> None:
     raise RuntimeError(f"magicfit_generator_mode_unavailable:{normalized_mode}")
 
 
+def asset_picker_video_locator(page):
+    """Return only provider assets inside the active picker, never background tiles."""
+
+    return (
+        page.locator('[role="dialog"]')
+        .filter(has_text="Select Asset")
+        .last.locator("video")
+    )
+
+
 def maybe_login(page, *, storage_state_path: Path | None = None) -> None:
     print("magicfit: open home", flush=True)
     body = ""
@@ -1013,8 +1023,9 @@ def select_extend_library_video(
         raise RuntimeError("magicfit_library_assets_unavailable")
     matched_index = -1
     while time.time() < deadline:
+        asset_videos = asset_picker_video_locator(page)
         matched_index = int(
-            page.locator("video").evaluate_all(
+            asset_videos.evaluate_all(
                 """(nodes, path) => nodes.findIndex(node => {
                     try {
                         return new URL(node.currentSrc || node.src || '', window.location.href).pathname === path;
@@ -1031,7 +1042,7 @@ def select_extend_library_video(
     if matched_index < 0:
         raise RuntimeError(f"magicfit_library_video_not_found:{target_path}")
 
-    selected = page.locator("video").nth(matched_index)
+    selected = asset_picker_video_locator(page).nth(matched_index)
     selected.evaluate(
         """node => {
             node.scrollIntoView({ block: 'center', inline: 'nearest' });
@@ -1241,7 +1252,10 @@ def _run_unlocked() -> int:
                 select_generator_mode(page, "extend" if native_extend_requested else "video")
                 if native_extend_requested:
                     print("magicfit: select native extend source", flush=True)
-                    source_selection = select_extend_library_video(page, native_extend_url)
+                    source_selection = select_extend_library_video(
+                        page,
+                        native_extend_url,
+                    )
             write_debug_snapshot(page, poll_count=0, label="generator-open")
             baseline = set(list(collect_visible_video_urls(page))[:1_000])
             print(f"magicfit: baseline urls={len(baseline)}", flush=True)

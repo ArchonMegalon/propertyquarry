@@ -32994,6 +32994,12 @@ def test_accepted_ai_panorama_route_uses_pinned_first_party_renderer_and_spatial
 
     client = build_product_client(principal_id="public-tour-ai-panorama-release")
     control = client.get(f"/tours/{slug}/control")
+    german_control = client.get(f"/tours/{slug}/control?lang=de-AT")
+    spanish_control = client.get(f"/tours/{slug}/control?lang=es-CR")
+    localized_entry = client.get(
+        f"/tours/{slug}?lang=de-AT",
+        follow_redirects=False,
+    )
     public_payload = client.get(f"/tours/{slug}.json")
     renderer = client.get("/tours/runtime/three-0.167.1.module.js")
 
@@ -33007,6 +33013,20 @@ def test_accepted_ai_panorama_route_uses_pinned_first_party_renderer_and_spatial
     assert "dollhouseRaycaster.intersectObjects" in control.text
     assert "addDollhouseWall" in control.text
     assert str(walkable_scene["representation_disclosure"]) in control.text
+    assert german_control.status_code == 200, german_control.text
+    assert '<html lang="de-AT">' in german_control.text
+    assert ">3D-Modell</button>" in german_control.text
+    assert ">Karte</button>" in german_control.text
+    assert "Grundriss schließen" in german_control.text
+    assert spanish_control.status_code == 200, spanish_control.text
+    assert '<html lang="es-CR">' in spanish_control.text
+    assert ">Modelo 3D</button>" in spanish_control.text
+    assert ">Mapa</button>" in spanish_control.text
+    assert "Cerrar plano" in spanish_control.text
+    assert localized_entry.status_code == 302
+    assert localized_entry.headers["location"] == (
+        f"/tours/{slug}/control?lang=de-AT"
+    )
     control_csp = control.headers["content-security-policy"]
     assert "frame-src 'none'" in control_csp
     assert "img-src 'self' data: blob:" in control_csp

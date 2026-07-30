@@ -1104,10 +1104,10 @@
     };
     const briefPreferences = (data.brief_preferences && typeof data.brief_preferences === 'object') ? { ...data.brief_preferences } : {};
     const currentPlanKey = () => String(
-      data?.run?.summary?.current_plan_key
+      meta?.commercial?.current_plan_key
+      || data?.run?.summary?.current_plan_key
       || data?.brief?.plan_key
       || data?.run?.brief?.plan_key
-      || meta?.commercial?.current_plan_key
       || meta?.run?.summary?.current_plan_key
       || meta?.brief?.plan_key
       || meta?.run?.brief?.plan_key

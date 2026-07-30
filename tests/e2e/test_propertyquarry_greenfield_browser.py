@@ -2565,7 +2565,7 @@ def _property_fact_browser_field(
     state: str,
     priority: str,
     value: int | None = None,
-    error_message: str = "",
+    error_message: object = "",
 ) -> dict[str, object]:
     resolved = state == "resolved" and value is not None
     return {
@@ -2607,7 +2607,7 @@ def _property_fact_browser_fields(
     state: str,
     required: bool,
     resolved: bool = False,
-    error_message: str = "",
+    error_message: object = "",
 ) -> list[dict[str, object]]:
     priorities = {
         "nearest_supermarket_m": "required" if required else "lazy",
@@ -3120,7 +3120,7 @@ def test_propertyquarry_lazy_distance_error_retries_without_blocking_provisional
                 fields=_property_fact_browser_fields(
                     state="queued" if retrying else "retryable_error",
                     required=False,
-                    error_message="Map sources timed out. Try again." if not retrying else "",
+                    error_message={"code": "overpass_timeout"} if not retrying else "",
                 ),
                 score_state="provisional",
                 previous_score=72,
@@ -3161,7 +3161,10 @@ def test_propertyquarry_lazy_distance_error_retries_without_blocking_provisional
         retry = supermarket.locator("[data-property-fact-retry]")
 
         expect(supermarket).to_have_attribute("data-property-fact-state", "retryable_error")
-        expect(supermarket.locator("[data-property-fact-status]")).to_contain_text("Map sources timed out")
+        expect(supermarket.locator("[data-property-fact-status]")).to_contain_text(
+            "The check did not finish. You can retry."
+        )
+        expect(root).not_to_contain_text("[object Object]")
         expect(retry).to_be_visible()
         expect(retry).to_have_attribute("aria-label", "Retry Supermarket distance")
         expect(score).to_have_attribute("data-score-state", "provisional")

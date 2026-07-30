@@ -18,6 +18,8 @@
     {%- endif -%}
   {%- endmacro %}
   {% set is_shortlist_surface = surface_mode == 'shortlist' %}
+  {% set current_property_plan_key = (commercial.get('current_plan_key') or (run.get('summary') or {}).get('current_plan_key') or brief.get('plan_key') or 'free')|string|trim|lower|replace('-', '_')|replace(' ', '_') %}
+  {% set agent_property_plan_keys = ['agent', 'agency', 'agency_tier', 'agency_lifetime', 'agency_tier_lifetime', 'agent_lifetime', 'agent_tier_lifetime'] %}
   {% set review_query_suffix = ('?run_id=' ~ ((run_payload.get('run_id') or '')|urlencode)) if run_payload.get('run_id') else '' %}
   <template data-pw-shortlist-empty-state-template>
     <div class="pqx-empty pqx-results-empty-state" data-pw-shortlist-empty-state hidden>
@@ -228,7 +230,7 @@
         </div>
       </div>
     </section>
-    {% if selected.get('candidate_ref') or selected.get('packet_url') or selected.get('property_url') or selected.get('source_url') %}
+    {% if (selected.get('candidate_ref') or selected.get('packet_url') or selected.get('property_url') or selected.get('source_url')) and current_property_plan_key not in agent_property_plan_keys %}
     {% set pricing_return_to = ('/app/properties' ~ review_query_suffix)|urlencode %}
     {% set selected_offer_title = selected.get('title') or 'this home' %}
     <section class="pqx-card pqx-decision-wizard" data-pqx-premium-next-step>
