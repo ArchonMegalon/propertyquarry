@@ -6,6 +6,7 @@ import json
 import math
 import os
 import pwd
+import stat
 import struct
 import subprocess
 import sys
@@ -4126,6 +4127,47 @@ def test_generated_reconstruction_runtime_sync_timeout_returns_receipt(
     assert receipt["container"] == "propertyquarry-api"
     assert receipt["recovery"] == {"state": "not_committed", "cleanup": "complete"}
     assert len(calls) == 2
+
+
+def test_generated_reconstruction_runtime_publish_manifest_split_is_private_and_atomic(
+    tmp_path: Path,
+) -> None:
+    bundle_dir = tmp_path / "tour"
+    bundle_dir.mkdir()
+    public_payload = {
+        "slug": "tour",
+        "video_relpath": "generated-reconstruction/generated-walkthrough.mp4",
+        "video_sidecar_relpath": "generated-reconstruction/generated-walkthrough.quality.json",
+        "video_source": "propertyquarry_generated_reconstruction",
+        "video_provider": "propertyquarry_generated_reconstruction",
+        "video_provider_key": "propertyquarry_generated_reconstruction",
+        "video_render_provider": "propertyquarry_generated_reconstruction",
+        "video_coverage_proof": "boundary_verified_frame_continuation",
+    }
+    private_payload = {"principal_id": "owner-1"}
+    (bundle_dir / "tour.json").write_text(json.dumps(public_payload), encoding="utf-8")
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(private_payload),
+        encoding="utf-8",
+    )
+
+    reconstruction_script._prepare_runtime_publish_manifests(bundle_dir)
+
+    public_result = json.loads((bundle_dir / "tour.json").read_text(encoding="utf-8"))
+    private_result = json.loads(
+        (bundle_dir / "tour.private.json").read_text(encoding="utf-8")
+    )
+    assert public_result == {
+        "slug": "tour",
+        "video_relpath": "generated-reconstruction/generated-walkthrough.mp4",
+        "video_sidecar_relpath": "generated-reconstruction/generated-walkthrough.quality.json",
+        "video_source": "propertyquarry_generated_reconstruction",
+    }
+    assert private_result["principal_id"] == "owner-1"
+    for key in reconstruction_script._RUNTIME_PRIVATE_VIDEO_KEYS:
+        assert private_result[key] == public_payload[key]
+    assert stat.S_IMODE((bundle_dir / "tour.json").stat().st_mode) == 0o644
+    assert stat.S_IMODE((bundle_dir / "tour.private.json").stat().st_mode) == 0o600
 
 
 def test_generated_reconstruction_runtime_sync_normalizes_private_bundle_for_api_user(

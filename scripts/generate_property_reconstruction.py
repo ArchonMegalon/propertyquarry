@@ -4579,6 +4579,80 @@ def _runtime_publish_succeeded(receipt: dict[str, object]) -> bool:
     }
 
 
+_RUNTIME_PRIVATE_VIDEO_KEYS = (
+    "video_provider",
+    "video_provider_key",
+    "video_render_provider",
+    "video_coverage_proof",
+)
+
+
+def _write_runtime_manifest_atomic(path: Path, payload: dict[str, object], *, mode: int) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "w", encoding="utf-8", closefd=True) as handle:
+            descriptor = -1
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        directory_descriptor = os.open(
+            path.parent,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary_path.unlink(missing_ok=True)
+
+
+def _prepare_runtime_publish_manifests(bundle_dir: Path) -> None:
+    """Split owner-only render provenance before a standalone runtime sync."""
+
+    if bundle_dir.is_symlink() or not bundle_dir.is_dir():
+        raise _PublicBundleTransactionError("runtime_publish_bundle_invalid")
+    public_path = bundle_dir / "tour.json"
+    private_path = bundle_dir / "tour.private.json"
+    for manifest_path in (public_path, private_path):
+        try:
+            details = manifest_path.lstat()
+        except OSError as exc:
+            raise _PublicBundleTransactionError(
+                "runtime_publish_manifest_invalid"
+            ) from exc
+        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+            raise _PublicBundleTransactionError("runtime_publish_manifest_invalid")
+    try:
+        public_payload = json.loads(public_path.read_text(encoding="utf-8"))
+        private_payload = json.loads(private_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise _PublicBundleTransactionError(
+            "runtime_publish_manifest_invalid"
+        ) from exc
+    if not isinstance(public_payload, dict) or not isinstance(private_payload, dict):
+        raise _PublicBundleTransactionError("runtime_publish_manifest_invalid")
+    for key in _RUNTIME_PRIVATE_VIDEO_KEYS:
+        value = public_payload.pop(key, None)
+        if value not in (None, ""):
+            private_payload[key] = value
+    _write_runtime_manifest_atomic(private_path, private_payload, mode=0o600)
+    _write_runtime_manifest_atomic(public_path, public_payload, mode=0o644)
+
+
 def _runtime_publish_token(slug: str) -> str:
     del slug
     return secrets.token_hex(16)
@@ -12198,6 +12272,7 @@ def main(argv: list[str] | None = None) -> int:
             postcommit_error_class = ""
             try:
                 if deferred_runtime_publish:
+                    _prepare_runtime_publish_manifests(live_bundle_dir)
                     runtime_publish = _sync_bundle_to_runtime_container(
                         live_bundle_dir,
                         slug=slug,
