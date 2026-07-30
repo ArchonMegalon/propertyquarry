@@ -253,6 +253,7 @@ def test_all_catalog_styles_bind_exact_palette_instances_and_viewer_scene(style_
         not in viewer_html
     )
     assert "map: null" in viewer_html
+    assert "const wallMaterial = new THREE.MeshPhysicalMaterial({" in viewer_html
     assert "minimumStyledCoveragePct = activeViewMode === \"room\" ? 5.0 : 3.0" in viewer_html
     for cue in EXPECTED_CUES[style_id]:
         assert f'"cue": "{cue}"' in viewer_html

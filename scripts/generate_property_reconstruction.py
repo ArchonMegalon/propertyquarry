@@ -8116,7 +8116,7 @@ if (floorplanReferenceButton) {{
 }}
 setFloorplanLayer(false);
 
-const wallMaterial = new THREE.MeshStandardMaterial({{
+const wallMaterial = new THREE.MeshPhysicalMaterial({{
   color: styleColor("wall", "#f4efe4"),
   roughness: 0.88,
   metalness: 0.02,
