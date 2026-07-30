@@ -754,6 +754,7 @@ def evaluate_network_blockers(
     origin: str,
     ignored_http_urls: Iterable[str] = (),
     ignored_console_patterns: Iterable[str] = (),
+    allow_recovered_tour_images: bool = False,
 ) -> dict[str, object]:
     ignored = {str(value) for value in ignored_http_urls}
     ignored_console = {
@@ -761,6 +762,42 @@ def evaluate_network_blockers(
         for value in ignored_console_patterns
         if str(value or "").strip()
     }
+
+    def canonical_tour_image_url(value: object) -> str:
+        raw = str(value or "")
+        try:
+            parsed = urllib.parse.urlsplit(raw)
+            query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            normalized_query = urllib.parse.urlencode(
+                [
+                    (key, item)
+                    for key, item in query
+                    if key != "pq_asset_retry"
+                ]
+            )
+            return urllib.parse.urlunsplit(
+                (
+                    parsed.scheme,
+                    parsed.netloc,
+                    parsed.path,
+                    normalized_query,
+                    parsed.fragment,
+                )
+            )
+        except (TypeError, ValueError):
+            return raw
+
+    recovered_tour_image_urls = {
+        canonical_tour_image_url(row.get("url"))
+        for row in journal.responses
+        if (
+            allow_recovered_tour_images
+            and str(row.get("resource_type") or "").lower() == "image"
+            and 100 <= int(row.get("status") or 0) < 400
+            and "pq_asset_retry=" in str(row.get("url") or "")
+        )
+    }
+    recovered_tour_image_failure_count = 0
     console = [
         row
         for row in journal.console_messages
@@ -803,8 +840,30 @@ def evaluate_network_blockers(
         resource_type = str(row.get("resource_type") or "")
         if status_code < 400 or url in ignored:
             continue
+        if (
+            allow_recovered_tour_images
+            and status_code in {502, 503, 504}
+            and resource_type.lower() == "image"
+            and canonical_tour_image_url(url) in recovered_tour_image_urls
+        ):
+            recovered_tour_image_failure_count += 1
+            continue
         if url.startswith(origin) or resource_type in CRITICAL_RESOURCE_TYPES:
             bad_http.append(row)
+    recovered_console_allowances = recovered_tour_image_failure_count
+    remaining_console: list[dict[str, object]] = []
+    for row in console:
+        text = str(row.get("text") or "").lower()
+        recovered_transient_console = (
+            recovered_console_allowances > 0
+            and "failed to load resource" in text
+            and any(marker in text for marker in ("502", "503", "504"))
+        )
+        if recovered_transient_console:
+            recovered_console_allowances -= 1
+            continue
+        remaining_console.append(row)
+    console = remaining_console
     page_errors = list(journal.page_errors)
 
     def digests(rows: Iterable[object]) -> list[str]:
@@ -816,6 +875,7 @@ def evaluate_network_blockers(
         "page_error_count": len(page_errors),
         "request_failure_count": len(request_failures),
         "bad_http_count": len(bad_http),
+        "recovered_tour_image_failure_count": recovered_tour_image_failure_count,
         "console_digests": digests(console),
         "page_error_digests": digests(page_errors),
         "request_failure_digests": digests(request_failures),
@@ -1723,13 +1783,61 @@ def _exercise_three_d_cutaway_checkpoint(
                 "planning preview",
             )
         )
-        network = evaluate_network_blockers(journal, origin=config.origin)
+        page.wait_for_function(
+            """() => !Array.from(document.images).some(
+              (image) => image.getAttribute('data-pq-asset-status') === 'retrying'
+            )""",
+            timeout=config.browser_timeout_ms,
+        )
+        asset_health = dict(
+            page.evaluate(
+                """() => {
+                  const images = Array.from(document.images).filter((image) => {
+                    try {
+                      return new URL(image.src, location.href).pathname.startsWith('/tours/files/');
+                    } catch (_error) {
+                      return false;
+                    }
+                  });
+                  const recovered = images.filter(
+                    (image) => image.getAttribute('data-pq-asset-status') === 'recovered'
+                  );
+                  const unavailable = images.filter(
+                    (image) => image.getAttribute('data-pq-asset-status') === 'unavailable'
+                  );
+                  const broken = images.filter(
+                    (image) => image.complete && image.naturalWidth === 0
+                  );
+                  return {
+                    image_count: images.length,
+                    recovered_count: recovered.length,
+                    unavailable_count: unavailable.length,
+                    broken_count: broken.length,
+                  };
+                }"""
+            )
+            or {}
+        )
+        asset_health_ok = bool(
+            int(asset_health.get("image_count") or 0) > 0
+            and int(asset_health.get("unavailable_count") or 0) == 0
+            and int(asset_health.get("broken_count") or 0) == 0
+        )
+        network = evaluate_network_blockers(
+            journal,
+            origin=config.origin,
+            allow_recovered_tour_images=bool(
+                int(asset_health.get("recovered_count") or 0) > 0
+                and asset_health_ok
+            ),
+        )
         route_ok = bool(
             response
             and response.ok
             and viewer_hook
             and cutaway_hook
             and truthful_disclosure
+            and asset_health_ok
             and network["ok"]
         )
         checks.append(
@@ -1741,6 +1849,10 @@ def _exercise_three_d_cutaway_checkpoint(
                 viewer_hook=viewer_hook,
                 cutaway_hook=cutaway_hook,
                 truthful_disclosure=truthful_disclosure,
+                asset_health_ok=asset_health_ok,
+                recovered_asset_count=int(asset_health.get("recovered_count") or 0),
+                unavailable_asset_count=int(asset_health.get("unavailable_count") or 0),
+                broken_asset_count=int(asset_health.get("broken_count") or 0),
             )
         )
         screenshot = _capture_screenshot(
@@ -1757,6 +1869,7 @@ def _exercise_three_d_cutaway_checkpoint(
             "viewer_hook": viewer_hook,
             "cutaway_hook": cutaway_hook,
             "truthful_disclosure": truthful_disclosure,
+            "asset_health": asset_health,
             "composed_checkpoint": composed,
             "network": network,
             "screenshot": screenshot,

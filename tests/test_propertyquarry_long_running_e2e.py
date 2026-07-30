@@ -426,6 +426,124 @@ def test_network_blockers_only_ignore_declared_expected_console_error() -> None:
     )["ok"] is True
 
 
+def test_network_blockers_accept_only_successfully_recovered_tour_images() -> None:
+    journal = gate.NetworkJournal.empty()
+    original_url = (
+        "https://propertyquarry.com/tours/files/urban-jungle/"
+        "generated-reconstruction/photo-04.jpg"
+    )
+    journal.responses.extend(
+        [
+            {
+                "url": original_url,
+                "resource_type": "image",
+                "status": 503,
+            },
+            {
+                "url": original_url + "?pq_asset_retry=1",
+                "resource_type": "image",
+                "status": 200,
+            },
+        ]
+    )
+    journal.console_messages.append(
+        {
+            "type": "error",
+            "text": (
+                "Failed to load resource: the server responded with a status "
+                "of 503 (Service Unavailable)"
+            ),
+        }
+    )
+
+    strict = gate.evaluate_network_blockers(
+        journal,
+        origin=gate.PRODUCTION_ORIGIN,
+    )
+    recovered = gate.evaluate_network_blockers(
+        journal,
+        origin=gate.PRODUCTION_ORIGIN,
+        allow_recovered_tour_images=True,
+    )
+
+    assert strict["ok"] is False
+    assert recovered["ok"] is True
+    assert recovered["recovered_tour_image_failure_count"] == 1
+
+
+def test_network_blockers_reject_failed_tour_image_without_successful_retry() -> None:
+    journal = gate.NetworkJournal.empty()
+    journal.responses.append(
+        {
+            "url": (
+                "https://propertyquarry.com/tours/files/urban-jungle/"
+                "generated-reconstruction/photo-04.jpg"
+            ),
+            "resource_type": "image",
+            "status": 503,
+        }
+    )
+
+    result = gate.evaluate_network_blockers(
+        journal,
+        origin=gate.PRODUCTION_ORIGIN,
+        allow_recovered_tour_images=True,
+    )
+
+    assert result["ok"] is False
+    assert result["bad_http_count"] == 1
+    assert result["recovered_tour_image_failure_count"] == 0
+
+
+def test_network_blockers_do_not_hide_extra_console_failures_after_image_recovery() -> None:
+    journal = gate.NetworkJournal.empty()
+    original_url = (
+        "https://propertyquarry.com/tours/files/urban-jungle/"
+        "generated-reconstruction/photo-04.jpg"
+    )
+    journal.responses.extend(
+        [
+            {
+                "url": original_url,
+                "resource_type": "image",
+                "status": 503,
+            },
+            {
+                "url": original_url + "?pq_asset_retry=1",
+                "resource_type": "image",
+                "status": 200,
+            },
+        ]
+    )
+    journal.console_messages.extend(
+        [
+            {
+                "type": "error",
+                "text": (
+                    "Failed to load resource: the server responded with a status "
+                    "of 503 (Service Unavailable)"
+                ),
+            },
+            {
+                "type": "error",
+                "text": (
+                    "Failed to load resource: the server responded with a status "
+                    "of 503 (Service Unavailable)"
+                ),
+            },
+        ]
+    )
+
+    result = gate.evaluate_network_blockers(
+        journal,
+        origin=gate.PRODUCTION_ORIGIN,
+        allow_recovered_tour_images=True,
+    )
+
+    assert result["ok"] is False
+    assert result["console_blocker_count"] == 1
+
+
 @pytest.mark.parametrize(
     "history",
     [

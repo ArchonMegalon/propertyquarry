@@ -10009,6 +10009,70 @@ def _generated_reconstruction_public_launch_html(payload: dict[str, object], *, 
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{title} | PropertyQuarry</title>
+    <script nonce="{nonce_attr}">
+      (() => {{
+        const retryAttribute = 'data-pq-asset-retry-count';
+        const statusAttribute = 'data-pq-asset-status';
+        const originalSourceAttribute = 'data-pq-asset-original-src';
+        const maximumRetries = 2;
+        const retryDelayMilliseconds = 350;
+
+        function retryableTourImage(node) {{
+          if (!(node instanceof HTMLImageElement)) return null;
+          const rawSource = node.getAttribute(originalSourceAttribute)
+            || node.getAttribute('src')
+            || '';
+          if (!rawSource) return null;
+          let source;
+          try {{
+            source = new URL(rawSource, window.location.href);
+          }} catch (_error) {{
+            return null;
+          }}
+          if (
+            source.origin !== window.location.origin
+            || !source.pathname.startsWith('/tours/files/')
+          ) {{
+            return null;
+          }}
+          source.searchParams.delete('pq_asset_retry');
+          return source;
+        }}
+
+        document.addEventListener('error', (event) => {{
+          const image = event.target;
+          const source = retryableTourImage(image);
+          if (!source) return;
+          const retryCount = Math.max(
+            0,
+            Number.parseInt(image.getAttribute(retryAttribute) || '0', 10) || 0,
+          );
+          if (retryCount >= maximumRetries) {{
+            image.setAttribute(statusAttribute, 'unavailable');
+            return;
+          }}
+          const nextRetryCount = retryCount + 1;
+          image.setAttribute(originalSourceAttribute, source.href);
+          image.setAttribute(retryAttribute, String(nextRetryCount));
+          image.setAttribute(statusAttribute, 'retrying');
+          window.setTimeout(() => {{
+            const retrySource = new URL(source.href);
+            retrySource.searchParams.set('pq_asset_retry', String(nextRetryCount));
+            image.src = retrySource.href;
+          }}, retryDelayMilliseconds * nextRetryCount);
+        }}, true);
+
+        document.addEventListener('load', (event) => {{
+          const image = event.target;
+          if (
+            image instanceof HTMLImageElement
+            && Number.parseInt(image.getAttribute(retryAttribute) || '0', 10) > 0
+          ) {{
+            image.setAttribute(statusAttribute, 'recovered');
+          }}
+        }}, true);
+      }})();
+    </script>
     <style nonce="{nonce_attr}">
       :root {{ color-scheme: light; --ink:#17130c; --muted:#766d5e; --paper:#f6f0e5; --card:rgba(255,252,245,.84); --line:rgba(54,42,27,.14); --gold:#a77c2b; --gold-soft:rgba(167,124,43,.14); --shadow:0 24px 70px rgba(68,47,24,.12); }}
       * {{ box-sizing:border-box; }}

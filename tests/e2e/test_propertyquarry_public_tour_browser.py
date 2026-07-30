@@ -4030,6 +4030,83 @@ def test_generated_reconstruction_launch_page_renders_honest_public_shell(
     context.close()
 
 
+def test_generated_reconstruction_public_shell_recovers_transient_tour_image(
+    generated_reconstruction_shell_server: dict[str, str],
+    browser: Browser,
+) -> None:
+    from app.api.routes.public_tours import (
+        _generated_reconstruction_walkthrough_scenes,
+        _generated_reconstruction_public_launch_html,
+    )
+
+    slug = str(generated_reconstruction_shell_server["slug"])
+    manifest_path = (
+        Path(str(generated_reconstruction_shell_server["bundle_root"]))
+        / slug
+        / "tour.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    launch_payload = {
+        **manifest,
+        "scenes": _generated_reconstruction_walkthrough_scenes(manifest),
+        "_lead_preview_url": f"/tours/files/{slug}/diorama-preview.png",
+        "_generated_reconstruction_public_shell": True,
+    }
+    shell_html = _generated_reconstruction_public_launch_html(
+        launch_payload,
+        nonce="browser-recovery-test",
+    )
+
+    context = _new_context(browser)
+    page = context.new_page()
+    request_count = 0
+    launch_url = f"{generated_reconstruction_shell_server['base_url']}/tours/{slug}"
+    page.route(
+        launch_url,
+        lambda route: route.fulfill(
+            status=200,
+            content_type="text/html",
+            body=shell_html,
+        ),
+    )
+
+    def route_transient_image(route) -> None:
+        nonlocal request_count
+        if route.request.frame != page.main_frame:
+            route.continue_()
+            return
+        request_count += 1
+        if request_count == 1:
+            route.fulfill(
+                status=503,
+                content_type="text/plain",
+                body="temporary image outage",
+            )
+            return
+        route.continue_()
+
+    page.route(
+        f"**/tours/files/{slug}/generated-reconstruction/photo-02.jpg*",
+        route_transient_image,
+    )
+    response = page.goto(
+        launch_url,
+        wait_until="domcontentloaded",
+    )
+    assert response is not None
+    assert response.status == 200
+    image = page.locator(
+        "#media-grid img[src*='/generated-reconstruction/photo-02.jpg']"
+    )
+    expect(image).to_have_attribute("data-pq-asset-status", "recovered", timeout=5_000)
+    assert image.evaluate("(node) => node.complete && node.naturalWidth > 0")
+    assert image.get_attribute("data-pq-asset-retry-count") == "1"
+    assert "pq_asset_retry=1" in str(image.get_attribute("src") or "")
+    assert request_count == 2
+    assert page.locator("[data-pq-asset-status='unavailable']").count() == 0
+    context.close()
+
+
 def test_generated_reconstruction_historical_matterport_never_hijacks_public_layout_preview(
     generated_reconstruction_matterport_server: dict[str, str],
     browser: Browser,
