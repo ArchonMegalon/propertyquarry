@@ -4678,8 +4678,8 @@ def _tour_html(
       .chapter {{ width: 100%; min-height: 48px; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 9px; border: 1px solid rgba(255,255,255,.13); border-radius: 11px; padding: 7px 9px; background: rgba(255,255,255,.045); color: #f7f1e6; cursor: pointer; font: inherit; text-align: left; scroll-snap-align: nearest; transition: border-color .18s ease, background .18s ease, transform .18s ease; }}
       .chapter:hover {{ border-color: rgba(216,180,118,.55); background: rgba(255,255,255,.08); transform: translateX(2px); }}
       .chapter-number {{ display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; color: rgba(247,241,230,.68); font-size: .69rem; font-weight: 900; }}
-      .chapter-copy {{ min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 7px; }}
-      .chapter-copy strong {{ overflow: hidden; font-size: .83rem; text-overflow: ellipsis; white-space: nowrap; }}
+      .chapter-copy {{ min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; }}
+      .chapter-copy strong {{ min-width: 0; overflow-wrap: anywhere; font-size: .83rem; line-height: 1.16; }}
       .chapter-copy small {{ color: rgba(247,241,230,.48); font-size: .69rem; font-variant-numeric: tabular-nums; }}
       .chapter.active {{ border-color: rgba(216,180,118,.7); background: linear-gradient(100deg, rgba(102,139,111,.36), rgba(216,180,118,.12)); box-shadow: inset 3px 0 #d8b476; }}
       .chapter.active .chapter-number {{ border-color: #d8b476; background: #d8b476; color: #111; }}

@@ -3257,7 +3257,7 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
             "video_relpath": video_relpath,
             "walkthrough_chapters": [
                 {"label": "Entrance hall", "start_seconds": 0.0},
-                {"label": "Primary bedroom", "start_seconds": 3.0},
+                {"label": "Return via primary bedroom", "start_seconds": 3.0},
                 {"label": "Terrace", "start_seconds": 6.0},
             ],
             "walkable_scene": {"rooms": []},
@@ -3375,7 +3375,7 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
         assert chapter_state["currentLabel"] == expected, chapter_state
         assert chapter_state["expectedCurrent"] == "true", chapter_state
 
-    click_chapter(1, "Primary bedroom")
+    click_chapter(1, "Return via primary bedroom")
     assert current_position.inner_text() == "2 / 3"
     click_chapter(2, "Terrace")
     assert current_position.inner_text() == "3 / 3"
@@ -3384,7 +3384,7 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
     page.wait_for_timeout(100)
     video.evaluate("(element) => element.pause()")
     page.wait_for_function(
-        "() => document.getElementById('walkthrough-current-room')?.textContent === 'Primary bedroom'"
+        "() => document.getElementById('walkthrough-current-room')?.textContent === 'Return via primary bedroom'"
     )
     page.locator("#walkthrough-previous").click()
     page.wait_for_timeout(100)
@@ -3392,13 +3392,13 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
     page.wait_for_function(
         "() => document.getElementById('walkthrough-current-room')?.textContent === 'Entrance hall'"
     )
-    click_chapter(1, "Primary bedroom")
+    click_chapter(1, "Return via primary bedroom")
     click_chapter(0, "Entrance hall")
     page.locator("#walkthrough-next").click()
     page.wait_for_timeout(100)
     video.evaluate("(element) => element.pause()")
     page.wait_for_function(
-        "() => document.getElementById('walkthrough-current-room')?.textContent === 'Primary bedroom'"
+        "() => document.getElementById('walkthrough-current-room')?.textContent === 'Return via primary bedroom'"
     )
     page.wait_for_function(
         """() => {
@@ -3426,6 +3426,12 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
             ).gridTemplateColumns.split(' ').length;
             const activeBounds = activeChapter?.getBoundingClientRect();
             const railBounds = chapterRail?.getBoundingClientRect();
+            const clippedLabels = Array.from(
+                document.querySelectorAll('.chapter-copy strong')
+            ).filter(
+                (label) => label.scrollWidth > label.clientWidth + 1
+                    || label.scrollHeight > label.clientHeight + 1
+            ).map((label) => label.textContent);
             return {
                 currentTime: video?.currentTime || 0,
                 readyState: video?.readyState || 0,
@@ -3437,6 +3443,7 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
                 routeControlsColumns: routeControls
                     ? getComputedStyle(routeControls).gridTemplateColumns.split(' ').length
                     : 0,
+                clippedLabels,
                 activeVisible: Boolean(
                     activeBounds
                     && railBounds
@@ -3458,6 +3465,7 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
     assert state["documentOverflow"] <= 1
     assert state["navigationOverflow"] <= 1
     assert state["routeControlsColumns"] == 2
+    assert state["clippedLabels"] == []
     assert state["activeVisible"]
     if mobile:
         assert state["shellColumns"] == 1
