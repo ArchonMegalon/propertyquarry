@@ -18,6 +18,7 @@ from app.product.property_search_work_queue import (
     PropertySearchWorkQueueSnapshot,
 )
 from app.product.service import ProductService
+from app.telemetry import TELEMETRY_PARENT_KEY
 
 
 def _job(
@@ -376,10 +377,10 @@ def test_prod_start_atomically_enqueues_before_return_and_never_starts_daemon(
     assert captured
     assert dict(captured["run_record"])["run_id"] == result["run_id"]
     assert dict(captured["payload_json"])["run_id"] == result["run_id"]
-    assert dict(dict(captured["payload_json"])["trace_context"])["trace_id"] == (
-        "4bf92f3577b34da6a3ce929d0e0e4736"
+    assert dict(dict(captured["payload_json"])[TELEMETRY_PARENT_KEY])["traceparent"] == (
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
     )
-    assert dict(dict(captured["payload_json"])["trace_context"])["correlation_id"] == (
+    assert dict(dict(captured["payload_json"])[TELEMETRY_PARENT_KEY])["correlation_id"] == (
         "search-request-1"
     )
     assert result["status"] == "queued"
@@ -505,10 +506,8 @@ def test_worker_role_processes_property_job_on_main_execution_path(
         payload_json={
             "actor": "api-actor",
             "force_refresh": False,
-            "trace_context": {
+            TELEMETRY_PARENT_KEY: {
                 "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-                "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
-                "span_id": "00f067aa0ba902b7",
                 "correlation_id": "search-request-1",
             },
         },
@@ -586,3 +585,47 @@ def test_worker_role_processes_property_job_on_main_execution_path(
     assert [name for name, _value in calls] == ["claim", "complete"]
     assert heartbeat_statuses == [("worker", "loop"), ("worker", "loop")]
     runner._record_property_search_queue_metrics(None)
+
+
+def test_worker_batch_claims_configured_search_slots_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import runner
+
+    monkeypatch.setenv("PROPERTYQUARRY_SEARCH_RUN_WORKER_CONCURRENCY", "3")
+    release = threading.Event()
+    all_started = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    peak_active = 0
+    calls = 0
+
+    def _run_once(_container, *, role: str, log: logging.Logger) -> dict[str, object]:
+        nonlocal active, peak_active, calls
+        assert role == "worker"
+        assert isinstance(log, logging.Logger)
+        with lock:
+            calls += 1
+            active += 1
+            peak_active = max(peak_active, active)
+            if active == 3:
+                all_started.set()
+        assert all_started.wait(timeout=2)
+        release.set()
+        assert release.wait(timeout=2)
+        with lock:
+            active -= 1
+        return {"claimed": True, "run_id": f"run-{calls}"}
+
+    monkeypatch.setattr(runner, "_run_property_search_work_once", _run_once)
+
+    results = runner._run_property_search_work_batch(
+        SimpleNamespace(),
+        role="worker",
+        log=logging.getLogger("test.property-search-worker-batch"),
+    )
+
+    assert len(results) == 3
+    assert all(result["claimed"] is True for result in results)
+    assert calls == 3
+    assert peak_active == 3

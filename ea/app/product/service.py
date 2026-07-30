@@ -770,7 +770,12 @@ _PROPERTY_SCOUT_OUTBOUND_NOTIFICATION_MIN_SCORE = 60.0
 _PROPERTY_SEARCH_RESULTS_NOTIFY_TIMEOUT_SECONDS = 6 * 60 * 60
 _PROPERTY_SEARCH_RESULTS_NOTIFY_POLL_SECONDS = 20.0
 _PROPERTY_SEARCH_DEFAULT_HIGH_MATCH_MIN_SCORE = 60.0
-_PROPERTY_SEARCH_DEFAULT_SCAN_CAP_PER_SOURCE = 80
+# First results must not sit behind an exhaustive provider crawl. Six fresh
+# candidates per source gives the ranking lane useful breadth while keeping a
+# default three-provider search inside the customer-facing worker budget.
+# Deeper saved-search and recovery lanes can still opt into a larger explicit
+# EA_PROPERTY_SEARCH_SCAN_CAP_PER_SOURCE value.
+_PROPERTY_SEARCH_DEFAULT_SCAN_CAP_PER_SOURCE = 6
 _PROPERTY_SEARCH_TERMINAL_STATUSES = {"processed", "completed", "completed_partial", "failed", "cancelled", "noop"}
 _PROPERTY_SEARCH_DELIVERABLE_TERMINAL_STATUSES = {"processed", "completed", "completed_partial"}
 _PROPERTY_MARKET_BOOTSTRAP_OPERATOR_ID = "property-market-codex"

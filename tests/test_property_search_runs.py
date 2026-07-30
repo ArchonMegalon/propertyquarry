@@ -2744,6 +2744,14 @@ def test_property_preview_timeout_fails_fast(monkeypatch: pytest.MonkeyPatch) ->
     assert started["value"] is True
 
 
+def test_property_search_default_scan_cap_keeps_first_results_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EA_PROPERTY_SEARCH_SCAN_CAP_PER_SOURCE", raising=False)
+
+    assert product_service._property_search_scan_cap_per_source() == 6
+
+
 def test_floorplan_recovery_workers_store_recovered_preview(monkeypatch: pytest.MonkeyPatch) -> None:
     service = ProductService.__new__(ProductService)
     stored: dict[str, dict[str, object]] = {}

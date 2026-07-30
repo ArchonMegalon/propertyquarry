@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -2523,6 +2524,53 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
     }
 
 
+def _property_search_work_batch_concurrency() -> int:
+    raw_value = str(
+        os.environ.get("PROPERTYQUARRY_SEARCH_RUN_WORKER_CONCURRENCY") or ""
+    ).strip()
+    if not raw_value:
+        return 4
+    try:
+        parsed = int(raw_value)
+    except Exception:
+        return 4
+    return max(1, min(parsed, 8))
+
+
+def _run_property_search_work_batch(
+    container,
+    *,
+    role: str,
+    log: logging.Logger,
+) -> list[dict[str, object]]:  # type: ignore[no-untyped-def]
+    """Claim independent durable searches concurrently.
+
+    A search can spend several minutes reviewing provider pages. Running the
+    durable queue serially lets one deep search starve every later Launch
+    search request even though the service already enforces its own bounded
+    run semaphore. Keep one claim loop per configured run slot so slow
+    providers do not turn otherwise healthy launches into an unbounded queue.
+    """
+
+    concurrency = _property_search_work_batch_concurrency()
+    if concurrency == 1:
+        return [_run_property_search_work_once(container, role=role, log=log)]
+    with ThreadPoolExecutor(
+        max_workers=concurrency,
+        thread_name_prefix="property-search-work",
+    ) as executor:
+        futures = [
+            executor.submit(
+                _run_property_search_work_once,
+                container,
+                role=role,
+                log=log,
+            )
+            for _slot in range(concurrency)
+        ]
+        return [future.result() for future in futures]
+
+
 def _require_property_search_writer_readiness(container: object, *, role: str) -> None:
     normalized_role = str(role or "").strip().lower()
     if normalized_role not in {"worker", "scheduler"}:
@@ -2830,23 +2878,33 @@ def _run_execution_worker(role: str) -> None:
                 continue
         if role == "worker":
             try:
-                property_work = _run_property_search_work_once(container, role=role, log=log)
+                property_work_batch = _run_property_search_work_batch(
+                    container,
+                    role=role,
+                    log=log,
+                )
             except Exception:
                 _record_property_search_queue_metrics(None)
                 _write_scheduler_heartbeat(role=role, status="loop")
                 log.exception("role=%s property search work queue failed; retrying in %.1fs", role, _ERROR_BACKOFF_SECONDS)
                 stop_event.wait(_ERROR_BACKOFF_SECONDS)
                 continue
-            if bool(property_work.get("claimed")):
+            claimed_property_work = [
+                property_work
+                for property_work in property_work_batch
+                if bool(property_work.get("claimed"))
+            ]
+            if claimed_property_work:
                 idle_backoff_seconds = _IDLE_BACKOFF_START_SECONDS
-                log.info(
-                    "role=%s property search work job=%s run=%s status=%s attempt=%s",
-                    role,
-                    property_work.get("job_id"),
-                    property_work.get("run_id"),
-                    property_work.get("status"),
-                    property_work.get("attempt_count"),
-                )
+                for property_work in claimed_property_work:
+                    log.info(
+                        "role=%s property search work job=%s run=%s status=%s attempt=%s",
+                        role,
+                        property_work.get("job_id"),
+                        property_work.get("run_id"),
+                        property_work.get("status"),
+                        property_work.get("attempt_count"),
+                    )
                 continue
         if property_only_worker:
             log.debug("role=%s property-only worker skips inherited generic queue; sleeping %.1fs", role, idle_backoff_seconds)
