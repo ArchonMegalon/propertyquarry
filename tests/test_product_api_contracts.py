@@ -32743,6 +32743,26 @@ def test_ai_panorama_core_manifest_digest_is_stable_across_proof_sealing_and_bin
     acceptance["proof_status"] = "pass"
     acceptance["browser_receipt_sha256"] = original_receipt_sha256
 
+    payload.update(
+        {
+            "video_provider": "magicfit",
+            "video_provider_backend_key": "magicfit",
+            "video_relpath": f"magicfit-media/walkthrough.{'1' * 64}.mp4",
+            "video_sidecar_relpath": f".magicfit-deliveries/{'2' * 64}.json",
+            "video_coverage_proof": "provider_render_verified",
+            "magicfit_import": {
+                "source": "magicfit_rendered_walkthrough",
+                "proof_status": "delivery_accepted",
+            },
+        }
+    )
+    assert (
+        property_tour_hosting._hosted_property_tour_ai_panorama_core_manifest_sha256(
+            payload
+        )
+        == original_digest
+    )
+
     scenes = walkable_scene["scenes"]
     assert isinstance(scenes, list)
     first_scene = scenes[0]
@@ -32761,6 +32781,27 @@ def test_ai_panorama_core_manifest_digest_is_stable_across_proof_sealing_and_bin
     )
     assert rejected["ready"] is False
     assert rejected["reason"] == "browser_core_manifest_binding_invalid"
+
+
+def test_ai_panorama_core_manifest_still_binds_non_magicfit_video_fields(
+    tmp_path: Path,
+) -> None:
+    payload = _write_test_ai_panorama_bundle(tmp_path)
+    original_digest = (
+        property_tour_hosting._hosted_property_tour_ai_panorama_core_manifest_sha256(
+            payload
+        )
+    )
+
+    payload["video_provider"] = "customer-hosted"
+    payload["video_relpath"] = "walkthrough/customer-hosted.mp4"
+
+    assert (
+        property_tour_hosting._hosted_property_tour_ai_panorama_core_manifest_sha256(
+            payload
+        )
+        != original_digest
+    )
 
 
 @pytest.mark.parametrize(

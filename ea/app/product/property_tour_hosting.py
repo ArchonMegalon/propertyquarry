@@ -30,11 +30,13 @@ from app.product.property_tour_governed_reservations import (
 try:
     from scripts.property_magicfit_public_eligibility import (
         evaluate_magicfit_public_eligibility,
+        magicfit_footprint_present,
         magicfit_provider_declared,
     )
 except ModuleNotFoundError:
     from property_magicfit_public_eligibility import (  # type: ignore[no-redef]
         evaluate_magicfit_public_eligibility,
+        magicfit_footprint_present,
         magicfit_provider_declared,
     )
 
@@ -123,6 +125,22 @@ _AI_PANORAMA_CORE_MANIFEST_EXCLUDED_ACCEPTANCE_FIELDS = frozenset(
         "browser_receipt_relpath",
         "browser_receipt_sha256",
         "core_manifest_sha256",
+    }
+)
+_AI_PANORAMA_CORE_MANIFEST_EXCLUDED_MAGICFIT_FIELDS = frozenset(
+    {
+        # MagicFit acceptance is a separate, independently verified delivery
+        # contract applied after panorama proof sealing. Keeping its exact
+        # augmentation out of the panorama core digest lets both proofs
+        # coexist. An incomplete or tampered footprint still fails closed in
+        # evaluate_magicfit_public_eligibility before any video is exposed.
+        "magicfit_import",
+        "video_coverage_proof",
+        "video_provider",
+        "video_provider_backend_key",
+        "video_relpath",
+        "video_sidecar_relpath",
+        "walkthrough_coverage_proof",
     }
 )
 _3DVISTA_FORBIDDEN_PUBLIC_MARKERS = (
@@ -2137,6 +2155,13 @@ def _hosted_property_tour_ai_panorama_core_manifest_sha256(
     """Hash the complete functional AI-tour manifest without its proof loop."""
 
     core_payload = dict(payload)
+    if magicfit_footprint_present(core_payload):
+        core_payload = {
+            str(key): value
+            for key, value in core_payload.items()
+            if str(key)
+            not in _AI_PANORAMA_CORE_MANIFEST_EXCLUDED_MAGICFIT_FIELDS
+        }
     walkable_scene = core_payload.get("walkable_scene")
     if isinstance(walkable_scene, dict):
         core_walkable_scene = dict(walkable_scene)
