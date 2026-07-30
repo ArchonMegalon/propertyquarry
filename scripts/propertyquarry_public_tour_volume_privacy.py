@@ -32,6 +32,9 @@ from app.api.routes.public_tour_payloads import (
     canonical_public_tour_payload,
     public_tour_key_is_exact_location,
 )
+from app.product.property_tour_hosting import (
+    _hosted_property_tour_ai_panorama_contract,
+)
 
 try:
     from property_magicfit_public_eligibility import (
@@ -200,6 +203,34 @@ def _accepted_magicfit_at_rest_payload(
     return True, privacy_payload
 
 
+def _accepted_ai_panorama_at_rest_payload(
+    payload: dict[str, object],
+    *,
+    bundle_dir: Path,
+) -> tuple[bool, dict[str, object]]:
+    """Preserve only a fully proof-bound AI panorama publication contract."""
+
+    walkable_scene = payload.get("walkable_scene")
+    representation_kind = (
+        str(walkable_scene.get("representation_kind") or "").strip().lower()
+        if isinstance(walkable_scene, dict)
+        else ""
+    )
+    if (
+        str(payload.get("control_mode") or "").strip().lower()
+        != "ai_panorama_360"
+        and representation_kind
+        not in {"ai_panorama_360", "ai_reconstruction"}
+    ):
+        return False, payload
+    verdict = _hosted_property_tour_ai_panorama_contract(
+        bundle_dir=bundle_dir,
+        payload=payload,
+        mode="full",
+    )
+    return verdict.get("ready") is True, payload
+
+
 def _merge_private_receipt(
     public_payload: dict[str, object],
     existing: dict[str, object],
@@ -306,6 +337,7 @@ def audit_or_repair(
         "private_key_manifests": 0,
         "noncanonical_manifests": 0,
         "private_mode_violations": 0,
+        "accepted_ai_panorama_manifests": 0,
         "accepted_magicfit_manifests": 0,
         "repaired_manifests": 0,
         "repaired_private_receipts": 0,
@@ -332,9 +364,17 @@ def audit_or_repair(
                     bundle_dir=manifest_path.parent,
                 )
             )
+            accepted_ai_panorama = False
+            if not magicfit_footprint_present(public_payload):
+                accepted_ai_panorama, privacy_payload = (
+                    _accepted_ai_panorama_at_rest_payload(
+                        public_payload,
+                        bundle_dir=manifest_path.parent,
+                    )
+                )
             canonical = (
                 public_payload
-                if accepted_magicfit
+                if accepted_magicfit or accepted_ai_panorama
                 else _canonical_public_payload(
                     public_payload,
                     bundle_dir=manifest_path.parent,
@@ -361,6 +401,9 @@ def audit_or_repair(
         noncanonical = canonical != payload
         counts["private_key_manifests"] += int(has_private)
         counts["noncanonical_manifests"] += int(noncanonical)
+        counts["accepted_ai_panorama_manifests"] += int(
+            accepted_ai_panorama
+        )
         counts["accepted_magicfit_manifests"] += int(accepted_magicfit)
         if not apply:
             continue

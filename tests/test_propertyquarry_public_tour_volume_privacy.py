@@ -138,6 +138,84 @@ def test_audit_rejects_unverified_magicfit_augmentation(
     assert receipt["counts"]["noncanonical_manifests"] == 1
 
 
+def test_audit_preserves_only_fully_accepted_ai_panorama_contract(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "public"
+    bundle = root / "accepted-ai-panorama"
+    bundle.mkdir(parents=True)
+    payload = {
+        "slug": "accepted-ai-panorama",
+        "publication_status": "ready",
+        "control_mode": "ai_panorama_360",
+        "diorama_preview_relpath": "diorama-preview.png",
+        "walkable_scene": {
+            "representation_kind": "ai_reconstruction",
+            "representation_disclosure": (
+                "AI-reconstructed from an architectural floorplan; "
+                "not a captured 360 or measured survey."
+            ),
+            "acceptance": {
+                "contract_name": "propertyquarry.ai_panorama_acceptance.v1",
+                "proof_status": "pass",
+            },
+            "scenes": [],
+        },
+    }
+    manifest_path = bundle / "tour.json"
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        privacy,
+        "_hosted_property_tour_ai_panorama_contract",
+        lambda **_kwargs: {"ready": True},
+    )
+
+    receipt = audit_or_repair(root)
+
+    assert receipt["status"] == "pass"
+    assert receipt["counts"]["accepted_ai_panorama_manifests"] == 1
+    assert receipt["counts"]["private_key_manifests"] == 0
+    assert receipt["counts"]["noncanonical_manifests"] == 0
+    assert json.loads(manifest_path.read_text(encoding="utf-8")) == payload
+
+
+def test_audit_rejects_unproven_ai_panorama_contract(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "public"
+    bundle = root / "unproven-ai-panorama"
+    bundle.mkdir(parents=True)
+    manifest_path = bundle / "tour.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "slug": "unproven-ai-panorama",
+                "publication_status": "ready",
+                "control_mode": "ai_panorama_360",
+                "walkable_scene": {
+                    "representation_kind": "ai_reconstruction",
+                    "acceptance": {"proof_status": "pass"},
+                    "scenes": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        privacy,
+        "_hosted_property_tour_ai_panorama_contract",
+        lambda **_kwargs: {"ready": False, "reason": "acceptance_invalid"},
+    )
+
+    receipt = audit_or_repair(root)
+
+    assert receipt["status"] == "fail"
+    assert receipt["counts"]["accepted_ai_panorama_manifests"] == 0
+    assert receipt["counts"]["noncanonical_manifests"] == 1
+
+
 def test_minimal_web_image_packages_the_live_volume_auditor() -> None:
     dockerfile = (
         Path(__file__).resolve().parents[1] / "ea" / "Dockerfile.property-web"
