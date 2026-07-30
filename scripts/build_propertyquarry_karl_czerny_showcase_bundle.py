@@ -10,7 +10,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 
 SLUG = "karl-czerny-gasse-2-urban-jungle"
@@ -23,13 +23,13 @@ DISCLOSURE = (
     "not a captured 360 or measured survey."
 )
 SCENES = (
-    ("hall", "Hall · entrance", 66.0, 57.0),
-    ("bedroom-primary", "Bedroom · 16.86 m²", 34.0, 54.0),
-    ("terrace", "Terrace · 7.78 m²", 22.0, 55.0),
-    ("bedroom-guest", "Bedroom · 15.24 m²", 80.0, 47.0),
-    ("wc", "Separate WC · 1.36 m²", 48.0, 42.0),
-    ("bath", "Bathroom · 4.96 m²", 58.0, 41.0),
-    ("living-kitchen", "Wohnküche · 30.33 m²", 61.0, 67.0),
+    ("hall", "Entrance vestibule · 3.80 m²", 52.0, 81.5),
+    ("bedroom-primary", "Bedroom · 16.86 m²", 36.5, 60.0),
+    ("terrace", "Terrace · 7.78 m²", 24.5, 59.0),
+    ("bedroom-guest", "Bedroom · 15.24 m²", 78.0, 42.0),
+    ("wc", "Separate WC · 1.36 m²", 47.5, 43.0),
+    ("bath", "Bathroom · 4.96 m²", 56.5, 42.0),
+    ("living-kitchen", "Wohnküche · 30.33 m²", 64.0, 65.0),
 )
 SCENE_INPUT_NAMES = {
     "hall": "karl-czerny-hall.png",
@@ -41,32 +41,70 @@ SCENE_INPUT_NAMES = {
     "living-kitchen": "karl-czerny-living-kitchen.png",
 }
 HOTSPOTS = {
-    "hall": (
-        ("Enter primary bedroom", "bedroom-primary", -92),
-        ("Enter second bedroom", "bedroom-guest", 86),
-        ("Open separate WC", "wc", -32),
-        ("Enter bathroom", "bath", 28),
-        ("Continue to Wohnküche", "living-kitchen", 154),
-    ),
+    "hall": (("Continue to Wohnküche", "living-kitchen", 154, ()),),
     "bedroom-primary": (
-        ("Return to hall", "hall", 112),
-        ("Step onto terrace", "terrace", -76),
+        ("Return to Wohnküche", "living-kitchen", 112, ()),
+        ("Step onto terrace", "terrace", -76, ()),
     ),
-    "terrace": (("Return to primary bedroom", "bedroom-primary", 180),),
-    "bedroom-guest": (("Return to hall", "hall", -128),),
-    "wc": (("Return to hall", "hall", 168),),
-    "bath": (("Return to hall", "hall", 172),),
-    "living-kitchen": (("Return to hall", "hall", -154),),
+    "terrace": (("Return to primary bedroom", "bedroom-primary", 180, ()),),
+    "bedroom-guest": (
+        (
+            "Return through internal hall to Wohnküche",
+            "living-kitchen",
+            -128,
+            ("circulation-hall",),
+        ),
+    ),
+    "wc": (("Return to Wohnküche", "living-kitchen", 168, ()),),
+    "bath": (
+        (
+            "Return through internal hall to Wohnküche",
+            "living-kitchen",
+            172,
+            ("circulation-hall",),
+        ),
+    ),
+    "living-kitchen": (
+        ("Return to entrance vestibule", "hall", -154, ()),
+        ("Enter primary bedroom", "bedroom-primary", -92, ()),
+        (
+            "Through internal hall to second bedroom",
+            "bedroom-guest",
+            86,
+            ("circulation-hall",),
+        ),
+        ("Open separate WC", "wc", -32, ()),
+        (
+            "Through internal hall to bathroom",
+            "bath",
+            28,
+            ("circulation-hall",),
+        ),
+    ),
 }
+# Bounds are percentages of the exact published floorplan image. The 3D model
+# is derived from these bounds at one uniform scale; it is not a separately
+# invented room layout.
 SPATIAL_ROOMS = (
-    ("terrace", "Terrace · 7.78 m²", "terrace", "exterior", 0.0, 0.0, 1.5, 4.9),
-    ("primary-bedroom", "Bedroom · 16.86 m²", "bedroom-primary", "interior", 1.6, 0.0, 2.9, 4.9),
-    ("separate-wc", "Separate WC · 1.36 m²", "wc", "interior", 4.6, 0.0, 1.0, 2.0),
-    ("bathroom", "Bathroom · 4.96 m²", "bath", "interior", 5.7, 0.0, 2.4, 2.0),
-    ("hall", "Hall · 3.50 m²", "hall", "interior", 8.2, 0.0, 2.0, 2.0),
-    ("guest-bedroom", "Bedroom · 15.24 m²", "bedroom-guest", "interior", 10.3, 0.0, 4.6, 3.3),
-    ("living-kitchen", "Wohnküche · 30.33 m²", "living-kitchen", "interior", 4.6, 2.2, 6.2, 4.9),
+    ("terrace", "Terrace · 7.78 m²", "terrace", "exterior", 19.7, 35.0, 9.2, 42.0),
+    ("primary-bedroom", "Bedroom · 16.86 m²", "bedroom-primary", "interior", 28.9, 34.8, 15.4, 42.1),
+    ("separate-wc", "Separate WC · 1.36 m²", "wc", "interior", 43.1, 34.8, 8.9, 14.3),
+    ("bathroom", "Bathroom · 4.96 m²", "bath", "interior", 52.1, 34.7, 10.0, 14.4),
+    ("circulation-hall", "Internal hall · 3.50 m²", "", "unavailable", 62.0, 39.3, 8.0, 9.8),
+    ("guest-bedroom", "Bedroom · 15.24 m²", "bedroom-guest", "interior", 70.0, 34.7, 14.2, 14.4),
+    ("living-kitchen", "Wohnküche · 30.33 m²", "living-kitchen", "interior", 44.3, 49.1, 39.9, 27.9),
+    ("entrance-vestibule", "Entrance vestibule · 3.80 m²", "hall", "interior", 44.3, 77.0, 15.1, 9.3),
 )
+DOORWAY_EDGES = (
+    ("terrace", "primary-bedroom"),
+    ("primary-bedroom", "living-kitchen"),
+    ("separate-wc", "living-kitchen"),
+    ("bathroom", "circulation-hall"),
+    ("circulation-hall", "living-kitchen"),
+    ("circulation-hall", "guest-bedroom"),
+    ("living-kitchen", "entrance-vestibule"),
+)
+MODEL_UNITS_PER_FLOORPLAN_PERCENT = 0.2
 WALKTHROUGH_CHAPTERS = (
     ("Entrance hall", 0.0),
     ("Primary bedroom", 5.0),
@@ -123,6 +161,58 @@ def _save_floorplan(source: Path, target: Path) -> None:
         image.save(target, format="WEBP", quality=92, method=6)
 
 
+def _save_floorplan_fidelity_overlay(source: Path, target: Path) -> None:
+    with Image.open(source) as opened:
+        image = opened.convert("RGBA")
+    draw = ImageDraw.Draw(image, "RGBA")
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", max(18, image.width // 90))
+    except OSError:
+        font = ImageFont.load_default()
+    colors = (
+        (64, 145, 108, 62),
+        (216, 161, 78, 62),
+        (83, 125, 174, 62),
+        (169, 92, 128, 62),
+    )
+    for index, (
+        room_id,
+        label,
+        _scene_id,
+        _kind,
+        x_pct,
+        y_pct,
+        width_pct,
+        height_pct,
+    ) in enumerate(SPATIAL_ROOMS):
+        left = round(image.width * x_pct / 100)
+        top = round(image.height * y_pct / 100)
+        right = round(image.width * (x_pct + width_pct) / 100)
+        bottom = round(image.height * (y_pct + height_pct) / 100)
+        fill = colors[index % len(colors)]
+        outline = (*fill[:3], 235)
+        draw.rectangle((left, top, right, bottom), fill=fill, outline=outline, width=5)
+        text = label.split(" · ", 1)[0]
+        text_box = draw.textbbox((0, 0), text, font=font)
+        text_width = text_box[2] - text_box[0]
+        text_height = text_box[3] - text_box[1]
+        text_x = min(max(left + 8, 0), max(0, image.width - text_width - 8))
+        text_y = min(max(top + 8, 0), max(0, image.height - text_height - 8))
+        draw.rounded_rectangle(
+            (
+                text_x - 5,
+                text_y - 4,
+                text_x + text_width + 5,
+                text_y + text_height + 5,
+            ),
+            radius=5,
+            fill=(10, 16, 13, 210),
+        )
+        draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 255))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image.convert("RGB").save(target, format="PNG", optimize=True)
+
+
 def _scene_payload(
     scene_id: str,
     label: str,
@@ -138,9 +228,10 @@ def _scene_payload(
                 "label": hotspot_label,
                 "pitch": -13,
                 "target_scene_id": target,
+                **({"via_room_ids": list(via_room_ids)} if via_room_ids else {}),
                 "yaw": yaw,
             }
-            for hotspot_label, target, yaw in HOTSPOTS[scene_id]
+            for hotspot_label, target, yaw, via_room_ids in HOTSPOTS[scene_id]
         ],
         "id": scene_id,
         "label": label,
@@ -173,6 +264,10 @@ def build(args: argparse.Namespace) -> Path:
     (bundle / "panoramas").mkdir(parents=True)
     (bundle / "proof").mkdir()
     _save_floorplan(floorplan_source, bundle / "floorplan.webp")
+    _save_floorplan_fidelity_overlay(
+        bundle / "floorplan.webp",
+        bundle / "proof" / "floorplan-fidelity-overlay.png",
+    )
     shutil.copyfile(diorama_source, bundle / "diorama-preview.png")
 
     raw_asset_hashes: dict[str, str] = {}
@@ -186,6 +281,55 @@ def build(args: argparse.Namespace) -> Path:
 
     property_url_sha256 = hashlib.sha256(PROPERTY_URL.encode("utf-8")).hexdigest()
     floorplan_sha256 = _sha256(bundle / "floorplan.webp")
+    spatial_rooms = [
+        {
+            "depth": round(height_pct * MODEL_UNITS_PER_FLOORPLAN_PERCENT, 3),
+            "floorplan_bounds_pct": {
+                "height": height_pct,
+                "width": width_pct,
+                "x": x_pct,
+                "y": y_pct,
+            },
+            "height": 2.7,
+            "id": room_id,
+            "kind": kind,
+            "label": label,
+            **({"scene_id": scene_id} if scene_id else {}),
+            "width": round(width_pct * MODEL_UNITS_PER_FLOORPLAN_PERCENT, 3),
+            "x": round(x_pct * MODEL_UNITS_PER_FLOORPLAN_PERCENT, 3),
+            "z": round(y_pct * MODEL_UNITS_PER_FLOORPLAN_PERCENT, 3),
+        }
+        for (
+            room_id,
+            label,
+            scene_id,
+            kind,
+            x_pct,
+            y_pct,
+            width_pct,
+            height_pct,
+        ) in SPATIAL_ROOMS
+    ]
+    layout_fidelity = {
+        "contract_name": "propertyquarry.floorplan_spatial_fidelity.v1",
+        "doorway_edges": [list(edge) for edge in DOORWAY_EDGES],
+        "floorplan_sha256": floorplan_sha256,
+        "model_units_per_floorplan_percent": MODEL_UNITS_PER_FLOORPLAN_PERCENT,
+        "overlay_relpath": "proof/floorplan-fidelity-overlay.png",
+        "overlay_sha256": _sha256(bundle / "proof" / "floorplan-fidelity-overlay.png"),
+        "review_method": "operator_floorplan_overlay",
+        "review_status": "pass",
+        "source_room_count": len(spatial_rooms),
+    }
+    layout_fidelity_sha256 = hashlib.sha256(
+        json.dumps(
+            layout_fidelity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
     provenance = {
         "contract_name": "propertyquarry.ai_panorama_provenance.v1",
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -202,6 +346,7 @@ def build(args: argparse.Namespace) -> Path:
         "spatial_model_basis": "floorplan_scaled_approximation",
         "spatial_model_measured": False,
         "spatial_scene_ids": [scene_id for scene_id, *_rest in SCENES],
+        "layout_fidelity_sha256": layout_fidelity_sha256,
         "raw_generated_asset_sha256": raw_asset_hashes,
         "panorama_asset_sha256": panorama_hashes,
         "release_transform": {
@@ -220,10 +365,11 @@ def build(args: argparse.Namespace) -> Path:
         },
         "source_scope": {
             "supported_space": (
-                "Wohnküche, both bedrooms, hall, separate WC, bathroom, "
-                "and terrace as an exterior room"
+                "Wohnküche, both bedrooms, entrance vestibule, internal hall, "
+                "separate WC, bathroom, and terrace as an exterior room"
             ),
             "unsupported_rooms_omitted": False,
+            "panorama_unavailable_space_ids": ["circulation-hall"],
             "source_photo_count": 0,
             "source_floorplan_count": 1,
             "generated_panorama_count": len(SCENES),
@@ -275,21 +421,9 @@ def build(args: argparse.Namespace) -> Path:
             "representation_kind": "ai_reconstruction",
             "scenes": [_scene_payload(*scene) for scene in SCENES],
             "spatial_model": {
+                "layout_fidelity": layout_fidelity,
                 "measured": False,
-                "rooms": [
-                    {
-                        "depth": depth,
-                        "height": 2.7,
-                        "id": room_id,
-                        "kind": kind,
-                        "label": label,
-                        "scene_id": scene_id,
-                        "width": width,
-                        "x": x,
-                        "z": z,
-                    }
-                    for room_id, label, scene_id, kind, x, z, width, depth in SPATIAL_ROOMS
-                ],
+                "rooms": spatial_rooms,
                 "source_basis": "floorplan_scaled_approximation",
             },
         },

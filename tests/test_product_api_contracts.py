@@ -32441,14 +32441,71 @@ def _write_test_ai_panorama_bundle(
     scene_ids = [scene_id for scene_id, *_rest in scene_rows]
     spatial_rooms = [
         {"id": "living-room", "label": "Living room", "scene_id": "living-room", "kind": "interior", "x": 0.0, "z": 2.4, "width": 5.5, "depth": 4.5, "height": 2.7},
-        {"id": "hall", "label": "Hall", "scene_id": "hall", "kind": "interior", "x": 5.5, "z": 3.0, "width": 2.0, "depth": 3.0, "height": 2.7},
-        {"id": "kitchen", "label": "Kitchen", "scene_id": "kitchen", "kind": "interior", "x": 7.5, "z": 0.0, "width": 3.0, "depth": 3.0, "height": 2.7},
-        {"id": "bedroom-large", "label": "Large bedroom", "scene_id": "bedroom-large", "kind": "interior", "x": 7.5, "z": 3.0, "width": 4.0, "depth": 3.7, "height": 2.7},
-        {"id": "bedroom-small", "label": "Small bedroom", "scene_id": "bedroom-small", "kind": "interior", "x": 7.5, "z": 6.7, "width": 3.4, "depth": 3.2, "height": 2.7},
-        {"id": "bathroom", "label": "Bathroom", "scene_id": "bathroom", "kind": "interior", "x": 5.5, "z": 6.0, "width": 2.0, "depth": 2.0, "height": 2.7},
+        {"id": "hall", "label": "Hall", "scene_id": "hall", "kind": "interior", "x": 5.5, "z": 2.4, "width": 2.0, "depth": 4.5, "height": 2.7},
+        {"id": "kitchen", "label": "Kitchen", "scene_id": "kitchen", "kind": "interior", "x": 5.5, "z": 0.0, "width": 3.0, "depth": 2.4, "height": 2.7},
+        {"id": "bedroom-large", "label": "Large bedroom", "scene_id": "bedroom-large", "kind": "interior", "x": 7.5, "z": 2.4, "width": 4.0, "depth": 3.7, "height": 2.7},
+        {"id": "bedroom-small", "label": "Small bedroom", "scene_id": "bedroom-small", "kind": "interior", "x": 7.5, "z": 6.1, "width": 3.4, "depth": 3.2, "height": 2.7},
+        {"id": "bathroom", "label": "Bathroom", "scene_id": "bathroom", "kind": "interior", "x": 5.5, "z": 6.9, "width": 2.0, "depth": 2.0, "height": 2.7},
         {"id": "terrace", "label": "Terrace", "scene_id": "terrace", "kind": "exterior", "x": 0.0, "z": 0.0, "width": 5.5, "depth": 2.4, "height": 2.7},
-        {"id": "wc", "label": "WC - no panorama", "kind": "unavailable", "x": 5.5, "z": 8.0, "width": 1.2, "depth": 1.3, "height": 2.7},
+        {"id": "wc", "label": "WC - no panorama", "kind": "unavailable", "x": 3.5, "z": 6.9, "width": 1.2, "depth": 1.3, "height": 2.7},
     ]
+    model_scale = 0.15
+    scene_by_id = {
+        str(scene["id"]): scene
+        for scene in scenes
+    }
+    for room in spatial_rooms:
+        source_bounds = {
+            "x": round(float(room["x"]) / model_scale, 4),
+            "y": round(float(room["z"]) / model_scale, 4),
+            "width": round(float(room["width"]) / model_scale, 4),
+            "height": round(float(room["depth"]) / model_scale, 4),
+        }
+        room["floorplan_bounds_pct"] = source_bounds
+        room_scene_id = str(room.get("scene_id") or "")
+        if room_scene_id:
+            scene = scene_by_id[room_scene_id]
+            scene["floorplan_x_pct"] = round(
+                source_bounds["x"] + source_bounds["width"] / 2,
+                4,
+            )
+            scene["floorplan_y_pct"] = round(
+                source_bounds["y"] + source_bounds["height"] / 2,
+                4,
+            )
+    overlay_path = proof_dir / "floorplan-fidelity-overlay.png"
+    Image.new("RGB", (1200, 1200), color=(226, 236, 229)).save(
+        overlay_path,
+        format="PNG",
+    )
+    layout_fidelity = {
+        "contract_name": "propertyquarry.floorplan_spatial_fidelity.v1",
+        "doorway_edges": [
+            ["living-room", "hall"],
+            ["living-room", "terrace"],
+            ["hall", "kitchen"],
+            ["hall", "bedroom-large"],
+            ["hall", "bedroom-small"],
+            ["hall", "bathroom"],
+            ["living-room", "wc"],
+        ],
+        "floorplan_sha256": floorplan_sha256,
+        "model_units_per_floorplan_percent": model_scale,
+        "overlay_relpath": "proof/floorplan-fidelity-overlay.png",
+        "overlay_sha256": hashlib.sha256(overlay_path.read_bytes()).hexdigest(),
+        "review_method": "operator_floorplan_overlay",
+        "review_status": "pass",
+        "source_room_count": len(spatial_rooms),
+    }
+    layout_fidelity_sha256 = hashlib.sha256(
+        json.dumps(
+            layout_fidelity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
 
     property_sha256 = "9" * 64
     provenance = {
@@ -32467,6 +32524,7 @@ def _write_test_ai_panorama_bundle(
         "spatial_model_basis": "floorplan_scaled_approximation",
         "spatial_model_measured": False,
         "spatial_scene_ids": scene_ids,
+        "layout_fidelity_sha256": layout_fidelity_sha256,
     }
     provenance_path = proof_dir / "provenance.json"
     provenance_path.write_text(
@@ -32505,6 +32563,7 @@ def _write_test_ai_panorama_bundle(
             "floorplan_relpath": "floorplan.jpg",
             "scenes": scenes,
             "spatial_model": {
+                "layout_fidelity": layout_fidelity,
                 "source_basis": "floorplan_scaled_approximation",
                 "measured": False,
                 "rooms": spatial_rooms,
@@ -32731,6 +32790,117 @@ def test_ai_panorama_contract_requires_immutable_assets_provenance_and_browser_p
         "representation_kind": "ai_panorama_360",
         "reason": "browser_surface_proof_invalid",
     }
+
+
+def test_ai_panorama_contract_fails_closed_on_unproven_floorplan_geometry(
+    tmp_path: Path,
+) -> None:
+    from app.product import property_tour_hosting
+
+    missing_dir = tmp_path / "missing"
+    missing_payload = _write_test_ai_panorama_bundle(missing_dir)
+    missing_walkable = missing_payload["walkable_scene"]
+    assert isinstance(missing_walkable, dict)
+    missing_spatial = missing_walkable["spatial_model"]
+    assert isinstance(missing_spatial, dict)
+    missing_spatial.pop("layout_fidelity")
+
+    assert property_tour_hosting._hosted_property_tour_ai_panorama_contract(
+        bundle_dir=missing_dir,
+        payload=missing_payload,
+        mode="preflight",
+    ) == {
+        "ready": False,
+        "representation_kind": "ai_panorama_360",
+        "reason": "spatial_fidelity_missing",
+        "preflight": True,
+        "preflight_ready": False,
+        "proof_pending": False,
+    }
+
+    geometry_dir = tmp_path / "geometry"
+    geometry_payload = _write_test_ai_panorama_bundle(geometry_dir)
+    geometry_walkable = geometry_payload["walkable_scene"]
+    assert isinstance(geometry_walkable, dict)
+    geometry_spatial = geometry_walkable["spatial_model"]
+    assert isinstance(geometry_spatial, dict)
+    geometry_rooms = geometry_spatial["rooms"]
+    assert isinstance(geometry_rooms, list)
+    assert isinstance(geometry_rooms[0], dict)
+    geometry_rooms[0]["x"] = float(geometry_rooms[0]["x"]) + 1.0
+
+    geometry_rejected = (
+        property_tour_hosting._hosted_property_tour_ai_panorama_contract(
+            bundle_dir=geometry_dir,
+            payload=geometry_payload,
+            mode="preflight",
+        )
+    )
+    assert geometry_rejected["ready"] is False
+    assert (
+        geometry_rejected["reason"]
+        == "spatial_fidelity_model_transform_invalid"
+    )
+
+    overlay_dir = tmp_path / "overlay"
+    overlay_payload = _write_test_ai_panorama_bundle(overlay_dir)
+    (overlay_dir / "proof" / "floorplan-fidelity-overlay.png").write_bytes(
+        b"tampered"
+    )
+    overlay_rejected = (
+        property_tour_hosting._hosted_property_tour_ai_panorama_contract(
+            bundle_dir=overlay_dir,
+            payload=overlay_payload,
+            mode="preflight",
+        )
+    )
+    assert overlay_rejected["ready"] is False
+    assert overlay_rejected["reason"] == "spatial_fidelity_overlay_invalid"
+
+
+def test_ai_panorama_hotspots_must_follow_floorplan_doorway_paths(
+    tmp_path: Path,
+) -> None:
+    from app.product import property_tour_hosting
+
+    bundle_dir = tmp_path / "route"
+    payload = _write_test_ai_panorama_bundle(bundle_dir)
+    walkable = payload["walkable_scene"]
+    assert isinstance(walkable, dict)
+    scenes = walkable["scenes"]
+    assert isinstance(scenes, list)
+    living = next(
+        scene
+        for scene in scenes
+        if isinstance(scene, dict) and scene.get("id") == "living-room"
+    )
+    hotspots = living["hotspots"]
+    assert isinstance(hotspots, list)
+    hotspots.append(
+        {
+            "label": "Invalid wall jump",
+            "pitch": -12,
+            "target_scene_id": "bedroom-large",
+            "yaw": 90,
+        }
+    )
+
+    blocked = property_tour_hosting._hosted_property_tour_ai_panorama_contract(
+        bundle_dir=bundle_dir,
+        payload=payload,
+        mode="preflight",
+    )
+    assert blocked["ready"] is False
+    assert blocked["reason"] == "hotspot_floorplan_route_invalid"
+
+    hotspots[-1]["via_room_ids"] = ["hall"]
+    routed = property_tour_hosting._hosted_property_tour_ai_panorama_contract(
+        bundle_dir=bundle_dir,
+        payload=payload,
+        mode="preflight",
+    )
+    assert routed["preflight_ready"] is True
+    assert routed["reason"] == "browser_proof_pending"
 
 
 def test_ai_panorama_core_manifest_digest_is_stable_across_proof_sealing_and_binds_functional_changes(

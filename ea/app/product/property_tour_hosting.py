@@ -2294,8 +2294,10 @@ def _hosted_property_tour_ai_panorama_contract(
         return _blocked("panorama_asset_hashes_missing")
 
     scene_ids: list[str] = []
+    scene_by_id: dict[str, dict[str, object]] = {}
     actual_asset_hashes: dict[str, str] = {}
     edges: dict[str, set[str]] = {}
+    hotspot_routes: dict[tuple[str, str], tuple[str, ...]] = {}
     total_panorama_bytes = 0
     largest_panorama_bytes = 0
     for fallback_id, scene in scene_rows:
@@ -2365,6 +2367,7 @@ def _hosted_property_tour_ai_panorama_contract(
         if not (0.0 <= floorplan_x <= 100.0 and 0.0 <= floorplan_y <= 100.0):
             return _blocked("floorplan_alignment_invalid")
         scene_ids.append(scene_id)
+        scene_by_id[scene_id] = scene
         actual_asset_hashes[scene_id] = asset_sha256
         edges[scene_id] = set()
     if len(set(actual_asset_hashes.values())) != len(scene_ids):
@@ -2397,6 +2400,32 @@ def _hosted_property_tour_ai_panorama_contract(
                     hotspot.get("scene"),
                 )
                 if target in scene_id_set and target != scene_id:
+                    raw_via_room_ids = hotspot.get("via_room_ids")
+                    if raw_via_room_ids is None:
+                        via_room_ids: tuple[str, ...] = ()
+                    elif isinstance(raw_via_room_ids, list):
+                        via_room_ids = tuple(
+                            str(value or "").strip()
+                            for value in raw_via_room_ids
+                        )
+                        if (
+                            not via_room_ids
+                            or any(
+                                not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", value)
+                                for value in via_room_ids
+                            )
+                            or len(set(via_room_ids)) != len(via_room_ids)
+                        ):
+                            return _blocked("hotspot_floorplan_route_invalid")
+                    else:
+                        return _blocked("hotspot_floorplan_route_invalid")
+                    route_key = (scene_id, target)
+                    if (
+                        route_key in hotspot_routes
+                        and hotspot_routes[route_key] != via_room_ids
+                    ):
+                        return _blocked("hotspot_floorplan_route_ambiguous")
+                    hotspot_routes[route_key] = via_room_ids
                     edges[scene_id].add(target)
                     hotspot_edges.add(f"{scene_id}->{target}")
                     hotspot_count += 1
@@ -2432,6 +2461,8 @@ def _hosted_property_tour_ai_panorama_contract(
         return _blocked("spatial_model_coverage_incomplete")
     spatial_room_ids: set[str] = set()
     spatial_scene_ids: list[str] = []
+    spatial_rooms_by_id: dict[str, dict[str, object]] = {}
+    spatial_scene_to_room: dict[str, str] = {}
     for raw_room in spatial_rooms:
         if not isinstance(raw_room, dict):
             return _blocked("spatial_room_invalid")
@@ -2464,9 +2495,19 @@ def _hosted_property_tour_ai_panorama_contract(
             if scene_id not in scene_id_set or scene_id in spatial_scene_ids:
                 return _blocked("spatial_scene_binding_invalid")
             spatial_scene_ids.append(scene_id)
+            spatial_scene_to_room[scene_id] = room_id
         elif kind != "unavailable":
             return _blocked("spatial_scene_binding_missing")
         spatial_room_ids.add(room_id)
+        spatial_rooms_by_id[room_id] = {
+            **raw_room,
+            "x": x,
+            "z": z,
+            "width": width,
+            "depth": depth,
+            "height": height,
+            "kind": kind,
+        }
     if set(spatial_scene_ids) != scene_id_set:
         return _blocked("spatial_model_coverage_incomplete")
 
@@ -2483,6 +2524,232 @@ def _hosted_property_tour_ai_panorama_contract(
     )
     if floorplan_width < 800 or floorplan_height < 800:
         return _blocked("floorplan_resolution_invalid")
+    floorplan_sha256 = _hosted_property_tour_file_sha256(floorplan_path)
+
+    layout_fidelity = spatial_model.get("layout_fidelity")
+    if not isinstance(layout_fidelity, dict):
+        return _blocked("spatial_fidelity_missing")
+    if (
+        layout_fidelity.get("contract_name")
+        != "propertyquarry.floorplan_spatial_fidelity.v1"
+        or layout_fidelity.get("review_status") != "pass"
+        or layout_fidelity.get("review_method") != "operator_floorplan_overlay"
+        or str(layout_fidelity.get("floorplan_sha256") or "").strip().lower()
+        != floorplan_sha256
+    ):
+        return _blocked("spatial_fidelity_invalid")
+    try:
+        source_room_count = int(layout_fidelity.get("source_room_count"))
+        model_scale = float(
+            layout_fidelity.get("model_units_per_floorplan_percent")
+        )
+    except (TypeError, ValueError):
+        return _blocked("spatial_fidelity_invalid")
+    if (
+        source_room_count != len(spatial_rooms_by_id)
+        or not math.isfinite(model_scale)
+        or not 0.02 <= model_scale <= 1.0
+    ):
+        return _blocked("spatial_fidelity_invalid")
+    overlay_relpath = _hosted_property_tour_public_asset_relpath(
+        layout_fidelity.get("overlay_relpath")
+    )
+    overlay_sha256 = str(
+        layout_fidelity.get("overlay_sha256") or ""
+    ).strip().lower()
+    overlay_path = _hosted_property_tour_asset_path(bundle_dir, overlay_relpath)
+    if (
+        overlay_path is None
+        or overlay_path.suffix.lower() != ".png"
+        or not digest_pattern.fullmatch(overlay_sha256)
+        or _hosted_property_tour_file_sha256(overlay_path) != overlay_sha256
+    ):
+        return _blocked("spatial_fidelity_overlay_invalid")
+    overlay_width, overlay_height = _hosted_property_tour_image_dimensions(
+        overlay_path
+    )
+    if (
+        overlay_width != floorplan_width
+        or overlay_height != floorplan_height
+    ):
+        return _blocked("spatial_fidelity_overlay_invalid")
+
+    transform_tolerance = 0.035
+    source_bounds_by_room: dict[str, tuple[float, float, float, float]] = {}
+    for room_id, room in spatial_rooms_by_id.items():
+        raw_bounds = room.get("floorplan_bounds_pct")
+        if not isinstance(raw_bounds, dict):
+            return _blocked("spatial_fidelity_room_bounds_missing")
+        try:
+            bounds = tuple(
+                float(raw_bounds.get(key))
+                for key in ("x", "y", "width", "height")
+            )
+        except (TypeError, ValueError):
+            return _blocked("spatial_fidelity_room_bounds_invalid")
+        source_x, source_y, source_width, source_height = bounds
+        if (
+            not all(math.isfinite(value) for value in bounds)
+            or source_x < 0.0
+            or source_y < 0.0
+            or source_width <= 0.0
+            or source_height <= 0.0
+            or source_x + source_width > 100.0
+            or source_y + source_height > 100.0
+        ):
+            return _blocked("spatial_fidelity_room_bounds_invalid")
+        expected_model_values = (
+            source_x * model_scale,
+            source_y * model_scale,
+            source_width * model_scale,
+            source_height * model_scale,
+        )
+        actual_model_values = (
+            float(room["x"]),
+            float(room["z"]),
+            float(room["width"]),
+            float(room["depth"]),
+        )
+        if any(
+            abs(actual - expected) > transform_tolerance
+            for actual, expected in zip(
+                actual_model_values,
+                expected_model_values,
+            )
+        ):
+            return _blocked("spatial_fidelity_model_transform_invalid")
+        source_bounds_by_room[room_id] = bounds
+
+    for scene_id, room_id in spatial_scene_to_room.items():
+        scene = scene_by_id[scene_id]
+        source_x, source_y, source_width, source_height = (
+            source_bounds_by_room[room_id]
+        )
+        floorplan_x = float(scene.get("floorplan_x_pct"))
+        floorplan_y = float(scene.get("floorplan_y_pct"))
+        if not (
+            source_x <= floorplan_x <= source_x + source_width
+            and source_y <= floorplan_y <= source_y + source_height
+        ):
+            return _blocked("spatial_fidelity_scene_pin_invalid")
+
+    raw_doorway_edges = layout_fidelity.get("doorway_edges")
+    if not isinstance(raw_doorway_edges, list):
+        return _blocked("spatial_fidelity_doorways_invalid")
+    doorway_edges: set[tuple[str, str]] = set()
+    adjacency_tolerance = 0.12
+
+    def _rooms_share_wall(
+        left_room: dict[str, object],
+        right_room: dict[str, object],
+    ) -> bool:
+        left_x = float(left_room["x"])
+        left_z = float(left_room["z"])
+        left_width = float(left_room["width"])
+        left_depth = float(left_room["depth"])
+        right_x = float(right_room["x"])
+        right_z = float(right_room["z"])
+        right_width = float(right_room["width"])
+        right_depth = float(right_room["depth"])
+        overlap_x = max(
+            0.0,
+            min(left_x + left_width, right_x + right_width)
+            - max(left_x, right_x),
+        )
+        overlap_z = max(
+            0.0,
+            min(left_z + left_depth, right_z + right_depth)
+            - max(left_z, right_z),
+        )
+        vertical_gap = min(
+            abs((left_x + left_width) - right_x),
+            abs((right_x + right_width) - left_x),
+        )
+        horizontal_gap = min(
+            abs((left_z + left_depth) - right_z),
+            abs((right_z + right_depth) - left_z),
+        )
+        return (
+            vertical_gap <= adjacency_tolerance and overlap_z >= 0.18
+        ) or (
+            horizontal_gap <= adjacency_tolerance and overlap_x >= 0.18
+        )
+
+    for raw_edge in raw_doorway_edges:
+        if (
+            not isinstance(raw_edge, list)
+            or len(raw_edge) != 2
+            or any(
+                str(value or "").strip() not in spatial_rooms_by_id
+                for value in raw_edge
+            )
+        ):
+            return _blocked("spatial_fidelity_doorways_invalid")
+        left_id, right_id = (
+            str(raw_edge[0]).strip(),
+            str(raw_edge[1]).strip(),
+        )
+        if left_id == right_id:
+            return _blocked("spatial_fidelity_doorways_invalid")
+        canonical_edge = tuple(sorted((left_id, right_id)))
+        if (
+            canonical_edge in doorway_edges
+            or not _rooms_share_wall(
+                spatial_rooms_by_id[left_id],
+                spatial_rooms_by_id[right_id],
+            )
+        ):
+            return _blocked("spatial_fidelity_doorways_invalid")
+        doorway_edges.add(canonical_edge)
+    if len(doorway_edges) < len(spatial_rooms_by_id) - 1:
+        return _blocked("spatial_fidelity_doorways_incomplete")
+    reached_rooms = {next(iter(spatial_rooms_by_id))}
+    room_frontier = list(reached_rooms)
+    while room_frontier:
+        room_id = room_frontier.pop()
+        for doorway_edge in doorway_edges:
+            if room_id not in doorway_edge:
+                continue
+            neighbor = (
+                doorway_edge[1]
+                if doorway_edge[0] == room_id
+                else doorway_edge[0]
+            )
+            if neighbor not in reached_rooms:
+                reached_rooms.add(neighbor)
+                room_frontier.append(neighbor)
+    if reached_rooms != set(spatial_rooms_by_id):
+        return _blocked("spatial_fidelity_doorways_incomplete")
+
+    for (source_scene_id, target_scene_id), via_room_ids in (
+        hotspot_routes.items()
+    ):
+        room_path = (
+            spatial_scene_to_room[source_scene_id],
+            *via_room_ids,
+            spatial_scene_to_room[target_scene_id],
+        )
+        if (
+            len(set(room_path)) != len(room_path)
+            or any(
+                room_id not in spatial_rooms_by_id
+                for room_id in room_path
+            )
+            or any(
+                tuple(sorted((left_id, right_id))) not in doorway_edges
+                for left_id, right_id in zip(room_path, room_path[1:])
+            )
+        ):
+            return _blocked("hotspot_floorplan_route_invalid")
+    layout_fidelity_sha256 = hashlib.sha256(
+        json.dumps(
+            layout_fidelity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
 
     def _verified_json_receipt(
         *,
@@ -2540,6 +2807,10 @@ def _hosted_property_tour_ai_panorama_contract(
         != "floorplan_scaled_approximation"
         or provenance.get("spatial_model_measured") is not False
         or set(provenance.get("spatial_scene_ids") or []) != scene_id_set
+        or str(
+            provenance.get("layout_fidelity_sha256") or ""
+        ).strip().lower()
+        != layout_fidelity_sha256
     ):
         return _blocked("provenance_content_invalid")
 
@@ -2557,6 +2828,8 @@ def _hosted_property_tour_ai_panorama_contract(
         "initial_scene_id": initial_scene_id,
         "hotspot_count": hotspot_count,
         "spatial_room_count": len(spatial_rooms),
+        "spatial_doorway_count": len(doorway_edges),
+        "layout_fidelity_sha256": layout_fidelity_sha256,
         "floorplan_relpath": floorplan_relpath,
         "total_panorama_bytes": total_panorama_bytes,
         "largest_panorama_bytes": largest_panorama_bytes,

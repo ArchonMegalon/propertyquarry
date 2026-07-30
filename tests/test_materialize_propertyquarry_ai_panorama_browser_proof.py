@@ -72,6 +72,60 @@ def _write_source_bundle(
         format="WEBP",
         quality=88,
     )
+    overlay_path = proof_dir / "floorplan-fidelity-overlay.png"
+    Image.new("RGBA", (1200, 1200), color=(80, 120, 180, 80)).save(
+        overlay_path,
+        format="PNG",
+    )
+    model_scale = 0.12
+    room_specs = (
+        ("living-volume", "Living", "living", 10.0, 30.0, 30.0, 40.0),
+        ("hall-volume", "Hall", "hall", 40.0, 30.0, 20.0, 40.0),
+        ("kitchen-volume", "Kitchen", "kitchen", 60.0, 10.0, 25.0, 60.0),
+    )
+    spatial_rooms = [
+        {
+            "id": room_id,
+            "label": label,
+            "scene_id": scene_id,
+            "kind": "interior",
+            "x": x * model_scale,
+            "z": y * model_scale,
+            "width": width * model_scale,
+            "depth": height * model_scale,
+            "height": 2.8,
+            "floorplan_bounds_pct": {
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+            },
+        }
+        for room_id, label, scene_id, x, y, width, height in room_specs
+    ]
+    layout_fidelity = {
+        "contract_name": "propertyquarry.floorplan_spatial_fidelity.v1",
+        "review_status": "pass",
+        "review_method": "operator_floorplan_overlay",
+        "floorplan_sha256": _sha256(floorplan_path),
+        "source_room_count": len(spatial_rooms),
+        "model_units_per_floorplan_percent": model_scale,
+        "overlay_relpath": "proof/floorplan-fidelity-overlay.png",
+        "overlay_sha256": _sha256(overlay_path),
+        "doorway_edges": [
+            ["living-volume", "hall-volume"],
+            ["hall-volume", "kitchen-volume"],
+        ],
+    }
+    layout_fidelity_sha256 = hashlib.sha256(
+        json.dumps(
+            layout_fidelity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
     scene_ids = [row[0] for row in scene_specs]
     property_url_sha256 = "8" * 64
     provenance = {
@@ -90,6 +144,7 @@ def _write_source_bundle(
         "spatial_model_basis": "floorplan_scaled_approximation",
         "spatial_model_measured": False,
         "spatial_scene_ids": scene_ids,
+        "layout_fidelity_sha256": layout_fidelity_sha256,
     }
     provenance_path = proof_dir / "provenance.json"
     provenance_path.write_bytes(materializer._canonical_json_bytes(provenance))
@@ -112,41 +167,8 @@ def _write_source_bundle(
             "spatial_model": {
                 "source_basis": "floorplan_scaled_approximation",
                 "measured": False,
-                "rooms": [
-                    {
-                        "id": "living-volume",
-                        "label": "Living",
-                        "scene_id": "living",
-                        "kind": "interior",
-                        "x": 0,
-                        "z": 0,
-                        "width": 4.8,
-                        "depth": 4.2,
-                        "height": 3.1,
-                    },
-                    {
-                        "id": "hall-volume",
-                        "label": "Hall",
-                        "scene_id": "hall",
-                        "kind": "interior",
-                        "x": 4.8,
-                        "z": 0,
-                        "width": 2.2,
-                        "depth": 4.2,
-                        "height": 2.6,
-                    },
-                    {
-                        "id": "kitchen-volume",
-                        "label": "Kitchen",
-                        "scene_id": "kitchen",
-                        "kind": "interior",
-                        "x": 7,
-                        "z": 0,
-                        "width": 3.5,
-                        "depth": 4.2,
-                        "height": 2.6,
-                    },
-                ],
+                "rooms": spatial_rooms,
+                "layout_fidelity": layout_fidelity,
             },
             "acceptance": {
                 "contract_name": "propertyquarry.ai_panorama_acceptance.v1",
