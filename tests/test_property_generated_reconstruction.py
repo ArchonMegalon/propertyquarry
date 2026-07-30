@@ -4423,11 +4423,11 @@ def test_generated_reconstruction_runtime_finalize_promotes_normalized_stage_wit
     stage = public_root / ".publish..staging" / "runtime-live-success"
     backup = stage.with_name(f"{stage.name}.previous")
     live.mkdir(parents=True)
-    (live / "tour.json").write_text('{"version": "old"}\n', encoding="utf-8")
+    (live / "tour.json").write_text('{"title": "old"}\n', encoding="utf-8")
     source = tmp_path / "source-bundle"
     (source / "generated-reconstruction").mkdir(parents=True)
     (source / "tour.json").write_text(
-        '{"slug": "runtime-live", "version": "new"}\n',
+        '{"slug": "runtime-live", "title": "new"}\n',
         encoding="utf-8",
     )
     viewer = source / "generated-reconstruction" / "viewer.html"
@@ -4442,7 +4442,7 @@ def test_generated_reconstruction_runtime_finalize_promotes_normalized_stage_wit
         while not stop_reader.is_set():
             try:
                 reader_versions.append(
-                    str(json.loads((live / "tour.json").read_text(encoding="utf-8"))["version"])
+                    str(json.loads((live / "tour.json").read_text(encoding="utf-8"))["title"])
                 )
             except Exception as exc:  # pragma: no cover - asserted below with exact details
                 reader_errors.append(f"{type(exc).__name__}:{exc}")
@@ -4487,12 +4487,12 @@ def test_generated_reconstruction_runtime_finalize_promotes_normalized_stage_wit
     assert completed.returncode == 0, completed.stderr
     assert reader_errors == []
     assert set(reader_versions) <= {"old", "new"}
-    assert json.loads((live / "tour.json").read_text(encoding="utf-8"))["version"] == "new"
+    assert json.loads((live / "tour.json").read_text(encoding="utf-8"))["title"] == "new"
     assert (live.stat().st_mode & 0o777) == 0o700
     assert ((live / "tour.json").stat().st_mode & 0o777) == 0o600
     assert ((live / "generated-reconstruction").stat().st_mode & 0o777) == 0o700
     assert ((live / "generated-reconstruction" / "viewer.html").stat().st_mode & 0o777) == 0o600
-    assert json.loads((stage / "tour.json").read_text(encoding="utf-8"))["version"] == "old"
+    assert json.loads((stage / "tour.json").read_text(encoding="utf-8"))["title"] == "old"
     assert not backup.exists()
 
     recovered = subprocess.run(

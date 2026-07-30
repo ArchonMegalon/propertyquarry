@@ -4928,6 +4928,32 @@ try:
         os.close(manifest_descriptor)
     if not isinstance(manifest_payload, dict) or str(manifest_payload.get("slug") or "") != os.path.basename(live):
         raise RuntimeError("public_manifest_slug_mismatch")
+    from pathlib import Path
+    from app.api.routes.public_tour_payloads import canonical_public_tour_payload
+    manifest_payload = canonical_public_tour_payload(
+        manifest_payload,
+        bundle_dir=Path(stage),
+    )
+    canonical_manifest = (
+        json.dumps(manifest_payload, ensure_ascii=False, indent=2) + "\n"
+    ).encode("utf-8")
+    if len(canonical_manifest) > hard_max_manifest_bytes:
+        raise RuntimeError("public_manifest_invalid")
+    manifest_descriptor = os.open(
+        manifest_path,
+        os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        pending = memoryview(canonical_manifest)
+        while pending:
+            written = os.write(manifest_descriptor, pending)
+            if written <= 0:
+                raise RuntimeError("public_manifest_write_failed")
+            pending = pending[written:]
+        os.fchmod(manifest_descriptor, 0o600)
+        os.fsync(manifest_descriptor)
+    finally:
+        os.close(manifest_descriptor)
 
     phase = "verification"
     stage_stat = os.lstat(stage)
