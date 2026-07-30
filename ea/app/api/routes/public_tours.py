@@ -13258,7 +13258,16 @@ def public_tour_page(
         _require_public_tour_viewable(payload)
         generated_reconstruction_only = _public_tour_is_generated_reconstruction_only(payload)
         primary_control_path = _public_tour_primary_control_path(payload)
-        if _tour_payload_is_disabled_fallback(payload) and not primary_control_path:
+        viewer_release = evaluate_public_tour_generated_viewer_release(payload)
+        generated_viewer_released = (
+            isinstance(payload.get("generated_viewer_release"), dict)
+            and viewer_release.get("released") is True
+        )
+        if (
+            _tour_payload_is_disabled_fallback(payload)
+            and not primary_control_path
+            and not generated_viewer_released
+        ):
             raise HTTPException(status_code=404, detail="tour_disabled_fallback")
         if primary_control_path and not _public_tour_request_prefers_embedded_media(request):
             return RedirectResponse(
@@ -13269,7 +13278,6 @@ def public_tour_page(
                 status_code=302,
                 headers=_public_tour_security_headers(),
             )
-        viewer_release = evaluate_public_tour_generated_viewer_release(payload)
         if (
             not primary_control_path
             and isinstance(payload.get("generated_viewer_release"), dict)

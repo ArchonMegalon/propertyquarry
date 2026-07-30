@@ -18523,7 +18523,7 @@ def test_propertyquarry_workspace_routes_render_greenfield_surfaces(monkeypatch)
     assert "Map" in search.text
     assert 'data-pqx-route-preview-strip' in search.text
     assert "Best so far" in search.text
-    assert 'class="pqx-current-property-card"' in search.text
+    assert 'class="pqx-current-property-card"' not in search.text
     assert 'class="pqx-route-preview-thumb"' in search.text
     assert "/app/api/property/map-previews/greenfield-route.png" in search.text
     assert "Your route" in search.text
