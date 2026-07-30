@@ -12876,8 +12876,9 @@
                   <td>
                     <div class="pqx-result-media">
                       <span class="pqx-thumb">
-                        {% if candidate.get('preview_image_url') %}
-                        <img src="{{ candidate.get('preview_image_url') }}" alt="" loading="lazy" decoding="async" fetchpriority="low">
+                        {% set ranked_preview_url = candidate.get('preview_image_url') or '' %}
+                        {% if ranked_preview_url.startswith('/') %}
+                        <img src="{{ ranked_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low">
                         {% else %}
                         HOME
                         {% endif %}

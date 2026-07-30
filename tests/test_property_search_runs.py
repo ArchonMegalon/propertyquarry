@@ -63,6 +63,52 @@ _TEST_DISTANCE_CLASSIFICATION_TAGS = {
     "nearest_supermarket_m": {"shop": "supermarket"},
 }
 
+
+def test_property_search_persisted_refresh_keeps_progress_monotonic() -> None:
+    cached = {
+        "status": "in_progress",
+        "progress": 12,
+        "updated_at": "2026-07-30T06:00:00+00:00",
+        "summary": {"progress": 12, "progress_percent": 12},
+    }
+    persisted = {
+        "status": "in_progress",
+        "progress": 0,
+        "updated_at": "2026-07-30T06:00:01+00:00",
+        "summary": {"progress": 0, "progress_percent": 0},
+    }
+
+    assert product_service._property_search_run_should_prefer_persisted_state(
+        cached_state=cached,
+        persisted_state=persisted,
+    )
+    merged = product_service._property_search_run_with_monotonic_progress(
+        cached_state=cached,
+        persisted_state=persisted,
+    )
+
+    assert merged["progress"] == 12
+    assert merged["summary"]["progress"] == 12
+    assert merged["summary"]["progress_percent"] == 12
+
+
+def test_property_search_persisted_refresh_never_reopens_terminal_state() -> None:
+    cached = {
+        "status": "processed",
+        "progress": 100,
+        "updated_at": "2026-07-30T06:00:00+00:00",
+    }
+    persisted = {
+        "status": "in_progress",
+        "progress": 92,
+        "updated_at": "2026-07-30T06:00:01+00:00",
+    }
+
+    assert not product_service._property_search_run_should_prefer_persisted_state(
+        cached_state=cached,
+        persisted_state=persisted,
+    )
+
 _CANONICAL_CATALOG_DISTANCE_RADIUS_KEYS = (
     property_fact_distance_preference_keys(
         search_supported_only=True,

@@ -6486,6 +6486,19 @@ def test_property_client_scripts_summarize_compact_candidate_copy_for_quiet_refr
     assert "fit_summary: cleanCandidateCopy(candidate?.fit_summary || candidate?.summary || candidate?.compare_reason || '')," not in workbench_script
 
 
+def test_property_results_do_not_hotlink_unverified_provider_thumbnails() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    results_template = (repo_root / "ea/app/templates/app/_property_results_list.html").read_text(encoding="utf-8")
+    workbench_template = (repo_root / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
+    workbench_script = (repo_root / "ea/app/templates/app/_property_workbench_script.html").read_text(encoding="utf-8")
+
+    assert "diorama_preview_url if diorama_preview_url.startswith('/') else ''" in results_template
+    assert "primary_preview_url if primary_preview_url.startswith('/') else ''" in results_template
+    assert "if ranked_preview_url.startswith('/')" in workbench_template
+    assert "const clientRenderableImageUrl = (value) => {" in workbench_script
+    assert "parsed.origin === window.location.origin ? candidateUrl : ''" in workbench_script
+
+
 def test_propertyquarry_customer_copy_uses_sources_not_provider_coverage() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     files = [

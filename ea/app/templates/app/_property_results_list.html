@@ -126,6 +126,8 @@
 		      {% set diorama_scene = candidate.get('diorama_scene') or {} %}
 		      {% set diorama_preview_url = candidate.get('diorama_preview_url') or diorama_scene.get('image_url') or '' %}
 		      {% set primary_preview_url = candidate.get('preview_image_url') or orientation_preview.get('thumb_image_url') or orientation_preview.get('image_url') or '' %}
+		      {% set diorama_preview_url = diorama_preview_url if diorama_preview_url.startswith('/') else '' %}
+		      {% set primary_preview_url = primary_preview_url if primary_preview_url.startswith('/') else '' %}
 	      {% set candidate_facts = candidate.get('property_facts') or {} %}
 	      {% set provisional_facts = candidate.get('provisional_facts') or candidate.get('facts') or {} %}
 	      {% set candidate_price_text = candidate.get('price_display') if candidate.get('price_display') and candidate.get('price_display') != 'n/a' else (candidate.get('costs_display') or candidate.get('rent_display') or candidate_facts.get('price_display') or candidate_facts.get('rent_display') or candidate_facts.get('price') or candidate_facts.get('rent') or provisional_facts.get('price_display') or provisional_facts.get('rent_display') or provisional_facts.get('price') or provisional_facts.get('rent') or '') %}

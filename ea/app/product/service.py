@@ -7479,17 +7479,20 @@ def _property_search_run_should_prefer_persisted_state(
     cached_state: dict[str, object],
     persisted_state: dict[str, object],
 ) -> bool:
-    cached_updated_at = _parse_iso(str(cached_state.get("updated_at") or cached_state.get("created_at") or "").strip())
-    persisted_updated_at = _parse_iso(str(persisted_state.get("updated_at") or persisted_state.get("created_at") or "").strip())
-    if persisted_updated_at and (cached_updated_at is None or persisted_updated_at > cached_updated_at):
-        return True
-
     cached_status = _property_search_run_snapshot_status(cached_state)
     persisted_status = _property_search_run_snapshot_status(persisted_state)
     cached_terminal = cached_status in _PROPERTY_SEARCH_TERMINAL_STATUSES
     persisted_terminal = persisted_status in _PROPERTY_SEARCH_TERMINAL_STATUSES
     if persisted_terminal and not cached_terminal:
         return True
+    if cached_terminal and not persisted_terminal:
+        return False
+
+    cached_updated_at = _parse_iso(str(cached_state.get("updated_at") or cached_state.get("created_at") or "").strip())
+    persisted_updated_at = _parse_iso(str(persisted_state.get("updated_at") or persisted_state.get("created_at") or "").strip())
+    if persisted_updated_at and (cached_updated_at is None or persisted_updated_at > cached_updated_at):
+        return True
+
     if persisted_status != cached_status and cached_status in {"queued", "starting"} and persisted_status not in {"queued", "starting"}:
         return True
 
@@ -7503,6 +7506,28 @@ def _property_search_run_should_prefer_persisted_state(
     if len(persisted_events) > len(cached_events):
         return True
     return False
+
+
+def _property_search_run_with_monotonic_progress(
+    *,
+    cached_state: dict[str, object],
+    persisted_state: dict[str, object],
+) -> dict[str, object]:
+    merged = dict(persisted_state or {})
+    persisted_status = _property_search_run_snapshot_status(merged)
+    cached_progress = _property_search_run_snapshot_progress(cached_state)
+    persisted_progress = _property_search_run_snapshot_progress(merged)
+    progress = (
+        100
+        if persisted_status in _PROPERTY_SEARCH_TERMINAL_STATUSES
+        else max(cached_progress, persisted_progress)
+    )
+    merged["progress"] = progress
+    summary = dict(merged.get("summary") or {}) if isinstance(merged.get("summary"), dict) else {}
+    summary["progress"] = progress
+    summary["progress_percent"] = progress
+    merged["summary"] = summary
+    return merged
 
 
 def _property_search_run_activity_sort_key(payload: dict[str, object] | None) -> tuple[int, int, float, int, int, int, int, float]:
@@ -44362,6 +44387,10 @@ class ProductService:
                 cached_state=state,
                 persisted_state=persisted,
             ):
+                persisted = _property_search_run_with_monotonic_progress(
+                    cached_state=state,
+                    persisted_state=persisted,
+                )
                 with _PROPERTY_SEARCH_RUN_LOCK:
                     _PROPERTY_SEARCH_RUN_REGISTRY[normalized_run_id] = dict(persisted)
                 state = persisted

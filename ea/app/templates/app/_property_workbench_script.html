@@ -3862,13 +3862,25 @@
       const body = rows.map((candidate, index) => {
         const title = safeCandidateTitle(candidate?.title);
         const location = String(candidate?.location_label || '').trim();
-	        const previewUrl = String(
-	          candidate?.preview_image_url
-	          || candidate?.orientation_preview?.thumb_image_url
-	          || candidate?.orientation_preview?.image_url
-	          || ''
-	        ).trim();
-	        const dioramaPreviewUrl = String(candidate?.diorama_preview_url || candidate?.diorama_scene?.image_url || '').trim();
+        const clientRenderableImageUrl = (value) => {
+          const candidateUrl = String(value || '').trim();
+          if (!candidateUrl) return '';
+          try {
+            const parsed = new URL(candidateUrl, window.location.origin);
+            return parsed.origin === window.location.origin ? candidateUrl : '';
+          } catch (_err) {
+            return '';
+          }
+        };
+	        const previewUrl = [
+	          candidate?.preview_image_url,
+	          candidate?.orientation_preview?.thumb_image_url,
+	          candidate?.orientation_preview?.image_url,
+	        ].map(clientRenderableImageUrl).find(Boolean) || '';
+	        const dioramaPreviewUrl = [
+	          candidate?.diorama_preview_url,
+	          candidate?.diorama_scene?.image_url,
+	        ].map(clientRenderableImageUrl).find(Boolean) || '';
 	        const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;
         const candidateRef = String(
           candidate?.candidate_ref
