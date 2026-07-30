@@ -33566,6 +33566,11 @@ def test_public_tour_landing_opens_runtime_accepted_magicfit_delivery() -> None:
     assert "Entrance hall" in html
     assert "Wohnküche" in html
     assert 'id="walkthrough-current-room"' in html
+    assert 'id="walkthrough-position"' in html
+    assert 'id="walkthrough-route-progress"' in html
+    assert 'class="chapter-number">01</span>' in html
+    assert 'class="chapter-number">03</span>' in html
+    assert 'aria-label="Room 3 of 3: Wohnküche"' in html
     assert 'id="walkthrough-previous"' in html
     assert 'id="walkthrough-next"' in html
     assert "seekToChapter" in html

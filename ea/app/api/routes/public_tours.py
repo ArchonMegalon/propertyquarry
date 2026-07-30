@@ -4478,13 +4478,28 @@ def _tour_html(
                     "start_seconds": round(start_seconds, 3),
                 }
             )
+        def _walkthrough_timestamp(raw_seconds: object) -> str:
+            try:
+                seconds = max(0, int(float(raw_seconds)))
+            except (TypeError, ValueError):
+                seconds = 0
+            return f"{seconds // 60}:{seconds % 60:02d}"
+
         walkthrough_chapter_markup = "".join(
             (
                 '<button type="button" class="chapter" '
-                f'data-start-seconds="{float(chapter["start_seconds"]):.3f}">'
-                f'{html.escape(str(chapter["label"]))}</button>'
+                f'data-start-seconds="{float(chapter["start_seconds"]):.3f}" '
+                f'data-label="{html.escape(str(chapter["label"]), quote=True)}" '
+                f'aria-label="Room {index} of {len(walkthrough_chapters)}: '
+                f'{html.escape(str(chapter["label"]), quote=True)}" '
+                'aria-controls="walkthrough-player">'
+                f'<span class="chapter-number">{index:02d}</span>'
+                '<span class="chapter-copy">'
+                f'<strong>{html.escape(str(chapter["label"]))}</strong>'
+                f'<small>{_walkthrough_timestamp(chapter["start_seconds"])}</small>'
+                "</span></button>"
             )
-            for chapter in walkthrough_chapters
+            for index, chapter in enumerate(walkthrough_chapters, start=1)
         )
         walkthrough_player = (
             f"""
@@ -4497,9 +4512,19 @@ def _tour_html(
         </div>
         {f'''
         <nav class="walkthrough-navigation" aria-label="Walkthrough room navigation">
-          <button type="button" id="walkthrough-previous" class="chapter-step" aria-label="Previous room">← <span>Previous</span></button>
+          <div class="route-heading">
+            <div>
+              <span>Apartment route</span>
+              <strong>Every space, in order</strong>
+            </div>
+            <b id="walkthrough-position" aria-live="polite">1 / {len(walkthrough_chapters)}</b>
+          </div>
+          <div class="route-progress" aria-hidden="true"><span id="walkthrough-route-progress"></span></div>
           <div class="chapters" aria-label="Walkthrough rooms">{walkthrough_chapter_markup}</div>
-          <button type="button" id="walkthrough-next" class="chapter-step" aria-label="Next room"><span>Next</span> →</button>
+          <div class="route-controls">
+            <button type="button" id="walkthrough-previous" class="chapter-step" aria-label="Previous room">← <span>Previous</span></button>
+            <button type="button" id="walkthrough-next" class="chapter-step" aria-label="Next room"><span>Next</span> →</button>
+          </div>
         </nav>''' if walkthrough_chapter_markup else ''}
       </section>
       <script nonce="{nonce_attr}">
@@ -4509,8 +4534,39 @@ def _tour_html(
           const previous = document.getElementById('walkthrough-previous');
           const next = document.getElementById('walkthrough-next');
           const currentRoom = document.getElementById('walkthrough-current-room');
+          const currentPosition = document.getElementById('walkthrough-position');
+          const routeProgress = document.getElementById('walkthrough-route-progress');
+          const chapterRail = document.querySelector('.chapters');
           if (!video) return;
           let activeIndex = -1;
+          const revealChapter = (selected) => {{
+            if (!chapterRail || !selected) return;
+            const railBounds = chapterRail.getBoundingClientRect();
+            const selectedBounds = selected.getBoundingClientRect();
+            const inset = 12;
+            let targetLeft = chapterRail.scrollLeft;
+            let targetTop = chapterRail.scrollTop;
+            if (selectedBounds.left < railBounds.left + inset) {{
+              targetLeft -= railBounds.left + inset - selectedBounds.left;
+            }} else if (selectedBounds.right > railBounds.right - inset) {{
+              targetLeft += selectedBounds.right - (railBounds.right - inset);
+            }}
+            if (selectedBounds.top < railBounds.top + inset) {{
+              targetTop -= railBounds.top + inset - selectedBounds.top;
+            }} else if (selectedBounds.bottom > railBounds.bottom - inset) {{
+              targetTop += selectedBounds.bottom - (railBounds.bottom - inset);
+            }}
+            if (
+              Math.abs(targetLeft - chapterRail.scrollLeft) > 1
+              || Math.abs(targetTop - chapterRail.scrollTop) > 1
+            ) {{
+              chapterRail.scrollTo({{
+                left: Math.max(0, targetLeft),
+                top: Math.max(0, targetTop),
+                behavior: 'smooth',
+              }});
+            }}
+          }};
           const activate = (active) => {{
             const nextIndex = Math.max(0, chapters.indexOf(active));
             chapters.forEach((button, index) => {{
@@ -4521,8 +4577,10 @@ def _tour_html(
             if (activeIndex !== nextIndex) {{
               activeIndex = nextIndex;
               const selected = chapters[activeIndex];
-              if (currentRoom) currentRoom.textContent = selected.textContent || '';
-              selected.scrollIntoView({{ behavior: 'smooth', block: 'nearest', inline: 'center' }});
+              if (currentRoom) currentRoom.textContent = selected.dataset.label || '';
+              if (currentPosition) currentPosition.textContent = `${{activeIndex + 1}} / ${{chapters.length}}`;
+              if (routeProgress) routeProgress.style.width = `${{((activeIndex + 1) / chapters.length) * 100}}%`;
+              revealChapter(selected);
             }}
             if (previous) previous.disabled = activeIndex <= 0 && video.currentTime < 3;
             if (next) next.disabled = activeIndex >= chapters.length - 1;
@@ -4578,41 +4636,80 @@ def _tour_html(
             pano2vr_url=pano2vr_url,
             video_url=video_url,
         )
+        walkthrough_summary = (
+            "A guided room-by-room walkthrough with direct access to every space."
+            if video_url and walkthrough_chapters
+            else str(spatial_review["summary"])
+        )
         return f"""<!doctype html>
-<html lang="de">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{safe_title}</title>
     {clickrank_head_snippet(hostname, path)}
     <style nonce="{nonce_attr}">
-      html, body {{ margin: 0; min-height: 100%; background: #111; color: #f7f1e6; font-family: Inter, system-ui, sans-serif; }}
-      body {{ display: grid; place-items: center; padding: 24px; }}
-      main {{ width: min(760px, 100%); border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 22px; background: rgba(255,255,255,.06); }}
-      h1 {{ margin: 0 0 10px; font-size: 24px; letter-spacing: 0; }}
+      * {{ box-sizing: border-box; }}
+      html, body {{ margin: 0; min-height: 100%; background: #0b0f0d; color: #f7f1e6; font-family: Inter, system-ui, sans-serif; }}
+      body {{ display: grid; place-items: center; padding: clamp(12px, 3vw, 34px); background: radial-gradient(circle at 16% 8%, rgba(64,105,77,.25), transparent 34rem), radial-gradient(circle at 90% 92%, rgba(184,134,70,.13), transparent 30rem), #0b0f0d; }}
+      main {{ width: min(1120px, 100%); border: 1px solid rgba(255,255,255,.16); border-radius: 22px; padding: clamp(18px, 3vw, 30px); background: linear-gradient(145deg, rgba(255,255,255,.085), rgba(255,255,255,.035)); box-shadow: 0 28px 80px rgba(0,0,0,.34); backdrop-filter: blur(18px); }}
+      h1 {{ margin: 0 0 10px; font-size: clamp(24px, 3vw, 36px); line-height: 1.08; letter-spacing: -.03em; }}
       p {{ margin: 0 0 16px; color: rgba(247,241,230,.78); line-height: 1.45; }}
       .eyebrow {{ margin-bottom: 10px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: rgba(247,241,230,.68); }}
       .actions {{ display: flex; flex-wrap: wrap; gap: 10px; }}
+      .actions:empty {{ display: none; }}
       a {{ color: #111; background: #f7f1e6; border-radius: 8px; padding: 11px 13px; text-decoration: none; font-weight: 700; }}
       a.secondary {{ color: #f7f1e6; background: transparent; border: 1px solid rgba(255,255,255,.28); }}
-      .walkthrough-shell {{ display: grid; gap: 12px; margin-top: 16px; }}
-      .walkthrough-stage {{ position: relative; overflow: hidden; border-radius: 12px; background: #050505; }}
-      .walkthrough-shell video {{ display: block; width: 100%; max-height: min(62vh, 620px); background: #050505; }}
+      .walkthrough-shell {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(236px, 282px); align-items: stretch; gap: 14px; margin-top: 18px; }}
+      .walkthrough-stage {{ position: relative; display: grid; place-items: center; min-width: 0; overflow: hidden; border: 1px solid rgba(255,255,255,.12); border-radius: 16px; background: #030504; box-shadow: 0 18px 44px rgba(0,0,0,.28); }}
+      .walkthrough-shell video {{ display: block; width: 100%; max-height: min(68vh, 680px); background: #030504; }}
       .walkthrough-now {{ position: absolute; left: 12px; top: 12px; display: grid; gap: 2px; max-width: calc(100% - 24px); padding: 8px 11px; border: 1px solid rgba(255,255,255,.2); border-radius: 9px; background: rgba(5,5,5,.74); backdrop-filter: blur(12px); pointer-events: none; }}
       .walkthrough-now span {{ color: rgba(255,255,255,.68); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
       .walkthrough-now strong {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-      .walkthrough-navigation {{ display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; gap: 8px; }}
-      .chapters {{ display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 5px; scroll-snap-type: x proximity; scrollbar-width: thin; }}
-      .chapter {{ flex: 0 0 auto; min-height: 42px; border: 1px solid rgba(255,255,255,.24); border-radius: 999px; padding: 0 13px; background: rgba(255,255,255,.08); color: #f7f1e6; cursor: pointer; font: inherit; font-weight: 700; }}
-      .chapter {{ scroll-snap-align: center; }}
-      .chapter.active {{ border-color: #f7f1e6; background: #f7f1e6; color: #111; }}
-      .chapter-step {{ min-height: 42px; border: 1px solid rgba(255,255,255,.24); border-radius: 9px; padding: 0 12px; background: rgba(255,255,255,.08); color: #f7f1e6; cursor: pointer; font: inherit; font-weight: 800; }}
+      .walkthrough-navigation {{ min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 11px; padding: 15px; overflow: hidden; border: 1px solid rgba(255,255,255,.13); border-radius: 16px; background: rgba(5,8,6,.55); }}
+      .route-heading {{ display: flex; align-items: start; justify-content: space-between; gap: 10px; }}
+      .route-heading div {{ display: grid; gap: 3px; min-width: 0; }}
+      .route-heading span {{ color: #9bb5a1; font-size: .69rem; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }}
+      .route-heading strong {{ overflow: hidden; color: #f7f1e6; font-size: .93rem; text-overflow: ellipsis; white-space: nowrap; }}
+      .route-heading b {{ flex: none; color: #d8b476; font-size: .78rem; letter-spacing: .04em; }}
+      .route-progress {{ height: 3px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.1); }}
+      .route-progress span {{ display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #799a80, #d8b476); transition: width .25s ease; }}
+      .chapters {{ min-height: 0; display: grid; align-content: start; gap: 7px; overflow-y: auto; padding: 1px 4px 4px 1px; scroll-padding-block: 10px; scrollbar-color: rgba(216,180,118,.55) transparent; scrollbar-width: thin; }}
+      .chapter {{ width: 100%; min-height: 48px; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 9px; border: 1px solid rgba(255,255,255,.13); border-radius: 11px; padding: 7px 9px; background: rgba(255,255,255,.045); color: #f7f1e6; cursor: pointer; font: inherit; text-align: left; scroll-snap-align: nearest; transition: border-color .18s ease, background .18s ease, transform .18s ease; }}
+      .chapter:hover {{ border-color: rgba(216,180,118,.55); background: rgba(255,255,255,.08); transform: translateX(2px); }}
+      .chapter-number {{ display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; color: rgba(247,241,230,.68); font-size: .69rem; font-weight: 900; }}
+      .chapter-copy {{ min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 7px; }}
+      .chapter-copy strong {{ overflow: hidden; font-size: .83rem; text-overflow: ellipsis; white-space: nowrap; }}
+      .chapter-copy small {{ color: rgba(247,241,230,.48); font-size: .69rem; font-variant-numeric: tabular-nums; }}
+      .chapter.active {{ border-color: rgba(216,180,118,.7); background: linear-gradient(100deg, rgba(102,139,111,.36), rgba(216,180,118,.12)); box-shadow: inset 3px 0 #d8b476; }}
+      .chapter.active .chapter-number {{ border-color: #d8b476; background: #d8b476; color: #111; }}
+      .chapter.active .chapter-copy small {{ color: #d8b476; }}
+      .route-controls {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
+      .chapter-step {{ min-height: 44px; border: 1px solid rgba(255,255,255,.18); border-radius: 10px; padding: 0 11px; background: rgba(255,255,255,.07); color: #f7f1e6; cursor: pointer; font: inherit; font-size: .82rem; font-weight: 800; }}
+      .chapter-step:not(:disabled):hover {{ border-color: rgba(216,180,118,.6); background: rgba(216,180,118,.12); }}
       .chapter-step:disabled {{ opacity: .38; cursor: not-allowed; }}
       .chapter:focus-visible, .chapter-step:focus-visible {{ outline: 3px solid #f2b85b; outline-offset: 2px; }}
+      .walkthrough-footer {{ display: flex; justify-content: flex-end; margin-top: 10px; }}
+      .walkthrough-footer a {{ padding: 7px 2px; border-radius: 0; background: transparent; color: rgba(247,241,230,.65); font-size: .78rem; font-weight: 700; text-decoration: underline; text-decoration-color: rgba(247,241,230,.24); text-underline-offset: 4px; }}
+      .walkthrough-footer a:hover {{ color: #f7f1e6; text-decoration-color: #d8b476; }}
+      @media (max-width: 760px) {{
+        .walkthrough-shell {{ grid-template-columns: minmax(0, 1fr); }}
+        .walkthrough-navigation {{ grid-template-rows: auto auto auto auto; }}
+        .chapters {{ display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 1px 3px 7px 1px; scroll-padding-inline: 12px; scroll-snap-type: x proximity; }}
+        .chapter {{ flex: 0 0 min(220px, 72vw); }}
+        .chapter:hover {{ transform: none; }}
+      }}
       @media (max-width: 560px) {{
-        .chapter-step span {{ display: none; }}
-        .chapter-step {{ min-width: 46px; padding: 0 10px; font-size: 1.15rem; }}
+        body {{ place-items: start center; }}
+        main {{ border-radius: 17px; }}
+        .actions {{ gap: 8px; }}
+        .actions a {{ flex: 1 1 auto; text-align: center; }}
         .walkthrough-now {{ left: 8px; top: 8px; max-width: calc(100% - 16px); }}
+        .walkthrough-navigation {{ padding: 12px; }}
+        .chapter-step {{ min-height: 46px; }}
+      }}
+      @media (prefers-reduced-motion: reduce) {{
+        *, *::before, *::after {{ scroll-behavior: auto !important; transition-duration: .01ms !important; }}
       }}
     </style>
   </head>
@@ -4620,15 +4717,15 @@ def _tour_html(
     <main data-spatial-review-mode="{html.escape(spatial_review["mode"])}" data-spatial-review-provider="{html.escape(spatial_review["provider"])}">
       <div class="eyebrow">PropertyQuarry Tour Access · {html.escape(spatial_review["provenance"])}</div>
       <h1>{safe_title}</h1>
-      <p>{html.escape(spatial_review["summary"])}</p>
-      <p>Only playable tour controls are shown here.</p>
+      <p>{html.escape(walkthrough_summary)}</p>
+      {'' if video_url else '<p>Only playable tour controls are shown here.</p>'}
       <div class="actions">
         {f'<a href="{matterport_url}">Open 3D tour</a>' if matterport_url else ''}
         {f'<a href="{three_d_vista_url}">Open 3D tour</a>' if three_d_vista_url else ''}
         {f'<a href="{pano2vr_url}">Open 3D tour</a>' if pano2vr_url else ''}
-        {f'<a class="secondary" href="{video_url}">Open walkthrough</a>' if video_url else ''}
       </div>
       {walkthrough_player}
+      {f'<div class="walkthrough-footer"><a href="{video_url}">Open walkthrough video ↗</a></div>' if video_url else ''}
     </main>
   </body>
 </html>"""

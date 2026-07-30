@@ -3341,6 +3341,11 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
     assert chapters.count() == 3
     current_room = page.locator("#walkthrough-current-room")
     assert current_room.inner_text() == "Entrance hall"
+    current_position = page.locator("#walkthrough-position")
+    assert current_position.inner_text() == "1 / 3"
+    assert page.locator("#walkthrough-route-progress").evaluate(
+        "(element) => Number.parseFloat(element.style.width)"
+    ) == pytest.approx(100 / 3, abs=0.01)
     assert page.locator("#walkthrough-previous").is_disabled()
 
     def click_chapter(index: int, expected: str) -> None:
@@ -3371,7 +3376,9 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
         assert chapter_state["expectedCurrent"] == "true", chapter_state
 
     click_chapter(1, "Primary bedroom")
+    assert current_position.inner_text() == "2 / 3"
     click_chapter(2, "Terrace")
+    assert current_position.inner_text() == "3 / 3"
     assert page.locator("#walkthrough-next").is_disabled()
     page.locator("#walkthrough-previous").click()
     page.wait_for_timeout(100)
@@ -3393,16 +3400,49 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
     page.wait_for_function(
         "() => document.getElementById('walkthrough-current-room')?.textContent === 'Primary bedroom'"
     )
+    page.wait_for_function(
+        """() => {
+            const active = document.querySelector('.chapter.active')?.getBoundingClientRect();
+            const rail = document.querySelector('.chapters')?.getBoundingClientRect();
+            return Boolean(
+                active
+                && rail
+                && active.left >= rail.left - 1
+                && active.right <= rail.right + 1
+            );
+        }"""
+    )
     state = page.evaluate(
         """() => {
             const video = document.getElementById('walkthrough-player');
             const navigation = document.querySelector('.walkthrough-navigation');
+            const stage = document.querySelector('.walkthrough-stage');
+            const routeControls = document.querySelector('.route-controls');
+            const activeChapter = document.querySelector('.chapter.active');
+            const chapterRail = document.querySelector('.chapters');
             const buttons = Array.from(document.querySelectorAll('.chapter, .chapter-step'));
+            const shellColumns = getComputedStyle(
+                document.querySelector('.walkthrough-shell')
+            ).gridTemplateColumns.split(' ').length;
+            const activeBounds = activeChapter?.getBoundingClientRect();
+            const railBounds = chapterRail?.getBoundingClientRect();
             return {
                 currentTime: video?.currentTime || 0,
                 readyState: video?.readyState || 0,
                 videoWidth: video?.videoWidth || 0,
                 buttonHeights: buttons.map((button) => button.getBoundingClientRect().height),
+                shellColumns,
+                stageWidth: stage?.getBoundingClientRect().width || 0,
+                navigationWidth: navigation?.getBoundingClientRect().width || 0,
+                routeControlsColumns: routeControls
+                    ? getComputedStyle(routeControls).gridTemplateColumns.split(' ').length
+                    : 0,
+                activeVisible: Boolean(
+                    activeBounds
+                    && railBounds
+                    && activeBounds.left >= railBounds.left - 1
+                    && activeBounds.right <= railBounds.right + 1
+                ),
                 navigationOverflow: navigation
                     ? navigation.scrollWidth - navigation.clientWidth
                     : 0,
@@ -3417,6 +3457,14 @@ def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
     assert all(height >= 42 for height in state["buttonHeights"])
     assert state["documentOverflow"] <= 1
     assert state["navigationOverflow"] <= 1
+    assert state["routeControlsColumns"] == 2
+    assert state["activeVisible"]
+    if mobile:
+        assert state["shellColumns"] == 1
+        assert state["stageWidth"] > state["navigationWidth"] - 2
+    else:
+        assert state["shellColumns"] == 2
+        assert state["stageWidth"] > state["navigationWidth"] * 2
     assert not [
         message
         for message in console_errors
