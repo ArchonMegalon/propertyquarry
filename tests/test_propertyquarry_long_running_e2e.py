@@ -364,6 +364,68 @@ def test_poll_history_accepts_tolerated_jitter_and_success_terminal() -> None:
     assert evaluation["final_status"] == "completed_partial"
 
 
+def test_poll_history_accepts_live_product_processed_terminal() -> None:
+    evaluation = gate.evaluate_poll_history(
+        [
+            {"status": "queued", "progress": 0},
+            {"status": "in_progress", "progress": 56},
+            {"status": "processed", "progress": 100},
+        ]
+    )
+    assert evaluation["ok"] is True
+    assert evaluation["terminal"] is True
+    assert evaluation["successful_terminal"] is True
+    assert evaluation["final_status"] == "processed"
+
+
+def test_network_blockers_ignore_recovered_navigation_abort() -> None:
+    journal = gate.NetworkJournal.empty()
+    url = "https://propertyquarry.com/app/properties?run_id=fixture"
+    journal.request_failures.append(
+        {
+            "url": url,
+            "resource_type": "document",
+            "failure": "net::ERR_ABORTED",
+            "expected_offline": False,
+        }
+    )
+    journal.responses.append(
+        {
+            "url": url,
+            "resource_type": "document",
+            "status": 200,
+        }
+    )
+    assert gate.evaluate_network_blockers(
+        journal,
+        origin=gate.PRODUCTION_ORIGIN,
+    )["ok"] is True
+
+
+def test_network_blockers_only_ignore_declared_expected_console_error() -> None:
+    journal = gate.NetworkJournal.empty()
+    journal.console_messages.append(
+        {
+            "type": "error",
+            "text": (
+                "Failed to load resource: the server responded with a status "
+                "of 503 (Service Unavailable)"
+            ),
+        }
+    )
+    assert gate.evaluate_network_blockers(
+        journal,
+        origin=gate.PRODUCTION_ORIGIN,
+    )["ok"] is False
+    assert gate.evaluate_network_blockers(
+        journal,
+        origin=gate.PRODUCTION_ORIGIN,
+        ignored_console_patterns=(
+            "failed to load resource: the server responded with a status of 503",
+        ),
+    )["ok"] is True
+
+
 @pytest.mark.parametrize(
     "history",
     [

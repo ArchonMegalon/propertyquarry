@@ -47,8 +47,7 @@ SESSION_COOKIE_NAME = "ea_workspace_session"
 SEARCH_ROUTE = "/app/search"
 RUN_STATUS_ROUTE_TEMPLATE = "/app/api/property/search-runs/{run_id}"
 DEFAULT_THREE_D_SLUG = (
-    "luxury-residence-with-breathtaking-skyline-views-danubeflats-vienna-"
-    "layout-first-742df65557"
+    "danubeflats-urban-jungle-layout-first-a43055be7b58de51447e"
 )
 MAX_SESSION_RECEIPT_BYTES = 64 * 1024
 MAX_THREE_D_RECEIPT_BYTES = 2 * 1024 * 1024
@@ -59,6 +58,7 @@ SUCCESS_TERMINAL_STATUSES = frozenset(
         "completed",
         "completed_partial",
         "completed_no_results",
+        "processed",
         "ready",
     }
 )
@@ -753,12 +753,22 @@ def evaluate_network_blockers(
     *,
     origin: str,
     ignored_http_urls: Iterable[str] = (),
+    ignored_console_patterns: Iterable[str] = (),
 ) -> dict[str, object]:
     ignored = {str(value) for value in ignored_http_urls}
+    ignored_console = {
+        str(value or "").strip().lower()
+        for value in ignored_console_patterns
+        if str(value or "").strip()
+    }
     console = [
         row
         for row in journal.console_messages
         if not _is_report_only_csp_information(row)
+        and not any(
+            pattern in str(row.get("text") or "").lower()
+            for pattern in ignored_console
+        )
         and (
             str(row.get("type") or "").lower() in {"assert", "error"}
             or any(
@@ -767,12 +777,20 @@ def evaluate_network_blockers(
             )
         )
     ]
+    successful_urls = {
+        str(row.get("url") or "")
+        for row in journal.responses
+        if 100 <= int(row.get("status") or 0) < 400
+    }
     request_failures: list[dict[str, object]] = []
     for row in journal.request_failures:
         if row.get("expected_offline") is True:
             continue
         url = str(row.get("url") or "")
         resource_type = str(row.get("resource_type") or "")
+        failure = str(row.get("failure") or "").strip().lower()
+        if "net::err_aborted" in failure and url in successful_urls:
+            continue
         if (
             url.startswith(origin)
             or resource_type in CRITICAL_RESOURCE_TYPES
@@ -828,7 +846,7 @@ def _install_launch_state_monitor(page: Any, *, storage_key: str) -> None:
             const busy = button.getAttribute('aria-busy') === 'true'
               || button.hasAttribute('disabled')
               || /preparing|saving|starting|launching/i.test(statusText);
-            const error = /could not|did not load|stopped|retry|reload|failed|too long/i.test(statusText);
+            const error = /could not|did not load|stopped|retry|reload|failed|failure|unavailable|too long/i.test(statusText);
             state.busy_observed = Boolean(state.busy_observed || busy);
             state.error_observed = Boolean(state.error_observed || error);
             state.queued_observed = Boolean(
@@ -1291,6 +1309,9 @@ def _exercise_visible_error_probe(
             journal,
             origin=config.origin,
             ignored_http_urls=(start_url,),
+            ignored_console_patterns=(
+                "failed to load resource: the server responded with a status of 503",
+            ),
         )
         checks.append(
             _check(
@@ -1669,17 +1690,21 @@ def _exercise_three_d_cutaway_checkpoint(
     journal = NetworkJournal.empty()
     journal.attach(page)
     try:
-        route = (
-            f"/tours/{urllib.parse.quote(config.three_d_slug, safe='')}"
-            "/control/3dvista"
-        )
+        route = f"/tours/{urllib.parse.quote(config.three_d_slug, safe='')}"
         response = page.goto(
             config.origin + route,
-            wait_until="domcontentloaded",
+            wait_until="networkidle",
             timeout=config.browser_timeout_ms,
         )
         provider_hook = page.locator(
-            "#load-provider, .provider-frame, iframe, [data-provider-status]"
+            "#load-provider, .provider-frame, iframe:not([src*='generated-reconstruction']), "
+            "[data-provider-status]"
+        ).count() > 0
+        viewer_hook = page.locator(
+            "iframe[src*='/generated-reconstruction/viewer.html'], "
+            "a[href*='/generated-reconstruction/viewer.html'], "
+            "[data-generated-reconstruction-viewer], "
+            "[data-pq-reconstruction-viewer]"
         ).count() > 0
         cutaway_hook = bool(
             page.locator(
@@ -1693,6 +1718,8 @@ def _exercise_three_d_cutaway_checkpoint(
             for phrase in (
                 "layout aid",
                 "not a captured tour",
+                "not a captured or measured tour",
+                "planning reconstruction",
                 "planning preview",
             )
         )
@@ -1700,7 +1727,7 @@ def _exercise_three_d_cutaway_checkpoint(
         route_ok = bool(
             response
             and response.ok
-            and provider_hook
+            and viewer_hook
             and cutaway_hook
             and truthful_disclosure
             and network["ok"]
@@ -1711,6 +1738,7 @@ def _exercise_three_d_cutaway_checkpoint(
                 route_ok,
                 status=int(response.status if response else 0),
                 provider_hook=provider_hook,
+                viewer_hook=viewer_hook,
                 cutaway_hook=cutaway_hook,
                 truthful_disclosure=truthful_disclosure,
             )
@@ -1726,6 +1754,7 @@ def _exercise_three_d_cutaway_checkpoint(
             else "fail",
             "route": route,
             "provider_hook": provider_hook,
+            "viewer_hook": viewer_hook,
             "cutaway_hook": cutaway_hook,
             "truthful_disclosure": truthful_disclosure,
             "composed_checkpoint": composed,
