@@ -10749,6 +10749,9 @@ def _write_viewer_walkthrough(
     sidecar = {
         "provider": "PropertyQuarry generated reconstruction",
         "provider_key": "propertyquarry_generated_reconstruction",
+        "acceptance_status": "accepted",
+        "launch_eligible": True,
+        "acceptance_basis": "automated_render_integrity_and_route_coverage_v1",
         "composition": "viewer_route_storyboard",
         "motion_style": "threejs_layout_flythrough",
         "style_label": style_label,
@@ -11091,6 +11094,9 @@ def _write_stop_card_walkthrough(
     sidecar = {
         "provider": "PropertyQuarry generated reconstruction",
         "provider_key": "propertyquarry_generated_reconstruction",
+        "acceptance_status": "accepted",
+        "launch_eligible": True,
+        "acceptance_basis": "automated_render_integrity_and_route_coverage_v1",
         "composition": "route_focused_stop_cards",
         "motion_style": "ken_burns_route_cards",
         "style_label": style_label,

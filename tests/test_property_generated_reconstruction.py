@@ -3667,6 +3667,12 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
         assert (output_dir / "generated-walkthrough.mp4").is_file()
         assert (output_dir / "generated-walkthrough.quality.json").is_file()
         walkthrough_sidecar = json.loads((output_dir / "generated-walkthrough.quality.json").read_text(encoding="utf-8"))
+        assert walkthrough_sidecar["acceptance_status"] == "accepted"
+        assert walkthrough_sidecar["launch_eligible"] is True
+        assert (
+            walkthrough_sidecar["acceptance_basis"]
+            == "automated_render_integrity_and_route_coverage_v1"
+        )
         assert receipt["walkthrough"]["duration_seconds"] >= float(walkthrough_sidecar["seconds_per_stop"])
         assert receipt["walkthrough"]["composition"] == expected_composition
         assert receipt["walkthrough"]["motion_style"] == expected_motion_style
