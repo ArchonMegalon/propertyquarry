@@ -12087,6 +12087,34 @@ def _tour_control_panorama_html(
         if (announce) announcer.textContent = direction > 0 ? 'View zoomed in' : 'View zoomed out';
       }
       function updateDollhouseNodes() {
+        const visualViewport = window.visualViewport;
+        const viewportLeft = visualViewport && Number.isFinite(visualViewport.offsetLeft) ? visualViewport.offsetLeft : 0;
+        const viewportTop = visualViewport && Number.isFinite(visualViewport.offsetTop) ? visualViewport.offsetTop : 0;
+        const viewportWidth = visualViewport && Number.isFinite(visualViewport.width) ? visualViewport.width : innerWidth;
+        const viewportHeight = visualViewport && Number.isFinite(visualViewport.height) ? visualViewport.height : innerHeight;
+        const safeStyle = getComputedStyle(hotspotLayer);
+        const safeInset = side => Math.max(0, parseFloat(safeStyle.getPropertyValue(`--pq-safe-${side}`)) || 0);
+        const bounds = {
+          left: Math.max(0, viewportLeft) + safeInset('left') + 8,
+          right: Math.min(innerWidth, viewportLeft + viewportWidth) - safeInset('right') - 8,
+          top: Math.max(0, viewportTop) + safeInset('top') + 8,
+          bottom: Math.min(innerHeight, viewportTop + viewportHeight) - safeInset('bottom') - 8,
+        };
+        const intersects = (left, right) => left.left < right.right && left.right > right.left
+          && left.top < right.bottom && left.bottom > right.top;
+        const obstacleSelectors = [
+          '.identity',
+          '.top-actions',
+          '.zoom-controls',
+          '.dollhouse-note:not([hidden])',
+        ];
+        const obstacleRects = obstacleSelectors.flatMap(selector => [...document.querySelectorAll(selector)]).flatMap(element => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          if (element.hidden || style.display === 'none' || style.visibility === 'hidden'
+            || Number(style.opacity || 1) <= 0 || rect.width <= 0 || rect.height <= 0) return [];
+          return [{ left: rect.left - 8, right: rect.right + 8, top: rect.top - 8, bottom: rect.bottom + 8 }];
+        });
         const candidates = [];
         for (const marker of dollhouseNodes.children) {
           marker.hidden = false;
@@ -12102,21 +12130,60 @@ def _tour_control_panorama_html(
         for (const candidate of candidates) {
           const width = Math.max(candidate.marker.offsetWidth, 74);
           const height = Math.max(candidate.marker.offsetHeight, 34);
+          const halfWidth = width / 2;
+          const halfHeight = height / 2;
+          const clampCandidate = (x, y) => ({
+            x: Math.max(bounds.left + halfWidth, Math.min(bounds.right - halfWidth, x)),
+            y: Math.max(bounds.top + halfHeight, Math.min(bounds.bottom - halfHeight, y)),
+          });
+          const blockers = [...obstacleRects, ...occupied];
+          const rawCandidates = [];
+          for (const yShift of [0, -38, 38, -76, 76, -114, 114]) {
+            rawCandidates.push({ x: candidate.x, y: candidate.y + yShift });
+          }
+          for (const xShift of [-88, 88, -154, 154]) {
+            rawCandidates.push(
+              { x: candidate.x + xShift, y: candidate.y },
+              { x: candidate.x + xShift, y: candidate.y - 44 },
+              { x: candidate.x + xShift, y: candidate.y + 44 },
+            );
+          }
+          for (const blocker of blockers) {
+            rawCandidates.push(
+              { x: blocker.left - halfWidth - 8, y: candidate.y },
+              { x: blocker.right + halfWidth + 8, y: candidate.y },
+              { x: candidate.x, y: blocker.top - halfHeight - 8 },
+              { x: candidate.x, y: blocker.bottom + halfHeight + 8 },
+            );
+          }
+          const seen = new Set();
           let placed = null;
-          for (const shift of [0, -38, 38, -76, 76]) {
-            const x = Math.max(width / 2 + 8, Math.min(innerWidth - width / 2 - 8, candidate.x));
-            const y = Math.max(height / 2 + 84, Math.min(innerHeight - height / 2 - 18, candidate.y + shift));
-            const box = { left: x - width / 2 - 4, right: x + width / 2 + 4, top: y - height / 2 - 3, bottom: y + height / 2 + 3 };
-            if (!occupied.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) {
-              placed = { x, y, box };
-              break;
-            }
+          for (const rawCandidate of rawCandidates) {
+            const position = clampCandidate(rawCandidate.x, rawCandidate.y);
+            const key = `${position.x.toFixed(2)}:${position.y.toFixed(2)}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            const box = {
+              left: position.x - halfWidth,
+              right: position.x + halfWidth,
+              top: position.y - halfHeight,
+              bottom: position.y + halfHeight,
+            };
+            if (box.left < bounds.left || box.right > bounds.right || box.top < bounds.top || box.bottom > bounds.bottom
+              || blockers.some(blocker => intersects(box, blocker))) continue;
+            placed = { ...position, box };
+            break;
           }
           candidate.marker.hidden = !placed;
           if (placed) {
             candidate.marker.style.left = `${placed.x}px`;
             candidate.marker.style.top = `${placed.y}px`;
-            occupied.push(placed.box);
+            occupied.push({
+              left: placed.box.left - 6,
+              right: placed.box.right + 6,
+              top: placed.box.top - 6,
+              bottom: placed.box.bottom + 6,
+            });
           }
         }
       }

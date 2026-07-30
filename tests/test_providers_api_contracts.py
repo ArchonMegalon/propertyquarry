@@ -8224,10 +8224,7 @@ def test_public_tour_page_rejects_generated_reconstruction_launch_shell(
 
     response = client.get(f"/tours/{slug}", follow_redirects=False)
 
-    assert response.status_code == 200
-    assert "PropertyQuarry styled 3D reconstruction" in response.text
-    assert "Generated reconstruction" in response.text
-    assert f"/tours/files/{slug}/generated-reconstruction/viewer.html" not in response.text
+    assert response.status_code == 404
     layout_preview = client.get(f"/tours/{slug}/layout-preview", follow_redirects=False)
     assert layout_preview.status_code == 200
     assert "PropertyQuarry styled 3D reconstruction" in layout_preview.text
@@ -8263,17 +8260,12 @@ def test_public_tour_page_rejects_generated_reconstruction_walkthrough_on_autopl
 
     response = client.get(f"/tours/{slug}?autoplay=1", follow_redirects=False)
 
-    assert response.status_code == 200
-    assert "<video id=\"tour-video\"" in response.text
-    assert "PropertyQuarry styled 3D reconstruction" in response.text
-    assert 'id="walkthrough-progress-track"' in response.text
-    assert 'id="walkthrough-progress-fill"' in response.text
-    assert 'id="route-prev"' in response.text
-    assert 'id="route-next"' in response.text
-    assert 'id="reference-focus-kind"' in response.text
+    assert response.status_code == 404
     walkthrough = client.get(f"/tours/{slug}/walkthrough", follow_redirects=False)
-    assert walkthrough.status_code == 200
-    assert walkthrough.headers["content-type"].startswith("video/mp4")
+    assert walkthrough.status_code == 404
+    layout_preview = client.get(f"/tours/{slug}/layout-preview", follow_redirects=False)
+    assert layout_preview.status_code == 200
+    assert "PropertyQuarry styled 3D reconstruction" in layout_preview.text
 
 
 def test_public_tour_json_never_exposes_listing_or_source_urls(

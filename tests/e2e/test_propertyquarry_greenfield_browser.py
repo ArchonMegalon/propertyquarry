@@ -1516,6 +1516,281 @@ def test_propertyquarry_ai_panorama_mobile_hotspot_labels_stay_inside_viewport(
         context.close()
 
 
+_MOBILE_DOLLHOUSE_THREE_STUB = """
+  export const SRGBColorSpace = 'srgb';
+  export const MathUtils = { degToRad: value => Number(value) * Math.PI / 180 };
+  const normalizedAngle = value => Math.atan2(Math.sin(value), Math.cos(value));
+  export class Vector3 {
+    constructor(x = 0, y = 0, z = 0) { this.set(x, y, z); }
+    set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
+    clone() { return new Vector3(this.x, this.y, this.z); }
+    normalize() {
+      const length = Math.hypot(this.x, this.y, this.z) || 1;
+      this.x /= length; this.y /= length; this.z /= length;
+      return this;
+    }
+    dot(other) { return this.x * other.x + this.y * other.y + this.z * other.z; }
+    project(camera) {
+      const normalized = this.clone().normalize();
+      const target = camera._forward.clone().normalize();
+      const vectorYaw = Math.atan2(-normalized.z, -normalized.x);
+      const cameraYaw = Math.atan2(-target.z, -target.x);
+      const vectorPitch = Math.asin(normalized.y);
+      const cameraPitch = Math.asin(target.y);
+      const verticalScale = Math.tan((camera.fov * Math.PI / 180) / 2);
+      this.x = Math.tan(normalizedAngle(vectorYaw - cameraYaw)) / (verticalScale * camera.aspect);
+      this.y = Math.tan(vectorPitch - cameraPitch) / verticalScale;
+      this.z = 0;
+      return this;
+    }
+  }
+  class Positioned {
+    constructor() { this.position = new Vector3(); this.rotation = { y: 0 }; this.userData = {}; }
+  }
+  export class PerspectiveCamera extends Positioned {
+    constructor(fov, aspect) {
+      super();
+      this.fov = fov;
+      this.aspect = aspect;
+      this._forward = new Vector3(0, 0, -1);
+    }
+    lookAt(target) { this._forward = target.clone().normalize(); }
+    getWorldDirection(target) { return target.set(this._forward.x, this._forward.y, this._forward.z); }
+    updateProjectionMatrix() {}
+  }
+  export class WebGLRenderer {
+    constructor() {
+      this.domElement = document.createElement('canvas');
+      this.capabilities = { getMaxAnisotropy: () => 1 };
+    }
+    setPixelRatio() {}
+    setSize(width, height) {
+      this.domElement.width = width; this.domElement.height = height;
+      this.domElement.style.width = `${width}px`; this.domElement.style.height = `${height}px`;
+    }
+    render() {}
+    setAnimationLoop(callback) {
+      const tick = () => { callback(); this._frame = requestAnimationFrame(tick); };
+      tick();
+    }
+  }
+  export class Scene { add() {} }
+  export class Group { add() {} }
+  export class SphereGeometry { scale() {} }
+  export class BoxGeometry {}
+  export class MeshBasicMaterial {
+    constructor(values = {}) {
+      Object.assign(this, values);
+      this.color = { setHex() {} };
+    }
+  }
+  export class MeshStandardMaterial extends MeshBasicMaterial {}
+  export class Mesh extends Positioned {
+    constructor(geometry, material) {
+      super();
+      this.geometry = geometry;
+      this.material = material;
+    }
+  }
+  export class Color { constructor(value) { this.value = value; } }
+  export class Fog {
+    constructor(color, near, far) { this.color = color; this.near = near; this.far = far; }
+  }
+  export class HemisphereLight extends Positioned {}
+  export class DirectionalLight extends Positioned {}
+  export class Raycaster { setFromCamera() {} intersectObjects() { return []; } }
+  export class Vector2 { constructor(x = 0, y = 0) { this.x = x; this.y = y; } }
+  export class TextureLoader {
+    setCrossOrigin() {}
+    load(_url, onLoad) { queueMicrotask(() => onLoad({ dispose() {} })); }
+  }
+"""
+
+
+def test_propertyquarry_ai_panorama_mobile_dollhouse_nodes_avoid_fixed_controls(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    image = Image.new("RGB", (1024, 512), (220, 214, 204))
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=88)
+    panorama_url = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    scene_rows = (
+        ("living-kitchen", "Open plan · Living & kitchen"),
+        ("lounge", "Open plan · Lounge"),
+        ("kitchen-dining", "Open plan · Kitchen & dining"),
+        ("bedroom-primary", "Primary bedroom"),
+        ("bedroom-2", "Bedroom 2"),
+        ("bedroom-3", "Bedroom 3"),
+        ("balcony", "Balcony · Vienna view"),
+    )
+    room_rows = (
+        ("lounge-zone", "lounge", 0.0, 0.0, 4.5, 5.5, "interior"),
+        ("living-zone", "living-kitchen", 4.6, 0.0, 4.0, 4.0, "interior"),
+        ("kitchen-zone", "kitchen-dining", 8.7, 0.0, 3.8, 5.5, "interior"),
+        ("primary-bedroom", "bedroom-primary", 0.0, 5.6, 4.1, 4.2, "interior"),
+        ("bedroom-2", "bedroom-2", 4.2, 5.6, 3.8, 4.2, "interior"),
+        ("bedroom-3", "bedroom-3", 8.1, 5.6, 3.6, 4.2, "interior"),
+        ("balcony", "balcony", 11.8, 5.6, 2.6, 4.2, "exterior"),
+    )
+    scene_labels = dict(scene_rows)
+    document = _tour_control_panorama_html(
+        {
+            "title": "Mobile dollhouse controls",
+            "display_title": "Mobile dollhouse controls",
+        },
+        panorama_spec={
+            "representation_kind": "ai_reconstruction",
+            "representation_disclosure": (
+                "AI-reconstructed from listing photos; not a captured 360 or measured survey."
+            ),
+            "initial_scene_id": "living-kitchen",
+            "scenes": [
+                {
+                    "id": scene_id,
+                    "label": label,
+                    "image_url": panorama_url,
+                    "start_yaw": 0,
+                    "start_pitch": 0,
+                    "start_fov": 72,
+                    "hotspots": [],
+                }
+                for scene_id, label in scene_rows
+            ],
+            "floorplan_url": panorama_url,
+            "spatial_model": {
+                "source_basis": "floorplan_scaled_approximation",
+                "measured": False,
+                "rooms": [
+                    {
+                        "id": room_id,
+                        "label": scene_labels[scene_id],
+                        "scene_id": scene_id,
+                        "x": x,
+                        "z": z,
+                        "width": width,
+                        "depth": depth,
+                        "height": 2.75,
+                        "kind": kind,
+                    }
+                    for room_id, scene_id, x, z, width, depth, kind in room_rows
+                ],
+            },
+        },
+        provider_label="PropertyQuarry AI 360",
+        viewer_name="propertyquarry-ai-panorama",
+        nonce="mobile-dollhouse-test-nonce",
+    )
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_public_context(browser, mobile=True, width=390, height=844)
+    page = context.new_page()
+    page_errors: list[str] = []
+    failed_requests: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    page.on("requestfailed", lambda request: failed_requests.append(request.url))
+    try:
+        test_path = "/__renderer_mobile_dollhouse_test"
+        page.route(
+            f"**{test_path}",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/html; charset=utf-8",
+                body=document,
+            ),
+        )
+        page.route(
+            "**/tours/runtime/three-*.module.js",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/javascript; charset=utf-8",
+                body=_MOBILE_DOLLHOUSE_THREE_STUB,
+            ),
+        )
+        response = page.goto(f"{base_url}{test_path}", wait_until="domcontentloaded")
+        assert response is not None and response.ok
+        page.locator("#viewer canvas").wait_for(state="visible", timeout=15_000)
+        page.locator("#status").wait_for(state="hidden", timeout=60_000)
+
+        dollhouse_toggle = page.locator("#dollhouse-toggle")
+        dollhouse_toggle.click()
+        expect(dollhouse_toggle).to_have_attribute("aria-pressed", "true")
+        expect(page.locator("#dollhouse-nodes .dollhouse-node")).to_have_count(7)
+        page.wait_for_timeout(500)
+
+        layout = page.evaluate(
+            """() => {
+              const visible = element => {
+                const style = getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return !element.hidden && style.display !== 'none' && style.visibility !== 'hidden'
+                  && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
+              };
+              const row = element => {
+                const rect = element.getBoundingClientRect();
+                return {
+                  id: element.dataset.sceneId || element.id || element.className,
+                  left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+                };
+              };
+              return {
+                width: innerWidth,
+                height: innerHeight,
+                nodes: [...document.querySelectorAll('.dollhouse-node')].filter(visible).map(row),
+                obstacles: [
+                  document.querySelector('.identity'),
+                  document.querySelector('.top-actions'),
+                  document.querySelector('.zoom-controls'),
+                  document.querySelector('.dollhouse-note:not([hidden])'),
+                ].filter(element => element && visible(element)).map(row),
+              };
+            }"""
+        )
+        nodes = [dict(row) for row in list(layout["nodes"])]
+        obstacles = [dict(row) for row in list(layout["obstacles"])]
+        assert len(nodes) == 7, layout
+
+        def _intersects(left: dict[str, object], right: dict[str, object], gap: float = 0) -> bool:
+            return (
+                float(left["left"]) < float(right["right"]) + gap
+                and float(left["right"]) > float(right["left"]) - gap
+                and float(left["top"]) < float(right["bottom"]) + gap
+                and float(left["bottom"]) > float(right["top"]) - gap
+            )
+
+        for node in nodes:
+            assert float(node["left"]) >= 0
+            assert float(node["right"]) <= float(layout["width"])
+            assert float(node["top"]) >= 0
+            assert float(node["bottom"]) <= float(layout["height"])
+            for obstacle in obstacles:
+                assert not _intersects(node, obstacle, 7), {
+                    "node": node,
+                    "obstacle": obstacle,
+                    "layout": layout,
+                }
+        for index, node in enumerate(nodes):
+            for other in nodes[index + 1 :]:
+                assert not _intersects(node, other, 5), {
+                    "node": node,
+                    "other": other,
+                    "layout": layout,
+                }
+
+        for scene_id, label in scene_rows:
+            node = page.locator(f'.dollhouse-node[data-scene-id="{scene_id}"]')
+            node.click()
+            expect(page.locator("#scene-title")).to_have_text(label)
+            if scene_id != scene_rows[-1][0]:
+                dollhouse_toggle.click()
+                expect(dollhouse_toggle).to_have_attribute("aria-pressed", "true")
+                page.wait_for_timeout(100)
+
+        assert not page_errors
+        assert not failed_requests
+    finally:
+        context.close()
+
+
 def _assert_no_viewport_or_text_cutoff(page: Page) -> None:
     report = page.evaluate(
         """() => {
