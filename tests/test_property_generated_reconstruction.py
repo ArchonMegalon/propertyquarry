@@ -3739,6 +3739,10 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
         assert manifest["video_relpath"] == "generated-reconstruction/generated-walkthrough.mp4"
         assert manifest["video_sidecar_relpath"] == "generated-reconstruction/generated-walkthrough.quality.json"
         assert manifest["video_coverage_proof"] == "boundary_verified_frame_continuation"
+        assert (
+            "generated-reconstruction/generated-walkthrough.mp4"
+            in {row["path"] for row in manifest["public_assets"] if isinstance(row, dict)}
+        )
         assert property_tour_hosting._hosted_property_tour_walkthrough_asset_url(
             f"https://propertyquarry.com/tours/{slug}"
         ) == f"https://propertyquarry.com/tours/files/{slug}/generated-reconstruction/generated-walkthrough.mp4"
@@ -4035,6 +4039,9 @@ def test_generated_reconstruction_manifest_whitelists_viewer_vendor_assets(tmp_p
     assert public_asset_paths >= {
         "diorama-preview.png",
         "telegram-preview.png",
+        "generated-reconstruction/viewer.html",
+        "generated-reconstruction/source-floorplan.jpg",
+        "generated-reconstruction/photo-01.jpg",
         "generated-reconstruction/model.obj",
         "generated-reconstruction/model.mtl",
         "generated-reconstruction/model.glb",

@@ -11745,6 +11745,29 @@ def _generate_reconstruction_on_anchored_surface(
     ):
         payload.pop(key, None)
     payload["generated_reconstruction"] = generated_reconstruction
+    _upsert_public_asset(
+        payload,
+        relpath=f"{base_relpath}/viewer.html",
+        role="generated_reconstruction_viewer",
+        privacy_class="generated_reconstruction_public",
+        mime_type="text/html",
+    )
+    if floorplan_relpath:
+        _upsert_public_asset(
+            payload,
+            relpath=f"{base_relpath}/{floorplan_relpath}",
+            role="floorplan",
+            privacy_class="generated_reconstruction_public",
+            mime_type="image/jpeg",
+        )
+    for photo_relpath in photo_relpaths:
+        _upsert_public_asset(
+            payload,
+            relpath=photo_relpath,
+            role="photo",
+            privacy_class="generated_reconstruction_public",
+            mime_type="image/jpeg",
+        )
     _upsert_public_generated_model_assets(
         payload,
         output_dir=output_dir,
@@ -11784,6 +11807,13 @@ def _generate_reconstruction_on_anchored_surface(
         )
     if walkthrough.get("status") == "generated":
         payload["video_relpath"] = f"{base_relpath}/generated-walkthrough.mp4"
+        _upsert_public_asset(
+            payload,
+            relpath=payload["video_relpath"],
+            role="video",
+            privacy_class="generated_reconstruction_public",
+            mime_type="video/mp4",
+        )
         payload["video_provider"] = "propertyquarry_generated_reconstruction"
         payload["video_provider_key"] = "propertyquarry_generated_reconstruction"
         payload["video_render_provider"] = "propertyquarry_generated_reconstruction"
