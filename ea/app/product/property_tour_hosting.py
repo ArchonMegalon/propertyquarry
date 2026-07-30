@@ -105,6 +105,16 @@ _PROPERTY_GENERATED_RECONSTRUCTION_VIEWER_VERSION = GENERATED_RECONSTRUCTION_VIE
 _AI_PANORAMA_CANONICAL_DISCLOSURE = (
     "AI-reconstructed from listing photos; not a captured 360 or measured survey."
 )
+_AI_PANORAMA_FLOORPLAN_CANONICAL_DISCLOSURE = (
+    "AI-reconstructed from an operator-provided architectural floorplan; "
+    "not a captured 360 or measured survey."
+)
+_AI_PANORAMA_CANONICAL_DISCLOSURES = frozenset(
+    {
+        _AI_PANORAMA_CANONICAL_DISCLOSURE,
+        _AI_PANORAMA_FLOORPLAN_CANONICAL_DISCLOSURE,
+    }
+)
 
 
 def _assert_governed_property_tour_slug_not_reserved(slug: object) -> None:
@@ -2228,7 +2238,7 @@ def _hosted_property_tour_ai_panorama_contract(
     if str(walkable_scene.get("representation_kind") or "").strip().lower() != "ai_reconstruction":
         return _blocked("representation_kind_invalid")
     disclosure = str(walkable_scene.get("representation_disclosure") or "").strip()
-    if disclosure != _AI_PANORAMA_CANONICAL_DISCLOSURE:
+    if disclosure not in _AI_PANORAMA_CANONICAL_DISCLOSURES:
         return _blocked("representation_disclosure_missing")
 
     raw_scenes = walkable_scene.get("scenes")

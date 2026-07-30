@@ -385,7 +385,7 @@ def _write_equirectangular_panel(
     image.save(path, format="JPEG", quality=92)
 
 
-def _write_h264_flythrough(path: Path) -> None:
+def _write_h264_flythrough(path: Path, *, duration_seconds: int = 3) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         "ffmpeg",
@@ -395,7 +395,7 @@ def _write_h264_flythrough(path: Path) -> None:
         "-f",
         "lavfi",
         "-i",
-        "color=c=#d8d0c4:s=1280x720:d=3",
+        f"color=c=#d8d0c4:s=1280x720:d={max(1, duration_seconds)}",
         "-vf",
         (
             "drawbox=x=0:y=0:w=iw:h=110:color=#181a1dcc:t=fill,"
@@ -3231,6 +3231,199 @@ def test_public_tour_flythrough_video_decodes_and_advances_in_real_browser(
         assert dropped_delta <= 16, profile
     assert page.locator("#tour-video source").get_attribute("type") == "video/mp4"
     assert not [message for message in console_errors if "MEDIA" in message.upper() or "decode" in message.lower()]
+    context.close()
+
+
+@pytest.mark.parametrize("mobile", [False, True], ids=["desktop", "mobile"])
+def test_walkthrough_room_navigation_operates_every_button_in_real_browser(
+    browser: Browser,
+    tmp_path: Path,
+    mobile: bool,
+) -> None:
+    from app.api.routes import public_tours
+
+    slug = "real-browser-walkthrough-navigation"
+    video_path = tmp_path / "walkthrough.mp4"
+    _write_h264_flythrough(video_path, duration_seconds=9)
+    video_bytes = video_path.read_bytes()
+    video_relpath = f"walkthrough/walkthrough.{'2' * 64}.mp4"
+    html_body = public_tours._tour_html(
+        {
+            "slug": slug,
+            "title": "Real Browser Walkthrough Navigation",
+            "display_title": "Real Browser Walkthrough Navigation",
+            "control_mode": "walkable_3d",
+            "video_provider": "propertyquarry_fixture",
+            "video_relpath": video_relpath,
+            "walkthrough_chapters": [
+                {"label": "Entrance hall", "start_seconds": 0.0},
+                {"label": "Primary bedroom", "start_seconds": 3.0},
+                {"label": "Terrace", "start_seconds": 6.0},
+            ],
+            "walkable_scene": {"rooms": []},
+            "scenes": [],
+        },
+        nonce="real-browser-walkthrough-navigation",
+        walkthrough_acceptance={
+            "allowed": True,
+            "verified_video_relpath": video_relpath,
+        },
+    )
+    context = _new_context(browser, mobile=mobile)
+    page = context.new_page()
+    console_errors: list[str] = []
+    page.on(
+        "console",
+        lambda msg: console_errors.append(msg.text)
+        if msg.type == "error"
+        else None,
+    )
+
+    def serve_walkthrough(route: object) -> None:
+        parsed = urllib.parse.urlsplit(route.request.url)  # type: ignore[attr-defined]
+        if parsed.path == f"/tours/{slug}/walkthrough":
+            range_header = str(  # type: ignore[attr-defined]
+                route.request.headers.get("range") or ""
+            )
+            if range_header.startswith("bytes="):
+                start_text, _, end_text = range_header[6:].partition("-")
+                start = max(0, int(start_text or "0"))
+                end = min(
+                    len(video_bytes) - 1,
+                    int(end_text) if end_text else len(video_bytes) - 1,
+                )
+                route.fulfill(  # type: ignore[attr-defined]
+                    status=206,
+                    headers={
+                        "Accept-Ranges": "bytes",
+                        "Content-Length": str(end - start + 1),
+                        "Content-Range": (
+                            f"bytes {start}-{end}/{len(video_bytes)}"
+                        ),
+                        "Content-Type": "video/mp4",
+                    },
+                    body=video_bytes[start : end + 1],
+                )
+                return
+            route.fulfill(  # type: ignore[attr-defined]
+                status=200,
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(video_bytes)),
+                    "Content-Type": "video/mp4",
+                },
+                body=video_bytes,
+            )
+            return
+        if parsed.path == f"/tours/{slug}":
+            route.fulfill(  # type: ignore[attr-defined]
+                status=200,
+                content_type="text/html; charset=utf-8",
+                body=html_body,
+            )
+            return
+        route.abort()  # type: ignore[attr-defined]
+
+    context.route("http://walkthrough.test/**", serve_walkthrough)
+    url = f"http://walkthrough.test/tours/{slug}?pane=flythrough-pane"
+
+    response = page.goto(url, wait_until="networkidle")
+
+    assert response is not None
+    assert response.status == 200
+    video = page.locator("#walkthrough-player")
+    video.wait_for()
+    assert video.is_visible()
+    page.wait_for_function(
+        "() => document.getElementById('walkthrough-player')?.readyState >= 2"
+    )
+    chapters = page.locator(".chapter")
+    assert chapters.count() == 3
+    current_room = page.locator("#walkthrough-current-room")
+    assert current_room.inner_text() == "Entrance hall"
+    assert page.locator("#walkthrough-previous").is_disabled()
+
+    def click_chapter(index: int, expected: str) -> None:
+        chapters.nth(index).click()
+        page.wait_for_timeout(100)
+        video.evaluate("(element) => element.pause()")
+        chapter_state = page.evaluate(
+            """({label, index}) => {
+                const current = document.getElementById('walkthrough-current-room');
+                const chapters = Array.from(document.querySelectorAll('.chapter'));
+                const video = document.getElementById('walkthrough-player');
+                return {
+                    expectedLabel: label,
+                    currentLabel: current?.textContent,
+                    expectedCurrent: chapters[index]?.getAttribute('aria-current'),
+                    activeLabels: chapters
+                        .filter((chapter) => chapter.getAttribute('aria-current') === 'true')
+                        .map((chapter) => chapter.textContent),
+                    currentTime: video?.currentTime,
+                    duration: video?.duration,
+                    chapterStarts: chapters.map((chapter) => chapter.dataset.startSeconds),
+                paused: video?.paused,
+                };
+            }""",
+            arg={"label": expected, "index": index},
+        )
+        assert chapter_state["currentLabel"] == expected, chapter_state
+        assert chapter_state["expectedCurrent"] == "true", chapter_state
+
+    click_chapter(1, "Primary bedroom")
+    click_chapter(2, "Terrace")
+    assert page.locator("#walkthrough-next").is_disabled()
+    page.locator("#walkthrough-previous").click()
+    page.wait_for_timeout(100)
+    video.evaluate("(element) => element.pause()")
+    page.wait_for_function(
+        "() => document.getElementById('walkthrough-current-room')?.textContent === 'Primary bedroom'"
+    )
+    page.locator("#walkthrough-previous").click()
+    page.wait_for_timeout(100)
+    video.evaluate("(element) => element.pause()")
+    page.wait_for_function(
+        "() => document.getElementById('walkthrough-current-room')?.textContent === 'Entrance hall'"
+    )
+    click_chapter(1, "Primary bedroom")
+    click_chapter(0, "Entrance hall")
+    page.locator("#walkthrough-next").click()
+    page.wait_for_timeout(100)
+    video.evaluate("(element) => element.pause()")
+    page.wait_for_function(
+        "() => document.getElementById('walkthrough-current-room')?.textContent === 'Primary bedroom'"
+    )
+    state = page.evaluate(
+        """() => {
+            const video = document.getElementById('walkthrough-player');
+            const navigation = document.querySelector('.walkthrough-navigation');
+            const buttons = Array.from(document.querySelectorAll('.chapter, .chapter-step'));
+            return {
+                currentTime: video?.currentTime || 0,
+                readyState: video?.readyState || 0,
+                videoWidth: video?.videoWidth || 0,
+                buttonHeights: buttons.map((button) => button.getBoundingClientRect().height),
+                navigationOverflow: navigation
+                    ? navigation.scrollWidth - navigation.clientWidth
+                    : 0,
+                documentOverflow: document.documentElement.scrollWidth
+                    - document.documentElement.clientWidth,
+            };
+        }"""
+    )
+    assert state["readyState"] >= 2
+    assert state["videoWidth"] >= 640
+    assert state["currentTime"] >= 0.8
+    assert all(height >= 42 for height in state["buttonHeights"])
+    assert state["documentOverflow"] <= 1
+    assert state["navigationOverflow"] <= 1
+    assert not [
+        message
+        for message in console_errors
+        if "decode" in message.lower()
+        or "media" in message.lower()
+        or "refused" in message.lower()
+    ]
     context.close()
 
 

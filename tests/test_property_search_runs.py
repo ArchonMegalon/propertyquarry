@@ -2123,6 +2123,83 @@ def test_private_brigittenau_showcase_does_not_inject_for_other_users() -> None:
     assert list(summary.get("sources") or []) == []
 
 
+def test_private_brigittenau_showcase_is_scoped_to_named_users_and_austria(monkeypatch) -> None:
+    monkeypatch.delenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS", raising=False)
+
+    assert product_service._property_private_showcase_allowed(  # type: ignore[attr-defined]
+        principal_id="cf-email:tibor.girschele@gmail.com"
+    )
+    assert product_service._property_private_showcase_allowed(  # type: ignore[attr-defined]
+        principal_id="cf-email:elisabeth.girschele@gmail.com"
+    )
+    assert not product_service._property_private_showcase_allowed(  # type: ignore[attr-defined]
+        principal_id="cf-email:viewer@example.test"
+    )
+    assert product_service._property_private_showcase_searches_brigittenau(  # type: ignore[attr-defined]
+        {"country_code": "AT", "location_query": "1200 Vienna"}
+    )
+    assert not product_service._property_private_showcase_searches_brigittenau(  # type: ignore[attr-defined]
+        {"country_code": "DE", "location_query": "1200 Berlin"}
+    )
+    assert not product_service._property_private_showcase_searches_brigittenau(  # type: ignore[attr-defined]
+        {"location_query": "Brigittenau"}
+    )
+
+
+def test_private_brigittenau_showcase_candidate_exposes_zero_cost_floorplan_media(monkeypatch) -> None:
+    slug = product_service._PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        product_service,
+        "_hosted_property_tour_first_party_open_url",
+        lambda *_args, **_kwargs: f"/tours/{slug}/control",
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_hosted_property_tour_walkthrough_asset_url",
+        lambda *_args, **_kwargs: f"/tours/{slug}/walkthrough",
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_hosted_property_tour_walkthrough_open_url",
+        lambda *_args, **_kwargs: (
+            f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
+        ),
+    )
+
+    candidate = product_service._property_private_showcase_candidate(  # type: ignore[attr-defined]
+        run_id="run-private-karl-czerny",
+        principal_id="cf-email:tibor.girschele@gmail.com",
+    )
+    facts = dict(candidate["property_facts"])
+
+    assert candidate["candidate_ref"] == "karl-czerny-gasse-2-private-showcase"
+    assert candidate["property_url"].startswith(
+        "/app/research/karl-czerny-gasse-2-private-showcase"
+    )
+    assert candidate["property_url"] != candidate["map_url"]
+    assert candidate["rent_display"] == "€0 / month"
+    assert candidate["monthly_cost_eur"] == 0
+    assert candidate["tour_url"] == f"/tours/{slug}/control"
+    assert candidate["flythrough_url"] == (
+        f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
+    )
+    assert candidate["diorama_preview_url"] == (
+        f"/tours/files/{slug}/diorama-preview.png"
+    )
+    assert facts["address"] == "Karl-Czerny-Gasse 2, 1200 Wien, Austria"
+    assert facts["has_floorplan"] is True
+    assert facts["floorplan_urls_json"] == [
+        f"/tours/files/{slug}/floorplan.webp"
+    ]
+    assert facts["walkthrough_asset_url"] == f"/tours/{slug}/walkthrough"
+    assert facts["walkthrough_url"] == (
+        f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
+    )
+    assert facts["has_terrace"] is True
+    assert facts["terrace_sqm"] == 7.78
+    assert facts["missing_fact_research"] == []
+
+
 def test_private_brigittenau_showcase_does_not_treat_budget_1200_as_district(monkeypatch) -> None:
     monkeypatch.setenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS", "property-showcase-owner@example.test")
     snapshot = product_service._property_search_snapshot_with_private_showcase(  # type: ignore[attr-defined]

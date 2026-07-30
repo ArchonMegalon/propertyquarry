@@ -4290,6 +4290,43 @@ def _public_tour_request_embeds_walkthrough(request: Request) -> bool:
 _PUBLIC_TOUR_RUNTIME_ACCEPTANCE_TOKEN = object()
 
 
+def _with_verified_magicfit_render_projection(
+    rendered_payload: dict[str, object],
+    *,
+    source_payload: dict[str, object],
+    walkthrough_acceptance: dict[str, object],
+) -> dict[str, object]:
+    """Restore only the media fields proven by the private runtime decision."""
+
+    if walkthrough_acceptance.get("allowed") is not True:
+        return rendered_payload
+    verified_video_relpath = _public_tour_safe_asset_relpath(
+        str(walkthrough_acceptance.get("verified_video_relpath") or "").strip()
+    )
+    source_video_relpath = _public_tour_safe_asset_relpath(
+        str(source_payload.get("video_relpath") or "").strip()
+    )
+    provider = str(
+        source_payload.get("video_provider")
+        or source_payload.get("video_provider_key")
+        or ""
+    ).strip().lower()
+    if (
+        provider != "magicfit"
+        or not verified_video_relpath
+        or source_video_relpath != verified_video_relpath
+    ):
+        return rendered_payload
+    projected = dict(rendered_payload)
+    projected["video_relpath"] = verified_video_relpath
+    projected["video_provider"] = "magicfit"
+    projected["video_coverage_proof"] = "provider_render_verified"
+    chapters = source_payload.get("walkthrough_chapters")
+    if isinstance(chapters, list):
+        projected["walkthrough_chapters"] = list(chapters)
+    return projected
+
+
 def _tour_html(
     payload: dict[str, object],
     *,
@@ -4380,12 +4417,159 @@ def _tour_html(
         ).strip().lower()
         video_coverage_proof = str(payload.get("video_coverage_proof") or "").strip()
         generated_video_providers = {"magicfit", "onemin_i2v", "ea_one_manager_onemin_i2v", "poppy_ai"}
+        runtime_walkthrough_acceptance = (
+            dict(payload.get("_walkthrough_runtime_acceptance") or {})
+            if payload.get("_walkthrough_runtime_acceptance_token")
+            is _PUBLIC_TOUR_RUNTIME_ACCEPTANCE_TOKEN
+            and isinstance(payload.get("_walkthrough_runtime_acceptance"), dict)
+            else {}
+        )
+        accepted_magicfit_delivery = bool(
+            video_provider == "magicfit"
+            and runtime_walkthrough_acceptance.get("allowed") is True
+            and str(
+                runtime_walkthrough_acceptance.get("verified_video_relpath")
+                or ""
+            ).strip()
+        )
         video_allowed = bool(video_provider) and (
             video_provider not in generated_video_providers
             or video_coverage_proof == "boundary_verified_frame_continuation"
+            or accepted_magicfit_delivery
         )
-        walkthrough_url, _walkthrough_mime_type = _public_tour_walkthrough_media_context(payload)
+        (
+            walkthrough_url,
+            walkthrough_mime_type,
+        ) = _public_tour_walkthrough_media_context(payload)
         video_url = walkthrough_url if video_allowed else ""
+        walkthrough_source_markup = (
+            _public_tour_walkthrough_source_markup(
+                payload,
+                video_url=video_url,
+                video_mime_type=walkthrough_mime_type,
+            )
+            if video_url
+            else ""
+        )
+        walkthrough_chapters: list[dict[str, object]] = []
+        for raw_chapter in list(payload.get("walkthrough_chapters") or []):
+            if not isinstance(raw_chapter, dict):
+                continue
+            label = str(raw_chapter.get("label") or "").strip()
+            try:
+                start_seconds = max(
+                    0.0,
+                    min(float(raw_chapter.get("start_seconds") or 0.0), 7200.0),
+                )
+            except (TypeError, ValueError):
+                continue
+            if (
+                not label
+                or any(
+                    str(chapter.get("label") or "").casefold()
+                    == label.casefold()
+                    for chapter in walkthrough_chapters
+                )
+            ):
+                continue
+            walkthrough_chapters.append(
+                {
+                    "label": label,
+                    "start_seconds": round(start_seconds, 3),
+                }
+            )
+        walkthrough_chapter_markup = "".join(
+            (
+                '<button type="button" class="chapter" '
+                f'data-start-seconds="{float(chapter["start_seconds"]):.3f}">'
+                f'{html.escape(str(chapter["label"]))}</button>'
+            )
+            for chapter in walkthrough_chapters
+        )
+        walkthrough_player = (
+            f"""
+      <section class="walkthrough-shell" aria-label="Apartment walkthrough">
+        <div class="walkthrough-stage">
+          <video id="walkthrough-player" controls playsinline webkit-playsinline="true" preload="metadata">
+            {walkthrough_source_markup}
+          </video>
+          {f'<div class="walkthrough-now" aria-live="polite"><span>Now viewing</span><strong id="walkthrough-current-room">{html.escape(str(walkthrough_chapters[0]["label"]))}</strong></div>' if walkthrough_chapter_markup else ''}
+        </div>
+        {f'''
+        <nav class="walkthrough-navigation" aria-label="Walkthrough room navigation">
+          <button type="button" id="walkthrough-previous" class="chapter-step" aria-label="Previous room">← <span>Previous</span></button>
+          <div class="chapters" aria-label="Walkthrough rooms">{walkthrough_chapter_markup}</div>
+          <button type="button" id="walkthrough-next" class="chapter-step" aria-label="Next room"><span>Next</span> →</button>
+        </nav>''' if walkthrough_chapter_markup else ''}
+      </section>
+      <script nonce="{nonce_attr}">
+        (() => {{
+          const video = document.getElementById('walkthrough-player');
+          const chapters = Array.from(document.querySelectorAll('[data-start-seconds]'));
+          const previous = document.getElementById('walkthrough-previous');
+          const next = document.getElementById('walkthrough-next');
+          const currentRoom = document.getElementById('walkthrough-current-room');
+          if (!video) return;
+          let activeIndex = -1;
+          const activate = (active) => {{
+            const nextIndex = Math.max(0, chapters.indexOf(active));
+            chapters.forEach((button, index) => {{
+              const selected = index === nextIndex;
+              button.classList.toggle('active', selected);
+              button.setAttribute('aria-current', selected ? 'true' : 'false');
+            }});
+            if (activeIndex !== nextIndex) {{
+              activeIndex = nextIndex;
+              const selected = chapters[activeIndex];
+              if (currentRoom) currentRoom.textContent = selected.textContent || '';
+              selected.scrollIntoView({{ behavior: 'smooth', block: 'nearest', inline: 'center' }});
+            }}
+            if (previous) previous.disabled = activeIndex <= 0 && video.currentTime < 3;
+            if (next) next.disabled = activeIndex >= chapters.length - 1;
+          }};
+          const seekToChapter = async (index) => {{
+            const button = chapters[Math.max(0, Math.min(index, chapters.length - 1))];
+            if (!button) return;
+            const start = Number.parseFloat(button.dataset.startSeconds || '0');
+            if (!Number.isFinite(start)) return;
+            const seek = () => {{ video.currentTime = Math.max(0, Math.min(start, video.duration || start)); }};
+            if (video.readyState === 0) video.addEventListener('loadedmetadata', seek, {{ once: true }});
+            else seek();
+            activate(button);
+            try {{ await video.play(); }} catch (_error) {{ video.controls = true; }}
+          }};
+          chapters.forEach((button, index) => {{
+            button.addEventListener('click', () => {{ void seekToChapter(index); }});
+          }});
+          if (previous) previous.addEventListener('click', () => {{
+            const start = Number.parseFloat(chapters[Math.max(0, activeIndex)]?.dataset.startSeconds || '0');
+            const target = video.currentTime > start + 3 ? activeIndex : activeIndex - 1;
+            void seekToChapter(target);
+          }});
+          if (next) next.addEventListener('click', () => {{ void seekToChapter(activeIndex + 1); }});
+          video.addEventListener('timeupdate', () => {{
+            let active = null;
+            chapters.forEach((button) => {{
+              const start = Number.parseFloat(button.dataset.startSeconds || '0');
+              if (Number.isFinite(start) && start <= video.currentTime + 0.15) active = button;
+            }});
+            if (active) activate(active);
+          }});
+          if (chapters.length) activate(chapters[0]);
+          if (new URLSearchParams(window.location.search).get('autoplay') === '1') {{
+            video.muted = true;
+            video.setAttribute('muted', '');
+            const play = async () => {{
+              try {{ await video.play(); }} catch (_error) {{ video.controls = true; }}
+            }};
+            if (video.readyState >= 2) void play();
+            else video.addEventListener('canplay', play, {{ once: true }});
+          }}
+        }})();
+      </script>"""
+            if video_url
+            else ""
+        )
         spatial_review = _tour_spatial_review_experience(
             payload,
             slug=slug,
@@ -4411,6 +4595,25 @@ def _tour_html(
       .actions {{ display: flex; flex-wrap: wrap; gap: 10px; }}
       a {{ color: #111; background: #f7f1e6; border-radius: 8px; padding: 11px 13px; text-decoration: none; font-weight: 700; }}
       a.secondary {{ color: #f7f1e6; background: transparent; border: 1px solid rgba(255,255,255,.28); }}
+      .walkthrough-shell {{ display: grid; gap: 12px; margin-top: 16px; }}
+      .walkthrough-stage {{ position: relative; overflow: hidden; border-radius: 12px; background: #050505; }}
+      .walkthrough-shell video {{ display: block; width: 100%; max-height: min(62vh, 620px); background: #050505; }}
+      .walkthrough-now {{ position: absolute; left: 12px; top: 12px; display: grid; gap: 2px; max-width: calc(100% - 24px); padding: 8px 11px; border: 1px solid rgba(255,255,255,.2); border-radius: 9px; background: rgba(5,5,5,.74); backdrop-filter: blur(12px); pointer-events: none; }}
+      .walkthrough-now span {{ color: rgba(255,255,255,.68); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }}
+      .walkthrough-now strong {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+      .walkthrough-navigation {{ display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; gap: 8px; }}
+      .chapters {{ display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 5px; scroll-snap-type: x proximity; scrollbar-width: thin; }}
+      .chapter {{ flex: 0 0 auto; min-height: 42px; border: 1px solid rgba(255,255,255,.24); border-radius: 999px; padding: 0 13px; background: rgba(255,255,255,.08); color: #f7f1e6; cursor: pointer; font: inherit; font-weight: 700; }}
+      .chapter {{ scroll-snap-align: center; }}
+      .chapter.active {{ border-color: #f7f1e6; background: #f7f1e6; color: #111; }}
+      .chapter-step {{ min-height: 42px; border: 1px solid rgba(255,255,255,.24); border-radius: 9px; padding: 0 12px; background: rgba(255,255,255,.08); color: #f7f1e6; cursor: pointer; font: inherit; font-weight: 800; }}
+      .chapter-step:disabled {{ opacity: .38; cursor: not-allowed; }}
+      .chapter:focus-visible, .chapter-step:focus-visible {{ outline: 3px solid #f2b85b; outline-offset: 2px; }}
+      @media (max-width: 560px) {{
+        .chapter-step span {{ display: none; }}
+        .chapter-step {{ min-width: 46px; padding: 0 10px; font-size: 1.15rem; }}
+        .walkthrough-now {{ left: 8px; top: 8px; max-width: calc(100% - 16px); }}
+      }}
     </style>
   </head>
   <body>
@@ -4425,6 +4628,7 @@ def _tour_html(
         {f'<a href="{pano2vr_url}">Open 3D tour</a>' if pano2vr_url else ''}
         {f'<a class="secondary" href="{video_url}">Open walkthrough</a>' if video_url else ''}
       </div>
+      {walkthrough_player}
     </main>
   </body>
 </html>"""
@@ -13001,6 +13205,11 @@ def public_tour_page(
             return _generated_reconstruction_public_launch_response(payload, request=request)
         walkthrough_acceptance = _public_tour_walkthrough_acceptance(payload)
         rendered_payload = _redacted_public_tour_payload(payload, expose_asset_relpaths=True)
+        rendered_payload = _with_verified_magicfit_render_projection(
+            rendered_payload,
+            source_payload=payload,
+            walkthrough_acceptance=walkthrough_acceptance,
+        )
         rendered_facts, research_snapshot = _merged_facts_with_listing_research(payload, dict(payload.get("facts") or {}))
         rendered_facts.pop("public_preference_snapshot", None)
         feedback_context = _live_property_feedback_context(

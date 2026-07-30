@@ -42,6 +42,16 @@ MATERIALIZATION_RECEIPT_CONTRACT = (
 CANONICAL_DISCLOSURE = (
     "AI-reconstructed from listing photos; not a captured 360 or measured survey."
 )
+FLOORPLAN_CANONICAL_DISCLOSURE = (
+    "AI-reconstructed from an operator-provided architectural floorplan; "
+    "not a captured 360 or measured survey."
+)
+CANONICAL_DISCLOSURES = frozenset(
+    {
+        CANONICAL_DISCLOSURE,
+        FLOORPLAN_CANONICAL_DISCLOSURE,
+    }
+)
 RENDERER_MODULE_PATH = "/tours/runtime/three-0.167.1.module.js"
 RENDERER_MODULE_SHA256 = (
     "5289ca2dfde8572bd7715b9fa2ca929db12bae87e9a2cb53e431662df7039506"
@@ -80,6 +90,18 @@ def _canonical_json_bytes(value: object) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise MaterializationError("canonical_json_invalid") from exc
+
+
+def _candidate_representation_disclosure(candidate: "PreparedCandidate") -> str:
+    walkable_scene = candidate.payload.get("walkable_scene")
+    disclosure = (
+        str(walkable_scene.get("representation_disclosure") or "").strip()
+        if isinstance(walkable_scene, Mapping)
+        else ""
+    )
+    if disclosure not in CANONICAL_DISCLOSURES:
+        raise MaterializationError("representation_disclosure_invalid")
+    return disclosure
 
 
 def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -1672,7 +1694,7 @@ def _verify_and_capture_desktop(
             raise MaterializationError("desktop_scene_rail_incomplete")
         if page.locator(".floorplan-pin").count() != len(candidate.scene_ids):
             raise MaterializationError("desktop_floorplan_pins_incomplete")
-        if CANONICAL_DISCLOSURE not in page.locator(".identity span").inner_text():
+        if _candidate_representation_disclosure(candidate) not in page.locator(".identity span").inner_text():
             raise MaterializationError("desktop_disclosure_missing")
         _assert_viewer_layout(page, require_expanded_floorplan=True)
 
@@ -2287,7 +2309,7 @@ def _capture_browser_proof(
         "viewer_implementation_sha256": desktop[
             "viewer_implementation_sha256"
         ],
-        "representation_disclosure": CANONICAL_DISCLOSURE,
+        "representation_disclosure": _candidate_representation_disclosure(candidate),
         "scene_ids": list(candidate.scene_ids),
         "anonymous_http_200": True,
         "drag_navigation_verified": desktop["drag_navigation_verified"] is True,

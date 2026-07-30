@@ -961,6 +961,21 @@ def _write_clean_3dvista_export(bundle_dir: Path) -> dict[str, object]:
     }
 
 
+def _write_accepted_walkthrough_sidecar(bundle_dir: Path) -> dict[str, object]:
+    sidecar_relpath = "tour.walkthrough.json"
+    (bundle_dir / sidecar_relpath).write_text(
+        json.dumps(
+            {
+                "provider_key": "propertyquarry_fixture",
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {"video_sidecar_relpath": sidecar_relpath}
+
+
 def _verified_floorplan_asset(url: str) -> dict[str, object]:
     return {
         "url": url,
@@ -32061,7 +32076,7 @@ def test_public_tour_control_matterport_requires_real_export() -> None:
         )
 
     assert exc_info.value.status_code == 404
-    assert exc_info.value.detail == "tour_control_provider_retired"
+    assert exc_info.value.detail == "tour_control_matterport_evidence_missing"
 
 
 def test_public_tour_control_3dvista_requires_real_export() -> None:
@@ -32161,7 +32176,7 @@ def test_public_tour_control_embeds_external_matterport_url() -> None:
         )
 
     assert exc_info.value.status_code == 404
-    assert exc_info.value.detail == "tour_control_provider_retired"
+    assert exc_info.value.detail == "tour_control_matterport_evidence_missing"
 
 
 def test_public_tour_control_hides_unaccepted_magicfit_provider_video() -> None:
@@ -33327,7 +33342,7 @@ def test_public_tour_control_switches_between_provider_backed_matterport_layers(
         )
 
     assert exc_info.value.status_code == 404
-    assert exc_info.value.detail == "tour_control_provider_retired"
+    assert exc_info.value.detail == "tour_control_matterport_evidence_missing"
 
 
 def test_public_tour_control_ignores_unverified_provider_layer_url() -> None:
@@ -33404,7 +33419,7 @@ def test_public_tour_control_rejects_matterport_lookalike_domain() -> None:
         )
 
     assert exc_info.value.status_code == 404
-    assert exc_info.value.detail == "tour_control_provider_retired"
+    assert exc_info.value.detail == "tour_control_matterport_evidence_missing"
 
 
 def test_public_tour_control_rejects_removed_legacy_viewer() -> None:
@@ -33513,6 +33528,105 @@ def test_public_tour_landing_hides_magicfit_without_route_coverage_proof() -> No
 
     assert "Open walkthrough" not in html
     assert "Open 3D Control" not in html
+
+
+def test_public_tour_landing_opens_runtime_accepted_magicfit_delivery() -> None:
+    from app.api.routes import public_tours
+
+    slug = "accepted-magicfit-panorama"
+    video_relpath = (
+        "magicfit-media/walkthrough."
+        f"{'1' * 64}.mp4"
+    )
+    html = public_tours._tour_html(
+        {
+            "slug": slug,
+            "display_title": "Accepted MagicFit panorama",
+            "video_provider": "magicfit",
+            "video_coverage_proof": "provider_render_verified",
+            "video_relpath": video_relpath,
+            "walkthrough_chapters": [
+                {"label": "Entrance hall", "start_seconds": 0},
+                {"label": "Terrace", "start_seconds": 12.1},
+                {"label": "Wohnküche", "start_seconds": 48.2},
+            ],
+            "scenes": [],
+            "walkable_scene": {"rooms": []},
+        },
+        walkthrough_acceptance={
+            "allowed": True,
+            "verified_video_relpath": video_relpath,
+        },
+    )
+
+    assert "Open walkthrough" in html
+    assert f"/tours/{slug}/walkthrough" in html
+    assert 'id="walkthrough-player"' in html
+    assert 'data-start-seconds="12.100"' in html
+    assert "Entrance hall" in html
+    assert "Wohnküche" in html
+    assert 'id="walkthrough-current-room"' in html
+    assert 'id="walkthrough-previous"' in html
+    assert 'id="walkthrough-next"' in html
+    assert "seekToChapter" in html
+
+
+def test_public_tour_landing_restores_verified_magicfit_projection_after_redaction() -> None:
+    from app.api.routes import public_tours
+
+    video_relpath = f"magicfit-media/full-route.{'2' * 64}.mp4"
+    source_payload = {
+        "slug": "accepted-magicfit-projection",
+        "video_provider": "magicfit",
+        "video_coverage_proof": "provider_render_verified",
+        "video_relpath": video_relpath,
+        "magicfit_import": {"proof_status": "delivery_accepted"},
+        "walkthrough_chapters": [
+            {"label": "Entrance hall", "start_seconds": 0},
+            {"label": "Return to central hall", "start_seconds": 59},
+            {"label": "Wohnküche", "start_seconds": 74},
+        ],
+    }
+    acceptance = {
+        "allowed": True,
+        "verified_video_relpath": video_relpath,
+    }
+
+    projected = public_tours._with_verified_magicfit_render_projection(
+        {
+            "slug": source_payload["slug"],
+            "video_relpath": video_relpath,
+            "walkable_scene": {"rooms": []},
+        },
+        source_payload=source_payload,
+        walkthrough_acceptance=acceptance,
+    )
+    html = public_tours._tour_html(
+        projected,
+        walkthrough_acceptance=acceptance,
+    )
+
+    assert projected["video_provider"] == "magicfit"
+    assert projected["video_coverage_proof"] == "provider_render_verified"
+    assert "magicfit_import" not in projected
+    assert 'id="walkthrough-player"' in html
+    assert "Return to central hall" in html
+    assert 'data-start-seconds="74.000"' in html
+
+    rejected = public_tours._with_verified_magicfit_render_projection(
+        {
+            "slug": source_payload["slug"],
+            "video_relpath": video_relpath,
+            "walkable_scene": {"rooms": []},
+        },
+        source_payload=source_payload,
+        walkthrough_acceptance={
+            "allowed": True,
+            "verified_video_relpath": f"magicfit-media/other.{'3' * 64}.mp4",
+        },
+    )
+    assert "video_provider" not in rejected
+    assert "walkthrough_chapters" not in rejected
 
 
 def test_public_tour_landing_renderer_redacts_private_payload_fields() -> None:
@@ -33876,6 +33990,7 @@ def test_public_tour_page_keeps_walkthrough_deep_link_on_entry_route(
                 "slug": slug,
                 "display_title": "Walkthrough deep link",
                 **_write_clean_3dvista_export(bundle_dir),
+                **_write_accepted_walkthrough_sidecar(bundle_dir),
                 "video_relpath": "walkthrough.mp4",
                 "scenes": [
                     {
@@ -33917,6 +34032,7 @@ def test_public_tour_page_keeps_walkthrough_autoplay_on_entry_route_without_pane
                 "slug": slug,
                 "display_title": "Walkthrough autoplay only",
                 **_write_clean_3dvista_export(bundle_dir),
+                **_write_accepted_walkthrough_sidecar(bundle_dir),
                 "video_relpath": "walkthrough.mp4",
                 "scenes": [
                     {
@@ -33960,6 +34076,7 @@ def test_public_tour_control_does_not_embed_walkthrough_when_explicit_floorplan_
                 "slug": slug,
                 "display_title": "Floorplan pane priority",
                 **_write_clean_3dvista_export(bundle_dir),
+                **_write_accepted_walkthrough_sidecar(bundle_dir),
                 "video_relpath": "walkthrough.mp4",
                 "scenes": [
                     {
@@ -34006,6 +34123,7 @@ def test_public_tour_page_preserves_underlying_walkthrough_mime_type_on_sanitize
                 "slug": slug,
                 "display_title": "Walkthrough webm",
                 "matterport_url": "https://my.matterport.com/show/?m=REALBROWSER123",
+                **_write_accepted_walkthrough_sidecar(bundle_dir),
                 "video_relpath": "walkthrough.webm",
                 "scenes": [
                     {
@@ -34047,6 +34165,7 @@ def test_public_tour_control_keeps_walkthrough_deep_link_without_raw_asset_path(
                 "slug": slug,
                 "display_title": "Walkthrough control deep link",
                 **_write_clean_3dvista_export(bundle_dir),
+                **_write_accepted_walkthrough_sidecar(bundle_dir),
                 "video_relpath": "walkthrough.mp4",
                 "scenes": [
                     {
@@ -34089,6 +34208,7 @@ def test_public_tour_control_preserves_underlying_walkthrough_mime_type_on_sanit
                 "slug": slug,
                 "display_title": "Walkthrough control webm",
                 **_write_clean_3dvista_export(bundle_dir),
+                **_write_accepted_walkthrough_sidecar(bundle_dir),
                 "video_relpath": "walkthrough.webm",
                 "scenes": [
                     {
@@ -34587,7 +34707,7 @@ def test_public_tour_forced_provider_route_fails_closed_when_provider_missing(
     right_response = client.get(f"/tours/{slug}/control/3dvista")
 
     assert wrong_response.status_code == 404
-    assert wrong_response.json()["error"]["code"] == "tour_control_provider_retired"
+    assert wrong_response.json()["error"]["code"] == "tour_control_matterport_evidence_missing"
     assert right_response.status_code == 200
     assert "3D Tour" in right_response.text
     assert "3DVista Control" not in right_response.text
@@ -34627,7 +34747,7 @@ def test_public_tour_matterport_control_uses_private_receipt_without_public_json
     assert "source_virtual_tour_url" not in serialized_payload
     assert "private123" not in serialized_payload
     assert control_response.status_code == 404
-    assert control_response.json()["error"]["code"] == "tour_control_provider_retired"
+    assert control_response.json()["error"]["code"] == "tour_control_matterport_evidence_missing"
     assert "private123" not in control_response.text.lower()
 
 
@@ -36195,34 +36315,21 @@ def test_public_tour_generated_layout_preview_route_surfaces_diorama_hero_for_re
     preview = client.get(f"/tours/{slug}/layout-preview")
     viewer = client.get(f"/tours/files/{slug}/generated-reconstruction/viewer.html", follow_redirects=False)
 
-    assert launch.status_code == 200
+    assert launch.status_code == 404
+    assert "generated-reconstruction/viewer.html" not in launch.text
+    assert "/diorama-preview.png" not in launch.text
     assert preview.status_code == 200
     assert viewer.status_code == 200
     assert viewer.headers["cache-control"] == "no-store"
     assert viewer.headers["cross-origin-resource-policy"] == "same-origin"
     assert viewer.headers["x-frame-options"] == "SAMEORIGIN"
-    assert viewer.headers["x-propertyquarry-tour-asset-kind"] == "generated-reconstruction-viewer"
     assert "frame-ancestors 'self'" in viewer.headers["content-security-policy"]
-    assert "PropertyQuarry styled 3D reconstruction" in launch.text
-    assert "PropertyQuarry styled 3D reconstruction" in preview.text
-    assert f"Start in the interactive {requested_style['label']} scene" in launch.text
     assert f"Start in the interactive {requested_style['label']} scene" in preview.text
-    assert 'id="lead-preview-image"' in launch.text
-    assert 'id="lead-preview-image"' in preview.text
-    assert 'id="layout-viewer-frame"' in launch.text
-    assert 'id="layout-viewer-frame"' in preview.text
-    assert f"/tours/files/{slug}/diorama-preview.png" in launch.text
     assert f"/tours/files/{slug}/diorama-preview.png" in preview.text
-    assert f"/tours/files/{slug}/generated-reconstruction/viewer.html?embed=1" in launch.text
-    assert f"/tours/files/{slug}/generated-reconstruction/viewer.html?embed=1" in preview.text
-    assert f'/tours/files/{slug}/generated-reconstruction/viewer.html"' in launch.text
-    assert f'/tours/files/{slug}/generated-reconstruction/viewer.html"' in preview.text
-    assert "selectedDurationMs = Number(routeItem.durationSeconds || 0) * 1000" in launch.text
-    assert "holdManualRoute(" in launch.text
-    assert "selectedDurationMs" in launch.text
-    assert "layoutViewerRouteSyncAttempts >= 100" in launch.text
-    assert "This link points to a generated layout reconstruction, not a published 3D tour." not in launch.text
-    assert "This link points to a generated layout reconstruction, not a published 3D tour." not in preview.text
+    assert (
+        f"/tours/files/{slug}/generated-reconstruction/viewer.html?embed=1"
+        in preview.text
+    )
     assert viewer.text == viewer_html
 
 
@@ -36262,7 +36369,7 @@ def test_public_tour_generated_layout_preview_route_rejects_generated_reconstruc
     viewer = client.get(f"/tours/files/{slug}/generated-reconstruction/viewer.html?embed=1", follow_redirects=False)
 
     assert launch.status_code == 404
-    assert "This link points to a generated layout reconstruction, not a published 3D tour." in launch.text
+    assert "generated-reconstruction/viewer.html" not in launch.text
     assert response.status_code == 404
     assert "Generated reconstruction" in response.text
     assert "PropertyQuarry no longer presents generated layout reconstructions as public 3D tours." in response.text
@@ -36444,7 +36551,7 @@ def test_public_tour_generated_layout_preview_route_rejects_under_referenced_gen
     response = client.get(f"/tours/{slug}/layout-preview")
 
     assert launch.status_code == 404
-    assert "This link points to a generated layout reconstruction, not a published 3D tour." in launch.text
+    assert "generated-reconstruction/viewer.html" not in launch.text
     assert response.status_code == 404
     assert "PropertyQuarry no longer presents generated layout reconstructions as public 3D tours." in response.text
 
@@ -36500,7 +36607,7 @@ def test_public_tour_generated_layout_preview_route_stays_blocked_when_live_matt
     assert client.get(f"/tours/{slug}").status_code == 404
     assert client.get(f"/tours/{slug}/layout-preview").status_code == 404
     assert control.status_code == 404
-    assert control.json()["error"]["code"] == "tour_control_provider_retired"
+    assert control.json()["error"]["code"] == "tour_control_matterport_evidence_missing"
     assert "my.matterport.com" not in control.text.lower()
 
 

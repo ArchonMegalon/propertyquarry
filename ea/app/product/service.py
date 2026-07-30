@@ -202,6 +202,7 @@ from app.product.property_tour_hosting import (
     _hosted_property_tour_verified_provider,
     _hosted_property_tour_verified_open_url,
     _hosted_property_tour_walkthrough_asset_url,
+    _hosted_property_tour_walkthrough_open_url,
     _published_walkthrough_asset_url,
     _hosted_public_tour_asset_url,
     _is_branded_public_tour_url,
@@ -13413,18 +13414,25 @@ def _property_search_ranked_candidates_from_sources(sources: object, *, limit: i
     return rows[: max(1, min(int(limit or 50), 200))]
 
 
-_PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF = "private-showcase-current-flat"
+_PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF = "karl-czerny-gasse-2-private-showcase"
 _PROPERTY_PRIVATE_SHOWCASE_SOURCE_REF = f"propertyquarry-private-showcase:{_PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF}"
-_PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG = "private-showcase-flat"
+_PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG = "karl-czerny-gasse-2-urban-jungle"
+_PROPERTY_PRIVATE_SHOWCASE_DEFAULT_ALLOWED_EMAILS = frozenset(
+    {
+        "tibor.girschele@gmail.com",
+        "elisabeth.girschele@gmail.com",
+    }
+)
 
 
 def _property_private_showcase_allowed_emails() -> frozenset[str]:
     raw_value = str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS") or "").strip()
-    return frozenset(
+    configured = frozenset(
         value.strip().lower()
         for value in raw_value.split(",")
         if value.strip() and "@" in value
     )
+    return frozenset((*_PROPERTY_PRIVATE_SHOWCASE_DEFAULT_ALLOWED_EMAILS, *configured))
 
 
 def _property_private_showcase_env_bool(name: str) -> bool:
@@ -13499,9 +13507,18 @@ def _property_private_showcase_searches_brigittenau(preferences: dict[str, objec
         return False
     rows = _property_private_showcase_flatten_preferences(preferences)
     all_text = " ".join(text for _key, text in rows).casefold()
+    country_matches = any(
+        (
+            any(marker in str(key or "").casefold() for marker in ("country", "land"))
+            and str(text or "").strip().casefold() in {"at", "aut", "austria", "österreich", "osterreich"}
+        )
+        for key, text in rows
+    ) or any(marker in all_text for marker in ("austria", "österreich", "osterreich"))
+    if not country_matches:
+        return False
     if "brigittenau" in all_text:
         return True
-    if re.search(r"\b(20\.?\s*bezirk|20th\s+district|20th|wien\s*20|vienna\s*20)\b", all_text):
+    if re.search(r"\b(20\.?\s*bezirk|20th\s+district|wien\s*20|vienna\s*20)\b", all_text):
         return True
     for key, text in rows:
         normalized_key = str(key or "").casefold()
@@ -13528,20 +13545,47 @@ def _property_private_showcase_candidate(
     )
     if not tour_url:
         return {}
-    walkthrough_url = _hosted_property_tour_walkthrough_asset_url(tour_url)
+    walkthrough_asset_url = _hosted_property_tour_walkthrough_asset_url(tour_url)
+    walkthrough_url = _hosted_property_tour_walkthrough_open_url(
+        tour_url,
+        walkthrough_asset_url,
+    )
+    ai_panorama_ready = urllib.parse.urlparse(tour_url).path.rstrip("/").endswith("/control")
+    floorplan_url = (
+        _hosted_public_tour_asset_url(
+            tour_url,
+            slug=_PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG,
+            asset_relpath="floorplan.webp",
+        )
+        if ai_panorama_ready
+        else ""
+    )
+    diorama_preview_url = (
+        _hosted_public_tour_asset_url(
+            tour_url,
+            slug=_PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG,
+            asset_relpath="diorama-preview.png",
+        )
+        if ai_panorama_ready
+        else ""
+    )
     facts: dict[str, object] = {
         "private_showcase": True,
+        "private_showcase_disclosure": (
+            "Private €0 result requested by the account owner. The tour and walkthrough are "
+            "AI reconstructions from the supplied architectural floorplan, not captured scans."
+        ),
         "visibility": "private_principal_only",
         "source_platform": "propertyquarry_private_showcase",
         "source_family": "private_showcase",
         "country_code": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_COUNTRY_CODE") or "AT").strip(),
-        "region_code": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_REGION_CODE") or "").strip(),
-        "city": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_CITY") or "").strip(),
-        "district": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_DISTRICT") or "").strip(),
-        "postal_code": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_POSTAL_CODE") or "").strip(),
-        "postal_name": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_POSTAL_NAME") or "").strip(),
-        "street_address": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_STREET_ADDRESS") or "").strip(),
-        "address": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ADDRESS") or "").strip(),
+        "region_code": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_REGION_CODE") or "AT-9").strip(),
+        "city": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_CITY") or "Wien").strip(),
+        "district": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_DISTRICT") or "Brigittenau").strip(),
+        "postal_code": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_POSTAL_CODE") or "1200").strip(),
+        "postal_name": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_POSTAL_NAME") or "1200 Wien").strip(),
+        "street_address": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_STREET_ADDRESS") or "Karl-Czerny-Gasse 2").strip(),
+        "address": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ADDRESS") or "Karl-Czerny-Gasse 2, 1200 Wien, Austria").strip(),
         "latitude": _property_private_showcase_env_float("PROPERTYQUARRY_PRIVATE_SHOWCASE_LATITUDE"),
         "longitude": _property_private_showcase_env_float("PROPERTYQUARRY_PRIVATE_SHOWCASE_LONGITUDE"),
         "map_source": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_MAP_SOURCE") or "").strip(),
@@ -13551,25 +13595,35 @@ def _property_private_showcase_candidate(
         "has_lift": _property_private_showcase_env_bool("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_LIFT"),
         "lift": _property_private_showcase_env_bool("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_LIFT"),
         "has_balcony": _property_private_showcase_env_bool("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_BALCONY"),
-        "has_terrace": _property_private_showcase_env_bool("PROPERTYQUARRY_PRIVATE_SHOWCASE_HAS_TERRACE"),
-        "has_floorplan": False,
-        "floorplan_count": 0,
-        "floorplan_urls_json": [],
-        "floorplan_detection_method": "operator_provided_floorplan_pending_import",
+        "has_terrace": True,
+        "terrace_sqm": 7.78,
+        "living_area_sqm": 72.25,
+        "area_sqm": 72.25,
+        "rooms": 3,
+        "has_floorplan": bool(floorplan_url),
+        "floorplan_count": 1 if floorplan_url else 0,
+        "floorplan_url": floorplan_url,
+        "floorplan_urls_json": [floorplan_url] if floorplan_url else [],
+        "floorplan_detection_method": "operator_provided_architectural_scan",
         "brightness_signal": "very_bright",
         "quiet_layout_signal": "very_quiet",
-        "quiet_layout_signal_summary": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_QUIET_SUMMARY") or "").strip(),
+        "quiet_layout_signal_summary": str(
+            os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_QUIET_SUMMARY")
+            or "Private showcase; acoustic conditions are not independently verified."
+        ).strip(),
         "total_rent_eur": 0,
         "price_eur": 0,
-        "rent_display": "EUR 0",
-        "price_display": "EUR 0",
-        "costs_display": "EUR 0",
-        "staging_style": "IKEA",
-        "tour_style": "lush",
+        "monthly_cost_eur": 0,
+        "rent_display": "€0 / month",
+        "price_display": "€0 / month",
+        "costs_display": "€0 monthly costs",
+        "staging_style": "Urban Jungle",
+        "tour_style": "urban_jungle",
         "tour_url": tour_url,
         "source_virtual_tour_url": tour_url,
         "flythrough_url": walkthrough_url,
         "walkthrough_url": walkthrough_url,
+        "walkthrough_asset_url": walkthrough_asset_url,
         "nearest_flowing_water_m": _property_private_showcase_env_int("PROPERTYQUARRY_PRIVATE_SHOWCASE_NEAREST_WATER_M"),
         "nearest_flowing_water_name": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_NEAREST_WATER_NAME") or "").strip(),
         "cooling_corridor_signal": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_COOLING_SIGNAL") or "").strip(),
@@ -13579,24 +13633,14 @@ def _property_private_showcase_candidate(
             for value in str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_NOTES") or "").split("|")
             if value.strip()
         ],
-        "missing_fact_research": [
-            {
-                "field": "real_floorplan_tiff",
-                "label": "Real floorplan",
-                "status": "pending",
-                "display_value": "Waiting for the provided TIFF to appear in the Linux workspace.",
-                "evidence": "The Windows download path was not mounted in the container during implementation.",
-                "ooda": {
-                    "act": "Import the TIFF and regenerate the layout-backed tour bundle.",
-                },
-            }
-        ],
+        "missing_fact_research": [],
     }
     assessment = {
         "recommendation": "review_now",
         "fit_score": 100,
         "match_reasons_json": [
-            "EUR 0 total cost private showcase.",
+            "€0 monthly-cost private showcase.",
+            "Exact Karl-Czerny-Gasse 2 match for an authorised 1200 Wien search.",
             str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_FIT_REASON") or "").strip(),
             _property_cooling_corridor_match_reason(facts),
         ],
@@ -13606,13 +13650,16 @@ def _property_private_showcase_candidate(
         "candidate_ref": _PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF,
         "source_ref": _PROPERTY_PRIVATE_SHOWCASE_SOURCE_REF,
         "listing_id": _PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF,
-        "title": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_TITLE") or "Private zero-cost flat").strip(),
-        "summary": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_SUMMARY") or "Private showcase flat.").strip(),
+        "title": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_TITLE") or "Karl-Czerny-Gasse 2 · private €0 home").strip(),
+        "summary": str(
+            os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_SUMMARY")
+            or "Private special result with €0 monthly costs and an Urban Jungle reconstruction based on the supplied floorplan."
+        ).strip(),
         "fit_score": 100.0,
         "ranking_score": 999.0,
         "assessment_fit_score": 100.0,
         "recommendation": "review_now",
-        "fit_summary": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_FIT_SUMMARY") or "Private match").strip(),
+        "fit_summary": str(os.getenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_FIT_SUMMARY") or "Exact private 1200 Wien match").strip(),
         "property_url": f"/app/research/{_PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF}" + (f"?run_id={urllib.parse.quote(run_id, safe='')}" if run_id else ""),
         "packet_url": f"/app/research/{_PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF}" + (f"?run_id={urllib.parse.quote(run_id, safe='')}" if run_id else ""),
         "review_url": f"/app/research/{_PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF}" + (f"?run_id={urllib.parse.quote(run_id, safe='')}" if run_id else ""),
@@ -13620,6 +13667,12 @@ def _property_private_showcase_candidate(
         "tour_status": "ready",
         "flythrough_url": walkthrough_url,
         "flythrough_status": "ready" if walkthrough_url else "unavailable",
+        "diorama_preview_url": diorama_preview_url,
+        "thumbnail_url": diorama_preview_url,
+        "image_url": diorama_preview_url,
+        "rent_display": "€0 / month",
+        "price_display": "€0 / month",
+        "monthly_cost_eur": 0,
         "source_platform": "propertyquarry_private_showcase",
         "source_family": "private_showcase",
         "source_trust_tier": "operator_confirmed",
@@ -52171,8 +52224,16 @@ class ProductService:
                 )
         commercial_snapshot = property_commercial_snapshot(request_preferences)
         plan_key = normalize_property_plan_key(commercial_snapshot.get("current_plan_key") or "free")
-        unlimited_provider_results = resolved_max_results is None
-        effective_max_results_per_source = 0 if resolved_max_results is None else max(1, int(resolved_max_results))
+        plan_result_cap = int(commercial_snapshot.get("max_results_per_source") or 0)
+        unlimited_provider_results = property_plan_has_unlimited_provider_results(
+            plan_key,
+            plan_result_cap,
+        )
+        effective_max_results_per_source = (
+            0
+            if unlimited_provider_results or resolved_max_results is None
+            else max(1, int(resolved_max_results))
+        )
         run_entitlement_summary = _property_search_run_entitlement_summary(request_preferences)
 
         preference_person_id = str(
@@ -52645,7 +52706,11 @@ class ProductService:
                 or 1
             ),
         )
-        preview_scan_cap = _property_search_scan_cap_per_source()
+        preview_scan_cap = (
+            0
+            if unlimited_provider_results
+            else _property_search_scan_cap_per_source()
+        )
         source_preview_jobs: list[dict[str, object]] = []
         for source_spec in specs:
             source_url = urllib.parse.urldefrag(str(source_spec.get("url") or "").strip())[0]
@@ -53298,7 +53363,11 @@ class ProductService:
                 continue
 
             raw_listing_count = len(listing_urls)
-            scan_cap = _property_search_scan_cap_per_source()
+            scan_cap = (
+                0
+                if unlimited_provider_results
+                else _property_search_scan_cap_per_source()
+            )
             scan_truncated = bool(scan_cap and len(listing_urls) > scan_cap)
             if scan_cap:
                 listing_urls = listing_urls[:scan_cap]

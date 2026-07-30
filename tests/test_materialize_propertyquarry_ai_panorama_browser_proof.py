@@ -16,8 +16,12 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _write_source_bundle(bundle_dir: Path, *, slug: str = "proof-fixture") -> dict[str, object]:
-    disclosure = materializer.CANONICAL_DISCLOSURE
+def _write_source_bundle(
+    bundle_dir: Path,
+    *,
+    slug: str = "proof-fixture",
+    disclosure: str = materializer.CANONICAL_DISCLOSURE,
+) -> dict[str, object]:
     bundle_dir.mkdir(parents=True)
     panorama_dir = bundle_dir / "panoramas"
     proof_dir = bundle_dir / "proof"
@@ -209,7 +213,9 @@ def _fake_browser_capture(
         "route_stack": "fastapi_public_route",
         "viewer_implementation": "app.api.routes.public_tours._tour_control_panorama_html",
         "viewer_implementation_sha256": viewer_implementation_sha256,
-        "representation_disclosure": materializer.CANONICAL_DISCLOSURE,
+        "representation_disclosure": materializer._candidate_representation_disclosure(
+            candidate
+        ),
         "scene_ids": list(candidate.scene_ids),
         "anonymous_http_200": True,
         "drag_navigation_verified": True,
@@ -407,6 +413,40 @@ def test_materialize_without_external_receipt_reports_no_post_write_recheck(
         "candidate_unchanged_post_write": None,
     }
     assert receipt["candidate_identity_rechecked_after_receipt_write"] is False
+
+
+def test_materialize_accepts_honest_floorplan_reconstruction_disclosure(
+    tmp_path: Path,
+) -> None:
+    source_bundle = tmp_path / "source" / "bundle"
+    _write_source_bundle(
+        source_bundle,
+        disclosure=materializer.FLOORPLAN_CANONICAL_DISCLOSURE,
+    )
+    candidate_root = tmp_path / "candidate-public"
+
+    receipt = materializer.materialize(
+        source_bundle=source_bundle.resolve(),
+        candidate_public_root=candidate_root.resolve(),
+        base_url="https://propertyquarry.com",
+        transport_base_url="http://127.0.0.1:18080",
+        capture=_fake_browser_capture,
+    )
+
+    assert receipt["status"] == "pass"
+    sealed = json.loads(
+        (candidate_root / "proof-fixture" / "tour.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    contract = property_tour_hosting._hosted_property_tour_ai_panorama_contract(
+        bundle_dir=candidate_root / "proof-fixture",
+        payload=sealed,
+    )
+    assert contract["ready"] is True
+    assert contract["representation_disclosure"] == (
+        materializer.FLOORPLAN_CANONICAL_DISCLOSURE
+    )
 
 
 def test_capture_failure_leaves_candidate_pending_and_source_unchanged(
