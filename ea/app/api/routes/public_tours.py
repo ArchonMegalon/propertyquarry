@@ -12577,7 +12577,7 @@ def _tour_control_panorama_html(
         const measuredMinX = Math.min(...measuredRooms.map(room => Number(room.x)));
         const measuredMinZ = Math.min(...measuredRooms.map(room => Number(room.z)));
         const measuredMaxX = Math.max(...measuredRooms.map(room => Number(room.x) + Number(room.width)));
-        const measuredMaxZ = Math.max(...measuredRooms.map(room => Number(room.z) + Number(room.depth));
+        const measuredMaxZ = Math.max(...measuredRooms.map(room => Number(room.z) + Number(room.depth)));
         const sourceComponents = sourceGeometry
           ? [...sourceRoomComponents.values()].flat()
           : [];
