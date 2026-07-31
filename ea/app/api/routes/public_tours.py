@@ -12358,10 +12358,11 @@ def _tour_control_panorama_html(
       let mode = 'panorama';
       let yaw = 0;
       let pitch = 0;
-      // Start close to a plan-aligned top view.  Users can still orbit, but
-      // the first frame should be directly comparable with the source plan.
+      // Start in a source-plan-aligned top view. Users can still orbit into a
+      // dollhouse perspective, but the first frame must be directly
+      // comparable with the source plan rather than a foreshortened sketch.
       let dollhouseAzimuth = 0;
-      let dollhouseElevation = 1.08;
+      let dollhouseElevation = 1.46;
       let dollhouseDistance = 17;
       let dollhouseDefaultDistance = 17;
       let dragging = false;
@@ -12571,7 +12572,7 @@ def _tour_control_panorama_html(
       }
       function resetDollhouseView(announce = true) {
         dollhouseAzimuth = 0;
-        dollhouseElevation = 1.08;
+        dollhouseElevation = 1.46;
         dollhouseDistance = dollhouseDefaultDistance;
         updateDollhouseCamera();
         if (announce) announcer.textContent = 'Plan-aligned dollhouse view restored';
