@@ -123,7 +123,7 @@
       "shape": "composite",
       "floorplan_bounds_pct": {"x": 44.3, "y": 77.0, "width": 15.1, "height": 9.3},
       "area_m2": 18.8,
-      "dimension_label": "18.80 m² · L-shaped",
+      "dimension_label": "L-shaped",
       "measurement_tolerance_m": 0.05,
       "components": [
         {"x": 4.335, "z": 6.236206, "width": 4.28, "depth": 2.13},
