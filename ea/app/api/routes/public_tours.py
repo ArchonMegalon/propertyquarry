@@ -12242,8 +12242,10 @@ def _tour_control_panorama_html(
       .dollhouse-node { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; min-height: 34px; border: 1px solid rgba(255,255,255,.8); border-radius: 999px; padding: 0 11px; color: #111820; background: rgba(255,255,255,.94); box-shadow: 0 8px 24px rgba(0,0,0,.3); cursor: pointer; font: 700 11px/1 Inter,system-ui,sans-serif; white-space: nowrap; }
       .dollhouse-node.active { color: #fff; background: #ee6b45; border-color: #fff; }
       .dollhouse-node.unavailable { color: rgba(255,255,255,.76); background: rgba(24,32,40,.88); border-color: rgba(255,255,255,.3); cursor: default; }
-      .dollhouse-note { position: fixed; z-index: 20; left: 50%; top: max(86px, calc(env(safe-area-inset-top) + 74px)); transform: translateX(-50%); padding: 8px 11px; color: rgba(255,255,255,.78); font-size: 11px; text-align: center; pointer-events: none; }
+      .dollhouse-note { position: fixed; z-index: 20; left: 50%; top: max(86px, calc(env(safe-area-inset-top) + 74px)); transform: translateX(-50%); padding: 8px 11px; color: rgba(255,255,255,.82); font-size: 11px; line-height: 1.35; text-align: center; pointer-events: none; }
       .dollhouse-note[hidden] { display: none; }
+      .dollhouse-reset { display: none; }
+      body[data-mode="dollhouse"] .dollhouse-reset { display: inline-flex; align-items: center; justify-content: center; }
       .status { position: fixed; z-index: 25; left: 50%; top: 50%; transform: translate(-50%,-50%); padding: 12px 16px; font-size: 13px; pointer-events: none; }
       .status[hidden] { display: none; }
       .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
@@ -12272,7 +12274,7 @@ def _tour_control_panorama_html(
       <div class="identity glass"><strong id="scene-title">__PQ_TITLE__</strong><span title="__PQ_PROVIDER____PQ_DISCLOSURE__">__PQ_PROVIDER____PQ_DISCLOSURE__</span></div>
       <div class="top-actions"><button class="icon-button" id="dollhouse-toggle" type="button" aria-label="Open 3D dollhouse" aria-pressed="false">Dollhouse</button><button class="icon-button" id="map-toggle" type="button" aria-label="Open floor plan" aria-pressed="false">Map</button><button class="icon-button" id="fullscreen" type="button" aria-label="Enter full screen">⛶</button></div>
     </header>
-    <div class="zoom-controls" aria-label="View zoom controls"><button class="icon-button" id="zoom-in" type="button" aria-label="Zoom in">+</button><button class="icon-button" id="zoom-out" type="button" aria-label="Zoom out">−</button></div>
+    <div class="zoom-controls" aria-label="View zoom controls"><button class="icon-button" id="dollhouse-reset" type="button" aria-label="Reset dollhouse view" title="Reset to plan-aligned view">↺</button><button class="icon-button" id="zoom-in" type="button" aria-label="Zoom in">+</button><button class="icon-button" id="zoom-out" type="button" aria-label="Zoom out">−</button></div>
     <nav class="scene-rail glass" id="scene-rail" aria-label="Tour spaces"></nav>
     <aside class="floorplan glass" id="floorplan" hidden><div class="floorplan-stage"><div class="floorplan-toolbar"><span id="floorplan-kind">Source plan</span><button id="floorplan-kind-toggle" type="button">Show derived</button></div><img id="floorplan-image" alt="Property floor plan"><div id="floorplan-pins"></div></div></aside>
     <a class="street-context" id="street-context" href="#" target="_blank" rel="noopener noreferrer" hidden>Street View context</a>
@@ -12300,6 +12302,7 @@ def _tour_control_panorama_html(
       const dollhouseNodes = document.getElementById('dollhouse-nodes');
       const dollhouseNote = document.getElementById('dollhouse-note');
       const streetContext = document.getElementById('street-context');
+      const dollhouseReset = document.getElementById('dollhouse-reset');
       const spatialModel = spec.spatial_model && Array.isArray(spec.spatial_model.rooms) ? spec.spatial_model : null;
       const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -12337,6 +12340,7 @@ def _tour_control_panorama_html(
       let dollhouseAzimuth = 0;
       let dollhouseElevation = 1.08;
       let dollhouseDistance = 17;
+      let dollhouseDefaultDistance = 17;
       let dragging = false;
       const activePointers = new Map();
       let primaryPointerId = null;
@@ -12453,7 +12457,8 @@ def _tour_control_panorama_html(
         const maxX = Math.max(...rooms.map(room => room.x + room.width));
         const maxZ = Math.max(...rooms.map(room => room.z + room.depth));
         dollhouseCenter.set((minX + maxX) / 2, .3, (minZ + maxZ) / 2);
-        dollhouseDistance = Math.max(13, Math.hypot(maxX - minX, maxZ - minZ) * 1.22);
+        dollhouseDefaultDistance = Math.max(13, Math.hypot(maxX - minX, maxZ - minZ) * 1.22);
+        dollhouseDistance = dollhouseDefaultDistance;
         const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
         const adjacent = (component, room, side) => {
           let best = null;
@@ -12487,7 +12492,7 @@ def _tour_control_panorama_html(
             color: sceneId ? 0xf4f0e8 : 0x7b8289,
             roughness: .82,
             transparent: true,
-            opacity: room.kind === 'exterior' ? .7 : .9,
+            opacity: room.kind === 'exterior' ? .66 : .78,
           });
           const wallHeight = room.kind === 'exterior' ? .22 : Math.max(.58, Math.min(1.42, room.height * .4));
           const openingFor = match => match ? { center: match.start + match.span / 2, width: Math.min(.92, match.span * .58) } : null;
@@ -12540,6 +12545,13 @@ def _tour_control_panorama_html(
         );
         dollhouseCamera.lookAt(dollhouseCenter);
         viewer.dataset.dollhouseDistance = dollhouseDistance.toFixed(2);
+      }
+      function resetDollhouseView(announce = true) {
+        dollhouseAzimuth = 0;
+        dollhouseElevation = 1.08;
+        dollhouseDistance = dollhouseDefaultDistance;
+        updateDollhouseCamera();
+        if (announce) announcer.textContent = 'Plan-aligned dollhouse view restored';
       }
       function adjustZoom(directionValue, announce = true) {
         const direction = Number(directionValue) || 0;
@@ -12680,6 +12692,7 @@ def _tour_control_panorama_html(
         dollhouseToggle.setAttribute('aria-label', inDollhouse ? 'Return to panorama tour' : 'Open 3D dollhouse');
         viewer.setAttribute('aria-label', inDollhouse ? 'Interactive approximate 3D dollhouse' : 'Interactive 360 degree property view');
         viewer.style.cursor = inDollhouse ? 'grab' : '';
+        dollhouseReset.hidden = !inDollhouse;
         if (inDollhouse) streetContext.hidden = true;
         else if (activeNode) syncStreetContext(activeNode);
         if (inDollhouse) {
@@ -12977,6 +12990,7 @@ def _tour_control_panorama_html(
         syncFloorplanImage();
       });
       dollhouseToggle.addEventListener('click', () => setMode(mode === 'dollhouse' ? 'panorama' : 'dollhouse'));
+      dollhouseReset.addEventListener('click', () => resetDollhouseView());
       document.getElementById('zoom-in').addEventListener('click', () => adjustZoom(1));
       document.getElementById('zoom-out').addEventListener('click', () => adjustZoom(-1));
       document.getElementById('fullscreen').addEventListener('click', async () => {
@@ -13070,8 +13084,9 @@ def _tour_control_panorama_html(
       }, { passive: false });
       viewer.addEventListener('keydown', event => {
         const key = event.key.toLowerCase();
-        if (['arrowleft','arrowright','arrowup','arrowdown','+','=','-','_'].includes(key)) event.preventDefault();
+        if (['arrowleft','arrowright','arrowup','arrowdown','+','=','-','_','r'].includes(key)) event.preventDefault();
         if (mode === 'dollhouse') {
+          if (key === 'r') resetDollhouseView();
           if (key === 'arrowleft') dollhouseAzimuth += .08;
           if (key === 'arrowright') dollhouseAzimuth -= .08;
           if (key === 'arrowup') dollhouseElevation = Math.min(1.18, dollhouseElevation + .05);
@@ -13140,6 +13155,7 @@ def _tour_control_panorama_html(
             "zoom_controls": "Zoom-Steuerung",
             "zoom_in": "Vergrößern",
             "zoom_out": "Verkleinern",
+            "reset_dollhouse": "3D-Modell auf Planansicht zurücksetzen",
             "tour_spaces": "Räume der Tour",
             "floorplan": "Grundriss der Immobilie",
             "dollhouse_note": "KI-Modell aus dem Grundriss · Raummaße laut Plan; ungefähr, nicht vermessen",
@@ -13168,6 +13184,7 @@ def _tour_control_panorama_html(
             "zoom_controls": "Zoom-Steuerung",
             "zoom_in": "Vergrößern",
             "zoom_out": "Verkleinern",
+            "reset_dollhouse": "3D-Modell auf Planansicht zurücksetzen",
             "tour_spaces": "Räume der Tour",
             "floorplan": "Grundriss der Immobilie",
             "dollhouse_note": "KI-Modell aus dem Grundriss · Raummaße laut Plan; ungefähr, nicht vermessen",
@@ -13196,6 +13213,7 @@ def _tour_control_panorama_html(
             "zoom_controls": "Controles de acercamiento",
             "zoom_in": "Acercar",
             "zoom_out": "Alejar",
+            "reset_dollhouse": "Restablecer modelo 3D a la vista del plano",
             "tour_spaces": "Espacios del recorrido",
             "floorplan": "Plano de la propiedad",
             "dollhouse_note": "Modelo de IA del plano · dimensiones del plano; aproximado, no medido",
@@ -13222,6 +13240,8 @@ def _tour_control_panorama_html(
         ('aria-label="View zoom controls"', f'aria-label="{copy["zoom_controls"]}"'),
         ('aria-label="Zoom in"', f'aria-label="{copy["zoom_in"]}"'),
         ('aria-label="Zoom out"', f'aria-label="{copy["zoom_out"]}"'),
+        ('aria-label="Reset dollhouse view"', f'aria-label="{copy["reset_dollhouse"]}"'),
+        ('title="Reset to plan-aligned view"', f'title="{copy["reset_dollhouse"]}"'),
         ('aria-label="Tour spaces"', f'aria-label="{copy["tour_spaces"]}"'),
         ('alt="Property floor plan"', f'alt="{copy["floorplan"]}"'),
         (
