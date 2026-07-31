@@ -2123,6 +2123,46 @@ def redacted_public_tour_walkable_scene(
                     normalized_boundary_adjacency[key] = normalized_rows
                 if normalized_boundary_adjacency:
                     rendered_walkable["spatial_model"]["boundary_adjacency"] = normalized_boundary_adjacency
+            raw_source_geometry = raw_spatial_model.get("source_geometry")
+            if isinstance(raw_source_geometry, dict):
+                raw_canvas = raw_source_geometry.get("canvas_size_px")
+                raw_geometry_rooms = raw_source_geometry.get("rooms")
+                if (
+                    raw_source_geometry.get("contract_name") == "propertyquarry.floorplan_source_geometry.v1"
+                    and raw_source_geometry.get("coordinate_system") == "source_image_pixels"
+                    and isinstance(raw_canvas, dict)
+                    and isinstance(raw_geometry_rooms, list)
+                ):
+                    geometry_rooms = []
+                    for raw_geometry_room in raw_geometry_rooms[:128]:
+                        if not isinstance(raw_geometry_room, dict):
+                            continue
+                        room_id = str(raw_geometry_room.get("id") or "").strip()[:80]
+                        raw_components_px = raw_geometry_room.get("components_px")
+                        if not room_id or not isinstance(raw_components_px, list):
+                            continue
+                        components_px = []
+                        for raw_component in raw_components_px[:16]:
+                            if not isinstance(raw_component, dict):
+                                continue
+                            component_px = {
+                                key: int(round(_bounded_number(raw_component.get(key), default=0.0, minimum=0.0, maximum=10000.0)))
+                                for key in ("x", "y", "width", "height")
+                            }
+                            if component_px["width"] > 0 and component_px["height"] > 0:
+                                components_px.append(component_px)
+                        if components_px:
+                            geometry_rooms.append({"id": room_id, "components_px": components_px})
+                    if geometry_rooms:
+                        rendered_walkable["spatial_model"]["source_geometry"] = {
+                            "contract_name": "propertyquarry.floorplan_source_geometry.v1",
+                            "coordinate_system": "source_image_pixels",
+                            "canvas_size_px": {
+                                "width": int(round(_bounded_number(raw_canvas.get("width"), default=0.0, minimum=1.0, maximum=10000.0))),
+                                "height": int(round(_bounded_number(raw_canvas.get("height"), default=0.0, minimum=1.0, maximum=10000.0))),
+                            },
+                            "rooms": geometry_rooms,
+                        }
     floorplan_relpath = public_tour_safe_asset_relpath(
         walkable_scene.get("floorplan_relpath")
     )

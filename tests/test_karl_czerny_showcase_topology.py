@@ -117,6 +117,15 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         "required": [["balcony-loggia", "living-kitchen"]],
         "forbidden": [["living-kitchen", "terrace"], ["balcony-loggia", "terrace"]],
     }
+    source_geometry = builder._ANALYSIS_SPEC["source_geometry"]
+    assert source_geometry["contract_name"] == "propertyquarry.floorplan_source_geometry.v1"
+    source_geometry_rooms = {
+        str(room["id"]): room for room in source_geometry["rooms"]
+    }
+    assert len(source_geometry_rooms["entrance-vestibule"]["components_px"]) == 2
+    assert source_geometry_rooms["living-kitchen"]["components_px"] == [
+        {"x": 795, "y": 780, "width": 320, "height": 245}
+    ]
 
     measured_areas = {
         room_id: float(geometry["area_m2"])

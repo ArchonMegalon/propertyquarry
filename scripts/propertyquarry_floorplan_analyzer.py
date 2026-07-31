@@ -114,6 +114,96 @@ def _source_bbox_to_bounds(
     }
 
 
+def _source_geometry(
+    raw: object,
+    *,
+    room_ids: set[str],
+    source_size: dict[str, int],
+    source_bboxes: dict[str, dict[str, int]],
+) -> dict[str, object]:
+    """Normalize the source-pixel construction graph.
+
+    The first tour workflow converted each room to an independently guessed
+    metric rectangle.  That is useful for labels, but it cannot reproduce a
+    scanned plan whose rooms do not share one uniform scale.  This contract is
+    deliberately pixel-native: the reviewed source components are the
+    authoritative footprint, and metric measurements remain annotations.
+    """
+    if not isinstance(raw, dict):
+        raise FloorplanAnalysisError("floorplan_source_geometry_missing")
+    if str(raw.get("contract_name") or "").strip() != "propertyquarry.floorplan_source_geometry.v1":
+        raise FloorplanAnalysisError("floorplan_source_geometry_contract_invalid")
+    if str(raw.get("coordinate_system") or "").strip() != "source_image_pixels":
+        raise FloorplanAnalysisError("floorplan_source_geometry_coordinates_invalid")
+    canvas = raw.get("canvas_size_px")
+    if not isinstance(canvas, dict):
+        raise FloorplanAnalysisError("floorplan_source_geometry_canvas_invalid")
+    try:
+        canvas_size = {
+            "width": int(round(_finite(canvas.get("width"), minimum=1.0))),
+            "height": int(round(_finite(canvas.get("height"), minimum=1.0))),
+        }
+    except (TypeError, ValueError) as exc:
+        raise FloorplanAnalysisError("floorplan_source_geometry_canvas_invalid") from exc
+    if canvas_size != source_size:
+        raise FloorplanAnalysisError("floorplan_source_geometry_canvas_mismatch")
+    raw_rooms = raw.get("rooms")
+    if not isinstance(raw_rooms, list) or not raw_rooms:
+        raise FloorplanAnalysisError("floorplan_source_geometry_rooms_missing")
+    normalized_rooms: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw_room in raw_rooms:
+        if not isinstance(raw_room, dict):
+            raise FloorplanAnalysisError("floorplan_source_geometry_room_invalid")
+        room_id = str(raw_room.get("id") or "").strip()
+        if room_id not in room_ids or room_id in seen:
+            raise FloorplanAnalysisError("floorplan_source_geometry_room_invalid")
+        seen.add(room_id)
+        raw_components = raw_room.get("components_px")
+        if not isinstance(raw_components, list) or not raw_components:
+            raise FloorplanAnalysisError(f"floorplan_source_geometry_components_missing:{room_id}")
+        components: list[dict[str, int]] = []
+        for raw_component in raw_components:
+            if not isinstance(raw_component, dict):
+                raise FloorplanAnalysisError(f"floorplan_source_geometry_component_invalid:{room_id}")
+            try:
+                component = {
+                    key: int(round(_finite(raw_component.get(key), minimum=0.0)))
+                    for key in ("x", "y", "width", "height")
+                }
+            except (TypeError, ValueError) as exc:
+                raise FloorplanAnalysisError(f"floorplan_source_geometry_component_invalid:{room_id}") from exc
+            if component["width"] <= 0 or component["height"] <= 0:
+                raise FloorplanAnalysisError(f"floorplan_source_geometry_component_invalid:{room_id}")
+            if (
+                component["x"] + component["width"] > source_size["width"]
+                or component["y"] + component["height"] > source_size["height"]
+            ):
+                raise FloorplanAnalysisError(f"floorplan_source_geometry_component_invalid:{room_id}")
+            components.append(component)
+        left = min(item["x"] for item in components)
+        top = min(item["y"] for item in components)
+        right = max(item["x"] + item["width"] for item in components)
+        bottom = max(item["y"] + item["height"] for item in components)
+        expected = source_bboxes.get(room_id)
+        if expected is None or max(
+            abs(left - expected["x"]),
+            abs(top - expected["y"]),
+            abs((right - left) - expected["width"]),
+            abs((bottom - top) - expected["height"]),
+        ) > 12:
+            raise FloorplanAnalysisError(f"floorplan_source_geometry_bbox_mismatch:{room_id}")
+        normalized_rooms.append({"id": room_id, "components_px": components})
+    if seen != room_ids:
+        raise FloorplanAnalysisError("floorplan_source_geometry_coverage_incomplete")
+    return {
+        "contract_name": "propertyquarry.floorplan_source_geometry.v1",
+        "coordinate_system": "source_image_pixels",
+        "canvas_size_px": canvas_size,
+        "rooms": normalized_rooms,
+    }
+
+
 def _rectangles(raw: object, *, room_id: str) -> list[dict[str, float]]:
     if not isinstance(raw, list) or not raw:
         raise FloorplanAnalysisError(f"floorplan_room_components_missing:{room_id}")
@@ -286,6 +376,7 @@ def analyze_floorplan(
         raise FloorplanAnalysisError("floorplan_rooms_missing")
     rooms: list[dict[str, object]] = []
     room_ids: set[str] = set()
+    source_bboxes: dict[str, dict[str, int]] = {}
     for raw_room in rooms_raw:
         if not isinstance(raw_room, dict):
             raise FloorplanAnalysisError("floorplan_room_invalid")
@@ -304,6 +395,7 @@ def analyze_floorplan(
             source_size=source_size,
         )
         if source_bbox is not None:
+            source_bboxes[room_id] = source_bbox
             source_bounds = _source_bbox_to_bounds(source_bbox, source_size=source_size)
             if max(
                 abs(source_bounds[key] - bounds[key])
@@ -405,6 +497,38 @@ def analyze_floorplan(
                 f"floorplan_forbidden_boundary_present:{pair[0]}:{pair[1]}"
             )
 
+    if specification.get("source_geometry") is None:
+        # Keep the analyzer backwards-compatible for older non-publishable
+        # callers.  The showcase/publish path must provide the explicit
+        # source-pixel contract above; this fallback is intentionally marked
+        # as legacy so it cannot be mistaken for a reviewed wall trace.
+        legacy_rooms = []
+        for room in rooms:
+            bounds = dict(room.get("floorplan_bounds_pct") or {})
+            legacy_rooms.append({
+                "id": str(room["id"]),
+                "components_px": [{
+                    "x": round(float(bounds["x"]) * source_size["width"] / 100),
+                    "y": round(float(bounds["y"]) * source_size["height"] / 100),
+                    "width": round(float(bounds["width"]) * source_size["width"] / 100),
+                    "height": round(float(bounds["height"]) * source_size["height"] / 100),
+                }],
+            })
+        source_geometry = {
+            "contract_name": "propertyquarry.floorplan_source_geometry.v1",
+            "coordinate_system": "source_image_pixels",
+            "canvas_size_px": dict(source_size),
+            "rooms": legacy_rooms,
+            "review_status": "legacy_derived",
+        }
+    else:
+        source_geometry = _source_geometry(
+            specification.get("source_geometry"),
+            room_ids=room_ids,
+            source_size=source_size,
+            source_bboxes=source_bboxes,
+        )
+
     content_bbox = _content_bbox(image)
     analysis: dict[str, object] = {
         "contract_name": ANALYZER_CONTRACT,
@@ -418,6 +542,7 @@ def analyze_floorplan(
         "rooms": rooms,
         "doorway_edges": edges,
         "boundary_adjacency": boundary_adjacency,
+        "source_geometry": source_geometry,
         "room_count": len(rooms),
         "minimum_dimension_confidence": round(
             min(float(room["confidence"]) for room in rooms), 4

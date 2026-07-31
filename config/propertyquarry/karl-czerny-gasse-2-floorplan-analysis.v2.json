@@ -173,5 +173,24 @@
   "boundary_adjacency": {
     "required": [["balcony-loggia", "living-kitchen"]],
     "forbidden": [["living-kitchen", "terrace"], ["balcony-loggia", "terrace"]]
+  },
+  "source_geometry": {
+    "contract_name": "propertyquarry.floorplan_source_geometry.v1",
+    "coordinate_system": "source_image_pixels",
+    "canvas_size_px": {"width": 1800, "height": 1310},
+    "rooms": [
+      {"id": "terrace", "components_px": [{"x": 390, "y": 510, "width": 130, "height": 495}]},
+      {"id": "primary-bedroom", "components_px": [{"x": 520, "y": 510, "width": 275, "height": 495}]},
+      {"id": "separate-wc", "components_px": [{"x": 790, "y": 510, "width": 150, "height": 270}]},
+      {"id": "bathroom", "components_px": [{"x": 940, "y": 510, "width": 150, "height": 190}]},
+      {"id": "circulation-hall", "components_px": [{"x": 1090, "y": 630, "width": 170, "height": 150}]},
+      {"id": "guest-bedroom", "components_px": [{"x": 1260, "y": 510, "width": 255, "height": 275}]},
+      {"id": "living-kitchen", "components_px": [{"x": 795, "y": 780, "width": 320, "height": 245}]},
+      {"id": "entrance-vestibule", "components_px": [
+        {"x": 795, "y": 1005, "width": 320, "height": 74},
+        {"x": 795, "y": 1079, "width": 139, "height": 181}
+      ]},
+      {"id": "balcony-loggia", "components_px": [{"x": 1360, "y": 990, "width": 160, "height": 320}]}
+    ]
   }
 }

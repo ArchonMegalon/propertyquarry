@@ -12220,6 +12220,46 @@ def _tour_control_panorama_spec(
                     normalized_boundary_adjacency[key] = normalized_boundary_rows
                 if normalized_boundary_adjacency:
                     spatial_model["boundary_adjacency"] = normalized_boundary_adjacency
+            raw_source_geometry = raw_spatial_model.get("source_geometry")
+            if isinstance(raw_source_geometry, dict):
+                raw_canvas = raw_source_geometry.get("canvas_size_px")
+                raw_geometry_rooms = raw_source_geometry.get("rooms")
+                if (
+                    raw_source_geometry.get("contract_name") == "propertyquarry.floorplan_source_geometry.v1"
+                    and raw_source_geometry.get("coordinate_system") == "source_image_pixels"
+                    and isinstance(raw_canvas, dict)
+                    and isinstance(raw_geometry_rooms, list)
+                ):
+                    geometry_rooms = []
+                    for raw_geometry_room in raw_geometry_rooms[:128]:
+                        if not isinstance(raw_geometry_room, dict):
+                            continue
+                        room_id = str(raw_geometry_room.get("id") or "").strip()[:80]
+                        raw_components_px = raw_geometry_room.get("components_px")
+                        if not room_id or not isinstance(raw_components_px, list):
+                            continue
+                        components_px = []
+                        for raw_component in raw_components_px[:16]:
+                            if not isinstance(raw_component, dict):
+                                continue
+                            component_px = {
+                                key: int(round(_number(raw_component.get(key), default=0.0, minimum=0.0, maximum=10000.0)))
+                                for key in ("x", "y", "width", "height")
+                            }
+                            if component_px["width"] > 0 and component_px["height"] > 0:
+                                components_px.append(component_px)
+                        if components_px:
+                            geometry_rooms.append({"id": room_id, "components_px": components_px})
+                    if geometry_rooms:
+                        spatial_model["source_geometry"] = {
+                            "contract_name": "propertyquarry.floorplan_source_geometry.v1",
+                            "coordinate_system": "source_image_pixels",
+                            "canvas_size_px": {
+                                "width": int(round(_number(raw_canvas.get("width"), default=0.0, minimum=1.0, maximum=10000.0))),
+                                "height": int(round(_number(raw_canvas.get("height"), default=0.0, minimum=1.0, maximum=10000.0))),
+                            },
+                            "rooms": geometry_rooms,
+                        }
     return {
         "scenes": [row[0] for row in normalized_rows],
         "initial_scene_id": str(walkable_scene.get("initial_scene_id") or normalized_rows[0][0]["id"]),
@@ -12408,6 +12448,7 @@ def _tour_control_panorama_html(
       const dollhouseRaycaster = new THREE.Raycaster();
       const dollhouseCenter = new THREE.Vector3(5, 0, 5);
       let dollhouseSourceUnderlay = null;
+      let dollhouseSourceTransform = null;
 
       const radians = degrees => THREE.MathUtils.degToRad(Number(degrees) || 0);
       function direction(yawValue, pitchValue, radius = 10) {
@@ -12477,25 +12518,13 @@ def _tour_control_panorama_html(
         line.name = name;
         dollhouseGroup.add(line);
       }
-      function addDollhouseSourceUnderlay(rooms, minX, minZ, maxX, maxZ) {
-        if (dollhouseSourceUnderlay || !spec.floorplan_url) return;
-        const bounds = rooms
-          .map(room => room.floorplan_bounds_pct)
-          .filter(value => value && Number.isFinite(Number(value.x)) && Number.isFinite(Number(value.y))
-            && Number.isFinite(Number(value.width)) && Number.isFinite(Number(value.height)));
-        if (!bounds.length) return;
-        const sourceMinX = Math.min(...bounds.map(value => Number(value.x)));
-        const sourceMinY = Math.min(...bounds.map(value => Number(value.y)));
-        const sourceMaxX = Math.max(...bounds.map(value => Number(value.x) + Number(value.width)));
-        const sourceMaxY = Math.max(...bounds.map(value => Number(value.y) + Number(value.height)));
-        const sourceWidthPct = Math.max(1, sourceMaxX - sourceMinX);
-        const sourceHeightPct = Math.max(1, sourceMaxY - sourceMinY);
-        const worldWidth = Math.max(.5, maxX - minX);
-        const worldDepth = Math.max(.5, maxZ - minZ);
-        const planeWidth = worldWidth * 100 / sourceWidthPct;
-        const planeDepth = worldDepth * 100 / sourceHeightPct;
-        const planeX = minX - planeWidth * sourceMinX / 100 + planeWidth / 2;
-        const planeZ = minZ - planeDepth * sourceMinY / 100 + planeDepth / 2;
+      function addDollhouseSourceUnderlay() {
+        if (dollhouseSourceUnderlay || !spec.floorplan_url || !dollhouseSourceTransform) return;
+        const transform = dollhouseSourceTransform;
+        const planeWidth = transform.worldWidth * transform.canvasWidth / transform.sourceSpanX;
+        const planeDepth = transform.worldDepth * transform.canvasHeight / transform.sourceSpanY;
+        const planeX = transform.worldMinX - planeWidth * transform.sourceMinX / transform.canvasWidth + planeWidth / 2;
+        const planeZ = transform.worldMinZ - planeDepth * transform.sourceMinY / transform.canvasHeight + planeDepth / 2;
         loader.load(spec.floorplan_url, texture => {
           texture.colorSpace = THREE.SRGBColorSpace;
           texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
@@ -12536,6 +12565,42 @@ def _tour_control_panorama_html(
       }
       function buildDollhouse() {
         if (!spatialModel) return false;
+        const sourceGeometry = spatialModel.source_geometry && spatialModel.source_geometry.coordinate_system === 'source_image_pixels'
+          ? spatialModel.source_geometry : null;
+        const sourceRoomComponents = new Map(
+          sourceGeometry && Array.isArray(sourceGeometry.rooms)
+            ? sourceGeometry.rooms.map(room => [String(room.id || ''), Array.isArray(room.components_px) ? room.components_px : []])
+            : [],
+        );
+        const measuredRooms = spatialModel.rooms
+          .filter(room => Number(room.width) > 0 && Number(room.depth) > 0);
+        const measuredMinX = Math.min(...measuredRooms.map(room => Number(room.x)));
+        const measuredMinZ = Math.min(...measuredRooms.map(room => Number(room.z)));
+        const measuredMaxX = Math.max(...measuredRooms.map(room => Number(room.x) + Number(room.width)));
+        const measuredMaxZ = Math.max(...measuredRooms.map(room => Number(room.z) + Number(room.depth));
+        const sourceComponents = sourceGeometry
+          ? [...sourceRoomComponents.values()].flat()
+          : [];
+        const canvasWidth = sourceGeometry ? Number(sourceGeometry.canvas_size_px?.width) : 0;
+        const canvasHeight = sourceGeometry ? Number(sourceGeometry.canvas_size_px?.height) : 0;
+        const sourceMinX = sourceComponents.length ? Math.min(...sourceComponents.map(component => Number(component.x))) : 0;
+        const sourceMinY = sourceComponents.length ? Math.min(...sourceComponents.map(component => Number(component.y))) : 0;
+        const sourceMaxX = sourceComponents.length ? Math.max(...sourceComponents.map(component => Number(component.x) + Number(component.width))) : 1;
+        const sourceMaxY = sourceComponents.length ? Math.max(...sourceComponents.map(component => Number(component.y) + Number(component.height))) : 1;
+        dollhouseSourceTransform = sourceGeometry && canvasWidth > 0 && canvasHeight > 0
+          ? {
+            canvasWidth,
+            canvasHeight,
+            sourceMinX,
+            sourceMinY,
+            sourceSpanX: Math.max(1, sourceMaxX - sourceMinX),
+            sourceSpanY: Math.max(1, sourceMaxY - sourceMinY),
+            worldMinX: measuredMinX,
+            worldMinZ: measuredMinZ,
+            worldWidth: Math.max(.5, measuredMaxX - measuredMinX),
+            worldDepth: Math.max(.5, measuredMaxZ - measuredMinZ),
+          }
+          : null;
         const rooms = spatialModel.rooms
           .filter(room => Number(room.width) > 0 && Number(room.depth) > 0)
           .map(room => {
@@ -12547,10 +12612,23 @@ def _tour_control_panorama_html(
                   width: Number(component.width), depth: Number(component.depth),
                 }))
               : [];
-            const components = measuredComponents.length ? measuredComponents : [{
+            const sourceComponentsForRoom = sourceRoomComponents.get(String(room.id || '')) || [];
+            const sourceMappedComponents = dollhouseSourceTransform && sourceComponentsForRoom.length
+              ? sourceComponentsForRoom.map(component => ({
+                x: dollhouseSourceTransform.worldMinX
+                  + (Number(component.x) - dollhouseSourceTransform.sourceMinX)
+                    * dollhouseSourceTransform.worldWidth / dollhouseSourceTransform.sourceSpanX,
+                z: dollhouseSourceTransform.worldMinZ
+                  + (Number(component.y) - dollhouseSourceTransform.sourceMinY)
+                    * dollhouseSourceTransform.worldDepth / dollhouseSourceTransform.sourceSpanY,
+                width: Number(component.width) * dollhouseSourceTransform.worldWidth / dollhouseSourceTransform.sourceSpanX,
+                depth: Number(component.height) * dollhouseSourceTransform.worldDepth / dollhouseSourceTransform.sourceSpanY,
+              }))
+              : [];
+            const components = sourceMappedComponents.length ? sourceMappedComponents : (measuredComponents.length ? measuredComponents : [{
               x: Number(room.x), z: Number(room.z),
               width: Number(room.width), depth: Number(room.depth),
-            }];
+            }]);
             const minComponentX = Math.min(...components.map(component => component.x));
             const minComponentZ = Math.min(...components.map(component => component.z));
             const maxComponentX = Math.max(...components.map(component => component.x + component.width));
@@ -12571,7 +12649,7 @@ def _tour_control_panorama_html(
         dollhouseCenter.set((minX + maxX) / 2, .3, (minZ + maxZ) / 2);
         dollhouseDefaultDistance = Math.max(13, Math.hypot(maxX - minX, maxZ - minZ) * 1.22);
         dollhouseDistance = dollhouseDefaultDistance;
-        addDollhouseSourceUnderlay(rooms, minX, minZ, maxX, maxZ);
+        addDollhouseSourceUnderlay();
         const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
         const adjacent = (component, room, side) => {
           let best = null;

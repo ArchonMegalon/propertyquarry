@@ -432,6 +432,9 @@ def build(args: argparse.Namespace) -> Path:
         "review_method": "floorplan_analyzer_round_trip",
         "review_status": "pass",
         "source_room_count": len(spatial_rooms),
+        "source_geometry_contract_name": str(
+            dict(floorplan_analysis.get("source_geometry") or {}).get("contract_name") or ""
+        ),
     }
     layout_fidelity_sha256 = hashlib.sha256(
         json.dumps(
@@ -542,6 +545,7 @@ def build(args: argparse.Namespace) -> Path:
                 "analyzer_contract_name": ANALYZER_CONTRACT,
                 "measured": True,
                 "rooms": spatial_rooms,
+                "source_geometry": dict(floorplan_analysis.get("source_geometry") or {}),
                 "source_basis": "floorplan_analyzer_reviewed_dimensions",
             },
         },
