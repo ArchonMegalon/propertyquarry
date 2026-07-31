@@ -12813,6 +12813,13 @@ def _tour_control_panorama_html(
         if (!node || !node.image_url) return;
         const token = ++loadToken;
         setStatus('Loading 360° view…');
+        // Give navigation immediate feedback while the next panorama streams.
+        // The texture callback below repeats these updates after the image is
+        // ready, keeping the state correct if a request fails or is superseded.
+        markActive(id);
+        buildHotspots(node);
+        sceneTitle.textContent = node.label || document.title;
+        announcer.textContent = `Loading ${node.label || 'space'}`;
         const rememberTexture = texture => {
           textureCache.delete(node.image_url);
           textureCache.set(node.image_url, texture);
