@@ -13,7 +13,7 @@
       "area_m2": 7.78,
       "dimension_label": "1.47 × 5.29 m",
       "measurement_tolerance_m": 0.05,
-      "components": [{"x": 0.0, "z": 0.0, "width": 1.47, "depth": 5.292517}],
+      "components": [{"x": 0.0, "z": 0.584, "width": 1.47, "depth": 5.292517}],
       "dimension_evidence": [
         {"text": "147", "method": "operator_dimension_line", "confidence": 0.99},
         {"text": "Terr. 7.78 m²", "method": "operator_room_label", "confidence": 0.99}
@@ -29,7 +29,7 @@
       "area_m2": 16.86,
       "dimension_label": "2.87 × 5.88 m",
       "measurement_tolerance_m": 0.05,
-      "components": [{"x": 1.47, "z": 0.0, "width": 2.865, "depth": 5.884817}],
+      "components": [{"x": 1.47, "z": 0.584, "width": 2.865, "depth": 5.884817}],
       "dimension_evidence": [
         {"text": "2865", "method": "operator_dimension_line", "confidence": 0.99},
         {"text": "Zimmer 16.86 m²", "method": "operator_room_label", "confidence": 0.99}
@@ -45,7 +45,7 @@
       "area_m2": 1.36,
       "dimension_label": "1.00 × 1.36 m",
       "measurement_tolerance_m": 0.05,
-      "components": [{"x": 4.335, "z": 0.0, "width": 1.0, "depth": 1.36}],
+      "components": [{"x": 4.335, "z": 0.584, "width": 1.0, "depth": 1.36}],
       "dimension_evidence": [
         {"text": "100", "method": "operator_dimension_line", "confidence": 0.99},
         {"text": "WC 1.36 m²", "method": "operator_room_label", "confidence": 0.99}
@@ -61,7 +61,7 @@
       "area_m2": 4.96,
       "dimension_label": "2.40 × 2.07 m",
       "measurement_tolerance_m": 0.05,
-      "components": [{"x": 5.335, "z": 0.0, "width": 2.4, "depth": 2.066667}],
+      "components": [{"x": 5.335, "z": 0.584, "width": 2.4, "depth": 2.066667}],
       "dimension_evidence": [
         {"text": "240", "method": "operator_dimension_line", "confidence": 0.99},
         {"text": "Bad 4.96 m²", "method": "operator_room_label", "confidence": 0.99}
@@ -77,7 +77,7 @@
       "area_m2": 3.5,
       "dimension_label": "1.80 × 1.94 m",
       "measurement_tolerance_m": 0.05,
-      "components": [{"x": 7.735, "z": 2.066667, "width": 1.8, "depth": 1.944444}],
+      "components": [{"x": 7.735, "z": 0.0, "width": 1.8, "depth": 1.944444}],
       "dimension_evidence": [
         {"text": "Flur 3.50 m²", "method": "operator_room_label", "confidence": 0.99},
         {"text": "180", "method": "operator_dimension_line", "confidence": 0.99}
@@ -93,7 +93,7 @@
       "area_m2": 15.24,
       "dimension_label": "4.60 × 3.31 m",
       "measurement_tolerance_m": 0.05,
-      "components": [{"x": 9.535, "z": 0.0, "width": 4.6, "depth": 3.313043}],
+      "components": [{"x": 9.535, "z": 0.584, "width": 4.6, "depth": 3.313043}],
       "dimension_evidence": [
         {"text": "460", "method": "operator_dimension_line", "confidence": 0.99},
         {"text": "Zimmer 15.24 m²", "method": "operator_room_label", "confidence": 0.99}
@@ -109,7 +109,7 @@
       "area_m2": 30.33,
       "dimension_label": "6.22 × 4.88 m",
       "measurement_tolerance_m": 0.05,
-      "components": [{"x": 4.335, "z": 1.36, "width": 6.22, "depth": 4.876206}],
+      "components": [{"x": 4.335, "z": 1.944, "width": 6.22, "depth": 4.876206}],
       "dimension_evidence": [
         {"text": "622", "method": "operator_dimension_line", "confidence": 0.99},
         {"text": "Wohnküche 30.33 m²", "method": "operator_room_label", "confidence": 0.99}
@@ -126,8 +126,8 @@
       "dimension_label": "L-shaped",
       "measurement_tolerance_m": 0.05,
       "components": [
-        {"x": 4.335, "z": 6.236206, "width": 4.28, "depth": 2.13},
-        {"x": 4.335, "z": 8.366206, "width": 1.86, "depth": 5.206237}
+        {"x": 4.335, "z": 6.820206, "width": 4.28, "depth": 2.13},
+        {"x": 4.335, "z": 8.950206, "width": 1.86, "depth": 5.206237}
       ],
       "dimension_evidence": [
         {"text": "VR 18.80 m²", "method": "operator_room_label", "confidence": 0.99},
@@ -144,7 +144,7 @@
       "area_m2": 4.38,
       "dimension_label": "1.80 × 2.43 m",
       "measurement_tolerance_m": 0.05,
-      "components": [{"x": 8.755, "z": 6.236206, "width": 1.8, "depth": 2.433333}],
+      "components": [{"x": 8.755, "z": 6.820206, "width": 1.8, "depth": 2.433333}],
       "dimension_evidence": [
         {"text": "244", "method": "operator_dimension_line", "confidence": 0.99},
         {"text": "Loggia 4.38 m²", "method": "operator_room_label", "confidence": 0.99}

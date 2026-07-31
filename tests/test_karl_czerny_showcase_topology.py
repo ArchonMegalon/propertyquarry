@@ -83,13 +83,13 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     assert len(source_rooms["terrace"]["components"]) == 1
     assert source_rooms["balcony-loggia"]["shape"] == "rectangle"
     assert source_rooms["bathroom"]["components"] == [
-        {"x": 5.335, "z": 0.0, "width": 2.4, "depth": 2.066667}
+        {"x": 5.335, "z": 0.584, "width": 2.4, "depth": 2.066667}
     ]
     assert source_rooms["circulation-hall"]["components"] == [
-        {"x": 7.735, "z": 2.066667, "width": 1.8, "depth": 1.944444}
+        {"x": 7.735, "z": 0.0, "width": 1.8, "depth": 1.944444}
     ]
     assert source_rooms["guest-bedroom"]["components"] == [
-        {"x": 9.535, "z": 0.0, "width": 4.6, "depth": 3.313043}
+        {"x": 9.535, "z": 0.584, "width": 4.6, "depth": 3.313043}
     ]
     assert builder._ANALYSIS_SPEC["boundary_adjacency"] == {
         "required": [["balcony-loggia", "living-kitchen"]],
