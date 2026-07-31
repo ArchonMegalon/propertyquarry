@@ -12503,10 +12503,24 @@ def _tour_control_panorama_html(
             map: texture,
             color: 0xffffff,
             transparent: true,
-            opacity: .20,
+            opacity: .16,
             depthWrite: false,
             side: THREE.DoubleSide,
           });
+          const paper = new THREE.Mesh(
+            new THREE.PlaneGeometry(planeWidth, planeDepth),
+            new THREE.MeshBasicMaterial({
+              color: 0xf3eee4,
+              transparent: true,
+              opacity: .72,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            }),
+          );
+          paper.name = 'source-floorplan-paper';
+          paper.rotation.x = -Math.PI / 2;
+          paper.position.set(planeX, .006, planeZ);
+          dollhouseGroup.add(paper);
           const underlay = new THREE.Mesh(
             new THREE.PlaneGeometry(planeWidth, planeDepth),
             underlayMaterial,
@@ -12953,7 +12967,7 @@ def _tour_control_panorama_html(
         if (activeButton) activeButton.scrollIntoView({ block: 'nearest', inline: 'center' });
         for (const [sceneId, meshes] of dollhouseRoomMeshes.entries()) {
           for (const mesh of meshes) {
-            mesh.material.color.setHex(sceneId === id ? 0xee6b45 : Number(mesh.userData.baseColor || 0xd9d4c8));
+            mesh.material.color.setHex(sceneId === id ? 0xd08a5f : Number(mesh.userData.baseColor || 0xd9d4c8));
           }
         }
       }
