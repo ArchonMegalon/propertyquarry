@@ -12127,6 +12127,19 @@ def _tour_control_panorama_spec(
                             else "interior"
                         ),
                     }
+                raw_bounds = raw_room.get("floorplan_bounds_pct")
+                if isinstance(raw_bounds, dict):
+                    normalized_bounds: dict[str, float] = {}
+                    for bound_key in ("x", "y", "width", "height"):
+                        if bound_key in raw_bounds:
+                            normalized_bounds[bound_key] = _number(
+                                raw_bounds.get(bound_key),
+                                default=0.0,
+                                minimum=0.0,
+                                maximum=100.0,
+                            )
+                    if len(normalized_bounds) == 4:
+                        normalized_room["floorplan_bounds_pct"] = normalized_bounds
                 dimension_label = str(raw_room.get("dimension_label") or "").strip()[:80]
                 if dimension_label:
                     normalized_room["dimension_label"] = dimension_label
@@ -12377,6 +12390,7 @@ def _tour_control_panorama_html(
       const dollhouseSelectableMeshes = [];
       const dollhouseRaycaster = new THREE.Raycaster();
       const dollhouseCenter = new THREE.Vector3(5, 0, 5);
+      let dollhouseSourceUnderlay = null;
 
       const radians = degrees => THREE.MathUtils.degToRad(Number(degrees) || 0);
       function direction(yawValue, pitchValue, radius = 10) {
@@ -12446,6 +12460,49 @@ def _tour_control_panorama_html(
         line.name = name;
         dollhouseGroup.add(line);
       }
+      function addDollhouseSourceUnderlay(rooms, minX, minZ, maxX, maxZ) {
+        if (dollhouseSourceUnderlay || !spec.floorplan_url) return;
+        const bounds = rooms
+          .map(room => room.floorplan_bounds_pct)
+          .filter(value => value && Number.isFinite(Number(value.x)) && Number.isFinite(Number(value.y))
+            && Number.isFinite(Number(value.width)) && Number.isFinite(Number(value.height)));
+        if (!bounds.length) return;
+        const sourceMinX = Math.min(...bounds.map(value => Number(value.x)));
+        const sourceMinY = Math.min(...bounds.map(value => Number(value.y)));
+        const sourceMaxX = Math.max(...bounds.map(value => Number(value.x) + Number(value.width)));
+        const sourceMaxY = Math.max(...bounds.map(value => Number(value.y) + Number(value.height)));
+        const sourceWidthPct = Math.max(1, sourceMaxX - sourceMinX);
+        const sourceHeightPct = Math.max(1, sourceMaxY - sourceMinY);
+        const worldWidth = Math.max(.5, maxX - minX);
+        const worldDepth = Math.max(.5, maxZ - minZ);
+        const planeWidth = worldWidth * 100 / sourceWidthPct;
+        const planeDepth = worldDepth * 100 / sourceHeightPct;
+        const planeX = minX - planeWidth * sourceMinX / 100 + planeWidth / 2;
+        const planeZ = minZ - planeDepth * sourceMinY / 100 + planeDepth / 2;
+        loader.load(spec.floorplan_url, texture => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+          const underlayMaterial = new THREE.MeshBasicMaterial({
+            map: texture,
+            color: 0xffffff,
+            transparent: true,
+            opacity: .20,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          });
+          const underlay = new THREE.Mesh(
+            new THREE.PlaneGeometry(planeWidth, planeDepth),
+            underlayMaterial,
+          );
+          underlay.name = 'source-floorplan-underlay';
+          underlay.rotation.x = -Math.PI / 2;
+          underlay.position.set(planeX, .012, planeZ);
+          dollhouseGroup.add(underlay);
+          dollhouseSourceUnderlay = underlay;
+        }, undefined, () => {
+          dollhouseSourceUnderlay = null;
+        });
+      }
       function buildDollhouse() {
         if (!spatialModel) return false;
         const rooms = spatialModel.rooms
@@ -12483,6 +12540,7 @@ def _tour_control_panorama_html(
         dollhouseCenter.set((minX + maxX) / 2, .3, (minZ + maxZ) / 2);
         dollhouseDefaultDistance = Math.max(13, Math.hypot(maxX - minX, maxZ - minZ) * 1.22);
         dollhouseDistance = dollhouseDefaultDistance;
+        addDollhouseSourceUnderlay(rooms, minX, minZ, maxX, maxZ);
         const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
         const adjacent = (component, room, side) => {
           let best = null;

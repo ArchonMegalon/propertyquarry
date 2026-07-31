@@ -2013,6 +2013,19 @@ def redacted_public_tour_walkable_scene(
                             maximum=6.0,
                         ),
                     }
+                raw_bounds = raw_room.get("floorplan_bounds_pct")
+                if isinstance(raw_bounds, dict):
+                    rendered_bounds: dict[str, float] = {}
+                    for bound_key in ("x", "y", "width", "height"):
+                        if bound_key in raw_bounds:
+                            rendered_bounds[bound_key] = _bounded_number(
+                                raw_bounds.get(bound_key),
+                                default=0.0,
+                                minimum=0.0,
+                                maximum=100.0,
+                            )
+                    if len(rendered_bounds) == 4:
+                        rendered_room["floorplan_bounds_pct"] = rendered_bounds
                 dimension_label = str(raw_room.get("dimension_label") or "").strip()[:80]
                 if dimension_label:
                     rendered_room["dimension_label"] = dimension_label
