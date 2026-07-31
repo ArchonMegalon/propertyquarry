@@ -12140,6 +12140,23 @@ def _tour_control_panorama_spec(
                             )
                     if len(normalized_bounds) == 4:
                         normalized_room["floorplan_bounds_pct"] = normalized_bounds
+                raw_source_bbox = raw_room.get("source_bbox_px")
+                if isinstance(raw_source_bbox, dict):
+                    normalized_source_bbox: dict[str, int] = {}
+                    for bbox_key in ("x", "y", "width", "height"):
+                        if bbox_key in raw_source_bbox:
+                            normalized_source_bbox[bbox_key] = int(
+                                round(
+                                    _number(
+                                        raw_source_bbox.get(bbox_key),
+                                        default=0.0,
+                                        minimum=0.0,
+                                        maximum=10000.0,
+                                    )
+                                )
+                            )
+                    if len(normalized_source_bbox) == 4:
+                        normalized_room["source_bbox_px"] = normalized_source_bbox
                 dimension_label = str(raw_room.get("dimension_label") or "").strip()[:80]
                 if dimension_label:
                     normalized_room["dimension_label"] = dimension_label

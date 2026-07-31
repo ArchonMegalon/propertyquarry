@@ -2026,6 +2026,23 @@ def redacted_public_tour_walkable_scene(
                             )
                     if len(rendered_bounds) == 4:
                         rendered_room["floorplan_bounds_pct"] = rendered_bounds
+                raw_source_bbox = raw_room.get("source_bbox_px")
+                if isinstance(raw_source_bbox, dict):
+                    rendered_source_bbox: dict[str, int] = {}
+                    for bbox_key in ("x", "y", "width", "height"):
+                        if bbox_key in raw_source_bbox:
+                            rendered_source_bbox[bbox_key] = int(
+                                round(
+                                    _bounded_number(
+                                        raw_source_bbox.get(bbox_key),
+                                        default=0.0,
+                                        minimum=0.0,
+                                        maximum=10000.0,
+                                    )
+                                )
+                            )
+                    if len(rendered_source_bbox) == 4:
+                        rendered_room["source_bbox_px"] = rendered_source_bbox
                 dimension_label = str(raw_room.get("dimension_label") or "").strip()[:80]
                 if dimension_label:
                     rendered_room["dimension_label"] = dimension_label

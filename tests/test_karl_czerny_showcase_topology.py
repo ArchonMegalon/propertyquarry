@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import copy
+from pathlib import Path
+
+import pytest
+from PIL import Image
+
 from scripts import build_propertyquarry_karl_czerny_showcase_bundle as builder
+from scripts.propertyquarry_floorplan_analyzer import (
+    FloorplanAnalysisError,
+    analyze_floorplan,
+)
 
 
 def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
@@ -81,6 +91,18 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     source_rooms = {str(room["id"]): room for room in builder._ANALYSIS_ROOMS}
     assert source_rooms["terrace"]["shape"] == "rectangle"
     assert len(source_rooms["terrace"]["components"]) == 1
+    assert source_rooms["living-kitchen"]["floorplan_bounds_pct"] == {
+        "x": 44.2,
+        "y": 59.5,
+        "width": 17.8,
+        "height": 18.5,
+    }
+    assert source_rooms["living-kitchen"]["source_bbox_px"] == {
+        "x": 795,
+        "y": 780,
+        "width": 320,
+        "height": 245,
+    }
     assert source_rooms["balcony-loggia"]["shape"] == "rectangle"
     assert source_rooms["bathroom"]["components"] == [
         {"x": 5.335, "z": 0.584, "width": 2.4, "depth": 2.066667}
@@ -120,3 +142,21 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
             )
             - float(geometry["area_m2"])
         ) < 0.01
+
+
+def test_source_pixel_envelopes_drive_reviewed_plan_bounds(tmp_path: Path) -> None:
+    source = tmp_path / "floorplan.webp"
+    Image.new("RGB", (1800, 1310), "white").save(source, format="WEBP")
+    analysis = analyze_floorplan(source, specification=builder._ANALYSIS_SPEC)
+    living = next(room for room in analysis["rooms"] if room["id"] == "living-kitchen")
+    assert living["floorplan_bounds_pct"] == {
+        "x": 44.166667,
+        "y": 59.541985,
+        "width": 17.777778,
+        "height": 18.70229,
+    }
+
+    invalid_spec = copy.deepcopy(builder._ANALYSIS_SPEC)
+    invalid_spec["rooms"][6]["source_bbox_px"]["x"] = 1200
+    with pytest.raises(FloorplanAnalysisError, match="floorplan_source_bbox_drift:living-kitchen"):
+        analyze_floorplan(source, specification=invalid_spec)

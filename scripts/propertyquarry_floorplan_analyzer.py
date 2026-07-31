@@ -68,6 +68,52 @@ def _bounds(raw: object) -> dict[str, float]:
     return {key: round(value, 6) for key, value in result.items()}
 
 
+def _source_bbox_px(
+    raw: object,
+    *,
+    room_id: str,
+    source_size: dict[str, int],
+) -> dict[str, int] | None:
+    """Validate an operator-reviewed wall envelope in source pixels.
+
+    A percentage box can look internally consistent while pointing at the
+    wrong part of a scanned plan.  When a reviewed pixel envelope is present,
+    it is the source of truth and the percentage box is checked against it.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise FloorplanAnalysisError(f"floorplan_source_bbox_invalid:{room_id}")
+    try:
+        values = {
+            key: int(round(_finite(raw.get(key), minimum=0.0)))
+            for key in ("x", "y", "width", "height")
+        }
+    except (TypeError, ValueError) as exc:
+        raise FloorplanAnalysisError(f"floorplan_source_bbox_invalid:{room_id}") from exc
+    if values["width"] <= 0 or values["height"] <= 0:
+        raise FloorplanAnalysisError(f"floorplan_source_bbox_invalid:{room_id}")
+    if (
+        values["x"] + values["width"] > int(source_size["width"])
+        or values["y"] + values["height"] > int(source_size["height"])
+    ):
+        raise FloorplanAnalysisError(f"floorplan_source_bbox_invalid:{room_id}")
+    return values
+
+
+def _source_bbox_to_bounds(
+    source_bbox: dict[str, int],
+    *,
+    source_size: dict[str, int],
+) -> dict[str, float]:
+    return {
+        "x": round(source_bbox["x"] * 100.0 / source_size["width"], 6),
+        "y": round(source_bbox["y"] * 100.0 / source_size["height"], 6),
+        "width": round(source_bbox["width"] * 100.0 / source_size["width"], 6),
+        "height": round(source_bbox["height"] * 100.0 / source_size["height"], 6),
+    }
+
+
 def _rectangles(raw: object, *, room_id: str) -> list[dict[str, float]]:
     if not isinstance(raw, list) or not raw:
         raise FloorplanAnalysisError(f"floorplan_room_components_missing:{room_id}")
@@ -252,6 +298,23 @@ def analyze_floorplan(
         if kind not in {"interior", "exterior", "unavailable"}:
             raise FloorplanAnalysisError(f"floorplan_room_kind_invalid:{room_id}")
         bounds = _bounds(raw_room.get("floorplan_bounds_pct"))
+        source_bbox = _source_bbox_px(
+            raw_room.get("source_bbox_px"),
+            room_id=room_id,
+            source_size=source_size,
+        )
+        if source_bbox is not None:
+            source_bounds = _source_bbox_to_bounds(source_bbox, source_size=source_size)
+            if max(
+                abs(source_bounds[key] - bounds[key])
+                for key in ("x", "y", "width", "height")
+            ) > 0.75:
+                raise FloorplanAnalysisError(
+                    f"floorplan_source_bbox_drift:{room_id}"
+                )
+            # Keep the normalized artifact derived from the reviewed pixels;
+            # the hand-entered percentage box is only a cross-check.
+            bounds = source_bounds
         components = _rectangles(raw_room.get("components"), room_id=room_id)
         area_m2 = _finite(raw_room.get("area_m2"), minimum=0.001)
         component_area = sum(item["width"] * item["depth"] for item in components)
@@ -280,6 +343,7 @@ def analyze_floorplan(
             "scene_id": str(raw_room.get("scene_id") or "").strip(),
             "shape": shape,
             "floorplan_bounds_pct": bounds,
+            **({"source_bbox_px": source_bbox} if source_bbox is not None else {}),
             "area_m2": round(area_m2, 4),
             "dimension_label": dimension_label,
             "components": components,

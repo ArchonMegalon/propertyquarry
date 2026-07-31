@@ -60,7 +60,7 @@ SCENES = (
     ("bedroom-guest", "Bedroom · 15.24 m²", 78.0, 42.0),
     ("wc", "Separate WC · 1.36 m²", 47.5, 43.0),
     ("bath", "Bathroom · 4.96 m²", 56.5, 42.0),
-    ("living-kitchen", "Wohnküche · 30.33 m²", 64.0, 65.0),
+    ("living-kitchen", "Wohnküche · 30.33 m²", 53.0, 68.0),
 )
 SCENE_INPUT_NAMES = {
     "hall": "karl-czerny-hall.png",
@@ -367,6 +367,11 @@ def build(args: argparse.Namespace) -> Path:
             {
                 "depth": round(max_z - min_z, 6),
                 "floorplan_bounds_pct": bounds,
+                **(
+                    {"source_bbox_px": dict(room["source_bbox_px"])}
+                    if isinstance(room.get("source_bbox_px"), dict)
+                    else {}
+                ),
                 "height": 2.7,
                 "id": str(room["id"]),
                 "kind": str(room["kind"]),
