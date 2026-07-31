@@ -46,10 +46,16 @@ FLOORPLAN_CANONICAL_DISCLOSURE = (
     "AI-reconstructed from an operator-provided architectural floorplan; "
     "not a captured 360 or measured survey."
 )
+MEASURED_FLOORPLAN_CANONICAL_DISCLOSURE = (
+    "AI-reconstructed from an operator-provided architectural floorplan with "
+    "room dimensions taken from its dimension lines; not a captured 360 or "
+    "measured survey."
+)
 CANONICAL_DISCLOSURES = frozenset(
     {
         CANONICAL_DISCLOSURE,
         FLOORPLAN_CANONICAL_DISCLOSURE,
+        MEASURED_FLOORPLAN_CANONICAL_DISCLOSURE,
     }
 )
 RENDERER_MODULE_PATH = "/tours/runtime/three-0.167.1.module.js"
@@ -1484,12 +1490,27 @@ def _dollhouse_floor_screen_point(
     forward = _normalize(tuple(look_at[index] - camera[index] for index in range(3)))
     right = _normalize(_cross(forward, (0.0, 1.0, 0.0)))
     upward = _normalize(_cross(right, forward))
+    raw_measurement = target_room.get("measurement")
+    raw_components = (
+        raw_measurement.get("components")
+        if isinstance(raw_measurement, Mapping)
+        else None
+    )
+    if isinstance(raw_components, list) and raw_components:
+        component = max(
+            (row for row in raw_components if isinstance(row, Mapping)),
+            key=lambda row: float(row.get("width") or 0.0) * float(row.get("depth") or 0.0),
+            default=None,
+        )
+    else:
+        component = None
+    footprint = component or target_room
     world = (
-        float(target_room.get("x") or 0.0)
-        + float(target_room.get("width") or 0.0) / 2.0,
+        float(footprint.get("x") or 0.0)
+        + float(footprint.get("width") or 0.0) / 2.0,
         0.1,
-        float(target_room.get("z") or 0.0)
-        + float(target_room.get("depth") or 0.0) / 2.0,
+        float(footprint.get("z") or 0.0)
+        + float(footprint.get("depth") or 0.0) / 2.0,
     )
     relative = tuple(world[index] - camera[index] for index in range(3))
     camera_x = sum(relative[index] * right[index] for index in range(3))

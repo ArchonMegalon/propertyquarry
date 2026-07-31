@@ -12053,8 +12053,7 @@ def _tour_control_panorama_spec(
                 if scene_id not in scene_ids:
                     scene_id = ""
                 seen_room_ids.add(room_id)
-                normalized_rooms.append(
-                    {
+                normalized_room = {
                         "id": room_id,
                         "label": str(
                             raw_room.get("label")
@@ -12089,15 +12088,43 @@ def _tour_control_panorama_spec(
                             else "interior"
                         ),
                     }
-                )
+                dimension_label = str(raw_room.get("dimension_label") or "").strip()[:80]
+                if dimension_label:
+                    normalized_room["dimension_label"] = dimension_label
+                raw_measurement = raw_room.get("measurement")
+                if isinstance(raw_measurement, dict):
+                    components = raw_measurement.get("components")
+                    normalized_components = []
+                    if isinstance(components, list):
+                        for component in components:
+                            if not isinstance(component, dict):
+                                continue
+                            component_width = _number(component.get("width"), default=0.0, minimum=0.0, maximum=40.0)
+                            component_depth = _number(component.get("depth"), default=0.0, minimum=0.0, maximum=40.0)
+                            if component_width < 0.2 or component_depth < 0.2:
+                                continue
+                            normalized_components.append({
+                                "x": _number(component.get("x"), default=0.0, minimum=-40.0, maximum=40.0),
+                                "z": _number(component.get("z"), default=0.0, minimum=-40.0, maximum=40.0),
+                                "width": component_width,
+                                "depth": component_depth,
+                            })
+                    if normalized_components:
+                        normalized_room["measurement"] = {
+                            "contract_name": str(raw_measurement.get("contract_name") or "").strip()[:120],
+                            "source": str(raw_measurement.get("source") or "").strip()[:120],
+                            "area_m2": _number(raw_measurement.get("area_m2"), default=0.0, minimum=0.0, maximum=1000.0),
+                            "components": normalized_components,
+                        }
+                normalized_rooms.append(normalized_room)
         if (
-            source_basis == "floorplan_scaled_approximation"
-            and raw_spatial_model.get("measured") is False
+            source_basis in {"floorplan_scaled_approximation", "floorplan_measured_dimensions"}
+            and raw_spatial_model.get("measured") in {False, True}
             and normalized_rooms
         ):
             spatial_model = {
                 "source_basis": source_basis,
-                "measured": False,
+                "measured": raw_spatial_model.get("measured") is True,
                 "rooms": normalized_rooms,
             }
     return {
@@ -12200,7 +12227,7 @@ def _tour_control_panorama_html(
     <div class="zoom-controls" aria-label="View zoom controls"><button class="icon-button" id="zoom-in" type="button" aria-label="Zoom in">+</button><button class="icon-button" id="zoom-out" type="button" aria-label="Zoom out">−</button></div>
     <nav class="scene-rail glass" id="scene-rail" aria-label="Tour spaces"></nav>
     <aside class="floorplan glass" id="floorplan" hidden><div class="floorplan-stage"><img id="floorplan-image" alt="Property floor plan"><div id="floorplan-pins"></div></div></aside>
-    <div class="dollhouse-note glass" id="dollhouse-note" hidden>Floorplan-scaled AI model · approximate, not measured</div>
+    <div class="dollhouse-note glass" id="dollhouse-note" hidden>Floorplan-measured AI model · dimensions from source plan; approximate, not measured</div>
     <div class="status glass" id="status" role="status">Loading 360° view…</div>
     <div class="sr-only" id="announcer" aria-live="polite"></div>
     <script nonce="__PQ_NONCE__" id="panorama-data" type="application/json">__PQ_DATA__</script>
@@ -12327,12 +12354,31 @@ def _tour_control_panorama_html(
         if (!spatialModel) return false;
         const rooms = spatialModel.rooms
           .filter(room => Number(room.width) > 0 && Number(room.depth) > 0)
-          .map(room => ({
-            ...room,
-            x: Number(room.x), z: Number(room.z),
-            width: Number(room.width), depth: Number(room.depth),
-            height: Number(room.height) || 2.55,
-          }));
+          .map(room => {
+            const measuredComponents = room.measurement && Array.isArray(room.measurement.components)
+              ? room.measurement.components
+                .filter(component => Number(component.width) > 0 && Number(component.depth) > 0)
+                .map(component => ({
+                  x: Number(component.x), z: Number(component.z),
+                  width: Number(component.width), depth: Number(component.depth),
+                }))
+              : [];
+            const components = measuredComponents.length ? measuredComponents : [{
+              x: Number(room.x), z: Number(room.z),
+              width: Number(room.width), depth: Number(room.depth),
+            }];
+            const minComponentX = Math.min(...components.map(component => component.x));
+            const minComponentZ = Math.min(...components.map(component => component.z));
+            const maxComponentX = Math.max(...components.map(component => component.x + component.width));
+            const maxComponentZ = Math.max(...components.map(component => component.z + component.depth));
+            return {
+              ...room,
+              components,
+              x: minComponentX, z: minComponentZ,
+              width: maxComponentX - minComponentX, depth: maxComponentZ - minComponentZ,
+              height: Number(room.height) || 2.55,
+            };
+          });
         if (!rooms.length) return false;
         const minX = Math.min(...rooms.map(room => room.x));
         const minZ = Math.min(...rooms.map(room => room.z));
@@ -12341,41 +12387,34 @@ def _tour_control_panorama_html(
         dollhouseCenter.set((minX + maxX) / 2, .3, (minZ + maxZ) / 2);
         dollhouseDistance = Math.max(13, Math.hypot(maxX - minX, maxZ - minZ) * 1.22);
         const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
-        const adjacent = (room, side) => {
+        const adjacent = (component, room, side) => {
           let best = null;
           for (const other of rooms) {
-            if (other === room) continue;
-            let span = 0, start = 0;
-            if (side === 'north' && Math.abs(other.z + other.depth - room.z) < .06) {
-              span = overlap(room.x, room.x + room.width, other.x, other.x + other.width);
-              start = Math.max(room.x, other.x) - room.x;
-            } else if (side === 'south' && Math.abs(other.z - (room.z + room.depth)) < .06) {
-              span = overlap(room.x, room.x + room.width, other.x, other.x + other.width);
-              start = Math.max(room.x, other.x) - room.x;
-            } else if (side === 'west' && Math.abs(other.x + other.width - room.x) < .06) {
-              span = overlap(room.z, room.z + room.depth, other.z, other.z + other.depth);
-              start = Math.max(room.z, other.z) - room.z;
-            } else if (side === 'east' && Math.abs(other.x - (room.x + room.width)) < .06) {
-              span = overlap(room.z, room.z + room.depth, other.z, other.z + other.depth);
-              start = Math.max(room.z, other.z) - room.z;
+            for (const otherComponent of other.components) {
+              if (other === room && otherComponent === component) continue;
+              let span = 0, start = 0;
+              if (side === 'north' && Math.abs(otherComponent.z + otherComponent.depth - component.z) < .06) {
+                span = overlap(component.x, component.x + component.width, otherComponent.x, otherComponent.x + otherComponent.width);
+                start = Math.max(component.x, otherComponent.x) - component.x;
+              } else if (side === 'south' && Math.abs(otherComponent.z - (component.z + component.depth)) < .06) {
+                span = overlap(component.x, component.x + component.width, otherComponent.x, otherComponent.x + otherComponent.width);
+                start = Math.max(component.x, otherComponent.x) - component.x;
+              } else if (side === 'west' && Math.abs(otherComponent.x + otherComponent.width - component.x) < .06) {
+                span = overlap(component.z, component.z + component.depth, otherComponent.z, otherComponent.z + otherComponent.depth);
+                start = Math.max(component.z, otherComponent.z) - component.z;
+              } else if (side === 'east' && Math.abs(otherComponent.x - (component.x + component.width)) < .06) {
+                span = overlap(component.z, component.z + component.depth, otherComponent.z, otherComponent.z + otherComponent.depth);
+                start = Math.max(component.z, otherComponent.z) - component.z;
+              }
+              if (span > .45 && (!best || span > best.span)) best = { other, span, start, internal: other === room };
             }
-            if (span > .45 && (!best || span > best.span)) best = { other, span, start };
           }
           return best;
         };
         for (const room of rooms) {
-          const x = room.x, z = room.z, width = room.width, depth = room.depth;
           const sceneId = String(room.scene_id || '');
           const baseColor = room.kind === 'exterior' ? 0x87a39b : (sceneId ? 0xd9d4c8 : 0x666d75);
           const floorMaterial = new THREE.MeshStandardMaterial({ color: baseColor, roughness: .78, metalness: .02 });
-          const floor = addDollhouseBox(`${room.id}-floor`, x + width / 2, .04, z + depth / 2, width, .12, depth, floorMaterial);
-          floor.userData.baseColor = baseColor;
-          floor.userData.sceneId = sceneId;
-          floor.userData.roomLabel = String(room.label || 'Space');
-          if (sceneId) {
-            dollhouseRoomMeshes.set(sceneId, [floor]);
-            dollhouseSelectableMeshes.push(floor);
-          }
           const wallMaterial = new THREE.MeshStandardMaterial({
             color: sceneId ? 0xf4f0e8 : 0x7b8289,
             roughness: .82,
@@ -12383,22 +12422,35 @@ def _tour_control_panorama_html(
             opacity: room.kind === 'exterior' ? .7 : .9,
           });
           const wallHeight = room.kind === 'exterior' ? .22 : Math.max(.58, Math.min(1.42, room.height * .4));
-          const north = adjacent(room, 'north');
-          const south = adjacent(room, 'south');
-          const west = adjacent(room, 'west');
-          const east = adjacent(room, 'east');
           const openingFor = match => match ? { center: match.start + match.span / 2, width: Math.min(.92, match.span * .58) } : null;
-          addDollhouseWall(`${room.id}-north`, x, z, x + width, z, wallHeight, wallMaterial, openingFor(north));
-          addDollhouseWall(`${room.id}-west`, x, z, x, z + depth, wallHeight, wallMaterial, openingFor(west));
-          if (!south) addDollhouseWall(`${room.id}-south`, x, z + depth, x + width, z + depth, wallHeight, wallMaterial);
-          if (!east) addDollhouseWall(`${room.id}-east`, x + width, z, x + width, z + depth, wallHeight, wallMaterial);
+          const roomFloors = [];
+          for (const component of room.components) {
+            const { x, z, width, depth } = component;
+            const floor = addDollhouseBox(`${room.id}-floor-${roomFloors.length}`, x + width / 2, .04, z + depth / 2, width, .12, depth, floorMaterial);
+            floor.userData.baseColor = baseColor;
+            floor.userData.sceneId = sceneId;
+            floor.userData.roomLabel = String(room.label || 'Space');
+            roomFloors.push(floor);
+            const north = adjacent(component, room, 'north');
+            const south = adjacent(component, room, 'south');
+            const west = adjacent(component, room, 'west');
+            const east = adjacent(component, room, 'east');
+            if (!north?.internal) addDollhouseWall(`${room.id}-north-${roomFloors.length}`, x, z, x + width, z, wallHeight, wallMaterial, openingFor(north));
+            if (!west?.internal) addDollhouseWall(`${room.id}-west-${roomFloors.length}`, x, z, x, z + depth, wallHeight, wallMaterial, openingFor(west));
+            if (!south?.internal) addDollhouseWall(`${room.id}-south-${roomFloors.length}`, x, z + depth, x + width, z + depth, wallHeight, wallMaterial, openingFor(south));
+            if (!east?.internal) addDollhouseWall(`${room.id}-east-${roomFloors.length}`, x + width, z, x + width, z + depth, wallHeight, wallMaterial, openingFor(east));
+          }
+          if (sceneId) {
+            dollhouseRoomMeshes.set(sceneId, roomFloors);
+            dollhouseSelectableMeshes.push(...roomFloors);
+          }
           const marker = document.createElement('button');
           marker.type = 'button';
           marker.className = `dollhouse-node${sceneId ? '' : ' unavailable'}`;
-          marker.textContent = room.label || 'Space';
-          marker.dataset.worldX = String(x + width / 2);
+          marker.textContent = room.dimension_label ? `${room.label || 'Space'} · ${room.dimension_label}` : (room.label || 'Space');
+          marker.dataset.worldX = String(room.x + room.width / 2);
           marker.dataset.worldY = String(wallHeight + .28);
-          marker.dataset.worldZ = String(z + depth / 2);
+          marker.dataset.worldZ = String(room.z + room.depth / 2);
           if (sceneId) {
             marker.dataset.sceneId = sceneId;
             marker.addEventListener('click', () => loadNode(sceneId));
@@ -12977,7 +13029,7 @@ def _tour_control_panorama_html(
             "zoom_out": "Verkleinern",
             "tour_spaces": "Räume der Tour",
             "floorplan": "Grundriss der Immobilie",
-            "dollhouse_note": "KI-Modell im Maßstab des Grundrisses · ungefähr, nicht vermessen",
+            "dollhouse_note": "KI-Modell aus dem Grundriss · Raummaße laut Plan; ungefähr, nicht vermessen",
             "loading": "360°-Ansicht wird geladen…",
             "load_error": "Dieses Panorama konnte nicht geladen werden.",
             "overview": "3D-Modell im Überblick",
@@ -13005,7 +13057,7 @@ def _tour_control_panorama_html(
             "zoom_out": "Verkleinern",
             "tour_spaces": "Räume der Tour",
             "floorplan": "Grundriss der Immobilie",
-            "dollhouse_note": "KI-Modell im Maßstab des Grundrisses · ungefähr, nicht vermessen",
+            "dollhouse_note": "KI-Modell aus dem Grundriss · Raummaße laut Plan; ungefähr, nicht vermessen",
             "loading": "360°-Ansicht wird geladen…",
             "load_error": "Dieses Panorama konnte nicht geladen werden.",
             "overview": "3D-Modell im Überblick",
@@ -13033,7 +13085,7 @@ def _tour_control_panorama_html(
             "zoom_out": "Alejar",
             "tour_spaces": "Espacios del recorrido",
             "floorplan": "Plano de la propiedad",
-            "dollhouse_note": "Modelo de IA a escala del plano · aproximado, no medido",
+            "dollhouse_note": "Modelo de IA del plano · dimensiones del plano; aproximado, no medido",
             "loading": "Cargando vista de 360°…",
             "load_error": "No se pudo cargar este panorama.",
             "overview": "Vista general del modelo 3D",
@@ -13060,7 +13112,7 @@ def _tour_control_panorama_html(
         ('aria-label="Tour spaces"', f'aria-label="{copy["tour_spaces"]}"'),
         ('alt="Property floor plan"', f'alt="{copy["floorplan"]}"'),
         (
-            "Floorplan-scaled AI model · approximate, not measured",
+            "Floorplan-measured AI model · dimensions from source plan; approximate, not measured",
             copy["dollhouse_note"],
         ),
         ("Loading 360° view…", copy["loading"]),

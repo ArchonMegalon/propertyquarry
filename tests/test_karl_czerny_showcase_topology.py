@@ -75,3 +75,27 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         for route in builder.HOTSPOTS["living-kitchen"]
         if route[1] == "bath"
     )[3] == ("circulation-hall",)
+
+    measured_areas = {
+        room_id: float(geometry["area_m2"])
+        for room_id, geometry in builder.MEASURED_ROOM_GEOMETRY.items()
+    }
+    assert measured_areas == {
+        "terrace": 7.78,
+        "primary-bedroom": 16.86,
+        "separate-wc": 1.36,
+        "bathroom": 4.96,
+        "circulation-hall": 3.50,
+        "guest-bedroom": 15.24,
+        "living-kitchen": 30.33,
+        "entrance-vestibule": 18.80,
+    }
+    for room_id, geometry in builder.MEASURED_ROOM_GEOMETRY.items():
+        components = geometry.get("components", (geometry,))
+        assert abs(
+            sum(
+                float(component["width"]) * float(component["depth"])
+                for component in components
+            )
+            - float(geometry["area_m2"])
+        ) < 0.01

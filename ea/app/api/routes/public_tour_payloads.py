@@ -1945,8 +1945,7 @@ def redacted_public_tour_walkable_scene(
                 if kind not in {"interior", "exterior", "unavailable"}:
                     kind = "interior"
                 seen_room_ids.add(room_id)
-                rendered_rooms.append(
-                    {
+                rendered_room = {
                         "id": room_id,
                         "label": str(
                             raw_room.get("label")
@@ -1976,16 +1975,56 @@ def redacted_public_tour_walkable_scene(
                             maximum=6.0,
                         ),
                     }
-                )
+                dimension_label = str(raw_room.get("dimension_label") or "").strip()[:80]
+                if dimension_label:
+                    rendered_room["dimension_label"] = dimension_label
+                raw_measurement = raw_room.get("measurement")
+                if isinstance(raw_measurement, dict):
+                    raw_components = raw_measurement.get("components")
+                    rendered_components: list[dict[str, float]] = []
+                    if isinstance(raw_components, list):
+                        for raw_component in raw_components[:16]:
+                            if not isinstance(raw_component, dict):
+                                continue
+                            component_width = _bounded_number(
+                                raw_component.get("width"),
+                                default=0.0,
+                                minimum=0.0,
+                                maximum=40.0,
+                            )
+                            component_depth = _bounded_number(
+                                raw_component.get("depth"),
+                                default=0.0,
+                                minimum=0.0,
+                                maximum=40.0,
+                            )
+                            if component_width < 0.2 or component_depth < 0.2:
+                                continue
+                            rendered_components.append(
+                                {
+                                    "x": _bounded_number(raw_component.get("x"), default=0.0, minimum=-40.0, maximum=40.0),
+                                    "z": _bounded_number(raw_component.get("z"), default=0.0, minimum=-40.0, maximum=40.0),
+                                    "width": component_width,
+                                    "depth": component_depth,
+                                }
+                            )
+                    if rendered_components:
+                        rendered_room["measurement"] = {
+                            "contract_name": str(raw_measurement.get("contract_name") or "").strip()[:120],
+                            "source": str(raw_measurement.get("source") or "").strip()[:120],
+                            "area_m2": _bounded_number(raw_measurement.get("area_m2"), default=0.0, minimum=0.0, maximum=1000.0),
+                            "components": rendered_components,
+                        }
+                rendered_rooms.append(rendered_room)
         if (
             str(raw_spatial_model.get("source_basis") or "").strip().lower()
-            == "floorplan_scaled_approximation"
-            and raw_spatial_model.get("measured") is False
+            in {"floorplan_scaled_approximation", "floorplan_measured_dimensions"}
+            and raw_spatial_model.get("measured") in {False, True}
             and rendered_rooms
         ):
             rendered_walkable["spatial_model"] = {
-                "source_basis": "floorplan_scaled_approximation",
-                "measured": False,
+                "source_basis": str(raw_spatial_model.get("source_basis") or "").strip().lower(),
+                "measured": raw_spatial_model.get("measured") is True,
                 "rooms": rendered_rooms,
             }
     floorplan_relpath = public_tour_safe_asset_relpath(

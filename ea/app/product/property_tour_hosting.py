@@ -109,10 +109,16 @@ _AI_PANORAMA_FLOORPLAN_CANONICAL_DISCLOSURE = (
     "AI-reconstructed from an operator-provided architectural floorplan; "
     "not a captured 360 or measured survey."
 )
+_AI_PANORAMA_MEASURED_FLOORPLAN_CANONICAL_DISCLOSURE = (
+    "AI-reconstructed from an operator-provided architectural floorplan with "
+    "room dimensions taken from its dimension lines; not a captured 360 or "
+    "measured survey."
+)
 _AI_PANORAMA_CANONICAL_DISCLOSURES = frozenset(
     {
         _AI_PANORAMA_CANONICAL_DISCLOSURE,
         _AI_PANORAMA_FLOORPLAN_CANONICAL_DISCLOSURE,
+        _AI_PANORAMA_MEASURED_FLOORPLAN_CANONICAL_DISCLOSURE,
     }
 )
 
@@ -2450,9 +2456,15 @@ def _hosted_property_tour_ai_panorama_contract(
     spatial_model = walkable_scene.get("spatial_model")
     if not isinstance(spatial_model, dict):
         return _blocked("spatial_model_missing")
-    if (
-        str(spatial_model.get("source_basis") or "").strip().lower()
-        != "floorplan_scaled_approximation"
+    spatial_model_basis = str(
+        spatial_model.get("source_basis") or ""
+    ).strip().lower()
+    measured_geometry = spatial_model_basis == "floorplan_measured_dimensions"
+    if measured_geometry:
+        if spatial_model.get("measured") is not True:
+            return _blocked("spatial_model_provenance_invalid")
+    elif (
+        spatial_model_basis != "floorplan_scaled_approximation"
         or spatial_model.get("measured") is not False
     ):
         return _blocked("spatial_model_provenance_invalid")
@@ -2540,16 +2552,36 @@ def _hosted_property_tour_ai_panorama_contract(
         return _blocked("spatial_fidelity_invalid")
     try:
         source_room_count = int(layout_fidelity.get("source_room_count"))
-        model_scale = float(
-            layout_fidelity.get("model_units_per_floorplan_percent")
-        )
     except (TypeError, ValueError):
         return _blocked("spatial_fidelity_invalid")
-    if (
-        source_room_count != len(spatial_rooms_by_id)
-        or not math.isfinite(model_scale)
-        or not 0.02 <= model_scale <= 1.0
-    ):
+    model_scale: float | None = None
+    if measured_geometry:
+        if (
+            layout_fidelity.get("measurement_contract_name")
+            != "propertyquarry.floorplan_measurement.v1"
+            or layout_fidelity.get("measurement_source")
+            != "operator_floorplan_dimension_lines"
+        ):
+            return _blocked("spatial_measurements_missing")
+        try:
+            measurement_tolerance = float(
+                layout_fidelity.get("measurement_tolerance_m", 0.03)
+            )
+        except (TypeError, ValueError):
+            return _blocked("spatial_measurements_invalid")
+        if not math.isfinite(measurement_tolerance) or not 0.005 <= measurement_tolerance <= 0.2:
+            return _blocked("spatial_measurements_invalid")
+    else:
+        try:
+            model_scale = float(
+                layout_fidelity.get("model_units_per_floorplan_percent")
+            )
+        except (TypeError, ValueError):
+            return _blocked("spatial_fidelity_invalid")
+        if not math.isfinite(model_scale) or not 0.02 <= model_scale <= 1.0:
+            return _blocked("spatial_fidelity_invalid")
+        measurement_tolerance = 0.03
+    if source_room_count != len(spatial_rooms_by_id):
         return _blocked("spatial_fidelity_invalid")
     overlay_relpath = _hosted_property_tour_public_asset_relpath(
         layout_fidelity.get("overlay_relpath")
@@ -2598,26 +2630,105 @@ def _hosted_property_tour_ai_panorama_contract(
             or source_y + source_height > 100.0
         ):
             return _blocked("spatial_fidelity_room_bounds_invalid")
-        expected_model_values = (
-            source_x * model_scale,
-            source_y * model_scale,
-            source_width * model_scale,
-            source_height * model_scale,
-        )
-        actual_model_values = (
-            float(room["x"]),
-            float(room["z"]),
-            float(room["width"]),
-            float(room["depth"]),
-        )
-        if any(
-            abs(actual - expected) > transform_tolerance
-            for actual, expected in zip(
-                actual_model_values,
-                expected_model_values,
+        if measured_geometry:
+            measurement = room.get("measurement")
+            if not isinstance(measurement, dict):
+                return _blocked("spatial_measurements_missing")
+            if (
+                measurement.get("contract_name")
+                != "propertyquarry.floorplan_measurement.v1"
+                or measurement.get("source")
+                != "operator_floorplan_dimension_lines"
+            ):
+                return _blocked("spatial_measurements_invalid")
+            try:
+                measured_area = float(measurement.get("area_m2"))
+            except (TypeError, ValueError):
+                return _blocked("spatial_measurements_invalid")
+            components = measurement.get("components")
+            if (
+                not math.isfinite(measured_area)
+                or measured_area <= 0.0
+                or not isinstance(components, list)
+                or not components
+            ):
+                return _blocked("spatial_measurements_invalid")
+            component_rects: list[tuple[float, float, float, float]] = []
+            component_area = 0.0
+            for component in components:
+                if not isinstance(component, dict):
+                    return _blocked("spatial_measurements_invalid")
+                try:
+                    component_values = tuple(
+                        float(component.get(key))
+                        for key in ("x", "z", "width", "depth")
+                    )
+                except (TypeError, ValueError):
+                    return _blocked("spatial_measurements_invalid")
+                component_x, component_z, component_width, component_depth = component_values
+                if (
+                    not all(math.isfinite(value) for value in component_values)
+                    or component_width <= 0.0
+                    or component_depth <= 0.0
+                    or component_x < float(room["x"]) - measurement_tolerance
+                    or component_z < float(room["z"]) - measurement_tolerance
+                    or component_x + component_width > float(room["x"]) + float(room["width"]) + measurement_tolerance
+                    or component_z + component_depth > float(room["z"]) + float(room["depth"]) + measurement_tolerance
+                ):
+                    return _blocked("spatial_measurement_geometry_invalid")
+                component_rects.append(component_values)
+                component_area += component_width * component_depth
+            if abs(component_area - measured_area) > measurement_tolerance:
+                return _blocked("spatial_measurement_area_mismatch")
+            min_component_x = min(rect[0] for rect in component_rects)
+            min_component_z = min(rect[1] for rect in component_rects)
+            max_component_x = max(rect[0] + rect[2] for rect in component_rects)
+            max_component_z = max(rect[1] + rect[3] for rect in component_rects)
+            if any(
+                abs(actual - expected) > measurement_tolerance
+                for actual, expected in (
+                    (min_component_x, float(room["x"])),
+                    (min_component_z, float(room["z"])),
+                    (max_component_x, float(room["x"]) + float(room["width"])),
+                    (max_component_z, float(room["z"]) + float(room["depth"])),
+                )
+            ):
+                return _blocked("spatial_measurement_geometry_invalid")
+            for index, left_rect in enumerate(component_rects):
+                for right_rect in component_rects[index + 1 :]:
+                    overlap_x = max(
+                        0.0,
+                        min(left_rect[0] + left_rect[2], right_rect[0] + right_rect[2])
+                        - max(left_rect[0], right_rect[0]),
+                    )
+                    overlap_z = max(
+                        0.0,
+                        min(left_rect[1] + left_rect[3], right_rect[1] + right_rect[3])
+                        - max(left_rect[1], right_rect[1]),
+                    )
+                    if overlap_x * overlap_z > measurement_tolerance:
+                        return _blocked("spatial_measurement_geometry_invalid")
+        else:
+            expected_model_values = (
+                source_x * model_scale,
+                source_y * model_scale,
+                source_width * model_scale,
+                source_height * model_scale,
             )
-        ):
-            return _blocked("spatial_fidelity_model_transform_invalid")
+            actual_model_values = (
+                float(room["x"]),
+                float(room["z"]),
+                float(room["width"]),
+                float(room["depth"]),
+            )
+            if any(
+                abs(actual - expected) > transform_tolerance
+                for actual, expected in zip(
+                    actual_model_values,
+                    expected_model_values,
+                )
+            ):
+                return _blocked("spatial_fidelity_model_transform_invalid")
         source_bounds_by_room[room_id] = bounds
 
     for scene_id, room_id in spatial_scene_to_room.items():
@@ -2804,8 +2915,8 @@ def _hosted_property_tour_ai_panorama_contract(
         or dict(provenance.get("panorama_asset_sha256") or {})
         != actual_asset_hashes
         or provenance.get("spatial_model_basis")
-        != "floorplan_scaled_approximation"
-        or provenance.get("spatial_model_measured") is not False
+        != spatial_model_basis
+        or provenance.get("spatial_model_measured") is not measured_geometry
         or set(provenance.get("spatial_scene_ids") or []) != scene_id_set
         or str(
             provenance.get("layout_fidelity_sha256") or ""
@@ -2829,6 +2940,7 @@ def _hosted_property_tour_ai_panorama_contract(
         "hotspot_count": hotspot_count,
         "spatial_room_count": len(spatial_rooms),
         "spatial_doorway_count": len(doorway_edges),
+        "spatial_model_measured": measured_geometry,
         "layout_fidelity_sha256": layout_fidelity_sha256,
         "floorplan_relpath": floorplan_relpath,
         "total_panorama_bytes": total_panorama_bytes,

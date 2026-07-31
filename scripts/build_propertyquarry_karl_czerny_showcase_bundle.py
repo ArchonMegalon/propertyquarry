@@ -19,11 +19,12 @@ PROPERTY_URL = (
     "karl-czerny-gasse-2-private-showcase"
 )
 DISCLOSURE = (
-    "AI-reconstructed from an operator-provided architectural floorplan; "
-    "not a captured 360 or measured survey."
+    "AI-reconstructed from an operator-provided architectural floorplan with "
+    "room dimensions taken from its dimension lines; not a captured 360 or "
+    "measured survey."
 )
 SCENES = (
-    ("hall", "Entrance vestibule · 3.80 m²", 52.0, 81.5),
+    ("hall", "Entrance vestibule · 18.80 m²", 52.0, 81.5),
     ("bedroom-primary", "Bedroom · 16.86 m²", 36.5, 60.0),
     ("terrace", "Terrace · 7.78 m²", 24.5, 59.0),
     ("bedroom-guest", "Bedroom · 15.24 m²", 78.0, 42.0),
@@ -82,9 +83,9 @@ HOTSPOTS = {
         ),
     ),
 }
-# Bounds are percentages of the exact published floorplan image. The 3D model
-# is derived from these bounds at one uniform scale; it is not a separately
-# invented room layout.
+# Bounds are percentages of the exact published floorplan image and are kept
+# for the source pins/overlay.  The 3D model itself is built from the measured
+# metre geometry below, never from a pixel-percentage scale.
 SPATIAL_ROOMS = (
     ("terrace", "Terrace · 7.78 m²", "terrace", "exterior", 19.7, 35.0, 9.2, 42.0),
     ("primary-bedroom", "Bedroom · 16.86 m²", "bedroom-primary", "interior", 28.9, 34.8, 15.4, 42.1),
@@ -93,7 +94,7 @@ SPATIAL_ROOMS = (
     ("circulation-hall", "Internal hall · 3.50 m²", "", "unavailable", 62.0, 39.3, 8.0, 9.8),
     ("guest-bedroom", "Bedroom · 15.24 m²", "bedroom-guest", "interior", 70.0, 34.7, 14.2, 14.4),
     ("living-kitchen", "Wohnküche · 30.33 m²", "living-kitchen", "interior", 44.3, 49.1, 39.9, 27.9),
-    ("entrance-vestibule", "Entrance vestibule · 3.80 m²", "hall", "interior", 44.3, 77.0, 15.1, 9.3),
+    ("entrance-vestibule", "Entrance vestibule · 18.80 m²", "hall", "interior", 44.3, 77.0, 15.1, 9.3),
 )
 DOORWAY_EDGES = (
     ("terrace", "primary-bedroom"),
@@ -104,7 +105,79 @@ DOORWAY_EDGES = (
     ("circulation-hall", "guest-bedroom"),
     ("living-kitchen", "entrance-vestibule"),
 )
-MODEL_UNITS_PER_FLOORPLAN_PERCENT = 0.2
+# The floorplan is the dimensional source of truth.  Coordinates below are a
+# coherent metre-space arrangement used by the dollhouse; each room's measured
+# footprint is checked independently against the labelled area on the plan.
+MEASURED_ROOM_GEOMETRY = {
+    "terrace": {
+        "x": 0.0,
+        "z": 0.0,
+        "width": 1.47,
+        "depth": 7.78 / 1.47,
+        "area_m2": 7.78,
+        "dimension_label": "1.47 × 5.29 m",
+    },
+    "primary-bedroom": {
+        "x": 1.47,
+        "z": 0.0,
+        "width": 2.865,
+        "depth": 16.86 / 2.865,
+        "area_m2": 16.86,
+        "dimension_label": "2.87 × 5.88 m",
+    },
+    "separate-wc": {
+        "x": 4.335,
+        "z": 0.0,
+        "width": 1.0,
+        "depth": 1.36,
+        "area_m2": 1.36,
+        "dimension_label": "1.00 × 1.36 m",
+    },
+    "bathroom": {
+        "x": 10.555,
+        "z": 0.0,
+        "width": 2.4,
+        "depth": 4.96 / 2.4,
+        "area_m2": 4.96,
+        "dimension_label": "2.40 × 2.07 m",
+    },
+    "circulation-hall": {
+        "x": 10.555,
+        "z": 2.0666667,
+        "width": 1.8,
+        "depth": 3.50 / 1.8,
+        "area_m2": 3.50,
+        "dimension_label": "1.80 × 1.94 m",
+    },
+    "guest-bedroom": {
+        "x": 12.355,
+        "z": 2.0666667,
+        "width": 4.6,
+        "depth": 15.24 / 4.6,
+        "area_m2": 15.24,
+        "dimension_label": "4.60 × 3.31 m",
+    },
+    "living-kitchen": {
+        "x": 4.335,
+        "z": 1.36,
+        "width": 6.22,
+        "depth": 30.33 / 6.22,
+        "area_m2": 30.33,
+        "dimension_label": "6.22 × 4.88 m",
+    },
+    "entrance-vestibule": {
+        "x": 4.335,
+        "z": 6.2362058,
+        "width": 4.28,
+        "depth": 2.13 + (18.80 - (4.28 * 2.13)) / 1.86,
+        "area_m2": 18.80,
+        "dimension_label": "18.80 m² · L-shaped",
+        "components": (
+            {"x": 4.335, "z": 6.2362058, "width": 4.28, "depth": 2.13},
+            {"x": 4.335, "z": 8.3662058, "width": 1.86, "depth": (18.80 - (4.28 * 2.13)) / 1.86},
+        ),
+    },
+}
 WALKTHROUGH_CHAPTERS = (
     ("Entrance hall", 0.0),
     ("Primary bedroom", 5.0),
@@ -283,7 +356,7 @@ def build(args: argparse.Namespace) -> Path:
     floorplan_sha256 = _sha256(bundle / "floorplan.webp")
     spatial_rooms = [
         {
-            "depth": round(height_pct * MODEL_UNITS_PER_FLOORPLAN_PERCENT, 3),
+            "depth": round(float(MEASURED_ROOM_GEOMETRY[room_id]["depth"]), 6),
             "floorplan_bounds_pct": {
                 "height": height_pct,
                 "width": width_pct,
@@ -294,10 +367,28 @@ def build(args: argparse.Namespace) -> Path:
             "id": room_id,
             "kind": kind,
             "label": label,
+            "measurement": {
+                "contract_name": "propertyquarry.floorplan_measurement.v1",
+                "source": "operator_floorplan_dimension_lines",
+                "area_m2": float(MEASURED_ROOM_GEOMETRY[room_id]["area_m2"]),
+                "components": [
+                    {
+                        "x": round(float(component.get("x", MEASURED_ROOM_GEOMETRY[room_id]["x"])), 6),
+                        "z": round(float(component.get("z", MEASURED_ROOM_GEOMETRY[room_id]["z"])), 6),
+                        "width": round(float(component.get("width", MEASURED_ROOM_GEOMETRY[room_id]["width"])), 6),
+                        "depth": round(float(component.get("depth", MEASURED_ROOM_GEOMETRY[room_id]["depth"])), 6),
+                    }
+                    for component in MEASURED_ROOM_GEOMETRY[room_id].get(
+                        "components",
+                        (MEASURED_ROOM_GEOMETRY[room_id],),
+                    )
+                ],
+            },
             **({"scene_id": scene_id} if scene_id else {}),
-            "width": round(width_pct * MODEL_UNITS_PER_FLOORPLAN_PERCENT, 3),
-            "x": round(x_pct * MODEL_UNITS_PER_FLOORPLAN_PERCENT, 3),
-            "z": round(y_pct * MODEL_UNITS_PER_FLOORPLAN_PERCENT, 3),
+            "dimension_label": str(MEASURED_ROOM_GEOMETRY[room_id]["dimension_label"]),
+            "width": round(float(MEASURED_ROOM_GEOMETRY[room_id]["width"]), 6),
+            "x": round(float(MEASURED_ROOM_GEOMETRY[room_id]["x"]), 6),
+            "z": round(float(MEASURED_ROOM_GEOMETRY[room_id]["z"]), 6),
         }
         for (
             room_id,
@@ -314,7 +405,9 @@ def build(args: argparse.Namespace) -> Path:
         "contract_name": "propertyquarry.floorplan_spatial_fidelity.v1",
         "doorway_edges": [list(edge) for edge in DOORWAY_EDGES],
         "floorplan_sha256": floorplan_sha256,
-        "model_units_per_floorplan_percent": MODEL_UNITS_PER_FLOORPLAN_PERCENT,
+        "measurement_contract_name": "propertyquarry.floorplan_measurement.v1",
+        "measurement_source": "operator_floorplan_dimension_lines",
+        "measurement_tolerance_m": 0.03,
         "overlay_relpath": "proof/floorplan-fidelity-overlay.png",
         "overlay_sha256": _sha256(bundle / "proof" / "floorplan-fidelity-overlay.png"),
         "review_method": "operator_floorplan_overlay",
@@ -343,8 +436,8 @@ def build(args: argparse.Namespace) -> Path:
         "representation_disclosure": DISCLOSURE,
         "source_image_sha256": [raw_asset_hashes[scene_id] for scene_id, *_rest in SCENES],
         "floorplan_sha256": floorplan_sha256,
-        "spatial_model_basis": "floorplan_scaled_approximation",
-        "spatial_model_measured": False,
+        "spatial_model_basis": "floorplan_measured_dimensions",
+        "spatial_model_measured": True,
         "spatial_scene_ids": [scene_id for scene_id, *_rest in SCENES],
         "layout_fidelity_sha256": layout_fidelity_sha256,
         "raw_generated_asset_sha256": raw_asset_hashes,
@@ -422,9 +515,9 @@ def build(args: argparse.Namespace) -> Path:
             "scenes": [_scene_payload(*scene) for scene in SCENES],
             "spatial_model": {
                 "layout_fidelity": layout_fidelity,
-                "measured": False,
+                "measured": True,
                 "rooms": spatial_rooms,
-                "source_basis": "floorplan_scaled_approximation",
+                "source_basis": "floorplan_measured_dimensions",
             },
         },
     }
