@@ -41,6 +41,13 @@ PROPERTY_URL = (
     "https://propertyquarry.com/app/research/"
     "karl-czerny-gasse-2-private-showcase"
 )
+# Google-hosted street context for the terrace.  This is deliberately a
+# navigation link rather than copied Street View imagery: the public tour does
+# not claim to have ingested or licensed Google's pixels.
+TERRACE_STREET_VIEW_URL = (
+    "https://www.google.com/maps/@?api=1&map_action=pano"
+    "&viewpoint=48.2337189,16.3637295&pitch=0&fov=80"
+)
 DISCLOSURE = (
     "AI-reconstructed from a reviewed architectural floorplan analysis with "
     "source-linked room dimensions and a derived-plan round-trip check; not a "
@@ -315,7 +322,7 @@ def _scene_payload(
     floorplan_x: float,
     floorplan_y: float,
 ) -> dict[str, object]:
-    return {
+    payload = {
         "asset_relpath": f"panoramas/{scene_id}.jpg",
         "floorplan_x_pct": floorplan_x,
         "floorplan_y_pct": floorplan_y,
@@ -339,6 +346,9 @@ def _scene_payload(
         "start_pitch": 0,
         "start_yaw": 0,
     }
+    if scene_id == "terrace":
+        payload["street_view_url"] = TERRACE_STREET_VIEW_URL
+    return payload
 
 
 def build(args: argparse.Namespace) -> Path:

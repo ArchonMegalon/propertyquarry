@@ -573,7 +573,12 @@ _PUBLIC_TOUR_SCENE_KEYS = frozenset(
         "image_url",
         "asset_relpath",
         "cube_faces",
+        "street_view_url",
     }
+)
+
+_PUBLIC_TOUR_STREET_CONTEXT_HOSTS = frozenset(
+    {"google.com", "www.google.com", "maps.google.com"}
 )
 
 
@@ -1436,6 +1441,23 @@ def public_tour_safe_http_url(value: object) -> str:
     return parsed._replace(scheme="https", netloc=netloc).geturl()
 
 
+def public_tour_google_maps_context_url(value: object) -> str:
+    """Allow only a Google-hosted Maps/Street View context navigation URL."""
+
+    normalized = public_tour_safe_http_url(value)
+    if not normalized:
+        return ""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(normalized)
+    hostname = str(parsed.hostname or "").strip().lower().rstrip(".")
+    if hostname not in _PUBLIC_TOUR_STREET_CONTEXT_HOSTS:
+        return ""
+    if not parsed.path.startswith(("/maps", "/@")):
+        return ""
+    return normalized
+
+
 def public_tour_external_media_url_allowed(
     value: object,
     *,
@@ -1699,6 +1721,11 @@ def redacted_public_tour_scenes(
                 if safe_url:
                     rendered[key] = safe_url
                 continue
+            if key == "street_view_url":
+                safe_url = public_tour_google_maps_context_url(value)
+                if safe_url:
+                    rendered[key] = safe_url
+                continue
             rendered[str(key)] = redact_public_tour_value(value)
         scene_role = str(rendered.get("role") or "").strip().lower().replace("-", "_")
         if rendered and (
@@ -1850,6 +1877,9 @@ def redacted_public_tour_walkable_scene(
             rendered["asset_relpath"] = relpath
         else:
             rendered["image_url"] = _versioned_file_url(relpath)
+        street_view_url = public_tour_google_maps_context_url(scene.get("street_view_url"))
+        if street_view_url:
+            rendered["street_view_url"] = street_view_url
         seen_ids.add(scene_id)
         normalized_rows.append((rendered, scene))
 

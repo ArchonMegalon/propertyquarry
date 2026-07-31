@@ -1484,8 +1484,10 @@ def _dollhouse_floor_screen_point(
     )
     look_at = ((min_x + max_x) / 2.0, 0.3, (min_z + max_z) / 2.0)
     distance = max(13.0, math.hypot(max_x - min_x, max_z - min_z) * 1.22)
-    azimuth = -0.72
-    elevation = 0.72
+    # Keep the proof projection in lockstep with the viewer's default
+    # plan-aligned dollhouse camera so the raycast check hits measured rooms.
+    azimuth = 0.0
+    elevation = 1.08
     horizontal = math.cos(elevation) * distance
     camera = (
         look_at[0] + math.sin(azimuth) * horizontal,
@@ -1544,7 +1546,7 @@ def _dollhouse_floor_screen_point(
     camera_depth = sum(relative[index] * forward[index] for index in range(3))
     if camera_depth <= 0:
         raise MaterializationError("dollhouse_projection_behind_camera")
-    tangent = math.tan(math.radians(44.0) / 2.0)
+    tangent = math.tan(math.radians(38.0) / 2.0)
     aspect = viewport_width / viewport_height
     ndc_x = camera_x / (camera_depth * tangent * aspect)
     ndc_y = camera_y / (camera_depth * tangent)

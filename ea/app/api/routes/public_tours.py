@@ -55,6 +55,7 @@ from app.api.routes.public_tour_payloads import (
     public_tour_exact_address_allowed as _payload_public_tour_exact_address_allowed,
     public_tour_external_media_url_allowed as _payload_public_tour_external_media_url_allowed,
     public_tour_file_url as _payload_public_tour_file_url,
+    public_tour_google_maps_context_url as _payload_public_tour_google_maps_context_url,
     public_tour_key_is_private as _payload_public_tour_key_is_private,
     public_tour_manifest as _payload_public_tour_manifest,
     public_tour_privacy_mode as _payload_public_tour_privacy_mode,
@@ -11992,6 +11993,11 @@ def _tour_control_panorama_spec(
             "floorplan_y_pct": _number(scene.get("floorplan_y_pct"), default=-1.0, minimum=-1.0, maximum=100.0),
             "hotspots": [],
         }
+        street_view_url = _payload_public_tour_google_maps_context_url(
+            scene.get("street_view_url")
+        )
+        if street_view_url:
+            normalized["street_view_url"] = street_view_url
         seen_ids.add(scene_id)
         normalized_rows.append((normalized, scene))
 
@@ -12228,6 +12234,9 @@ def _tour_control_panorama_html(
       .floorplan img { display: block; width: 100%; max-height: 34vh; object-fit: contain; }
       .floorplan-pin { position: absolute; width: 24px; height: 24px; transform: translate(-50%,-50%); border: 2px solid #fff; border-radius: 50%; background: #182028; color: white; font-size: 10px; cursor: pointer; }
       .floorplan-pin.active { background: #ee6b45; box-shadow: 0 0 0 4px rgba(238,107,69,.24); }
+      .street-context { position: fixed; z-index: 20; left: 12px; bottom: 76px; display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 13px; color: #182028; background: rgba(255,255,255,.94); border: 1px solid rgba(255,255,255,.8); border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.3); font: 700 11px/1 Inter,system-ui,sans-serif; text-decoration: none; }
+      .street-context::before { content: '↗'; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: white; background: #111820; }
+      .street-context[hidden] { display: none; }
       .dollhouse-layer { position: fixed; inset: 0; z-index: 13; pointer-events: none; overflow: hidden; }
       .dollhouse-layer[hidden] { display: none; }
       .dollhouse-node { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; min-height: 34px; border: 1px solid rgba(255,255,255,.8); border-radius: 999px; padding: 0 11px; color: #111820; background: rgba(255,255,255,.94); box-shadow: 0 8px 24px rgba(0,0,0,.3); cursor: pointer; font: 700 11px/1 Inter,system-ui,sans-serif; white-space: nowrap; }
@@ -12238,7 +12247,7 @@ def _tour_control_panorama_html(
       .status { position: fixed; z-index: 25; left: 50%; top: 50%; transform: translate(-50%,-50%); padding: 12px 16px; font-size: 13px; pointer-events: none; }
       .status[hidden] { display: none; }
       .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
-      :is(.icon-button, .scene-button, .hotspot, .floorplan-toolbar button, .floorplan-pin, .dollhouse-node):focus-visible { outline: 2px solid #ee6b45; outline-offset: 3px; }
+      :is(.icon-button, .scene-button, .hotspot, .floorplan-toolbar button, .floorplan-pin, .dollhouse-node, .street-context):focus-visible { outline: 2px solid #ee6b45; outline-offset: 3px; }
       @media (max-width: 720px) {
         .floorplan { width: min(220px, 52vw); bottom: 74px; }
         .topbar { gap: 7px; }
@@ -12249,6 +12258,7 @@ def _tour_control_panorama_html(
         .top-actions { gap: 5px; }
         .zoom-controls { right: 9px; }
         .scene-button { min-height: 40px; padding: 0 12px; font-size: 12px; }
+        .street-context { left: 9px; bottom: 74px; max-width: calc(100vw - 18px); }
         .dollhouse-note { top: max(104px, calc(env(safe-area-inset-top) + 94px)); width: calc(100vw - 30px); }
       }
       @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -12265,6 +12275,7 @@ def _tour_control_panorama_html(
     <div class="zoom-controls" aria-label="View zoom controls"><button class="icon-button" id="zoom-in" type="button" aria-label="Zoom in">+</button><button class="icon-button" id="zoom-out" type="button" aria-label="Zoom out">−</button></div>
     <nav class="scene-rail glass" id="scene-rail" aria-label="Tour spaces"></nav>
     <aside class="floorplan glass" id="floorplan" hidden><div class="floorplan-stage"><div class="floorplan-toolbar"><span id="floorplan-kind">Source plan</span><button id="floorplan-kind-toggle" type="button">Show derived</button></div><img id="floorplan-image" alt="Property floor plan"><div id="floorplan-pins"></div></div></aside>
+    <a class="street-context" id="street-context" href="#" target="_blank" rel="noopener noreferrer" hidden>Street View context</a>
     <div class="dollhouse-note glass" id="dollhouse-note" hidden>Floorplan-measured AI model · dimensions from source plan; approximate, not measured</div>
     <div class="status glass" id="status" role="status">Loading 360° view…</div>
     <div class="sr-only" id="announcer" aria-live="polite"></div>
@@ -12288,6 +12299,7 @@ def _tour_control_panorama_html(
       const dollhouseToggle = document.getElementById('dollhouse-toggle');
       const dollhouseNodes = document.getElementById('dollhouse-nodes');
       const dollhouseNote = document.getElementById('dollhouse-note');
+      const streetContext = document.getElementById('street-context');
       const spatialModel = spec.spatial_model && Array.isArray(spec.spatial_model.rooms) ? spec.spatial_model : null;
       const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -12304,7 +12316,7 @@ def _tour_control_panorama_html(
       const dollhouseScene = new THREE.Scene();
       dollhouseScene.background = new THREE.Color(0x151a1f);
       dollhouseScene.fog = new THREE.Fog(0x151a1f, 18, 34);
-      const dollhouseCamera = new THREE.PerspectiveCamera(44, innerWidth / innerHeight, .1, 80);
+      const dollhouseCamera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, .1, 80);
       const dollhouseGroup = new THREE.Group();
       dollhouseScene.add(dollhouseGroup);
       dollhouseScene.add(new THREE.HemisphereLight(0xffffff, 0x35404b, 2.2));
@@ -12320,8 +12332,10 @@ def _tour_control_panorama_html(
       let mode = 'panorama';
       let yaw = 0;
       let pitch = 0;
-      let dollhouseAzimuth = -.72;
-      let dollhouseElevation = .72;
+      // Start close to a plan-aligned top view.  Users can still orbit, but
+      // the first frame should be directly comparable with the source plan.
+      let dollhouseAzimuth = 0;
+      let dollhouseElevation = 1.08;
       let dollhouseDistance = 17;
       let dragging = false;
       const activePointers = new Map();
@@ -12389,6 +12403,20 @@ def _tour_control_panorama_html(
         const center = Math.max(halfGap + .08, Math.min(length - halfGap - .08, Number(opening.center) || length / 2));
         placeSegment(0, center - halfGap);
         placeSegment(center + halfGap, length);
+      }
+      function addDollhouseFootprint(name, x, z, width, depth) {
+        const points = [
+          new THREE.Vector3(x, .125, z),
+          new THREE.Vector3(x + width, .125, z),
+          new THREE.Vector3(x + width, .125, z + depth),
+          new THREE.Vector3(x, .125, z + depth),
+          new THREE.Vector3(x, .125, z),
+        ];
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color: 0xffc7a9, transparent: true, opacity: .88 });
+        const line = new THREE.Line(geometry, material);
+        line.name = name;
+        dollhouseGroup.add(line);
       }
       function buildDollhouse() {
         if (!spatialModel) return false;
@@ -12466,6 +12494,7 @@ def _tour_control_panorama_html(
           const roomFloors = [];
           for (const component of room.components) {
             const { x, z, width, depth } = component;
+            addDollhouseFootprint(`${room.id}-measured-footprint-${roomFloors.length}`, x, z, width, depth);
             const floor = addDollhouseBox(`${room.id}-floor-${roomFloors.length}`, x + width / 2, .04, z + depth / 2, width, .12, depth, floorMaterial);
             floor.userData.baseColor = baseColor;
             floor.userData.sceneId = sceneId;
@@ -12545,6 +12574,7 @@ def _tour_control_panorama_html(
           '.top-actions',
           '.zoom-controls',
           '.dollhouse-note:not([hidden])',
+          '.street-context:not([hidden])',
         ];
         const obstacleRects = obstacleSelectors.flatMap(selector => [...document.querySelectorAll(selector)]).flatMap(element => {
           const style = getComputedStyle(element);
@@ -12650,6 +12680,8 @@ def _tour_control_panorama_html(
         dollhouseToggle.setAttribute('aria-label', inDollhouse ? 'Return to panorama tour' : 'Open 3D dollhouse');
         viewer.setAttribute('aria-label', inDollhouse ? 'Interactive approximate 3D dollhouse' : 'Interactive 360 degree property view');
         viewer.style.cursor = inDollhouse ? 'grab' : '';
+        if (inDollhouse) streetContext.hidden = true;
+        else if (activeNode) syncStreetContext(activeNode);
         if (inDollhouse) {
           floorplan.classList.add('collapsed');
           document.getElementById('map-toggle').setAttribute('aria-pressed', 'false');
@@ -12818,6 +12850,7 @@ def _tour_control_panorama_html(
         // The texture callback below repeats these updates after the image is
         // ready, keeping the state correct if a request fails or is superseded.
         markActive(id);
+        syncStreetContext(node);
         buildHotspots(node);
         sceneTitle.textContent = node.label || document.title;
         announcer.textContent = `Loading ${node.label || 'space'}`;
@@ -12868,6 +12901,23 @@ def _tour_control_panorama_html(
         }, undefined, () => {
           if (token === loadToken) setStatus('This panorama could not be loaded.');
         });
+      }
+      function syncStreetContext(node) {
+        const url = _safeStreetViewUrl(node && node.street_view_url);
+        streetContext.hidden = !url;
+        if (url) {
+          streetContext.href = url;
+          streetContext.title = 'Open Google Street View context for the terrace';
+          streetContext.setAttribute('aria-label', 'Open Google Street View context for the terrace');
+        } else {
+          streetContext.removeAttribute('href');
+          streetContext.removeAttribute('title');
+          streetContext.removeAttribute('aria-label');
+        }
+      }
+      function _safeStreetViewUrl(value) {
+        const normalized = String(value || '').trim();
+        return /^https:\/\/(?:www\.)?google\.com\/maps\/(?:@|\?)/.test(normalized) ? normalized : '';
       }
       for (const node of nodes) {
         const button = document.createElement('button');
