@@ -1986,6 +1986,12 @@ def redacted_public_tour_walkable_scene(
                         ).strip()[:80],
                         "scene_id": scene_id,
                         "kind": kind,
+                        "shape": (
+                            str(raw_room.get("shape") or "rectangle").strip().lower()
+                            if str(raw_room.get("shape") or "rectangle").strip().lower()
+                            in {"rectangle", "composite"}
+                            else "rectangle"
+                        ),
                         "x": _bounded_number(
                             raw_room.get("x"),
                             default=0.0,
@@ -2066,6 +2072,27 @@ def redacted_public_tour_walkable_scene(
             analyzer_contract_name = str(raw_spatial_model.get("analyzer_contract_name") or "").strip()
             if analyzer_contract_name:
                 rendered_walkable["spatial_model"]["analyzer_contract_name"] = analyzer_contract_name
+            raw_boundary_adjacency = (
+                raw_spatial_model.get("layout_fidelity", {}).get("boundary_adjacency")
+                if isinstance(raw_spatial_model.get("layout_fidelity"), dict)
+                else raw_spatial_model.get("boundary_adjacency")
+            )
+            if isinstance(raw_boundary_adjacency, dict):
+                normalized_boundary_adjacency: dict[str, list[list[str]]] = {}
+                for key in ("required", "forbidden"):
+                    rows = raw_boundary_adjacency.get(key)
+                    if not isinstance(rows, list):
+                        continue
+                    normalized_rows: list[list[str]] = []
+                    for row in rows:
+                        if isinstance(row, list) and len(row) == 2:
+                            normalized_rows.append([
+                                str(row[0]).strip()[:80],
+                                str(row[1]).strip()[:80],
+                            ])
+                    normalized_boundary_adjacency[key] = normalized_rows
+                if normalized_boundary_adjacency:
+                    rendered_walkable["spatial_model"]["boundary_adjacency"] = normalized_boundary_adjacency
     floorplan_relpath = public_tour_safe_asset_relpath(
         walkable_scene.get("floorplan_relpath")
     )
