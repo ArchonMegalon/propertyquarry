@@ -1,0 +1,139 @@
+{
+  "contract_name": "propertyquarry.floorplan_analysis_input.v2",
+  "review_status": "approved",
+  "reviewer": "operator",
+  "rooms": [
+    {
+      "id": "terrace",
+      "label": "Terrace · 7.78 m²",
+      "kind": "exterior",
+      "scene_id": "terrace",
+      "floorplan_bounds_pct": {"x": 19.7, "y": 35.0, "width": 9.2, "height": 42.0},
+      "area_m2": 7.78,
+      "dimension_label": "1.47 × 5.29 m",
+      "measurement_tolerance_m": 0.05,
+      "components": [{"x": 0.0, "z": 0.0, "width": 1.47, "depth": 5.292517}],
+      "dimension_evidence": [
+        {"text": "147", "method": "operator_dimension_line", "confidence": 0.99},
+        {"text": "Terr. 7.78 m²", "method": "operator_room_label", "confidence": 0.99}
+      ]
+    },
+    {
+      "id": "primary-bedroom",
+      "label": "Bedroom · 16.86 m²",
+      "kind": "interior",
+      "scene_id": "bedroom-primary",
+      "floorplan_bounds_pct": {"x": 28.9, "y": 34.8, "width": 15.4, "height": 42.1},
+      "area_m2": 16.86,
+      "dimension_label": "2.87 × 5.88 m",
+      "measurement_tolerance_m": 0.05,
+      "components": [{"x": 1.47, "z": 0.0, "width": 2.865, "depth": 5.884817}],
+      "dimension_evidence": [
+        {"text": "2865", "method": "operator_dimension_line", "confidence": 0.99},
+        {"text": "Zimmer 16.86 m²", "method": "operator_room_label", "confidence": 0.99}
+      ]
+    },
+    {
+      "id": "separate-wc",
+      "label": "Separate WC · 1.36 m²",
+      "kind": "interior",
+      "scene_id": "wc",
+      "floorplan_bounds_pct": {"x": 43.1, "y": 34.8, "width": 8.9, "height": 14.3},
+      "area_m2": 1.36,
+      "dimension_label": "1.00 × 1.36 m",
+      "measurement_tolerance_m": 0.05,
+      "components": [{"x": 4.335, "z": 0.0, "width": 1.0, "depth": 1.36}],
+      "dimension_evidence": [
+        {"text": "100", "method": "operator_dimension_line", "confidence": 0.99},
+        {"text": "WC 1.36 m²", "method": "operator_room_label", "confidence": 0.99}
+      ]
+    },
+    {
+      "id": "bathroom",
+      "label": "Bathroom · 4.96 m²",
+      "kind": "interior",
+      "scene_id": "bath",
+      "floorplan_bounds_pct": {"x": 52.1, "y": 34.7, "width": 10.0, "height": 14.4},
+      "area_m2": 4.96,
+      "dimension_label": "2.40 × 2.07 m",
+      "measurement_tolerance_m": 0.05,
+      "components": [{"x": 10.555, "z": 0.0, "width": 2.4, "depth": 2.066667}],
+      "dimension_evidence": [
+        {"text": "240", "method": "operator_dimension_line", "confidence": 0.99},
+        {"text": "Bad 4.96 m²", "method": "operator_room_label", "confidence": 0.99}
+      ]
+    },
+    {
+      "id": "circulation-hall",
+      "label": "Internal hall · 3.50 m²",
+      "kind": "unavailable",
+      "scene_id": "",
+      "floorplan_bounds_pct": {"x": 62.0, "y": 39.3, "width": 8.0, "height": 9.8},
+      "area_m2": 3.5,
+      "dimension_label": "1.80 × 1.94 m",
+      "measurement_tolerance_m": 0.05,
+      "components": [{"x": 10.555, "z": 2.066667, "width": 1.8, "depth": 1.944444}],
+      "dimension_evidence": [
+        {"text": "Flur 3.50 m²", "method": "operator_room_label", "confidence": 0.99},
+        {"text": "180", "method": "operator_dimension_line", "confidence": 0.99}
+      ]
+    },
+    {
+      "id": "guest-bedroom",
+      "label": "Bedroom · 15.24 m²",
+      "kind": "interior",
+      "scene_id": "bedroom-guest",
+      "floorplan_bounds_pct": {"x": 70.0, "y": 34.7, "width": 14.2, "height": 14.4},
+      "area_m2": 15.24,
+      "dimension_label": "4.60 × 3.31 m",
+      "measurement_tolerance_m": 0.05,
+      "components": [{"x": 12.355, "z": 2.066667, "width": 4.6, "depth": 3.313043}],
+      "dimension_evidence": [
+        {"text": "460", "method": "operator_dimension_line", "confidence": 0.99},
+        {"text": "Zimmer 15.24 m²", "method": "operator_room_label", "confidence": 0.99}
+      ]
+    },
+    {
+      "id": "living-kitchen",
+      "label": "Wohnküche · 30.33 m²",
+      "kind": "interior",
+      "scene_id": "living-kitchen",
+      "floorplan_bounds_pct": {"x": 44.3, "y": 49.1, "width": 39.9, "height": 27.9},
+      "area_m2": 30.33,
+      "dimension_label": "6.22 × 4.88 m",
+      "measurement_tolerance_m": 0.05,
+      "components": [{"x": 4.335, "z": 1.36, "width": 6.22, "depth": 4.876206}],
+      "dimension_evidence": [
+        {"text": "622", "method": "operator_dimension_line", "confidence": 0.99},
+        {"text": "Wohnküche 30.33 m²", "method": "operator_room_label", "confidence": 0.99}
+      ]
+    },
+    {
+      "id": "entrance-vestibule",
+      "label": "Entrance vestibule · 18.80 m²",
+      "kind": "interior",
+      "scene_id": "hall",
+      "floorplan_bounds_pct": {"x": 44.3, "y": 77.0, "width": 15.1, "height": 9.3},
+      "area_m2": 18.8,
+      "dimension_label": "18.80 m² · L-shaped",
+      "measurement_tolerance_m": 0.05,
+      "components": [
+        {"x": 4.335, "z": 6.236206, "width": 4.28, "depth": 2.13},
+        {"x": 4.335, "z": 8.366206, "width": 1.86, "depth": 5.206237}
+      ],
+      "dimension_evidence": [
+        {"text": "VR 18.80 m²", "method": "operator_room_label", "confidence": 0.99},
+        {"text": "L-shaped vestibule", "method": "operator_wall_trace", "confidence": 0.99}
+      ]
+    }
+  ],
+  "doorway_edges": [
+    ["terrace", "primary-bedroom"],
+    ["primary-bedroom", "living-kitchen"],
+    ["separate-wc", "living-kitchen"],
+    ["bathroom", "circulation-hall"],
+    ["circulation-hall", "living-kitchen"],
+    ["circulation-hall", "guest-bedroom"],
+    ["entrance-vestibule", "living-kitchen"]
+  ]
+}

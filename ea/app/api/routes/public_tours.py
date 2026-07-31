@@ -3407,6 +3407,12 @@ def _public_tour_ai_panorama_asset_paths(
     )
     if floorplan_relpath:
         accepted.add(floorplan_relpath)
+    derived_floorplan_relpath = _add(
+        referenced,
+        walkable_scene.get("derived_floorplan_relpath"),
+    )
+    if derived_floorplan_relpath:
+        accepted.add(derived_floorplan_relpath)
     # The materializer promotes the browser-proven dollhouse screenshot to the
     # listing's diorama preview. It is safe to publish only when its bytes still
     # match the digest sealed inside the accepted browser receipt.
@@ -3516,6 +3522,19 @@ def _public_tour_ai_panorama_asset_digests(
             ).strip().lower()
             if re.fullmatch(r"[0-9a-f]{64}", floorplan_digest):
                 digests[floorplan_relpath] = floorplan_digest
+            derived_floorplan_relpath = _public_tour_safe_asset_relpath(
+                walkable_scene.get("derived_floorplan_relpath")
+            )
+            derived_floorplan_digest = str(
+                provenance.get("derived_floorplan_sha256")
+                if isinstance(provenance, dict)
+                else ""
+            ).strip().lower()
+            if (
+                derived_floorplan_relpath
+                and re.fullmatch(r"[0-9a-f]{64}", derived_floorplan_digest)
+            ):
+                digests[derived_floorplan_relpath] = derived_floorplan_digest
     diorama_preview_relpath = _public_tour_safe_asset_relpath(
         payload.get("diorama_preview_relpath")
     )
@@ -12014,6 +12033,14 @@ def _tour_control_panorama_spec(
         if floorplan_relpath and floorplan_relpath in allowed_assets
         else ""
     )
+    derived_floorplan_relpath = _public_tour_safe_asset_relpath(
+        walkable_scene.get("derived_floorplan_relpath")
+    )
+    derived_floorplan_url = (
+        _asset_url(derived_floorplan_relpath)
+        if derived_floorplan_relpath and derived_floorplan_relpath in allowed_assets
+        else ""
+    )
     representation_kind = str(walkable_scene.get("representation_kind") or "captured_360").strip().lower()
     disclosure = str(walkable_scene.get("representation_disclosure") or "").strip()
     if representation_kind == "ai_reconstruction" and not disclosure:
@@ -12118,7 +12145,11 @@ def _tour_control_panorama_spec(
                         }
                 normalized_rooms.append(normalized_room)
         if (
-            source_basis in {"floorplan_scaled_approximation", "floorplan_measured_dimensions"}
+            source_basis in {
+                "floorplan_scaled_approximation",
+                "floorplan_measured_dimensions",
+                "floorplan_analyzer_reviewed_dimensions",
+            }
             and raw_spatial_model.get("measured") in {False, True}
             and normalized_rooms
         ):
@@ -12127,10 +12158,14 @@ def _tour_control_panorama_spec(
                 "measured": raw_spatial_model.get("measured") is True,
                 "rooms": normalized_rooms,
             }
+            analyzer_contract_name = str(raw_spatial_model.get("analyzer_contract_name") or "").strip()
+            if analyzer_contract_name:
+                spatial_model["analyzer_contract_name"] = analyzer_contract_name
     return {
         "scenes": [row[0] for row in normalized_rows],
         "initial_scene_id": str(walkable_scene.get("initial_scene_id") or normalized_rows[0][0]["id"]),
         "floorplan_url": floorplan_url,
+        "derived_floorplan_url": derived_floorplan_url,
         "representation_kind": representation_kind,
         "representation_disclosure": disclosure,
         "spatial_model": spatial_model,
@@ -12188,6 +12223,8 @@ def _tour_control_panorama_html(
       .floorplan[hidden] { display: none; }
       .floorplan.collapsed { opacity: 0; pointer-events: none; transform: translateY(12px); }
       .floorplan-stage { position: relative; border-radius: 9px; overflow: hidden; background: white; }
+      .floorplan-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 8px; color:#182028; background:#fff; font-size:11px; font-weight:700; }
+      .floorplan-toolbar button { border:1px solid #cbd1d4; border-radius:999px; padding:5px 8px; background:#f5f7f7; color:#182028; cursor:pointer; font:inherit; }
       .floorplan img { display: block; width: 100%; max-height: 34vh; object-fit: contain; }
       .floorplan-pin { position: absolute; width: 24px; height: 24px; transform: translate(-50%,-50%); border: 2px solid #fff; border-radius: 50%; background: #182028; color: white; font-size: 10px; cursor: pointer; }
       .floorplan-pin.active { background: #ee6b45; box-shadow: 0 0 0 4px rgba(238,107,69,.24); }
@@ -12226,7 +12263,7 @@ def _tour_control_panorama_html(
     </header>
     <div class="zoom-controls" aria-label="View zoom controls"><button class="icon-button" id="zoom-in" type="button" aria-label="Zoom in">+</button><button class="icon-button" id="zoom-out" type="button" aria-label="Zoom out">−</button></div>
     <nav class="scene-rail glass" id="scene-rail" aria-label="Tour spaces"></nav>
-    <aside class="floorplan glass" id="floorplan" hidden><div class="floorplan-stage"><img id="floorplan-image" alt="Property floor plan"><div id="floorplan-pins"></div></div></aside>
+    <aside class="floorplan glass" id="floorplan" hidden><div class="floorplan-stage"><div class="floorplan-toolbar"><span id="floorplan-kind">Source plan</span><button id="floorplan-kind-toggle" type="button">Show derived</button></div><img id="floorplan-image" alt="Property floor plan"><div id="floorplan-pins"></div></div></aside>
     <div class="dollhouse-note glass" id="dollhouse-note" hidden>Floorplan-measured AI model · dimensions from source plan; approximate, not measured</div>
     <div class="status glass" id="status" role="status">Loading 360° view…</div>
     <div class="sr-only" id="announcer" aria-live="polite"></div>
@@ -12245,6 +12282,8 @@ def _tour_control_panorama_html(
       const floorplan = document.getElementById('floorplan');
       const floorplanImage = document.getElementById('floorplan-image');
       const floorplanPins = document.getElementById('floorplan-pins');
+      const floorplanKind = document.getElementById('floorplan-kind');
+      const floorplanKindToggle = document.getElementById('floorplan-kind-toggle');
       const dollhouseToggle = document.getElementById('dollhouse-toggle');
       const dollhouseNodes = document.getElementById('dollhouse-nodes');
       const dollhouseNote = document.getElementById('dollhouse-note');
@@ -12845,23 +12884,39 @@ def _tour_control_panorama_html(
       }
       const dollhouseReady = buildDollhouse();
       dollhouseToggle.hidden = !dollhouseReady;
-      if (spec.floorplan_url) {
+      let showingDerivedFloorplan = false;
+      function syncFloorplanImage() {
+        const sourceUrl = spec.floorplan_url || '';
+        const derivedUrl = spec.derived_floorplan_url || '';
+        showingDerivedFloorplan = Boolean(derivedUrl) && showingDerivedFloorplan;
+        floorplanImage.src = showingDerivedFloorplan ? derivedUrl : sourceUrl;
+        floorplanImage.alt = showingDerivedFloorplan ? 'Floor plan derived from completed 3D construction' : 'Original property floor plan';
+        floorplanKind.textContent = showingDerivedFloorplan ? 'Derived from 3D' : 'Source plan';
+        floorplanKindToggle.hidden = !derivedUrl;
+        floorplanKindToggle.textContent = showingDerivedFloorplan ? 'Show source' : 'Show derived';
+      }
+      if (spec.floorplan_url || spec.derived_floorplan_url) {
         floorplan.hidden = false;
-        floorplanImage.src = spec.floorplan_url;
+        syncFloorplanImage();
         if (matchMedia('(max-width: 720px)').matches) floorplan.classList.add('collapsed');
       }
       const mapToggle = document.getElementById('map-toggle');
       function syncMapToggle() {
-        const expanded = Boolean(spec.floorplan_url) && !floorplan.classList.contains('collapsed') && mode !== 'dollhouse';
+        const expanded = Boolean(spec.floorplan_url || spec.derived_floorplan_url) && !floorplan.classList.contains('collapsed') && mode !== 'dollhouse';
         mapToggle.setAttribute('aria-pressed', String(expanded));
         mapToggle.setAttribute('aria-label', expanded ? 'Close floor plan' : 'Open floor plan');
       }
       syncMapToggle();
       mapToggle.addEventListener('click', () => {
-        if (!spec.floorplan_url) return;
+        if (!spec.floorplan_url && !spec.derived_floorplan_url) return;
         if (mode === 'dollhouse') setMode('panorama');
         floorplan.classList.toggle('collapsed');
         syncMapToggle();
+      });
+      floorplanKindToggle.addEventListener('click', () => {
+        if (!spec.derived_floorplan_url) return;
+        showingDerivedFloorplan = !showingDerivedFloorplan;
+        syncFloorplanImage();
       });
       dollhouseToggle.addEventListener('click', () => setMode(mode === 'dollhouse' ? 'panorama' : 'dollhouse'));
       document.getElementById('zoom-in').addEventListener('click', () => adjustZoom(1));

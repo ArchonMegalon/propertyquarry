@@ -51,11 +51,17 @@ MEASURED_FLOORPLAN_CANONICAL_DISCLOSURE = (
     "room dimensions taken from its dimension lines; not a captured 360 or "
     "measured survey."
 )
+ANALYZED_FLOORPLAN_CANONICAL_DISCLOSURE = (
+    "AI-reconstructed from a reviewed architectural floorplan analysis with "
+    "source-linked room dimensions and a derived-plan round-trip check; not a "
+    "captured 360 or measured survey."
+)
 CANONICAL_DISCLOSURES = frozenset(
     {
         CANONICAL_DISCLOSURE,
         FLOORPLAN_CANONICAL_DISCLOSURE,
         MEASURED_FLOORPLAN_CANONICAL_DISCLOSURE,
+        ANALYZED_FLOORPLAN_CANONICAL_DISCLOSURE,
     }
 )
 RENDERER_MODULE_PATH = "/tours/runtime/three-0.167.1.module.js"
@@ -655,8 +661,13 @@ def _bundle_material_file_rows(
             if relpath:
                 material_relpaths.add(relpath)
                 break
-    material_relpaths.add(str(walkable_scene.get("floorplan_relpath") or "").strip())
-    material_relpaths.add(str(acceptance.get("provenance_relpath") or "").strip())
+    for relpath in (
+        str(walkable_scene.get("floorplan_relpath") or "").strip(),
+        str(walkable_scene.get("derived_floorplan_relpath") or "").strip(),
+        str(acceptance.get("provenance_relpath") or "").strip(),
+    ):
+        if relpath:
+            material_relpaths.add(relpath)
     rows: list[dict[str, object]] = []
     for relpath in sorted(material_relpaths):
         path = _confined_path(bundle_dir, relpath)
@@ -1352,7 +1363,11 @@ def _browser_allowed_urls(
     tested_url: str,
 ) -> frozenset[str]:
     spec = _expected_browser_spec(candidate)
-    relative_urls = [RENDERER_MODULE_PATH, str(spec.get("floorplan_url") or "")]
+    relative_urls = [
+        RENDERER_MODULE_PATH,
+        str(spec.get("floorplan_url") or ""),
+        str(spec.get("derived_floorplan_url") or ""),
+    ]
     for scene in spec.get("scenes") or []:
         if isinstance(scene, Mapping):
             relative_urls.append(str(scene.get("image_url") or ""))
@@ -1420,6 +1435,17 @@ def _browser_expected_assets(
     expected[urllib.parse.urljoin(f"{tested_origin}/", floorplan_url)] = (
         floorplan_binding
     )
+    derived_floorplan_relpath = (
+        str(walkable_scene.get("derived_floorplan_relpath") or "").strip()
+        if isinstance(walkable_scene, Mapping)
+        else ""
+    )
+    derived_floorplan_url = str(spec.get("derived_floorplan_url") or "")
+    derived_floorplan_binding = material_by_relpath.get(derived_floorplan_relpath)
+    if derived_floorplan_relpath and derived_floorplan_binding and derived_floorplan_url:
+        expected[urllib.parse.urljoin(f"{tested_origin}/", derived_floorplan_url)] = (
+            derived_floorplan_binding
+        )
     return expected
 
 
@@ -1761,6 +1787,20 @@ def _verify_and_capture_desktop(
         map_toggle.click()
         if map_toggle.get_attribute("aria-pressed") != "true":
             raise MaterializationError("desktop_map_open_failed")
+        derived_toggle = page.locator("#floorplan-kind-toggle")
+        if derived_toggle.is_visible():
+            derived_toggle.click()
+            page.wait_for_function(
+                "() => document.querySelector('#floorplan-image')?.alt?.toLowerCase().includes('derived')",
+                timeout=timeout_ms,
+            )
+            if "show source" not in str(derived_toggle.inner_text()).lower():
+                raise MaterializationError("desktop_derived_floorplan_toggle_failed")
+            derived_toggle.click()
+            page.wait_for_function(
+                "() => document.querySelector('#floorplan-image')?.alt?.toLowerCase().includes('original')",
+                timeout=timeout_ms,
+            )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(output_path), full_page=False, animations="disabled")

@@ -1182,6 +1182,7 @@ def public_tour_collect_asset_refs(payload: dict[str, object]) -> set[str]:
     walkable_scene = payload.get("walkable_scene")
     if isinstance(walkable_scene, dict):
         _add(walkable_scene.get("floorplan_relpath"), privacy_class="public", role="floorplan")
+        _add(walkable_scene.get("derived_floorplan_relpath"), privacy_class="public", role="derived_floorplan")
         walkable_scenes = walkable_scene.get("scenes")
         if isinstance(walkable_scenes, dict):
             scene_rows.extend(scene for scene in walkable_scenes.values() if isinstance(scene, dict))
@@ -1302,6 +1303,7 @@ def public_tour_asset_metadata(payload: dict[str, object]) -> dict[str, dict[str
     walkable_scene = payload.get("walkable_scene")
     if isinstance(walkable_scene, dict):
         _record(walkable_scene.get("floorplan_relpath"), privacy_class="public", role="floorplan")
+        _record(walkable_scene.get("derived_floorplan_relpath"), privacy_class="public", role="derived_floorplan")
         walkable_scenes = walkable_scene.get("scenes")
         if isinstance(walkable_scenes, dict):
             scene_rows.extend(scene for scene in walkable_scenes.values() if isinstance(scene, dict))
@@ -2018,7 +2020,11 @@ def redacted_public_tour_walkable_scene(
                 rendered_rooms.append(rendered_room)
         if (
             str(raw_spatial_model.get("source_basis") or "").strip().lower()
-            in {"floorplan_scaled_approximation", "floorplan_measured_dimensions"}
+            in {
+                "floorplan_scaled_approximation",
+                "floorplan_measured_dimensions",
+                "floorplan_analyzer_reviewed_dimensions",
+            }
             and raw_spatial_model.get("measured") in {False, True}
             and rendered_rooms
         ):
@@ -2027,6 +2033,9 @@ def redacted_public_tour_walkable_scene(
                 "measured": raw_spatial_model.get("measured") is True,
                 "rooms": rendered_rooms,
             }
+            analyzer_contract_name = str(raw_spatial_model.get("analyzer_contract_name") or "").strip()
+            if analyzer_contract_name:
+                rendered_walkable["spatial_model"]["analyzer_contract_name"] = analyzer_contract_name
     floorplan_relpath = public_tour_safe_asset_relpath(
         walkable_scene.get("floorplan_relpath")
     )
@@ -2035,6 +2044,14 @@ def redacted_public_tour_walkable_scene(
             rendered_walkable["floorplan_relpath"] = floorplan_relpath
         else:
             rendered_walkable["floorplan_url"] = _versioned_file_url(floorplan_relpath)
+    derived_floorplan_relpath = public_tour_safe_asset_relpath(
+        walkable_scene.get("derived_floorplan_relpath")
+    )
+    if derived_floorplan_relpath and derived_floorplan_relpath in allowed_assets:
+        if expose_asset_relpaths:
+            rendered_walkable["derived_floorplan_relpath"] = derived_floorplan_relpath
+        else:
+            rendered_walkable["derived_floorplan_url"] = _versioned_file_url(derived_floorplan_relpath)
     return rendered_walkable
 
 

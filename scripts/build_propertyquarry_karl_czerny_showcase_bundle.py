@@ -12,16 +12,39 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+try:
+    from scripts.propertyquarry_floorplan_analyzer import (
+        ANALYZER_CONTRACT,
+        FloorplanAnalysisError,
+        analyze_floorplan,
+        compare_constructed_floorplan,
+        render_derived_floorplan,
+    )
+except ModuleNotFoundError:  # direct ``python scripts/...`` invocation
+    from propertyquarry_floorplan_analyzer import (  # type: ignore[no-redef]
+        ANALYZER_CONTRACT,
+        FloorplanAnalysisError,
+        analyze_floorplan,
+        compare_constructed_floorplan,
+        render_derived_floorplan,
+    )
+
 
 SLUG = "karl-czerny-gasse-2-urban-jungle"
+ANALYSIS_SPEC_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "config"
+    / "propertyquarry"
+    / "karl-czerny-gasse-2-floorplan-analysis.v2.json"
+)
 PROPERTY_URL = (
     "https://propertyquarry.com/app/research/"
     "karl-czerny-gasse-2-private-showcase"
 )
 DISCLOSURE = (
-    "AI-reconstructed from an operator-provided architectural floorplan with "
-    "room dimensions taken from its dimension lines; not a captured 360 or "
-    "measured survey."
+    "AI-reconstructed from a reviewed architectural floorplan analysis with "
+    "source-linked room dimensions and a derived-plan round-trip check; not a "
+    "captured 360 or measured survey."
 )
 SCENES = (
     ("hall", "Entrance vestibule · 18.80 m²", 52.0, 81.5),
@@ -336,11 +359,32 @@ def build(args: argparse.Namespace) -> Path:
 
     (bundle / "panoramas").mkdir(parents=True)
     (bundle / "proof").mkdir()
+    try:
+        analysis_spec = json.loads(ANALYSIS_SPEC_PATH.read_text(encoding="utf-8"))
+        floorplan_analysis = analyze_floorplan(
+            floorplan_source,
+            specification=analysis_spec,
+            output_dir=bundle / "proof" / "floorplan-analysis",
+        )
+    except (OSError, json.JSONDecodeError, FloorplanAnalysisError) as exc:
+        raise RuntimeError(f"floorplan_analysis_failed:{exc}") from exc
     _save_floorplan(floorplan_source, bundle / "floorplan.webp")
     _save_floorplan_fidelity_overlay(
         bundle / "floorplan.webp",
         bundle / "proof" / "floorplan-fidelity-overlay.png",
     )
+    derived_floorplan = render_derived_floorplan(
+        floorplan_analysis,
+        bundle / "derived-floorplan.png",
+        source_size=Image.open(bundle / "floorplan.webp").size,
+    )
+    with Image.open(bundle / "floorplan.webp") as source_plan, Image.open(bundle / "derived-floorplan.png") as derived_plan:
+        roundtrip_overlay_path = bundle / "proof" / "floorplan-roundtrip-overlay.png"
+        Image.blend(source_plan.convert("RGB"), derived_plan.convert("RGB"), 0.5).save(
+            roundtrip_overlay_path,
+            format="PNG",
+            optimize=True,
+        )
     shutil.copyfile(diorama_source, bundle / "diorama-preview.png")
 
     raw_asset_hashes: dict[str, str] = {}
@@ -354,63 +398,74 @@ def build(args: argparse.Namespace) -> Path:
 
     property_url_sha256 = hashlib.sha256(PROPERTY_URL.encode("utf-8")).hexdigest()
     floorplan_sha256 = _sha256(bundle / "floorplan.webp")
-    spatial_rooms = [
-        {
-            "depth": round(float(MEASURED_ROOM_GEOMETRY[room_id]["depth"]), 6),
-            "floorplan_bounds_pct": {
-                "height": height_pct,
-                "width": width_pct,
-                "x": x_pct,
-                "y": y_pct,
-            },
-            "height": 2.7,
-            "id": room_id,
-            "kind": kind,
-            "label": label,
-            "measurement": {
-                "contract_name": "propertyquarry.floorplan_measurement.v1",
-                "source": "operator_floorplan_dimension_lines",
-                "area_m2": float(MEASURED_ROOM_GEOMETRY[room_id]["area_m2"]),
-                "components": [
-                    {
-                        "x": round(float(component.get("x", MEASURED_ROOM_GEOMETRY[room_id]["x"])), 6),
-                        "z": round(float(component.get("z", MEASURED_ROOM_GEOMETRY[room_id]["z"])), 6),
-                        "width": round(float(component.get("width", MEASURED_ROOM_GEOMETRY[room_id]["width"])), 6),
-                        "depth": round(float(component.get("depth", MEASURED_ROOM_GEOMETRY[room_id]["depth"])), 6),
-                    }
-                    for component in MEASURED_ROOM_GEOMETRY[room_id].get(
-                        "components",
-                        (MEASURED_ROOM_GEOMETRY[room_id],),
-                    )
-                ],
-            },
-            **({"scene_id": scene_id} if scene_id else {}),
-            "dimension_label": str(MEASURED_ROOM_GEOMETRY[room_id]["dimension_label"]),
-            "width": round(float(MEASURED_ROOM_GEOMETRY[room_id]["width"]), 6),
-            "x": round(float(MEASURED_ROOM_GEOMETRY[room_id]["x"]), 6),
-            "z": round(float(MEASURED_ROOM_GEOMETRY[room_id]["z"]), 6),
-        }
-        for (
-            room_id,
-            label,
-            scene_id,
-            kind,
-            x_pct,
-            y_pct,
-            width_pct,
-            height_pct,
-        ) in SPATIAL_ROOMS
-    ]
+    spatial_rooms = []
+    for room in list(floorplan_analysis.get("rooms") or []):
+        components = [dict(component) for component in list(room.get("components") or [])]
+        min_x = min(float(component["x"]) for component in components)
+        min_z = min(float(component["z"]) for component in components)
+        max_x = max(float(component["x"]) + float(component["width"]) for component in components)
+        max_z = max(float(component["z"]) + float(component["depth"]) for component in components)
+        bounds = dict(room.get("floorplan_bounds_pct") or {})
+        spatial_rooms.append(
+            {
+                "depth": round(max_z - min_z, 6),
+                "floorplan_bounds_pct": bounds,
+                "height": 2.7,
+                "id": str(room["id"]),
+                "kind": str(room["kind"]),
+                "label": str(room["label"]),
+                "measurement": {
+                    "contract_name": "propertyquarry.floorplan_measurement.v1",
+                    "source": "floorplan_analyzer_reviewed_dimension_evidence",
+                    "area_m2": float(room["area_m2"]),
+                    "components": components,
+                    "dimension_evidence": list(room.get("dimension_evidence") or []),
+                    "confidence": float(room.get("confidence") or 0.0),
+                },
+                **({"scene_id": str(room["scene_id"])} if str(room.get("scene_id") or "") else {}),
+                "dimension_label": str(room["dimension_label"]),
+                "width": round(max_x - min_x, 6),
+                "x": round(min_x, 6),
+                "z": round(min_z, 6),
+            }
+        )
+    round_trip = compare_constructed_floorplan(
+        floorplan_analysis,
+        derived=bundle / "derived-floorplan.png",
+        source=floorplan_source,
+        geometry={"rooms": spatial_rooms},
+        tolerance_m=float(floorplan_analysis.get("measurement_tolerance_m") or 0.05),
+    )
+    analysis_artifact = dict(floorplan_analysis)
+    analysis_artifact["derived_floorplan"] = derived_floorplan
+    analysis_artifact["round_trip_overlay"] = {
+        "relpath": "proof/floorplan-roundtrip-overlay.png",
+        "sha256": _sha256(bundle / "proof" / "floorplan-roundtrip-overlay.png"),
+    }
+    analysis_artifact["round_trip"] = round_trip
+    (bundle / "proof" / "floorplan-analysis.json").write_text(
+        json.dumps(analysis_artifact, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     layout_fidelity = {
         "contract_name": "propertyquarry.floorplan_spatial_fidelity.v1",
-        "doorway_edges": [list(edge) for edge in DOORWAY_EDGES],
+        "doorway_edges": [list(edge) for edge in list(floorplan_analysis.get("doorway_edges") or [])],
         "floorplan_sha256": floorplan_sha256,
+        "source_floorplan_sha256": str(dict(floorplan_analysis.get("source") or {}).get("sha256") or ""),
+        "analyzer_contract_name": ANALYZER_CONTRACT,
+        "analyzer_sha256": str(floorplan_analysis.get("analysis_sha256") or ""),
         "measurement_contract_name": "propertyquarry.floorplan_measurement.v1",
-        "measurement_source": "operator_floorplan_dimension_lines",
-        "measurement_tolerance_m": 0.03,
+        "measurement_source": "floorplan_analyzer_reviewed_dimension_evidence",
+        "measurement_tolerance_m": float(floorplan_analysis.get("measurement_tolerance_m") or 0.05),
+        "round_trip_contract_name": str(round_trip.get("contract_name") or ""),
+        "round_trip_receipt_sha256": str(round_trip.get("receipt_sha256") or ""),
+        "derived_floorplan_relpath": "derived-floorplan.png",
+        "derived_floorplan_sha256": str(derived_floorplan.get("sha256") or ""),
+        "round_trip_overlay_relpath": "proof/floorplan-roundtrip-overlay.png",
+        "round_trip_overlay_sha256": _sha256(bundle / "proof" / "floorplan-roundtrip-overlay.png"),
         "overlay_relpath": "proof/floorplan-fidelity-overlay.png",
         "overlay_sha256": _sha256(bundle / "proof" / "floorplan-fidelity-overlay.png"),
-        "review_method": "operator_floorplan_overlay",
+        "review_method": "floorplan_analyzer_round_trip",
         "review_status": "pass",
         "source_room_count": len(spatial_rooms),
     }
@@ -436,7 +491,10 @@ def build(args: argparse.Namespace) -> Path:
         "representation_disclosure": DISCLOSURE,
         "source_image_sha256": [raw_asset_hashes[scene_id] for scene_id, *_rest in SCENES],
         "floorplan_sha256": floorplan_sha256,
-        "spatial_model_basis": "floorplan_measured_dimensions",
+        "floorplan_analysis_sha256": str(floorplan_analysis.get("analysis_sha256") or ""),
+        "floorplan_round_trip_sha256": str(round_trip.get("receipt_sha256") or ""),
+        "derived_floorplan_sha256": str(derived_floorplan.get("sha256") or ""),
+        "spatial_model_basis": "floorplan_analyzer_reviewed_dimensions",
         "spatial_model_measured": True,
         "spatial_scene_ids": [scene_id for scene_id, *_rest in SCENES],
         "layout_fidelity_sha256": layout_fidelity_sha256,
@@ -476,6 +534,7 @@ def build(args: argparse.Namespace) -> Path:
         "control_mode": "ai_panorama_360",
         "creation_mode": "ai_image_reconstruction",
         "diorama_preview_relpath": "diorama-preview.png",
+        "derived_floorplan_relpath": "derived-floorplan.png",
         "display_title": "Karl-Czerny-Gasse 2 · Urban Jungle 360",
         "facts": {
             "photographic_panorama_nodes": len(SCENES),
@@ -509,15 +568,17 @@ def build(args: argparse.Namespace) -> Path:
             },
             "expected_scene_count": len(SCENES),
             "floorplan_relpath": "floorplan.webp",
+            "derived_floorplan_relpath": "derived-floorplan.png",
             "initial_scene_id": "hall",
             "representation_disclosure": DISCLOSURE,
             "representation_kind": "ai_reconstruction",
             "scenes": [_scene_payload(*scene) for scene in SCENES],
             "spatial_model": {
                 "layout_fidelity": layout_fidelity,
+                "analyzer_contract_name": ANALYZER_CONTRACT,
                 "measured": True,
                 "rooms": spatial_rooms,
-                "source_basis": "floorplan_measured_dimensions",
+                "source_basis": "floorplan_analyzer_reviewed_dimensions",
             },
         },
     }

@@ -114,11 +114,17 @@ _AI_PANORAMA_MEASURED_FLOORPLAN_CANONICAL_DISCLOSURE = (
     "room dimensions taken from its dimension lines; not a captured 360 or "
     "measured survey."
 )
+_AI_PANORAMA_ANALYZED_FLOORPLAN_CANONICAL_DISCLOSURE = (
+    "AI-reconstructed from a reviewed architectural floorplan analysis with "
+    "source-linked room dimensions and a derived-plan round-trip check; not a "
+    "captured 360 or measured survey."
+)
 _AI_PANORAMA_CANONICAL_DISCLOSURES = frozenset(
     {
         _AI_PANORAMA_CANONICAL_DISCLOSURE,
         _AI_PANORAMA_FLOORPLAN_CANONICAL_DISCLOSURE,
         _AI_PANORAMA_MEASURED_FLOORPLAN_CANONICAL_DISCLOSURE,
+        _AI_PANORAMA_ANALYZED_FLOORPLAN_CANONICAL_DISCLOSURE,
     }
 )
 
@@ -2459,7 +2465,10 @@ def _hosted_property_tour_ai_panorama_contract(
     spatial_model_basis = str(
         spatial_model.get("source_basis") or ""
     ).strip().lower()
-    measured_geometry = spatial_model_basis == "floorplan_measured_dimensions"
+    measured_geometry = spatial_model_basis in {
+        "floorplan_measured_dimensions",
+        "floorplan_analyzer_reviewed_dimensions",
+    }
     if measured_geometry:
         if spatial_model.get("measured") is not True:
             return _blocked("spatial_model_provenance_invalid")
@@ -2545,7 +2554,8 @@ def _hosted_property_tour_ai_panorama_contract(
         layout_fidelity.get("contract_name")
         != "propertyquarry.floorplan_spatial_fidelity.v1"
         or layout_fidelity.get("review_status") != "pass"
-        or layout_fidelity.get("review_method") != "operator_floorplan_overlay"
+        or layout_fidelity.get("review_method")
+        not in {"operator_floorplan_overlay", "floorplan_analyzer_round_trip"}
         or str(layout_fidelity.get("floorplan_sha256") or "").strip().lower()
         != floorplan_sha256
     ):
@@ -2560,9 +2570,32 @@ def _hosted_property_tour_ai_panorama_contract(
             layout_fidelity.get("measurement_contract_name")
             != "propertyquarry.floorplan_measurement.v1"
             or layout_fidelity.get("measurement_source")
-            != "operator_floorplan_dimension_lines"
+            not in {
+                "operator_floorplan_dimension_lines",
+                "floorplan_analyzer_reviewed_dimension_evidence",
+            }
         ):
             return _blocked("spatial_measurements_missing")
+        if layout_fidelity.get("review_method") == "floorplan_analyzer_round_trip":
+            if layout_fidelity.get("analyzer_contract_name") != "propertyquarry.floorplan_analysis.v2":
+                return _blocked("spatial_fidelity_analyzer_missing")
+            round_trip_contract = str(layout_fidelity.get("round_trip_contract_name") or "")
+            if round_trip_contract != "propertyquarry.floorplan_roundtrip.v1":
+                return _blocked("spatial_fidelity_round_trip_missing")
+            derived_relpath = _hosted_property_tour_public_asset_relpath(
+                layout_fidelity.get("derived_floorplan_relpath")
+            )
+            derived_sha256 = str(layout_fidelity.get("derived_floorplan_sha256") or "").strip().lower()
+            derived_path = _hosted_property_tour_asset_path(bundle_dir, derived_relpath)
+            if (
+                derived_path is None
+                or not digest_pattern.fullmatch(derived_sha256)
+                or _hosted_property_tour_file_sha256(derived_path) != derived_sha256
+            ):
+                return _blocked("spatial_fidelity_derived_floorplan_invalid")
+            round_trip_sha256 = str(layout_fidelity.get("round_trip_receipt_sha256") or "").strip().lower()
+            if not digest_pattern.fullmatch(round_trip_sha256):
+                return _blocked("spatial_fidelity_round_trip_invalid")
         try:
             measurement_tolerance = float(
                 layout_fidelity.get("measurement_tolerance_m", 0.03)
@@ -2638,7 +2671,10 @@ def _hosted_property_tour_ai_panorama_contract(
                 measurement.get("contract_name")
                 != "propertyquarry.floorplan_measurement.v1"
                 or measurement.get("source")
-                != "operator_floorplan_dimension_lines"
+                not in {
+                    "operator_floorplan_dimension_lines",
+                    "floorplan_analyzer_reviewed_dimension_evidence",
+                }
             ):
                 return _blocked("spatial_measurements_invalid")
             try:
