@@ -12210,10 +12210,10 @@ def _tour_control_panorama_html(
       .top-actions { display: flex; gap: 7px; pointer-events: auto; }
       .zoom-controls { position: fixed; z-index: 20; right: 12px; top: 50%; transform: translateY(-50%); display: grid; gap: 7px; }
       .zoom-controls .icon-button { font-size: 20px; font-weight: 600; line-height: 1; }
-      .scene-rail { position: fixed; z-index: 20; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(980px, calc(100vw - 28px)); display: flex; gap: 8px; overflow-x: auto; padding: 8px; scroll-padding-inline: 42%; scrollbar-width: none; }
+      .scene-rail { position: fixed; z-index: 20; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(980px, calc(100vw - 28px)); display: flex; gap: 8px; overflow-x: auto; padding: 8px; scroll-padding-inline: 42%; scroll-snap-type: x proximity; overscroll-behavior-inline: contain; scrollbar-width: none; }
       .scene-rail[hidden] { display: none; }
       .scene-rail::-webkit-scrollbar { display: none; }
-      .scene-button { flex: 0 0 auto; min-height: 42px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.09); color: white; border-radius: 10px; padding: 0 14px; cursor: pointer; font: inherit; }
+      .scene-button { flex: 0 0 auto; min-height: 42px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.09); color: white; border-radius: 10px; padding: 0 14px; cursor: pointer; font: inherit; scroll-snap-align: center; }
       .scene-button.active { color: #10151a; background: #fff; border-color: #fff; }
       .hotspot-layer { position: fixed; inset: 0; z-index: 12; pointer-events: none; overflow: hidden; --pq-safe-top: env(safe-area-inset-top, 0px); --pq-safe-right: env(safe-area-inset-right, 0px); --pq-safe-bottom: env(safe-area-inset-bottom, 0px); --pq-safe-left: env(safe-area-inset-left, 0px); }
       .hotspot { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; max-width: calc(100vw - var(--pq-safe-left) - var(--pq-safe-right) - 20px); overflow: hidden; border: 0; color: #111820; background: #fff; min-height: 38px; border-radius: 999px; padding: 0 14px 0 11px; font: 700 12px/1 Inter,system-ui,sans-serif; box-shadow: 0 9px 30px rgba(0,0,0,.38); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; }
@@ -12238,12 +12238,13 @@ def _tour_control_panorama_html(
       .status { position: fixed; z-index: 25; left: 50%; top: 50%; transform: translate(-50%,-50%); padding: 12px 16px; font-size: 13px; pointer-events: none; }
       .status[hidden] { display: none; }
       .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+      :is(.icon-button, .scene-button, .hotspot, .floorplan-toolbar button, .floorplan-pin, .dollhouse-node):focus-visible { outline: 2px solid #ee6b45; outline-offset: 3px; }
       @media (max-width: 720px) {
         .floorplan { width: min(220px, 52vw); bottom: 74px; }
         .topbar { gap: 7px; }
         .identity { padding: 9px 10px; max-width: calc(100vw - 142px); }
         .identity strong { font-size: 13px; }
-        .identity span { max-width: 58vw; font-size: 10px; line-height: 1.25; }
+        .identity span { max-width: 58vw; font-size: 10px; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
         .icon-button { min-width: 40px; min-height: 40px; padding: 0 8px; font-size: 11px; }
         .top-actions { gap: 5px; }
         .zoom-controls { right: 9px; }
@@ -12258,7 +12259,7 @@ def _tour_control_panorama_html(
     <div class="hotspot-layer" id="hotspots" aria-label="Navigation hotspots"></div>
     <div class="dollhouse-layer" id="dollhouse-nodes" aria-label="Dollhouse room navigation" hidden></div>
     <header class="topbar">
-      <div class="identity glass"><strong id="scene-title">__PQ_TITLE__</strong><span>__PQ_PROVIDER____PQ_DISCLOSURE__</span></div>
+      <div class="identity glass"><strong id="scene-title">__PQ_TITLE__</strong><span title="__PQ_PROVIDER____PQ_DISCLOSURE__">__PQ_PROVIDER____PQ_DISCLOSURE__</span></div>
       <div class="top-actions"><button class="icon-button" id="dollhouse-toggle" type="button" aria-label="Open 3D dollhouse" aria-pressed="false">Dollhouse</button><button class="icon-button" id="map-toggle" type="button" aria-label="Open floor plan" aria-pressed="false">Map</button><button class="icon-button" id="fullscreen" type="button" aria-label="Enter full screen">⛶</button></div>
     </header>
     <div class="zoom-controls" aria-label="View zoom controls"><button class="icon-button" id="zoom-in" type="button" aria-label="Zoom in">+</button><button class="icon-button" id="zoom-out" type="button" aria-label="Zoom out">−</button></div>
