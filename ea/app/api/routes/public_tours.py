@@ -12362,7 +12362,7 @@ def _tour_control_panorama_html(
       // dollhouse perspective, but the first frame must be directly
       // comparable with the source plan rather than a foreshortened sketch.
       let dollhouseAzimuth = 0;
-      let dollhouseElevation = 1.46;
+      let dollhouseElevation = 1.52;
       let dollhouseDistance = 17;
       let dollhouseDefaultDistance = 17;
       let dragging = false;
@@ -12518,7 +12518,10 @@ def _tour_control_panorama_html(
             transparent: true,
             opacity: room.kind === 'exterior' ? .66 : .78,
           });
-          const wallHeight = room.kind === 'exterior' ? .22 : Math.max(.58, Math.min(1.42, room.height * .4));
+          // Keep walls as a thin architectural cutaway so the measured
+          // footprint remains legible against the source plan in the default
+          // top view. Orbiting still reveals the full room volume.
+          const wallHeight = room.kind === 'exterior' ? .16 : Math.max(.32, Math.min(.72, room.height * .24));
           const openingFor = match => match ? { center: match.start + match.span / 2, width: Math.min(.92, match.span * .58) } : null;
           const roomFloors = [];
           for (const component of room.components) {
@@ -12569,10 +12572,11 @@ def _tour_control_panorama_html(
         );
         dollhouseCamera.lookAt(dollhouseCenter);
         viewer.dataset.dollhouseDistance = dollhouseDistance.toFixed(2);
+        viewer.dataset.dollhouseElevation = dollhouseElevation.toFixed(2);
       }
       function resetDollhouseView(announce = true) {
         dollhouseAzimuth = 0;
-        dollhouseElevation = 1.46;
+        dollhouseElevation = 1.52;
         dollhouseDistance = dollhouseDefaultDistance;
         updateDollhouseCamera();
         if (announce) announcer.textContent = 'Plan-aligned dollhouse view restored';
