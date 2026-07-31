@@ -12094,6 +12094,12 @@ def _tour_control_panorama_spec(
                             or f"Space {index + 1}"
                         ).strip()[:80],
                         "scene_id": scene_id,
+                        "shape": (
+                            str(raw_room.get("shape") or "rectangle").strip().lower()
+                            if str(raw_room.get("shape") or "rectangle").strip().lower()
+                            in {"rectangle", "composite"}
+                            else "rectangle"
+                        ),
                         "x": _number(
                             raw_room.get("x"),
                             default=0.0,
@@ -12167,6 +12173,23 @@ def _tour_control_panorama_spec(
             analyzer_contract_name = str(raw_spatial_model.get("analyzer_contract_name") or "").strip()
             if analyzer_contract_name:
                 spatial_model["analyzer_contract_name"] = analyzer_contract_name
+            raw_boundary_adjacency = raw_spatial_model.get("layout_fidelity", {}).get("boundary_adjacency") if isinstance(raw_spatial_model.get("layout_fidelity"), dict) else raw_spatial_model.get("boundary_adjacency")
+            if isinstance(raw_boundary_adjacency, dict):
+                normalized_boundary_adjacency = {}
+                for key in ("required", "forbidden"):
+                    rows = raw_boundary_adjacency.get(key)
+                    if not isinstance(rows, list):
+                        continue
+                    normalized_boundary_rows = []
+                    for row in rows:
+                        if isinstance(row, list) and len(row) == 2:
+                            normalized_boundary_rows.append([
+                                str(row[0]).strip()[:80],
+                                str(row[1]).strip()[:80],
+                            ])
+                    normalized_boundary_adjacency[key] = normalized_boundary_rows
+                if normalized_boundary_adjacency:
+                    spatial_model["boundary_adjacency"] = normalized_boundary_adjacency
     return {
         "scenes": [row[0] for row in normalized_rows],
         "initial_scene_id": str(walkable_scene.get("initial_scene_id") or normalized_rows[0][0]["id"]),

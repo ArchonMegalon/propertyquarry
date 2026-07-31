@@ -113,101 +113,48 @@ HOTSPOTS = {
         ),
     ),
 }
-# Bounds are percentages of the exact published floorplan image and are kept
-# for the source pins/overlay.  The 3D model itself is built from the measured
-# metre geometry below, never from a pixel-percentage scale.
-SPATIAL_ROOMS = (
-    ("terrace", "Terrace · 7.78 m²", "terrace", "exterior", 19.7, 35.0, 9.2, 42.0),
-    ("primary-bedroom", "Bedroom · 16.86 m²", "bedroom-primary", "interior", 28.9, 34.8, 15.4, 42.1),
-    ("separate-wc", "Separate WC · 1.36 m²", "wc", "interior", 43.1, 34.8, 8.9, 14.3),
-    ("bathroom", "Bathroom · 4.96 m²", "bath", "interior", 52.1, 34.7, 10.0, 14.4),
-    ("circulation-hall", "Internal hall · 3.50 m²", "", "unavailable", 62.0, 39.3, 8.0, 9.8),
-    ("guest-bedroom", "Bedroom · 15.24 m²", "bedroom-guest", "interior", 70.0, 34.7, 14.2, 14.4),
-    ("living-kitchen", "Wohnküche · 30.33 m²", "living-kitchen", "interior", 44.3, 49.1, 39.9, 27.9),
-    ("entrance-vestibule", "Entrance vestibule · 18.80 m²", "hall", "interior", 44.3, 77.0, 15.1, 9.3),
+# The reviewed JSON is the only geometry source.  These compatibility views
+# are derived from it for tests and the floorplan overlay; the builder never
+# maintains a second set of coordinates or silently reshapes an exterior room.
+_ANALYSIS_SPEC = json.loads(ANALYSIS_SPEC_PATH.read_text(encoding="utf-8"))
+_ANALYSIS_ROOMS = tuple(
+    room for room in list(_ANALYSIS_SPEC.get("rooms") or []) if isinstance(room, dict)
 )
-DOORWAY_EDGES = (
-    ("terrace", "primary-bedroom"),
-    ("primary-bedroom", "living-kitchen"),
-    ("separate-wc", "living-kitchen"),
-    ("bathroom", "circulation-hall"),
-    ("circulation-hall", "living-kitchen"),
-    ("circulation-hall", "guest-bedroom"),
-    ("living-kitchen", "entrance-vestibule"),
+SPATIAL_ROOMS = tuple(
+    (
+        str(room["id"]),
+        str(room["label"]),
+        str(room.get("scene_id") or ""),
+        str(room["kind"]),
+        float(dict(room["floorplan_bounds_pct"])["x"]),
+        float(dict(room["floorplan_bounds_pct"])["y"]),
+        float(dict(room["floorplan_bounds_pct"])["width"]),
+        float(dict(room["floorplan_bounds_pct"])["height"]),
+    )
+    for room in _ANALYSIS_ROOMS
 )
-# The floorplan is the dimensional source of truth.  Coordinates below are a
-# coherent metre-space arrangement used by the dollhouse; each room's measured
-# footprint is checked independently against the labelled area on the plan.
-MEASURED_ROOM_GEOMETRY = {
-    "terrace": {
-        "x": 0.0,
-        "z": 0.0,
-        "width": 1.47,
-        "depth": 7.78 / 1.47,
-        "area_m2": 7.78,
-        "dimension_label": "1.47 × 5.29 m",
-    },
-    "primary-bedroom": {
-        "x": 1.47,
-        "z": 0.0,
-        "width": 2.865,
-        "depth": 16.86 / 2.865,
-        "area_m2": 16.86,
-        "dimension_label": "2.87 × 5.88 m",
-    },
-    "separate-wc": {
-        "x": 4.335,
-        "z": 0.0,
-        "width": 1.0,
-        "depth": 1.36,
-        "area_m2": 1.36,
-        "dimension_label": "1.00 × 1.36 m",
-    },
-    "bathroom": {
-        "x": 10.555,
-        "z": 0.0,
-        "width": 2.4,
-        "depth": 4.96 / 2.4,
-        "area_m2": 4.96,
-        "dimension_label": "2.40 × 2.07 m",
-    },
-    "circulation-hall": {
-        "x": 10.555,
-        "z": 2.0666667,
-        "width": 1.8,
-        "depth": 3.50 / 1.8,
-        "area_m2": 3.50,
-        "dimension_label": "1.80 × 1.94 m",
-    },
-    "guest-bedroom": {
-        "x": 12.355,
-        "z": 2.0666667,
-        "width": 4.6,
-        "depth": 15.24 / 4.6,
-        "area_m2": 15.24,
-        "dimension_label": "4.60 × 3.31 m",
-    },
-    "living-kitchen": {
-        "x": 4.335,
-        "z": 1.36,
-        "width": 6.22,
-        "depth": 30.33 / 6.22,
-        "area_m2": 30.33,
-        "dimension_label": "6.22 × 4.88 m",
-    },
-    "entrance-vestibule": {
-        "x": 4.335,
-        "z": 6.2362058,
-        "width": 4.28,
-        "depth": 2.13 + (18.80 - (4.28 * 2.13)) / 1.86,
-        "area_m2": 18.80,
-        "dimension_label": "18.80 m² · L-shaped",
-        "components": (
-            {"x": 4.335, "z": 6.2362058, "width": 4.28, "depth": 2.13},
-            {"x": 4.335, "z": 8.3662058, "width": 1.86, "depth": (18.80 - (4.28 * 2.13)) / 1.86},
-        ),
-    },
-}
+DOORWAY_EDGES = tuple(
+    tuple(edge)
+    for edge in list(_ANALYSIS_SPEC.get("doorway_edges") or [])
+    if isinstance(edge, (list, tuple)) and len(edge) == 2
+)
+MEASURED_ROOM_GEOMETRY = {}
+for _room in _ANALYSIS_ROOMS:
+    _components = tuple(dict(component) for component in list(_room["components"]))
+    _min_x = min(float(component["x"]) for component in _components)
+    _min_z = min(float(component["z"]) for component in _components)
+    _max_x = max(float(component["x"]) + float(component["width"]) for component in _components)
+    _max_z = max(float(component["z"]) + float(component["depth"]) for component in _components)
+    MEASURED_ROOM_GEOMETRY[str(_room["id"])] = {
+        "x": _min_x,
+        "z": _min_z,
+        "width": _max_x - _min_x,
+        "depth": _max_z - _min_z,
+        "area_m2": float(_room["area_m2"]),
+        "dimension_label": str(_room["dimension_label"]),
+        "shape": str(_room.get("shape") or "rectangle"),
+        "components": _components,
+    }
 WALKTHROUGH_CHAPTERS = (
     ("Entrance hall", 0.0),
     ("Primary bedroom", 5.0),
@@ -424,6 +371,7 @@ def build(args: argparse.Namespace) -> Path:
                 "id": str(room["id"]),
                 "kind": str(room["kind"]),
                 "label": str(room["label"]),
+                "shape": str(room.get("shape") or "rectangle"),
                 "measurement": {
                     "contract_name": "propertyquarry.floorplan_measurement.v1",
                     "source": "floorplan_analyzer_reviewed_dimension_evidence",
@@ -459,6 +407,7 @@ def build(args: argparse.Namespace) -> Path:
     )
     layout_fidelity = {
         "contract_name": "propertyquarry.floorplan_spatial_fidelity.v1",
+        "boundary_adjacency": dict(floorplan_analysis.get("boundary_adjacency") or {}),
         "doorway_edges": [list(edge) for edge in list(floorplan_analysis.get("doorway_edges") or [])],
         "floorplan_sha256": floorplan_sha256,
         "source_floorplan_sha256": str(dict(floorplan_analysis.get("source") or {}).get("sha256") or ""),
@@ -527,10 +476,10 @@ def build(args: argparse.Namespace) -> Path:
         "source_scope": {
             "supported_space": (
                 "Wohnküche, both bedrooms, entrance vestibule, internal hall, "
-                "separate WC, bathroom, and terrace as an exterior room"
+                "separate WC, bathroom, terrace, and the balcony/loggia as exterior rooms"
             ),
             "unsupported_rooms_omitted": False,
-            "panorama_unavailable_space_ids": ["circulation-hall"],
+            "panorama_unavailable_space_ids": ["circulation-hall", "balcony-loggia"],
             "source_photo_count": 0,
             "source_floorplan_count": 1,
             "generated_panorama_count": len(SCENES),

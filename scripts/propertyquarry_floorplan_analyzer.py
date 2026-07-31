@@ -112,6 +112,64 @@ def _dimension_evidence(raw: object, *, room_id: str) -> list[dict[str, object]]
     return result
 
 
+def _boundary_pairs(
+    raw: object,
+    *,
+    room_ids: set[str],
+    field: str,
+) -> list[list[str]]:
+    """Normalize explicit room-boundary constraints from the reviewed plan."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise FloorplanAnalysisError(f"floorplan_{field}_invalid")
+    result: list[list[str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise FloorplanAnalysisError(f"floorplan_{field}_invalid")
+        left, right = (str(item[0]).strip(), str(item[1]).strip())
+        if left not in room_ids or right not in room_ids or left == right:
+            raise FloorplanAnalysisError(f"floorplan_{field}_invalid")
+        pair = tuple(sorted((left, right)))
+        if pair in seen:
+            raise FloorplanAnalysisError(f"floorplan_{field}_invalid")
+        seen.add(pair)
+        result.append(list(pair))
+    return result
+
+
+def _rectangles_share_boundary(
+    left: list[dict[str, float]],
+    right: list[dict[str, float]],
+    *,
+    tolerance: float = 0.06,
+    minimum_overlap: float = 0.45,
+) -> bool:
+    """Return whether two room footprints touch along a meaningful wall edge."""
+    for a in left:
+        for b in right:
+            horizontal = (
+                abs(a["z"] + a["depth"] - b["z"]) <= tolerance
+                or abs(b["z"] + b["depth"] - a["z"]) <= tolerance
+            ) and max(
+                0.0,
+                min(a["x"] + a["width"], b["x"] + b["width"])
+                - max(a["x"], b["x"]),
+            ) >= minimum_overlap
+            vertical = (
+                abs(a["x"] + a["width"] - b["x"]) <= tolerance
+                or abs(b["x"] + b["width"] - a["x"]) <= tolerance
+            ) and max(
+                0.0,
+                min(a["z"] + a["depth"], b["z"] + b["depth"])
+                - max(a["z"], b["z"]),
+            ) >= minimum_overlap
+            if horizontal or vertical:
+                return True
+    return False
+
+
 def _normalise_source(source: Path) -> tuple[Image.Image, str, dict[str, int]]:
     if not source.is_file() or source.stat().st_size <= 0:
         raise FloorplanAnalysisError("floorplan_source_missing")
@@ -210,11 +268,17 @@ def analyze_floorplan(
         dimension_label = str(raw_room.get("dimension_label") or "").strip()
         if not dimension_label:
             raise FloorplanAnalysisError(f"floorplan_dimension_label_missing:{room_id}")
+        shape = str(raw_room.get("shape") or ("rectangle" if len(components) == 1 else "composite")).strip().lower()
+        if shape not in {"rectangle", "composite"}:
+            raise FloorplanAnalysisError(f"floorplan_room_shape_invalid:{room_id}")
+        if shape == "rectangle" and len(components) != 1:
+            raise FloorplanAnalysisError(f"floorplan_room_shape_mismatch:{room_id}")
         room = {
             "id": room_id,
             "label": label,
             "kind": kind,
             "scene_id": str(raw_room.get("scene_id") or "").strip(),
+            "shape": shape,
             "floorplan_bounds_pct": bounds,
             "area_m2": round(area_m2, 4),
             "dimension_label": dimension_label,
@@ -241,6 +305,42 @@ def analyze_floorplan(
         seen_edges.add(edge)
         edges.append(list(edge))
 
+    room_components_by_id = {
+        str(room["id"]): list(room["components"])
+        for room in rooms
+    }
+    boundary_adjacency_raw = specification.get("boundary_adjacency")
+    boundary_adjacency = {
+        "required": _boundary_pairs(
+            dict(boundary_adjacency_raw or {}).get("required")
+            if isinstance(boundary_adjacency_raw, dict)
+            else None,
+            room_ids=room_ids,
+            field="boundary_adjacency",
+        ),
+        "forbidden": _boundary_pairs(
+            dict(boundary_adjacency_raw or {}).get("forbidden")
+            if isinstance(boundary_adjacency_raw, dict)
+            else None,
+            room_ids=room_ids,
+            field="boundary_adjacency",
+        ),
+    }
+    for pair in boundary_adjacency["required"]:
+        if not _rectangles_share_boundary(
+            room_components_by_id[pair[0]], room_components_by_id[pair[1]]
+        ):
+            raise FloorplanAnalysisError(
+                f"floorplan_required_boundary_missing:{pair[0]}:{pair[1]}"
+            )
+    for pair in boundary_adjacency["forbidden"]:
+        if _rectangles_share_boundary(
+            room_components_by_id[pair[0]], room_components_by_id[pair[1]]
+        ):
+            raise FloorplanAnalysisError(
+                f"floorplan_forbidden_boundary_present:{pair[0]}:{pair[1]}"
+            )
+
     content_bbox = _content_bbox(image)
     analysis: dict[str, object] = {
         "contract_name": ANALYZER_CONTRACT,
@@ -253,6 +353,7 @@ def analyze_floorplan(
         },
         "rooms": rooms,
         "doorway_edges": edges,
+        "boundary_adjacency": boundary_adjacency,
         "room_count": len(rooms),
         "minimum_dimension_confidence": round(
             min(float(room["confidence"]) for room in rooms), 4

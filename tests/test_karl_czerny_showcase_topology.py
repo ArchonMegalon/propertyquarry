@@ -17,8 +17,10 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         frozenset(("circulation-hall", "living-kitchen")),
         frozenset(("circulation-hall", "guest-bedroom")),
         frozenset(("living-kitchen", "entrance-vestibule")),
+        frozenset(("balcony-loggia", "living-kitchen")),
     }
     assert frozenset(("bathroom", "living-kitchen")) not in doorway_edges
+    assert frozenset(("terrace", "living-kitchen")) not in doorway_edges
 
     room_by_scene_id = {
         scene_id: room_id
@@ -76,6 +78,15 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         if route[1] == "bath"
     )[3] == ("circulation-hall",)
 
+    source_rooms = {str(room["id"]): room for room in builder._ANALYSIS_ROOMS}
+    assert source_rooms["terrace"]["shape"] == "rectangle"
+    assert len(source_rooms["terrace"]["components"]) == 1
+    assert source_rooms["balcony-loggia"]["shape"] == "rectangle"
+    assert builder._ANALYSIS_SPEC["boundary_adjacency"] == {
+        "required": [["balcony-loggia", "living-kitchen"]],
+        "forbidden": [["living-kitchen", "terrace"], ["balcony-loggia", "terrace"]],
+    }
+
     measured_areas = {
         room_id: float(geometry["area_m2"])
         for room_id, geometry in builder.MEASURED_ROOM_GEOMETRY.items()
@@ -89,6 +100,7 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         "guest-bedroom": 15.24,
         "living-kitchen": 30.33,
         "entrance-vestibule": 18.80,
+        "balcony-loggia": 4.38,
     }
     for room_id, geometry in builder.MEASURED_ROOM_GEOMETRY.items():
         components = geometry.get("components", (geometry,))

@@ -8,6 +8,7 @@
       "label": "Terrace · 7.78 m²",
       "kind": "exterior",
       "scene_id": "terrace",
+      "shape": "rectangle",
       "floorplan_bounds_pct": {"x": 19.7, "y": 35.0, "width": 9.2, "height": 42.0},
       "area_m2": 7.78,
       "dimension_label": "1.47 × 5.29 m",
@@ -23,6 +24,7 @@
       "label": "Bedroom · 16.86 m²",
       "kind": "interior",
       "scene_id": "bedroom-primary",
+      "shape": "rectangle",
       "floorplan_bounds_pct": {"x": 28.9, "y": 34.8, "width": 15.4, "height": 42.1},
       "area_m2": 16.86,
       "dimension_label": "2.87 × 5.88 m",
@@ -38,6 +40,7 @@
       "label": "Separate WC · 1.36 m²",
       "kind": "interior",
       "scene_id": "wc",
+      "shape": "rectangle",
       "floorplan_bounds_pct": {"x": 43.1, "y": 34.8, "width": 8.9, "height": 14.3},
       "area_m2": 1.36,
       "dimension_label": "1.00 × 1.36 m",
@@ -53,6 +56,7 @@
       "label": "Bathroom · 4.96 m²",
       "kind": "interior",
       "scene_id": "bath",
+      "shape": "rectangle",
       "floorplan_bounds_pct": {"x": 52.1, "y": 34.7, "width": 10.0, "height": 14.4},
       "area_m2": 4.96,
       "dimension_label": "2.40 × 2.07 m",
@@ -68,6 +72,7 @@
       "label": "Internal hall · 3.50 m²",
       "kind": "unavailable",
       "scene_id": "",
+      "shape": "rectangle",
       "floorplan_bounds_pct": {"x": 62.0, "y": 39.3, "width": 8.0, "height": 9.8},
       "area_m2": 3.5,
       "dimension_label": "1.80 × 1.94 m",
@@ -83,6 +88,7 @@
       "label": "Bedroom · 15.24 m²",
       "kind": "interior",
       "scene_id": "bedroom-guest",
+      "shape": "rectangle",
       "floorplan_bounds_pct": {"x": 70.0, "y": 34.7, "width": 14.2, "height": 14.4},
       "area_m2": 15.24,
       "dimension_label": "4.60 × 3.31 m",
@@ -98,6 +104,7 @@
       "label": "Wohnküche · 30.33 m²",
       "kind": "interior",
       "scene_id": "living-kitchen",
+      "shape": "rectangle",
       "floorplan_bounds_pct": {"x": 44.3, "y": 49.1, "width": 39.9, "height": 27.9},
       "area_m2": 30.33,
       "dimension_label": "6.22 × 4.88 m",
@@ -113,6 +120,7 @@
       "label": "Entrance vestibule · 18.80 m²",
       "kind": "interior",
       "scene_id": "hall",
+      "shape": "composite",
       "floorplan_bounds_pct": {"x": 44.3, "y": 77.0, "width": 15.1, "height": 9.3},
       "area_m2": 18.8,
       "dimension_label": "18.80 m² · L-shaped",
@@ -125,6 +133,22 @@
         {"text": "VR 18.80 m²", "method": "operator_room_label", "confidence": 0.99},
         {"text": "L-shaped vestibule", "method": "operator_wall_trace", "confidence": 0.99}
       ]
+    },
+    {
+      "id": "balcony-loggia",
+      "label": "Balkon / Loggia · 4.38 m²",
+      "kind": "unavailable",
+      "scene_id": "",
+      "shape": "rectangle",
+      "floorplan_bounds_pct": {"x": 76.3, "y": 74.5, "width": 9.9, "height": 25.5},
+      "area_m2": 4.38,
+      "dimension_label": "1.80 × 2.43 m",
+      "measurement_tolerance_m": 0.05,
+      "components": [{"x": 8.755, "z": 6.236206, "width": 1.8, "depth": 2.433333}],
+      "dimension_evidence": [
+        {"text": "244", "method": "operator_dimension_line", "confidence": 0.99},
+        {"text": "Loggia 4.38 m²", "method": "operator_room_label", "confidence": 0.99}
+      ]
     }
   ],
   "doorway_edges": [
@@ -134,6 +158,11 @@
     ["bathroom", "circulation-hall"],
     ["circulation-hall", "living-kitchen"],
     ["circulation-hall", "guest-bedroom"],
-    ["entrance-vestibule", "living-kitchen"]
-  ]
+    ["entrance-vestibule", "living-kitchen"],
+    ["balcony-loggia", "living-kitchen"]
+  ],
+  "boundary_adjacency": {
+    "required": [["balcony-loggia", "living-kitchen"]],
+    "forbidden": [["living-kitchen", "terrace"], ["balcony-loggia", "terrace"]]
+  }
 }
