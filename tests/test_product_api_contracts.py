@@ -187,6 +187,7 @@ def test_property_runtime_images_package_tour_verifier_dependencies() -> None:
         "browseract_ui_media.py",
         "property_magicfit_delivery_contract.py",
         "property_magicfit_secure_io.py",
+        "property_tour_publication_gate.py",
         "property_tour_publication_lock.py",
         "property_scene_video_shared_env.py",
     ):
