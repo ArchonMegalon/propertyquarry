@@ -169,11 +169,17 @@ _PUBLIC_TOUR_DEFAULT_EXTERNAL_MEDIA_HOSTS = (
     "*.propertyquarry.com",
     "3dvista.com",
     "*.3dvista.com",
+    "crezlotours.com",
+    "*.crezlotours.com",
     "360.kalandra.at",
 )
 _PUBLIC_TOUR_PROVIDER_CSP_ORIGINS = (
     "https://3dvista.com",
     "https://*.3dvista.com",
+)
+_CREZLO_PUBLIC_CSP_ORIGINS = (
+    "https://crezlotours.com",
+    "https://*.crezlotours.com",
 )
 _MATTERPORT_PUBLIC_CSP_ORIGIN = "https://my.matterport.com"
 _MATTERPORT_PUBLICATION_PROOF_MAX_AGE = timedelta(days=30)
@@ -245,6 +251,10 @@ _PRIVATE_TOUR_RECEIPT_ALLOWED_KEYS = frozenset(
         "3dvista_export_root_relpath",
         "3dvista_url",
         "crezlo_public_url",
+        "crezlo_source_provenance",
+        "crezlo_browser_render_proof",
+        "crezlo_floorplan_geometry_receipt",
+        "crezlo_import",
         "matterport_model_publication",
         "matterport_url",
         "matterport_walkthrough",
@@ -3828,6 +3838,8 @@ def _public_tour_primary_control_path(payload: dict[str, object]) -> str:
     quoted_slug = urllib.parse.quote(slug, safe="")
     if _matterport_public_control_context(payload):
         return f"/tours/{quoted_slug}/control/matterport"
+    if _crezlo_hosted_tour_ready(payload, slug=slug):
+        return f"/tours/{quoted_slug}/control/crezlo"
     local_3dvista_entry = _public_tour_safe_asset_relpath(
         str(
             payload.get("three_d_vista_entry_relpath")
@@ -4423,6 +4435,7 @@ def _tour_html(
     nonce: str = "",
     validated_matterport_control_path: str = "",
     validated_3dvista_control_path: str = "",
+    validated_crezlo_control_path: str = "",
     walkthrough_acceptance: dict[str, object] | None = None,
 ) -> str:
     nonce_attr = html.escape(_public_tour_normalized_nonce(nonce) or _public_tour_csp_nonce(), quote=True)
@@ -4449,6 +4462,7 @@ def _tour_html(
     slug = str(payload.get("slug") or "").strip()
     matterport_url = ""
     three_d_vista_url = ""
+    crezlo_url = ""
     if slug:
         expected_matterport_control_path = (
             f"/tours/{urllib.parse.quote(slug, safe='')}/control/matterport"
@@ -4463,6 +4477,9 @@ def _tour_html(
             # was redacted. Carry only the same-origin control path, never the
             # private provenance or provider URL, into the rendered page.
             three_d_vista_url = expected_3dvista_control_path
+        expected_crezlo_control_path = f"/tours/{urllib.parse.quote(slug, safe='')}/control/crezlo"
+        if validated_crezlo_control_path == expected_crezlo_control_path:
+            crezlo_url = expected_crezlo_control_path
         three_d_vista_browser_ready = _3dvista_browser_render_proof_ready(payload)
         if not three_d_vista_url and three_d_vista_browser_ready:
             for key in ("three_d_vista_url", "threedvista_url", "3dvista_url", "source_virtual_tour_url", "crezlo_public_url"):
@@ -4810,6 +4827,7 @@ def _tour_html(
       <div class="actions">
         {f'<a href="{matterport_url}">Open 3D tour</a>' if matterport_url else ''}
         {f'<a href="{three_d_vista_url}">Open 3D tour</a>' if three_d_vista_url else ''}
+        {f'<a href="{crezlo_url}">Open Crezlo 3D tour</a>' if crezlo_url else ''}
         {f'<a href="{pano2vr_url}">Open 3D tour</a>' if pano2vr_url else ''}
       </div>
       {walkthrough_player}
@@ -5256,6 +5274,7 @@ def _tour_html(
     provider_action_links = [
         ("Open 3D tour", matterport_url, "ghost"),
         ("Open 3D tour", three_d_vista_url, "ghost"),
+        ("Open Crezlo 3D tour", crezlo_url, "ghost"),
         ("Open walkthrough", video_url, "ghost"),
     ]
     provider_actions_html = "".join(
@@ -5294,7 +5313,10 @@ def _tour_html(
         if live_360_url
         else ""
     )
-    if three_d_vista_url:
+    if crezlo_url:
+        primary_cta = "Open Crezlo 3D tour"
+        primary_cta_href = crezlo_url
+    elif three_d_vista_url:
         primary_cta = "Open 3D tour"
         primary_cta_href = three_d_vista_url
     elif live_360_url:
@@ -7990,6 +8012,7 @@ def _public_tour_security_headers(
     nonce: str = "",
     allow_jsdelivr: bool = False,
     allow_matterport: bool = False,
+    allow_crezlo: bool = False,
     runtime_profile: str = "document",
     script_hashes: tuple[str, ...] = (),
     style_hashes: tuple[str, ...] = (),
@@ -8008,6 +8031,7 @@ def _public_tour_security_headers(
         if self_only_runtime
         else (
             *_PUBLIC_TOUR_PROVIDER_CSP_ORIGINS,
+            *(_CREZLO_PUBLIC_CSP_ORIGINS if allow_crezlo else ()),
             *(
                 (_MATTERPORT_PUBLIC_CSP_ORIGIN,)
                 if allow_matterport
@@ -8096,6 +8120,7 @@ def _public_tour_control_security_headers(
     nonce: str,
     ai_panorama: bool = False,
     allow_matterport: bool = False,
+    allow_crezlo: bool = False,
 ) -> dict[str, str]:
     """Bind a freshly rendered control document to one strict CSP envelope."""
 
@@ -8103,6 +8128,7 @@ def _public_tour_control_security_headers(
         nonce=nonce,
         allow_jsdelivr=(not ai_panorama and "https://cdn.jsdelivr.net/" in html_body),
         allow_matterport=allow_matterport,
+        allow_crezlo=allow_crezlo,
         runtime_profile="ai_panorama" if ai_panorama else "document",
         script_hashes=_public_tour_inline_csp_hashes(html_body, tag_name="script"),
         style_hashes=_public_tour_inline_csp_hashes(html_body, tag_name="style"),
@@ -9198,6 +9224,8 @@ def _tour_control_html(
         raise HTTPException(status_code=410, detail="tour_control_legacy_viewer_removed")
     if forced_mode in {"matterport", "metaport"}:
         return _tour_control_public_matterport_html(payload, nonce=control_nonce)
+    if forced_mode == "crezlo":
+        return _tour_control_crezlo_html(payload, nonce=control_nonce)
     if forced_mode in {"3dvista", "3d_vista", "three_d_vista"}:
         return _tour_control_3dvista_html(payload, nonce=control_nonce)
     if forced_mode in {"pano2vr", "pano_2_vr", "krpano"}:
@@ -9207,6 +9235,8 @@ def _tour_control_html(
         raise HTTPException(status_code=410, detail="tour_control_legacy_viewer_removed")
     if control_mode in {"matterport", "metaport"}:
         return _tour_control_public_matterport_html(payload, nonce=control_nonce)
+    if control_mode == "crezlo":
+        return _tour_control_crezlo_html(payload, nonce=control_nonce)
     if control_mode in {"3dvista", "3d_vista", "three_d_vista"}:
         return _tour_control_3dvista_html(payload, nonce=control_nonce)
     if control_mode in {"pano2vr", "pano_2_vr"}:
@@ -9251,6 +9281,112 @@ def _safe_3dvista_external_url(value: object) -> str:
     if host != "3dvista.com" and not host.endswith(".3dvista.com"):
         return ""
     return normalized
+
+
+def _safe_crezlo_external_url(value: object) -> str:
+    """Allow only a Crezlo-hosted tour URL for a receipt-backed iframe."""
+
+    normalized = _public_tour_safe_http_url(value)
+    if not normalized:
+        return ""
+    parsed = urllib.parse.urlparse(normalized)
+    host = str(parsed.hostname or "").strip().lower().rstrip(".")
+    if host != "crezlotours.com" and not host.endswith(".crezlotours.com"):
+        return ""
+    if not parsed.path or parsed.path == "/":
+        return ""
+    return normalized
+
+
+def _crezlo_hosted_tour_ready(payload: dict[str, object], *, slug: str = "") -> bool:
+    """Verify the private, source-geometry-locked Crezlo receipt before routing."""
+
+    raw_url = payload.get("crezlo_public_url")
+    hosted_url = _safe_crezlo_external_url(raw_url)
+    if not hosted_url:
+        return False
+    provenance = payload.get("crezlo_source_provenance")
+    if not isinstance(provenance, dict):
+        return False
+    if str(provenance.get("schema") or "").strip() != "propertyquarry.crezlo_source_provenance.v1":
+        return False
+    if str(provenance.get("status") or "").strip().lower() != "pass":
+        return False
+    if str(provenance.get("provider") or "").strip().lower() != "crezlo":
+        return False
+    if slug and str(provenance.get("target_slug") or "").strip() != slug:
+        return False
+    if str(provenance.get("hosted_url") or "").strip() != hosted_url:
+        return False
+    if str(provenance.get("authorization_status") or "").strip().lower() != "approved":
+        return False
+    review = provenance.get("review")
+    if not isinstance(review, dict) or any(
+        str(review.get(key) or "").strip().lower() != "pass"
+        for key in ("property_match", "visual_match", "spatial_capture_match")
+    ):
+        return False
+    capture = provenance.get("capture")
+    if not isinstance(capture, dict):
+        return False
+    if str(capture.get("representation_kind") or "").strip().lower() not in {
+        "captured_360",
+        "provider_render",
+    }:
+        return False
+    try:
+        scene_count = int(capture.get("scene_count") or 0)
+        hotspot_count = int(capture.get("navigation_hotspot_count") or 0)
+        covered_space_count = int(capture.get("covered_space_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if scene_count < 3 or covered_space_count < 3 or hotspot_count < scene_count - 1:
+        return False
+    if capture.get("scene_graph_connected") is not True or capture.get("all_scenes_reachable") is not True:
+        return False
+    floorplan = provenance.get("floorplan")
+    if not isinstance(floorplan, dict):
+        return False
+    if str(floorplan.get("contract_name") or "").strip() != "propertyquarry.floorplan_analysis.v2":
+        return False
+    if str(floorplan.get("review_status") or "").strip().lower() not in {"approved", "reviewed"}:
+        return False
+    if floorplan.get("alignment_verified") is not True or floorplan.get("geometry_receipt_verified") is not True:
+        return False
+    if not re.fullmatch(r"[0-9a-f]{64}", str(floorplan.get("analysis_sha256") or "").strip().lower()):
+        return False
+    try:
+        if int(floorplan.get("source_room_count") or 0) < 1:
+            return False
+    except (TypeError, ValueError):
+        return False
+    portal_ids = floorplan.get("source_portal_ids")
+    if not isinstance(portal_ids, list) or not portal_ids:
+        return False
+    browser = payload.get("crezlo_browser_render_proof")
+    if not isinstance(browser, dict):
+        return False
+    if str(browser.get("status") or "").strip().lower() != "pass" or browser.get("rendered_viewer") is not True:
+        return False
+    try:
+        anonymous_http_status = int(browser.get("anonymous_http_status") or 0)
+    except (TypeError, ValueError):
+        return False
+    if anonymous_http_status != 200:
+        return False
+    if not all(
+        browser.get(key) is True
+        for key in (
+            "drag_look_verified",
+            "scene_navigation_verified",
+            "desktop_viewer_verified",
+            "mobile_viewer_verified",
+            "touch_look_verified",
+        )
+    ):
+        return False
+    browser_receipt_sha256 = str(browser.get("browser_receipt_sha256") or "").strip().lower().removeprefix("sha256:")
+    return bool(re.fullmatch(r"[0-9a-f]{64}", browser_receipt_sha256))
 
 
 def _safe_matterport_external_url(value: object) -> str:
@@ -11235,6 +11371,8 @@ def _public_tour_safe_frame_url(value: object) -> str:
             return local_url
         return ""
     return (
+        _safe_crezlo_external_url(normalized)
+        or
         _safe_3dvista_external_url(normalized)
         or _safe_matterport_external_url(normalized)
         or _safe_live_360_url(normalized)
@@ -11275,7 +11413,14 @@ def _tour_control_provider_layers(
         label = str(row.get("label") or row.get("title") or layer_id.replace("-", " ").title()).strip()
         disclosure = str(row.get("disclosure") or "").strip()
         src = ""
-        if provider in {"3dvista", "3d_vista", "three_d_vista"}:
+        if provider == "crezlo":
+            if not _crezlo_hosted_tour_ready(payload, slug=slug):
+                continue
+            src = _safe_crezlo_external_url(row.get("crezlo_public_url") or row.get("url") or row.get("iframe_src"))
+            if not src and bool(row.get("same_tour_layer")):
+                src = _safe_crezlo_external_url(payload.get("crezlo_public_url"))
+            disclosure = _public_tour_layer_disclosure(disclosure)
+        elif provider in {"3dvista", "3d_vista", "three_d_vista"}:
             provider_browser_ready = _3dvista_browser_render_proof_ready(row) or _3dvista_browser_render_proof_ready(payload)
             if not provider_browser_ready:
                 continue
@@ -11852,6 +11997,29 @@ def _tour_control_external_iframe_html(
     </script>
   </body>
 </html>"""
+
+
+def _tour_control_crezlo_html(payload: dict[str, object], *, nonce: str = "") -> str:
+    title = html.escape(str(payload.get("display_title") or payload.get("title") or "Crezlo 3D tour").strip())
+    raw_slug = str(payload.get("slug") or "").strip()
+    if not _crezlo_hosted_tour_ready(payload, slug=raw_slug):
+        raise HTTPException(status_code=404, detail="tour_control_crezlo_evidence_missing")
+    iframe_src = _safe_crezlo_external_url(payload.get("crezlo_public_url"))
+    if not iframe_src:
+        raise HTTPException(status_code=404, detail="tour_control_crezlo_url_missing")
+    return _tour_control_external_iframe_html(
+        title=title,
+        iframe_src=iframe_src,
+        badge="Crezlo 3D Tour",
+        payload=payload,
+        fullscreen_href=(
+            f"/tours/{urllib.parse.quote(raw_slug, safe='')}/control/crezlo?fullscreen=1"
+            if raw_slug
+            else iframe_src
+        ),
+        fullscreen=bool(payload.get("_tour_control_fullscreen")),
+        nonce=nonce,
+    )
 
 
 def _tour_control_3dvista_html(payload: dict[str, object], *, nonce: str = "") -> str:
@@ -13971,6 +14139,11 @@ def public_tour_page(
                 if primary_control_path.endswith("/control/3dvista")
                 else ""
             ),
+            validated_crezlo_control_path=(
+                primary_control_path
+                if primary_control_path.endswith("/control/crezlo")
+                else ""
+            ),
             walkthrough_acceptance=walkthrough_acceptance,
         )
         return HTMLResponse(
@@ -14081,7 +14254,7 @@ def public_tour_control(slug: str, request: Request) -> HTMLResponse:
     primary_control_path = _public_tour_primary_control_path(payload)
     if isinstance(payload.get("walkable_scene"), dict) and not primary_control_path:
         raise HTTPException(status_code=404, detail="tour_control_acceptance_missing")
-    if primary_control_path.endswith(("/control/3dvista", "/control/matterport")):
+    if primary_control_path.endswith(("/control/3dvista", "/control/matterport", "/control/crezlo")):
         # Provider routes retain only allowlisted private receipt fields long
         # enough to revalidate the target and topology evidence.
         rendered_payload = payload
@@ -14110,6 +14283,8 @@ def public_tour_control(slug: str, request: Request) -> HTMLResponse:
         viewer_mode=(
             "matterport"
             if primary_control_path.endswith("/control/matterport")
+            else "crezlo"
+            if primary_control_path.endswith("/control/crezlo")
             else "3dvista"
             if primary_control_path.endswith("/control/3dvista")
             else ""
@@ -14127,6 +14302,7 @@ def public_tour_control(slug: str, request: Request) -> HTMLResponse:
             allow_matterport=primary_control_path.endswith(
                 "/control/matterport"
             ),
+            allow_crezlo=primary_control_path.endswith("/control/crezlo"),
         ),
     )
 
@@ -14151,6 +14327,7 @@ def public_tour_control_viewer(slug: str, viewer_mode: str, request: Request) ->
         "3dvista",
         "3d_vista",
         "three_d_vista",
+        "crezlo",
         "matterport",
         "metaport",
     }:
@@ -14173,6 +14350,7 @@ def public_tour_control_viewer(slug: str, viewer_mode: str, request: Request) ->
                 ai_panorama=False,
                 allow_matterport=normalized_viewer_mode
                 in {"matterport", "metaport"},
+                allow_crezlo=normalized_viewer_mode == "crezlo",
             ),
         )
     rendered_payload = _redacted_public_tour_payload(

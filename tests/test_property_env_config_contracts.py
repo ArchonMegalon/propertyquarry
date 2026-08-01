@@ -100,6 +100,8 @@ def test_property_public_tour_scripts_default_to_property_state() -> None:
     crezlo_public = (ROOT / "scripts/publish_crezlo_public_tours.py").read_text(encoding="utf-8")
     crezlo_gate = (ROOT / "scripts/property_tour_publication_gate.py").read_text(encoding="utf-8")
     crezlo_worker = (ROOT / "scripts/crezlo_property_tour_worker.py").read_text(encoding="utf-8")
+    crezlo_import = (ROOT / "scripts/import_crezlo_hosted_tour.py").read_text(encoding="utf-8")
+    public_tours = (ROOT / "ea/app/api/routes/public_tours.py").read_text(encoding="utf-8")
 
     for body in (backfill, comparison, crezlo_publish, crezlo_public):
         assert "/docker/property/state/public_property_tours" in body
@@ -120,6 +122,10 @@ def test_property_public_tour_scripts_default_to_property_state() -> None:
     assert "require_verified_crezlo_publication" in crezlo_publish
     assert "require_verified_crezlo_publication" in crezlo_public
     assert "floorplan_layout_receipt_verified" in crezlo_gate
+    assert "propertyquarry.crezlo_source_provenance.v1" in crezlo_import
+    assert "control_mode\": \"crezlo\"" in crezlo_import
+    assert "_tour_control_crezlo_html" in public_tours
+    assert "allow_crezlo" in public_tours
 
 
 def test_property_release_gate_runs_repair_fleet_canary() -> None:
