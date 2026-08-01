@@ -40,10 +40,6 @@ ACCOUNT_AGENT_BODY = (
 )
 
 ACCOUNT_FREE_BODY = ACCOUNT_AGENT_BODY.replace("<h2>Agent</h2>", "<h2>Free</h2>")
-ACCOUNT_FREE_STANDARD_BODY = ACCOUNT_AGENT_BODY.replace(
-    "<h2>Agent</h2>",
-    "<h2>Free standard research</h2>",
-)
 
 BILLING_PORTAL_UNAVAILABLE_BODY = (
     "PropertyQuarry Billing portal unavailable. "
@@ -951,7 +947,7 @@ def test_live_authenticated_smoke_passes_free_customer_surfaces_when_free_is_exp
 
 def test_live_authenticated_smoke_recognizes_descriptive_free_plan_as_non_paid() -> None:
     bodies = {
-        "https://propertyquarry.com/app/account": ACCOUNT_FREE_STANDARD_BODY,
+        "https://propertyquarry.com/app/account": ACCOUNT_FREE_BODY,
         "https://propertyquarry.com/app/billing": BILLING_PORTAL_UNAVAILABLE_BODY,
         "https://propertyquarry.com/sign-in": SIGN_IN_BODY,
     }
@@ -965,6 +961,8 @@ def test_live_authenticated_smoke_recognizes_descriptive_free_plan_as_non_paid()
     )
 
     assert receipt["status"] == "pass"
+    account_row = next(row for row in receipt["checks"] if row["path"] == "/app/account")
+    assert any(check["name"] == "account_paid_plan" and check["ok"] is True for check in account_row["checks"])
     assert receipt["billing_readiness"]["paid_persona"] is False
     assert receipt["billing_readiness"]["required_for_paid_persona"] is False
 
