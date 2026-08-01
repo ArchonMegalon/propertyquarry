@@ -41649,6 +41649,9 @@ class ProductService:
                 "tour_media_mode": tour_media_mode,
             },
         }
+        floorplan_analysis_json = property_facts_json.get("floorplan_analysis_json")
+        if isinstance(floorplan_analysis_json, dict):
+            request_payload["floorplan_analysis_json"] = dict(floorplan_analysis_json)
         if source_virtual_tour_url:
             request_payload["source_virtual_tour_url"] = source_virtual_tour_url
         if panorama_source:
@@ -42663,6 +42666,9 @@ class ProductService:
             "is_private": False,
             "runtime_inputs_json": {"listing_id": listing_id, "variant_key": resolved_variant_key, "source": source_host, "tour_media_mode": tour_media_mode},
         }
+        floorplan_analysis_json = property_facts_json.get("floorplan_analysis_json")
+        if isinstance(floorplan_analysis_json, dict):
+            request_payload["floorplan_analysis_json"] = dict(floorplan_analysis_json)
         if source_virtual_tour_url:
             request_payload["source_virtual_tour_url"] = source_virtual_tour_url
         if panorama_source:

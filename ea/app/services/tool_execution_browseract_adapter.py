@@ -814,7 +814,7 @@ class BrowserActToolAdapter:
                 2,
             )
 
-        return {
+        packet = {
             "usage_history_count": usage_history_count,
             "latest_usage_at": latest_usage_at,
             "earliest_usage_at": earliest_usage_at,
@@ -2541,7 +2541,7 @@ class BrowserActToolAdapter:
             text = str(candidate or "").strip()
             if text and text not in workspace_label_candidates:
                 workspace_label_candidates.append(text)
-        return {
+        packet = {
             "login_email": cls._crezlo_login_email(payload, binding_metadata=binding_metadata),
             "login_password": cls._crezlo_login_password(payload, binding_metadata=binding_metadata),
             "tour_title": str(requested_inputs.get("tour_title") or payload.get("tour_title") or "").strip(),
@@ -2558,6 +2558,13 @@ class BrowserActToolAdapter:
             "scene_selection_json": dict(payload.get("scene_selection_json") or {}),
             "timeout_seconds": timeout_seconds,
         }
+        layout_contract = cls._crezlo_json_dict(
+            requested_inputs.get("floorplan_analysis_json")
+            or requested_inputs.get("source_geometry_json")
+        )
+        if layout_contract:
+            packet["floorplan_analysis_json"] = layout_contract
+        return packet
 
     @classmethod
     def _crezlo_api_request(
@@ -2932,6 +2939,40 @@ class BrowserActToolAdapter:
         for key in ("floorplan_urls_json", "floorplan_urls", "floorplans"):
             requested_floorplans.extend(cls._crezlo_json_list(requested_inputs.get(key)))
         floorplan_required = bool(requested_floorplans)
+        requested_layout_contract = cls._crezlo_json_dict(
+            requested_inputs.get("floorplan_analysis_json")
+            or requested_inputs.get("source_geometry_json")
+        )
+        expected_layout_hash = ""
+        expected_layout_contract_name = ""
+        expected_layout_review_status = ""
+        expected_layout_room_count = 0
+        expected_layout_portal_ids: set[str] = set()
+        if requested_layout_contract:
+            expected_layout_hash = hashlib.sha256(
+                json.dumps(
+                    requested_layout_contract,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            expected_layout_contract_name = str(
+                requested_layout_contract.get("contract_name") or ""
+            ).strip()
+            expected_layout_review_status = str(
+                requested_layout_contract.get("review_status") or ""
+            ).strip().lower()
+            try:
+                expected_layout_room_count = int(requested_layout_contract.get("room_count") or 0)
+            except Exception:
+                expected_layout_room_count = 0
+            source_geometry = cls._crezlo_json_dict(requested_layout_contract.get("source_geometry"))
+            expected_layout_portal_ids = {
+                str(row.get("id") or "").strip()
+                for row in cls._crezlo_json_list(source_geometry.get("portals"))
+                if isinstance(row, dict) and str(row.get("id") or "").strip()
+            }
         scenes = [
             dict(entry)
             for entry in cls._crezlo_json_list(detail.get("scenes"))
@@ -3041,6 +3082,34 @@ class BrowserActToolAdapter:
             and exact_property_provenance_verified
         )
         floorplan_alignment_verified = proof.get("floorplan_alignment_verified") is True
+        floorplan_geometry_receipt_verified = proof.get("floorplan_geometry_receipt_verified") is True
+        proof_layout_hash = str(proof.get("floorplan_analysis_sha256") or "").strip().lower().removeprefix("sha256:")
+        proof_layout_contract_name = str(proof.get("floorplan_analysis_contract_name") or "").strip()
+        proof_layout_review_status = str(proof.get("floorplan_analysis_review_status") or "").strip().lower()
+        try:
+            proof_layout_room_count = int(proof.get("floorplan_source_room_count") or 0)
+        except Exception:
+            proof_layout_room_count = 0
+        proof_layout_portal_ids = {
+            str(value or "").strip()
+            for value in cls._crezlo_json_list(proof.get("floorplan_source_portal_ids"))
+            if str(value or "").strip()
+        }
+        floorplan_layout_receipt_verified = bool(
+            not floorplan_required
+            or (
+                bool(requested_layout_contract)
+                and expected_layout_contract_name == "propertyquarry.floorplan_analysis.v2"
+                and expected_layout_review_status in {"approved", "reviewed"}
+                and bool(re.fullmatch(r"[0-9a-f]{64}", expected_layout_hash))
+                and proof_layout_hash == expected_layout_hash
+                and proof_layout_contract_name == expected_layout_contract_name
+                and proof_layout_review_status == expected_layout_review_status
+                and proof_layout_room_count == expected_layout_room_count
+                and expected_layout_portal_ids.issubset(proof_layout_portal_ids)
+                and floorplan_geometry_receipt_verified
+            )
+        )
         try:
             required_spatial_scene_count = max(3, min(24, int(proof.get("required_spatial_scene_count") or 3)))
         except Exception:
@@ -3071,6 +3140,7 @@ class BrowserActToolAdapter:
             and bool(valid_source_asset_hashes)
             and browser_receipt_verified
             and (not floorplan_required or floorplan_alignment_verified)
+            and floorplan_layout_receipt_verified
             and proof_status == "pass"
             and anonymous_http_status == 200
             and drag_look_verified
@@ -3097,6 +3167,8 @@ class BrowserActToolAdapter:
             reason = "spatial_provenance_unverified"
         elif floorplan_required and not floorplan_alignment_verified:
             reason = "floorplan_alignment_unverified"
+        elif floorplan_required and not floorplan_layout_receipt_verified:
+            reason = "floorplan_geometry_receipt_unverified"
         elif proof_status != "pass":
             reason = "browser_proof_missing"
         elif anonymous_http_status != 200:
@@ -3129,6 +3201,7 @@ class BrowserActToolAdapter:
             "spatial_provenance_verified": spatial_provenance_verified,
             "floorplan_required": floorplan_required,
             "floorplan_alignment_verified": floorplan_alignment_verified,
+            "floorplan_layout_receipt_verified": floorplan_layout_receipt_verified,
             "anonymous_http_status": anonymous_http_status,
             "drag_look_verified": drag_look_verified,
             "scene_navigation_verified": scene_navigation_verified,
@@ -4298,6 +4371,14 @@ class BrowserActToolAdapter:
         if floorplan_urls:
             inputs["floorplan_urls_json"] = floorplan_urls
             inputs["floorplan_urls_text"] = "\n".join(floorplan_urls)
+        floorplan_analysis_json = cls._crezlo_json_dict(
+            payload.get("floorplan_analysis_json")
+            or property_facts_json.get("floorplan_analysis_json")
+        )
+        if floorplan_analysis_json:
+            inputs["floorplan_analysis_json"] = cls._browseract_safe_input_value(
+                floorplan_analysis_json
+            )
         inputs["proxy_result"] = bool(payload.get("proxy_result", True))
         if property_facts_json:
             inputs["property_facts_json"] = cls._browseract_safe_input_value(property_facts_json)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import urllib.request
@@ -5269,6 +5270,12 @@ def test_crezlo_property_tour_env_credentials_populate_inputs_and_worker_packet(
         "property_url": "https://www.willhaben.at/listing/env-credential-tour",
         "media_urls_json": ["https://assets.example/photo-1.jpg"],
         "floorplan_urls_json": ["https://assets.example/floorplan-1.jpg"],
+        "floorplan_analysis_json": {
+            "contract_name": "propertyquarry.floorplan_analysis.v2",
+            "review_status": "approved",
+            "room_count": 1,
+            "source_geometry": {"portals": [{"id": "entrance-exit-gate"}]},
+        },
     }
     binding_metadata: dict[str, object] = {}
 
@@ -5297,6 +5304,7 @@ def test_crezlo_property_tour_env_credentials_populate_inputs_and_worker_packet(
     )
     assert packet["login_email"] == "env-crezlo@example.com"
     assert packet["login_password"] == "env-crezlo-password"
+    assert packet["floorplan_analysis_json"]["contract_name"] == "propertyquarry.floorplan_analysis.v2"
 
 
 def test_crezlo_inspection_workflow_sends_only_declared_existing_editor_inputs() -> None:
@@ -5395,12 +5403,27 @@ def test_crezlo_immersive_acceptance_requires_spatial_and_first_party_browser_pr
         "_crezlo_public_tour_base_url",
         staticmethod(lambda: "https://propertyquarry.com/tours"),
     )
+    layout_contract = {
+        "contract_name": "propertyquarry.floorplan_analysis.v2",
+        "review_status": "approved",
+        "room_count": 3,
+        "source_geometry": {
+            "portals": [
+                {"id": "entrance-to-living"},
+                {"id": "entrance-exit-gate"},
+            ]
+        },
+    }
+    layout_hash = hashlib.sha256(
+        json.dumps(layout_contract, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     result = BrowserActToolAdapter._crezlo_immersive_acceptance(
         {
             "structured_output_json": {
                 "requested_inputs": {
                     "property_url": "https://www.willhaben.at/listing/verified-property",
                     "floorplan_urls_json": ["https://assets.example/floorplan.jpg"],
+                    "floorplan_analysis_json": layout_contract,
                 },
                 "workflow_output_json": {
                     "tour_detail_json": {
@@ -5458,6 +5481,12 @@ def test_crezlo_immersive_acceptance_requires_spatial_and_first_party_browser_pr
                         "source_asset_hashes": ["a" * 64, "b" * 64],
                         "browser_receipt_sha256": "c" * 64,
                         "floorplan_alignment_verified": True,
+                        "floorplan_geometry_receipt_verified": True,
+                        "floorplan_analysis_sha256": layout_hash,
+                        "floorplan_analysis_contract_name": "propertyquarry.floorplan_analysis.v2",
+                        "floorplan_analysis_review_status": "approved",
+                        "floorplan_source_room_count": 3,
+                        "floorplan_source_portal_ids": ["entrance-to-living", "entrance-exit-gate"],
                         "first_party_viewer_verified": True,
                         "first_party_public_url": "https://propertyquarry.com/tours/verified-crezlo/control/crezlo",
                     },
