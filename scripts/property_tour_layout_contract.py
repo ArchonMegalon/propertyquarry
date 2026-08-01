@@ -10,6 +10,7 @@ the generator and its publication bridge.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -136,6 +137,61 @@ def source_bounds_m(payload: dict[str, Any]) -> tuple[float, float]:
     if max_x <= 0 or max_z <= 0:
         raise LayoutContractError("floorplan_source_bounds_missing")
     return round(max_x, 4), round(max_z, 4)
+
+
+def source_geometry_projection(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return the canonical measured geometry projection used by provider receipts.
+
+    A floorplan file hash proves which analysis was reviewed, but it does not
+    make it obvious what geometry a hosted provider was checked against.  This
+    compact projection makes room identities, measured components, doorway
+    edges, portals, and the source bounds explicit and gives that projection a
+    deterministic digest.  Importers must derive it from the reviewed contract;
+    publishers only accept the resulting receipt.
+    """
+
+    validate_layout_contract(payload)
+    rooms = [
+        {
+            "id": str(room.get("id") or "").strip(),
+            "components": [
+                {
+                    key: round(float(component.get(key) or 0), 4)
+                    for key in ("x", "z", "width", "depth")
+                }
+                for component in list(room.get("components") or [])
+                if isinstance(component, dict)
+            ],
+        }
+        for room in room_rows(payload)
+    ]
+    doorway_edges = [
+        [str(edge[0]).strip(), str(edge[1]).strip()]
+        for edge in list(payload.get("doorway_edges") or [])
+        if isinstance(edge, (list, tuple)) and len(edge) == 2
+    ]
+    portals = [
+        {
+            "id": str(portal.get("id") or "").strip(),
+            "room_ids": [str(room_id).strip() for room_id in list(portal.get("room_ids") or [])],
+        }
+        for portal in list(dict(payload.get("source_geometry") or {}).get("portals") or [])
+        if isinstance(portal, dict)
+    ]
+    projection = {
+        "contract_name": CONTRACT_NAME,
+        "room_count": int(payload.get("room_count") or 0),
+        "room_ids": [row["id"] for row in rooms],
+        "rooms": rooms,
+        "doorway_edges": doorway_edges,
+        "portal_ids": [row["id"] for row in portals],
+        "portals": portals,
+        "source_bounds_m": list(source_bounds_m(payload)),
+    }
+    digest = hashlib.sha256(
+        json.dumps(projection, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {**projection, "sha256": digest}
 
 
 def validate_walkable_scene(scene: dict[str, Any], payload: dict[str, Any]) -> list[str]:

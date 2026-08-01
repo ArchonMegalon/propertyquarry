@@ -20,10 +20,10 @@ from typing import Any
 
 if __package__:
     from .property_tour_governed_reservation import require_dynamic_tour_slug
-    from .property_tour_layout_contract import load_layout_contract
+    from .property_tour_layout_contract import load_layout_contract, source_geometry_projection
 else:
     from property_tour_governed_reservation import require_dynamic_tour_slug
-    from property_tour_layout_contract import load_layout_contract
+    from property_tour_layout_contract import load_layout_contract, source_geometry_projection
 
 
 SCHEMA = "propertyquarry.crezlo_source_provenance.v1"
@@ -119,6 +119,7 @@ def _require_pass(receipt: dict[str, Any], *, slug: str, floorplan_path: Path) -
     if not isinstance(floorplan, dict):
         raise SystemExit("crezlo_floorplan_receipt_missing")
     layout = load_layout_contract(floorplan_path)
+    geometry_projection = source_geometry_projection(layout)
     expected_hash = _sha256_file(floorplan_path)
     declared_hash = str(floorplan.get("analysis_sha256") or "").strip().lower().removeprefix("sha256:")
     if declared_hash != expected_hash:
@@ -147,6 +148,22 @@ def _require_pass(receipt: dict[str, Any], *, slug: str, floorplan_path: Path) -
     }
     if not expected_portal_ids.issubset(portal_ids):
         raise SystemExit("crezlo_floorplan_portal_coverage_mismatch")
+    declared_projection = floorplan.get("source_geometry_projection")
+    if not isinstance(declared_projection, dict):
+        raise SystemExit("crezlo_floorplan_geometry_projection_missing")
+    for key in (
+        "contract_name",
+        "room_count",
+        "room_ids",
+        "rooms",
+        "doorway_edges",
+        "portal_ids",
+        "portals",
+        "source_bounds_m",
+        "sha256",
+    ):
+        if declared_projection.get(key) != geometry_projection.get(key):
+            raise SystemExit("crezlo_floorplan_geometry_projection_mismatch")
 
     browser = receipt.get("browser")
     if not isinstance(browser, dict):
@@ -181,6 +198,7 @@ def _require_pass(receipt: dict[str, Any], *, slug: str, floorplan_path: Path) -
             "analysis_sha256": expected_hash,
             "source_room_count": int(layout.get("room_count") or 0),
             "source_portal_ids": sorted(expected_portal_ids),
+            "source_geometry_projection": geometry_projection,
         },
         "capture": {
             **capture,

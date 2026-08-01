@@ -9363,6 +9363,91 @@ def _crezlo_hosted_tour_ready(payload: dict[str, object], *, slug: str = "") -> 
     portal_ids = floorplan.get("source_portal_ids")
     if not isinstance(portal_ids, list) or not portal_ids:
         return False
+    projection = floorplan.get("source_geometry_projection")
+    if not isinstance(projection, dict):
+        return False
+    if str(projection.get("contract_name") or "").strip() != "propertyquarry.floorplan_analysis.v2":
+        return False
+    projection_hash = str(projection.get("sha256") or "").strip().lower().removeprefix("sha256:")
+    if not re.fullmatch(r"[0-9a-f]{64}", projection_hash):
+        return False
+    projection_body = {
+        key: projection.get(key)
+        for key in (
+            "contract_name",
+            "room_count",
+            "room_ids",
+            "rooms",
+            "doorway_edges",
+            "portal_ids",
+            "portals",
+            "source_bounds_m",
+        )
+    }
+    computed_projection_hash = hashlib.sha256(
+        json.dumps(
+            projection_body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if projection_hash != computed_projection_hash:
+        return False
+    try:
+        projection_room_count = int(projection.get("room_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    projection_room_ids = projection.get("room_ids")
+    projection_rooms = projection.get("rooms")
+    projection_portal_ids = projection.get("portal_ids")
+    projection_portals = projection.get("portals")
+    projection_edges = projection.get("doorway_edges")
+    projection_bounds = projection.get("source_bounds_m")
+    if (
+        projection_room_count != int(floorplan.get("source_room_count") or 0)
+        or not isinstance(projection_room_ids, list)
+        or len(projection_room_ids) != projection_room_count
+        or len({str(value).strip() for value in projection_room_ids}) != projection_room_count
+        or not isinstance(projection_rooms, list)
+        or len(projection_rooms) != projection_room_count
+        or not isinstance(projection_portal_ids, list)
+        or set(portal_ids) != {str(value).strip() for value in projection_portal_ids}
+        or not isinstance(projection_portals, list)
+        or len(projection_portals) != len(projection_portal_ids)
+        or not isinstance(projection_edges, list)
+        or not isinstance(projection_bounds, list)
+        or len(projection_bounds) != 2
+    ):
+        return False
+    if any(
+        not isinstance(room, dict)
+        or str(room.get("id") or "").strip() not in {str(value).strip() for value in projection_room_ids}
+        or not isinstance(room.get("components"), list)
+        or not room.get("components")
+        for room in projection_rooms
+    ):
+        return False
+    if any(
+        not isinstance(portal, dict)
+        or str(portal.get("id") or "").strip() not in set(portal_ids)
+        or not isinstance(portal.get("room_ids"), list)
+        or not portal.get("room_ids")
+        for portal in projection_portals
+    ):
+        return False
+    if any(
+        not isinstance(edge, list)
+        or len(edge) != 2
+        or not all(str(value or "").strip() for value in edge)
+        for edge in projection_edges
+    ):
+        return False
+    try:
+        if any(float(value) <= 0 for value in projection_bounds):
+            return False
+    except (TypeError, ValueError):
+        return False
     browser = payload.get("crezlo_browser_render_proof")
     if not isinstance(browser, dict):
         return False

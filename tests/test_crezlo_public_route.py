@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ from app.api.routes import public_tours
 
 
 def _payload() -> dict[str, object]:
-    return {
+    payload = {
         "slug": "crezlo-route-proof",
         "crezlo_public_url": "https://ea-property-tours-1781067093.crezlotours.com/tours/real-tour",
         "crezlo_source_provenance": {
@@ -32,9 +33,27 @@ def _payload() -> dict[str, object]:
                 "review_status": "approved",
                 "analysis_sha256": "a" * 64,
                 "source_room_count": 3,
-                "source_portal_ids": ["entrance-to-living"],
+                "source_portal_ids": ["entrance-to-living", "balcony-door"],
                 "alignment_verified": True,
                 "geometry_receipt_verified": True,
+                "source_geometry_projection": {
+                    "contract_name": "propertyquarry.floorplan_analysis.v2",
+                    "room_count": 3,
+                    "room_ids": ["entrance-vestibule", "living-kitchen", "balcony-loggia"],
+                    "portal_ids": ["entrance-to-living", "balcony-door"],
+                    "rooms": [
+                        {"id": "entrance-vestibule", "components": [{"x": 0, "z": 0, "width": 2, "depth": 2}]},
+                        {"id": "living-kitchen", "components": [{"x": 2, "z": 0, "width": 4, "depth": 3}]},
+                        {"id": "balcony-loggia", "components": [{"x": 6, "z": 0, "width": 2, "depth": 2}]},
+                    ],
+                    "doorway_edges": [["entrance-vestibule", "living-kitchen"]],
+                    "portals": [
+                        {"id": "entrance-to-living", "room_ids": ["entrance-vestibule", "living-kitchen"]},
+                        {"id": "balcony-door", "room_ids": ["living-kitchen", "balcony-loggia"]},
+                    ],
+                    "source_bounds_m": [8.0, 5.0],
+                    "sha256": "",
+                },
             },
             "review": {"property_match": "pass", "visual_match": "pass", "spatial_capture_match": "pass"},
         },
@@ -50,6 +69,16 @@ def _payload() -> dict[str, object]:
             "browser_receipt_sha256": "b" * 64,
         },
     }
+    projection = payload["crezlo_source_provenance"]["floorplan"]["source_geometry_projection"]
+    projection["sha256"] = hashlib.sha256(
+        json.dumps(
+            {key: projection.get(key) for key in projection if key != "sha256"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return payload
 
 
 def test_crezlo_route_is_allowlisted_and_source_geometry_locked() -> None:
@@ -63,6 +92,12 @@ def test_crezlo_route_is_allowlisted_and_source_geometry_locked() -> None:
 def test_crezlo_route_rejects_missing_geometry_receipt() -> None:
     payload = _payload()
     del payload["crezlo_source_provenance"]["floorplan"]
+    assert public_tours._crezlo_hosted_tour_ready(payload, slug="crezlo-route-proof") is False
+
+
+def test_crezlo_route_rejects_projection_hash_drift() -> None:
+    payload = _payload()
+    payload["crezlo_source_provenance"]["floorplan"]["source_geometry_projection"]["source_bounds_m"] = [99.0, 99.0]
     assert public_tours._crezlo_hosted_tour_ready(payload, slug="crezlo-route-proof") is False
 
 

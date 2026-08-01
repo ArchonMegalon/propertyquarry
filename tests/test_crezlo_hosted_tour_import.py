@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from scripts.import_crezlo_hosted_tour import import_crezlo_hosted_tour
+from scripts.property_tour_layout_contract import source_geometry_projection
 
 
 def _layout() -> dict[str, object]:
@@ -32,6 +33,7 @@ def _layout() -> dict[str, object]:
 
 def _receipt(slug: str, floorplan: Path) -> dict[str, object]:
     floorplan_hash = hashlib.sha256(floorplan.read_bytes()).hexdigest()
+    projection = source_geometry_projection(json.loads(floorplan.read_text(encoding="utf-8")))
     return {
         "schema": "propertyquarry.crezlo_source_provenance.v1",
         "status": "pass",
@@ -55,6 +57,7 @@ def _receipt(slug: str, floorplan: Path) -> dict[str, object]:
             "source_portal_ids": ["entrance-to-living", "balcony-door"],
             "alignment_verified": True,
             "geometry_receipt_verified": True,
+            "source_geometry_projection": projection,
         },
         "browser": {
             "status": "pass",
@@ -98,6 +101,7 @@ def test_crezlo_import_requires_source_geometry_and_writes_private_first_party_r
     private = json.loads((bundle / "tour.private.json").read_text(encoding="utf-8"))
     assert manifest["control_mode"] == "crezlo"
     assert private["crezlo_source_provenance"]["floorplan"]["analysis_sha256"] == hashlib.sha256(floorplan.read_bytes()).hexdigest()
+    assert private["crezlo_source_provenance"]["floorplan"]["source_geometry_projection"]["sha256"] == source_geometry_projection(_layout())["sha256"]
     assert private["crezlo_public_url"].startswith("https://ea-property-tours-")
 
 
@@ -112,6 +116,29 @@ def test_crezlo_import_rejects_hallucinated_provider_render(tmp_path: Path) -> N
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
 
     with pytest.raises(SystemExit, match="crezlo_capture_provenance_unverified"):
+        import_crezlo_hosted_tour(
+            slug=slug,
+            receipt_path=receipt_path,
+            floorplan_path=floorplan,
+            public_tour_dir=tmp_path / "public",
+        )
+
+
+def test_crezlo_import_rejects_geometry_projection_drift(tmp_path: Path) -> None:
+    slug = "crezlo-rejects-geometry-drift"
+    _bundle(tmp_path, slug)
+    floorplan = tmp_path / "floorplan-analysis.json"
+    floorplan.write_text(json.dumps(_layout()), encoding="utf-8")
+    receipt = _receipt(slug, floorplan)
+    floorplan_receipt = dict(receipt["floorplan"])
+    projection = dict(floorplan_receipt["source_geometry_projection"])
+    projection["source_bounds_m"] = [99.0, 99.0]
+    floorplan_receipt["source_geometry_projection"] = projection
+    receipt["floorplan"] = floorplan_receipt
+    receipt_path = tmp_path / "crezlo-provenance.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="crezlo_floorplan_geometry_projection_mismatch"):
         import_crezlo_hosted_tour(
             slug=slug,
             receipt_path=receipt_path,
