@@ -2438,7 +2438,9 @@ class BrowserActToolAdapter:
         return (
             str(os.getenv("EA_CREZLO_WORKSPACE_ID") or "").strip()
             or str(os.getenv("CREZLO_WORKSPACE_ID") or "").strip()
-            or "019d0cff-3282-70a9-9c5a-20dfdce7f3fe"
+            # Current authenticated EA Property Tours workspace.  Explicit
+            # binding metadata and env configuration remain authoritative.
+            or "019eafdf-15ae-73f7-b6d0-1cc4559fc465"
         )
 
     @staticmethod

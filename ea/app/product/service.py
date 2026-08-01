@@ -27471,7 +27471,9 @@ def _crezlo_property_tour_bootstrap_metadata() -> dict[str, object]:
         metadata.get("browseract_crezlo_workspace_id"),
         os.getenv("EA_CREZLO_WORKSPACE_ID"),
         os.getenv("CREZLO_WORKSPACE_ID"),
-        "019d0cff-3282-70a9-9c5a-20dfdce7f3fe",
+        # Current authenticated EA Property Tours workspace.  Explicit
+        # binding metadata and env configuration remain authoritative.
+        "019eafdf-15ae-73f7-b6d0-1cc4559fc465",
     )
     workspace_domain = _first_non_empty_text(
         metadata.get("crezlo_workspace_domain"),
