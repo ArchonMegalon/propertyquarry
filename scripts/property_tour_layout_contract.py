@@ -221,4 +221,66 @@ def validate_walkable_scene(scene: dict[str, Any], payload: dict[str, Any]) -> l
         failures.append("source_portals_missing")
     if "entrance-exit-gate" in expected_portal_ids and "entrance-exit-gate" not in portal_ids:
         failures.append("entrance_exit_gate_missing")
+    if scene.get("source_geometry_locked") is True:
+        width_m, depth_m = source_bounds_m(payload)
+        expected_rooms = {
+            str(room.get("id") or "").strip(): room
+            for room in room_rows(payload)
+            if isinstance(room, dict)
+        }
+
+        def _components(row: object) -> list[dict[str, float]]:
+            if not isinstance(row, dict):
+                return []
+            return [
+                {
+                    key: round(float(component.get(key) or 0.0), 4)
+                    for key in ("x", "z", "width", "depth")
+                }
+                for component in list(row.get("components") or row.get("source_components_m") or [])
+                if isinstance(component, dict)
+            ]
+
+        for collection_key in ("route", "rooms"):
+            for row in list(scene.get(collection_key) or []):
+                if not isinstance(row, dict):
+                    failures.append(f"{collection_key}_source_geometry_row_invalid")
+                    continue
+                room_id = str(row.get("source_room_id") or "").strip()
+                expected_room = expected_rooms.get(room_id)
+                if expected_room is None:
+                    failures.append(f"{collection_key}_source_room_unknown")
+                    continue
+                expected_components = _components(expected_room)
+                actual_components = _components(row)
+                if actual_components != expected_components:
+                    failures.append(f"{collection_key}_source_components_mismatch:{room_id}")
+                bounds = row.get("source_component_bounds_m")
+                if not isinstance(bounds, dict) or not actual_components:
+                    failures.append(f"{collection_key}_source_component_bounds_missing:{room_id}")
+                    continue
+                largest = max(
+                    actual_components,
+                    key=lambda component: component["width"] * component["depth"],
+                )
+                expected_bounds = {
+                    "x": round(largest["x"] - (width_m * 0.5), 4),
+                    "z": round(largest["z"] - (depth_m * 0.5), 4),
+                    "width": largest["width"],
+                    "depth": largest["depth"],
+                }
+                observed_bounds = {
+                    key: round(float(bounds.get(key) or 0.0), 4)
+                    for key in ("x", "z", "width", "depth")
+                }
+                if observed_bounds != expected_bounds:
+                    failures.append(f"{collection_key}_source_component_bounds_mismatch:{room_id}")
+        scene_bounds = scene.get("bounds")
+        if isinstance(scene_bounds, dict):
+            if round(float(scene_bounds.get("width_m") or 0.0), 4) != round(width_m, 4):
+                failures.append("source_bounds_width_mismatch")
+            if round(float(scene_bounds.get("depth_m") or 0.0), 4) != round(depth_m, 4):
+                failures.append("source_bounds_depth_mismatch")
+        else:
+            failures.append("source_bounds_missing")
     return failures

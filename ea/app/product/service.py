@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import html
 import io
+import inspect
 import ipaddress
 import json
 import math
@@ -21135,16 +21136,25 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
         style_id = str(selected_reconstruction_style.get("id") or "")
         style_signature = str(selected_reconstruction_style.get("signature") or "")
         if _property_reconstruction_should_use_render_bridge(skip_video=skip_video):
-            _run_property_reconstruction_render_bridge(
-                slug=slug,
-                floorplan_path=floorplan_path,
-                photo_paths=photo_paths,
-                style_label=style_label,
-                room_count=reconstruction_room_count,
-                route_labels=normalized_reconstruction_route_labels,
-                skip_video=skip_video,
-                floorplan_analysis_path=floorplan_analysis_path,
-            )
+            bridge_kwargs: dict[str, object] = {
+                "slug": slug,
+                "floorplan_path": floorplan_path,
+                "photo_paths": photo_paths,
+                "style_label": style_label,
+                "room_count": reconstruction_room_count,
+                "route_labels": normalized_reconstruction_route_labels,
+                "skip_video": skip_video,
+            }
+            # Keep test/extension adapters that implement the pre-contract
+            # bridge signature usable while the production bridge receives the
+            # measured layout artifact whenever it advertises the parameter.
+            try:
+                bridge_parameters = inspect.signature(_run_property_reconstruction_render_bridge).parameters
+            except (TypeError, ValueError):
+                bridge_parameters = {}
+            if "floorplan_analysis_path" in bridge_parameters:
+                bridge_kwargs["floorplan_analysis_path"] = floorplan_analysis_path
+            _run_property_reconstruction_render_bridge(**bridge_kwargs)
         else:
             command = [
                 _runtime_python_executable(),

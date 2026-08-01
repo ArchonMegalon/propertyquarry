@@ -67,6 +67,37 @@ def test_layout_contract_rejects_route_drift() -> None:
     assert "route_room_order_mismatch" in validate_walkable_scene(scene, payload)
 
 
+def test_layout_contract_rejects_geometry_locked_component_drift() -> None:
+    payload = _contract()
+    source_by_id = {str(room["id"]): room for room in payload["rooms"]}  # type: ignore[index]
+    route = []
+    for room_id in room_ids_in_walk_order(payload):
+        component = dict(source_by_id[room_id]["components"][0])  # type: ignore[index]
+        width_m, depth_m = source_bounds_m(payload)
+        route.append(
+            {
+                "source_room_id": room_id,
+                "source_components_m": [component],
+                "source_component_bounds_m": {
+                    "x": round(float(component["x"]) - width_m / 2, 4),
+                    "z": round(float(component["z"]) - depth_m / 2, 4),
+                    "width": component["width"],
+                    "depth": component["depth"],
+                },
+            }
+        )
+    scene = {
+        "source_geometry_locked": True,
+        "bounds": {"width_m": 8.0, "depth_m": 5.0},
+        "route": route,
+        "rooms": [dict(row) for row in route],
+        "portals": payload["source_geometry"]["portals"],  # type: ignore[index]
+    }
+    assert validate_walkable_scene(scene, payload) == []
+    scene["route"][1]["source_components_m"][0]["width"] = 4.25  # type: ignore[index]
+    assert "route_source_components_mismatch:living-kitchen" in validate_walkable_scene(scene, payload)
+
+
 def test_layout_contract_loader_requires_reviewed_v2(tmp_path: Path) -> None:
     path = tmp_path / "layout.json"
     invalid = _contract()

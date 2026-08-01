@@ -37,7 +37,9 @@ from app.api.routes.public_tour_payloads import (
 from app.product import property_tour_hosting
 from app.product import service as product_service
 from scripts import generate_property_reconstruction as reconstruction_script
+from scripts import build_propertyquarry_karl_czerny_showcase_bundle as karl_builder
 from scripts import property_reconstruction_styles
+from scripts.propertyquarry_floorplan_analyzer import analyze_floorplan
 from scripts.verify_property_tour_controls import build_property_tour_control_receipt
 
 
@@ -3240,6 +3242,96 @@ def test_generated_reconstruction_walkable_scene_snaps_route_stops_to_open_floor
     assert len(seen_cells) == len(route)
     assert walkable_scene["route_anchor_method"] == "coverage_aware_floorplan_open_cell_sampling"
     assert walkable_scene["route_label_binding"] == "operator_supplied_labels_without_pixel_semantic_inference"
+
+
+def test_geometry_locked_walkable_scene_uses_measured_components_and_keeps_cameras_inside() -> None:
+    source_rooms = [
+        {
+            "id": "entrance-vestibule",
+            "components": [{"x": 0, "z": 2, "width": 2, "depth": 3}],
+        },
+        {
+            "id": "living-kitchen",
+            "components": [{"x": 2, "z": 2, "width": 4, "depth": 3}],
+        },
+        {
+            "id": "balcony-loggia",
+            "components": [{"x": 6, "z": 2, "width": 2, "depth": 2}],
+        },
+    ]
+    scene = reconstruction_script._reconstruction_walkable_scene(
+        route_labels=["entry/hall", "living room", "balcony"],
+        width_m=8.0,
+        depth_m=5.0,
+        height_m=2.8,
+        source_room_ids=["entrance-vestibule", "living-kitchen", "balcony-loggia"],
+        source_rooms=source_rooms,
+        source_portals=[
+            {"id": "entrance-to-living", "room_ids": ["entrance-vestibule", "living-kitchen"]},
+            {"id": "entrance-exit-gate", "room_ids": ["entrance-vestibule", "outside"]},
+        ],
+    )
+
+    assert scene["source_geometry_locked"] is True
+    assert scene["route_anchor_method"] == "measured_source_component_centroids_v1"
+    route = list(scene["route"])
+    assert [(round(float(row["focus"]["x"]), 4), round(float(row["focus"]["z"]), 4)) for row in route] == [
+        (-3.0, 1.0),
+        (0.0, 1.0),
+        (3.0, 0.5),
+    ]
+    for row in route:
+        bounds = dict(row["source_component_bounds_m"])
+        camera = dict(row["camera"])
+        assert bounds["x"] < float(camera["x"]) < bounds["x"] + bounds["width"]
+        assert bounds["z"] < float(camera["z"]) < bounds["z"] + bounds["depth"]
+        assert row["source_components_m"]
+
+
+def test_generator_persists_measured_geometry_lock_into_reconstruction_receipt(tmp_path: Path) -> None:
+    floorplan = tmp_path / "source-floorplan.png"
+    Image.new("RGB", (1800, 1310), "white").save(floorplan, format="PNG")
+    analysis_dir = tmp_path / "analysis"
+    analysis = analyze_floorplan(
+        floorplan,
+        specification=karl_builder._ANALYSIS_SPEC,
+        output_dir=analysis_dir,
+    )
+    bundle = _write_base_tour(tmp_path, "geometry-locked-generator")
+
+    generated = _run_generator(
+        tmp_path,
+        "--slug",
+        "geometry-locked-generator",
+        "--floorplan",
+        str(floorplan),
+        "--floorplan-analysis",
+        str(analysis_dir / "floorplan-analysis.json"),
+        "--skip-video",
+    )
+
+    assert generated.returncode == 0, generated.stdout or generated.stderr
+    body = json.loads(generated.stdout)
+    assert body["status"] == "generated"
+    receipt = json.loads(
+        (bundle / "generated-reconstruction" / "reconstruction.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    scene = dict(receipt["walkable_scene"])
+    assert scene["source_geometry_locked"] is True
+    assert scene["route_anchor_method"] == "measured_source_component_centroids_v1"
+    assert receipt["floorplan_analysis"]["source_geometry_projection_sha256"]
+    source_rooms = {
+        str(room["id"]): room for room in analysis["rooms"]  # type: ignore[index]
+    }
+    for stop in scene["route"]:
+        room = source_rooms[str(stop["source_room_id"])]
+        assert stop["source_components_m"] == room["components"]
+        assert stop["source_geometry_locked"] is True
+    assert "source_geometry_locked" in (bundle / "generated-reconstruction" / "viewer.html").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_generated_reconstruction_route_sampling_is_deterministic_spread_and_wall_safe() -> None:

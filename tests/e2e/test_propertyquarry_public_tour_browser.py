@@ -2520,6 +2520,7 @@ def generated_reconstruction_viewer_server(
     yield {
         "slug": slug,
         "viewer_url": viewer_url,
+        "bundle_root": str(bundle_root),
     }
 
 
@@ -4786,6 +4787,80 @@ def test_generated_reconstruction_ready_viewer_route_renders_in_real_browser(
     assert updated_metrics["activeRouteIndex"] == 2
     assert external_requests == []
     context.close()
+
+
+def test_geometry_locked_viewer_keeps_each_route_camera_inside_measured_room(
+    generated_reconstruction_viewer_server: dict[str, str],
+    browser: Browser,
+) -> None:
+    """Exercise the source-geometry camera branch in a real Chromium session."""
+    bundle_root = Path(generated_reconstruction_viewer_server["bundle_root"])
+    slug = str(generated_reconstruction_viewer_server["slug"])
+    bundle_dir = bundle_root / slug
+    reconstruction_dir = bundle_dir / "generated-reconstruction"
+    manifest_path = reconstruction_dir / "reconstruction.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    room_dimensions = dict(manifest["room_dimensions_m"])
+    width_m = float(room_dimensions["width"])
+    depth_m = float(room_dimensions["depth"])
+    source_rooms = [
+        {"id": "entry", "components": [{"x": 0.1, "z": 0.2, "width": width_m * 0.25, "depth": depth_m * 0.38}]},
+        {"id": "living", "components": [{"x": width_m * 0.25, "z": 0.2, "width": width_m * 0.42, "depth": depth_m * 0.52}]},
+        {"id": "bedroom", "components": [{"x": width_m * 0.67, "z": 0.2, "width": width_m * 0.25, "depth": depth_m * 0.38}]},
+    ]
+    walkable_scene = reconstruction_script._reconstruction_walkable_scene(
+        route_labels=["entry/hall", "living room", "bedroom"],
+        width_m=width_m,
+        depth_m=depth_m,
+        height_m=float(room_dimensions["height"]),
+        source_room_ids=["entry", "living", "bedroom"],
+        source_rooms=source_rooms,
+        source_portals=[
+            {"id": "entry-living", "room_ids": ["entry", "living"]},
+            {"id": "living-bedroom", "room_ids": ["living", "bedroom"]},
+            {"id": "entry-exit-gate", "room_ids": ["entry", "outside"]},
+        ],
+    )
+    manifest["walkable_scene"] = walkable_scene
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    vendor_assets = reconstruction_script._copy_viewer_vendor_assets(reconstruction_dir)
+    (reconstruction_dir / "viewer.html").write_text(
+        reconstruction_script._viewer_html(
+            manifest=manifest,
+            three_relpath=str(vendor_assets.get("three_relpath") or "vendor/three.module.js"),
+            orbit_controls_relpath=str(vendor_assets.get("orbit_controls_relpath") or "vendor/examples/jsm/controls/OrbitControls.js"),
+        ),
+        encoding="utf-8",
+    )
+
+    context = _new_context(browser)
+    page = context.new_page()
+    browser_errors: list[str] = []
+    page.on("console", lambda message: browser_errors.append(f"console:{message.type}:{message.text}"))
+    page.on("pageerror", lambda error: browser_errors.append(f"pageerror:{error}"))
+    try:
+        response = page.goto(
+            str(generated_reconstruction_viewer_server["viewer_url"]),
+            wait_until="domcontentloaded",
+        )
+        assert response is not None and response.ok
+        page.wait_for_function(
+            "() => { const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.(); return Boolean(metrics && Number(metrics.frameCount || 0) >= 2 && Number(metrics.renderCalls || 0) > 0); }",
+            timeout=30_000,
+        )
+        for index, stop in enumerate(list(walkable_scene["route"])):
+            page.evaluate("(routeIndex) => window.__pqReconstructionDebug.setRouteView(routeIndex)", index)
+            page.wait_for_function(
+                "(expected) => Number(window.__pqReconstructionDebug.getRenderMetrics().activeRouteIndex) === expected",
+                arg=index,
+            )
+            metrics = page.evaluate("() => window.__pqReconstructionDebug.getRenderMetrics()")
+            camera = dict(metrics["cameraPosition"])
+            bounds = dict(stop["source_component_bounds_m"])
+            assert bounds["x"] < float(camera["x"]) < bounds["x"] + bounds["width"], (index, metrics, bounds)
+            assert bounds["z"] < float(camera["z"]) < bounds["z"] + bounds["depth"], (index, metrics, bounds)
+    finally:
+        context.close()
 
 
 def test_generated_reconstruction_viewer_uses_balanced_mobile_render_budget(

@@ -92,6 +92,7 @@ try:
         load_layout_contract,
         room_ids_in_walk_order,
         room_rows,
+        source_geometry_projection,
         source_bounds_m,
         validate_walkable_scene,
     )
@@ -101,6 +102,7 @@ except ModuleNotFoundError:
         load_layout_contract,
         room_ids_in_walk_order,
         room_rows,
+        source_geometry_projection,
         source_bounds_m,
         validate_walkable_scene,
     )
@@ -2478,6 +2480,7 @@ def _reconstruction_walkable_scene(
     height_m: float,
     geometry: dict[str, object] | None = None,
     source_room_ids: list[str] | tuple[str, ...] = (),
+    source_rooms: list[dict[str, object]] | tuple[dict[str, object], ...] = (),
     source_portals: list[dict[str, object]] | tuple[dict[str, object], ...] = (),
 ) -> dict[str, object]:
     normalized_labels = [
@@ -2514,6 +2517,99 @@ def _reconstruction_walkable_scene(
         if isinstance(geometry, dict)
         else []
     )
+    normalized_source_room_ids = [str(value or "").strip() for value in list(source_room_ids or [])]
+    source_room_rows = [
+        dict(row)
+        for row in list(source_rooms or [])
+        if isinstance(row, dict) and str(row.get("id") or "").strip()
+    ]
+    source_rooms_by_id = {
+        str(row.get("id") or "").strip(): row
+        for row in source_room_rows
+    }
+    source_geometry_locked = bool(
+        source_room_rows
+        and normalized_source_room_ids
+        and all(room_id in source_rooms_by_id for room_id in normalized_source_room_ids)
+    )
+
+    def _clamp(value: float, lower: float, upper: float) -> float:
+        if lower > upper:
+            return (lower + upper) * 0.5
+        return max(lower, min(upper, value))
+
+    def _source_room_position(room_id: str) -> dict[str, object] | None:
+        if not source_geometry_locked:
+            return None
+        row = source_rooms_by_id.get(room_id)
+        components = [
+            dict(component)
+            for component in list((row or {}).get("components") or [])
+            if isinstance(component, dict)
+        ]
+        measured_components: list[dict[str, float]] = []
+        for component in components:
+            try:
+                values = {
+                    key: round(float(component.get(key) or 0.0), 4)
+                    for key in ("x", "z", "width", "depth")
+                }
+            except (TypeError, ValueError):
+                return None
+            if values["width"] <= 0.0 or values["depth"] <= 0.0:
+                return None
+            measured_components.append(values)
+        if not measured_components:
+            return None
+        largest_index, largest = max(
+            enumerate(measured_components),
+            key=lambda item: item[1]["width"] * item[1]["depth"],
+        )
+        union_left = min(item["x"] for item in measured_components)
+        union_top = min(item["z"] for item in measured_components)
+        union_right = max(item["x"] + item["width"] for item in measured_components)
+        union_bottom = max(item["z"] + item["depth"] for item in measured_components)
+        component_bounds = {
+            "x": round(largest["x"] - (width_m * 0.5), 4),
+            "z": round(largest["z"] - (depth_m * 0.5), 4),
+            "width": largest["width"],
+            "depth": largest["depth"],
+        }
+        focus_x = round(
+            largest["x"] + (largest["width"] * 0.5) - (width_m * 0.5),
+            4,
+        )
+        focus_z = round(
+            largest["z"] + (largest["depth"] * 0.5) - (depth_m * 0.5),
+            4,
+        )
+        inset = min(0.22, max(0.06, min(largest["width"], largest["depth"]) * 0.22))
+        camera_x = _clamp(
+            focus_x + min(0.38, largest["width"] * 0.16),
+            component_bounds["x"] + inset,
+            component_bounds["x"] + component_bounds["width"] - inset,
+        )
+        camera_z = _clamp(
+            focus_z + min(0.28, largest["depth"] * 0.12),
+            component_bounds["z"] + inset,
+            component_bounds["z"] + component_bounds["depth"] - inset,
+        )
+        return {
+            "source_components_m": measured_components,
+            "source_component_index": largest_index,
+            "source_component_bounds_m": component_bounds,
+            "source_union_bounds_m": {
+                "x": round(union_left - (width_m * 0.5), 4),
+                "z": round(union_top - (depth_m * 0.5), 4),
+                "width": round(union_right - union_left, 4),
+                "depth": round(union_bottom - union_top, 4),
+            },
+            "focus_x": focus_x,
+            "focus_z": focus_z,
+            "camera_x": round(camera_x, 4),
+            "camera_z": round(camera_z, 4),
+        }
+
     floorplan_walkable_cells = _floorplan_walkable_cells(wall_mask)
     has_floorplan_walkable_region = bool(floorplan_walkable_cells)
     inner_width = max(1.2, width_m * (0.88 if has_floorplan_walkable_region else 0.34))
@@ -2523,6 +2619,16 @@ def _reconstruction_walkable_scene(
     used_floorplan_cells: set[tuple[int, int]] = set()
     for index, label in enumerate(normalized_labels):
         kind = _route_label_kind(label)
+        source_room_id = (
+            normalized_source_room_ids[index]
+            if index < len(normalized_source_room_ids)
+            else ""
+        )
+        source_position = _source_room_position(source_room_id)
+        if source_position is not None:
+            stop_positions.append((float(source_position["focus_x"]), float(source_position["focus_z"])))
+            used_positions.append(stop_positions[-1])
+            continue
         base_x, base_z = semantic_anchors.get(kind, semantic_anchors["generic"])
         if kind == "bedroom":
             bedroom_offset = min(0.18, 0.12 * sum(1 for prior in normalized_labels[:index] if _route_label_kind(prior) == "bedroom"))
@@ -2544,14 +2650,10 @@ def _reconstruction_walkable_scene(
         used_positions.append(candidate)
         stop_positions.append(candidate)
 
-    def _clamp(value: float, lower: float, upper: float) -> float:
-        return max(lower, min(upper, value))
-
     route: list[dict[str, object]] = []
     rooms: list[dict[str, object]] = []
     eye_y = round(max(1.45, min(height_m * 0.58, height_m - 0.3)), 3)
     target_y = round(max(1.2, min(height_m * 0.5, eye_y - 0.18)), 3)
-    normalized_source_room_ids = [str(value or "").strip() for value in list(source_room_ids or [])]
     for index, (label, (nx, nz)) in enumerate(zip(normalized_labels, stop_positions), start=1):
         kind = _route_label_kind(label)
         source_room_id = (
@@ -2565,6 +2667,12 @@ def _reconstruction_walkable_scene(
         offset_z = 0.92 if focus_z < 0.18 else 0.58
         camera_x = round(_clamp(focus_x + offset_x, -(width_m * 0.42), width_m * 0.42), 3)
         camera_z = round(_clamp(focus_z + offset_z, -(depth_m * 0.42), depth_m * 0.42), 3)
+        source_position = _source_room_position(source_room_id)
+        if source_position is not None:
+            focus_x = float(source_position["focus_x"])
+            focus_z = float(source_position["focus_z"])
+            camera_x = float(source_position["camera_x"])
+            camera_z = float(source_position["camera_z"])
         stop = {
             "label": label,
             "room": label,
@@ -2575,9 +2683,18 @@ def _reconstruction_walkable_scene(
             "focus": {"x": focus_x, "y": target_y, "z": focus_z},
             "camera": {"x": camera_x, "y": eye_y, "z": camera_z},
         }
+        if source_position is not None:
+            stop.update(
+                {
+                    "source_geometry_locked": True,
+                    "source_components_m": list(source_position["source_components_m"]),
+                    "source_component_index": int(source_position["source_component_index"]),
+                    "source_component_bounds_m": dict(source_position["source_component_bounds_m"]),
+                    "source_union_bounds_m": dict(source_position["source_union_bounds_m"]),
+                }
+            )
         route.append(stop)
-        rooms.append(
-            {
+        room_row = {
                 "label": label,
                 "name": label,
                 "kind": kind,
@@ -2586,7 +2703,17 @@ def _reconstruction_walkable_scene(
                 "position": {"x": focus_x, "y": 0.0, "z": focus_z},
                 "focus": {"x": focus_x, "y": target_y, "z": focus_z},
             }
-        )
+        if source_position is not None:
+            room_row.update(
+                {
+                    "source_geometry_locked": True,
+                    "source_components_m": list(source_position["source_components_m"]),
+                    "source_component_index": int(source_position["source_component_index"]),
+                    "source_component_bounds_m": dict(source_position["source_component_bounds_m"]),
+                    "source_union_bounds_m": dict(source_position["source_union_bounds_m"]),
+                }
+            )
+        rooms.append(room_row)
     normalized_portals = [
         dict(portal)
         for portal in list(source_portals or [])
@@ -2595,12 +2722,15 @@ def _reconstruction_walkable_scene(
     return {
         "kind": "generated_reconstruction_layout",
         "route_anchor_method": (
-            "coverage_aware_floorplan_open_cell_sampling"
+            "measured_source_component_centroids_v1"
+            if source_geometry_locked
+            else "coverage_aware_floorplan_open_cell_sampling"
             if has_floorplan_walkable_region
             else "semantic_layout_fallback"
         ),
         "route_label_binding": "operator_supplied_labels_without_pixel_semantic_inference",
-        "bounds": {"width_m": round(width_m, 3), "depth_m": round(depth_m, 3), "height_m": round(height_m, 3)},
+        "source_geometry_locked": source_geometry_locked,
+        "bounds": {"width_m": round(width_m, 4), "depth_m": round(depth_m, 4), "height_m": round(height_m, 3)},
         "rooms": rooms,
         "route": route,
         "portals": normalized_portals,
@@ -4662,18 +4792,30 @@ def _prepare_runtime_publish_manifests(bundle_dir: Path) -> None:
         raise _PublicBundleTransactionError("runtime_publish_bundle_invalid")
     public_path = bundle_dir / "tour.json"
     private_path = bundle_dir / "tour.private.json"
-    for manifest_path in (public_path, private_path):
-        try:
-            details = manifest_path.lstat()
-        except OSError as exc:
-            raise _PublicBundleTransactionError(
-                "runtime_publish_manifest_invalid"
-            ) from exc
-        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
-            raise _PublicBundleTransactionError("runtime_publish_manifest_invalid")
+    try:
+        public_details = public_path.lstat()
+    except OSError as exc:
+        raise _PublicBundleTransactionError("runtime_publish_manifest_invalid") from exc
+    if not stat.S_ISREG(public_details.st_mode) or public_details.st_nlink != 1:
+        raise _PublicBundleTransactionError("runtime_publish_manifest_invalid")
+    private_exists = True
+    try:
+        private_details = private_path.lstat()
+    except FileNotFoundError:
+        private_exists = False
+    except OSError as exc:
+        raise _PublicBundleTransactionError("runtime_publish_manifest_invalid") from exc
+    if private_exists and (
+        not stat.S_ISREG(private_details.st_mode) or private_details.st_nlink != 1
+    ):
+        raise _PublicBundleTransactionError("runtime_publish_manifest_invalid")
     try:
         public_payload = json.loads(public_path.read_text(encoding="utf-8"))
-        private_payload = json.loads(private_path.read_text(encoding="utf-8"))
+        private_payload = (
+            json.loads(private_path.read_text(encoding="utf-8"))
+            if private_exists
+            else {}
+        )
     except Exception as exc:
         raise _PublicBundleTransactionError(
             "runtime_publish_manifest_invalid"
@@ -4963,6 +5105,13 @@ try:
         os.close(manifest_descriptor)
     if not isinstance(manifest_payload, dict) or str(manifest_payload.get("slug") or "") != os.path.basename(live):
         raise RuntimeError("public_manifest_slug_mismatch")
+    # The standalone finalizer is also exercised from a source checkout where
+    # the application package lives under ``ea/app`` rather than the current
+    # working directory.  Add that bounded repository path when present; the
+    # deployed image already exposes ``/app`` directly.
+    repository_ea = os.path.join(os.getcwd(), "ea")
+    if os.path.isdir(os.path.join(repository_ea, "app")) and repository_ea not in sys.path:
+        sys.path.insert(0, repository_ea)
     from pathlib import Path
     from app.api.routes.public_tour_payloads import canonical_public_tour_payload
     manifest_payload = canonical_public_tour_payload(
@@ -9280,8 +9429,16 @@ function styledSelfOccluderCount(position, routeIndex) {{
   return hiddenObjectCount;
 }}
 
-function roomCameraPosition(target, cameraStop, routeIndex, variant, styledBounds = null) {{
+function roomCameraPosition(target, cameraStop, routeIndex, variant, styledBounds = null, sourceRoomBounds = null) {{
   const maximumSpan = Math.max(roomWidth, roomDepth);
+  const sourceBounds = sourceRoomBounds && typeof sourceRoomBounds === "object"
+    ? sourceRoomBounds
+    : null;
+  const sourceBoundsValid = sourceBounds
+    && Number.isFinite(Number(sourceBounds.x))
+    && Number.isFinite(Number(sourceBounds.z))
+    && Number(sourceBounds.width || 0) > 0
+    && Number(sourceBounds.depth || 0) > 0;
   const styledSize = styledBounds instanceof THREE.Box3
     ? styledBounds.getSize(new THREE.Vector3())
     : new THREE.Vector3(2.4, 1.2, 2.2);
@@ -9291,7 +9448,9 @@ function roomCameraPosition(target, cameraStop, routeIndex, variant, styledBound
     styledSize.z,
     Math.hypot(styledSize.x, styledSize.z) * 0.82,
   );
-  const radius = Math.max(3.0, Math.min(4.6, styledHorizontalSpan * 1.38));
+  const radius = sourceBoundsValid
+    ? Math.max(0.42, Math.min(2.6, Math.max(Number(sourceBounds.width || 0), Number(sourceBounds.depth || 0)) * 0.34))
+    : Math.max(3.0, Math.min(4.6, styledHorizontalSpan * 1.38));
   const preferredX = Number(cameraStop.x ?? target.x + 1) - target.x;
   const preferredZ = Number(cameraStop.z ?? target.z + 1) - target.z;
   const fallbackAngle = ((Math.max(0, Number(routeIndex || 0)) % 8) / 8) * Math.PI * 2;
@@ -9303,13 +9462,28 @@ function roomCameraPosition(target, cameraStop, routeIndex, variant, styledBound
   const halfWidth = roomWidth * 0.5;
   const halfDepth = roomDepth * 0.5;
   const boundaryInset = Math.max(0.28, Math.min(0.48, maximumSpan * 0.035));
+  const sourceInset = sourceBoundsValid
+    ? Math.min(0.18, Math.max(0.06, Math.min(Number(sourceBounds.width || 0), Number(sourceBounds.depth || 0)) * 0.20))
+    : 0;
+  const minX = sourceBoundsValid
+    ? Number(sourceBounds.x || 0) + sourceInset
+    : -halfWidth + boundaryInset;
+  const maxX = sourceBoundsValid
+    ? Number(sourceBounds.x || 0) + Number(sourceBounds.width || 0) - sourceInset
+    : halfWidth - boundaryInset;
+  const minZ = sourceBoundsValid
+    ? Number(sourceBounds.z || 0) + sourceInset
+    : -halfDepth + boundaryInset;
+  const maxZ = sourceBoundsValid
+    ? Number(sourceBounds.z || 0) + Number(sourceBounds.depth || 0) - sourceInset
+    : halfDepth - boundaryInset;
   let best = null;
   for (let candidateIndex = 0; candidateIndex < angleOffsets.length; candidateIndex += 1) {{
     const angle = preferredAngle + variantOffset + angleOffsets[candidateIndex];
     const position = new THREE.Vector3(
-      Math.max(-halfWidth + boundaryInset, Math.min(halfWidth - boundaryInset, target.x + (Math.cos(angle) * radius))),
+      Math.max(minX, Math.min(maxX, target.x + (Math.cos(angle) * radius))),
       Math.max(1.38, Math.min(roomHeight * 0.72, target.y + 0.96)),
-      Math.max(-halfDepth + boundaryInset, Math.min(halfDepth - boundaryInset, target.z + (Math.sin(angle) * radius))),
+      Math.max(minZ, Math.min(maxZ, target.z + (Math.sin(angle) * radius))),
     );
     const horizontalDistance = Math.hypot(position.x - target.x, position.z - target.z);
     const insideWall = wallRectangles.some((wall) => roomPointInsideWall(position, wall, 0.12));
@@ -9348,16 +9522,20 @@ function routeCameraState(index = 0, variant = 0) {{
   const focus = stop?.focus && typeof stop.focus === "object" ? stop.focus : {{}};
   const cameraStop = stop?.camera && typeof stop.camera === "object" ? stop.camera : {{}};
   const styledBounds = styledBoundsForRoute(boundedIndex);
+  const geometryLocked = stop?.source_geometry_locked === true;
+  const sourceRoomBounds = geometryLocked && stop?.source_component_bounds_m && typeof stop.source_component_bounds_m === "object"
+    ? stop.source_component_bounds_m
+    : null;
   const styledCenter = styledBounds
     ? styledBounds.getCenter(new THREE.Vector3())
     : null;
   const target = new THREE.Vector3(
-    styledCenter ? styledCenter.x : Number(focus.x || 0),
-    Math.max(0.48, Math.min(0.68, styledCenter ? styledCenter.y : Number(focus.y || 0.56))),
-    styledCenter ? styledCenter.z : Number(focus.z || 0),
+    !geometryLocked && styledCenter ? styledCenter.x : Number(focus.x || 0),
+    Math.max(0.48, Math.min(0.68, !geometryLocked && styledCenter ? styledCenter.y : Number(focus.y || 0.56))),
+    !geometryLocked && styledCenter ? styledCenter.z : Number(focus.z || 0),
   );
   const visitVariant = Math.max(0, Number(variant || 0));
-  const position = roomCameraPosition(target, cameraStop, boundedIndex, visitVariant, styledBounds);
+  const position = roomCameraPosition(target, cameraStop, boundedIndex, visitVariant, styledBounds, sourceRoomBounds);
   return {{
     position,
     target,
@@ -11701,10 +11879,15 @@ def _generate_reconstruction_on_anchored_surface(
         raise SystemExit("floorplan_missing")
 
     layout_contract: dict[str, object] | None = None
+    layout_geometry_projection: dict[str, object] = {}
     floorplan_analysis_arg = str(getattr(args, "floorplan_analysis", "") or "").strip()
     if floorplan_analysis_arg:
         try:
             layout_contract = load_layout_contract(floorplan_analysis_arg)
+        except LayoutContractError as exc:
+            raise SystemExit(str(exc)) from exc
+        try:
+            layout_geometry_projection = source_geometry_projection(layout_contract)
         except LayoutContractError as exc:
             raise SystemExit(str(exc)) from exc
 
@@ -11818,6 +12001,11 @@ def _generate_reconstruction_on_anchored_surface(
         height_m=height_m,
         geometry=geometry,
         source_room_ids=ordered_room_ids,
+        source_rooms=(
+            room_rows(layout_contract)
+            if layout_contract is not None
+            else []
+        ),
         source_portals=(
             list(dict(layout_contract.get("source_geometry") or {}).get("portals") or [])
             if layout_contract is not None
@@ -11962,6 +12150,8 @@ def _generate_reconstruction_on_anchored_surface(
                 "round_trip_status": str(dict(layout_contract.get("round_trip") or {}).get("status") or ""),
                 "source_sha256": str(dict(layout_contract.get("source") or {}).get("sha256") or ""),
                 "analysis_sha256": str(layout_contract.get("analysis_sha256") or ""),
+                "source_geometry_projection_sha256": str(layout_geometry_projection.get("sha256") or ""),
+                "source_geometry_projection": layout_geometry_projection,
             }
             if layout_contract is not None
             else {"status": "not_supplied"}
@@ -12101,6 +12291,11 @@ def _generate_reconstruction_on_anchored_surface(
             len(list(dict(layout_contract.get("source_geometry") or {}).get("portals") or []))
             if layout_contract is not None
             else 0
+        ),
+        "source_geometry_projection_sha256": (
+            str(layout_geometry_projection.get("sha256") or "")
+            if layout_contract is not None
+            else ""
         ),
     }
     floorplan_relpath = str(dict(receipt.get("floorplan") or {}).get("relpath") or "").strip()
