@@ -211,6 +211,16 @@ def build_run_input(
         "login_email": login_email,
         "login_password": login_password,
     }
+    # Carry the reviewed source geometry alongside the floorplan image.  A
+    # provider can display a plan without proving that the tour follows it;
+    # the downstream acceptance gate needs the hash-bound analysis receipt to
+    # reject that drift instead of silently treating the upload as enough.
+    floorplan_analysis = facts.get("floorplan_analysis_json") or facts.get("floorplan_analysis")
+    if floorplan_analysis:
+        payload["floorplan_analysis_json"] = floorplan_analysis
+    floorplan_analysis_path = str(facts.get("floorplan_analysis_path") or "").strip()
+    if floorplan_analysis_path:
+        payload["floorplan_analysis_path"] = floorplan_analysis_path
     return payload
 
 

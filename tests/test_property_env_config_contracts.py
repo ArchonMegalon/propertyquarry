@@ -109,6 +109,10 @@ def test_property_public_tour_scripts_default_to_property_state() -> None:
     assert "PROPERTYQUARRY_CREZLO_PLAYWRIGHT_IMAGE" in crezlo_worker
     assert "PROPERTYQUARRY_CREZLO_WORKSPACE_DOMAIN" in crezlo_worker
     assert "propertyquarry-tours.crezlotours.com" in crezlo_worker
+    assert "/api/seller/tours/workspaces" in crezlo_worker
+    assert "internal_fqdn" in crezlo_worker
+    assert "tours-active-workspace" in crezlo_worker
+    assert "workspace_create_permission_unavailable" in crezlo_worker
     assert "ea-property-tours" not in crezlo_worker
     assert "PropertyQuarry-hosted" in crezlo_publish
     assert "EA-hosted" not in crezlo_publish

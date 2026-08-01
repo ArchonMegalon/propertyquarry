@@ -1692,6 +1692,29 @@ def _tour_payload_is_disabled_fallback(payload: dict[str, object]) -> bool:
         return True
     if creation_mode in {"hosted_listing_fallback", "generated_reconstruction_tour"}:
         return True
+    # A historical private showcase used a locally generated HTML shell under
+    # a 3DVista-looking path.  The paired private receipt is intentionally
+    # merged into this payload, so reject that provenance marker here instead
+    # of allowing an internally generated preview to masquerade as a vendor
+    # export.  Real 3DVista exports carry an external/export receipt instead.
+    three_d_vista_import = (
+        dict(normalized.get("three_d_vista_import") or {})
+        if isinstance(normalized.get("three_d_vista_import"), dict)
+        else {}
+    )
+    three_d_vista_proof = (
+        dict(normalized.get("three_d_vista_white_label_proof") or {})
+        if isinstance(normalized.get("three_d_vista_white_label_proof"), dict)
+        else {}
+    )
+    if (
+        creation_mode == "generated_private_showcase"
+        or str(three_d_vista_import.get("source") or "").strip().lower()
+        == "propertyquarry_generated_showcase_shell"
+        or str(three_d_vista_proof.get("proof_kind") or "").strip().lower()
+        == "local_showcase_shell"
+    ):
+        return True
     if control_mode in {"walkable_3d", "internal_walkable_3d"}:
         return True
     if generated_reconstruction.get("satisfies_verified_tour_gate") is False:

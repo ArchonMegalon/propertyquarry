@@ -10330,6 +10330,57 @@ def test_public_tour_routes_refuse_unverified_generated_reconstruction_tours(
     assert walkthrough.json()["error"]["code"] == "tour_disabled_fallback"
 
 
+def test_public_tour_routes_refuse_generated_showcase_shell_even_with_3dvista_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A local showcase shell must never be promoted as a vendor tour."""
+    monkeypatch.setenv("EA_ENABLE_PUBLIC_TOURS", "1")
+    slug = "generated-showcase-shell-disabled"
+    bundle_dir = tmp_path / slug
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "tour.json").write_text(
+        json.dumps(
+            {
+                "slug": slug,
+                "title": "Generated showcase shell",
+                "display_title": "Generated showcase shell",
+                "creation_mode": "generated_private_showcase",
+                "control_mode": "3dvista",
+                "three_d_vista_entry_relpath": "3dvista/index.htm",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "three_d_vista_import": {
+                    "source": "propertyquarry_generated_showcase_shell",
+                },
+                "three_d_vista_white_label_proof": {
+                    "proof_kind": "local_showcase_shell",
+                    "private_viewer_verified": True,
+                    "non_trial_export_verified": True,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
+
+    client = _client(principal_id="exec-generated-showcase-shell-disabled")
+    page = client.get(f"/tours/{slug}", headers={"host": "propertyquarry.com"})
+    payload = client.get(f"/tours/{slug}.json")
+
+    assert page.status_code == 404
+    assert "This old link no longer opens as a 3D tour." in page.text
+    assert payload.status_code == 404
+    assert payload.json()["error"]["code"] == "tour_disabled_fallback"
+
+
 def test_public_memorial_routes_render_original_voice_without_voice_clone(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

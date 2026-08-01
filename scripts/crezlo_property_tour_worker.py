@@ -196,6 +196,50 @@ async function main() {
   };
 
   const log = (message) => result.logs.push(String(message || ''));
+  let transferWorkspaceId = String(packet.workspace_id || '').trim();
+
+  // The workspace app keeps its active workspace in a cookie (not
+  // localStorage).  The picker clears that cookie before issuing the signed
+  // cross-host transfer, so restore it after authentication and before the
+  // target app's first API request.  Without it the target page renders but
+  // every tours request is rejected with `workspace_id is required`.
+  async function setActiveWorkspaceCookie() {
+    if (!transferWorkspaceId) return;
+    await context.addCookies([{
+      name: 'tours-active-workspace',
+      value: transferWorkspaceId,
+      domain: '.crezlotours.com',
+      path: '/',
+    }]).catch((error) => log(`workspace_cookie_set_failed:${error}`));
+  }
+
+  // Crezlo currently emits an internal workspace hostname that already ends
+  // in `.crezlotours.com`, then appends that suffix again during the transfer
+  // POST.  Keep the provider's signed transfer query intact but repair only
+  // this deterministic host typo before Chromium requests it.
+  await page.route('**/*', async (route) => {
+    const requestUrl = String(route.request().url() || '');
+    let repairedUrl = requestUrl.replace(
+      '.crezlotours.com.crezlotours.com',
+      '.crezlotours.com',
+    );
+    if (repairedUrl !== requestUrl && transferWorkspaceId) {
+      try {
+        const parsed = new URL(repairedUrl);
+        if (parsed.searchParams.has('transfer') && !parsed.searchParams.has('workspace_id')) {
+          parsed.searchParams.set('workspace_id', transferWorkspaceId);
+          repairedUrl = parsed.toString();
+        }
+      } catch (error) {
+        log(`workspace_transfer_url_parse_failed:${error}`);
+      }
+    }
+    if (repairedUrl !== requestUrl) {
+      await route.continue({ url: repairedUrl });
+      return;
+    }
+    await route.continue();
+  });
 
   function workspaceLabelCandidates(packet) {
     const labels = [];
@@ -237,6 +281,43 @@ async function main() {
       return;
     }
     const candidates = workspaceLabelCandidates(packet);
+    // The provider may rotate the workspace FQDN.  Resolve the current
+    // workspace from the authenticated seller API before trying a label so a
+    // stale env/default hostname cannot strand the worker on the picker.
+    const workspaceResponse = await page.request.get('https://tours.crezlo.com/api/seller/tours/workspaces').catch(() => null);
+    if (workspaceResponse && workspaceResponse.ok()) {
+      try {
+        const workspacePayload = await workspaceResponse.json();
+        const workspaceRows = (((workspacePayload || {}).data || {}).data || []);
+        const requestedId = String(packet.workspace_id || '').trim();
+        const requestedName = String(packet.workspace_name || packet.workspace_label || '').trim().toLowerCase();
+        const selected = workspaceRows.find((row) => {
+          const id = String((row || {}).id || '').trim();
+          const name = String((row || {}).name || '').trim().toLowerCase();
+          return (requestedId && id === requestedId) || (requestedName && name === requestedName);
+        }) || (workspaceRows.length === 1 ? workspaceRows[0] : null);
+        if (selected) {
+          transferWorkspaceId = String(selected.id || '').trim() || transferWorkspaceId;
+          await setActiveWorkspaceCookie();
+          result.workspace_id = String(selected.id || '');
+          result.workspace_name = String(selected.name || '');
+          result.workspace_domain = String(selected.internal_fqdn || selected.external_fqdn || '');
+          result.workspace_base_url = result.workspace_domain ? `https://${result.workspace_domain}` : '';
+          const workspaceCard = page
+            .locator('[title="Use Workspace"]')
+            .filter({ hasText: result.workspace_name })
+            .first();
+          if (await workspaceCard.count()) {
+            await workspaceCard.click({ force: true }).catch(() => {});
+            await page.waitForTimeout(5000);
+            if (String(page.url() || '').includes('/admin/tours')) return;
+          }
+        }
+      } catch (error) {
+        log(`workspace_api_parse_failed:${error}`);
+      }
+    }
+    await setActiveWorkspaceCookie();
     for (const label of candidates) {
       const candidate = page.getByText(new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')).first();
       if (!await candidate.count()) {
@@ -297,6 +378,13 @@ async function main() {
     ).catch(() => null);
 
     const addButton = page.getByRole('button', { name: /add tour/i }).first();
+    if (!await addButton.count()) {
+      // Keep this diagnostic bounded.  A provider workspace can render its
+      // tour list while omitting the create control when the workspace
+      // permission/domain context is missing; waiting for a click in that
+      // state only burns the whole worker timeout and hides the real cause.
+      throw new Error(`workspace_create_permission_unavailable:${page.url()}`);
+    }
     await addButton.click({ force: true });
     await page.waitForTimeout(1500);
 
@@ -340,7 +428,8 @@ async function main() {
     result.tour_title = String(createdData.title || packet.tour_title || '');
 
     if (result.tour_id) {
-      result.editor_url = `${packet.workspace_base_url}/admin/tours/${result.tour_id}`;
+      const editorBaseUrl = String(result.workspace_base_url || packet.workspace_base_url || '').replace(/\/$/, '');
+      result.editor_url = `${editorBaseUrl}/admin/tours/${result.tour_id}`;
       await page.goto(String(result.editor_url), { waitUntil: 'domcontentloaded', timeout: 120000 }).catch(() => {});
       await page.waitForTimeout(5000);
     } else {
@@ -469,6 +558,8 @@ def main() -> int:
             "workspace_label": str(packet.get("workspace_label") or "").strip(),
             "workspace_name": str(packet.get("workspace_name") or "").strip(),
             "workspace_label_candidates": list(packet.get("workspace_label_candidates") or []),
+            "floorplan_analysis_json": packet.get("floorplan_analysis_json") or packet.get("floorplan_analysis") or {},
+            "floorplan_analysis_path": str(packet.get("floorplan_analysis_path") or "").strip(),
             "local_media_paths": [str(path) for path in selected_paths],
             "timeout_seconds": timeout_seconds,
         }
@@ -478,9 +569,25 @@ def main() -> int:
         result["source_floorplan_count"] = len(floorplan_paths)
         result["scene_strategy"] = scene_strategy
         result["scene_selection_json"] = scene_selection_json
-        result["workspace_domain"] = str(packet.get("workspace_domain") or DEFAULT_WORKSPACE_DOMAIN).strip()
-        result["workspace_base_url"] = workspace_base_url
-        result["workspace_tours_url"] = workspace_tours_url
+        result["workspace_domain"] = str(
+            result.get("workspace_domain")
+            or packet.get("workspace_domain")
+            or DEFAULT_WORKSPACE_DOMAIN
+        ).strip()
+        result["workspace_base_url"] = str(
+            result.get("workspace_base_url")
+            or (f"https://{result['workspace_domain']}" if result["workspace_domain"] else "")
+            or workspace_base_url
+        ).strip()
+        result["workspace_tours_url"] = str(
+            result.get("workspace_tours_url")
+            or (
+                f"{result['workspace_base_url'].rstrip('/')}/admin/tours"
+                if result["workspace_base_url"]
+                else ""
+            )
+            or workspace_tours_url
+        ).strip()
         print(json.dumps(result, ensure_ascii=True))
     return 0
 
