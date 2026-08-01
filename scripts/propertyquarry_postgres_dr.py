@@ -44,12 +44,12 @@ AWS_CLI_MINIMAL_PATH = "/usr/bin:/bin"
 SNAPSHOT_CONTRACT_NAME = "propertyquarry.postgres_exported_snapshot"
 SNAPSHOT_CONTRACT_VERSION = 2
 CRITICAL_DATA_CONTRACT_NAME = "propertyquarry.postgres_critical_data"
-CRITICAL_DATA_CONTRACT_VERSION = 3
-CRITICAL_DATA_EVIDENCE_VERSION = 3
+CRITICAL_DATA_CONTRACT_VERSION = 4
+CRITICAL_DATA_EVIDENCE_VERSION = 4
 CRITICAL_DATA_FINGERPRINT_ALGORITHM = "postgresql_sha256_bounded_chunk_merkle_v2"
 CRITICAL_DATA_SCHEMA = "public"
 CRITICAL_DATA_CHUNK_SIZE = 1_024
-CRITICAL_DATA_MAX_ROW_BYTES = 4 * 1_024 * 1_024
+CRITICAL_DATA_MAX_ROW_BYTES = 128 * 1_024 * 1_024
 CRITICAL_DATA_MAX_CHUNKS = 65_536
 CRITICAL_DATA_MAX_SUPPORTED_ROWS = CRITICAL_DATA_CHUNK_SIZE * CRITICAL_DATA_MAX_CHUNKS
 CRITICAL_DATA_PRIVACY_SCHEMA_VERSION = 15
@@ -2321,37 +2321,29 @@ def _critical_data_evidence_from_database(
                 ", 'capacity_state', COALESCE((SELECT json_agg(json_build_object("
                 "'capacity_key', capacity_key, 'row_count', row_count, "
                 "'row_limit', row_limit) ORDER BY capacity_key) "
-                "FROM bounded_source), '[]'::json)"
+                f'FROM "{CRITICAL_DATA_SCHEMA}"."{table}"), \'[]\'::json)'
             )
         sql = (
             "SET TIME ZONE 'UTC'; "
+            "SET work_mem TO '16MB'; "
             f"/* propertyquarry_critical_data:{table} */ "
-            "WITH bounded_source AS MATERIALIZED ("
-            "SELECT source_row.* "
-            f'FROM "{CRITICAL_DATA_SCHEMA}"."{table}" AS source_row '
-            f"LIMIT {CRITICAL_DATA_MAX_SUPPORTED_ROWS}"
-            "), serialized_rows AS MATERIALIZED ("
+            "WITH digested_rows AS MATERIALIZED ("
             f"SELECT {identity_projection_sql}, "
-            "convert_to(to_jsonb(source_row)::text, 'UTF8') AS row_bytes "
-            "FROM bounded_source AS source_row"
-            "), digested_rows AS MATERIALIZED ("
-            "SELECT serialized_row.*, "
+            "octet_length(serialized_row.row_bytes)::bigint AS row_size_bytes, "
             "encode(sha256(serialized_row.row_bytes), 'hex') AS row_sha256 "
-            "FROM serialized_rows AS serialized_row"
+            f'FROM "{CRITICAL_DATA_SCHEMA}"."{table}" AS source_row '
+            "CROSS JOIN LATERAL (SELECT "
+            "convert_to(to_jsonb(source_row)::text, 'UTF8') AS row_bytes "
+            "OFFSET 0) AS serialized_row"
             "), canonical_rows AS MATERIALIZED ("
             f"SELECT row_number() OVER (ORDER BY {identity_sql}, "
             "digested_row.row_sha256 COLLATE \"C\")::bigint AS ordinal, "
-            "digested_row.row_bytes, digested_row.row_sha256 "
+            "digested_row.row_size_bytes, digested_row.row_sha256 "
             "FROM digested_rows AS digested_row"
-            "), measured_rows AS MATERIALIZED ("
-            "SELECT ordinal, row_bytes, row_sha256, "
-            "octet_length(row_bytes)::bigint AS row_size_bytes "
-            "FROM canonical_rows"
             "), bounded_rows AS MATERIALIZED ("
             "SELECT ordinal, row_size_bytes, row_sha256, "
             f"((ordinal - 1) / {CRITICAL_DATA_CHUNK_SIZE})::bigint AS chunk_index "
-            f"FROM measured_rows WHERE row_size_bytes <= {CRITICAL_DATA_MAX_ROW_BYTES} "
-            f"AND ordinal <= {CRITICAL_DATA_MAX_SUPPORTED_ROWS}"
+            f"FROM canonical_rows WHERE row_size_bytes <= {CRITICAL_DATA_MAX_ROW_BYTES}"
             "), bounded_chunks AS MATERIALIZED ("
             "SELECT chunk_index, COUNT(*)::bigint AS row_count, "
             "MAX(row_size_bytes)::bigint AS max_row_bytes_observed, "
@@ -2359,11 +2351,13 @@ def _critical_data_evidence_from_database(
             "'UTF8')), 'hex') AS chunk_sha256 FROM bounded_rows GROUP BY chunk_index"
             ") SELECT json_build_object("
             f"'evidence_version', {CRITICAL_DATA_EVIDENCE_VERSION}, "
-            "'row_count', (SELECT COUNT(*)::bigint FROM measured_rows), "
-            "'oversized_row_count', (SELECT COUNT(*)::bigint FROM measured_rows "
+            "'row_count', (SELECT COUNT(*)::bigint FROM canonical_rows), "
+            "'oversized_row_count', (SELECT COUNT(*)::bigint FROM canonical_rows "
             f"WHERE row_size_bytes > {CRITICAL_DATA_MAX_ROW_BYTES}), "
+            "'max_row_bytes_observed', (SELECT COALESCE(MAX(row_size_bytes), 0)::bigint "
+            "FROM canonical_rows), "
             "'chunk_count', (SELECT CASE WHEN COUNT(*) = 0 THEN 0 "
-            f"ELSE ((COUNT(*) - 1) / {CRITICAL_DATA_CHUNK_SIZE}) + 1 END FROM measured_rows), "
+            f"ELSE ((COUNT(*) - 1) / {CRITICAL_DATA_CHUNK_SIZE}) + 1 END FROM canonical_rows), "
             "'chunks', COALESCE((SELECT json_agg(json_build_object("
             "'chunk_index', chunk_index, 'row_count', row_count, "
             "'max_row_bytes_observed', max_row_bytes_observed, "
@@ -2407,10 +2401,21 @@ def _critical_data_evidence_from_database(
             code="critical_data_query_invalid",
             message=f"{label} oversized-row count is invalid for {table}.",
         )
+        max_row_bytes_observed = _strict_nonnegative_int(
+            observed.get("max_row_bytes_observed"),
+            code="critical_data_query_invalid",
+            message=f"{label} maximum row size is invalid for {table}.",
+        )
         if oversized_row_count:
             raise DisasterRecoveryError(
                 "critical_data_row_too_large",
                 f"{label} contains a canonical row larger than the release bound in {table}.",
+                details={
+                    "table": table,
+                    "max_row_bytes": CRITICAL_DATA_MAX_ROW_BYTES,
+                    "max_row_bytes_observed": max_row_bytes_observed,
+                    "oversized_row_count": oversized_row_count,
+                },
             )
         chunks = observed.get("chunks")
         if not isinstance(chunks, list):

@@ -211,6 +211,10 @@ def _critical_query_result(
         "evidence_version": row["evidence_version"],
         "row_count": row["row_count"],
         "oversized_row_count": 0,
+        "max_row_bytes_observed": max(
+            (chunk["max_row_bytes_observed"] for chunk in row["chunks"]),
+            default=0,
+        ),
         "chunk_count": row["chunk_count"],
         "chunks": row["chunks"],
     }
@@ -2823,8 +2827,15 @@ def test_canonical_queries_are_snapshot_bound_public_quoted_and_chunk_bounded() 
             assert expensive_operation not in preflight_sql
 
         assert f'FROM "public"."{table}" AS source_row' in full_sql
-        assert "bounded_source AS MATERIALIZED" in full_sql
-        assert f"LIMIT {dr.CRITICAL_DATA_MAX_SUPPORTED_ROWS}" in full_sql
+        assert "SET work_mem TO '16MB'" in full_sql
+        assert "bounded_source AS MATERIALIZED" not in full_sql
+        assert "serialized_rows AS MATERIALIZED" not in full_sql
+        assert "digested_rows AS MATERIALIZED" in full_sql
+        assert "CROSS JOIN LATERAL" in full_sql
+        assert "OFFSET 0) AS serialized_row" in full_sql
+        assert "digested_row.row_size_bytes" in full_sql
+        assert "digested_row.row_bytes" not in full_sql
+        assert f"LIMIT {dr.CRITICAL_DATA_MAX_SUPPORTED_ROWS}" not in full_sql
         for column in identity_columns:
             assert f'source_row."{column}"' in full_sql
             assert f'digested_row."{column}"' in full_sql
@@ -2832,7 +2843,7 @@ def test_canonical_queries_are_snapshot_bound_public_quoted_and_chunk_bounded() 
         assert "bounded_chunks AS MATERIALIZED" in full_sql
         assert f"((ordinal - 1) / {dr.CRITICAL_DATA_CHUNK_SIZE})" in full_sql
         assert f"row_size_bytes <= {dr.CRITICAL_DATA_MAX_ROW_BYTES}" in full_sql
-        assert f"ordinal <= {dr.CRITICAL_DATA_MAX_SUPPORTED_ROWS}" in full_sql
+        assert f"ordinal <= {dr.CRITICAL_DATA_MAX_SUPPORTED_ROWS}" not in full_sql
         assert "string_agg(row_sha256, '' ORDER BY ordinal)" in full_sql
         assert "all_chunks" not in full_sql
         assert f"FROM {table} " not in preflight_sql
@@ -2910,6 +2921,43 @@ def test_full_merkle_query_must_match_same_snapshot_preflight_count() -> None:
         )
         for command in commands
     )
+
+
+def test_critical_data_query_reports_oversized_row_bound_evidence() -> None:
+    commands: list[dict[str, object]] = []
+
+    def runner(command, **_kwargs):
+        sql = list(command)[list(command).index("--command") + 1]
+        raw = _critical_query_result(sql)
+        if (
+            "propertyquarry_critical_data:property_search_runs" in sql
+            and "row_bound_preflight" not in sql
+        ):
+            observed = json.loads(raw)
+            observed["oversized_row_count"] = 1
+            observed["max_row_bytes_observed"] = dr.CRITICAL_DATA_MAX_ROW_BYTES + 1
+            raw = json.dumps(observed) + "\n"
+        return _result(stdout="BEGIN\nSET\nSET\n" + raw)
+
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        dr._critical_data_evidence_from_database(
+            label="Source",
+            step="source_critical_data",
+            psql="/mock/bin/psql",
+            database_url="postgresql://owner@db.example/propertyquarry",
+            env={},
+            runner=runner,
+            commands=commands,
+            snapshot_id="00000003-0000001B-1",
+        )
+
+    assert exc.value.code == "critical_data_row_too_large"
+    assert exc.value.details == {
+        "table": "property_search_runs",
+        "max_row_bytes": 128 * 1_024 * 1_024,
+        "max_row_bytes_observed": (128 * 1_024 * 1_024) + 1,
+        "oversized_row_count": 1,
+    }
 
 
 def test_schema_ledger_queries_are_snapshot_bound_to_quoted_public_table() -> None:
