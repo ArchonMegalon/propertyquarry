@@ -21,6 +21,7 @@ CONTRACT_NAME = "propertyquarry.render_bridge_runtime.v1"
 CRITICAL_RUNTIME_SCRIPT_PATHS = (
     (ROOT / "scripts" / "generate_property_reconstruction.py", "/app/scripts/generate_property_reconstruction.py"),
     (ROOT / "scripts" / "property_reconstruction_styles.py", "/app/scripts/property_reconstruction_styles.py"),
+    (ROOT / "scripts" / "property_tour_layout_contract.py", "/app/scripts/property_tour_layout_contract.py"),
     (ROOT / "scripts" / "property_reconstruction_render_bridge.py", "/app/scripts/property_reconstruction_render_bridge.py"),
     (ROOT / "vendor" / "three" / "0.167.1" / "three.module.js", "/app/vendor/three/0.167.1/three.module.js"),
     (

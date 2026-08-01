@@ -86,6 +86,25 @@ except ModuleNotFoundError:
         validate_style_scene,
     )
 
+try:
+    from scripts.property_tour_layout_contract import (
+        LayoutContractError,
+        load_layout_contract,
+        room_ids_in_walk_order,
+        room_rows,
+        source_bounds_m,
+        validate_walkable_scene,
+    )
+except ModuleNotFoundError:
+    from property_tour_layout_contract import (  # type: ignore[no-redef]
+        LayoutContractError,
+        load_layout_contract,
+        room_ids_in_walk_order,
+        room_rows,
+        source_bounds_m,
+        validate_walkable_scene,
+    )
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
 VIEWER_VERSION = GENERATED_RECONSTRUCTION_VIEWER_VERSION
@@ -2458,6 +2477,8 @@ def _reconstruction_walkable_scene(
     depth_m: float,
     height_m: float,
     geometry: dict[str, object] | None = None,
+    source_room_ids: list[str] | tuple[str, ...] = (),
+    source_portals: list[dict[str, object]] | tuple[dict[str, object], ...] = (),
 ) -> dict[str, object]:
     normalized_labels = [
         _compact_route_label(label)
@@ -2530,8 +2551,14 @@ def _reconstruction_walkable_scene(
     rooms: list[dict[str, object]] = []
     eye_y = round(max(1.45, min(height_m * 0.58, height_m - 0.3)), 3)
     target_y = round(max(1.2, min(height_m * 0.5, eye_y - 0.18)), 3)
+    normalized_source_room_ids = [str(value or "").strip() for value in list(source_room_ids or [])]
     for index, (label, (nx, nz)) in enumerate(zip(normalized_labels, stop_positions), start=1):
         kind = _route_label_kind(label)
+        source_room_id = (
+            normalized_source_room_ids[index - 1]
+            if index - 1 < len(normalized_source_room_ids)
+            else ""
+        )
         focus_x = round(nx * inner_width, 3)
         focus_z = round(nz * inner_depth, 3)
         offset_x = 0.72 if focus_x < 0 else -0.72
@@ -2543,6 +2570,7 @@ def _reconstruction_walkable_scene(
             "room": label,
             "name": label,
             "kind": kind,
+            "source_room_id": source_room_id,
             "sequence": index,
             "focus": {"x": focus_x, "y": target_y, "z": focus_z},
             "camera": {"x": camera_x, "y": eye_y, "z": camera_z},
@@ -2553,11 +2581,17 @@ def _reconstruction_walkable_scene(
                 "label": label,
                 "name": label,
                 "kind": kind,
+                "source_room_id": source_room_id,
                 "sequence": index,
                 "position": {"x": focus_x, "y": 0.0, "z": focus_z},
                 "focus": {"x": focus_x, "y": target_y, "z": focus_z},
             }
         )
+    normalized_portals = [
+        dict(portal)
+        for portal in list(source_portals or [])
+        if isinstance(portal, dict) and str(portal.get("id") or "").strip()
+    ]
     return {
         "kind": "generated_reconstruction_layout",
         "route_anchor_method": (
@@ -2569,6 +2603,7 @@ def _reconstruction_walkable_scene(
         "bounds": {"width_m": round(width_m, 3), "depth_m": round(depth_m, 3), "height_m": round(height_m, 3)},
         "rooms": rooms,
         "route": route,
+        "portals": normalized_portals,
     }
 
 
@@ -6329,6 +6364,151 @@ def _wall_rectangles_with_boundary_completion(
         "boundary_depth_m": round(normalized_depth, 4),
         "boundary_thickness_m": thickness,
     }
+
+
+def _source_geometry_wall_rectangles(
+    layout_contract: dict[str, object],
+    *,
+    width_m: float,
+    depth_m: float,
+) -> list[dict[str, float]]:
+    """Build wall segments from measured room components, not bitmap guesses."""
+    rooms = room_rows(layout_contract)
+    if not rooms:
+        return []
+    source_width, source_depth = source_bounds_m(layout_contract)
+    thickness = round(max(0.10, min(0.18, min(width_m, depth_m) * 0.012)), 4)
+    half_width = source_width / 2.0
+    half_depth = source_depth / 2.0
+    source_geometry = dict(layout_contract.get("source_geometry") or {})
+    canvas = dict(source_geometry.get("canvas_size_px") or {})
+    canvas_width = max(1.0, float(canvas.get("width") or 1.0))
+    source_geometry_rooms = [
+        dict(room)
+        for room in list(source_geometry.get("rooms") or [])
+        if isinstance(room, dict)
+    ]
+    portal_positions: list[tuple[str, set[str], float, float, float]] = []
+    for portal in list(source_geometry.get("portals") or []):
+        if not isinstance(portal, dict):
+            continue
+        center = dict(portal.get("center_px") or {})
+        if not center:
+            continue
+        portal_id = str(portal.get("id") or "").strip()
+        room_ids = {str(value or "").strip() for value in list(portal.get("room_ids") or [])}
+        gap = max(
+            0.65,
+            min(
+                1.35,
+                (float(portal.get("width_px") or 70.0) / max(canvas_width, 1.0)) * source_width,
+            ),
+        )
+        portal_positions.append(
+            (
+                portal_id,
+                room_ids,
+                float(center.get("x") or 0.0),
+                float(center.get("y") or 0.0),
+                gap,
+            )
+        )
+
+    def _segments(start: float, end: float, gaps: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        cuts = sorted((max(start, left), min(end, right)) for left, right in gaps if right > start and left < end)
+        if not cuts:
+            return [(start, end)]
+        output: list[tuple[float, float]] = []
+        cursor = start
+        for left, right in cuts:
+            if left - cursor >= thickness:
+                output.append((cursor, left))
+            cursor = max(cursor, right)
+        if end - cursor >= thickness:
+            output.append((cursor, end))
+        return output
+
+    rectangles: list[dict[str, float]] = []
+    source_geometry_rooms_by_id = {
+        str(room.get("id") or "").strip(): room
+        for room in source_geometry_rooms
+    }
+    for room in rooms:
+        room_id = str(room.get("id") or "").strip()
+        source_geometry_room = source_geometry_rooms_by_id.get(room_id, {})
+        pixel_room_components = [
+            dict(component)
+            for component in list(source_geometry_room.get("components_px") or [])
+            if isinstance(component, dict)
+        ]
+        for component_index, component in enumerate(list(room.get("components") or [])):
+            x = float(component.get("x") or 0.0)
+            z = float(component.get("z") or 0.0)
+            room_width = float(component.get("width") or 0.0)
+            room_depth = float(component.get("depth") or 0.0)
+            if room_width <= 0 or room_depth <= 0:
+                continue
+            left = x - half_width
+            right = x + room_width - half_width
+            top = z - half_depth
+            bottom = z + room_depth - half_depth
+            pixel_component = (
+                pixel_room_components[component_index]
+                if component_index < len(pixel_room_components)
+                else {}
+            )
+            pixel_left = float(pixel_component.get("x") or 0.0)
+            pixel_top = float(pixel_component.get("y") or 0.0)
+            pixel_right = pixel_left + float(pixel_component.get("width") or 0.0)
+            pixel_bottom = pixel_top + float(pixel_component.get("height") or 0.0)
+            room_portals = [portal for portal in portal_positions if room_id in portal[1]]
+            component_portals: list[tuple[str, str, float, float, float]] = []
+            for portal_id, _room_ids, portal_px, portal_py, portal_gap in room_portals:
+                distances = {
+                    "left": abs(portal_px - pixel_left),
+                    "right": abs(portal_px - pixel_right),
+                    "top": abs(portal_py - pixel_top),
+                    "bottom": abs(portal_py - pixel_bottom),
+                }
+                side = min(distances, key=distances.get)
+                if distances[side] > 140.0:
+                    continue
+                if side in {"left", "right"}:
+                    fraction = (portal_py - pixel_top) / max(1.0, pixel_bottom - pixel_top)
+                    coordinate = top + max(0.0, min(1.0, fraction)) * room_depth
+                else:
+                    fraction = (portal_px - pixel_left) / max(1.0, pixel_right - pixel_left)
+                    coordinate = left + max(0.0, min(1.0, fraction)) * room_width
+                component_portals.append((portal_id, side, coordinate, portal_gap, distances[side]))
+            left_gaps = [
+                (coordinate - gap / 2.0, coordinate + gap / 2.0)
+                for _portal_id, side, coordinate, gap, _distance in component_portals
+                if side == "left"
+            ]
+            right_gaps = [
+                (coordinate - gap / 2.0, coordinate + gap / 2.0)
+                for _portal_id, side, coordinate, gap, _distance in component_portals
+                if side == "right"
+            ]
+            top_gaps = [
+                (coordinate - gap / 2.0, coordinate + gap / 2.0)
+                for _portal_id, side, coordinate, gap, _distance in component_portals
+                if side == "top"
+            ]
+            bottom_gaps = [
+                (coordinate - gap / 2.0, coordinate + gap / 2.0)
+                for _portal_id, side, coordinate, gap, _distance in component_portals
+                if side == "bottom"
+            ]
+            for segment_start, segment_end in _segments(top, bottom, left_gaps):
+                rectangles.append({"center_x": round(left, 4), "center_z": round((segment_start + segment_end) / 2.0, 4), "width": thickness, "depth": round(segment_end - segment_start, 4), "rotation_y": 0.0})
+            for segment_start, segment_end in _segments(top, bottom, right_gaps):
+                rectangles.append({"center_x": round(right, 4), "center_z": round((segment_start + segment_end) / 2.0, 4), "width": thickness, "depth": round(segment_end - segment_start, 4), "rotation_y": 0.0})
+            for segment_start, segment_end in _segments(left, right, top_gaps):
+                rectangles.append({"center_x": round((segment_start + segment_end) / 2.0, 4), "center_z": round(top, 4), "width": round(segment_end - segment_start, 4), "depth": thickness, "rotation_y": 0.0})
+            for segment_start, segment_end in _segments(left, right, bottom_gaps):
+                rectangles.append({"center_x": round((segment_start + segment_end) / 2.0, 4), "center_z": round(bottom, 4), "width": round(segment_end - segment_start, 4), "depth": thickness, "rotation_y": 0.0})
+    return rectangles
 
 
 def _write_obj(
@@ -11403,6 +11583,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a PropertyQuarry reconstruction from a floorplan image and photos.")
     parser.add_argument("--slug", required=True, help="Existing PropertyQuarry public tour slug.")
     parser.add_argument("--floorplan", default="", help="Floorplan image. PDF support is intentionally not implied here.")
+    parser.add_argument(
+        "--floorplan-analysis",
+        default="",
+        help="Reviewed propertyquarry.floorplan_analysis.v2 JSON. When supplied, room geometry and portals are source-locked.",
+    )
     parser.add_argument("--photo", action="append", default=[], help="Source property photo. Can be provided multiple times.")
     parser.add_argument("--target-subdir", default="generated-reconstruction")
     parser.add_argument("--max-width-m", type=float, default=10.0)
@@ -11515,6 +11700,14 @@ def _generate_reconstruction_on_anchored_surface(
     else:
         raise SystemExit("floorplan_missing")
 
+    layout_contract: dict[str, object] | None = None
+    floorplan_analysis_arg = str(getattr(args, "floorplan_analysis", "") or "").strip()
+    if floorplan_analysis_arg:
+        try:
+            layout_contract = load_layout_contract(floorplan_analysis_arg)
+        except LayoutContractError as exc:
+            raise SystemExit(str(exc)) from exc
+
     photo_rows: list[dict[str, object]] = []
     photo_paths: list[Path] = []
     for index, source in enumerate(photo_sources, start=1):
@@ -11527,21 +11720,39 @@ def _generate_reconstruction_on_anchored_surface(
 
     geometry = _extract_floorplan_geometry(floorplan_target)
     geometry_content_size = dict(geometry.get("content_size_px") or {})
-    width_m, depth_m, height_m = _room_dimensions(
-        int(geometry_content_size.get("width") or floorplan_meta["width"]),
-        int(geometry_content_size.get("height") or floorplan_meta["height"]),
-        max_width_m=max(3.0, float(args.max_width_m)),
-    )
-    extracted_wall_rectangles = _wall_rectangles_from_mask(
-        list(geometry.get("wall_mask") or []),
-        width_m=width_m,
-        depth_m=depth_m,
-    )
-    wall_rectangles, boundary_completion = _wall_rectangles_with_boundary_completion(
-        extracted_wall_rectangles,
-        width_m=width_m,
-        depth_m=depth_m,
-    )
+    if layout_contract is not None:
+        try:
+            width_m, depth_m = source_bounds_m(layout_contract)
+        except LayoutContractError as exc:
+            raise SystemExit(str(exc)) from exc
+        height_m = 2.7
+        extracted_wall_rectangles = _source_geometry_wall_rectangles(
+            layout_contract,
+            width_m=width_m,
+            depth_m=depth_m,
+        )
+        wall_rectangles, boundary_completion = extracted_wall_rectangles, {
+            "status": "source_locked",
+            "method": "floorplan_analysis_room_components_v1",
+            "extracted_wall_count": len(extracted_wall_rectangles),
+            "added_wall_count": 0,
+        }
+    else:
+        width_m, depth_m, height_m = _room_dimensions(
+            int(geometry_content_size.get("width") or floorplan_meta["width"]),
+            int(geometry_content_size.get("height") or floorplan_meta["height"]),
+            max_width_m=max(3.0, float(args.max_width_m)),
+        )
+        extracted_wall_rectangles = _wall_rectangles_from_mask(
+            list(geometry.get("wall_mask") or []),
+            width_m=width_m,
+            depth_m=depth_m,
+        )
+        wall_rectangles, boundary_completion = _wall_rectangles_with_boundary_completion(
+            extracted_wall_rectangles,
+            width_m=width_m,
+            depth_m=depth_m,
+        )
 
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -11578,19 +11789,68 @@ def _generate_reconstruction_on_anchored_surface(
             )
         ]
     source_images = [floorplan_target, *photo_paths]
-    route_labels = _reconstruction_walkthrough_route_labels(
-        payload,
-        explicit_labels=list(args.room_label or []),
-        explicit_room_count=int(args.room_count or 0),
+    if layout_contract is not None:
+        ordered_room_ids = room_ids_in_walk_order(layout_contract)
+        room_by_id = {
+            str(room.get("id") or "").strip(): room
+            for room in room_rows(layout_contract)
+        }
+        route_labels = [
+            str(room_by_id[room_id].get("label") or room_id).strip()
+            for room_id in ordered_room_ids
+            if room_id in room_by_id
+        ]
+    else:
+        ordered_room_ids = []
+        route_labels = _reconstruction_walkthrough_route_labels(
+            payload,
+            explicit_labels=list(args.room_label or []),
+            explicit_room_count=int(args.room_count or 0),
+        )
+    walkthrough_route_labels = _walkthrough_stop_labels(
+        route_labels,
+        target_stop_count=len(route_labels) if layout_contract is not None else len(photo_rows),
     )
-    walkthrough_route_labels = _walkthrough_stop_labels(route_labels, target_stop_count=len(photo_rows))
     walkable_scene = _reconstruction_walkable_scene(
         route_labels=route_labels,
         width_m=width_m,
         depth_m=depth_m,
         height_m=height_m,
         geometry=geometry,
+        source_room_ids=ordered_room_ids,
+        source_portals=(
+            list(dict(layout_contract.get("source_geometry") or {}).get("portals") or [])
+            if layout_contract is not None
+            else []
+        ),
     )
+    if layout_contract is not None:
+        layout_failures = validate_walkable_scene(walkable_scene, layout_contract)
+        if layout_failures:
+            raise SystemExit("floorplan_layout_contract_failed:" + ",".join(layout_failures))
+        source_rooms_by_id = {
+            str(room.get("id") or "").strip(): room
+            for room in room_rows(layout_contract)
+        }
+        for collection_key in ("route", "rooms"):
+            for row in list(walkable_scene.get(collection_key) or []):
+                if not isinstance(row, dict):
+                    continue
+                source_room = source_rooms_by_id.get(str(row.get("source_room_id") or "").strip())
+                if not source_room:
+                    continue
+                row["source_dimensions_m"] = str(source_room.get("dimension_label") or "").strip()
+                row["source_area_m2"] = float(source_room.get("area_m2") or 0.0)
+                row["source_components_m"] = [
+                    {
+                        "x": float(component.get("x") or 0.0),
+                        "z": float(component.get("z") or 0.0),
+                        "width": float(component.get("width") or 0.0),
+                        "depth": float(component.get("depth") or 0.0),
+                    }
+                    for component in list(source_room.get("components") or [])
+                    if isinstance(component, dict)
+                ]
     photo_reference_panels = _generated_reconstruction_photo_reference_panels(
         photos=photo_rows,
         walkable_scene=walkable_scene,
@@ -11633,6 +11893,12 @@ def _generate_reconstruction_on_anchored_surface(
         photo_count=len(photo_rows),
         floorplan_inferred=floorplan_inferred,
     )
+    if layout_contract is not None:
+        source_disclosure = (
+            "Planning reconstruction with room footprints, measured dimensions, doorway edges, "
+            "and the entrance exit gate locked to the reviewed floorplan contract. "
+            "Visual materials remain generated and are not a captured photorealistic tour."
+        )
     diorama_preview = _write_generated_reconstruction_diorama_preview(
         bundle_dir / "diorama-preview.png",
         floorplan_path=floorplan_target,
@@ -11664,7 +11930,9 @@ def _generate_reconstruction_on_anchored_surface(
         "requested_style": selected_style,
         "style_scene": style_scene,
         "method": (
-            "photo_inferred_schematic_with_source_photo_reference_panels"
+            "floorplan_analysis_source_locked_geometry_with_source_photo_reference_panels"
+            if layout_contract is not None
+            else "photo_inferred_schematic_with_source_photo_reference_panels"
             if floorplan_inferred
             else "floorplan_directional_wall_segments_with_source_photo_reference_panels"
         ),
@@ -11682,6 +11950,22 @@ def _generate_reconstruction_on_anchored_surface(
             "boundary_completion": boundary_completion,
         },
         "floorplan": floorplan_meta,
+        "floorplan_analysis": (
+            {
+                "status": "source_locked",
+                "contract_name": str(layout_contract.get("contract_name") or ""),
+                "review_status": str(layout_contract.get("review_status") or ""),
+                "room_count": int(layout_contract.get("room_count") or 0),
+                "measurement_tolerance_m": float(layout_contract.get("measurement_tolerance_m") or 0.0),
+                "doorway_edge_count": len(list(layout_contract.get("doorway_edges") or [])),
+                "portal_count": len(list(dict(layout_contract.get("source_geometry") or {}).get("portals") or [])),
+                "round_trip_status": str(dict(layout_contract.get("round_trip") or {}).get("status") or ""),
+                "source_sha256": str(dict(layout_contract.get("source") or {}).get("sha256") or ""),
+                "analysis_sha256": str(layout_contract.get("analysis_sha256") or ""),
+            }
+            if layout_contract is not None
+            else {"status": "not_supplied"}
+        ),
         "photos": photo_rows,
         "source_photo_filter": {
             "status": "pass",
@@ -11808,6 +12092,16 @@ def _generate_reconstruction_on_anchored_surface(
         "photo_reference_panel_count": len(photo_reference_panels),
         "walkable_scene": walkable_scene,
         "walkable_scene_kind": str(walkable_scene.get("kind") or "").strip(),
+        "layout_contract_status": "source_locked" if layout_contract is not None else "not_supplied",
+        "layout_contract_name": (
+            str(layout_contract.get("contract_name") or "") if layout_contract is not None else ""
+        ),
+        "layout_room_count": int(layout_contract.get("room_count") or 0) if layout_contract is not None else 0,
+        "layout_portal_count": (
+            len(list(dict(layout_contract.get("source_geometry") or {}).get("portals") or []))
+            if layout_contract is not None
+            else 0
+        ),
     }
     floorplan_relpath = str(dict(receipt.get("floorplan") or {}).get("relpath") or "").strip()
     if floorplan_relpath:

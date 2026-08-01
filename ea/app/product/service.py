@@ -20693,6 +20693,30 @@ def _ensure_hosted_property_tour_url(structured_output: dict[str, object]) -> di
     return normalized
 
 
+def _property_tour_immersive_quality_block_reason(structured_output: dict[str, object]) -> str:
+    """Return the provider quality-gate reason, if this artifact is not publishable.
+
+    Crezlo artifacts can contain a vendor/editor URL even when the spatial
+    acceptance gate rejected the output (for example, when the provider only
+    produced flat JPEG scenes).  That URL must never be converted into a
+    first-party gallery or treated as a ready tour.  Keep this check separate
+    from the legacy fallback detector so all provider outputs fail closed.
+    """
+    normalized = dict(structured_output or {})
+    if str(normalized.get("quality_gate_status") or "").strip().lower() == "blocked":
+        return _first_non_empty_text(
+            normalized.get("quality_gate_reason"),
+            "crezlo_immersive_evidence_missing",
+        )
+    acceptance = normalized.get("immersive_acceptance_json")
+    if isinstance(acceptance, dict) and acceptance and acceptance.get("accepted") is not True:
+        return _first_non_empty_text(
+            acceptance.get("reason"),
+            "crezlo_immersive_evidence_missing",
+        )
+    return ""
+
+
 def _property_reconstruction_asset_suffix(*, url: str, content_type: str = "") -> str:
     suffix = _hosted_property_tour_asset_suffix(url=url, content_type=content_type).lower()
     if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}:
@@ -20804,6 +20828,36 @@ def _stage_property_reconstruction_source_image(source_path: Path | None, stage_
     return staged_path if staged_path.is_file() and staged_path.stat().st_size > 0 else None
 
 
+def _stage_property_reconstruction_layout_contract(
+    source: object,
+    stage_dir: Path,
+) -> Path | None:
+    """Stage a reviewed floorplan-analysis JSON beside the source floorplan."""
+    target = (stage_dir / "floorplan-analysis.json").resolve()
+    if stage_dir.resolve() not in target.parents:
+        return None
+    if isinstance(source, dict):
+        try:
+            target.write_text(json.dumps(source, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except (OSError, TypeError, ValueError):
+            return None
+        return target if target.is_file() and target.stat().st_size > 0 else None
+    raw_path = str(source or "").strip()
+    if not raw_path:
+        return None
+    try:
+        resolved_source = Path(raw_path).expanduser().resolve()
+    except Exception:
+        return None
+    if not resolved_source.is_file() or resolved_source.suffix.lower() != ".json":
+        return None
+    try:
+        shutil.copy2(resolved_source, target)
+    except OSError:
+        return None
+    return target if target.is_file() and target.stat().st_size > 0 else None
+
+
 def _run_property_reconstruction_render_bridge(
     *,
     slug: str,
@@ -20813,6 +20867,7 @@ def _run_property_reconstruction_render_bridge(
     room_count: int,
     route_labels: list[str],
     skip_video: bool,
+    floorplan_analysis_path: Path | None = None,
 ) -> dict[str, object]:
     bridge_url = _property_reconstruction_render_bridge_url()
     if not bridge_url:
@@ -20832,6 +20887,7 @@ def _run_property_reconstruction_render_bridge(
         "slug": str(slug or "").strip(),
         "skip_video": bool(skip_video),
         "floorplan_path": str(floorplan_path) if floorplan_path is not None else "",
+        "floorplan_analysis_path": str(floorplan_analysis_path) if floorplan_analysis_path is not None else "",
         "photo_paths": [str(path) for path in photo_paths if isinstance(path, Path)],
         "style_label": style_label,
         "style_id": str(selected_style.get("id") or ""),
@@ -21069,6 +21125,10 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
             )
             if photo_path is not None:
                 photo_paths.append(photo_path)
+        floorplan_analysis_path = _stage_property_reconstruction_layout_contract(
+            facts.get("floorplan_analysis_json") or facts.get("floorplan_analysis_path"),
+            tmp_path,
+        )
         if floorplan_path is None and not photo_paths:
             raise RuntimeError("reconstruction_source_assets_unavailable")
         style_label = str(selected_reconstruction_style.get("prompt") or "")
@@ -21083,6 +21143,7 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
                 room_count=reconstruction_room_count,
                 route_labels=normalized_reconstruction_route_labels,
                 skip_video=skip_video,
+                floorplan_analysis_path=floorplan_analysis_path,
             )
         else:
             command = [
@@ -21097,6 +21158,8 @@ def _write_generated_reconstruction_property_tour_bundle_unchecked(
                 command.extend(["--floorplan", str(floorplan_path)])
             else:
                 command.append("--infer-floorplan-from-photos")
+            if floorplan_analysis_path is not None:
+                command.extend(["--floorplan-analysis", str(floorplan_analysis_path)])
             for photo_path in photo_paths:
                 command.extend(["--photo", str(photo_path)])
             if style_label:
@@ -41763,9 +41826,11 @@ class ProductService:
             return payload
 
         structured_output = dict(direct_structured_output or artifact.structured_output_json or {}) if artifact is not None else dict(direct_structured_output or {})
-        structured_output = _ensure_hosted_property_tour_url(structured_output)
-        if _property_tour_payload_is_disabled_fallback(structured_output):
-            blocked_reason = "property_tour_fallback_disabled"
+        immersive_quality_block_reason = _property_tour_immersive_quality_block_reason(structured_output)
+        if not immersive_quality_block_reason:
+            structured_output = _ensure_hosted_property_tour_url(structured_output)
+        if immersive_quality_block_reason or _property_tour_payload_is_disabled_fallback(structured_output):
+            blocked_reason = immersive_quality_block_reason or "property_tour_fallback_disabled"
             followup_task_id = ""
             if not suppress_human_followup:
                 followup = self._open_property_tour_followup(
@@ -42874,9 +42939,12 @@ class ProductService:
                 dedupe_key=f"{principal_id}|{resolved_source_ref}|{resolved_variant_key}|generic-tour-blocked:{blocked_reason}",
             )
             return payload
-        structured_output = _ensure_hosted_property_tour_url(dict(getattr(artifact, "structured_output_json", {}) or {}))
-        if _property_tour_payload_is_disabled_fallback(structured_output):
-            blocked_reason = "property_tour_fallback_disabled"
+        structured_output = dict(getattr(artifact, "structured_output_json", {}) or {})
+        immersive_quality_block_reason = _property_tour_immersive_quality_block_reason(structured_output)
+        if not immersive_quality_block_reason:
+            structured_output = _ensure_hosted_property_tour_url(structured_output)
+        if immersive_quality_block_reason or _property_tour_payload_is_disabled_fallback(structured_output):
+            blocked_reason = immersive_quality_block_reason or "property_tour_fallback_disabled"
             followup_task_id = ""
             if not suppress_human_followup:
                 followup = self._open_property_tour_followup(

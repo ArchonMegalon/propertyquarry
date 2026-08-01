@@ -27380,6 +27380,69 @@ def test_generic_property_tour_blocks_generated_listing_fallback_payload(monkeyp
     assert result["tour_url"] == ""
 
 
+def test_generic_property_tour_does_not_repackage_blocked_crezlo_quality_gate(monkeypatch) -> None:
+    """A vendor URL is not publishable when Crezlo lacks spatial evidence."""
+    from app.domain.models import Artifact
+
+    monkeypatch.setenv("EA_WILLHABEN_PROPERTY_TOUR_REQUIRE_360", "0")
+    principal_id = "cf-email:owner@example.test"
+    client = build_product_client(principal_id=principal_id)
+    start_workspace(client, mode="personal", workspace_name="Executive Office")
+    service = ProductService(client.app.state.container)
+    property_url = "https://www.immobilienscout24.at/expose/crezlo-flat-scenes-1"
+
+    monkeypatch.setattr(ProductService, "_resolve_browseract_property_tour_binding_id", lambda self, **kwargs: "browseract-binding-crezlo-1")
+    monkeypatch.setattr(
+        product_service,
+        "_property_scout_page_preview",
+        lambda url: {
+            "listing_id": "crezlo-flat-scenes-1",
+            "title": "Crezlo flat-scene apartment",
+            "summary": "Source listing with floorplan",
+            "property_facts_json": {},
+            "media_urls_json": ["https://cdn.example.test/flat-scene.jpg"],
+            "floorplan_urls_json": ["https://cdn.example.test/floorplan.png"],
+            "panorama_media_urls_json": [],
+        },
+    )
+
+    def _must_not_publish_gallery(structured_output):  # type: ignore[no-untyped-def]
+        raise AssertionError("blocked Crezlo output must not be repackaged as a first-party gallery")
+
+    monkeypatch.setattr(product_service, "_ensure_hosted_property_tour_url", _must_not_publish_gallery)
+    client.app.state.container.orchestrator.execute_task_artifact = lambda request: Artifact(  # type: ignore[no-untyped-def]
+        artifact_id="artifact-crezlo-flat-scenes-1",
+        kind="property_tour_packet",
+        content="Crezlo draft created, but spatial proof failed.",
+        execution_session_id="session-crezlo-flat-scenes-1",
+        principal_id=principal_id,
+        structured_output_json={
+            "tour_id": "tour-crezlo-flat-scenes-1",
+            "crezlo_public_url": "https://ea-property-tours-20260320.crezlotours.com/tours/flat-scenes",
+            "editor_url": "https://ea-property-tours-20260320.crezlotours.com/admin/tours/flat-scenes",
+            "quality_gate_status": "blocked",
+            "quality_gate_reason": "spatial_scenes_missing",
+            "immersive_acceptance_json": {
+                "accepted": False,
+                "reason": "spatial_scenes_missing",
+            },
+        },
+    )
+
+    result = service.create_generic_property_tour(
+        principal_id=principal_id,
+        property_url=property_url,
+        source_ref="gmail-thread:crezlo-flat-scenes",
+        auto_deliver=False,
+        actor="test",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["blocked_reason"] == "spatial_scenes_missing"
+    assert result["tour_url"] == ""
+    assert result["vendor_tour_url"] == ""
+
+
 def test_willhaben_property_tour_blocks_generated_listing_fallback_payload(monkeypatch) -> None:
     from app.domain.models import Artifact
 

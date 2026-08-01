@@ -210,6 +210,7 @@ def test_render_image_is_offline_minimal_non_root_and_immutable() -> None:
     assert copied_scripts == {
         "generate_property_reconstruction.py",
         "property_reconstruction_styles.py",
+        "property_tour_layout_contract.py",
         "property_reconstruction_render_bridge.py",
         "property_tour_governed_reservation.py",
         "property_tour_runtime_paths.py",

@@ -1070,8 +1070,9 @@ def _validate_generation_cost(payload: dict[str, object], *, config: BridgeConfi
 
     root = _public_tour_dir()
     source_paths: list[object] = list(normalized_photos)
-    if str(payload.get("floorplan_path") or "").strip():
-        source_paths.append(payload.get("floorplan_path") or "")
+    for source_key in ("floorplan_path", "floorplan_analysis_path", "source_geometry_path"):
+        if str(payload.get(source_key) or "").strip():
+            source_paths.append(payload.get(source_key) or "")
     source_bytes = 0
     seen: set[Path] = set()
     for raw_path in source_paths:
@@ -1155,6 +1156,11 @@ def _build_generator_command(payload: dict[str, object]) -> list[str]:
         command.extend(["--floorplan", str(_safe_shared_file(floorplan_path, root=root))])
     else:
         command.append("--infer-floorplan-from-photos")
+    floorplan_analysis_path = str(
+        payload.get("floorplan_analysis_path") or payload.get("source_geometry_path") or ""
+    ).strip()
+    if floorplan_analysis_path:
+        command.extend(["--floorplan-analysis", str(_safe_shared_file(floorplan_analysis_path, root=root))])
     photo_paths = payload.get("photo_paths")
     if not isinstance(photo_paths, list):
         photo_paths = []

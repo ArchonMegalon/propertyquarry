@@ -5452,6 +5452,7 @@ def test_crezlo_immersive_acceptance_requires_spatial_and_first_party_browser_pr
                         "desktop_viewer_verified": True,
                         "mobile_viewer_verified": True,
                         "touch_look_verified": True,
+                        "captured_360_verified": True,
                         "exact_property_provenance_verified": True,
                         "source_property_url": "https://www.willhaben.at/listing/verified-property",
                         "source_asset_hashes": ["a" * 64, "b" * 64],

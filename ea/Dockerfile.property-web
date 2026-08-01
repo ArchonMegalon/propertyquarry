@@ -86,6 +86,7 @@ COPY scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_p
 COPY --chmod=0444 scripts/property_tour_governed_reservation.py /app/scripts/property_tour_governed_reservation.py
 COPY scripts/generate_property_reconstruction.py /app/scripts/generate_property_reconstruction.py
 COPY scripts/property_reconstruction_styles.py /app/scripts/property_reconstruction_styles.py
+COPY scripts/property_tour_layout_contract.py /app/scripts/property_tour_layout_contract.py
 COPY scripts/import_magicfit_walkthrough.py /app/scripts/import_magicfit_walkthrough.py
 COPY scripts/verify_property_tour_controls.py /app/scripts/verify_property_tour_controls.py
 COPY scripts/property_tour_3dvista_provenance.py /app/scripts/property_tour_3dvista_provenance.py

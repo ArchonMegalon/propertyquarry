@@ -90,6 +90,32 @@ def test_build_generator_command_rejects_paths_outside_public_tour_dir(tmp_path:
         )
 
 
+def test_build_generator_command_passes_reviewed_floorplan_analysis_to_generator(tmp_path: Path, monkeypatch) -> None:
+    public_root = tmp_path / "public_tours"
+    source_root = public_root / "source-locked"
+    source_root.mkdir(parents=True)
+    script_path = tmp_path / "generate_property_reconstruction.py"
+    script_path.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    floorplan = source_root / "floorplan.jpg"
+    analysis = source_root / "floorplan-analysis.json"
+    floorplan.write_bytes(b"floorplan")
+    analysis.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(public_root))
+    monkeypatch.setattr(bridge, "_script_path", lambda: script_path)
+
+    command = bridge._build_generator_command(
+        {
+            "slug": "source-locked",
+            "floorplan_path": str(floorplan),
+            "floorplan_analysis_path": str(analysis),
+            "photo_paths": [],
+        }
+    )
+
+    assert "--floorplan-analysis" in command
+    assert command[command.index("--floorplan-analysis") + 1] == str(analysis.resolve())
+
+
 def test_run_generation_request_invokes_generator_with_shared_paths(tmp_path: Path, monkeypatch) -> None:
     public_root = tmp_path / "public_tours"
     bundle_root = public_root / "safe-slug" / ".reconstruction-source"

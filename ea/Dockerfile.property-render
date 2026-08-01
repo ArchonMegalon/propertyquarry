@@ -45,6 +45,7 @@ RUN set -eu; \
 COPY --chown=10001:10001 scripts/property_reconstruction_render_bridge.py /app/scripts/property_reconstruction_render_bridge.py
 COPY --chown=10001:10001 scripts/generate_property_reconstruction.py /app/scripts/generate_property_reconstruction.py
 COPY --chown=10001:10001 scripts/property_reconstruction_styles.py /app/scripts/property_reconstruction_styles.py
+COPY --chown=10001:10001 scripts/property_tour_layout_contract.py /app/scripts/property_tour_layout_contract.py
 COPY --chown=10001:10001 scripts/property_tour_governed_reservation.py /app/scripts/property_tour_governed_reservation.py
 COPY --chown=10001:10001 scripts/property_tour_runtime_paths.py /app/scripts/property_tour_runtime_paths.py
 COPY --chown=10001:10001 scripts/propertyquarry_playwright_runtime.py /app/scripts/propertyquarry_playwright_runtime.py

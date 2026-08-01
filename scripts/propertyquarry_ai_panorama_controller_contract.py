@@ -43,6 +43,7 @@ SOURCE_RELPATHS = (
     "scripts/property_tour_governed_reservation.py",
     "scripts/attach_provider_tour_layer.py",
     "scripts/generate_property_reconstruction.py",
+    "scripts/property_tour_layout_contract.py",
     "scripts/import_3dvista_export.py",
     "scripts/import_krpano_walkable_scene.py",
     "scripts/import_magicfit_walkthrough.py",
