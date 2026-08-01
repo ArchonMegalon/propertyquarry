@@ -73,6 +73,7 @@ COPY scripts/import_3dvista_export.py /app/scripts/import_3dvista_export.py
 COPY scripts/import_pano2vr_export.py /app/scripts/import_pano2vr_export.py
 COPY scripts/import_krpano_walkable_scene.py /app/scripts/import_krpano_walkable_scene.py
 COPY scripts/import_property_tour_exports.py /app/scripts/import_property_tour_exports.py
+COPY scripts/import_crezlo_hosted_tour.py /app/scripts/import_crezlo_hosted_tour.py
 COPY --chmod=0555 scripts/install_ai_panorama_tour_bundle.py /app/scripts/install_ai_panorama_tour_bundle.py
 COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_controller.py /app/scripts/propertyquarry_prater_ai_panorama_controller.py
 COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_recovery.py /app/scripts/propertyquarry_prater_ai_panorama_recovery.py
