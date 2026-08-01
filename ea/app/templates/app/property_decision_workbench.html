@@ -8877,6 +8877,50 @@
         grid-template-columns: minmax(0, 1fr);
         gap: 10px;
       }
+      /* Keep the setup form contained on the properties surface as well as
+         the dedicated search route. The form used to retain its desktop
+         two-column intrinsic width at narrow locales, pushing labels and
+         workflow controls off-screen. */
+      .pqx-setup .pqx-command,
+      .pqx-setup .pqx-brief-drawer-panel,
+      .pqx-setup .pqx-form,
+      .pqx-setup .pqx-form-body {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .pqx-setup:not(.pqx-surface-search) .pqx-workflow {
+        flex-wrap: wrap;
+        overflow-x: visible;
+        gap: 5px;
+      }
+      .pqx-setup:not(.pqx-surface-search) .pqx-workflow-step {
+        flex: 1 1 calc(33.333% - 5px);
+        min-width: 0;
+        max-width: calc(33.333% - 4px);
+      }
+      .pqx-setup:not(.pqx-surface-search) .pqx-form-body {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 7px;
+      }
+      .pqx-setup:not(.pqx-surface-search) .pqx-form-body > .pqx-field {
+        grid-column: 1 / -1;
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      .pqx-setup:not(.pqx-surface-search) .pqx-form-body > .pqx-field > label,
+      .pqx-setup:not(.pqx-surface-search) .pqx-form-body > .pqx-field > label > *,
+      .pqx-setup:not(.pqx-surface-search) .pqx-field-tools,
+      .pqx-setup:not(.pqx-surface-search) .pqx-location-map-launch,
+      .pqx-setup:not(.pqx-surface-search) .pqx-location-map-open {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
       .pqx-setup.pqx-surface-search .pqx-command {
         order: initial;
         width: 100%;

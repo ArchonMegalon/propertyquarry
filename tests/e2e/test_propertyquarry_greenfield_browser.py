@@ -1995,6 +1995,47 @@ def test_propertyquarry_every_search_setup_button_works_in_real_browser(
         context.close()
 
 
+def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    """The prominent Launch search CTA must survive lazy hydration and navigate."""
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False, width=1440, height=900)
+    page = context.new_page()
+    page_errors: list[str] = []
+    launch_requests: list[dict[str, object]] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+    def _capture_launch(request: object) -> None:
+        request_url = str(getattr(request, "url", "") or "")
+        if str(getattr(request, "method", "") or "").upper() != "POST":
+            return
+        if "property/search" not in request_url and "property-search" not in request_url:
+            return
+        launch_requests.append(
+            {
+                "method": getattr(request, "method", ""),
+                "body": getattr(request, "post_data_json", None),
+            }
+        )
+    page.on("request", _capture_launch)
+    try:
+        response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
+        assert response is not None and response.ok
+        launch = page.locator("[data-property-start-top]")
+        expect(launch).to_be_visible()
+        expect(launch).to_be_enabled()
+        launch.click()
+        page.wait_for_url(re.compile(r"/app/properties\?run_id=[^&]+$"), timeout=10000)
+        assert launch_requests and all(row["method"] == "POST" for row in launch_requests)
+        launch_payloads = [row["body"] for row in launch_requests if isinstance(row["body"], dict)]
+        assert any(isinstance(payload.get("property_preferences"), dict) for payload in launch_payloads)
+        assert page_errors == []
+    finally:
+        context.close()
+
+
 def test_propertyquarry_browser_locales_do_not_clip(
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
