@@ -612,15 +612,21 @@ def test_flagship_mobile_navigation_templates_keep_primary_links_at_44px() -> No
     templates = Path(__file__).resolve().parents[1] / "ea/app/templates/app"
     packets = (templates / "property_packets.html").read_text(encoding="utf-8")
     research = (templates / "property_research_detail.html").read_text(encoding="utf-8")
+    base_console = (templates.parent / "base_console.html").read_text(encoding="utf-8")
 
     assert ".pq-pack-nav :is(a, span) {\n      display: inline-flex;" in packets
-    assert "min-height: 44px;" in packets
+    assert (
+        ".pq-pack-nav :is(a, span) {\n"
+        "        min-height: 44px;\n"
+        "        padding: 0 12px;"
+    ) in packets
     assert (
         ".prd-primary-nav a,\n"
         "    .prd-primary-nav span {\n"
         "      min-height: 44px;\n"
         "      height: 44px;"
     ) in research
+    assert "--touch-target: 44px;" in base_console
 
 
 def test_live_mobile_smoke_accepts_empty_shortlist_with_top_navigation_only() -> None:
