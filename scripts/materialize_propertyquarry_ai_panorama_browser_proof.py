@@ -1831,7 +1831,7 @@ def _verify_and_capture_desktop(
             }""",
             timeout=timeout_ms,
         )
-        room_count = page.locator(".dollhouse-node").count()
+        room_count = page.locator(".dollhouse-node:not(.exit-gate)").count()
         if room_count != candidate.spatial_room_count:
             raise MaterializationError("dollhouse_room_count_mismatch")
         if "approximate, not measured" not in page.locator("#dollhouse-note").inner_text().lower():
@@ -1868,6 +1868,14 @@ def _verify_and_capture_desktop(
             if isinstance(walkable_scene, Mapping)
             else {}
         )
+        source_geometry = spatial_model.get("source_geometry") if isinstance(spatial_model, Mapping) else {}
+        expected_exit_gates = sum(
+            1
+            for portal in (source_geometry.get("portals") or [])
+            if isinstance(portal, Mapping) and str(portal.get("kind") or "").strip().lower() == "exit_gate"
+        ) if isinstance(source_geometry, Mapping) else 0
+        if page.locator(".dollhouse-node.exit-gate").count() != expected_exit_gates:
+            raise MaterializationError("dollhouse_exit_gate_count_mismatch")
         spatial_rooms = (
             spatial_model.get("rooms")
             if isinstance(spatial_model, Mapping)
