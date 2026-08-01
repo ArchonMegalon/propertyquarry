@@ -2154,6 +2154,37 @@ def redacted_public_tour_walkable_scene(
                         if components_px:
                             geometry_rooms.append({"id": room_id, "components_px": components_px})
                     if geometry_rooms:
+                        geometry_portals = []
+                        raw_geometry_portals = raw_source_geometry.get("portals")
+                        if isinstance(raw_geometry_portals, list):
+                            for raw_portal in raw_geometry_portals[:128]:
+                                if not isinstance(raw_portal, dict):
+                                    continue
+                                portal_id = str(raw_portal.get("id") or "").strip()[:80]
+                                kind = str(raw_portal.get("kind") or "door").strip().lower()
+                                room_ids = raw_portal.get("room_ids")
+                                center_px = raw_portal.get("center_px")
+                                room_sides = raw_portal.get("room_sides")
+                                if (
+                                    not portal_id
+                                    or kind not in {"door", "exit_gate"}
+                                    or not isinstance(room_ids, list)
+                                    or not isinstance(center_px, dict)
+                                    or not isinstance(room_sides, dict)
+                                ):
+                                    continue
+                                geometry_portals.append({
+                                    "id": portal_id,
+                                    "kind": kind,
+                                    "room_ids": [str(value or "").strip()[:80] for value in room_ids[:2]],
+                                    "room_sides": {str(key).strip()[:80]: str(value).strip().lower() for key, value in room_sides.items()},
+                                    "center_px": {
+                                        "x": int(round(_bounded_number(center_px.get("x"), default=0.0, minimum=0.0, maximum=10000.0))),
+                                        "y": int(round(_bounded_number(center_px.get("y"), default=0.0, minimum=0.0, maximum=10000.0))),
+                                    },
+                                    "width_px": int(round(_bounded_number(raw_portal.get("width_px"), default=0.0, minimum=0.0, maximum=10000.0))),
+                                    "target_room_id": str(raw_portal.get("target_room_id") or "").strip()[:80],
+                                })
                         rendered_walkable["spatial_model"]["source_geometry"] = {
                             "contract_name": "propertyquarry.floorplan_source_geometry.v1",
                             "coordinate_system": "source_image_pixels",
@@ -2162,6 +2193,7 @@ def redacted_public_tour_walkable_scene(
                                 "height": int(round(_bounded_number(raw_canvas.get("height"), default=0.0, minimum=1.0, maximum=10000.0))),
                             },
                             "rooms": geometry_rooms,
+                            "portals": geometry_portals,
                         }
     floorplan_relpath = public_tour_safe_asset_relpath(
         walkable_scene.get("floorplan_relpath")

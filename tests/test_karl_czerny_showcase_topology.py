@@ -126,6 +126,19 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     assert source_geometry_rooms["living-kitchen"]["components_px"] == [
         {"x": 795, "y": 780, "width": 320, "height": 245}
     ]
+    source_portals = {
+        str(portal["id"]): portal for portal in source_geometry["portals"]
+    }
+    assert source_portals["entrance-to-living"]["room_ids"] == [
+        "entrance-vestibule",
+        "living-kitchen",
+    ]
+    assert source_portals["entrance-to-living"]["room_sides"] == {
+        "entrance-vestibule": "north",
+        "living-kitchen": "south",
+    }
+    assert source_portals["entrance-exit-gate"]["kind"] == "exit_gate"
+    assert source_portals["entrance-exit-gate"]["target_room_id"] == "outside"
 
     measured_areas = {
         room_id: float(geometry["area_m2"])

@@ -435,6 +435,7 @@ def build(args: argparse.Namespace) -> Path:
         "source_geometry_contract_name": str(
             dict(floorplan_analysis.get("source_geometry") or {}).get("contract_name") or ""
         ),
+        "source_geometry": dict(floorplan_analysis.get("source_geometry") or {}),
     }
     layout_fidelity_sha256 = hashlib.sha256(
         json.dumps(

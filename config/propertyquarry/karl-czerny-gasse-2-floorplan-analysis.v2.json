@@ -191,6 +191,26 @@
         {"x": 795, "y": 1079, "width": 139, "height": 181}
       ]},
       {"id": "balcony-loggia", "components_px": [{"x": 1360, "y": 990, "width": 160, "height": 320}]}
+    ],
+    "portals": [
+      {
+        "id": "entrance-to-living",
+        "kind": "door",
+        "room_ids": ["entrance-vestibule", "living-kitchen"],
+        "room_sides": {"entrance-vestibule": "north", "living-kitchen": "south"},
+        "center_px": {"x": 1040, "y": 1005},
+        "width_px": 80,
+        "target_room_id": "living-kitchen"
+      },
+      {
+        "id": "entrance-exit-gate",
+        "kind": "exit_gate",
+        "room_ids": ["entrance-vestibule", "outside"],
+        "room_sides": {"entrance-vestibule": "west"},
+        "center_px": {"x": 795, "y": 1160},
+        "width_px": 90,
+        "target_room_id": "outside"
+      }
     ]
   }
 }

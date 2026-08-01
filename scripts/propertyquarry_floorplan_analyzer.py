@@ -196,11 +196,94 @@ def _source_geometry(
         normalized_rooms.append({"id": room_id, "components_px": components})
     if seen != room_ids:
         raise FloorplanAnalysisError("floorplan_source_geometry_coverage_incomplete")
+    normalized_portals: list[dict[str, object]] = []
+    raw_portals = raw.get("portals") or []
+    if not isinstance(raw_portals, list):
+        raise FloorplanAnalysisError("floorplan_source_geometry_portals_invalid")
+    for raw_portal in raw_portals:
+        if not isinstance(raw_portal, dict):
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid")
+        portal_id = str(raw_portal.get("id") or "").strip()
+        kind = str(raw_portal.get("kind") or "door").strip().lower()
+        if not portal_id or kind not in {"door", "exit_gate"}:
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid")
+        raw_room_ids = raw_portal.get("room_ids")
+        if not isinstance(raw_room_ids, list) or len(raw_room_ids) not in {1, 2}:
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid")
+        portal_room_ids = [str(value or "").strip() for value in raw_room_ids]
+        if any(value != "outside" and value not in room_ids for value in portal_room_ids):
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid")
+        if kind == "door" and (len(portal_room_ids) != 2 or "outside" in portal_room_ids):
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid")
+        if kind == "exit_gate" and "outside" not in portal_room_ids:
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid")
+        center = raw_portal.get("center_px")
+        if not isinstance(center, dict):
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid")
+        try:
+            center_px = {
+                "x": int(round(_finite(center.get("x"), minimum=0.0))),
+                "y": int(round(_finite(center.get("y"), minimum=0.0))),
+                "width": int(round(_finite(raw_portal.get("width_px"), minimum=1.0))),
+            }
+        except (TypeError, ValueError) as exc:
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid") from exc
+        if (
+            center_px["x"] > source_size["width"]
+            or center_px["y"] > source_size["height"]
+            or center_px["width"] < 12
+        ):
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_invalid")
+        raw_sides = raw_portal.get("room_sides")
+        if not isinstance(raw_sides, dict):
+            raise FloorplanAnalysisError("floorplan_source_geometry_portal_sides_missing")
+        room_sides: dict[str, str] = {}
+        for room_id in portal_room_ids:
+            if room_id == "outside":
+                continue
+            side = str(raw_sides.get(room_id) or "").strip().lower()
+            if side not in {"north", "south", "east", "west"}:
+                raise FloorplanAnalysisError("floorplan_source_geometry_portal_side_invalid")
+            room_sides[room_id] = side
+            room_components = next(
+                item["components_px"]
+                for item in normalized_rooms
+                if item["id"] == room_id
+            )
+            on_boundary = False
+            half_width = center_px["width"] / 2
+            for component in room_components:
+                left = component["x"]
+                right = left + component["width"]
+                top = component["y"]
+                bottom = top + component["height"]
+                horizontal_span = left - half_width <= center_px["x"] <= right + half_width
+                vertical_span = top - half_width <= center_px["y"] <= bottom + half_width
+                if side == "north" and abs(center_px["y"] - top) <= 30 and horizontal_span:
+                    on_boundary = True
+                if side == "south" and abs(center_px["y"] - bottom) <= 30 and horizontal_span:
+                    on_boundary = True
+                if side == "west" and abs(center_px["x"] - left) <= 30 and vertical_span:
+                    on_boundary = True
+                if side == "east" and abs(center_px["x"] - right) <= 30 and vertical_span:
+                    on_boundary = True
+            if not on_boundary:
+                raise FloorplanAnalysisError(f"floorplan_source_geometry_portal_boundary_invalid:{portal_id}")
+        normalized_portals.append({
+            "id": portal_id,
+            "kind": kind,
+            "room_ids": portal_room_ids,
+            "room_sides": room_sides,
+            "center_px": {"x": center_px["x"], "y": center_px["y"]},
+            "width_px": center_px["width"],
+            "target_room_id": str(raw_portal.get("target_room_id") or "").strip(),
+        })
     return {
         "contract_name": "propertyquarry.floorplan_source_geometry.v1",
         "coordinate_system": "source_image_pixels",
         "canvas_size_px": canvas_size,
         "rooms": normalized_rooms,
+        "portals": normalized_portals,
     }
 
 
@@ -519,6 +602,7 @@ def analyze_floorplan(
             "coordinate_system": "source_image_pixels",
             "canvas_size_px": dict(source_size),
             "rooms": legacy_rooms,
+            "portals": [],
             "review_status": "legacy_derived",
         }
     else:
