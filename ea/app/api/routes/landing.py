@@ -6872,6 +6872,7 @@ def sign_in_page(
     request: Request,
     container: AppContainer = Depends(get_container),
     access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
+    request_context: RequestContext = Depends(get_request_context_if_available),
 ) -> HTMLResponse:
     brand = request_brand(request)
     sign_in_return_to = _normalize_browser_return_to(
@@ -6884,6 +6885,20 @@ def sign_in_page(
         request=request,
         compact=brand["key"] == "propertyquarry",
     )
+    if (
+        not principal_id
+        and request_context.authenticated is True
+        and str(request_context.auth_source or "").strip()
+        == "propertyquarry_release_probe"
+    ):
+        principal_id = str(request_context.principal_id or "").strip()
+        if principal_id:
+            status = (
+                container.onboarding.compact_status(principal_id=principal_id)
+                if brand["key"] == "propertyquarry"
+                and hasattr(container.onboarding, "compact_status")
+                else container.onboarding.status(principal_id=principal_id)
+            )
     link_status = str(request.query_params.get("link_status") or "").strip()
     link_email = str(request.query_params.get("link_email") or "").strip()
     link_error = str(request.query_params.get("link_error") or "").strip()

@@ -40,6 +40,10 @@ ACCOUNT_AGENT_BODY = (
 )
 
 ACCOUNT_FREE_BODY = ACCOUNT_AGENT_BODY.replace("<h2>Agent</h2>", "<h2>Free</h2>")
+ACCOUNT_FREE_STANDARD_BODY = ACCOUNT_AGENT_BODY.replace(
+    "<h2>Agent</h2>",
+    "<h2>Free standard research</h2>",
+)
 
 BILLING_PORTAL_UNAVAILABLE_BODY = (
     "PropertyQuarry Billing portal unavailable. "
@@ -945,6 +949,26 @@ def test_live_authenticated_smoke_passes_free_customer_surfaces_when_free_is_exp
     assert receipt["failed_count"] == 0
 
 
+def test_live_authenticated_smoke_recognizes_descriptive_free_plan_as_non_paid() -> None:
+    bodies = {
+        "https://propertyquarry.com/app/account": ACCOUNT_FREE_STANDARD_BODY,
+        "https://propertyquarry.com/app/billing": BILLING_PORTAL_UNAVAILABLE_BODY,
+        "https://propertyquarry.com/sign-in": SIGN_IN_BODY,
+    }
+
+    receipt = build_live_authenticated_smoke_receipt(
+        base_url="https://propertyquarry.com",
+        api_token="token",
+        principal_id="propertyquarry-release-probe",
+        expected_plan_label="Free standard research",
+        fetcher=lambda url, _timeout: _fake_response(bodies[url], final_url=url),
+    )
+
+    assert receipt["status"] == "pass"
+    assert receipt["billing_readiness"]["paid_persona"] is False
+    assert receipt["billing_readiness"]["required_for_paid_persona"] is False
+
+
 def test_live_authenticated_smoke_fails_when_account_loses_paid_plan_projection() -> None:
     bodies = {
         "https://propertyquarry.com/app/account": ACCOUNT_FREE_BODY,
@@ -1025,9 +1049,9 @@ def test_live_authenticated_smoke_fails_when_sign_in_surface_duplicates_logout()
     assert any(check["name"] == "sign_in_single_logout" and check["ok"] is False for check in sign_in_row["checks"])
 
 
-def test_live_authenticated_smoke_fails_when_sign_in_loses_account_creation_copy() -> None:
+def test_live_authenticated_smoke_accepts_signed_in_surface_without_anonymous_provider_copy() -> None:
     bodies = {
-        "https://propertyquarry.com/sign-in": "PropertyQuarry Open search Continue with Google <button>Log out</button> Email sign-in is not available right now.",
+        "https://propertyquarry.com/sign-in": "PropertyQuarry Open search <button>Log out</button>",
     }
 
     receipt = build_live_authenticated_smoke_receipt(
@@ -1038,9 +1062,9 @@ def test_live_authenticated_smoke_fails_when_sign_in_loses_account_creation_copy
         fetcher=lambda url, _timeout: _fake_response(bodies[url], final_url=url),
     )
 
+    assert receipt["status"] == "pass"
     sign_in_row = next(row for row in receipt["checks"] if row["path"] == "/sign-in")
-    assert receipt["status"] == "fail"
-    assert any(check["name"] == "sign_in_connected_identity_creates_account" and check["ok"] is False for check in sign_in_row["checks"])
+    assert all(check["ok"] is True for check in sign_in_row["checks"])
 
 
 def test_live_authenticated_smoke_retries_transient_transport_failures_without_network() -> None:

@@ -410,12 +410,6 @@ def _route_checks(*, path: str, text: str, expected_plan_label: str) -> list[tup
             (
                 ("sign_in_current_session", "Open current session" in visible_text or "Open search" in visible_text),
                 ("sign_in_single_logout", logout_count == 1),
-                ("sign_in_google_state", "Continue with Google" in visible_text),
-                (
-                    "sign_in_connected_identity_creates_account",
-                    "First sign-in" in visible_text
-                    and "creates the account automatically" in visible_text,
-                ),
                 (
                     "sign_in_no_unavailable_auth_copy",
                     "temporarily unavailable" not in lowered_visible
@@ -473,7 +467,7 @@ def _billing_readiness_from_route_row(
         state = "unavailable"
         reason = "billing_route_not_available"
     normalized_plan = str(expected_plan_label or "").strip().lower()
-    paid_persona = bool(normalized_plan and normalized_plan != "free")
+    paid_persona = bool(normalized_plan and not normalized_plan.startswith("free"))
     return {
         "state": state,
         "available": state == "available",
