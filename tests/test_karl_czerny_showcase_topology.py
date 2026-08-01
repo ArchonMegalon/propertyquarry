@@ -139,6 +139,10 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     }
     assert source_portals["entrance-exit-gate"]["kind"] == "exit_gate"
     assert source_portals["entrance-exit-gate"]["target_room_id"] == "outside"
+    assert source_portals["entrance-exit-gate"]["center_px"] == {"x": 795, "y": 1100}
+    assert source_portals["entrance-exit-gate"]["label"] == "Entrance / exit · Stairwell 3"
+    assert source_portals["entrance-exit-gate"]["target_label"] == "Stairwell 3"
+    assert source_portals["entrance-to-living"]["label"] == "Door · Wohnküche"
 
     measured_areas = {
         room_id: float(geometry["area_m2"])
@@ -164,6 +168,17 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
             )
             - float(geometry["area_m2"])
         ) < 0.01
+
+
+def test_karl_czerny_viewer_uses_component_local_portal_mapping() -> None:
+    viewer = (Path(__file__).resolve().parents[1] / "ea/app/api/routes/public_tours.py").read_text(
+        encoding="utf-8"
+    )
+    assert "const sourcePointToWorld = (roomId, point, side)" in viewer
+    assert "const canonicalPortalWorld = portal" in viewer
+    assert "const components = measuredComponents.length ? measuredComponents" in viewer
+    assert "Entrance / exit · Stairwell 3" in viewer
+    assert "Door → ${targetRoom?.label || targetId || 'next room'}" in viewer
 
 
 def test_source_pixel_envelopes_drive_reviewed_plan_bounds(tmp_path: Path) -> None:

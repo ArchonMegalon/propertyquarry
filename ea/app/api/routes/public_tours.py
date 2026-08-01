@@ -12270,7 +12270,7 @@ def _tour_control_panorama_spec(
                                     or not isinstance(room_sides, dict)
                                 ):
                                     continue
-                                geometry_portals.append({
+                                geometry_portal = {
                                     "id": portal_id,
                                     "kind": kind,
                                     "room_ids": [str(value or "").strip()[:80] for value in room_ids[:2]],
@@ -12281,7 +12281,12 @@ def _tour_control_panorama_spec(
                                     },
                                     "width_px": int(round(_number(raw_portal.get("width_px"), default=0.0, minimum=0.0, maximum=10000.0))),
                                     "target_room_id": str(raw_portal.get("target_room_id") or "").strip()[:80],
-                                })
+                                }
+                                for key in ("label", "target_label"):
+                                    value = str(raw_portal.get(key) or "").strip()[:120]
+                                    if value:
+                                        geometry_portal[key] = value
+                                geometry_portals.append(geometry_portal)
                         spatial_model["source_geometry"] = {
                             "contract_name": "propertyquarry.floorplan_source_geometry.v1",
                             "coordinate_system": "source_image_pixels",
@@ -12365,6 +12370,7 @@ def _tour_control_panorama_html(
       .dollhouse-layer { position: fixed; inset: 0; z-index: 13; pointer-events: none; overflow: hidden; }
       .dollhouse-layer[hidden] { display: none; }
       .dollhouse-node { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; min-height: 34px; border: 1px solid rgba(255,255,255,.8); border-radius: 999px; padding: 0 11px; color: #111820; background: rgba(255,255,255,.94); box-shadow: 0 8px 24px rgba(0,0,0,.3); cursor: pointer; font: 700 11px/1 Inter,system-ui,sans-serif; white-space: nowrap; }
+      .dollhouse-portal-label { position: absolute; transform: translate(-50%,-50%); pointer-events: none; min-height: 24px; border: 1px solid rgba(238,107,69,.9); border-radius: 999px; padding: 0 8px; color: #fff; background: rgba(29,38,48,.94); box-shadow: 0 6px 18px rgba(0,0,0,.28); font: 700 10px/1 Inter,system-ui,sans-serif; white-space: nowrap; }
       .dollhouse-node.active { color: #fff; background: #ee6b45; border-color: #fff; }
       .dollhouse-node.unavailable { color: rgba(255,255,255,.76); background: rgba(24,32,40,.88); border-color: rgba(255,255,255,.3); cursor: default; }
       .dollhouse-note { position: fixed; z-index: 20; left: 50%; top: max(86px, calc(env(safe-area-inset-top) + 74px)); transform: translateX(-50%); padding: 8px 11px; color: rgba(255,255,255,.82); font-size: 11px; line-height: 1.35; text-align: center; pointer-events: none; }
@@ -12647,29 +12653,69 @@ def _tour_control_panorama_html(
         const sourcePortals = sourceGeometry && Array.isArray(sourceGeometry.portals)
           ? sourceGeometry.portals.filter(portal => portal && portal.center_px && portal.room_sides)
           : [];
+        const measuredComponentsFor = room => room && room.measurement && Array.isArray(room.measurement.components)
+          ? room.measurement.components.filter(component => Number(component.width) > 0 && Number(component.depth) > 0)
+          : [];
+        const sourceComponentsFor = roomId => sourceRoomComponents.get(String(roomId || '')) || [];
+        const roomForId = roomId => spatialModel.rooms.find(room => String(room.id || '') === String(roomId || '')) || null;
+        const sourcePointToWorld = (roomId, point, side) => {
+          const room = roomForId(roomId);
+          if (!room || !dollhouseSourceTransform) return null;
+          const sourceComponents = sourceComponentsFor(roomId);
+          const measuredComponents = measuredComponentsFor(room);
+          if (!sourceComponents.length || !measuredComponents.length) return null;
+          const px = Number(point?.x), py = Number(point?.y);
+          let best = null;
+          sourceComponents.forEach((sourceComponent, index) => {
+            const measuredComponent = measuredComponents[index];
+            if (!measuredComponent) return;
+            const left = Number(sourceComponent.x), top = Number(sourceComponent.y);
+            const right = left + Number(sourceComponent.width), bottom = top + Number(sourceComponent.height);
+            const boundaryDistance = side === 'north' ? Math.abs(py - top)
+              : side === 'south' ? Math.abs(py - bottom)
+              : side === 'west' ? Math.abs(px - left)
+              : Math.abs(px - right);
+            const alongDistance = side === 'north' || side === 'south'
+              ? Math.max(0, left - px, px - right)
+              : Math.max(0, top - py, py - bottom);
+            const score = boundaryDistance + alongDistance * .25;
+            if (!best || score < best.score) best = {sourceComponent, measuredComponent, score};
+          });
+          if (!best) return null;
+          const sourceComponent = best.sourceComponent;
+          const measuredComponent = best.measuredComponent;
+          const tx = Math.max(0, Math.min(1, (px - Number(sourceComponent.x)) / Math.max(1, Number(sourceComponent.width))));
+          const tz = Math.max(0, Math.min(1, (py - Number(sourceComponent.y)) / Math.max(1, Number(sourceComponent.height))));
+          const worldX = Number(measuredComponent.x) + tx * Number(measuredComponent.width);
+          const worldZ = Number(measuredComponent.z) + tz * Number(measuredComponent.depth);
+          return {
+            x: side === 'west' ? Number(measuredComponent.x) : side === 'east' ? Number(measuredComponent.x) + Number(measuredComponent.width) : worldX,
+            z: side === 'north' ? Number(measuredComponent.z) : side === 'south' ? Number(measuredComponent.z) + Number(measuredComponent.depth) : worldZ,
+            scaleX: Number(measuredComponent.width) / Math.max(1, Number(sourceComponent.width)),
+            scaleZ: Number(measuredComponent.depth) / Math.max(1, Number(sourceComponent.height)),
+          };
+        };
+        const canonicalPortalWorld = portal => {
+          const roomId = String(portal?.room_ids?.find(value => value !== 'outside') || '');
+          const side = String(portal?.room_sides?.[roomId] || 'south').toLowerCase();
+          return sourcePointToWorld(roomId, portal?.center_px || {}, side);
+        };
         const explicitOpeningsFor = (room, component, side) => {
-          if (!dollhouseSourceTransform) return [];
-          const transform = dollhouseSourceTransform;
           const openings = [];
           for (const portal of sourcePortals) {
             const roomId = String(room.id || '');
             const portalSide = String(portal.room_sides?.[roomId] || '').toLowerCase();
             if (portalSide !== side) continue;
-            const point = portal.center_px || {};
-            const px = Number(point.x), py = Number(point.y);
-            const worldX = transform.worldMinX
-              + (px - transform.sourceMinX) * transform.worldWidth / transform.sourceSpanX;
-            const worldZ = transform.worldMinZ
-              + (py - transform.sourceMinY) * transform.worldDepth / transform.sourceSpanY;
+            const world = canonicalPortalWorld(portal);
+            if (!world) continue;
             const horizontal = side === 'north' || side === 'south';
             const boundaryDistance = horizontal
-              ? Math.min(Math.abs(worldZ - component.z), Math.abs(worldZ - (component.z + component.depth)))
-              : Math.min(Math.abs(worldX - component.x), Math.abs(worldX - (component.x + component.width)));
-            const along = horizontal ? worldX : worldZ;
+              ? Math.min(Math.abs(world.z - component.z), Math.abs(world.z - (component.z + component.depth)))
+              : Math.min(Math.abs(world.x - component.x), Math.abs(world.x - (component.x + component.width)));
+            const along = horizontal ? world.x : world.z;
             const start = horizontal ? component.x : component.z;
             const end = horizontal ? component.x + component.width : component.z + component.depth;
-            const width = Number(portal.width_px || 0)
-              * (horizontal ? transform.worldWidth / transform.sourceSpanX : transform.worldDepth / transform.sourceSpanY);
+            const width = Number(portal.width_px || 0) * (horizontal ? world.scaleX : world.scaleZ);
             if (boundaryDistance <= .48 && along >= start - width / 2 && along <= end + width / 2) {
               openings.push({ center: along - start, width, kind: String(portal.kind || 'door'), id: String(portal.id || '') });
             }
@@ -12700,7 +12746,7 @@ def _tour_control_panorama_html(
                 depth: Number(component.height) * dollhouseSourceTransform.worldDepth / dollhouseSourceTransform.sourceSpanY,
               }))
               : [];
-            const components = sourceMappedComponents.length ? sourceMappedComponents : (measuredComponents.length ? measuredComponents : [{
+            const components = measuredComponents.length ? measuredComponents : (sourceMappedComponents.length ? sourceMappedComponents : [{
               x: Number(room.x), z: Number(room.z),
               width: Number(room.width), depth: Number(room.depth),
             }]);
@@ -12812,27 +12858,41 @@ def _tour_control_panorama_html(
           const roomId = String(portal.room_ids?.find(value => value !== 'outside') || '');
           const room = rooms.find(value => String(value.id || '') === roomId);
           if (!room) continue;
-          const side = String(portal.room_sides?.[roomId] || 'south');
-          const point = portal.center_px || {};
-          const worldX = dollhouseSourceTransform.worldMinX
-            + (Number(point.x) - dollhouseSourceTransform.sourceMinX) * dollhouseSourceTransform.worldWidth / dollhouseSourceTransform.sourceSpanX;
-          const worldZ = dollhouseSourceTransform.worldMinZ
-            + (Number(point.y) - dollhouseSourceTransform.sourceMinY) * dollhouseSourceTransform.worldDepth / dollhouseSourceTransform.sourceSpanY;
+          const side = String(portal.room_sides?.[roomId] || 'south').toLowerCase();
+          const world = canonicalPortalWorld(portal);
+          if (!world) continue;
           const marker = document.createElement('button');
           marker.type = 'button';
           marker.className = 'dollhouse-node exit-gate';
-          marker.textContent = 'Exit gate · Outside';
-          marker.dataset.worldX = String(worldX);
+          marker.textContent = String(portal.label || portal.target_label || 'Entrance / exit · Stairwell 3');
+          marker.dataset.worldX = String(world.x);
           marker.dataset.worldY = '.56';
-          marker.dataset.worldZ = String(worldZ);
+          marker.dataset.worldZ = String(world.z);
           marker.dataset.portalId = String(portal.id || '');
-          marker.title = 'Leave the apartment through the exterior gate.';
+          marker.dataset.targetRoomId = String(portal.target_room_id || 'outside');
+          marker.title = String(portal.target_label || 'Enter from Stairwell 3 or leave the apartment.');
           marker.addEventListener('click', () => {
-            announcer.textContent = 'Exit gate: outside the apartment';
-            status.textContent = 'Exit gate · Outside';
+            const targetLabel = String(portal.target_label || 'Stairwell 3');
+            announcer.textContent = `Entrance / exit: ${targetLabel} → ${room.label || 'Entrance vestibule'}`;
+            status.textContent = `${marker.textContent} → ${room.label || 'Entrance vestibule'}`;
             status.hidden = false;
           });
           dollhouseNodes.appendChild(marker);
+        }
+        for (const portal of sourcePortals.filter(value => String(value.kind || '') === 'door')) {
+          const world = canonicalPortalWorld(portal);
+          if (!world) continue;
+          const targetId = String(portal.target_room_id || portal.room_ids?.find(value => value !== String(portal.room_ids?.[0] || '')) || '');
+          const targetRoom = rooms.find(value => String(value.id || '') === targetId);
+          const label = document.createElement('div');
+          label.className = 'dollhouse-portal-label';
+          label.textContent = String(portal.label || `Door → ${targetRoom?.label || targetId || 'next room'}`).replace(/ · .+$/, '');
+          label.dataset.worldX = String(world.x);
+          label.dataset.worldY = '.58';
+          label.dataset.worldZ = String(world.z);
+          label.dataset.portalId = String(portal.id || '');
+          label.title = `Door route: entrance vestibule to ${targetRoom?.label || targetId || 'next room'}`;
+          dollhouseNodes.appendChild(label);
         }
         return true;
       }

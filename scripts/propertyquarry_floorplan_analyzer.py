@@ -269,7 +269,7 @@ def _source_geometry(
                     on_boundary = True
             if not on_boundary:
                 raise FloorplanAnalysisError(f"floorplan_source_geometry_portal_boundary_invalid:{portal_id}")
-        normalized_portals.append({
+        normalized_portal = {
             "id": portal_id,
             "kind": kind,
             "room_ids": portal_room_ids,
@@ -277,7 +277,12 @@ def _source_geometry(
             "center_px": {"x": center_px["x"], "y": center_px["y"]},
             "width_px": center_px["width"],
             "target_room_id": str(raw_portal.get("target_room_id") or "").strip(),
-        })
+        }
+        for key in ("label", "target_label"):
+            value = str(raw_portal.get(key) or "").strip()
+            if value:
+                normalized_portal[key] = value
+        normalized_portals.append(normalized_portal)
     return {
         "contract_name": "propertyquarry.floorplan_source_geometry.v1",
         "coordinate_system": "source_image_pixels",

@@ -2173,7 +2173,7 @@ def redacted_public_tour_walkable_scene(
                                     or not isinstance(room_sides, dict)
                                 ):
                                     continue
-                                geometry_portals.append({
+                                geometry_portal = {
                                     "id": portal_id,
                                     "kind": kind,
                                     "room_ids": [str(value or "").strip()[:80] for value in room_ids[:2]],
@@ -2184,7 +2184,12 @@ def redacted_public_tour_walkable_scene(
                                     },
                                     "width_px": int(round(_bounded_number(raw_portal.get("width_px"), default=0.0, minimum=0.0, maximum=10000.0))),
                                     "target_room_id": str(raw_portal.get("target_room_id") or "").strip()[:80],
-                                })
+                                }
+                                for key in ("label", "target_label"):
+                                    value = str(raw_portal.get(key) or "").strip()[:120]
+                                    if value:
+                                        geometry_portal[key] = value
+                                geometry_portals.append(geometry_portal)
                         rendered_walkable["spatial_model"]["source_geometry"] = {
                             "contract_name": "propertyquarry.floorplan_source_geometry.v1",
                             "coordinate_system": "source_image_pixels",

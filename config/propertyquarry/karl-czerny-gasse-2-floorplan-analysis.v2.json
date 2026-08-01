@@ -195,6 +195,7 @@
     "portals": [
       {
         "id": "entrance-to-living",
+        "label": "Door · Wohnküche",
         "kind": "door",
         "room_ids": ["entrance-vestibule", "living-kitchen"],
         "room_sides": {"entrance-vestibule": "north", "living-kitchen": "south"},
@@ -204,12 +205,14 @@
       },
       {
         "id": "entrance-exit-gate",
+        "label": "Entrance / exit · Stairwell 3",
         "kind": "exit_gate",
         "room_ids": ["entrance-vestibule", "outside"],
         "room_sides": {"entrance-vestibule": "west"},
-        "center_px": {"x": 795, "y": 1160},
+        "center_px": {"x": 795, "y": 1100},
         "width_px": 90,
-        "target_room_id": "outside"
+        "target_room_id": "outside",
+        "target_label": "Stairwell 3"
       }
     ]
   }
