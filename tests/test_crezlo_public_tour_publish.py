@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -102,3 +104,43 @@ def test_crezlo_public_tour_private_receipt_keeps_source_urls_off_manifest_path(
     assert receipt["listing_url"] == "https://portal.example/private-listing"
     assert receipt["property_url"] == "https://broker.example/private-property"
     assert receipt["crezlo_public_url"] == "https://crezlo.example/public/private"
+
+
+def test_crezlo_publish_gate_rejects_missing_immersive_source_geometry_receipt() -> None:
+    gate_path = SCRIPTS / "property_tour_publication_gate.py"
+    spec = importlib.util.spec_from_file_location("property_tour_publication_gate", gate_path)
+    assert spec is not None
+    gate = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(gate)
+
+    with pytest.raises(SystemExit, match="crezlo_publication_blocked:spatial_scenes_missing"):
+        gate.require_verified_crezlo_publication(
+            {"immersive_acceptance_json": {"accepted": False, "reason": "spatial_scenes_missing"}}
+        )
+
+
+def test_crezlo_publish_gate_accepts_complete_source_geometry_receipt() -> None:
+    gate_path = SCRIPTS / "property_tour_publication_gate.py"
+    spec = importlib.util.spec_from_file_location("property_tour_publication_gate_ok", gate_path)
+    assert spec is not None
+    gate = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(gate)
+
+    gate.require_verified_crezlo_publication(
+        {
+            "immersive_acceptance_json": {
+                "accepted": True,
+                "spatial_provenance_verified": True,
+                "exact_property_provenance_verified": True,
+                "browser_receipt_verified": True,
+                "scene_graph_connected": True,
+                "all_required_scenes_navigable": True,
+                "first_party_viewer_verified": True,
+                "floorplan_required": True,
+                "floorplan_alignment_verified": True,
+                "floorplan_layout_receipt_verified": True,
+            }
+        }
+    )

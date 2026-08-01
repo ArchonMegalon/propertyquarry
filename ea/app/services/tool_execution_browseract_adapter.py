@@ -3407,6 +3407,31 @@ class BrowserActToolAdapter:
     def _publish_crezlo_public_tour_bundle(cls, normalized: dict[str, object]) -> str:
         from app.api.routes.public_tour_payloads import redacted_public_tour_payload
 
+        # The service path normally calls this writer only after the
+        # immersive gate.  Keep the writer fail-closed as well when a blocked
+        # result is passed directly, so a vendor URL can never be repackaged
+        # into a first-party gallery by an alternate caller.
+        structured_for_gate = cls._crezlo_json_dict(normalized.get("structured_output_json"))
+        acceptance_for_gate = cls._crezlo_json_dict(structured_for_gate.get("immersive_acceptance_json"))
+        if acceptance_for_gate and acceptance_for_gate.get("accepted") is not True:
+            return ""
+        if acceptance_for_gate:
+            for required_key in (
+                "spatial_provenance_verified",
+                "exact_property_provenance_verified",
+                "browser_receipt_verified",
+                "scene_graph_connected",
+                "all_required_scenes_navigable",
+                "first_party_viewer_verified",
+            ):
+                if acceptance_for_gate.get(required_key) is not True:
+                    return ""
+            if acceptance_for_gate.get("floorplan_required") is True and any(
+                acceptance_for_gate.get(key) is not True
+                for key in ("floorplan_alignment_verified", "floorplan_layout_receipt_verified")
+            ):
+                return ""
+
         rows = cls._crezlo_public_asset_rows(normalized)
         if not rows:
             return ""

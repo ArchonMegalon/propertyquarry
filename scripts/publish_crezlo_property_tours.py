@@ -15,6 +15,8 @@ from pathlib import Path
 DEFAULT_OUTPUT_DIR = Path("/docker/property/state/public_property_tours/crezlo")
 DEFAULT_PUBLIC_BASE_URL = str(os.environ.get("PROPERTYQUARRY_PUBLIC_TOUR_BASE_URL", "https://propertyquarry.com/tours")).strip().rstrip("/")
 
+from property_tour_publication_gate import require_verified_crezlo_publication
+
 
 def slugify(value: str) -> str:
     lowered = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
@@ -283,6 +285,7 @@ def main() -> int:
         run_payload = load_run(run_path)
         output_json = dict(run_payload.get("output_json") or {})
         structured = dict(output_json.get("structured_output_json") or {})
+        require_verified_crezlo_publication(structured)
         workflow_output = dict(structured.get("workflow_output_json") or {})
         detail = dict(workflow_output.get("tour_detail_json") or structured.get("tour_detail_json") or {})
         title = str(workflow_output.get("tour_title") or structured.get("tour_title") or output_json.get("result_title") or detail.get("title") or "Property Tour").strip() or "Property Tour"

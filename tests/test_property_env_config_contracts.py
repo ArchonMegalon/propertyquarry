@@ -98,6 +98,7 @@ def test_property_public_tour_scripts_default_to_property_state() -> None:
     comparison = (ROOT / "scripts/build_comparison_dossiers.py").read_text(encoding="utf-8")
     crezlo_publish = (ROOT / "scripts/publish_crezlo_property_tours.py").read_text(encoding="utf-8")
     crezlo_public = (ROOT / "scripts/publish_crezlo_public_tours.py").read_text(encoding="utf-8")
+    crezlo_gate = (ROOT / "scripts/property_tour_publication_gate.py").read_text(encoding="utf-8")
     crezlo_worker = (ROOT / "scripts/crezlo_property_tour_worker.py").read_text(encoding="utf-8")
 
     for body in (backfill, comparison, crezlo_publish, crezlo_public):
@@ -116,6 +117,9 @@ def test_property_public_tour_scripts_default_to_property_state() -> None:
     assert "ea-property-tours" not in crezlo_worker
     assert "PropertyQuarry-hosted" in crezlo_publish
     assert "EA-hosted" not in crezlo_publish
+    assert "require_verified_crezlo_publication" in crezlo_publish
+    assert "require_verified_crezlo_publication" in crezlo_public
+    assert "floorplan_layout_receipt_verified" in crezlo_gate
 
 
 def test_property_release_gate_runs_repair_fleet_canary() -> None:

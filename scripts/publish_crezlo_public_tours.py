@@ -18,6 +18,7 @@ if str(EA_DIR) not in sys.path:
 
 from browseract_ui_media import compose_slideshow_video, transcode_video_webm
 from app.api.routes.public_tour_payloads import PrivateTourReceipt, build_public_tour_manifest
+from property_tour_publication_gate import require_verified_crezlo_publication
 
 
 DEFAULT_OUTPUT_DIR = Path("/docker/property/state/public_property_tours/crezlo")
@@ -279,6 +280,7 @@ def main() -> int:
         run_json = coerce_dict(load_json(run_path))
         output_json = coerce_dict(run_json.get("output_json"))
         structured = expanded_structured(output_json.get("structured_output_json"))
+        require_verified_crezlo_publication(structured)
         slug = str(structured.get("slug") or row.get("run_key") or "").strip()
         if not slug:
             raise SystemExit(f"slug_missing:{run_path}")

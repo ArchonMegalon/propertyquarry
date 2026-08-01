@@ -5596,6 +5596,31 @@ def test_crezlo_public_tour_bundle_writer_downloads_assets_and_writes_tour_json(
     assert private_payload["brief"]["creative_brief"] == "Lead with the view and floorplan clarity."
 
 
+def test_crezlo_public_tour_bundle_writer_refuses_explicitly_blocked_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
+    hosted_url = BrowserActToolAdapter._publish_crezlo_public_tour_bundle(
+        {
+            "tour_title": "Blocked direct writer call",
+            "structured_output_json": {
+                "immersive_acceptance_json": {
+                    "accepted": False,
+                    "reason": "floorplan_geometry_receipt_unverified",
+                },
+                "workflow_output_json": {
+                    "file_records_json": [
+                        {"path": "https://assets.example/blocked.jpg", "mime_type": "image/jpeg"}
+                    ]
+                },
+            },
+        }
+    )
+    assert hosted_url == ""
+    assert not list(tmp_path.iterdir())
+
+
 def test_crezlo_public_tour_bundle_writer_supports_ui_worker_scene_payload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
