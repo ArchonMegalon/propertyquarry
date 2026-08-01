@@ -8597,7 +8597,17 @@ def _public_tour_verified_generated_viewer_response(
 def public_tour_payload(slug: str) -> JSONResponse:
     payload = _load_tour(slug)
     _require_public_tour_viewable(payload)
-    if _tour_payload_is_disabled_fallback(payload):
+    # A generated reconstruction is a disclosed planning preview, not a
+    # provider tour, but its redacted manifest and measured-layout assets are
+    # still useful to the viewer shell.  Keep legacy fallback bundles blocked
+    # while allowing this explicitly identified preview through the JSON
+    # surface; the first-party viewer contract still fail-closes on tampered
+    # geometry and no verified-provider route is created.
+    generated_preview_ready = (
+        _generated_reconstruction_public_shell_ready(payload)
+        and bool(str(payload.get("principal_id") or "").strip())
+    )
+    if _tour_payload_is_disabled_fallback(payload) and not generated_preview_ready:
         raise HTTPException(status_code=404, detail="tour_disabled_fallback")
     ai_panorama_contract = _require_public_tour_ai_panorama_release(
         payload,
@@ -14124,6 +14134,11 @@ def public_tour_page(
         payload = _load_tour_with_private_receipt(slug)
         _require_public_tour_viewable(payload)
         generated_reconstruction_only = _public_tour_is_generated_reconstruction_only(payload)
+        generated_preview_ready = (
+            generated_reconstruction_only
+            and _generated_reconstruction_public_shell_ready(payload)
+            and bool(str(payload.get("principal_id") or "").strip())
+        )
         primary_control_path = _public_tour_primary_control_path(payload)
         viewer_release = evaluate_public_tour_generated_viewer_release(payload)
         generated_viewer_released = (
@@ -14134,6 +14149,7 @@ def public_tour_page(
             _tour_payload_is_disabled_fallback(payload)
             and not primary_control_path
             and not generated_viewer_released
+            and not generated_preview_ready
         ):
             raise HTTPException(status_code=404, detail="tour_disabled_fallback")
         if primary_control_path and not _public_tour_request_prefers_embedded_media(request):

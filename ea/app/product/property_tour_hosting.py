@@ -57,6 +57,11 @@ except ModuleNotFoundError:
         validate_style_scene,
     )
 
+try:
+    from scripts.property_tour_layout_contract import room_ids_in_walk_order
+except ModuleNotFoundError:
+    from property_tour_layout_contract import room_ids_in_walk_order  # type: ignore[no-redef]
+
 _PROPERTY_SCOUT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0 Safari/537.36"
 _PROPERTY_SCOUT_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 _PROPERTY_SCOUT_FLOORPLAN_ASSET_EXTENSIONS = (*_PROPERTY_SCOUT_IMAGE_EXTENSIONS, ".pdf")
@@ -3419,6 +3424,142 @@ def _generated_reconstruction_relpath_file(bundle_dir: Path, relpath: object) ->
     return asset_path
 
 
+def _hosted_property_tour_source_geometry_lock_ready(
+    *,
+    receipt: dict[str, object],
+    generated_reconstruction: dict[str, object],
+    walkable_scene: dict[str, object],
+) -> bool:
+    """Re-check source-locked geometry before exposing a generated viewer.
+
+    The generator validates the full reviewed contract before writing a bundle,
+    but a first-party route must also defend against a stale or tampered bundle
+    being copied into the public-tour root afterward.  The reconstruction
+    receipt carries a compact canonical projection specifically for this
+    publish-time check, so no private floorplan artifact is needed here.
+    """
+
+    floorplan_analysis = receipt.get("floorplan_analysis")
+    if not isinstance(floorplan_analysis, dict):
+        return True
+    if str(floorplan_analysis.get("status") or "").strip().lower() != "source_locked":
+        return True
+    projection = floorplan_analysis.get("source_geometry_projection")
+    if not isinstance(projection, dict):
+        return False
+    projection = dict(projection)
+    projection_hash = str(projection.get("sha256") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", projection_hash):
+        return False
+    canonical_projection = {key: value for key, value in projection.items() if key != "sha256"}
+    computed_hash = hashlib.sha256(
+        json.dumps(
+            canonical_projection,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if computed_hash != projection_hash:
+        return False
+    expected_hashes = {
+        projection_hash,
+        str(floorplan_analysis.get("source_geometry_projection_sha256") or "").strip().lower(),
+        str(generated_reconstruction.get("source_geometry_projection_sha256") or "").strip().lower(),
+    }
+    if expected_hashes != {projection_hash}:
+        return False
+    if str(projection.get("contract_name") or "").strip() != "propertyquarry.floorplan_analysis.v2":
+        return False
+    try:
+        expected_room_ids = room_ids_in_walk_order(projection)
+    except Exception:
+        return False
+    expected_rooms = {
+        str(room.get("id") or "").strip(): room
+        for room in list(projection.get("rooms") or [])
+        if isinstance(room, dict) and str(room.get("id") or "").strip()
+    }
+    if not expected_room_ids or set(expected_room_ids) != set(expected_rooms):
+        return False
+    if walkable_scene.get("source_geometry_locked") is not True:
+        return False
+    if str(walkable_scene.get("route_anchor_method") or "").strip() != "measured_source_component_centroids_v1":
+        return False
+    source_bounds = list(projection.get("source_bounds_m") or [])
+    if len(source_bounds) != 2:
+        return False
+    try:
+        source_width_m, source_depth_m = (round(float(value), 4) for value in source_bounds)
+    except (TypeError, ValueError):
+        return False
+    scene_bounds = walkable_scene.get("bounds")
+    if not isinstance(scene_bounds, dict):
+        return False
+    try:
+        if round(float(scene_bounds.get("width_m") or 0.0), 4) != source_width_m:
+            return False
+        if round(float(scene_bounds.get("depth_m") or 0.0), 4) != source_depth_m:
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    def _components(row: object) -> list[dict[str, float]]:
+        if not isinstance(row, dict):
+            return []
+        source = row.get("source_components_m") or row.get("components") or []
+        return [
+            {
+                key: round(float(component.get(key) or 0.0), 4)
+                for key in ("x", "z", "width", "depth")
+            }
+            for component in list(source)
+            if isinstance(component, dict)
+        ]
+
+    for collection_key in ("route", "rooms"):
+        rows = list(walkable_scene.get(collection_key) or [])
+        if [str(row.get("source_room_id") or "").strip() for row in rows if isinstance(row, dict)] != expected_room_ids:
+            return False
+        for row in rows:
+            if not isinstance(row, dict) or row.get("source_geometry_locked") is not True:
+                return False
+            room_id = str(row.get("source_room_id") or "").strip()
+            expected_components = _components(expected_rooms.get(room_id))
+            if not expected_components or _components(row) != expected_components:
+                return False
+            largest = max(expected_components, key=lambda component: component["width"] * component["depth"])
+            observed_bounds = row.get("source_component_bounds_m")
+            if not isinstance(observed_bounds, dict):
+                return False
+            expected_bounds = {
+                "x": round(largest["x"] - (source_width_m * 0.5), 4),
+                "z": round(largest["z"] - (source_depth_m * 0.5), 4),
+                "width": largest["width"],
+                "depth": largest["depth"],
+            }
+            try:
+                actual_bounds = {
+                    key: round(float(observed_bounds.get(key) or 0.0), 4)
+                    for key in ("x", "z", "width", "depth")
+                }
+            except (TypeError, ValueError):
+                return False
+            if actual_bounds != expected_bounds:
+                return False
+    expected_portal_ids = {
+        str(portal.get("id") or "").strip()
+        for portal in list(projection.get("portals") or [])
+        if isinstance(portal, dict) and str(portal.get("id") or "").strip()
+    }
+    actual_portal_ids = {
+        str(portal.get("id") or "").strip()
+        for portal in list(walkable_scene.get("portals") or [])
+        if isinstance(portal, dict) and str(portal.get("id") or "").strip()
+    }
+    return expected_portal_ids.issubset(actual_portal_ids)
+
+
 def _hosted_property_tour_generated_reconstruction_contract(
     *,
     bundle_dir: Path,
@@ -3651,6 +3792,12 @@ def _hosted_property_tour_generated_reconstruction_contract(
     if not walkable_scene and isinstance(receipt.get("walkable_scene"), dict):
         walkable_scene = dict(receipt.get("walkable_scene") or {})
     if str(walkable_scene.get("kind") or "").strip() != "generated_reconstruction_layout":
+        return {"ready": False}
+    if not _hosted_property_tour_source_geometry_lock_ready(
+        receipt=receipt,
+        generated_reconstruction=generated_reconstruction,
+        walkable_scene=walkable_scene,
+    ):
         return {"ready": False}
     route_stops = list(walkable_scene.get("route") or []) if isinstance(walkable_scene.get("route"), list) else []
     room_stops = list(walkable_scene.get("rooms") or []) if isinstance(walkable_scene.get("rooms"), list) else []

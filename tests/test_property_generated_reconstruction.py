@@ -3334,6 +3334,58 @@ def test_generator_persists_measured_geometry_lock_into_reconstruction_receipt(t
     )
 
 
+def test_generated_reconstruction_publish_recheck_rejects_source_geometry_drift(tmp_path: Path) -> None:
+    floorplan = tmp_path / "source-floorplan.png"
+    Image.new("RGB", (1800, 1310), "white").save(floorplan, format="PNG")
+    analysis_dir = tmp_path / "analysis"
+    analysis = analyze_floorplan(
+        floorplan,
+        specification=karl_builder._ANALYSIS_SPEC,
+        output_dir=analysis_dir,
+    )
+    bundle = _write_base_tour(tmp_path, "geometry-locked-publish-recheck")
+    generated = _run_generator(
+        tmp_path,
+        "--slug",
+        "geometry-locked-publish-recheck",
+        "--floorplan",
+        str(floorplan),
+        "--floorplan-analysis",
+        str(analysis_dir / "floorplan-analysis.json"),
+        "--skip-video",
+    )
+    assert generated.returncode == 0, generated.stdout or generated.stderr
+    receipt = json.loads(
+        (bundle / "generated-reconstruction" / "reconstruction.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = json.loads((bundle / "tour.json").read_text(encoding="utf-8"))
+    generated_reconstruction = dict(manifest["generated_reconstruction"])
+    scene = dict(receipt["walkable_scene"])
+    assert property_tour_hosting._hosted_property_tour_source_geometry_lock_ready(
+        receipt=receipt,
+        generated_reconstruction=generated_reconstruction,
+        walkable_scene=scene,
+    ) is True
+
+    tampered_scene = json.loads(json.dumps(scene))
+    tampered_scene["route"][0]["source_components_m"][0]["width"] += 0.25
+    assert property_tour_hosting._hosted_property_tour_source_geometry_lock_ready(
+        receipt=receipt,
+        generated_reconstruction=generated_reconstruction,
+        walkable_scene=tampered_scene,
+    ) is False
+
+    tampered_manifest = json.loads(json.dumps(generated_reconstruction))
+    tampered_manifest["source_geometry_projection_sha256"] = "0" * 64
+    assert property_tour_hosting._hosted_property_tour_source_geometry_lock_ready(
+        receipt=receipt,
+        generated_reconstruction=tampered_manifest,
+        walkable_scene=scene,
+    ) is False
+
+
 def test_generated_reconstruction_route_sampling_is_deterministic_spread_and_wall_safe() -> None:
     rows = 21
     cols = 25
