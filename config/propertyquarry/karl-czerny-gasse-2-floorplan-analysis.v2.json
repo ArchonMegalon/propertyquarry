@@ -111,8 +111,8 @@
       "kind": "interior",
       "scene_id": "living-kitchen",
       "shape": "rectangle",
-      "floorplan_bounds_pct": {"x": 44.2, "y": 59.5, "width": 17.8, "height": 18.5},
-      "source_bbox_px": {"x": 795, "y": 780, "width": 320, "height": 245},
+      "floorplan_bounds_pct": {"x": 44.2, "y": 59.5, "width": 40.0, "height": 18.5},
+      "source_bbox_px": {"x": 795, "y": 780, "width": 720, "height": 245},
       "area_m2": 30.33,
       "dimension_label": "6.22 × 4.88 m",
       "measurement_tolerance_m": 0.05,
@@ -185,7 +185,7 @@
       {"id": "bathroom", "components_px": [{"x": 940, "y": 510, "width": 150, "height": 190}]},
       {"id": "circulation-hall", "components_px": [{"x": 1090, "y": 630, "width": 170, "height": 150}]},
       {"id": "guest-bedroom", "components_px": [{"x": 1260, "y": 510, "width": 255, "height": 275}]},
-      {"id": "living-kitchen", "components_px": [{"x": 795, "y": 780, "width": 320, "height": 245}]},
+      {"id": "living-kitchen", "components_px": [{"x": 795, "y": 780, "width": 720, "height": 245}]},
       {"id": "entrance-vestibule", "components_px": [
         {"x": 795, "y": 1005, "width": 320, "height": 74},
         {"x": 795, "y": 1079, "width": 139, "height": 181}

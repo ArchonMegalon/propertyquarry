@@ -94,16 +94,22 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     assert source_rooms["living-kitchen"]["floorplan_bounds_pct"] == {
         "x": 44.2,
         "y": 59.5,
-        "width": 17.8,
+        "width": 40.0,
         "height": 18.5,
     }
     assert source_rooms["living-kitchen"]["source_bbox_px"] == {
         "x": 795,
         "y": 780,
-        "width": 320,
+        "width": 720,
         "height": 245,
     }
     assert source_rooms["balcony-loggia"]["shape"] == "rectangle"
+    living_bbox = source_rooms["living-kitchen"]["source_bbox_px"]
+    balcony_bbox = source_rooms["balcony-loggia"]["source_bbox_px"]
+    assert living_bbox["x"] + living_bbox["width"] == 1515
+    assert balcony_bbox["x"] == 1360
+    assert balcony_bbox["x"] < living_bbox["x"] + living_bbox["width"]
+    assert balcony_bbox["y"] < living_bbox["y"] + living_bbox["height"]
     assert source_rooms["bathroom"]["components"] == [
         {"x": 5.335, "z": 0.584, "width": 2.4, "depth": 2.066667}
     ]
@@ -124,7 +130,7 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     }
     assert len(source_geometry_rooms["entrance-vestibule"]["components_px"]) == 2
     assert source_geometry_rooms["living-kitchen"]["components_px"] == [
-        {"x": 795, "y": 780, "width": 320, "height": 245}
+        {"x": 795, "y": 780, "width": 720, "height": 245}
     ]
     source_portals = {
         str(portal["id"]): portal for portal in source_geometry["portals"]
@@ -189,11 +195,11 @@ def test_source_pixel_envelopes_drive_reviewed_plan_bounds(tmp_path: Path) -> No
     assert living["floorplan_bounds_pct"] == {
         "x": 44.166667,
         "y": 59.541985,
-        "width": 17.777778,
+        "width": 40.0,
         "height": 18.70229,
     }
 
     invalid_spec = copy.deepcopy(builder._ANALYSIS_SPEC)
-    invalid_spec["rooms"][6]["source_bbox_px"]["x"] = 1200
+    invalid_spec["rooms"][6]["source_bbox_px"]["x"] = 1000
     with pytest.raises(FloorplanAnalysisError, match="floorplan_source_bbox_drift:living-kitchen"):
         analyze_floorplan(source, specification=invalid_spec)
