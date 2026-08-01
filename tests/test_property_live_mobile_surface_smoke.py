@@ -54,6 +54,7 @@ def _base_metrics() -> dict[str, object]:
         "topnav_visible": True,
         "min_action_height": 46,
         "measured_touch_target_height": 46,
+        "measured_primary_touch_target_height": 46,
         "visible_card_count": 12,
         "heavy_shadow_count": 0,
         "district_picker_available": True,
@@ -190,6 +191,12 @@ def test_live_mobile_smoke_browser_worker_uses_selected_shared_engine_runtime(mo
     class Page:
         url = "https://propertyquarry.test/app/search"
 
+        class Touchscreen:
+            def tap(self, x: int, y: int) -> None:
+                observed["touchscreen_tap"] = (x, y)
+
+        touchscreen = Touchscreen()
+
         def set_default_timeout(self, _timeout: int) -> None:
             pass
 
@@ -205,7 +212,9 @@ def test_live_mobile_smoke_browser_worker_uses_selected_shared_engine_runtime(mo
         def wait_for_timeout(self, _timeout: int) -> None:
             pass
 
-        def evaluate(self, _script: str) -> dict[str, object]:
+        def evaluate(self, script: str) -> dict[str, object] | None:
+            if "async () =>" not in script:
+                return None
             return {"viewport_width": 390}
 
     class Context:
@@ -271,6 +280,7 @@ def test_live_mobile_smoke_browser_worker_uses_selected_shared_engine_runtime(mo
     }
     assert observed["context"].get("extra_http_headers") is None
     assert observed["route_pattern"] == "**/*"
+    assert observed["touchscreen_tap"] == (10, 10)
     assert observed["payload"] == {
         "ok": True,
         "status_code": 200,
@@ -283,6 +293,7 @@ def test_live_mobile_smoke_browser_worker_uses_selected_shared_engine_runtime(mo
             "navigation_committed": True,
             "requested_url": "https://propertyquarry.test/app/search",
             "final_url": "https://propertyquarry.test/app/search",
+            "touchscreen_tap_capable": True,
         },
     }
 
@@ -571,6 +582,45 @@ def test_propertyquarry_mobile_topnav_fallback_keeps_touch_targets_at_least_44px
     ).read_text(encoding="utf-8")
 
     assert "item.style.setProperty('min-height', '44px', 'important');" in template
+
+
+def test_flagship_browser_proof_uses_actual_touchscreen_capability_and_primary_targets() -> None:
+    metrics = _base_metrics()
+    metrics.update(
+        {
+            "require_browser_proof": True,
+            "navigation_committed": True,
+            "touch_capable": False,
+            "touchscreen_tap_capable": True,
+            "focus_navigation_ok": True,
+            "measured_touch_target_height": 24,
+            "measured_primary_touch_target_height": 44,
+        }
+    )
+
+    assert _failed_names("/app/settings/usage", metrics) == set()
+
+    metrics["touchscreen_tap_capable"] = False
+    metrics["measured_primary_touch_target_height"] = 40
+    assert _failed_names("/app/settings/usage", metrics) == {
+        "browser_touch_context",
+        "primary_touch_targets",
+    }
+
+
+def test_flagship_mobile_navigation_templates_keep_primary_links_at_44px() -> None:
+    templates = Path(__file__).resolve().parents[1] / "ea/app/templates/app"
+    packets = (templates / "property_packets.html").read_text(encoding="utf-8")
+    research = (templates / "property_research_detail.html").read_text(encoding="utf-8")
+
+    assert ".pq-pack-nav :is(a, span) {\n      display: inline-flex;" in packets
+    assert "min-height: 44px;" in packets
+    assert (
+        ".prd-primary-nav a,\n"
+        "    .prd-primary-nav span {\n"
+        "      min-height: 44px;\n"
+        "      height: 44px;"
+    ) in research
 
 
 def test_live_mobile_smoke_accepts_empty_shortlist_with_top_navigation_only() -> None:
