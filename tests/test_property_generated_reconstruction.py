@@ -3385,6 +3385,14 @@ def test_generated_reconstruction_publish_recheck_rejects_source_geometry_drift(
         walkable_scene=scene,
     ) is False
 
+    missing_analysis_receipt = dict(receipt)
+    missing_analysis_receipt.pop("floorplan_analysis", None)
+    assert property_tour_hosting._hosted_property_tour_source_geometry_lock_ready(
+        receipt=missing_analysis_receipt,
+        generated_reconstruction=generated_reconstruction,
+        walkable_scene=scene,
+    ) is False
+
 
 def test_generated_reconstruction_route_sampling_is_deterministic_spread_and_wall_safe() -> None:
     rows = 21

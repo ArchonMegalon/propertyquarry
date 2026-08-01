@@ -27,8 +27,23 @@ def _contract() -> dict[str, object]:
         "doorway_edges": [["entrance-vestibule", "living-kitchen"], ["living-kitchen", "balcony-loggia"]],
         "source_geometry": {
             "portals": [
-                {"id": "entrance-to-living", "room_ids": ["entrance-vestibule", "living-kitchen"]},
-                {"id": "entrance-exit-gate", "room_ids": ["entrance-vestibule", "outside"]},
+                {
+                    "id": "entrance-to-living",
+                    "kind": "door",
+                    "room_ids": ["entrance-vestibule", "living-kitchen"],
+                    "room_sides": {"entrance-vestibule": "east", "living-kitchen": "west"},
+                    "center_px": {"x": 200, "y": 100},
+                    "width_px": 90,
+                },
+                {
+                    "id": "entrance-exit-gate",
+                    "kind": "exit_gate",
+                    "room_ids": ["entrance-vestibule", "outside"],
+                    "room_sides": {"entrance-vestibule": "west"},
+                    "center_px": {"x": 20, "y": 100},
+                    "width_px": 100,
+                    "target_room_id": "outside",
+                },
             ]
         },
         "round_trip": {"status": "pass"},
@@ -96,6 +111,18 @@ def test_layout_contract_rejects_geometry_locked_component_drift() -> None:
     assert validate_walkable_scene(scene, payload) == []
     scene["route"][1]["source_components_m"][0]["width"] = 4.25  # type: ignore[index]
     assert "route_source_components_mismatch:living-kitchen" in validate_walkable_scene(scene, payload)
+
+
+def test_layout_contract_rejects_portal_geometry_drift() -> None:
+    payload = _contract()
+    scene = {
+        "source_geometry_locked": True,
+        "route": [{"source_room_id": room_id} for room_id in room_ids_in_walk_order(payload)],
+        "rooms": [{"source_room_id": room_id} for room_id in room_ids_in_walk_order(payload)],
+        "portals": json.loads(json.dumps(payload["source_geometry"]["portals"])),  # type: ignore[index]
+    }
+    scene["portals"][0]["center_px"]["x"] = 240  # type: ignore[index]
+    assert "source_portal_geometry_mismatch" in validate_walkable_scene(scene, payload)
 
 
 def test_layout_contract_loader_requires_reviewed_v2(tmp_path: Path) -> None:

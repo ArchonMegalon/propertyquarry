@@ -58,9 +58,12 @@ except ModuleNotFoundError:
     )
 
 try:
-    from scripts.property_tour_layout_contract import room_ids_in_walk_order
+    from scripts.property_tour_layout_contract import room_ids_in_walk_order, source_portal_projection
 except ModuleNotFoundError:
-    from property_tour_layout_contract import room_ids_in_walk_order  # type: ignore[no-redef]
+    from property_tour_layout_contract import (  # type: ignore[no-redef]
+        room_ids_in_walk_order,
+        source_portal_projection,
+    )
 
 _PROPERTY_SCOUT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0 Safari/537.36"
 _PROPERTY_SCOUT_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
@@ -3439,11 +3442,24 @@ def _hosted_property_tour_source_geometry_lock_ready(
     publish-time check, so no private floorplan artifact is needed here.
     """
 
+    layout_contract_status = str(
+        generated_reconstruction.get("layout_contract_status") or ""
+    ).strip().lower()
+    projection_hash = str(
+        generated_reconstruction.get("source_geometry_projection_sha256") or ""
+    ).strip().lower()
+    requires_source_lock = layout_contract_status == "source_locked" or bool(
+        projection_hash
+    )
     floorplan_analysis = receipt.get("floorplan_analysis")
     if not isinstance(floorplan_analysis, dict):
-        return True
-    if str(floorplan_analysis.get("status") or "").strip().lower() != "source_locked":
-        return True
+        # Inferred planning previews remain publishable as explicitly
+        # non-source-locked output.  A bundle that claims the reviewed layout
+        # contract, however, must carry the complete analysis receipt.
+        return not requires_source_lock
+    analysis_status = str(floorplan_analysis.get("status") or "").strip().lower()
+    if analysis_status != "source_locked":
+        return not requires_source_lock and analysis_status == "not_supplied"
     projection = floorplan_analysis.get("source_geometry_projection")
     if not isinstance(projection, dict):
         return False
@@ -3547,17 +3563,20 @@ def _hosted_property_tour_source_geometry_lock_ready(
                 return False
             if actual_bounds != expected_bounds:
                 return False
-    expected_portal_ids = {
-        str(portal.get("id") or "").strip()
+    expected_portals = [
+        source_portal_projection(portal)
         for portal in list(projection.get("portals") or [])
-        if isinstance(portal, dict) and str(portal.get("id") or "").strip()
-    }
-    actual_portal_ids = {
-        str(portal.get("id") or "").strip()
+        if isinstance(portal, dict)
+    ]
+    actual_portals = [
+        source_portal_projection(portal)
         for portal in list(walkable_scene.get("portals") or [])
-        if isinstance(portal, dict) and str(portal.get("id") or "").strip()
-    }
-    return expected_portal_ids.issubset(actual_portal_ids)
+        if isinstance(portal, dict)
+    ]
+    # Compare the complete measured portal records, not just ids.  This
+    # catches a moved doorway, a swapped wall side, a changed width, or an
+    # altered entrance/exit gate while preserving source ordering.
+    return actual_portals == expected_portals
 
 
 def _hosted_property_tour_generated_reconstruction_contract(

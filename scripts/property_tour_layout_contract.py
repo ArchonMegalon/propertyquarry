@@ -125,6 +125,52 @@ def room_ids_in_walk_order(payload: dict[str, Any]) -> list[str]:
     return order
 
 
+def source_portal_projection(portal: object) -> dict[str, Any]:
+    """Return the canonical, comparable representation of a measured portal.
+
+    Portal ids and room references identify topology, but they do not prove
+    that a doorway is in the right wall.  The analyzer supplies the optional
+    geometric fields below (and older synthetic contracts may omit them); the
+    projection preserves every field that is present so a generated scene
+    cannot silently move or relabel a measured door or exit gate.
+    """
+
+    if not isinstance(portal, dict):
+        return {}
+    result: dict[str, Any] = {
+        "id": str(portal.get("id") or "").strip(),
+        "room_ids": [str(value or "").strip() for value in list(portal.get("room_ids") or [])],
+    }
+    for key in ("kind", "target_room_id", "label", "target_label"):
+        if key in portal:
+            result[key] = str(portal.get(key) or "").strip()
+    if "room_sides" in portal:
+        raw_sides = portal.get("room_sides")
+        result["room_sides"] = (
+            {str(room_id).strip(): str(side).strip().lower() for room_id, side in raw_sides.items()}
+            if isinstance(raw_sides, dict)
+            else {}
+        )
+    if "center_px" in portal:
+        raw_center = portal.get("center_px")
+        if isinstance(raw_center, dict):
+            try:
+                result["center_px"] = {
+                    "x": int(round(float(raw_center.get("x") or 0))),
+                    "y": int(round(float(raw_center.get("y") or 0))),
+                }
+            except (TypeError, ValueError, OverflowError):
+                result["center_px"] = {"x": None, "y": None}
+        else:
+            result["center_px"] = {}
+    if "width_px" in portal:
+        try:
+            result["width_px"] = int(round(float(portal.get("width_px") or 0)))
+        except (TypeError, ValueError, OverflowError):
+            result["width_px"] = None
+    return result
+
+
 def source_bounds_m(payload: dict[str, Any]) -> tuple[float, float]:
     max_x = 0.0
     max_z = 0.0
@@ -171,10 +217,7 @@ def source_geometry_projection(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(edge, (list, tuple)) and len(edge) == 2
     ]
     portals = [
-        {
-            "id": str(portal.get("id") or "").strip(),
-            "room_ids": [str(room_id).strip() for room_id in list(portal.get("room_ids") or [])],
-        }
+        source_portal_projection(portal)
         for portal in list(dict(payload.get("source_geometry") or {}).get("portals") or [])
         if isinstance(portal, dict)
     ]
@@ -207,20 +250,18 @@ def validate_walkable_scene(scene: dict[str, Any], payload: dict[str, Any]) -> l
         failures.append("route_room_order_mismatch")
     if len(actual) != int(payload.get("room_count") or 0):
         failures.append("route_room_count_mismatch")
-    portal_ids = {
-        str(row.get("id") or "").strip()
-        for row in list(scene.get("portals") or [])
-        if isinstance(row, dict)
-    }
-    expected_portal_ids = {
-        str(row.get("id") or "").strip()
+    expected_portals = [
+        source_portal_projection(row)
         for row in list(dict(payload.get("source_geometry") or {}).get("portals") or [])
         if isinstance(row, dict)
-    }
-    if not expected_portal_ids.issubset(portal_ids):
-        failures.append("source_portals_missing")
-    if "entrance-exit-gate" in expected_portal_ids and "entrance-exit-gate" not in portal_ids:
-        failures.append("entrance_exit_gate_missing")
+    ]
+    actual_portals = [
+        source_portal_projection(row)
+        for row in list(scene.get("portals") or [])
+        if isinstance(row, dict)
+    ]
+    if actual_portals != expected_portals:
+        failures.append("source_portal_geometry_mismatch")
     if scene.get("source_geometry_locked") is True:
         width_m, depth_m = source_bounds_m(payload)
         expected_rooms = {
