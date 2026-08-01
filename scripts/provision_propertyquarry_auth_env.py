@@ -4,7 +4,9 @@
 The source EA environment contains credentials for several unrelated services.
 This provisioner copies only the Emailit and Google OAuth values required by
 PropertyQuarry's existing sign-in routes, generates PropertyQuarry-specific
-state/encryption secrets, and writes an atomic mode-0600 env file.
+state/encryption and release-probe secrets, and writes an atomic mode-0600 env
+file. The release probe is constrained to one origin, one principal, and the
+reviewed read-only customer routes enforced by the application middleware.
 """
 
 from __future__ import annotations
@@ -16,11 +18,34 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
 import tempfile
 from typing import Mapping
 
 
+ROOT = Path(__file__).resolve().parents[1]
+EA_ROOT = ROOT / "ea"
+if str(EA_ROOT) not in sys.path:
+    sys.path.insert(0, str(EA_ROOT))
+
+from app.propertyquarry_release_probe import (  # noqa: E402
+    normalized_propertyquarry_release_probe_origin,
+    propertyquarry_release_probe_research_detail_route_valid,
+    propertyquarry_release_probe_shortlist_run_path_valid,
+)
+
+
 PROPERTYQUARRY_GOOGLE_REDIRECT_URI = "https://propertyquarry.com/google/callback"
+PROPERTYQUARRY_RELEASE_PROBE_DEFAULTS = {
+    "PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID": "propertyquarry-release-probe",
+    "PROPERTYQUARRY_RELEASE_PROBE_ORIGIN": "https://propertyquarry.com",
+    "PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE": (
+        "/app/research/perf-candidate-1020?run_id=run-gold-mobile"
+    ),
+    "PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH": (
+        "/app/shortlist/run/0a89ead9e0b048288cca22d1aac54fa7"
+    ),
+}
 
 _COPIED_KEYS = (
     "EMAILIT_API_KEY",
@@ -42,9 +67,12 @@ _REQUIRED_KEYS = (
 _GENERATED_SECRET_KEYS = (
     "EA_GOOGLE_OAUTH_STATE_SECRET",
     "EA_PROVIDER_SECRET_KEY",
+    "PROPERTYQUARRY_RELEASE_PROBE_SECRET",
 )
+_RELEASE_PROBE_CONFIG_KEYS = tuple(PROPERTYQUARRY_RELEASE_PROBE_DEFAULTS)
 _ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SAFE_ENV_VALUE_RE = re.compile(r"[A-Za-z0-9_./:@%+,=-]*")
+_PRINCIPAL_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/+~-]{0,199}")
 
 
 class AuthEnvProvisionError(RuntimeError):
@@ -121,6 +149,53 @@ def _usable_secret(value: object) -> str:
     return normalized if len(normalized) >= 32 else ""
 
 
+def _release_probe_configuration(source_values: Mapping[str, str]) -> dict[str, str]:
+    configured = {
+        key: str(source_values.get(key) or default).strip()
+        for key, default in PROPERTYQUARRY_RELEASE_PROBE_DEFAULTS.items()
+    }
+    principal_id = configured["PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID"]
+    if not _PRINCIPAL_ID_RE.fullmatch(principal_id):
+        raise AuthEnvProvisionError("propertyquarry_release_probe_principal_invalid")
+    try:
+        configured["PROPERTYQUARRY_RELEASE_PROBE_ORIGIN"] = (
+            normalized_propertyquarry_release_probe_origin(
+                configured["PROPERTYQUARRY_RELEASE_PROBE_ORIGIN"]
+            )
+        )
+    except ValueError as exc:
+        raise AuthEnvProvisionError(
+            "propertyquarry_release_probe_origin_invalid"
+        ) from exc
+    if not propertyquarry_release_probe_research_detail_route_valid(
+        configured["PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE"]
+    ):
+        raise AuthEnvProvisionError(
+            "propertyquarry_release_probe_research_detail_route_invalid"
+        )
+    if not propertyquarry_release_probe_shortlist_run_path_valid(
+        configured["PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH"]
+    ):
+        raise AuthEnvProvisionError(
+            "propertyquarry_release_probe_shortlist_run_path_invalid"
+        )
+    return configured
+
+
+def _dedicated_secret(
+    existing_value: object,
+    *,
+    prohibited_values: set[str],
+) -> str:
+    existing = _usable_secret(existing_value)
+    if existing and existing not in prohibited_values:
+        return existing
+    while True:
+        generated = secrets.token_urlsafe(48)
+        if generated not in prohibited_values:
+            return generated
+
+
 def build_auth_environment(
     source_values: Mapping[str, str],
     *,
@@ -139,9 +214,21 @@ def build_auth_environment(
         if str(source_values.get(key) or "").strip()
     }
     result["EA_GOOGLE_OAUTH_REDIRECT_URI"] = PROPERTYQUARRY_GOOGLE_REDIRECT_URI
+    result.update(_release_probe_configuration(source_values))
     existing = dict(existing_values or {})
+    prohibited_secrets = {
+        value
+        for value in (
+            str(raw_value or "").strip() for raw_value in source_values.values()
+        )
+        if _usable_secret(value)
+    }
     for key in _GENERATED_SECRET_KEYS:
-        result[key] = _usable_secret(existing.get(key)) or secrets.token_urlsafe(48)
+        result[key] = _dedicated_secret(
+            existing.get(key),
+            prohibited_values=prohibited_secrets,
+        )
+        prohibited_secrets.add(result[key])
     return result
 
 
@@ -191,6 +278,7 @@ def provision_auth_environment(
         for key in (
             *_COPIED_KEYS,
             "EA_GOOGLE_OAUTH_REDIRECT_URI",
+            *_RELEASE_PROBE_CONFIG_KEYS,
             *_GENERATED_SECRET_KEYS,
         )
         if key in values
@@ -206,6 +294,17 @@ def provision_auth_environment(
         "configured_keys": list(ordered_keys),
         "sender_domain": _sender_domain(values),
         "google_redirect_uri": PROPERTYQUARRY_GOOGLE_REDIRECT_URI,
+        "release_probe_configured": True,
+        "release_probe_origin": values["PROPERTYQUARRY_RELEASE_PROBE_ORIGIN"],
+        "release_probe_principal_id": values[
+            "PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID"
+        ],
+        "release_probe_research_detail_route": values[
+            "PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE"
+        ],
+        "release_probe_shortlist_run_path": values[
+            "PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH"
+        ],
         "emailit_key_fingerprint": hashlib.sha256(
             values["EMAILIT_API_KEY"].encode("utf-8")
         ).hexdigest()[:16],
@@ -216,6 +315,10 @@ def provision_auth_environment(
         != str(source_values.get("EA_GOOGLE_OAUTH_STATE_SECRET") or "").strip(),
         "dedicated_provider_secret": values["EA_PROVIDER_SECRET_KEY"]
         != str(source_values.get("EA_PROVIDER_SECRET_KEY") or "").strip(),
+        "dedicated_release_probe_secret": values[
+            "PROPERTYQUARRY_RELEASE_PROBE_SECRET"
+        ]
+        != str(source_values.get("PROPERTYQUARRY_RELEASE_PROBE_SECRET") or "").strip(),
         "unrelated_source_keys_copied": False,
     }
     _atomic_write(receipt_path, json.dumps(receipt, indent=2, sort_keys=True) + "\n")

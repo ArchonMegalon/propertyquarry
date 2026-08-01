@@ -35,6 +35,7 @@ def _write_source(path: Path, *, sender: str = "access@propertyquarry.com") -> N
                 "EA_GOOGLE_OAUTH_CLIENT_SECRET=google-client-secret",
                 "EA_GOOGLE_OAUTH_STATE_SECRET=shared-state-secret-that-must-not-be-copied",
                 "EA_PROVIDER_SECRET_KEY=shared-provider-secret-that-must-not-be-copied",
+                "PROPERTYQUARRY_RELEASE_PROBE_SECRET=shared-release-probe-secret-that-must-not-be-copied",
                 "UNRELATED_ROOT_TOKEN=must-not-cross-boundary",
             )
         )
@@ -73,8 +74,30 @@ def test_provisioner_writes_narrow_mode_0600_environment(tmp_path: Path) -> None
         values["EA_PROVIDER_SECRET_KEY"]
         != "shared-provider-secret-that-must-not-be-copied"
     )
+    assert (
+        values["PROPERTYQUARRY_RELEASE_PROBE_SECRET"]
+        != "shared-release-probe-secret-that-must-not-be-copied"
+    )
+    assert (
+        values["PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID"]
+        == "propertyquarry-release-probe"
+    )
+    assert (
+        values["PROPERTYQUARRY_RELEASE_PROBE_ORIGIN"]
+        == "https://propertyquarry.com"
+    )
+    assert (
+        values["PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE"]
+        == "/app/research/perf-candidate-1020?run_id=run-gold-mobile"
+    )
+    assert (
+        values["PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH"]
+        == "/app/shortlist/run/0a89ead9e0b048288cca22d1aac54fa7"
+    )
     assert "UNRELATED_ROOT_TOKEN" not in values
     assert receipt["status"] == "ready"
+    assert receipt["release_probe_configured"] is True
+    assert receipt["dedicated_release_probe_secret"] is True
     receipt_text = receipt_path.read_text(encoding="utf-8")
     assert "emailit-private-key" not in receipt_text
     assert "google-client-secret" not in receipt_text
@@ -101,6 +124,39 @@ def test_provisioner_replay_preserves_dedicated_secrets(tmp_path: Path) -> None:
         second["EA_GOOGLE_OAUTH_STATE_SECRET"] == first["EA_GOOGLE_OAUTH_STATE_SECRET"]
     )
     assert second["EA_PROVIDER_SECRET_KEY"] == first["EA_PROVIDER_SECRET_KEY"]
+    assert (
+        second["PROPERTYQUARRY_RELEASE_PROBE_SECRET"]
+        == first["PROPERTYQUARRY_RELEASE_PROBE_SECRET"]
+    )
+
+
+def test_provisioner_validates_release_probe_overrides(tmp_path: Path) -> None:
+    module = _load_module()
+    source = tmp_path / "source.env"
+    _write_source(source)
+    with source.open("a", encoding="utf-8") as handle:
+        handle.write(
+            "PROPERTYQUARRY_RELEASE_PROBE_ORIGIN=https://staging.propertyquarry.com/\n"
+            "PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID=propertyquarry-staging-probe\n"
+            "PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE=/app/research/staging-candidate?run_id=staging-run\n"
+            "PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH=/app/shortlist/run/staging-run\n"
+        )
+
+    module.provision_auth_environment(
+        source_env=source,
+        output_env=tmp_path / "propertyquarry_auth.env",
+        receipt_path=tmp_path / "propertyquarry_auth_receipt.json",
+    )
+    values = module.parse_env_file(tmp_path / "propertyquarry_auth.env")
+
+    assert (
+        values["PROPERTYQUARRY_RELEASE_PROBE_ORIGIN"]
+        == "https://staging.propertyquarry.com"
+    )
+    assert (
+        values["PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID"]
+        == "propertyquarry-staging-probe"
+    )
 
 
 def test_provisioner_rejects_non_propertyquarry_sender(tmp_path: Path) -> None:
