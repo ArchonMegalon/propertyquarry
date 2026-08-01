@@ -2943,6 +2943,20 @@ class BrowserActToolAdapter:
             requested_inputs.get("floorplan_analysis_json")
             or requested_inputs.get("source_geometry_json")
         )
+        expected_geometry_projection: dict[str, object] = {}
+        if requested_layout_contract:
+            try:
+                from scripts.property_tour_layout_contract import source_geometry_projection
+
+                expected_geometry_projection = source_geometry_projection(requested_layout_contract)
+            except Exception:
+                # An unvalidated floorplan contract cannot be promoted as a
+                # measured source.  The existing layout receipt checks below
+                # will keep the acceptance blocked when this stays empty.
+                expected_geometry_projection = {}
+        expected_geometry_projection_hash = str(
+            expected_geometry_projection.get("sha256") or ""
+        ).strip().lower()
         expected_layout_hash = ""
         expected_layout_contract_name = ""
         expected_layout_review_status = ""
@@ -3083,6 +3097,17 @@ class BrowserActToolAdapter:
         )
         floorplan_alignment_verified = proof.get("floorplan_alignment_verified") is True
         floorplan_geometry_receipt_verified = proof.get("floorplan_geometry_receipt_verified") is True
+        proof_geometry_projection_hash = str(
+            proof.get("floorplan_source_geometry_projection_sha256") or ""
+        ).strip().lower().removeprefix("sha256:")
+        floorplan_geometry_projection_verified = bool(
+            not floorplan_required
+            or (
+                bool(re.fullmatch(r"[0-9a-f]{64}", expected_geometry_projection_hash))
+                and proof.get("floorplan_geometry_projection_verified") is True
+                and proof_geometry_projection_hash == expected_geometry_projection_hash
+            )
+        )
         proof_layout_hash = str(proof.get("floorplan_analysis_sha256") or "").strip().lower().removeprefix("sha256:")
         proof_layout_contract_name = str(proof.get("floorplan_analysis_contract_name") or "").strip()
         proof_layout_review_status = str(proof.get("floorplan_analysis_review_status") or "").strip().lower()
@@ -3130,6 +3155,10 @@ class BrowserActToolAdapter:
             and (first_party_url == first_party_base or first_party_url.startswith(first_party_base + "/"))
             and proof.get("first_party_viewer_verified") is True
         )
+        provider_control_route_verified = bool(
+            first_party_url_verified
+            and proof.get("provider_control_route_verified") is True
+        )
         accepted = bool(
             spatial_scene_count >= required_spatial_scene_count
             and covered_space_count >= required_space_count
@@ -3141,6 +3170,7 @@ class BrowserActToolAdapter:
             and browser_receipt_verified
             and (not floorplan_required or floorplan_alignment_verified)
             and floorplan_layout_receipt_verified
+            and floorplan_geometry_projection_verified
             and proof_status == "pass"
             and anonymous_http_status == 200
             and drag_look_verified
@@ -3149,7 +3179,7 @@ class BrowserActToolAdapter:
             and mobile_viewer_verified
             and touch_look_verified
             and spatial_provenance_verified
-            and first_party_url_verified
+            and provider_control_route_verified
         )
         if spatial_scene_count < required_spatial_scene_count:
             reason = "spatial_scenes_missing"
@@ -3169,6 +3199,8 @@ class BrowserActToolAdapter:
             reason = "floorplan_alignment_unverified"
         elif floorplan_required and not floorplan_layout_receipt_verified:
             reason = "floorplan_geometry_receipt_unverified"
+        elif floorplan_required and not floorplan_geometry_projection_verified:
+            reason = "floorplan_geometry_projection_unverified"
         elif proof_status != "pass":
             reason = "browser_proof_missing"
         elif anonymous_http_status != 200:
@@ -3179,7 +3211,7 @@ class BrowserActToolAdapter:
             reason = "scene_navigation_unverified"
         elif not desktop_viewer_verified or not mobile_viewer_verified or not touch_look_verified:
             reason = "cross_device_interaction_unverified"
-        elif not first_party_url_verified:
+        elif not provider_control_route_verified:
             reason = "first_party_viewer_unverified"
         else:
             reason = ""
@@ -3202,6 +3234,10 @@ class BrowserActToolAdapter:
             "floorplan_required": floorplan_required,
             "floorplan_alignment_verified": floorplan_alignment_verified,
             "floorplan_layout_receipt_verified": floorplan_layout_receipt_verified,
+            "floorplan_geometry_projection_verified": floorplan_geometry_projection_verified,
+            "floorplan_source_geometry_projection_sha256": (
+                expected_geometry_projection_hash if floorplan_geometry_projection_verified else ""
+            ),
             "anonymous_http_status": anonymous_http_status,
             "drag_look_verified": drag_look_verified,
             "scene_navigation_verified": scene_navigation_verified,
@@ -3209,6 +3245,7 @@ class BrowserActToolAdapter:
             "mobile_viewer_verified": mobile_viewer_verified,
             "touch_look_verified": touch_look_verified,
             "first_party_viewer_verified": first_party_url_verified,
+            "provider_control_route_verified": provider_control_route_verified,
             "first_party_public_url": first_party_url if first_party_url_verified else "",
         }
 
@@ -3412,25 +3449,44 @@ class BrowserActToolAdapter:
         # result is passed directly, so a vendor URL can never be repackaged
         # into a first-party gallery by an alternate caller.
         structured_for_gate = cls._crezlo_json_dict(normalized.get("structured_output_json"))
-        acceptance_for_gate = cls._crezlo_json_dict(structured_for_gate.get("immersive_acceptance_json"))
-        if acceptance_for_gate and acceptance_for_gate.get("accepted") is not True:
+        try:
+            from scripts.property_tour_publication_gate import publication_gate_result
+
+            publication_accepted, _publication_reason = publication_gate_result(structured_for_gate)
+        except Exception:
+            publication_accepted = False
+        if not publication_accepted:
             return ""
-        if acceptance_for_gate:
-            for required_key in (
-                "spatial_provenance_verified",
-                "exact_property_provenance_verified",
-                "browser_receipt_verified",
-                "scene_graph_connected",
-                "all_required_scenes_navigable",
-                "first_party_viewer_verified",
-            ):
-                if acceptance_for_gate.get(required_key) is not True:
-                    return ""
-            if acceptance_for_gate.get("floorplan_required") is True and any(
-                acceptance_for_gate.get(key) is not True
-                for key in ("floorplan_alignment_verified", "floorplan_layout_receipt_verified")
-            ):
+        acceptance_for_gate = cls._crezlo_json_dict(structured_for_gate.get("immersive_acceptance_json"))
+        if not acceptance_for_gate or acceptance_for_gate.get("accepted") is not True:
+            return ""
+        for required_key in (
+            "spatial_provenance_verified",
+            "exact_property_provenance_verified",
+            "browser_receipt_verified",
+            "scene_graph_connected",
+            "all_required_scenes_navigable",
+            "first_party_viewer_verified",
+            "provider_control_route_verified",
+        ):
+            if acceptance_for_gate.get(required_key) is not True:
                 return ""
+        if acceptance_for_gate.get("floorplan_required") is True and any(
+            acceptance_for_gate.get(key) is not True
+            for key in (
+                "floorplan_alignment_verified",
+                "floorplan_layout_receipt_verified",
+                "floorplan_geometry_projection_verified",
+            )
+        ):
+            return ""
+        provenance_for_gate = cls._crezlo_json_dict(structured_for_gate.get("crezlo_source_provenance"))
+        if (
+            provenance_for_gate.get("schema") != "propertyquarry.crezlo_source_provenance.v1"
+            or str(provenance_for_gate.get("status") or "").strip().lower() != "pass"
+            or str(provenance_for_gate.get("provider") or "").strip().lower() != "crezlo"
+        ):
+            return ""
 
         rows = cls._crezlo_public_asset_rows(normalized)
         if not rows:
@@ -3561,6 +3617,8 @@ class BrowserActToolAdapter:
                     or "Pioche Lecombe"
                 ).strip(),
                 "scenes": published_rows,
+                "control_mode": "crezlo",
+                "viewer_provider": "crezlo",
             }
             private_receipt = {
                 "contract_name": "propertyquarry.public_tour_private_receipt.v1",
@@ -3573,6 +3631,10 @@ class BrowserActToolAdapter:
                 "crezlo_public_url": str(normalized.get("public_url") or "").strip(),
                 "brief": dict(payload.get("brief") or {}) if isinstance(payload.get("brief"), dict) else {},
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                "crezlo_source_provenance": provenance_for_gate,
+                "crezlo_browser_render_proof": dict(
+                    structured_for_gate.get("crezlo_browser_render_proof") or {}
+                ),
             }
             public_payload = redacted_public_tour_payload(
                 payload,

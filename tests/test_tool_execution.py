@@ -35,6 +35,7 @@ from app.services.tool_execution_browseract_adapter import BrowserActToolAdapter
 from app.services.tool_execution_gemini_vortex_adapter import GeminiVortexToolAdapter
 from app.services.tool_execution_teable_adapter import TeableToolAdapter
 from app.services.tool_runtime import ToolRuntimeService
+from scripts.property_tour_layout_contract import source_geometry_projection
 
 
 def _tool_execution_service(*args, **kwargs) -> ToolExecutionService:
@@ -51,6 +52,46 @@ def _stub_mootion_public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
         ],
     )
+
+
+def _approved_crezlo_writer_acceptance(*, floorplan_required: bool = False) -> dict[str, object]:
+    acceptance: dict[str, object] = {
+        "accepted": True,
+        "spatial_provenance_verified": True,
+        "exact_property_provenance_verified": True,
+        "browser_receipt_verified": True,
+        "scene_graph_connected": True,
+        "all_required_scenes_navigable": True,
+        "first_party_viewer_verified": True,
+        "provider_control_route_verified": True,
+        "floorplan_required": floorplan_required,
+    }
+    if floorplan_required:
+        acceptance.update(
+            {
+                "floorplan_alignment_verified": True,
+                "floorplan_layout_receipt_verified": True,
+                "floorplan_geometry_projection_verified": True,
+            }
+        )
+    return acceptance
+
+
+def _approved_crezlo_source_provenance() -> dict[str, object]:
+    return {
+        "schema": "propertyquarry.crezlo_source_provenance.v1",
+        "status": "pass",
+        "provider": "crezlo",
+        "hosted_url": "https://ea-property-tours-20260320.crezlotours.com/tours/verified",
+        "capture": {
+            "representation_kind": "captured_360",
+            "scene_count": 3,
+            "covered_space_count": 3,
+            "navigation_hotspot_count": 2,
+            "scene_graph_connected": True,
+            "all_scenes_reachable": True,
+        },
+    }
 
 
 def test_tool_execution_service_executes_builtin_artifact_repository_handler() -> None:
@@ -5407,16 +5448,27 @@ def test_crezlo_immersive_acceptance_requires_spatial_and_first_party_browser_pr
         "contract_name": "propertyquarry.floorplan_analysis.v2",
         "review_status": "approved",
         "room_count": 3,
+        "rooms": [
+            {"id": "entrance-vestibule", "components": [{"x": 0, "z": 0, "width": 2, "depth": 2}]},
+            {"id": "living-kitchen", "components": [{"x": 2, "z": 0, "width": 4, "depth": 3}]},
+            {"id": "balcony-loggia", "components": [{"x": 6, "z": 0, "width": 2, "depth": 2}]},
+        ],
+        "doorway_edges": [
+            ["entrance-vestibule", "living-kitchen"],
+            ["living-kitchen", "balcony-loggia"],
+        ],
         "source_geometry": {
             "portals": [
-                {"id": "entrance-to-living"},
-                {"id": "entrance-exit-gate"},
+                {"id": "entrance-to-living", "room_ids": ["entrance-vestibule", "living-kitchen"]},
+                {"id": "entrance-exit-gate", "room_ids": ["entrance-vestibule", "outside"]},
             ]
         },
+        "round_trip": {"status": "pass"},
     }
     layout_hash = hashlib.sha256(
         json.dumps(layout_contract, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    projection_hash = str(source_geometry_projection(layout_contract)["sha256"])
     result = BrowserActToolAdapter._crezlo_immersive_acceptance(
         {
             "structured_output_json": {
@@ -5487,8 +5539,11 @@ def test_crezlo_immersive_acceptance_requires_spatial_and_first_party_browser_pr
                         "floorplan_analysis_review_status": "approved",
                         "floorplan_source_room_count": 3,
                         "floorplan_source_portal_ids": ["entrance-to-living", "entrance-exit-gate"],
+                        "floorplan_geometry_projection_verified": True,
+                        "floorplan_source_geometry_projection_sha256": projection_hash,
                         "first_party_viewer_verified": True,
                         "first_party_public_url": "https://propertyquarry.com/tours/verified-crezlo/control/crezlo",
+                        "provider_control_route_verified": True,
                     },
                 }
             }
@@ -5527,6 +5582,8 @@ def test_crezlo_public_tour_bundle_writer_downloads_assets_and_writes_tour_json(
             "public_url": "https://ea-property-tours-20260320.crezlotours.com/tours/kahlenberg-variant-b",
             "editor_url": "https://ea-property-tours-20260320.crezlotours.com/admin/tours/tour-crezlo-2",
             "structured_output_json": {
+                "immersive_acceptance_json": _approved_crezlo_writer_acceptance(),
+                "crezlo_source_provenance": _approved_crezlo_source_provenance(),
                 "requested_inputs": {
                     "tour_title": "Kahlenberg Variant B",
                     "property_url": "https://www.willhaben.at/listing/kahlenberg",
@@ -5645,6 +5702,8 @@ def test_crezlo_public_tour_bundle_writer_supports_ui_worker_scene_payload(
             "public_url": "https://ea-property-tours-20260320.crezlotours.com/tours/wahring-ui-worker",
             "editor_url": "https://ea-property-tours-20260320.crezlotours.com/admin/tours/tour-crezlo-ui-1",
             "structured_output_json": {
+                "immersive_acceptance_json": _approved_crezlo_writer_acceptance(),
+                "crezlo_source_provenance": _approved_crezlo_source_provenance(),
                 "requested_inputs": {
                     "tour_title": "Wahring UI Worker",
                     "property_url": "https://www.willhaben.at/listing/wahring-ui-worker",
@@ -5703,7 +5762,7 @@ def test_crezlo_public_tour_bundle_writer_supports_ui_worker_scene_payload(
     assert private_payload["crezlo_public_url"] == "https://ea-property-tours-20260320.crezlotours.com/tours/wahring-ui-worker"
 
 
-def test_crezlo_public_tour_bundle_writer_falls_back_to_requested_media_urls(
+def test_crezlo_public_tour_bundle_writer_rejects_requested_media_fallback(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -5752,26 +5811,8 @@ def test_crezlo_public_tour_bundle_writer_falls_back_to_requested_media_urls(
         }
     )
 
-    assert hosted_url == "https://ea.example/tours/fallback-media-tour#live-360"
-    bundle_dir = tmp_path / "fallback-media-tour"
-    assert (bundle_dir / "scene-01.jpg").read_bytes() == b"asset:https://assets.example/fallback-floorplan-1.jpg"
-    assert (bundle_dir / "scene-02.jpg").read_bytes() == b"asset:https://assets.example/fallback-photo-1.jpg"
-    payload = json.loads((bundle_dir / "tour.json").read_text(encoding="utf-8"))
-    assert payload["scene_count"] == 3
-    assert payload["scenes"][0]["role"] == "floorplan"
-    assert payload["scenes"][1]["role"] == "photo"
-    assert payload["hosted_url"] == "https://ea.example/tours/fallback-media-tour#live-360"
-    assert payload["brand_name"] == "Pioche Lecombe"
-    serialized_payload = json.dumps(payload, sort_keys=True)
-    assert "listing_url" not in payload
-    assert "source_virtual_tour_url" not in payload
-    assert "panorama_source" not in payload
-    assert "willhaben.at/listing/fallback-media-tour" not in serialized_payload
-    assert "360.example.test" not in serialized_payload
-    private_payload = json.loads((bundle_dir / "tour.private.json").read_text(encoding="utf-8"))
-    assert private_payload["listing_url"] == "https://www.willhaben.at/listing/fallback-media-tour"
-    assert private_payload["source_virtual_tour_url"] == "https://360.example.test/view/portal/id/demo-tour"
-    assert private_payload["panorama_source"] == "feelestate_kalandra"
+    assert hosted_url == ""
+    assert not list(tmp_path.iterdir())
 
 
 def test_crezlo_public_tour_base_url_defaults_to_propertyquarry_public_base(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5822,6 +5863,8 @@ def test_crezlo_public_tour_bundle_writer_replaces_stale_bundle_atomically(
             "tour_title": "Atomic Bundle Tour",
             "slug": slug,
             "structured_output_json": {
+                "immersive_acceptance_json": _approved_crezlo_writer_acceptance(),
+                "crezlo_source_provenance": _approved_crezlo_source_provenance(),
                 "requested_inputs": {
                     "tour_title": "Atomic Bundle Tour",
                     "property_url": "https://www.willhaben.at/listing/atomic-bundle-tour",

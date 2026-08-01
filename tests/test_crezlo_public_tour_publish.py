@@ -138,9 +138,53 @@ def test_crezlo_publish_gate_accepts_complete_source_geometry_receipt() -> None:
                 "scene_graph_connected": True,
                 "all_required_scenes_navigable": True,
                 "first_party_viewer_verified": True,
+                "provider_control_route_verified": True,
                 "floorplan_required": True,
                 "floorplan_alignment_verified": True,
                 "floorplan_layout_receipt_verified": True,
-            }
+                "floorplan_geometry_projection_verified": True,
+            },
+            "crezlo_source_provenance": {
+                "schema": "propertyquarry.crezlo_source_provenance.v1",
+                "status": "pass",
+                "provider": "crezlo",
+                "hosted_url": "https://ea-property-tours-20260320.crezlotours.com/tours/verified",
+                "capture": {
+                    "representation_kind": "captured_360",
+                    "scene_count": 3,
+                    "covered_space_count": 3,
+                    "navigation_hotspot_count": 2,
+                    "scene_graph_connected": True,
+                    "all_scenes_reachable": True,
+                },
+                "floorplan": {
+                    "source_geometry_projection": {"sha256": "a" * 64},
+                },
+            },
         }
     )
+
+
+def test_crezlo_publish_gate_rejects_accepted_payload_without_provider_receipt() -> None:
+    gate_path = SCRIPTS / "property_tour_publication_gate.py"
+    spec = importlib.util.spec_from_file_location("property_tour_publication_gate_missing_provider", gate_path)
+    assert spec is not None
+    gate = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(gate)
+
+    with pytest.raises(SystemExit, match="crezlo_publication_blocked:crezlo_source_provenance_missing"):
+        gate.require_verified_crezlo_publication(
+            {
+                "immersive_acceptance_json": {
+                    "accepted": True,
+                    "spatial_provenance_verified": True,
+                    "exact_property_provenance_verified": True,
+                    "browser_receipt_verified": True,
+                    "scene_graph_connected": True,
+                    "all_required_scenes_navigable": True,
+                    "first_party_viewer_verified": True,
+                    "provider_control_route_verified": True,
+                }
+            }
+        )
