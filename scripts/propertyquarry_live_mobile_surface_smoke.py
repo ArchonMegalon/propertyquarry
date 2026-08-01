@@ -190,6 +190,49 @@ def _header_value(headers: dict[str, Any], name: str) -> str:
     return ""
 
 
+def _release_probe_browser_navigation_url(
+    url: str,
+    *,
+    headers: dict[str, str],
+    authorized_origin: str,
+    timeout_seconds: float,
+    release_probe_secret: str,
+    release_probe_configured_routes: tuple[str, ...] = (),
+) -> tuple[str, dict[str, object]]:
+    """Resolve same-origin redirects with a fresh signature per hop.
+
+    Playwright carries headers supplied to an intercepted request onto its
+    redirects without re-running the route handler. A path-bound release
+    signature must never be reused that way, so the bounded HTTP probe resolves
+    the redirect chain first and the browser opens the verified final URL.
+    """
+
+    response = _http_get_for_smoke(
+        url,
+        headers=headers,
+        timeout_seconds=timeout_seconds,
+        follow_redirects=True,
+        authorized_origin=authorized_origin,
+        release_probe_secret=release_probe_secret,
+        release_probe_configured_routes=release_probe_configured_routes,
+    )
+    status_code = int(response.get("status_code") or 0)
+    final_url = str(response.get("url") or url).strip() or url
+    redirect_resolved = (
+        status_code == 200
+        and final_url != url
+        and url_matches_origin(final_url, authorized_origin)
+    )
+    return (
+        final_url if redirect_resolved else url,
+        {
+            "release_probe_redirect_resolved": redirect_resolved,
+            "release_probe_redirect_status_code": status_code,
+            "release_probe_navigation_url": final_url if redirect_resolved else url,
+        },
+    )
+
+
 def _redact_sensitive_receipt_text(value: object) -> str:
     redacted = re.sub(
         r"(?i)(/app/research/)[^/?#\s\"'<>]+(?:[?#][^\s\"'<>]*)?",
@@ -928,6 +971,11 @@ def mobile_billing_readiness_from_metrics(metrics: dict[str, Any]) -> dict[str, 
     }
 
 
+def _is_paid_plan_label(value: str) -> bool:
+    normalized_plan = str(value or "").strip().lower()
+    return bool(normalized_plan and not normalized_plan.startswith("free"))
+
+
 def mobile_billing_readiness_summary(
     rows: list[dict[str, Any]],
     *,
@@ -1512,6 +1560,7 @@ def build_live_mobile_surface_receipt(
     api_token: str,
     principal_id: str,
     release_probe_secret: str = "",
+    expected_plan_label: str = "Agent",
     host_header: str = "",
     routes: tuple[str, ...] = DEFAULT_ROUTES,
     require_research_detail: bool = False,
@@ -1524,6 +1573,7 @@ def build_live_mobile_surface_receipt(
     required_browser_engines: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     normalized_release_probe_secret = str(release_probe_secret or "").strip()
+    paid_persona = _is_paid_plan_label(expected_plan_label)
     release_probe_configured_routes = tuple(
         dict.fromkeys(
             normalized_route
@@ -1559,6 +1609,7 @@ def build_live_mobile_surface_receipt(
                 api_token=api_token,
                 principal_id=principal_id,
                 release_probe_secret=normalized_release_probe_secret,
+                expected_plan_label=expected_plan_label,
                 host_header=host_header,
                 routes=routes,
                 require_research_detail=True,
@@ -1603,7 +1654,11 @@ def build_live_mobile_surface_receipt(
         failed_rows = [row for row in rows if row.get("ok") is not True]
         failed_coverage = [row for row in coverage_checks if row.get("ok") is not True]
         blocked = any(str(receipt.get("status") or "") == "blocked" for receipt in child_receipts)
-        billing_readiness = mobile_billing_readiness_summary(rows, strict_required=True)
+        billing_readiness = mobile_billing_readiness_summary(
+            rows,
+            strict_required=paid_persona,
+        )
+        billing_readiness["paid_persona"] = paid_persona
         receipt = {
             "status": "blocked" if blocked else ("pass" if not failed_rows and not failed_coverage else "fail"),
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1611,6 +1666,7 @@ def build_live_mobile_surface_receipt(
             "host_header": host_header,
             "navigation_base_url": str(child_receipts[0].get("navigation_base_url") or base_url) if child_receipts else base_url,
             "principal_id": principal_id,
+            "expected_plan_label": expected_plan_label,
             "proof_mode": FLAGSHIP_PROOF_MODE,
             "browser_engine": "matrix" if len(normalized_required_engines) > 1 else normalized_required_engines[0],
             "browser_engines": list(normalized_required_engines),
@@ -1722,6 +1778,7 @@ def build_live_mobile_surface_receipt(
             "release_probe_secret": normalized_release_probe_secret,
             "release_probe_configured_routes": release_probe_configured_routes,
         }
+    resolved_browser_navigation: dict[str, tuple[str, dict[str, object]]] = {}
 
     def _run_with_deadline(action: Any, *, seconds: int, label: str) -> Any:
         if os.name == "nt":
@@ -1740,9 +1797,22 @@ def build_live_mobile_surface_receipt(
             signal.signal(signal.SIGALRM, previous_handler)
 
     def _collect_route_metrics_in_worker(route: str, url: str) -> tuple[int, dict[str, Any]]:
+        browser_url = url
+        redirect_metrics: dict[str, object] = {}
+        if normalized_release_probe_secret:
+            if url not in resolved_browser_navigation:
+                resolved_browser_navigation[url] = _release_probe_browser_navigation_url(
+                    url,
+                    headers=headers,
+                    authorized_origin=browser_authorized_origin,
+                    timeout_seconds=route_deadline_seconds,
+                    release_probe_secret=normalized_release_probe_secret,
+                    release_probe_configured_routes=release_probe_configured_routes,
+                )
+            browser_url, redirect_metrics = resolved_browser_navigation[url]
         status_code, metrics = collect_playwright_route_metrics(
             route=route,
-            url=url,
+            url=browser_url,
             headers=headers,
             authorized_origin=browser_authorized_origin,
             browser_args=browser_args,
@@ -1755,6 +1825,8 @@ def build_live_mobile_surface_receipt(
         )
         if browser_all:
             metrics["require_browser_proof"] = True
+        metrics.update(redirect_metrics)
+        metrics["requested_route_url"] = url
         return status_code, metrics
 
     for route in routes:
@@ -1853,7 +1925,7 @@ def build_live_mobile_surface_receipt(
                 checks = evaluate_mobile_metrics(
                     route,
                     metrics,
-                    require_billing_available=browser_all,
+                    require_billing_available=browser_all and paid_persona,
                 )
                 rows.append(
                     {
@@ -1884,7 +1956,7 @@ def build_live_mobile_surface_receipt(
                 checks = evaluate_mobile_metrics(
                     route,
                     metrics,
-                    require_billing_available=browser_all,
+                    require_billing_available=browser_all and paid_persona,
                 )
                 rows.append(
                     {
@@ -2051,7 +2123,11 @@ def build_live_mobile_surface_receipt(
             }
         )
     failed_coverage = [row for row in coverage_checks if not row.get("ok")]
-    billing_readiness = mobile_billing_readiness_summary(rows, strict_required=browser_all)
+    billing_readiness = mobile_billing_readiness_summary(
+        rows,
+        strict_required=browser_all and paid_persona,
+    )
+    billing_readiness["paid_persona"] = paid_persona
     receipt = _redact_sensitive_receipt_value({
         "status": "pass" if not failed and not failed_coverage else "fail",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2059,6 +2135,7 @@ def build_live_mobile_surface_receipt(
         "host_header": host_header,
         "navigation_base_url": navigation_base_url,
         "principal_id": principal_id,
+        "expected_plan_label": expected_plan_label,
         "proof_mode": normalized_proof_mode,
         "browser_engine": selected_browser_engine,
         "browser_engines": [selected_browser_engine],
@@ -2170,6 +2247,10 @@ def main() -> int:
         help="Read the protected release-probe credential once from bounded stdin.",
     )
     parser.add_argument("--principal-id", default=_env("PROPERTYQUARRY_LIVE_PRINCIPAL_ID", "pq-live-mobile-smoke"))
+    parser.add_argument(
+        "--expected-plan-label",
+        default=_env("PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL", "Agent"),
+    )
     configured_research_detail = _env("PROPERTYQUARRY_LIVE_RESEARCH_DETAIL_ROUTE")
     default_routes = (*DEFAULT_ROUTES, configured_research_detail) if configured_research_detail else DEFAULT_ROUTES
     parser.add_argument("--routes", default=",".join(default_routes))
@@ -2296,6 +2377,7 @@ def main() -> int:
         api_token=str(args.api_token or "").strip(),
         principal_id=str(args.principal_id or "").strip() or "pq-live-mobile-smoke",
         release_probe_secret=release_probe_secret,
+        expected_plan_label=str(args.expected_plan_label or "").strip(),
         host_header=str(args.host_header or "").strip(),
         routes=routes or DEFAULT_ROUTES,
         require_research_detail=bool(args.require_research_detail),

@@ -431,6 +431,148 @@ def test_live_mobile_smoke_flagship_browser_all_rejects_static_probe_fallback(mo
     assert proof_check["ok"] is False
 
 
+def test_live_mobile_smoke_resolves_signed_redirect_before_browser_navigation(monkeypatch) -> None:
+    browser_urls: list[str] = []
+
+    monkeypatch.setattr(
+        mobile_smoke,
+        "_http_get_for_smoke",
+        lambda url, **_kwargs: {
+            "status_code": 200,
+            "headers": {},
+            "url": (
+                "https://propertyquarry.com/app/search"
+                if url.endswith("/app/properties")
+                else url
+            ),
+            "text": "",
+        },
+    )
+
+    def fake_browser_probe(**kwargs):
+        browser_urls.append(str(kwargs["url"]))
+        metrics = _base_metrics()
+        metrics.update(
+            {
+                "browser_probe": True,
+                "browser_engine": kwargs["browser_engine"],
+                "proof_mode": "playwright",
+                "navigation_committed": True,
+                "touch_capable": True,
+                "focus_navigation_ok": True,
+                "requested_url": kwargs["url"],
+                "final_url": kwargs["url"],
+            }
+        )
+        return 200, metrics
+
+    monkeypatch.setattr(mobile_smoke, "collect_playwright_route_metrics", fake_browser_probe)
+    monkeypatch.setattr(
+        mobile_smoke,
+        "_registry_mobile_surface_coverage_checks",
+        lambda **_kwargs: [{"name": "registry_mobile_customer_surfaces_covered", "ok": True}],
+    )
+
+    receipt = build_live_mobile_surface_receipt(
+        base_url="https://propertyquarry.com",
+        api_token="",
+        principal_id="propertyquarry-release-probe",
+        release_probe_secret="dedicated-probe-secret",
+        routes=(
+            "/app/properties",
+            "/app/research/current-result?run_id=run-flagship",
+        ),
+        proof_mode="flagship",
+        supported_viewports=((390, 844),),
+        required_browser_engines=("chromium",),
+    )
+
+    assert receipt["status"] == "pass"
+    assert browser_urls == [
+        "https://propertyquarry.com/app/search",
+        "https://propertyquarry.com/app/research/current-result?run_id=run-flagship",
+    ]
+    assert receipt["routes"][0]["metrics"]["release_probe_redirect_resolved"] is True
+
+
+def test_live_mobile_smoke_flagship_billing_is_strict_only_for_paid_persona(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mobile_smoke,
+        "_http_get_for_smoke",
+        lambda url, **_kwargs: {
+            "status_code": 503 if url.endswith("/app/billing") else 200,
+            "headers": {},
+            "url": url,
+            "text": (
+                BILLING_PORTAL_UNAVAILABLE_BODY
+                if url.endswith("/app/billing")
+                else ""
+            ),
+        },
+    )
+
+    def fake_browser_probe(**kwargs):
+        metrics = _base_metrics()
+        status_code = 503 if kwargs["route"] == "/app/billing" else 200
+        metrics.update(
+            {
+                "status_code": status_code,
+                "browser_probe": True,
+                "browser_engine": kwargs["browser_engine"],
+                "proof_mode": "playwright",
+                "navigation_committed": True,
+                "touch_capable": True,
+                "focus_navigation_ok": True,
+            }
+        )
+        return status_code, metrics
+
+    monkeypatch.setattr(mobile_smoke, "collect_playwright_route_metrics", fake_browser_probe)
+    monkeypatch.setattr(
+        mobile_smoke,
+        "_registry_mobile_surface_coverage_checks",
+        lambda **_kwargs: [{"name": "registry_mobile_customer_surfaces_covered", "ok": True}],
+    )
+    kwargs = {
+        "base_url": "https://propertyquarry.com",
+        "api_token": "",
+        "principal_id": "propertyquarry-release-probe",
+        "release_probe_secret": "dedicated-probe-secret",
+        "routes": (
+            "/app/billing",
+            "/app/research/current-result?run_id=run-flagship",
+        ),
+        "proof_mode": "flagship",
+        "supported_viewports": ((390, 844),),
+        "required_browser_engines": ("chromium",),
+    }
+
+    free_receipt = build_live_mobile_surface_receipt(
+        **kwargs,
+        expected_plan_label="Free standard research",
+    )
+    paid_receipt = build_live_mobile_surface_receipt(
+        **kwargs,
+        expected_plan_label="Agent",
+    )
+
+    assert free_receipt["status"] == "pass"
+    assert free_receipt["billing_readiness"]["paid_persona"] is False
+    assert free_receipt["billing_readiness"]["strict_required"] is False
+    assert paid_receipt["status"] == "fail"
+    assert paid_receipt["billing_readiness"]["paid_persona"] is True
+    assert paid_receipt["billing_readiness"]["strict_required"] is True
+
+
+def test_propertyquarry_mobile_topnav_fallback_keeps_touch_targets_at_least_44px() -> None:
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "ea/app/templates/app/property_decision_workbench.html"
+    ).read_text(encoding="utf-8")
+
+    assert "item.style.setProperty('min-height', '44px', 'important');" in template
+
+
 def test_live_mobile_smoke_accepts_empty_shortlist_with_top_navigation_only() -> None:
     metrics = _base_metrics()
 
