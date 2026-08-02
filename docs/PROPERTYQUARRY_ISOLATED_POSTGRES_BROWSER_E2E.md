@@ -111,8 +111,12 @@ admission-table `SELECT, INSERT, UPDATE, DELETE` plus capacity-state `SELECT`;
 the ingress role receives the corresponding rights only on the bounded ingress
 quota/lease tables plus ingress-capacity `SELECT`. Both roles are proved to be
 unprivileged, membership-free logins, the internal role runs the production
-strict least-privilege probe, and the ingress role runs an exact privilege and capacity-contract
-probe before API startup. The production-mode API receives both dedicated DSNs,
+strict least-privilege probe, and the ingress role runs an exact privilege and
+capacity-contract probe before API startup. The disposable ingress relations,
+security-definer capacity triggers, hard row ceilings, cross-revocations, and
+grants are built from the same parameter-validated SQL generator used by the
+production admission-database provisioner. The production-mode API receives
+both dedicated DSNs,
 neither of which equals the primary application DSN or each other. No database
 DSN or password is placed in Docker or process argv. The controller derives
 PostgreSQL SCRAM verifiers client-side, so clear passwords are not embedded in

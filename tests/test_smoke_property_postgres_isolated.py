@@ -1051,15 +1051,41 @@ def test_disposable_api_admission_role_is_exactly_granted_and_strictly_probed(
         connect=connect_admin,
     )
     assert provision_connection.committed is True
+
+    migration_connection = Connection()
+
+    def connect_migration(database_url: str, **kwargs: object) -> Connection:
+        assert database_url == admin
+        assert kwargs == {
+            "autocommit": True,
+            "connect_timeout": 5,
+            "hostaddr": "127.0.0.1",
+            "sslmode": "disable",
+            "options": "",
+            "application_name": "propertyquarry-isolated-ingress-schema-migrate",
+            "target_session_attrs": "read-write",
+        }
+        return migration_connection
+
+    harness._migrate_api_ingress_schema(
+        admin_database_url=admin,
+        connect=connect_migration,
+    )
     rendered = "\n".join(statement for statement in statements if isinstance(statement, str))
-    assert password not in "\n".join(repr(statement) for statement in statements)
+    statement_reprs = "\n".join(repr(statement) for statement in statements)
+    assert password not in statement_reprs
+    assert ingress_password not in statement_reprs
     assert "SET LOCAL log_statement = 'none'" in rendered
     assert "SET LOCAL log_min_error_statement = 'panic'" in rendered
     assert "REVOKE ALL PRIVILEGES ON DATABASE postgres FROM PUBLIC" in rendered
     assert "REVOKE ALL ON SCHEMA public FROM PUBLIC" in rendered
     assert "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE" in rendered
     assert "GRANT SELECT ON TABLE propertyquarry_admission_capacity_state" in rendered
-    assert "GRANT SELECT ON TABLE propertyquarry_ingress_admission_capacity" in rendered
+    assert (
+        "ON TABLE public.propertyquarry_ingress_admission_capacity" in rendered
+    )
+    assert "CREATE TABLE propertyquarry_ingress_quota_buckets" in rendered
+    assert "SET LOCAL ROLE postgres" in rendered
     assert "FROM propertyquarry_api_admission" in rendered
     assert "FROM propertyquarry_api_ingress" in rendered
 
@@ -1740,6 +1766,7 @@ def test_scoped_diagnostic_allowlist_is_a_closed_phase_reason_schema() -> None:
             "api-admission-role-provision-failed",
         "api-admission-role-verification-failed",
                 "api-ingress-role-collision",
+                "api-ingress-schema-migration-failed",
                 "api-ingress-role-verification-failed",
             "libpq-environment-not-closed",
             "database-relay-start-failed",

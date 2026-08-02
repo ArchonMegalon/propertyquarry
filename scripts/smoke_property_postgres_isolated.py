@@ -244,6 +244,7 @@ PHASE_SEMANTIC_FAILURE_CODES: Final = frozenset(
         "api-admission-role-provision-failed",
         "api-admission-role-verification-failed",
         "api-ingress-role-collision",
+        "api-ingress-schema-migration-failed",
         "api-ingress-role-verification-failed",
         "libpq-environment-not-closed",
         "database-relay-start-failed",
@@ -2542,13 +2543,10 @@ def _provision_api_database_roles(
                     WHERE relation.oid IN (
                         'propertyquarry_admission_quota_buckets'::regclass,
                         'propertyquarry_admission_leases'::regclass,
-                        'propertyquarry_admission_capacity_state'::regclass,
-                        'propertyquarry_ingress_quota_buckets'::regclass,
-                        'propertyquarry_ingress_leases'::regclass,
-                        'propertyquarry_ingress_admission_capacity'::regclass
+                        'propertyquarry_admission_capacity_state'::regclass
                     )
                     GROUP BY namespace.nspname
-                    HAVING COUNT(*) = 6
+                    HAVING COUNT(*) = 3
                     """
                 )
                 if cursor.fetchall() != [("public",)]:
@@ -2594,19 +2592,6 @@ def _provision_api_database_roles(
                     "propertyquarry_admission_capacity_after_delete(), "
                     "propertyquarry_admission_capacity_after_truncate() "
                     "FROM propertyquarry_api_admission",
-                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "
-                    "propertyquarry_ingress_quota_buckets, "
-                    "propertyquarry_ingress_leases TO propertyquarry_api_ingress",
-                    "GRANT SELECT ON TABLE propertyquarry_ingress_admission_capacity "
-                    "TO propertyquarry_api_ingress",
-                    "REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER "
-                    "ON TABLE propertyquarry_ingress_admission_capacity "
-                    "FROM propertyquarry_api_ingress",
-                    "REVOKE EXECUTE ON FUNCTION "
-                    "propertyquarry_ingress_admission_capacity_after_insert(), "
-                    "propertyquarry_ingress_admission_capacity_after_delete(), "
-                    "propertyquarry_ingress_admission_capacity_after_truncate() "
-                    "FROM propertyquarry_api_ingress",
                 ):
                     cursor.execute(statement)
                 for role_name in (
@@ -2643,6 +2628,45 @@ def _provision_api_database_roles(
         raise
     except Exception:
         _fail("api-admission-role-provision-failed")
+
+
+def _migrate_api_ingress_schema(
+    *,
+    admin_database_url: str,
+    connect: Callable[..., object] | None = None,
+) -> None:
+    """Install the production ingress contract into the disposable schema."""
+    _require_closed_libpq_environment()
+    try:
+        import psycopg
+        from scripts.provision_propertyquarry_admission_database import (
+            _ingress_migration_sql,
+        )
+
+        migration_sql = _ingress_migration_sql(
+            SCHEMA_NAME="public",
+            OWNER_ROLE="postgres",
+            CAPACITY_OWNER_ROLE="propertyquarry_admission_capacity_owner",
+            RUNTIME_ROLE=DISPOSABLE_API_ADMISSION_ROLE,
+            INGRESS_RUNTIME_ROLE=DISPOSABLE_API_INGRESS_ROLE,
+        )
+        connector = connect or psycopg.connect
+        with connector(
+            admin_database_url,
+            autocommit=True,
+            connect_timeout=5,
+            hostaddr="127.0.0.1",
+            sslmode="disable",
+            options="",
+            application_name="propertyquarry-isolated-ingress-schema-migrate",
+            target_session_attrs="read-write",
+        ) as connection:
+            with connection.cursor() as cursor:  # type: ignore[attr-defined]
+                cursor.execute(migration_sql)
+    except IsolatedPostgresError:
+        raise
+    except Exception:
+        _fail("api-ingress-schema-migration-failed")
 
 
 def _verify_api_admission_role(
@@ -3117,6 +3141,7 @@ def _execute_guarded(
                 expected_network_id=network_id,
                 environment=docker_environment,
             )
+            sys.path.insert(0, str(repo_root))
             sys.path.insert(0, str(repo_root / "ea"))
             from app.services.admission_control import (  # noqa: PLC0415
                 ADMISSION_CAPACITY_OWNER_ROLE_DEFAULT,
@@ -3178,6 +3203,10 @@ def _execute_guarded(
                 admission_password=admission_password,
                 ingress_database_url=ingress_database_url,
                 ingress_password=ingress_password,
+            )
+            database_relay.assert_healthy()
+            _migrate_api_ingress_schema(
+                admin_database_url=database_url,
             )
             database_relay.assert_healthy()
             _verify_api_admission_role(

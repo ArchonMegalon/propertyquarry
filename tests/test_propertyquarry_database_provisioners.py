@@ -291,6 +291,31 @@ def test_ingress_admission_schema_is_bounded_and_role_separated() -> None:
         in migration
     )
 
+    disposable = admission._ingress_migration_sql(
+        SCHEMA_NAME="public",
+        OWNER_ROLE="postgres",
+        CAPACITY_OWNER_ROLE="propertyquarry_admission_capacity_owner",
+        RUNTIME_ROLE="propertyquarry_api_admission",
+        INGRESS_RUNTIME_ROLE="propertyquarry_api_ingress",
+    )
+    assert "SET LOCAL ROLE postgres" in disposable
+    assert "ON TABLE public.propertyquarry_ingress_quota_buckets" in disposable
+    assert "FROM propertyquarry_api_admission" in disposable
+    assert "TO propertyquarry_api_ingress" in disposable
+
+    with pytest.raises(
+        admission.ProvisioningError,
+        match="ingress_migration_identifier_invalid",
+    ):
+        admission._ingress_migration_sql(SCHEMA_NAME="public; DROP SCHEMA public")
+    with pytest.raises(
+        admission.ProvisioningError,
+        match="ingress_migration_role_separation_invalid",
+    ):
+        admission._ingress_migration_sql(
+            RUNTIME_ROLE=admission.INGRESS_RUNTIME_ROLE,
+        )
+
 
 def test_admission_role_sql_rejects_excess_authority_memberships() -> None:
     role_sql = admission._role_sql(PASSWORD_A, PASSWORD_B)
