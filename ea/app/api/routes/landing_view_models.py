@@ -69,7 +69,7 @@ from app.api.routes.landing_property_surface_contracts import (
 
 _PROPERTY_MAP_PREVIEW_RENDER_LOCK = threading.Lock()
 _PROPERTY_MAP_PREVIEW_RENDER_IN_FLIGHT: set[str] = set()
-_PROPERTY_MAP_PREVIEW_STYLE_VERSION = "flagship_map_v13_calm_backdrop"
+_PROPERTY_MAP_PREVIEW_STYLE_VERSION = "flagship_map_v14_calm_backdrop"
 _PROPERTY_MAP_PREVIEW_SELECTED_FILL = (194, 42, 48, 46)
 _PROPERTY_MAP_PREVIEW_COVERAGE_FILL = (194, 42, 48, 24)
 _PROPERTY_MAP_PREVIEW_SECONDARY_FILL = (194, 42, 48, 24)
@@ -976,8 +976,11 @@ def _map_preview_cache_path_for_key(cache_key: dict[str, object]) -> Path:
 
 def _flagship_map_backdrop(image: Image.Image) -> Image.Image:
     """Keep OSM readable under the selected-area layer without turning noisy."""
-    softened = image.convert("RGB")
-    softened = softened.filter(ImageFilter.GaussianBlur(radius=0.9))
+    source = image.convert("RGB")
+    softened = source.filter(ImageFilter.GaussianBlur(radius=1.5))
+    # Preserve street labels and broad terrain contrast while damping the
+    # high-frequency tile texture that becomes noisy at card-thumbnail size.
+    softened = Image.blend(softened, source, 0.48)
     softened = ImageEnhance.Color(softened).enhance(0.44)
     softened = ImageEnhance.Contrast(softened).enhance(0.78)
     softened = ImageEnhance.Brightness(softened).enhance(1.01)
