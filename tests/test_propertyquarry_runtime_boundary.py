@@ -50,6 +50,8 @@ def test_propertyquarry_runtime_profile_mounts_only_property_product_surface(
         "/app/search",
         "/app/handoffs/{handoff_ref:path}",
         "/app/settings/access",
+        "/app/settings/support",
+        "/app/support",
         "/app/properties",
         "/app/properties/packets",
         "/app/shortlist",
@@ -83,6 +85,9 @@ def test_propertyquarry_runtime_profile_mounts_only_property_product_surface(
 
     client = TestClient(app, base_url="https://propertyquarry.com")
     assert client.get("/sign-in").status_code == 200
+    support_response = client.get("/app/support", follow_redirects=False)
+    assert support_response.status_code == 307
+    assert support_response.headers["location"] == "/app/settings/support"
     assert client.get("/app/queue").status_code == 404
     assert client.get("/app/api/brief").status_code == 404
     assert client.get("/v1/memory/candidates").status_code == 404

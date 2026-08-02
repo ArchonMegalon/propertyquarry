@@ -29,6 +29,7 @@ PROPERTYQUARRY_RELEASE_PROBE_STATIC_PATHS = frozenset(
         "/app/settings/access",
         "/app/settings/usage",
         "/app/settings/support",
+        "/app/support",
         "/app/settings/trust",
         "/app/settings/invitations",
         "/app/research",

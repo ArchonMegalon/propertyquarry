@@ -55,6 +55,7 @@ _PROPERTYQUARRY_APP_SECTIONS = frozenset(
         "properties/packets",
         "research",
         "shortlist",
+        "support",
     }
 )
 _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS = frozenset(
