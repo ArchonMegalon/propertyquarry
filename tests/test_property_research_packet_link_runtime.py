@@ -257,6 +257,25 @@ def test_account_erasure_purges_event_snapshot_rejected_by_durable_fence(
     }
 
 
+def test_record_run_event_propagates_unexpected_mutation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        product_service,
+        "_property_fact_mutate_run_record",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("database_unavailable")),
+    )
+
+    with pytest.raises(RuntimeError, match="database_unavailable"):
+        product_service.ProductService._record_property_search_run_event(
+            SimpleNamespace(),
+            run_id="unexpected-mutation-failure",
+            principal_id="tenant-unexpected-mutation-failure",
+            step="source_started",
+            message="Source started.",
+        )
+
+
 def test_privacy_export_includes_validated_research_packets_and_memberships(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

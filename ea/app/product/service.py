@@ -45018,6 +45018,10 @@ class ProductService:
             )
         except LookupError:
             return False
+        except RuntimeError as exc:
+            if exc.args == ("property_fact_run_store_rejected",):
+                return False
+            raise
         return applied is True
 
     def _open_property_search_run_interruption_repair(
