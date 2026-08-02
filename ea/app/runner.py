@@ -2249,8 +2249,9 @@ def _run_scheduler_telegram_async_recovery(container, log: logging.Logger) -> di
 
 
 def _run_role_heartbeat_loop(*, role: str, stop_event: threading.Event) -> None:
+    status = "serving" if str(role or "").strip().lower() == "api" else "loop"
     while not stop_event.wait(30.0):
-        _write_scheduler_heartbeat(role=role, status="serving")
+        _write_scheduler_heartbeat(role=role, status=status)
 
 
 def _run_api() -> None:
@@ -2671,6 +2672,18 @@ def _run_execution_worker(role: str) -> None:
     property_only_worker = role == "worker" and _worker_property_only_profile_enabled()
     log.info("role=%s started worker loop", role)
     _write_scheduler_heartbeat(role=role, status="started")
+    worker_heartbeat_thread: threading.Thread | None = None
+    if role == "worker":
+        # Queue lease renewal and provider execution can both block on external
+        # systems. Keep process liveness independent so a healthy worker is not
+        # restarted while its durable lease heartbeat is recovering.
+        worker_heartbeat_thread = threading.Thread(
+            target=_run_role_heartbeat_loop,
+            kwargs={"role": role, "stop_event": stop_event},
+            name="property-search-worker-process-heartbeat",
+            daemon=True,
+        )
+        worker_heartbeat_thread.start()
     if property_only_worker:
         try:
             _run_property_search_work_pool(
@@ -2680,6 +2693,9 @@ def _run_execution_worker(role: str) -> None:
                 stop_event=stop_event,
             )
         finally:
+            stop_event.set()
+            if worker_heartbeat_thread is not None:
+                worker_heartbeat_thread.join(timeout=2.0)
             _write_scheduler_heartbeat(role=role, status="stopped")
         return
     while not stop_event.is_set():
@@ -2982,6 +2998,9 @@ def _run_execution_worker(role: str) -> None:
             artifact.execution_session_id,
             artifact.artifact_id,
         )
+    stop_event.set()
+    if worker_heartbeat_thread is not None:
+        worker_heartbeat_thread.join(timeout=2.0)
     log.info("role=%s stopped worker loop", role)
 
 

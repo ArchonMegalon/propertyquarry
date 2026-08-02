@@ -186,6 +186,79 @@ def test_execution_worker_refreshes_heartbeat_before_role_work(
     assert readiness < started < loop < heartbeat < scheduler_branch < queue_execution
 
 
+def test_role_heartbeat_loop_uses_writer_ready_status_for_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    observed: list[tuple[str, str]] = []
+
+    class _StopAfterOneWrite:
+        calls = 0
+
+        def wait(self, timeout: float) -> bool:
+            assert timeout == 30.0
+            self.calls += 1
+            return self.calls > 1
+
+    monkeypatch.setattr(
+        runner,
+        "_write_scheduler_heartbeat",
+        lambda *, role, status: observed.append((role, status)),
+    )
+
+    runner._run_role_heartbeat_loop(
+        role="worker",
+        stop_event=_StopAfterOneWrite(),  # type: ignore[arg-type]
+    )
+
+    assert observed == [("worker", "loop")]
+
+
+def test_property_only_worker_runs_independent_process_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    loop_started = threading.Event()
+    loop_stopped = threading.Event()
+    container = SimpleNamespace()
+
+    monkeypatch.setattr(runner.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(runner, "build_container", lambda: container)
+    monkeypatch.setattr(
+        runner,
+        "_require_property_search_writer_readiness",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(runner, "_worker_property_only_profile_enabled", lambda: True)
+    monkeypatch.setattr(runner, "_write_scheduler_heartbeat", lambda **_kwargs: None)
+
+    def _heartbeat_loop(*, role: str, stop_event: threading.Event) -> None:
+        assert role == "worker"
+        loop_started.set()
+        assert stop_event.wait(timeout=2.0)
+        loop_stopped.set()
+
+    def _work_pool(
+        observed_container: object,
+        *,
+        role: str,
+        log: logging.Logger,
+        stop_event: threading.Event,
+    ) -> None:
+        assert observed_container is container
+        assert role == "worker"
+        assert isinstance(log, logging.Logger)
+        assert not stop_event.is_set()
+        assert loop_started.wait(timeout=2.0)
+
+    monkeypatch.setattr(runner, "_run_role_heartbeat_loop", _heartbeat_loop)
+    monkeypatch.setattr(runner, "_run_property_search_work_pool", _work_pool)
+
+    runner._run_execution_worker("worker")
+
+    assert loop_stopped.wait(timeout=1.0)
+
+
 def test_execution_writer_readiness_fails_before_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

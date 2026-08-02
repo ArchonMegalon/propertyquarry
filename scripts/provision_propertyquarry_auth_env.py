@@ -299,12 +299,17 @@ def provision_auth_environment(
         "release_probe_principal_id": values[
             "PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID"
         ],
-        "release_probe_research_detail_route": values[
-            "PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE"
-        ],
-        "release_probe_shortlist_run_path": values[
-            "PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH"
-        ],
+        "release_probe_route_values_redacted": True,
+        "release_probe_research_detail_route_sha256": hashlib.sha256(
+            values[
+                "PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE"
+            ].encode("utf-8")
+        ).hexdigest(),
+        "release_probe_shortlist_run_path_sha256": hashlib.sha256(
+            values[
+                "PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH"
+            ].encode("utf-8")
+        ).hexdigest(),
         "emailit_key_fingerprint": hashlib.sha256(
             values["EMAILIT_API_KEY"].encode("utf-8")
         ).hexdigest()[:16],

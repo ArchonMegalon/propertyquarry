@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -97,11 +98,27 @@ def test_provisioner_writes_narrow_mode_0600_environment(tmp_path: Path) -> None
     assert "UNRELATED_ROOT_TOKEN" not in values
     assert receipt["status"] == "ready"
     assert receipt["release_probe_configured"] is True
+    assert receipt["release_probe_route_values_redacted"] is True
+    assert receipt["release_probe_research_detail_route_sha256"] == hashlib.sha256(
+        values[
+            "PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE"
+        ].encode("utf-8")
+    ).hexdigest()
+    assert receipt["release_probe_shortlist_run_path_sha256"] == hashlib.sha256(
+        values[
+            "PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH"
+        ].encode("utf-8")
+    ).hexdigest()
     assert receipt["dedicated_release_probe_secret"] is True
     receipt_text = receipt_path.read_text(encoding="utf-8")
     assert "emailit-private-key" not in receipt_text
     assert "google-client-secret" not in receipt_text
-    assert json.loads(receipt_text)["unrelated_source_keys_copied"] is False
+    assert values["PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE"] not in receipt_text
+    assert values["PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH"] not in receipt_text
+    persisted_receipt = json.loads(receipt_text)
+    assert "release_probe_research_detail_route" not in persisted_receipt
+    assert "release_probe_shortlist_run_path" not in persisted_receipt
+    assert persisted_receipt["unrelated_source_keys_copied"] is False
 
 
 def test_provisioner_replay_preserves_dedicated_secrets(tmp_path: Path) -> None:

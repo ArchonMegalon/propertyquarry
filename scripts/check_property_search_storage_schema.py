@@ -260,6 +260,9 @@ def _check_source_contracts() -> None:
         "property_research_packet_erasure_trigger_split",
         "durable_property_account_privacy_lifecycle",
         "distributed_request_admission_control",
+        "nonpublishing_work_lease_heartbeat",
+        "to_jsonb(NEW)\n           - 'heartbeat_at'",
+        "to_jsonb(OLD)\n           - 'heartbeat_at'",
         "property_account_privacy_requests",
         "propertyquarry_admission_quota_buckets",
         "propertyquarry_admission_leases",
@@ -325,6 +328,7 @@ def _check_source_contracts() -> None:
         (15, "durable_property_account_privacy_lifecycle"),
         (16, "distributed_request_admission_control"),
         (17, "bounded_admission_capacity_state"),
+        (18, "nonpublishing_work_lease_heartbeat"),
     )
     declared_migrations = _declared_migration_contracts(schema)
     if declared_migrations != expected_migrations:

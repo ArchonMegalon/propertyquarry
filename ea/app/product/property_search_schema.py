@@ -2238,6 +2238,59 @@ $propertyquarry_admission_capacity_owner_install$;
 """
 
 
+_PROPERTY_SEARCH_WORK_HEARTBEAT_ERASURE_ORDER_SCHEMA_V18 = r"""
+CREATE OR REPLACE FUNCTION property_search_work_jobs_enforce_erasure_fence()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $property_search_work_jobs_erasure_fence_function$
+BEGIN
+    IF COALESCE(
+        current_setting('propertyquarry.property_search_writer_contract', TRUE),
+        ''
+    ) <> '3' THEN
+        RAISE EXCEPTION 'property_search_writer_contract_required'
+            USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'UPDATE' AND (
+        NEW.principal_id IS DISTINCT FROM OLD.principal_id
+        OR NEW.run_id IS DISTINCT FROM OLD.run_id
+        OR NEW.principal_key IS DISTINCT FROM OLD.principal_key
+    ) THEN
+        RAISE EXCEPTION 'property_search_work_job_owner_immutable'
+            USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'UPDATE'
+       AND (
+           to_jsonb(NEW)
+           - 'heartbeat_at'
+           - 'lease_expires_at'
+           - 'updated_at'
+       ) IS NOT DISTINCT FROM (
+           to_jsonb(OLD)
+           - 'heartbeat_at'
+           - 'lease_expires_at'
+           - 'updated_at'
+       ) THEN
+        -- Lease liveness is not publication.  This update cannot create a row
+        -- or change product data, and PostgreSQL row/FK locking orders it with
+        -- account/run deletion.  Avoiding the principal advisory lock keeps a
+        -- long erasure-ordered publication from starving the worker heartbeat.
+        RETURN NEW;
+    END IF;
+    PERFORM property_search_assert_run_owner(
+        NEW.principal_key,
+        NEW.run_id
+    );
+    PERFORM property_search_assert_write_allowed(NEW.principal_key, NEW.run_id);
+    RETURN NEW;
+END
+$property_search_work_jobs_erasure_fence_function$;
+"""
+
+
 PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
     PropertySearchMigration(1, "property_search_runs_tenant_schema", _RUN_SCHEMA_V1),
     PropertySearchMigration(
@@ -2309,6 +2362,11 @@ PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
         17,
         "bounded_admission_capacity_state",
         _ADMISSION_CAPACITY_STATE_SCHEMA_V17,
+    ),
+    PropertySearchMigration(
+        18,
+        "nonpublishing_work_lease_heartbeat",
+        _PROPERTY_SEARCH_WORK_HEARTBEAT_ERASURE_ORDER_SCHEMA_V18,
     ),
 )
 LATEST_PROPERTY_SEARCH_SCHEMA_VERSION = PROPERTY_SEARCH_MIGRATIONS[-1].version

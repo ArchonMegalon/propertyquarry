@@ -2315,3 +2315,13 @@ def test_harness_source_has_no_compose_build_live_stack_or_repo_env_path() -> No
         "lifecycle.begin_cleanup()",
     ):
         assert required in source
+
+
+def test_disposable_lane_runs_queue_erasure_order_contracts() -> None:
+    source = Path(harness.__file__).read_text(encoding="utf-8")
+
+    database_binding = '"EA_TEST_PROPERTY_DATABASE_URL": database_url'
+    queue_contract = '"tests/test_property_search_work_queue_postgres.py"'
+    assert database_binding in source
+    assert queue_contract in source
+    assert source.index(database_binding) < source.index(queue_contract)

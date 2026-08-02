@@ -113,8 +113,8 @@ a loggable role-management statement. Before any direct libpq connection, the
 scoped controller removes all inherited `PG*` overrides, asserts that the
 environment remains closed, and explicitly binds `hostaddr=127.0.0.1`, empty
 session options, and the private relay port from the canonical DSNs.
-Migration, schema-check,
-session-bootstrap, browser-test, and API stdout/stderr are routed only to
+Migration, schema-check, session-bootstrap, the PostgreSQL queue/erasure
+ordering contract tests, browser-test, and API stdout/stderr are routed only to
 distinct mode-0600 temporary logs; the terminal receives generic pass/fail
 status only.
 Every host producer is launched through `/usr/bin/prlimit`. Migration,

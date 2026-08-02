@@ -824,19 +824,14 @@ class PostgresPropertySearchWorkQueue:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._set_writer_contract(cur)
-                identity = self._nonlocking_job_identity(
-                    cur,
-                    job_id=normalized_job_id,
-                )
-                if identity is None:
-                    conn.commit()
-                    return False
-                principal_id, run_id = identity
-                self._acquire_principal_write_authority(
-                    cur,
-                    principal_id=principal_id,
-                    run_id=run_id,
-                )
+                # A heartbeat only extends an existing exact lease.  It cannot
+                # insert or recreate work, so joining the principal erasure
+                # advisory lock is both unnecessary and dangerous: a long
+                # erasure-ordered publication can otherwise stall the worker
+                # healthcheck until Docker restarts the process.  PostgreSQL's
+                # row lock still orders this UPDATE with a concurrent DELETE;
+                # once deletion commits the conditional update affects zero
+                # rows and cannot resurrect the job.
                 cur.execute(
                     """
                     UPDATE property_search_work_jobs
@@ -844,8 +839,6 @@ class PostgresPropertySearchWorkQueue:
                         lease_expires_at = NOW() + (%s * INTERVAL '1 second'),
                         updated_at = NOW()
                     WHERE job_id = %s
-                      AND principal_id = %s
-                      AND run_id = %s
                       AND status = 'leased'
                       AND lease_owner = %s
                       AND lease_expires_at > NOW()
@@ -853,8 +846,6 @@ class PostgresPropertySearchWorkQueue:
                     (
                         max(1, int(lease_seconds or 1)),
                         normalized_job_id,
-                        principal_id,
-                        run_id,
                         owner,
                     ),
                 )

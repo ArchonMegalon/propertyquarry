@@ -3050,6 +3050,7 @@ def _execute_guarded(
             browser_environment = dict(runtime_environment)
             browser_environment.update(
                 {
+                    "EA_TEST_PROPERTY_DATABASE_URL": database_url,
                     "PROPERTYQUARRY_POSTGRES_BROWSER_BASE_URL": base_url,
                     "PROPERTYQUARRY_POSTGRES_BROWSER_EXPECTED_READY_REASON": expected_reason,
                     "PROPERTYQUARRY_POSTGRES_BROWSER_SESSION_FILE": str(
@@ -3063,6 +3064,7 @@ def _execute_guarded(
                     "-m",
                     "pytest",
                     "-q",
+                    "tests/test_property_search_work_queue_postgres.py",
                     "tests/e2e/test_propertyquarry_postgres_browser.py",
                     "-p",
                     "no:cacheprovider",
