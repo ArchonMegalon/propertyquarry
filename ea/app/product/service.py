@@ -231,6 +231,7 @@ from app.product.property_tour_hosting import (
     _write_hosted_property_tour_payload_with_slug_lock_held,
 )
 from app.product.property_search_storage import (
+    _bounded_property_search_run_payload,
     _compare_and_swap_property_search_run_record,
     _compact_pruned_property_search_run_record,
     _delete_property_search_run_record as _delete_property_search_run_record_storage,
@@ -45017,10 +45018,6 @@ class ProductService:
             )
         except LookupError:
             return False
-        except Exception:
-            if _property_search_durable_work_required():
-                raise
-            return False
         return applied is True
 
     def _open_property_search_run_interruption_repair(
@@ -56490,10 +56487,34 @@ class ProductService:
         )
         if lifecycle:
             payload["search_agent_lifecycle"] = lifecycle
+        completion_projection = _bounded_property_search_run_payload(
+            {
+                "run_id": property_search_run_id,
+                "principal_id": principal_id,
+                "status": str(payload.get("status") or "processed"),
+                "created_at": str(payload.get("generated_at") or _now_iso()),
+                "updated_at": str(payload.get("generated_at") or _now_iso()),
+                "summary": payload,
+            }
+        )
+        completion_observation = (
+            dict(completion_projection.get("summary") or {})
+            if isinstance(completion_projection.get("summary"), dict)
+            else {}
+        )
+        completion_observation.update(
+            {
+                "run_id": property_search_run_id,
+                "status": str(payload.get("status") or "processed"),
+                "generated_at": str(payload.get("generated_at") or _now_iso()),
+                "actor": str(actor or "").strip() or "property_scout",
+                "payload_retention_status": "bounded_projection",
+            }
+        )
         self._record_product_event(
             principal_id=principal_id,
             event_type="property_scout_sync_completed",
-            payload={**payload, "actor": str(actor or "").strip() or "property_scout"},
+            payload=completion_observation,
             source_id=f"property-scout-sync:{principal_id}",
             dedupe_key=f"{principal_id}|property-scout-sync|{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}",
         )

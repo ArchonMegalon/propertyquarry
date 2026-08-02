@@ -1,0 +1,20 @@
+[Unit]
+Description=PropertyQuarry storage high-water check
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/docker/property
+Environment=PROPERTYQUARRY_DB_SERVICE=propertyquarry-db
+Environment=PROPERTYQUARRY_DB_CONTAINER_NAME=propertyquarry-db-live
+Environment=POSTGRES_DB=propertyquarry
+Environment=POSTGRES_USER=postgres
+Environment=EA_DB_SIZE_FAIL_ON_HIGH_WATER=1
+Environment=EA_STORAGE_FAIL_ON_HIGH_WATER=1
+EnvironmentFile=-/etc/propertyquarry/storage-retention.env
+ExecStart=/usr/bin/bash -c '/docker/property/scripts/db_size.sh && /docker/property/scripts/storage_size.sh'
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/docker/property

@@ -2291,6 +2291,59 @@ $property_search_work_jobs_erasure_fence_function$;
 """
 
 
+_BOUNDED_STORAGE_RETENTION_CONTROL_SCHEMA_V19 = r"""
+CREATE TABLE IF NOT EXISTS propertyquarry_retention_runs (
+    retention_run_id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    target_database TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT 'operator',
+    batch_size INTEGER NOT NULL,
+    max_rows_per_table INTEGER NOT NULL,
+    candidate_rows BIGINT NOT NULL DEFAULT 0,
+    deleted_rows BIGINT NOT NULL DEFAULT 0,
+    compacted_rows BIGINT NOT NULL DEFAULT 0,
+    database_bytes_before BIGINT NOT NULL DEFAULT 0,
+    database_bytes_after BIGINT NOT NULL DEFAULT 0,
+    policy_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_code TEXT NOT NULL DEFAULT '',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMPTZ NULL,
+    CHECK (char_length(retention_run_id) BETWEEN 1 AND 128),
+    CHECK (scope IN ('postgres_retention', 'property_search_retention')),
+    CHECK (mode = 'apply'),
+    CHECK (status IN ('running', 'completed', 'failed', 'abandoned')),
+    CHECK (char_length(target_database) BETWEEN 1 AND 128),
+    CHECK (char_length(profile) BETWEEN 1 AND 32),
+    CHECK (char_length(actor) BETWEEN 1 AND 128),
+    CHECK (batch_size BETWEEN 1 AND 10000),
+    CHECK (max_rows_per_table BETWEEN 1 AND 1000000),
+    CHECK (candidate_rows >= 0),
+    CHECK (deleted_rows >= 0),
+    CHECK (compacted_rows >= 0),
+    CHECK (database_bytes_before >= 0),
+    CHECK (database_bytes_after >= 0),
+    CHECK (pg_column_size(policy_json) <= 65536),
+    CHECK (pg_column_size(result_json) <= 262144),
+    CHECK (char_length(error_code) <= 256),
+    CHECK (
+        (status = 'running' AND completed_at IS NULL)
+        OR (status <> 'running' AND completed_at IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_propertyquarry_retention_runs_started
+ON propertyquarry_retention_runs(started_at DESC, retention_run_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_propertyquarry_retention_single_running
+ON propertyquarry_retention_runs(scope, target_database)
+WHERE status = 'running';
+"""
+
+
 PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
     PropertySearchMigration(1, "property_search_runs_tenant_schema", _RUN_SCHEMA_V1),
     PropertySearchMigration(
@@ -2367,6 +2420,11 @@ PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
         18,
         "nonpublishing_work_lease_heartbeat",
         _PROPERTY_SEARCH_WORK_HEARTBEAT_ERASURE_ORDER_SCHEMA_V18,
+    ),
+    PropertySearchMigration(
+        19,
+        "bounded_storage_retention_control",
+        _BOUNDED_STORAGE_RETENTION_CONTROL_SCHEMA_V19,
     ),
 )
 LATEST_PROPERTY_SEARCH_SCHEMA_VERSION = PROPERTY_SEARCH_MIGRATIONS[-1].version
@@ -2447,6 +2505,9 @@ _REQUIRED_RELATIONS = (
     "idx_propertyquarry_admission_lease_dimension_expiry",
     "idx_propertyquarry_admission_lease_expiry",
     ADMISSION_CAPACITY_STATE_TABLE,
+    "propertyquarry_retention_runs",
+    "idx_propertyquarry_retention_runs_started",
+    "idx_propertyquarry_retention_single_running",
 )
 
 _FORBIDDEN_RELATIONS = ("idx_delivery_outbox_idempotency_key_unique",)

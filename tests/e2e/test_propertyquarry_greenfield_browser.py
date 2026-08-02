@@ -37,6 +37,7 @@ from app.property_distance_preferences import (
     property_distance_preference_keys,
 )
 from app.product import property_evidence_overlays as evidence_overlays
+from app.product import service as product_service
 from app.product.models import HandoffNote
 from app.product.service import ProductService
 from app.services.property_market_catalog import selectable_property_platform_keys
@@ -628,6 +629,20 @@ def propertyquarry_browser_server(
 
     cleanup = ExitStack()
     request.addfinalizer(cleanup.close)
+    with product_service._PROPERTY_SEARCH_RUN_LOCK:  # type: ignore[attr-defined]
+        previous_run_registry = dict(
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY  # type: ignore[attr-defined]
+        )
+        product_service._PROPERTY_SEARCH_RUN_REGISTRY.clear()  # type: ignore[attr-defined]
+
+    def _restore_run_registry() -> None:
+        with product_service._PROPERTY_SEARCH_RUN_LOCK:  # type: ignore[attr-defined]
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY.clear()  # type: ignore[attr-defined]
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY.update(  # type: ignore[attr-defined]
+                previous_run_registry
+            )
+
+    cleanup.callback(_restore_run_registry)
     monkeypatch.setenv("EMAILIT_API_KEY", "propertyquarry-browser-test-emailit-key")
     monkeypatch.setenv("PROPERTYQUARRY_LEGACY_PDF_RENDERER_ALLOW", "1")
     monkeypatch.setenv("PAYPAL_CLIENT_ID", "paypal-client")

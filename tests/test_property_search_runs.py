@@ -14234,6 +14234,13 @@ def test_property_search_runs_keep_recent_history_but_prune_stale_payloads_by_de
         "property_search_run_retention_days": "90.0",
         "property_search_run_retention_env": "EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS",
         "property_search_run_retention_default_seconds": "7776000",
+        "property_search_run_max_payload_bytes": "524288",
+        "property_search_run_max_payload_env": "EA_PROPERTY_SEARCH_RUN_MAX_PAYLOAD_BYTES",
+        "property_search_run_max_rows_per_principal": "500",
+        "property_search_run_max_rows_per_principal_env": "EA_PROPERTY_SEARCH_RUN_MAX_ROWS_PER_PRINCIPAL",
+        "property_search_retention_batch_size": "250",
+        "property_search_retention_batch_size_env": "EA_PROPERTY_SEARCH_RETENTION_BATCH_SIZE",
+        "property_search_legal_hold_policy": "preserve_and_backpressure",
     }
     run_id = "retained-recent-run"
     stale_run_id = "pruned-stale-run"

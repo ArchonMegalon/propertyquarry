@@ -483,13 +483,18 @@ bash scripts/db_size.sh
 # or
 make db-size
 
+# all local-state, generated-media, project-volume, and shared Docker summaries
+bash scripts/storage_size.sh
+# or
+make storage-size
+
 # optional table-prefix filter
 EA_DB_SIZE_TABLE_PREFIX=execution_ bash scripts/db_size.sh
 
 # optional schema filter
 EA_DB_SIZE_SCHEMA=public bash scripts/db_size.sh
 
-# optional sort key (total|table|index)
+# optional sort key (total|table|index|toast|dead)
 EA_DB_SIZE_SORT_KEY=index bash scripts/db_size.sh
 
 # optional minimum table size filter (MB)
@@ -525,6 +530,22 @@ EA_RETENTION_SKIP_TABLES=observation_events,policy_decisions bash scripts/db_ret
 # apply deletions
 bash scripts/db_retention.sh --apply
 ```
+
+Always export `PROPERTYQUARRY_DB_SERVICE=propertyquarry-db`,
+`PROPERTYQUARRY_DB_CONTAINER_NAME=propertyquarry-db-live`,
+`POSTGRES_DB=propertyquarry`, and `POSTGRES_USER=postgres` when operating the
+standalone runtime. Both commands print the resolved target before querying or
+mutating. Apply mode rejects unknown table names, journals the run, uses
+`EA_RETENTION_BATCH_SIZE` and `EA_RETENTION_MAX_ROWS_PER_TABLE`, and can be
+rerun safely after a ceiling or failure. Ordinary `VACUUM (ANALYZE)` is opt-in;
+physical reclaim is a separate backup-first maintenance operation.
+
+Install and enable the checked-in
+`packaging/propertyquarry-storage-maintenance/systemd/` units through the host
+configuration lane for hourly high-water alerts and weekly bounded retention.
+The complete classification, legal-hold invariants, quota/backpressure policy,
+and exact reclaim boundary are in
+`docs/PROPERTYQUARRY_STORAGE_RETENTION.md`.
 
 ## 3) Health Check
 

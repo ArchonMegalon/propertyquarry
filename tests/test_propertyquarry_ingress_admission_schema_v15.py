@@ -131,10 +131,10 @@ class _ReadinessCursor:
         raise AssertionError(f"unexpected readiness query: {self.sql}")
 
 
-def test_v18_is_append_only_and_preserves_prior_migration_checksums() -> None:
+def test_v19_is_append_only_and_preserves_prior_migration_checksums() -> None:
     assert tuple(
         migration.version for migration in schema.PROPERTY_SEARCH_MIGRATIONS
-    ) == tuple(range(1, 19))
+    ) == tuple(range(1, 20))
     assert tuple(
         migration.checksum for migration in schema.PROPERTY_SEARCH_MIGRATIONS[:16]
     ) == _V1_TO_V16_CHECKSUMS
@@ -152,7 +152,14 @@ def test_v18_is_append_only_and_preserves_prior_migration_checksums() -> None:
         v18.checksum
         == "eae758d281c5447d984f15e7d367e3fb181d06f79b6f0b5d277d6b91a2d455e8"
     )
-    assert schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION == 18
+    v19 = schema.PROPERTY_SEARCH_MIGRATIONS[18]
+    assert v19.version == 19
+    assert v19.name == "bounded_storage_retention_control"
+    assert (
+        v19.checksum
+        == "3cee796e77912373a948ee9d9f4613ace502374cad74e753b5073f46366aa96a"
+    )
+    assert schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION == 19
 
 
 def test_v16_and_v17_define_bounded_authoritative_capacity_contract() -> None:
@@ -173,7 +180,7 @@ def test_v16_and_v17_define_bounded_authoritative_capacity_contract() -> None:
     assert "AFTER TRUNCATE ON propertyquarry_admission_leases" in capacity_sql
 
 
-def test_upgrade_from_v16_applies_v17_and_v18_and_commits(
+def test_upgrade_from_v16_applies_v17_v18_and_v19_and_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -190,8 +197,8 @@ def test_upgrade_from_v16_applies_v17_and_v18_and_commits(
     )
 
     assert result.previous_version == 16
-    assert result.current_version == 18
-    assert result.applied_versions == (17, 18)
+    assert result.current_version == 19
+    assert result.applied_versions == (17, 18, 19)
     assert connection.committed is True
     assert connection.rolled_back is False
     assert connection.closed is True
@@ -201,6 +208,10 @@ def test_upgrade_from_v16_applies_v17_and_v18_and_commits(
     ) in connection.cursor_instance.executed
     assert (
         schema.PROPERTY_SEARCH_MIGRATIONS[17].sql,
+        None,
+    ) in connection.cursor_instance.executed
+    assert (
+        schema.PROPERTY_SEARCH_MIGRATIONS[18].sql,
         None,
     ) in connection.cursor_instance.executed
 
@@ -238,7 +249,7 @@ def test_readiness_accepts_exact_capacity_contract_and_counts() -> None:
 
     assert status.ready is True
     assert status.reason == "schema_ready"
-    assert status.current_version == 18
+    assert status.current_version == 19
 
 
 def test_readiness_rejects_capacity_contract_drift() -> None:

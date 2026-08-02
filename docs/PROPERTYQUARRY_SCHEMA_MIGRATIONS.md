@@ -46,6 +46,8 @@ services blocked by Compose's `service_completed_successfully` dependency.
 15. `durable_property_account_privacy_lifecycle`
 16. `distributed_request_admission_control`
 17. `bounded_admission_capacity_state`
+18. `nonpublishing_work_lease_heartbeat`
+19. `bounded_storage_retention_control`
 
 Each immutable migration has a SHA-256 checksum. Applied versions are recorded
 in `propertyquarry_schema_migrations` under component `property_search`. The
@@ -98,7 +100,7 @@ fallback and their output is not release evidence.
 ### Mandatory contained cutover for schema v11
 
 Writer contract 3 and schema v11 are deliberately not rolling-compatible.
-Current schema v17 remains incompatible with contract-2 processes. The
+Current schema v19 remains incompatible with contract-2 processes. The
 installed controller must execute this exact fail-closed sequence when upgrading
 a v9 or v10 deployment:
 
@@ -115,7 +117,7 @@ a v9 or v10 deployment:
    replica is not safe evidence that the drain completed.
 3. While all writers remain stopped, take the controller-governed backup and
    apply the ordered pending migrations. From live schema v9 this applies v10
-   and v11 in the same migration transaction, then continues through v12-v17
+   and v11 in the same migration transaction, then continues through v12-v19
    before that transaction commits; partial application is forbidden.
    The migration runner sets contract 2 only inside that transaction while v11
    backfills legacy principal keys, before v11 replaces the write guards with
@@ -134,12 +136,15 @@ a v9 or v10 deployment:
    role and grant it to `propertyquarry_migration` exactly as specified in the
    role-boundary runbook; v17 rejects a missing, login-capable, elevated, or
    unrelated-role-member owner.
+   Schema v18 permits nonpublishing lease-heartbeat updates without starving
+   erasure-ordered publication. Schema v19 installs the bounded operator
+   retention journal and its single-running-run fence.
 4. Schema v11 first established the homogeneous schema-v11/contract-3 fleet
-   boundary. For current schema v17, start only the immutable, homogeneous
-   schema-v17/contract-3 fleet. Require current readiness plus fresh per-instance
+   boundary. For current schema v19, start only the immutable, homogeneous
+   schema-v19/contract-3 fleet. Require current readiness plus fresh per-instance
    heartbeats for the complete expected role manifest before reopening ingress.
 
-Never start current contract-3 code before every migration through v17 commits,
+Never start current contract-3 code before every migration through v19 commits,
 and never restart a contract-2 binary after v11. A failed step leaves ingress and writers contained for
 forward repair. Changing the erasure secret is a separately designed key
 migration, not an environment-variable rotation; without that migration the

@@ -255,7 +255,13 @@ def test_postgres_recent_queries_avoid_unrelated_payloads_and_preserve_window() 
             {"session_id": "session-a"},
             source_id="session-a",
         )
-        repository.append("tenant-a", "product", "unrelated_event", {"large": "x" * 2_000_000})
+        repository.append(
+            "tenant-a",
+            "product",
+            "unrelated_event",
+            {"large": "x" * 2_000_000},
+            raw_payload_uri="s3://propertyquarry-observations/query-efficiency.json",
+        )
 
         assert not repository.exists_recent(
             principal_id="tenant-a",

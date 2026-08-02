@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import uuid
 from datetime import datetime
 from typing import Any
@@ -11,6 +14,48 @@ from app.repositories.postgres_schema import (
     create_index_if_missing,
     drop_index_if_present,
 )
+
+
+_DEFAULT_OBSERVATION_PAYLOAD_MAX_BYTES = 512 * 1024
+
+
+def _observation_payload_max_bytes() -> int:
+    raw_value = str(os.getenv("EA_OBSERVATION_MAX_PAYLOAD_BYTES") or "").strip()
+    if not raw_value:
+        return _DEFAULT_OBSERVATION_PAYLOAD_MAX_BYTES
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        return _DEFAULT_OBSERVATION_PAYLOAD_MAX_BYTES
+    return max(16 * 1024, min(parsed, 8 * 1024 * 1024))
+
+
+def _bounded_observation_payload(
+    payload: dict[str, object],
+    *,
+    raw_payload_uri: str,
+) -> dict[str, object]:
+    serialized = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+        default=str,
+    ).encode("utf-8")
+    limit_bytes = _observation_payload_max_bytes()
+    if len(serialized) <= limit_bytes:
+        return dict(payload)
+    normalized_uri = str(raw_payload_uri or "").strip()
+    if not normalized_uri:
+        raise ValueError("observation_payload_too_large_raw_payload_uri_required")
+    return {
+        "payload_retention_status": "external_pointer_only",
+        "payload_original_bytes": len(serialized),
+        "payload_limit_bytes": limit_bytes,
+        "payload_sha256": hashlib.sha256(serialized).hexdigest(),
+        "raw_payload_uri": normalized_uri,
+    }
 
 
 def _to_iso(value: Any) -> str:
@@ -188,18 +233,23 @@ class PostgresObservationEventRepository:
                     auth_context_json=dict(found_auth_context or {}),
                     raw_payload_uri=str(found_raw_uri or ""),
                 )
+        normalized_raw_payload_uri = str(raw_payload_uri or "").strip()
+        bounded_payload = _bounded_observation_payload(
+            dict(payload or {}),
+            raw_payload_uri=normalized_raw_payload_uri,
+        )
         row = ObservationEvent(
             observation_id=str(uuid.uuid4()),
             principal_id=principal,
             channel=str(channel or "unknown").strip(),
             event_type=str(event_type or "unknown").strip(),
-            payload=dict(payload or {}),
+            payload=bounded_payload,
             created_at=now_utc_iso(),
             source_id=str(source_id or "").strip(),
             external_id=str(external_id or "").strip(),
             dedupe_key=dedupe,
             auth_context_json=dict(auth_context_json or {}),
-            raw_payload_uri=str(raw_payload_uri or "").strip(),
+            raw_payload_uri=normalized_raw_payload_uri,
         )
         with self._connect() as conn:
             with conn.cursor() as cur:

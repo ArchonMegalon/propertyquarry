@@ -24,6 +24,7 @@ endif
 endif
 
 .PHONY: deploy deploy-legacy-ea-stack deploy-memory deploy-bootstrap bootstrap db-status db-size db-retention smoke-api smoke-api-authenticated smoke-api-tibor smoke-postgres smoke-postgres-legacy smoke-help smoke-help-authenticated release-smoke release-smoke-authenticated release-preflight propertyquarry-release-preflight propertyquarry-release-protocol-contracts propertyquarry-native-release-control-gates bootstrap-propertyquarry-release-python release-docs test-api test-api-real-chromium test-api-authenticated test-all propertyquarry-target-recovery-canary test-postgres-contracts test-telegram-bot openapi-export openapi-diff openapi-prune endpoints version-info operator-summary operator-help operator-help-authenticated provider-readiness overlay-vision-check overlay-vision-pull support-bundle tasks-archive tasks-archive-prune tasks-archive-dry-run materialize-release-assets materialize-release-assets-authenticated verify-generated-release-artifacts-clean verify-generated-release-artifacts-clean-authenticated verify-local-docker-deployment-authenticated ci-local ci-local-authenticated ci-gates ci-gates-authenticated ci-gates-postgres ci-gates-postgres-legacy hard-exit-gates runtime-hard-exit-gates property-release-gates property-security-posture ltd-release-gates verify-release-assets verify-release-assets-authenticated verify-flagship-release-readiness verify-flagship-release-readiness-authenticated verify-pocket-audio-archive verify-ltd-critical-entries verify-ltd-critical-entries-authenticated verify-ltd-flagship-subset verify-ltd-flagship-subset-authenticated verify-design-mirror-bundle verify-design-full-mirror-parity repair-design-mirror-bundle docs-verify all-local
+.PHONY: storage-size
 
 PYTHON_BIN ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 override PYTHONDONTWRITEBYTECODE := 1
@@ -69,6 +70,9 @@ db-size:
 
 db-retention:
 	bash scripts/db_retention.sh
+
+storage-size:
+	bash scripts/storage_size.sh
 
 smoke-api:
 	bash scripts/smoke_api.sh

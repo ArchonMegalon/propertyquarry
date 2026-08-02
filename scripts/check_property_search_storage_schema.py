@@ -329,6 +329,7 @@ def _check_source_contracts() -> None:
         (16, "distributed_request_admission_control"),
         (17, "bounded_admission_capacity_state"),
         (18, "nonpublishing_work_lease_heartbeat"),
+        (19, "bounded_storage_retention_control"),
     )
     declared_migrations = _declared_migration_contracts(schema)
     if declared_migrations != expected_migrations:

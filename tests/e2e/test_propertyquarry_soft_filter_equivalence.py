@@ -620,6 +620,13 @@ def test_propertyquarry_e2e_exact_district_selection_remains_a_hard_filter(monke
     monkeypatch.setattr(product_service, "_property_scout_page_preview_with_timeout", _fake_preview)
     monkeypatch.setattr(
         product_service,
+        "_merge_property_facts_with_source_research",
+        lambda *, property_url, property_facts, image_urls=(): dict(
+            property_facts or {}
+        ),
+    )
+    monkeypatch.setattr(
+        product_service,
         "_property_alert_personal_fit_from_facts",
         lambda **kwargs: {
             "fit_score": 72.0,

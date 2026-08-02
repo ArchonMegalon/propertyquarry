@@ -34,6 +34,12 @@ _PROPERTY_SEARCH_RUN_COMPACT_UI_CANDIDATE_LIMIT = 40
 _PROPERTY_SEARCH_RUN_COMPACT_SOURCE_LIMIT = 64
 _PROPERTY_SEARCH_RUN_COMPACT_NESTED_LIST_LIMIT = 32
 _PROPERTY_SEARCH_RUN_COMPACT_TEXT_LIMIT = 2048
+_PROPERTY_SEARCH_RUN_DEFAULT_MAX_PAYLOAD_BYTES = 512 * 1024
+_PROPERTY_SEARCH_RUN_DEFAULT_MAX_ROWS_PER_PRINCIPAL = 500
+_PROPERTY_SEARCH_RUN_DEFAULT_RETENTION_BATCH_SIZE = 250
+_PROPERTY_SEARCH_RUN_TERMINAL_STATUSES = frozenset(
+    {"processed", "completed", "completed_partial", "failed", "cancelled", "noop"}
+)
 _PROPERTY_SEARCH_ERASURE_KEY_DOMAIN = b"propertyquarry:property-search-erasure:v1\0"
 _PROPERTY_SEARCH_INGRESS_ADMISSION_KEY_DOMAIN = (
     b"propertyquarry:ingress-admission-key:v1\0"
@@ -1567,6 +1573,208 @@ def _compact_pruned_property_search_run_record(
     return compact
 
 
+def _bounded_int_env(
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw_value = str(os.getenv(name) or "").strip()
+    if not raw_value:
+        return default
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(parsed, maximum))
+
+
+def _property_search_run_max_payload_bytes() -> int:
+    return _bounded_int_env(
+        "EA_PROPERTY_SEARCH_RUN_MAX_PAYLOAD_BYTES",
+        default=_PROPERTY_SEARCH_RUN_DEFAULT_MAX_PAYLOAD_BYTES,
+        minimum=64 * 1024,
+        maximum=4 * 1024 * 1024,
+    )
+
+
+def _property_search_run_max_rows_per_principal() -> int:
+    return _bounded_int_env(
+        "EA_PROPERTY_SEARCH_RUN_MAX_ROWS_PER_PRINCIPAL",
+        default=_PROPERTY_SEARCH_RUN_DEFAULT_MAX_ROWS_PER_PRINCIPAL,
+        minimum=10,
+        maximum=10_000,
+    )
+
+
+def _property_search_retention_batch_size() -> int:
+    return _bounded_int_env(
+        "EA_PROPERTY_SEARCH_RETENTION_BATCH_SIZE",
+        default=_PROPERTY_SEARCH_RUN_DEFAULT_RETENTION_BATCH_SIZE,
+        minimum=1,
+        maximum=2_000,
+    )
+
+
+def _property_search_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+        default=str,
+    ).encode("utf-8")
+
+
+def _bounded_property_search_run_payload(
+    record: dict[str, object],
+) -> dict[str, object]:
+    """Return the durable run payload under a strict serialized byte ceiling.
+
+    Packet projections are materialized from the full record before this helper
+    is called.  The database row therefore remains a recovery/UI projection,
+    while durable saved-result packet rows keep their independently checksummed
+    evidence contract.
+    """
+
+    normalized = _property_search_run_canonicalize_record(dict(record or {}))
+    original_bytes = _property_search_json_bytes(normalized)
+    limit_bytes = _property_search_run_max_payload_bytes()
+    status = str(normalized.get("status") or "").strip().lower()
+    terminal = status in _PROPERTY_SEARCH_RUN_TERMINAL_STATUSES
+    if not terminal and len(original_bytes) <= limit_bytes:
+        return normalized
+
+    durable = (
+        _compact_pruned_property_search_run_record(normalized)
+        if terminal
+        else _compact_property_search_run_record(normalized)
+    )
+    durable["payload_retention_status"] = (
+        "compact_only" if terminal else "bounded_projection"
+    )
+    durable["payload_original_bytes"] = len(original_bytes)
+    durable["payload_limit_bytes"] = limit_bytes
+    durable["payload_original_sha256"] = hashlib.sha256(original_bytes).hexdigest()
+    if len(_property_search_json_bytes(durable)) <= limit_bytes:
+        return durable
+
+    summary = (
+        dict(durable.get("summary") or {})
+        if isinstance(durable.get("summary"), dict)
+        else {}
+    )
+    for key in (
+        "timing_receipts",
+        "required_fact_resolution_receipts",
+        "repair_receipts",
+        "provider_repair_tasks",
+        "fact_enrichment_jobs",
+        "optional_fact_enrichment_candidate_jobs",
+        "required_fact_enrichment_candidate_jobs",
+        "fact_enrichment_candidate_jobs",
+    ):
+        summary.pop(key, None)
+    for limit in (16, 8, 4):
+        for key in (
+            "sources",
+            "ranked_candidates",
+            "results",
+            "top_candidates",
+            "evaluating_candidates",
+            "research_candidates",
+            "_delivery_candidates",
+        ):
+            if isinstance(summary.get(key), list):
+                summary[key] = list(summary[key])[:limit]
+        durable["summary"] = summary
+        if len(_property_search_json_bytes(durable)) <= limit_bytes:
+            return durable
+
+    scalar_summary = {
+        str(key)[:160]: (str(value)[:2048] if isinstance(value, str) else value)
+        for key, value in summary.items()
+        if value is None or isinstance(value, (bool, int, float, str))
+    }
+    raw_candidates = summary.get("ranked_candidates")
+    if isinstance(raw_candidates, list):
+        candidate_keys = (
+            "candidate_ref",
+            "title",
+            "property_url",
+            "review_url",
+            "source_ref",
+            "source_label",
+            "status",
+            "fit_score",
+            "price",
+            "price_text",
+            "preview_image_url",
+            "tour_url",
+        )
+        scalar_summary["ranked_candidates"] = [
+            {
+                key: (str(candidate[key])[:512] if isinstance(candidate[key], str) else candidate[key])
+                for key in candidate_keys
+                if isinstance(candidate, dict)
+                and candidate.get(key) not in (None, "", [], {})
+            }
+            for candidate in raw_candidates[:5]
+            if isinstance(candidate, dict)
+        ]
+    durable["summary"] = scalar_summary
+    if len(_property_search_json_bytes(durable)) <= limit_bytes:
+        return durable
+
+    minimal = {
+        key: durable[key]
+        for key in (
+            "run_id",
+            "principal_id",
+            "status",
+            "progress",
+            "stage",
+            "stage_label",
+            "current_step",
+            "created_at",
+            "updated_at",
+            "payload_retention_status",
+            "payload_pruned_at",
+            "payload_original_bytes",
+            "payload_limit_bytes",
+            "payload_original_sha256",
+            "compact_schema_version",
+            "delivery_pending",
+        )
+        if key in durable
+    }
+    minimal["summary"] = {
+        key: value
+        for key, value in scalar_summary.items()
+        if key != "ranked_candidates"
+    }
+    if len(_property_search_json_bytes(minimal)) <= limit_bytes:
+        return minimal
+
+    # The configured minimum is 64 KiB, so this final identity/checksum
+    # envelope always fits even when legacy scalar fields are pathologically
+    # large. It is preferable to reject UI detail than to violate the durable
+    # row-size contract.
+    strict_minimal: dict[str, object] = {
+        "run_id": str(durable.get("run_id") or "")[:256],
+        "principal_id": str(durable.get("principal_id") or "")[:256],
+        "status": str(durable.get("status") or "")[:64],
+        "payload_retention_status": durable["payload_retention_status"],
+        "payload_original_bytes": len(original_bytes),
+        "payload_limit_bytes": limit_bytes,
+        "payload_original_sha256": hashlib.sha256(original_bytes).hexdigest(),
+        "compact_schema_version": _PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION,
+    }
+    return strict_minimal
+
+
 def _compact_property_search_run_json_sql() -> str:
     preference_drop_sql = " ".join(
         f"- '{key}'"
@@ -2040,6 +2248,145 @@ def _merge_monotonic_property_search_run_progress(
     return current_record
 
 
+def _enforce_property_search_principal_run_quota(
+    cur: object,
+    *,
+    principal_id: str,
+) -> dict[str, int]:
+    """Converge an over-limit tenant without crossing legal-hold boundaries."""
+
+    row_limit = _property_search_run_max_rows_per_principal()
+    batch_size = _property_search_retention_batch_size()
+    cur.execute(  # type: ignore[attr-defined]
+        "SELECT COUNT(*) FROM property_search_runs WHERE principal_id = %s",
+        (principal_id,),
+    )
+    count_row = cur.fetchone()  # type: ignore[attr-defined]
+    try:
+        row_count = max(0, int(count_row[0])) if count_row else 0
+    except (TypeError, ValueError, IndexError):
+        # Compatibility for pre-contract unit-test cursors. Real PostgreSQL
+        # always returns one numeric row for COUNT(*).
+        return {"compacted": 0, "deleted": 0}
+    if row_count <= row_limit:
+        return {"compacted": 0, "deleted": 0}
+
+    cleanup_target = min(batch_size, row_count - row_limit)
+    pruned_at = _now_iso()
+    terminal_statuses = list(sorted(_PROPERTY_SEARCH_RUN_TERMINAL_STATUSES))
+    cur.execute(  # type: ignore[attr-defined]
+        f"""
+        WITH quota_compaction_candidates AS (
+            SELECT runs.principal_id, runs.run_id
+            FROM property_search_runs AS runs
+            WHERE runs.principal_id = %s
+              AND runs.status = ANY(%s)
+              AND COALESCE(runs.payload_json->>'payload_retention_status', '') <> 'compact_only'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM property_research_packet_run_memberships AS memberships
+                  JOIN property_research_packet_links AS links
+                    ON links.principal_id = memberships.principal_id
+                   AND links.candidate_ref = memberships.candidate_ref
+                  WHERE memberships.principal_id = runs.principal_id
+                    AND memberships.run_id = runs.run_id
+                    AND links.retention_state = 'legal_hold'
+              )
+            ORDER BY runs.updated_at ASC, runs.run_id ASC
+            FOR UPDATE OF runs SKIP LOCKED
+            LIMIT %s
+        ), compacted AS (
+            UPDATE property_search_runs AS runs
+            SET compact_json = (
+                    COALESCE(NULLIF(runs.compact_json, '{{}}'::jsonb), {_compact_property_search_run_json_sql()})
+                    #- '{{summary,sources}}'
+                ),
+                payload_json = (
+                    COALESCE(NULLIF(runs.compact_json, '{{}}'::jsonb), {_compact_property_search_run_json_sql()})
+                    #- '{{summary,sources}}'
+                ) || jsonb_build_object(
+                    'payload_retention_status', 'compact_only',
+                    'payload_pruned_at', %s::text
+                )
+            FROM quota_compaction_candidates AS candidates
+            WHERE runs.principal_id = candidates.principal_id
+              AND runs.run_id = candidates.run_id
+            RETURNING 1
+        )
+        SELECT COUNT(*) FROM compacted
+        """,
+        (principal_id, terminal_statuses, batch_size, pruned_at),
+    )
+    compacted_row = cur.fetchone()  # type: ignore[attr-defined]
+    try:
+        compacted_count = max(0, int(compacted_row[0])) if compacted_row else 0
+    except (TypeError, ValueError, IndexError):
+        compacted_count = 0
+
+    cur.execute(  # type: ignore[attr-defined]
+        """
+        SELECT runs.run_id
+        FROM property_search_runs AS runs
+        WHERE runs.principal_id = %s
+          AND runs.status = ANY(%s)
+          AND COALESCE(runs.payload_json->>'payload_retention_status', '') = 'compact_only'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM property_research_packet_run_memberships AS memberships
+              JOIN property_research_packet_links AS links
+                ON links.principal_id = memberships.principal_id
+               AND links.candidate_ref = memberships.candidate_ref
+              WHERE memberships.principal_id = runs.principal_id
+                AND memberships.run_id = runs.run_id
+                AND links.retention_state = 'legal_hold'
+          )
+        ORDER BY runs.updated_at ASC, runs.run_id ASC
+        FOR UPDATE OF runs SKIP LOCKED
+        LIMIT %s
+        """,
+        (principal_id, terminal_statuses, cleanup_target),
+    )
+    victim_ids = tuple(
+        str(row[0] or "").strip()
+        for row in list(cur.fetchall() or ())  # type: ignore[attr-defined]
+        if row and str(row[0] or "").strip()
+    )
+    if len(victim_ids) < cleanup_target:
+        raise RuntimeError("property_search_run_quota_exceeded_legal_hold_or_active")
+
+    cur.execute(  # type: ignore[attr-defined]
+        """
+        SELECT DISTINCT candidate_ref
+        FROM property_research_packet_run_memberships
+        WHERE principal_id = %s AND run_id = ANY(%s)
+        """,
+        (principal_id, list(victim_ids)),
+    )
+    affected_refs = tuple(
+        str(row[0] or "").strip()
+        for row in list(cur.fetchall() or ())  # type: ignore[attr-defined]
+        if row and str(row[0] or "").strip()
+    )
+    cur.execute(  # type: ignore[attr-defined]
+        "DELETE FROM property_search_work_jobs WHERE principal_id = %s AND run_id = ANY(%s)",
+        (principal_id, list(victim_ids)),
+    )
+    cur.execute(  # type: ignore[attr-defined]
+        "DELETE FROM property_search_runs WHERE principal_id = %s AND run_id = ANY(%s)",
+        (principal_id, list(victim_ids)),
+    )
+    deleted_count = max(0, int(getattr(cur, "rowcount", 0) or 0))
+    if deleted_count != cleanup_target:
+        raise RuntimeError("property_search_run_quota_delete_conflict")
+    if affected_refs:
+        refresh_property_research_packet_links_for_refs(
+            cur,
+            principal_id=principal_id,
+            candidate_refs=affected_refs,
+        )
+    return {"compacted": compacted_count, "deleted": deleted_count}
+
+
 def _store_property_search_run_record(record: dict[str, object]) -> bool:
     if not _property_search_run_database_url():
         return True
@@ -2107,6 +2454,9 @@ def _store_property_search_run_record(record: dict[str, object]) -> bool:
                     packet_links = project_property_research_packet_links(
                         normalized_record
                     )
+                    persisted_record = _bounded_property_search_run_payload(
+                        normalized_record
+                    )
                     status_value = (
                         str(compact_record.get("status") or "").strip() or None
                     )
@@ -2148,7 +2498,7 @@ def _store_property_search_run_record(record: dict[str, object]) -> bool:
                             run_id,
                             principal_id,
                             principal_key,
-                            Json(normalized_record),
+                            Json(persisted_record),
                             status_value,
                             Json(compact_record),
                             _PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION,
@@ -2164,6 +2514,11 @@ def _store_property_search_run_record(record: dict[str, object]) -> bool:
                         run_id=run_id,
                         links=packet_links,
                     )
+                    if prior_row is None:
+                        _enforce_property_search_principal_run_quota(
+                            cur,
+                            principal_id=principal_id,
+                        )
     except Exception as exc:
         if _is_property_search_account_erased_error(exc):
             return False
@@ -2216,6 +2571,7 @@ def _compare_and_swap_property_search_run_record(
     )
     compact_record = _compact_property_search_run_record(normalized_record)
     packet_links = project_property_research_packet_links(normalized_record)
+    persisted_record = _bounded_property_search_run_payload(normalized_record)
     status_value = str(compact_record.get("status") or "").strip() or None
     from psycopg.types.json import Json
 
@@ -2268,7 +2624,7 @@ def _compare_and_swap_property_search_run_record(
                         """,
                         (
                             principal_key,
-                            Json(normalized_record),
+                            Json(persisted_record),
                             status_value,
                             Json(compact_record),
                             _PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION,
@@ -2367,6 +2723,7 @@ def update_property_search_run_record_for_publication(
     )
     compact_record = _compact_property_search_run_record(normalized_record)
     packet_links = project_property_research_packet_links(normalized_record)
+    persisted_record = _bounded_property_search_run_payload(normalized_record)
     status_value = str(compact_record.get("status") or "").strip() or None
     from psycopg.types.json import Json
 
@@ -2439,7 +2796,7 @@ def update_property_search_run_record_for_publication(
                 """,
                 (
                     principal_key,
-                    Json(normalized_record),
+                    Json(persisted_record),
                     status_value,
                     Json(compact_record),
                     _PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION,
@@ -3001,33 +3358,44 @@ def _list_property_search_run_records(
     return tuple(results)
 
 
-def _prune_property_search_run_records() -> None:
+def _prune_property_search_run_records() -> dict[str, int]:
     if not _property_search_run_database_url():
-        return
+        return {"memberships_deleted": 0, "runs_compacted": 0}
     retention_seconds = _property_search_run_retention_seconds()
     if retention_seconds <= 0:
-        return
+        return {"memberships_deleted": 0, "runs_compacted": 0}
     _require_property_search_run_schema()
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=retention_seconds)).isoformat()
     pruned_at = _now_iso()
+    batch_size = _property_search_retention_batch_size()
     with _property_search_run_connect() as conn:
         with _property_search_run_transaction(conn):
             with conn.cursor() as cur:
                 _set_property_search_writer_contract(cur)
                 cur.execute(
                     """
+                    WITH expired AS (
+                        SELECT memberships.ctid
+                        FROM property_research_packet_run_memberships AS memberships
+                        JOIN property_search_runs AS runs
+                          ON runs.principal_id = memberships.principal_id
+                         AND runs.run_id = memberships.run_id
+                        JOIN property_research_packet_links AS links
+                          ON links.principal_id = memberships.principal_id
+                         AND links.candidate_ref = memberships.candidate_ref
+                        WHERE runs.updated_at < %s
+                          AND links.retention_state <> 'legal_hold'
+                        ORDER BY runs.updated_at ASC, memberships.run_id ASC,
+                                 memberships.candidate_ref ASC
+                        FOR UPDATE OF memberships SKIP LOCKED
+                        LIMIT %s
+                    )
                     DELETE FROM property_research_packet_run_memberships AS memberships
-                    USING property_search_runs AS runs,
-                          property_research_packet_links AS links
-                    WHERE memberships.principal_id = runs.principal_id
-                      AND memberships.run_id = runs.run_id
-                      AND links.principal_id = memberships.principal_id
-                      AND links.candidate_ref = memberships.candidate_ref
-                      AND runs.updated_at < %s
-                      AND links.retention_state <> 'legal_hold'
+                    USING expired
+                    WHERE memberships.ctid = expired.ctid
                     RETURNING memberships.principal_id, memberships.candidate_ref
                     """,
-                    (cutoff,),
+                    (cutoff, batch_size),
                 )
                 expired_memberships = tuple(cur.fetchall() or ())
                 refs_by_principal: dict[str, set[str]] = {}
@@ -3052,6 +3420,19 @@ def _prune_property_search_run_records() -> None:
                     FROM property_search_runs
                     WHERE updated_at < %s
                       AND COALESCE(payload_json->>'payload_retention_status', '') <> 'compact_only'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM property_research_packet_run_memberships AS memberships
+                          JOIN property_research_packet_links AS links
+                            ON links.principal_id = memberships.principal_id
+                           AND links.candidate_ref = memberships.candidate_ref
+                          WHERE memberships.principal_id = property_search_runs.principal_id
+                            AND memberships.run_id = property_search_runs.run_id
+                            AND links.retention_state = 'legal_hold'
+                      )
+                    ORDER BY updated_at ASC, run_id ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT %s
                 )
                 UPDATE property_search_runs AS runs
                 SET compact_json = stale_runs.compacted,
@@ -3063,9 +3444,15 @@ def _prune_property_search_run_records() -> None:
                 FROM stale_runs
                 WHERE runs.principal_id = stale_runs.principal_id
                   AND runs.run_id = stale_runs.run_id
+                RETURNING runs.run_id
                 """,
-                    (cutoff, pruned_at),
+                    (cutoff, batch_size, pruned_at),
                 )
+                compacted_runs = tuple(cur.fetchall() or ())
+    return {
+        "memberships_deleted": len(expired_memberships),
+        "runs_compacted": len(compacted_runs),
+    }
 
 
 def _delete_property_search_run_record(
@@ -3315,6 +3702,23 @@ def property_search_run_retention_policy() -> dict[str, str]:
         "property_search_run_retention_days": str(round(retention_seconds / 86400, 2)),
         "property_search_run_retention_env": "EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS",
         "property_search_run_retention_default_seconds": str(_PROPERTY_SEARCH_RUN_TTL_SECONDS),
+        "property_search_run_max_payload_bytes": str(
+            _property_search_run_max_payload_bytes()
+        ),
+        "property_search_run_max_payload_env": "EA_PROPERTY_SEARCH_RUN_MAX_PAYLOAD_BYTES",
+        "property_search_run_max_rows_per_principal": str(
+            _property_search_run_max_rows_per_principal()
+        ),
+        "property_search_run_max_rows_per_principal_env": (
+            "EA_PROPERTY_SEARCH_RUN_MAX_ROWS_PER_PRINCIPAL"
+        ),
+        "property_search_retention_batch_size": str(
+            _property_search_retention_batch_size()
+        ),
+        "property_search_retention_batch_size_env": (
+            "EA_PROPERTY_SEARCH_RETENTION_BATCH_SIZE"
+        ),
+        "property_search_legal_hold_policy": "preserve_and_backpressure",
     }
 
 
