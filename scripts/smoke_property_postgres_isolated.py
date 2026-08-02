@@ -52,6 +52,7 @@ NETWORK_ID_RE: Final = re.compile(r"[0-9a-f]{64}\Z")
 RESOURCE_NAME_RE: Final = re.compile(r"pq-pg-e2e-[0-9a-f]{16}-(?:db|net|data)\Z")
 ADMISSION_CAPACITY_OWNER_ROLE_RE: Final = re.compile(r"[a-z_][a-z0-9_]{0,62}\Z")
 DISPOSABLE_API_ADMISSION_ROLE: Final = "propertyquarry_api_admission"
+DISPOSABLE_API_INGRESS_ROLE: Final = "propertyquarry_api_ingress"
 DISPOSABLE_SCHEMA_RUNTIME_ROLES: Final = (
     "propertyquarry_api",
     "propertyquarry_scheduler",
@@ -242,6 +243,8 @@ PHASE_SEMANTIC_FAILURE_CODES: Final = frozenset(
         "api-admission-role-collision",
         "api-admission-role-provision-failed",
         "api-admission-role-verification-failed",
+        "api-ingress-role-collision",
+        "api-ingress-role-verification-failed",
         "libpq-environment-not-closed",
         "database-relay-start-failed",
         "database-relay-runtime-failed",
@@ -2301,10 +2304,17 @@ def _validate_disposable_admission_dsns(
     admin_database_url: str,
     admission_database_url: str,
     admission_password: str,
+    ingress_database_url: str,
+    ingress_password: str,
 ) -> None:
-    raw_urls = (admin_database_url, admission_database_url)
+    raw_urls = (
+        admin_database_url,
+        admission_database_url,
+        ingress_database_url,
+    )
     if (
         DISPOSABLE_DATABASE_PASSWORD_RE.fullmatch(admission_password) is None
+        or DISPOSABLE_DATABASE_PASSWORD_RE.fullmatch(ingress_password) is None
         or any(not value.isascii() for value in raw_urls)
         or any(
             ord(character) <= 0x20 or ord(character) == 0x7F
@@ -2318,11 +2328,14 @@ def _validate_disposable_admission_dsns(
 
         admin = urllib.parse.urlsplit(admin_database_url)
         admission = urllib.parse.urlsplit(admission_database_url)
+        ingress = urllib.parse.urlsplit(ingress_database_url)
         admin_port = admin.port
         admission_port = admission.port
+        ingress_port = ingress.port
         admin_password = str(admin.password or "")
         parsed_admin = conninfo_to_dict(admin_database_url)
         parsed_admission = conninfo_to_dict(admission_database_url)
+        parsed_ingress = conninfo_to_dict(ingress_database_url)
     except Exception:
         _fail("api-admission-role-dsn-invalid")
     expected_admin = (
@@ -2332,26 +2345,39 @@ def _validate_disposable_admission_dsns(
         "postgresql://propertyquarry_api_admission:"
         f"{admission_password}@127.0.0.1:{admission_port}/postgres"
     )
+    expected_ingress = (
+        "postgresql://propertyquarry_api_ingress:"
+        f"{ingress_password}@127.0.0.1:{ingress_port}/postgres"
+    )
     if (
         admin.scheme != "postgresql"
         or admission.scheme != "postgresql"
+        or ingress.scheme != "postgresql"
         or admin.hostname != "127.0.0.1"
         or admission.hostname != "127.0.0.1"
+        or ingress.hostname != "127.0.0.1"
         or admin_port is None
         or admission_port != admin_port
+        or ingress_port != admin_port
         or admin.username != "postgres"
         or admission.username != DISPOSABLE_API_ADMISSION_ROLE
+        or ingress.username != DISPOSABLE_API_INGRESS_ROLE
         or DISPOSABLE_DATABASE_PASSWORD_RE.fullmatch(admin_password) is None
         or admission.password != admission_password
+        or ingress.password != ingress_password
         or admin.path != "/postgres"
         or admission.path != "/postgres"
+        or ingress.path != "/postgres"
         or admin.query
         or admission.query
+        or ingress.query
         or admin.fragment
         or admission.fragment
-        or admin_database_url == admission_database_url
+        or ingress.fragment
+        or len(set(raw_urls)) != len(raw_urls)
         or admin_database_url != expected_admin
         or admission_database_url != expected_admission
+        or ingress_database_url != expected_ingress
         or parsed_admin
         != {
             "user": "postgres",
@@ -2367,6 +2393,14 @@ def _validate_disposable_admission_dsns(
             "dbname": "postgres",
             "host": "127.0.0.1",
             "port": str(admission_port),
+        }
+        or parsed_ingress
+        != {
+            "user": DISPOSABLE_API_INGRESS_ROLE,
+            "password": ingress_password,
+            "dbname": "postgres",
+            "host": "127.0.0.1",
+            "port": str(ingress_port),
         }
     ):
         _fail("api-admission-role-dsn-invalid")
@@ -2423,21 +2457,26 @@ def _postgres_scram_verifier(
     return verifier
 
 
-def _provision_api_admission_role(
+def _provision_api_database_roles(
     *,
     admin_database_url: str,
     admission_database_url: str,
     admission_password: str,
+    ingress_database_url: str,
+    ingress_password: str,
     connect: Callable[..., object] | None = None,
 ) -> None:
-    """Install the exact API admission login in the disposable database only."""
+    """Install separate internal-admission and public-ingress API logins."""
     _validate_disposable_admission_dsns(
         admin_database_url=admin_database_url,
         admission_database_url=admission_database_url,
         admission_password=admission_password,
+        ingress_database_url=ingress_database_url,
+        ingress_password=ingress_password,
     )
     _require_closed_libpq_environment()
     admission_verifier = _postgres_scram_verifier(admission_password)
+    ingress_verifier = _postgres_scram_verifier(ingress_password)
     try:
         import psycopg
         from psycopg import sql
@@ -2467,17 +2506,32 @@ def _provision_api_admission_role(
                 cursor.execute("SET LOCAL log_statement = 'none'")
                 cursor.execute("SET LOCAL log_min_error_statement = 'panic'")
                 cursor.execute(
-                    "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = %s",
-                    (DISPOSABLE_API_ADMISSION_ROLE,),
+                    "SELECT rolname FROM pg_catalog.pg_roles "
+                    "WHERE rolname IN (%s, %s) ORDER BY rolname",
+                    (
+                        DISPOSABLE_API_ADMISSION_ROLE,
+                        DISPOSABLE_API_INGRESS_ROLE,
+                    ),
                 )
-                if cursor.fetchone() is not None:
-                    _fail("api-admission-role-collision")
+                collisions = cursor.fetchall()
+                if collisions:
+                    collision_names = {str(row[0]) for row in collisions}
+                    if DISPOSABLE_API_ADMISSION_ROLE in collision_names:
+                        _fail("api-admission-role-collision")
+                    _fail("api-ingress-role-collision")
                 cursor.execute(
                     sql.SQL(
                         'CREATE ROLE "propertyquarry_api_admission" WITH '
                         "LOGIN PASSWORD {} NOINHERIT NOSUPERUSER NOCREATEDB "
                         "NOCREATEROLE NOREPLICATION NOBYPASSRLS"
                     ).format(sql.Literal(admission_verifier))
+                )
+                cursor.execute(
+                    sql.SQL(
+                        'CREATE ROLE "propertyquarry_api_ingress" WITH '
+                        "LOGIN PASSWORD {} NOINHERIT NOSUPERUSER NOCREATEDB "
+                        "NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+                    ).format(sql.Literal(ingress_verifier))
                 )
                 cursor.execute(
                     """
@@ -2488,10 +2542,13 @@ def _provision_api_admission_role(
                     WHERE relation.oid IN (
                         'propertyquarry_admission_quota_buckets'::regclass,
                         'propertyquarry_admission_leases'::regclass,
-                        'propertyquarry_admission_capacity_state'::regclass
+                        'propertyquarry_admission_capacity_state'::regclass,
+                        'propertyquarry_ingress_quota_buckets'::regclass,
+                        'propertyquarry_ingress_leases'::regclass,
+                        'propertyquarry_ingress_admission_capacity'::regclass
                     )
                     GROUP BY namespace.nspname
-                    HAVING COUNT(*) = 3
+                    HAVING COUNT(*) = 6
                     """
                 )
                 if cursor.fetchall() != [("public",)]:
@@ -2500,9 +2557,14 @@ def _provision_api_admission_role(
                     "REVOKE ALL PRIVILEGES ON DATABASE postgres FROM PUBLIC",
                     "GRANT CONNECT ON DATABASE postgres TO propertyquarry_api_admission",
                     "REVOKE CREATE, TEMPORARY ON DATABASE postgres FROM propertyquarry_api_admission",
+                    "GRANT CONNECT ON DATABASE postgres TO propertyquarry_api_ingress",
+                    "REVOKE CREATE, TEMPORARY ON DATABASE postgres FROM propertyquarry_api_ingress",
                     "REVOKE ALL ON SCHEMA public FROM PUBLIC",
                     "GRANT USAGE ON SCHEMA public TO propertyquarry_api_admission",
+                    "GRANT USAGE ON SCHEMA public TO propertyquarry_api_ingress",
                     "ALTER ROLE propertyquarry_api_admission IN DATABASE postgres "
+                    "SET search_path TO public, pg_catalog",
+                    "ALTER ROLE propertyquarry_api_ingress IN DATABASE postgres "
                     "SET search_path TO public, pg_catalog",
                     "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM PUBLIC",
                     "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC",
@@ -2513,6 +2575,12 @@ def _provision_api_admission_role(
                     "FROM propertyquarry_api_admission",
                     "REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public "
                     "FROM propertyquarry_api_admission",
+                    "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public "
+                    "FROM propertyquarry_api_ingress",
+                    "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public "
+                    "FROM propertyquarry_api_ingress",
+                    "REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public "
+                    "FROM propertyquarry_api_ingress",
                     "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "
                     "propertyquarry_admission_quota_buckets, "
                     "propertyquarry_admission_leases TO propertyquarry_api_admission",
@@ -2526,32 +2594,50 @@ def _provision_api_admission_role(
                     "propertyquarry_admission_capacity_after_delete(), "
                     "propertyquarry_admission_capacity_after_truncate() "
                     "FROM propertyquarry_api_admission",
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "
+                    "propertyquarry_ingress_quota_buckets, "
+                    "propertyquarry_ingress_leases TO propertyquarry_api_ingress",
+                    "GRANT SELECT ON TABLE propertyquarry_ingress_admission_capacity "
+                    "TO propertyquarry_api_ingress",
+                    "REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER "
+                    "ON TABLE propertyquarry_ingress_admission_capacity "
+                    "FROM propertyquarry_api_ingress",
+                    "REVOKE EXECUTE ON FUNCTION "
+                    "propertyquarry_ingress_admission_capacity_after_insert(), "
+                    "propertyquarry_ingress_admission_capacity_after_delete(), "
+                    "propertyquarry_ingress_admission_capacity_after_truncate() "
+                    "FROM propertyquarry_api_ingress",
                 ):
                     cursor.execute(statement)
-                cursor.execute(
-                    """
-                    SELECT role.rolcanlogin, role.rolinherit, role.rolsuper,
-                           role.rolcreaterole, role.rolcreatedb,
-                           role.rolreplication, role.rolbypassrls,
-                           (SELECT COUNT(*)
-                            FROM pg_catalog.pg_auth_members AS membership
-                            WHERE membership.member = role.oid)
-                    FROM pg_catalog.pg_roles AS role
-                    WHERE role.rolname = %s
-                    """,
-                    (DISPOSABLE_API_ADMISSION_ROLE,),
-                )
-                if cursor.fetchone() != (
-                    True,
-                    False,
-                    False,
-                    False,
-                    False,
-                    False,
-                    False,
-                    0,
+                for role_name in (
+                    DISPOSABLE_API_ADMISSION_ROLE,
+                    DISPOSABLE_API_INGRESS_ROLE,
                 ):
-                    _fail("api-admission-role-provision-failed")
+                    cursor.execute(
+                        """
+                        SELECT role.rolcanlogin, role.rolinherit, role.rolsuper,
+                               role.rolcreaterole, role.rolcreatedb,
+                               role.rolreplication, role.rolbypassrls,
+                               (SELECT COUNT(*)
+                                FROM pg_catalog.pg_auth_members AS membership
+                                WHERE membership.member = role.oid
+                                   OR membership.roleid = role.oid)
+                        FROM pg_catalog.pg_roles AS role
+                        WHERE role.rolname = %s
+                        """,
+                        (role_name,),
+                    )
+                    if cursor.fetchone() != (
+                        True,
+                        False,
+                        False,
+                        False,
+                        False,
+                        False,
+                        False,
+                        0,
+                    ):
+                        _fail("api-admission-role-provision-failed")
             connection.commit()  # type: ignore[attr-defined]
     except IsolatedPostgresError:
         raise
@@ -2588,6 +2674,103 @@ def _verify_api_admission_role(
         raise
     except Exception:
         _fail("api-admission-role-verification-failed")
+
+
+def _verify_api_ingress_role(
+    *,
+    ingress_database_url: str,
+    connect: Callable[..., object] | None = None,
+) -> None:
+    """Prove the ingress login has only its bounded accounting authority."""
+    _require_closed_libpq_environment()
+    try:
+        import psycopg
+
+        connector = connect or psycopg.connect
+        with connector(
+            ingress_database_url,
+            autocommit=True,
+            connect_timeout=5,
+            hostaddr="127.0.0.1",
+            sslmode="disable",
+            options="",
+            application_name="propertyquarry-isolated-api-ingress-proof",
+            target_session_attrs="read-write",
+        ) as connection:
+            with connection.cursor() as cursor:  # type: ignore[attr-defined]
+                cursor.execute(
+                    """
+                    SELECT current_database(), current_user,
+                           role.rolcanlogin, role.rolinherit, role.rolsuper,
+                           role.rolcreaterole, role.rolcreatedb,
+                           role.rolreplication, role.rolbypassrls,
+                           (SELECT COUNT(*)
+                            FROM pg_catalog.pg_auth_members AS membership
+                            WHERE membership.member = role.oid
+                               OR membership.roleid = role.oid)
+                    FROM pg_catalog.pg_roles AS role
+                    WHERE role.rolname = current_user
+                    """
+                )
+                if cursor.fetchone() != (
+                    "postgres",
+                    DISPOSABLE_API_INGRESS_ROLE,
+                    True,
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    0,
+                ):
+                    _fail("api-ingress-role-verification-failed")
+                cursor.execute(
+                    """
+                    SELECT
+                        has_database_privilege(current_user, current_database(), 'CONNECT'),
+                        NOT has_database_privilege(current_user, current_database(), 'CREATE'),
+                        NOT has_database_privilege(current_user, current_database(), 'TEMPORARY'),
+                        has_schema_privilege(current_user, 'public', 'USAGE'),
+                        NOT has_schema_privilege(current_user, 'public', 'CREATE'),
+                        has_table_privilege(current_user, 'propertyquarry_ingress_quota_buckets', 'SELECT,INSERT,UPDATE,DELETE'),
+                        NOT has_table_privilege(current_user, 'propertyquarry_ingress_quota_buckets', 'TRUNCATE,REFERENCES,TRIGGER'),
+                        has_table_privilege(current_user, 'propertyquarry_ingress_leases', 'SELECT,INSERT,UPDATE,DELETE'),
+                        NOT has_table_privilege(current_user, 'propertyquarry_ingress_leases', 'TRUNCATE,REFERENCES,TRIGGER'),
+                        has_table_privilege(current_user, 'propertyquarry_ingress_admission_capacity', 'SELECT'),
+                        NOT has_table_privilege(current_user, 'propertyquarry_ingress_admission_capacity', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),
+                        NOT has_table_privilege(current_user, 'propertyquarry_admission_quota_buckets', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),
+                        NOT has_table_privilege(current_user, 'propertyquarry_admission_leases', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),
+                        NOT has_table_privilege(current_user, 'propertyquarry_admission_capacity_state', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),
+                        NOT has_function_privilege(current_user, 'propertyquarry_ingress_admission_capacity_after_insert()', 'EXECUTE'),
+                        NOT has_function_privilege(current_user, 'propertyquarry_ingress_admission_capacity_after_delete()', 'EXECUTE'),
+                        NOT has_function_privilege(current_user, 'propertyquarry_ingress_admission_capacity_after_truncate()', 'EXECUTE')
+                    """
+                )
+                if cursor.fetchone() != (True,) * 17:
+                    _fail("api-ingress-role-verification-failed")
+                cursor.execute(
+                    """
+                    SELECT capacity_key, row_count, hard_limit, contract_version
+                    FROM propertyquarry_ingress_admission_capacity
+                    ORDER BY capacity_key
+                    """
+                )
+                rows = cursor.fetchall()
+                if (
+                    len(rows) != 2
+                    or tuple((row[0], row[2], row[3]) for row in rows)
+                    != (("lease", 100_000, 1), ("quota", 1_000_000, 1))
+                    or any(
+                        type(row[1]) is not int or row[1] < 0 or row[1] > row[2]
+                        for row in rows
+                    )
+                ):
+                    _fail("api-ingress-role-verification-failed")
+    except IsolatedPostgresError:
+        raise
+    except Exception:
+        _fail("api-ingress-role-verification-failed")
 
 
 def _resource_label_command(
@@ -2803,6 +2986,7 @@ def _runtime_environment(
     temp_root: Path,
     database_url: str,
     admission_database_url: str,
+    ingress_database_url: str,
     api_token: str,
     signing_secret: str,
     identity_session_secret: str,
@@ -2850,6 +3034,7 @@ def _runtime_environment(
         "PROPERTYQUARRY_ENABLE_PUBLIC_SIDE_SURFACES": "0",
         "PROPERTYQUARRY_ENABLE_PUBLIC_TOURS": "0",
         "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": admission_database_url,
+        "PROPERTYQUARRY_API_INGRESS_DATABASE_URL": ingress_database_url,
         "PROPERTYQUARRY_IDENTITY_SESSION_SECRET": identity_session_secret,
         "PROPERTYQUARRY_POSTGRES_BROWSER_E2E": "1",
         "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET": erasure_secret,
@@ -2957,11 +3142,17 @@ def _execute_guarded(
                 "postgresql://propertyquarry_api_admission:"
                 f"{admission_password}@127.0.0.1:{db_port}/postgres"
             )
+            ingress_password = secrets.token_urlsafe(32)
+            ingress_database_url = (
+                "postgresql://propertyquarry_api_ingress:"
+                f"{ingress_password}@127.0.0.1:{db_port}/postgres"
+            )
             runtime_values = _runtime_environment(
                 repo_root=repo_root,
                 temp_root=temp_root,
                 database_url=database_url,
                 admission_database_url=admission_database_url,
+                ingress_database_url=ingress_database_url,
                 api_token=secrets.token_urlsafe(32),
                 signing_secret=secrets.token_urlsafe(48),
                 identity_session_secret=secrets.token_urlsafe(48),
@@ -2981,14 +3172,20 @@ def _execute_guarded(
                 storage_guard=storage_guard,
             )
             database_relay.assert_healthy()
-            _provision_api_admission_role(
+            _provision_api_database_roles(
                 admin_database_url=database_url,
                 admission_database_url=admission_database_url,
                 admission_password=admission_password,
+                ingress_database_url=ingress_database_url,
+                ingress_password=ingress_password,
             )
             database_relay.assert_healthy()
             _verify_api_admission_role(
                 admission_database_url=admission_database_url,
+            )
+            database_relay.assert_healthy()
+            _verify_api_ingress_role(
+                ingress_database_url=ingress_database_url,
             )
             database_relay.assert_healthy()
             _run_host(

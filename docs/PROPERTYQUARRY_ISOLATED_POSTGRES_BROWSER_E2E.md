@@ -102,14 +102,21 @@ files are mode 0600. Production runtime settings include a fresh, per-run
 property-search erasure secret. Before migration, the controller creates the
 exact dedicated `NOLOGIN NOINHERIT` admission-capacity owner inside the
 disposable cluster and verifies that all elevated flags and outbound
-memberships are absent. After migration, it creates a distinct
-`propertyquarry_api_admission` login with a fresh per-run password, removes
-public database/schema/relation/function authority, grants only admission-table
-`SELECT, INSERT, UPDATE, DELETE` plus capacity-state `SELECT`, and runs the same
-strict least-privilege probe required by production readiness. Neither database
-DSN nor password is placed in Docker or process argv. The controller derives a
-PostgreSQL SCRAM verifier client-side, so the clear password is not embedded in
-a loggable role-management statement. Before any direct libpq connection, the
+memberships are absent. After migration, it creates distinct
+`propertyquarry_api_admission` and `propertyquarry_api_ingress` logins with
+independent fresh per-run passwords, removes public
+database/schema/relation/function authority, and explicitly denies each login
+access to the other authority's tables. The internal role receives only
+admission-table `SELECT, INSERT, UPDATE, DELETE` plus capacity-state `SELECT`;
+the ingress role receives the corresponding rights only on the bounded ingress
+quota/lease tables plus ingress-capacity `SELECT`. Both roles are proved to be
+unprivileged, membership-free logins, the internal role runs the production
+strict least-privilege probe, and the ingress role runs an exact privilege and capacity-contract
+probe before API startup. The production-mode API receives both dedicated DSNs,
+neither of which equals the primary application DSN or each other. No database
+DSN or password is placed in Docker or process argv. The controller derives
+PostgreSQL SCRAM verifiers client-side, so clear passwords are not embedded in
+loggable role-management statements. Before any direct libpq connection, the
 scoped controller removes all inherited `PG*` overrides, asserts that the
 environment remains closed, and explicitly binds `hostaddr=127.0.0.1`, empty
 session options, and the private relay port from the canonical DSNs.

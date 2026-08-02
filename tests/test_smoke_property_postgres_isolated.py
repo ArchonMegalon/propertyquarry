@@ -840,32 +840,50 @@ def test_schema_runtime_role_bootstrap_verifies_exact_safe_roles(
 
 
 def test_disposable_api_admission_dsns_are_distinct_loopback_credentials() -> None:
-    password = "A" * 32
+    admission_password = "A" * 32
+    ingress_password = "C" * 32
     admin = f"postgresql://postgres:{'B' * 32}@127.0.0.1:15432/postgres"
     admission = (
         "postgresql://propertyquarry_api_admission:"
-        f"{password}@127.0.0.1:15432/postgres"
+        f"{admission_password}@127.0.0.1:15432/postgres"
+    )
+    ingress = (
+        "postgresql://propertyquarry_api_ingress:"
+        f"{ingress_password}@127.0.0.1:15432/postgres"
     )
     harness._validate_disposable_admission_dsns(
         admin_database_url=admin,
         admission_database_url=admission,
-        admission_password=password,
+        admission_password=admission_password,
+        ingress_database_url=ingress,
+        ingress_password=ingress_password,
     )
 
     invalid = (
-        (admin, admission, "short"),
-        ("\x00" + admin, admission, password),
-        (admin + "\t", admission, password),
-        (admin, "\r" + admission, password),
-        (admin, admission.replace("@", "\n@"), password),
-        (" " + admin, admission, password),
-        (admin.replace("127.0.0.1", "db.example"), admission, password),
-        (admin, admission.replace("127.0.0.1", "db.example"), password),
-        (admin, admin, password),
-        (admin, admission.replace(":15432", ":15433"), password),
-        (admin, admission + "?sslmode=disable", password),
+        (admin, admission, "short", ingress, ingress_password),
+        (admin, admission, admission_password, ingress, "short"),
+        ("\x00" + admin, admission, admission_password, ingress, ingress_password),
+        (admin + "\t", admission, admission_password, ingress, ingress_password),
+        (admin, "\r" + admission, admission_password, ingress, ingress_password),
+        (admin, admission, admission_password, ingress.replace("@", "\n@"), ingress_password),
+        (" " + admin, admission, admission_password, ingress, ingress_password),
+        (admin.replace("127.0.0.1", "db.example"), admission, admission_password, ingress, ingress_password),
+        (admin, admission.replace("127.0.0.1", "db.example"), admission_password, ingress, ingress_password),
+        (admin, admission, admission_password, ingress.replace("127.0.0.1", "db.example"), ingress_password),
+        (admin, admin, admission_password, ingress, ingress_password),
+        (admin, admission, admission_password, admission, ingress_password),
+        (admin, admission.replace(":15432", ":15433"), admission_password, ingress, ingress_password),
+        (admin, admission, admission_password, ingress.replace(":15432", ":15433"), ingress_password),
+        (admin, admission + "?sslmode=disable", admission_password, ingress, ingress_password),
+        (admin, admission, admission_password, ingress + "?sslmode=disable", ingress_password),
     )
-    for admin_url, admission_url, supplied_password in invalid:
+    for (
+        admin_url,
+        admission_url,
+        supplied_admission_password,
+        ingress_url,
+        supplied_ingress_password,
+    ) in invalid:
         with pytest.raises(
             harness.IsolatedPostgresError,
             match="api-admission-role-dsn-invalid",
@@ -873,7 +891,9 @@ def test_disposable_api_admission_dsns_are_distinct_loopback_credentials() -> No
             harness._validate_disposable_admission_dsns(
                 admin_database_url=admin_url,
                 admission_database_url=admission_url,
-                admission_password=supplied_password,
+                admission_password=supplied_admission_password,
+                ingress_database_url=ingress_url,
+                ingress_password=supplied_ingress_password,
             )
 
 
@@ -913,10 +933,15 @@ def test_libpq_environment_is_closed_before_any_direct_connection(
     harness._require_closed_libpq_environment(isolated_environment)
 
     password = "E" * 32
+    ingress_password = "G" * 32
     admin = f"postgresql://postgres:{'F' * 32}@127.0.0.1:15432/postgres"
     admission = (
         "postgresql://propertyquarry_api_admission:"
         f"{password}@127.0.0.1:15432/postgres"
+    )
+    ingress = (
+        "postgresql://propertyquarry_api_ingress:"
+        f"{ingress_password}@127.0.0.1:15432/postgres"
     )
     connected: list[bool] = []
     for key in tuple(os.environ):
@@ -927,10 +952,12 @@ def test_libpq_environment_is_closed_before_any_direct_connection(
         harness.IsolatedPostgresError,
         match="libpq-environment-not-closed",
     ):
-        harness._provision_api_admission_role(
+        harness._provision_api_database_roles(
             admin_database_url=admin,
             admission_database_url=admission,
             admission_password=password,
+            ingress_database_url=ingress,
+            ingress_password=ingress_password,
             connect=lambda *_args, **_kwargs: connected.append(True),
         )
     assert connected == []
@@ -942,10 +969,15 @@ def test_disposable_api_admission_role_is_exactly_granted_and_strictly_probed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     password = "C" * 32
+    ingress_password = "E" * 32
     admin = f"postgresql://postgres:{'D' * 32}@127.0.0.1:15432/postgres"
     admission = (
         "postgresql://propertyquarry_api_admission:"
         f"{password}@127.0.0.1:15432/postgres"
+    )
+    ingress = (
+        "postgresql://propertyquarry_api_ingress:"
+        f"{ingress_password}@127.0.0.1:15432/postgres"
     )
     statements: list[object] = []
 
@@ -1010,10 +1042,12 @@ def test_disposable_api_admission_role_is_exactly_granted_and_strictly_probed(
         }
         return provision_connection
 
-    harness._provision_api_admission_role(
+    harness._provision_api_database_roles(
         admin_database_url=admin,
         admission_database_url=admission,
         admission_password=password,
+        ingress_database_url=ingress,
+        ingress_password=ingress_password,
         connect=connect_admin,
     )
     assert provision_connection.committed is True
@@ -1025,6 +1059,9 @@ def test_disposable_api_admission_role_is_exactly_granted_and_strictly_probed(
     assert "REVOKE ALL ON SCHEMA public FROM PUBLIC" in rendered
     assert "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE" in rendered
     assert "GRANT SELECT ON TABLE propertyquarry_admission_capacity_state" in rendered
+    assert "GRANT SELECT ON TABLE propertyquarry_ingress_admission_capacity" in rendered
+    assert "FROM propertyquarry_api_admission" in rendered
+    assert "FROM propertyquarry_api_ingress" in rendered
 
     verify_connection = Connection()
 
@@ -1055,6 +1092,53 @@ def test_disposable_api_admission_role_is_exactly_granted_and_strictly_probed(
     )
     assert probed == [verify_connection._cursor]
 
+    class IngressCursor(Cursor):
+        def execute(self, statement: object, _params: object = ()) -> None:
+            normalized = " ".join(statement.split()) if isinstance(statement, str) else ""
+            self.row = None
+            self.rows = []
+            if normalized.startswith("SELECT current_database(), current_user"):
+                self.row = (
+                    "postgres",
+                    harness.DISPOSABLE_API_INGRESS_ROLE,
+                    True,
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    0,
+                )
+            elif normalized.startswith("SELECT has_database_privilege"):
+                self.row = (True,) * 17
+            elif normalized.startswith("SELECT capacity_key"):
+                self.rows = [
+                    ("lease", 0, 100_000, 1),
+                    ("quota", 0, 1_000_000, 1),
+                ]
+
+    ingress_connection = Connection()
+    ingress_connection._cursor = IngressCursor()
+
+    def connect_ingress(database_url: str, **kwargs: object) -> Connection:
+        assert database_url == ingress
+        assert kwargs == {
+            "autocommit": True,
+            "connect_timeout": 5,
+            "hostaddr": "127.0.0.1",
+            "sslmode": "disable",
+            "options": "",
+            "application_name": "propertyquarry-isolated-api-ingress-proof",
+            "target_session_attrs": "read-write",
+        }
+        return ingress_connection
+
+    harness._verify_api_ingress_role(
+        ingress_database_url=ingress,
+        connect=connect_ingress,
+    )
+
     def interrupted(_cursor: object, *, require_least_privilege: bool) -> None:
         assert require_least_privilege is True
         raise harness.IsolatedPostgresError("internal-watchdog-expired")
@@ -1067,6 +1151,15 @@ def test_disposable_api_admission_role_is_exactly_granted_and_strictly_probed(
             admission_database_url=admission,
             connect=connect_admission,
             probe=interrupted,
+        )
+    ingress_connection._cursor = Cursor()
+    with pytest.raises(
+        harness.IsolatedPostgresError,
+        match="api-ingress-role-verification-failed",
+    ):
+        harness._verify_api_ingress_role(
+            ingress_database_url=ingress,
+            connect=connect_ingress,
         )
     captured = capsys.readouterr()
     assert captured.out == "" and captured.err == ""
@@ -1367,6 +1460,7 @@ def test_prod_runtime_has_fresh_product_secrets_and_only_temp_state(
         temp_root=tmp_path / "first",
         database_url="postgresql://loopback/first",
         admission_database_url="postgresql://admission/first",
+        ingress_database_url="postgresql://ingress/first",
         api_token="api-one",
         signing_secret="sign-one",
         identity_session_secret="identity-one-" + "a" * 32,
@@ -1379,6 +1473,7 @@ def test_prod_runtime_has_fresh_product_secrets_and_only_temp_state(
         temp_root=tmp_path / "second",
         database_url="postgresql://loopback/second",
         admission_database_url="postgresql://admission/second",
+        ingress_database_url="postgresql://ingress/second",
         api_token="api-two",
         signing_secret="sign-two",
         identity_session_secret="identity-two-" + "b" * 32,
@@ -1393,6 +1488,12 @@ def test_prod_runtime_has_fresh_product_secrets_and_only_temp_state(
     )
     assert second["PROPERTYQUARRY_API_ADMISSION_DATABASE_URL"] == (
         "postgresql://admission/second"
+    )
+    assert first["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"] == (
+        "postgresql://ingress/first"
+    )
+    assert second["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"] == (
+        "postgresql://ingress/second"
     )
     assert first["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"] == (
         "identity-one-" + "a" * 32
@@ -1637,7 +1738,9 @@ def test_scoped_diagnostic_allowlist_is_a_closed_phase_reason_schema() -> None:
             "api-admission-role-dsn-invalid",
             "api-admission-role-collision",
             "api-admission-role-provision-failed",
-            "api-admission-role-verification-failed",
+        "api-admission-role-verification-failed",
+                "api-ingress-role-collision",
+                "api-ingress-role-verification-failed",
             "libpq-environment-not-closed",
             "database-relay-start-failed",
             "database-relay-runtime-failed",
