@@ -19,7 +19,10 @@ from scripts import propertyquarry_live_authenticated_smoke as authenticated_smo
 from scripts import propertyquarry_live_mobile_surface_smoke as mobile_smoke
 from scripts import propertyquarry_map_preview_flagship_gate as map_gate
 from scripts.propertyquarry_live_http_security import normalized_origin, validated_live_base_origin
-from scripts.propertyquarry_live_probe_auth import live_probe_request_headers
+from scripts.propertyquarry_live_probe_auth import (
+    live_probe_request_headers,
+    release_probe_path_allowed,
+)
 
 
 _NOW = 1_800_000_000
@@ -118,6 +121,13 @@ def test_release_probe_headers_sign_only_exact_origin_and_allowlisted_route() ->
         assert PROPERTYQUARRY_RELEASE_PROBE_TIMESTAMP_HEADER.lower() not in lowered
         assert PROPERTYQUARRY_RELEASE_PROBE_NONCE_HEADER.lower() not in lowered
         assert PROPERTYQUARRY_RELEASE_PROBE_SIGNATURE_HEADER.lower() not in lowered
+
+
+def test_release_probe_allowlists_exact_legacy_support_redirect_surface() -> None:
+    assert release_probe_path_allowed("https://propertyquarry.com/app/support") is True
+    assert release_probe_path_allowed("https://propertyquarry.com/app/settings/support") is True
+    assert release_probe_path_allowed("https://propertyquarry.com/app/support/") is False
+    assert release_probe_path_allowed("https://propertyquarry.com/app/support?next=account") is False
 
 
 def test_release_probe_headers_bind_head_and_refuse_post() -> None:

@@ -189,6 +189,8 @@ class _FakePage:
     def __init__(self, context: "_FakeContext") -> None:
         self.context = context
         self.url = "about:blank"
+        self.navigation_urls: list[str] = []
+        self.wait_timeouts_ms: list[int] = []
         self.session: _FakeSession | None = None
         self.target_navigation_count = 0
         self.default_timeout_ms = 0
@@ -206,6 +208,9 @@ class _FakePage:
 
     def goto(self, url: str, **_kwargs: object) -> object:
         self.url = url
+        self.navigation_urls.append(url)
+        if url == "about:blank":
+            return SimpleNamespace(status=200)
         request_headers = (
             {}
             if self.skip_target_request_interception and "/access/" not in url
@@ -321,8 +326,8 @@ class _FakePage:
             headers=response_headers,
         )
 
-    def wait_for_timeout(self, _timeout_ms: int) -> None:
-        return None
+    def wait_for_timeout(self, timeout_ms: int) -> None:
+        self.wait_timeouts_ms.append(timeout_ms)
 
     def evaluate(self, script: str) -> object:
         if "getEntriesByType('navigation')" in script:
@@ -503,7 +508,7 @@ def test_default_constrained_profile_is_closed_bounded_and_honest() -> None:
     assert receipt["viewport"]["claim"] == "emulated_viewport_not_physical_device"
     assert receipt["cache_policy"] == {
         "cold": "browser_http_cache_cleared_before_first_navigation",
-        "warm": "same_context_repeat_navigation_cache_eligible",
+        "warm": "same_context_neutral_page_repeat_cache_eligible",
         "service_workers": "blocked",
     }
 
@@ -973,6 +978,15 @@ def test_chromium_constrained_collector_records_identity_cold_warm_and_waterfall
     assert receipt["measurements"]["cold"]["failed_request_count"] == 0
     assert receipt["measurements"]["cold"]["failed_requests"] == []
     assert receipt["measurements"]["cold"]["incomplete_request_count"] == 0
+    assert browser.context.page.navigation_urls == [
+        "https://propertyquarry.test/app/search",
+        "about:blank",
+        "https://propertyquarry.test/app/search",
+    ]
+    assert browser.context.page.wait_timeouts_ms == [1_000, 1_000]
+    assert receipt["measurements"]["warm"]["cache_state"] == (
+        "same_context_neutral_page_repeat_cache_observed"
+    )
     assert receipt["measurements"]["warm"]["cache_hit_count"] == 1
     assert receipt["measurements"]["warm"]["subresource_cache_hit_count"] == 1
     assert receipt["measurements"]["warm"]["final_url"] == (
