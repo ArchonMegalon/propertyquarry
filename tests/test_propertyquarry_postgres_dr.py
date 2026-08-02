@@ -2839,6 +2839,11 @@ def test_canonical_queries_are_snapshot_bound_public_quoted_and_chunk_bounded() 
         for column in identity_columns:
             assert f'source_row."{column}"' in full_sql
             assert f'digested_row."{column}"' in full_sql
+            identity_order = f'digested_row."{column}" COLLATE "C"'
+            if (table, column) in dr._CRITICAL_DATA_NON_TEXT_IDENTITIES:
+                assert identity_order not in full_sql
+            else:
+                assert identity_order in full_sql
         assert 'digested_row.row_sha256 COLLATE "C"' in full_sql
         assert "bounded_chunks AS MATERIALIZED" in full_sql
         assert f"((ordinal - 1) / {dr.CRITICAL_DATA_CHUNK_SIZE})" in full_sql
@@ -2848,6 +2853,21 @@ def test_canonical_queries_are_snapshot_bound_public_quoted_and_chunk_bounded() 
         assert "all_chunks" not in full_sql
         assert f"FROM {table} " not in preflight_sql
         assert f"FROM {table} " not in full_sql
+
+
+def test_critical_data_identity_collations_match_schema_types() -> None:
+    assert dr._CRITICAL_DATA_NON_TEXT_IDENTITIES == {
+        ("property_content_job_events", "event_sequence"),
+        ("propertyquarry_admission_leases", "lease_id"),
+    }
+    assert (
+        "propertyquarry_admission_leases",
+        "dimension_key",
+    ) in dr._CRITICAL_DATA_TEXT_IDENTITIES
+    assert (
+        "propertyquarry_admission_leases",
+        "lease_id",
+    ) not in dr._CRITICAL_DATA_TEXT_IDENTITIES
 
 
 def test_over_limit_preflight_never_executes_full_merkle_query() -> None:

@@ -89,11 +89,15 @@ CRITICAL_DATA_TABLES: tuple[tuple[str, tuple[str, ...], bool], ...] = (
     ),
     ("propertyquarry_admission_capacity_state", ("capacity_key",), True),
 )
+_CRITICAL_DATA_NON_TEXT_IDENTITIES = {
+    ("property_content_job_events", "event_sequence"),
+    ("propertyquarry_admission_leases", "lease_id"),
+}
 _CRITICAL_DATA_TEXT_IDENTITIES = {
     (table, column)
     for table, columns, _data_required in CRITICAL_DATA_TABLES
     for column in columns
-    if (table, column) != ("property_content_job_events", "event_sequence")
+    if (table, column) not in _CRITICAL_DATA_NON_TEXT_IDENTITIES
 }
 DISPOSABLE_CONFIRMATION = "YES_DESTROY_DISPOSABLE_TARGET"
 DEFAULT_DISPOSABLE_PREFIX = "propertyquarry_restore_drill_"
