@@ -9,6 +9,7 @@ from typing import Iterator
 
 import pytest
 
+from app.api.routes import landing_workspace
 from app.propertyquarry_release_probe import (
     PROPERTYQUARRY_RELEASE_PROBE_NONCE_HEADER,
     PROPERTYQUARRY_RELEASE_PROBE_SIGNATURE_HEADER,
@@ -128,6 +129,16 @@ def test_release_probe_allowlists_exact_legacy_support_redirect_surface() -> Non
     assert release_probe_path_allowed("https://propertyquarry.com/app/settings/support") is True
     assert release_probe_path_allowed("https://propertyquarry.com/app/support/") is False
     assert release_probe_path_allowed("https://propertyquarry.com/app/support?next=account") is False
+
+    response = landing_workspace.app_support_legacy_redirect()
+    assert response.status_code == 303
+    assert response.headers["location"] == "/app/settings/support"
+    assert any(
+        route.path == "/app/support"
+        and route.endpoint is landing_workspace.app_support_legacy_redirect
+        and route.methods == {"GET"}
+        for route in landing_workspace.router.routes
+    )
 
 
 def test_release_probe_headers_bind_head_and_refuse_post() -> None:
