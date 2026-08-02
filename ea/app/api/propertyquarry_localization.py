@@ -109,6 +109,9 @@ _DE_AT = {
     "Sites": "Portale",
     "Updates": "Aktualisierungen",
     "Search totals": "Suchsummen",
+    "Search progress": "Suchfortschritt",
+    "Homes found": "Immobilien gefunden",
+    "Homes checked": "Geprüft",
     "Checking the saved search.": "Gespeicherte Suche wird geprüft.",
     "Checking the latest search status.": "Aktueller Suchstatus wird geprüft.",
     "Saved defaults": "Gespeicherte Vorgaben",
@@ -374,6 +377,9 @@ _ES_CR = {
     "Sites": "Portales",
     "Updates": "Actualizaciones",
     "Search totals": "Totales de búsqueda",
+    "Search progress": "Progreso de búsqueda",
+    "Homes found": "Propiedades encontradas",
+    "Homes checked": "Propiedades revisadas",
     "Checking the saved search.": "Revisando la búsqueda guardada.",
     "Checking the latest search status.": "Revisando el estado más reciente de la búsqueda.",
     "Saved defaults": "Preferencias guardadas",
@@ -1071,6 +1077,18 @@ def propertyquarry_translation(value: str, *, locale: str) -> str:
                 "saved opportunities": "oportunidades guardadas",
             }[unit]
         return f"{matching_total.group(1)} {label}"
+    source_progress = re.fullmatch(
+        r"(\d+)\s*/\s*(\d+)\s+(sources|search queries)",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if source_progress:
+        unit = source_progress.group(3).casefold()
+        if is_german:
+            label = "Quellen" if unit == "sources" else "Suchanfragen"
+        else:
+            label = "fuentes" if unit == "sources" else "consultas de búsqueda"
+        return f"{source_progress.group(1)} / {source_progress.group(2)} {label}"
     rooms = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s+rooms?(\s*\|\s*.+)?", source, flags=re.IGNORECASE)
     if rooms:
         unit = "Zimmer" if is_german else ("habitación" if rooms.group(1) == "1" else "habitaciones")

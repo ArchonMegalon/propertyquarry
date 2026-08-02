@@ -107,6 +107,18 @@ load_env_file "${APP_ROOT}/state/runtime/propertyquarry_render_bridge.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_magicfit_reviewer.env"
 import_existing_runtime_environment
 
+requested_mode="${EA_RUNTIME_MODE:-prod}"
+requested_mode="${requested_mode,,}"
+case "${requested_mode}" in
+  prod|production)
+    ;;
+  *)
+    /usr/bin/printf '%s\n' \
+      "EA_RUNTIME_MODE must select production for the authoritative local deployment." >&2
+    exit 2
+    ;;
+esac
+
 : "${PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID:=${EA_GOOGLE_OAUTH_CLIENT_ID:-}}"
 : "${PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET:=${EA_GOOGLE_OAUTH_CLIENT_SECRET:-}}"
 : "${PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET:=${EA_GOOGLE_OAUTH_STATE_SECRET:-}}"

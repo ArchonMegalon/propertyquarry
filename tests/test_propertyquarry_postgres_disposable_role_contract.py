@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import yaml
-
 from scripts import provision_propertyquarry_runtime_database as runtime_database
 from scripts import smoke_property_postgres_isolated as isolated_harness
 
@@ -98,6 +96,9 @@ def test_isolated_runtime_executes_the_authenticated_overlay_before_the_venv(
         admission_database_url=(
             "postgresql://propertyquarry_api_admission:secret@127.0.0.1:15432/postgres"
         ),
+        ingress_database_url=(
+            "postgresql://propertyquarry_api_ingress:secret@127.0.0.1:15432/postgres"
+        ),
         api_token="api-token",
         signing_secret="signing-secret",
         identity_session_secret="identity-session-secret-" + "x" * 32,
@@ -117,6 +118,9 @@ def test_isolated_runtime_executes_the_authenticated_overlay_before_the_venv(
     assert environment["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"] != environment[
         "EA_SIGNING_SECRET"
     ]
+    assert environment["PROPERTYQUARRY_API_INGRESS_DATABASE_URL"] == (
+        "postgresql://propertyquarry_api_ingress:secret@127.0.0.1:15432/postgres"
+    )
 
 
 def test_disposable_capacity_owner_sql_is_exact_idempotent_and_fail_closed() -> None:
@@ -198,36 +202,20 @@ def test_postgres_smoke_provisions_runtime_roles_before_full_schema_migration() 
     assert "python -m app.product.property_search_schema migrate" not in source
 
 
-def test_postgres_browser_ci_uses_only_the_isolated_host_capped_harness() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "smoke-runtime.yml").read_text(
-        encoding="utf-8"
+def test_postgres_browser_local_harness_is_host_capped() -> None:
+    command = isolated_harness.build_systemd_scope_command(
+        systemd_run="/usr/bin/systemd-run",
+        python="/docker/property/.venv/bin/python",
+        script=str(ROOT / "scripts" / "smoke_property_postgres_isolated.py"),
+        repo_root=str(ROOT),
+        venv="/docker/property/.venv",
+        chromium_headless_shell="/safe/chromium-headless-shell",
+        docker_binary="/usr/bin/docker",
+        run_id="0123456789abcdef",
     )
-    job = workflow.split("  propertyquarry-postgres-browser-e2e:\n", 1)[1].split(
-        "\n  propertyquarry-continuous-ux:", 1
-    )[0]
 
-    assert "scripts/smoke_property_postgres_isolated.py" in job
-    assert "scripts/smoke_property_postgres.sh" not in job
-    assert "--systemd-run /usr/bin/systemd-run" in job
-    assert "--docker-binary /usr/bin/docker" in job
-    assert "--chromium-headless-shell" in job
-    assert "--venv" in job
-    assert "docker pull \"${postgres_image}\"" in job
-    assert "pip install --ignore-installed" in job
-    assert "pip install --user --ignore-installed" in job
-    assert job.count("-c ea/requirements.ci.lock") == 2
-    assert 'dependency_userbase="$(mktemp -d "${RUNNER_TEMP}/propertyquarry-postgres-browser-userbase.XXXXXXXX")"' in job
-    assert 'chmod 0700 "${dependency_userbase}"' in job
-    assert 'PYTHONUSERBASE="${dependency_userbase}" \\' in job
-    assert "python -m venv --system-site-packages" not in job
-    assert 'python -m venv "${venv}"' in job
-    assert "printf '%s=%s\\n' PYTHONUSERBASE \"${dependency_userbase}\"" in job
-    assert "pytest==9.0.3" in job
-    assert "pytest==9.0.2" not in job
-    assert 'sudo systemctl start "user@${runner_uid}.service"' in job
-    assert 'test -S "${user_runtime_dir}/bus"' in job
-    assert "DBUS_SESSION_BUS_ADDRESS" in job
-    assert "propertyquarry-postgres-browser-preflight-" in job
+    assert str(ROOT / "scripts" / "smoke_property_postgres_isolated.py") in command
+    assert "scripts/smoke_property_postgres.sh" not in " ".join(command)
     for host_limit in (
         "--property=MemoryMax=1073741824",
         "--property=MemorySwapMax=0",
@@ -235,50 +223,32 @@ def test_postgres_browser_ci_uses_only_the_isolated_host_capped_harness() -> Non
         "--property=CPUQuota=100%",
         "--property=RuntimeMaxSec=1200s",
     ):
-        assert host_limit in job
-    assert "--with-deps chromium" in job
+        assert host_limit in command
 
 
-def test_smoke_runtime_api_uses_the_fully_constrained_jsonschema_closure() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "smoke-runtime.yml").read_text(
-        encoding="utf-8"
-    )
-    job = workflow.split("  smoke-runtime-api:\n", 1)[1].split(
-        "\n  smoke-runtime-postgres:", 1
-    )[0]
+def test_local_test_dependencies_use_the_fully_constrained_jsonschema_closure() -> None:
+    production_lock = (ROOT / "ea" / "requirements.lock").read_text(encoding="utf-8")
+    ci_lock = (ROOT / "ea" / "requirements.ci.lock").read_text(encoding="utf-8")
 
-    assert "jsonschema==4.25.1" in job
-    assert "--constraint ea/requirements.lock" in job or "-c ea/requirements.lock" in job
-    assert "--constraint ea/requirements.ci.lock" in job or "-c ea/requirements.ci.lock" in job
-    assert "jsonschema>=" not in job
-    assert "jsonschema~=" not in job
+    assert "jsonschema==4.25.1" in ci_lock
+    assert "jsonschema==" not in production_lock
+    assert "jsonschema>=" not in ci_lock
+    assert "jsonschema~=" not in ci_lock
 
 
-def test_every_ordinary_ci_test_install_uses_the_separate_ci_constraints_lock() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "smoke-runtime.yml").read_text(
-        encoding="utf-8"
-    )
-    jobs = yaml.safe_load(workflow)["jobs"]
-    for job_name in (
-        "smoke-runtime-api",
-        "propertyquarry-browser-contracts",
-        "product-browser-e2e",
-        "propertyquarry-postgres-browser-e2e",
-        "propertyquarry-continuous-ux",
-        "propertyquarry-accessibility-contracts",
-        "propertyquarry-failure-state-contracts",
-        "propertyquarry-activation-contracts",
-        "postgres-runtime-contracts",
-    ):
-        run_source = "\n".join(
-            str(step.get("run") or "") for step in jobs[job_name].get("steps", [])
-        )
-        assert "-c ea/requirements.lock" in run_source
-        assert "-c ea/requirements.ci.lock" in run_source
-
+def test_local_verification_has_no_hosted_workflow_authority() -> None:
+    workflows = ROOT / ".github" / "workflows"
+    assert workflows.is_dir()
+    assert not any(workflows.iterdir())
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     production_image_lock = (ROOT / "ea" / "requirements.lock").read_text(
         encoding="utf-8"
     )
+
+    assert "ci-gates:" in makefile
+    assert "ci-gates-postgres:" in makefile
+    assert "test-api-real-chromium" in makefile
+    assert "verify-flagship-release-readiness" in makefile
     assert "pytest==" not in production_image_lock
     assert "jsonschema==" not in production_image_lock
     assert "httpx==" not in production_image_lock

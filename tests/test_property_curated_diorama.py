@@ -400,7 +400,17 @@ def test_exact_shortlist_run_renders_all_drawn_diorama_thumbnails(
     assert len(asset_urls) == 40
     assert len(set(asset_urls)) == 40
     assert "stale-runtime-preview" not in response.text
-    assert response.text.count(">Illustrative</span>") == 40
+    drawn_rows = [
+        row
+        for row in re.findall(
+            r'<article class="pq-fast-row">(.*?)</article>',
+            response.text,
+            re.DOTALL,
+        )
+        if "-drawn-diorama.webp" in row
+    ]
+    assert len(drawn_rows) == 40
+    assert all(">Illustrative</span>" in row for row in drawn_rows)
     assert (
         response.text.count('alt="Illustrative hand-drawn property diorama"')
         == 40
@@ -442,15 +452,25 @@ def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
     assert payload["contract_name"] == "propertyquarry.curated_diorama_previews.v2"
     assert payload["run_binding"] == {
         "run_id": "9dd6a4993d7245a0acf48aeb50c44a9b",
-        "candidate_count": 40,
+        "candidate_count": len(entries),
     }
-    assert len(entries) == 40
-    assert {entry["rank"] for entry in entries} == set(range(1, 41))
-    assert all(
+    assert len(entries) == 41
+    assert {entry["rank"] for entry in entries} == set(range(1, 42))
+    assert sum(
         entry["preview_kind"] == "illustrative_drawn_diorama"
+        for entry in entries
+    ) == 40
+    assert sum(entry["preview_kind"] == "rendered_diorama" for entry in entries) == 1
+    assert all(
+        entry["preview_kind"]
+        in {"illustrative_drawn_diorama", "rendered_diorama"}
         and entry["representation"] == "illustrative"
         and "not listing evidence" in entry["truth_boundary"]
         and entry["source_basis"]
-        in {"listing_reference_image", "listing_metadata_only"}
+        in {
+            "listing_reference_image",
+            "listing_metadata_only",
+            "listing_floorplan_and_reference_images",
+        }
         for entry in entries
     )

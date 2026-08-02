@@ -444,7 +444,7 @@
   </div>
 		  <div class="pqx-source-progress" data-pqx-source-progress>
 		    <div class="pqx-source-progress-head">
-				      <strong data-pqx-radar-count>Search progress</strong>
+				      <strong data-pqx-radar-count>{{ source_check_label or scan_count_label }}</strong>
 							      <span class="pqx-small">{{ (summary.get('ranked_candidate_total') or summary.get('ranked_total') or (summary.get('ranked_candidates') or [])|length or 0) }} matching homes</span>
 					    </div>
 				    <div class="pqx-live-review-bars" aria-label="Search totals">

@@ -211,7 +211,7 @@ def test_real_chromium_synthetic_persisted_lifecycle_race_fences_stale_poll() ->
             "status": "in_progress",
             "provider_total": 1,
             "sources_total": 1,
-            "reviewed_listing_total": 1,
+            "reviewed_listing_total": 2,
         },
     }
     status_requests: list[str] = []
@@ -384,7 +384,7 @@ def test_real_chromium_synthetic_persisted_lifecycle_race_fences_stale_poll() ->
             ) is True
             page.wait_for_function(
                 """() => document.querySelector('[data-pqx-run-message]')
-                  ?.textContent?.includes('Fresh resumed update')"""
+                  ?.textContent?.includes('2 homes found')"""
             )
             assert page.evaluate(
                 "() => window.__pqPersistedLifecyclePollProbe.statusCallCount"

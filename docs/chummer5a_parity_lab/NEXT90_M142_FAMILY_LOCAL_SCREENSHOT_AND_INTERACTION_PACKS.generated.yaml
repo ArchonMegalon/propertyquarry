@@ -1,5 +1,5 @@
 contract_name: ea.next90_m142_family_local_screenshot_and_interaction_packs
-generated_at: '2026-07-18T16:07:28Z'
+generated_at: '2026-08-02T12:22:02Z'
 package_id: next90-m142-ea-compile-family-local-screenshot-and-interaction-packs-for-these-workflows
 title: Compile family-local screenshot and interaction packs for these workflows without
   collapsing them into broad family prose.
@@ -68,25 +68,25 @@ source_inputs:
     row_fingerprint: 91e518b8dab7f536272e29b5ce0cd647dc16e04c611e3cabc22c687dbda3db59
   parity_audit:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/CHUMMER5A_UI_ELEMENT_PARITY_AUDIT.generated.json
-    generated_at: '2026-06-29T13:23:17.304567Z'
+    generated_at: '2026-07-31T16:00:39.779708Z'
   screenshot_gate:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/CHUMMER5A_SCREENSHOT_REVIEW_GATE.generated.json
-    generated_at: '2026-07-13T03:51:31.735020Z'
+    generated_at: '2026-08-01T10:25:48.092069Z'
   visual_gate:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/DESKTOP_VISUAL_FAMILIARITY_EXIT_GATE.generated.json
-    generated_at: '2026-07-13T03:51:29.190961Z'
+    generated_at: '2026-08-01T10:25:47.935175Z'
   workflow_gate:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/DESKTOP_WORKFLOW_EXECUTION_GATE.generated.json
-    generated_at: '2026-07-13T04:39:22.679304Z'
+    generated_at: '2026-08-01T10:39:55.075489Z'
   classic_dense_gate:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/CLASSIC_DENSE_WORKBENCH_POSTURE_GATE.generated.json
     generated_at: '2026-06-27T18:41:18.910738Z'
   section_host_ruleset_parity:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/SECTION_HOST_RULESET_PARITY.generated.json
-    generated_at: '2026-07-07T12:10:59.751098Z'
+    generated_at: '2026-08-01T06:15:44.023402Z'
   generated_dialog_parity:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/GENERATED_DIALOG_ELEMENT_PARITY.generated.json
-    generated_at: '2026-06-27T11:01:05.526449Z'
+    generated_at: '2026-08-01T06:15:08.915098Z'
   gm_runboard_route:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/NEXT90_M121_UI_GM_RUNBOARD_ROUTE.generated.json
     generated_at: '2026-06-18T12:15:03Z'
@@ -199,7 +199,6 @@ family_local_packs:
     - /docker/fleet/docs/chummer5a-oracle/veteran_workflow_packs.yaml
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/SECTION_HOST_RULESET_PARITY.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/CHUMMER5A_SCREENSHOT_REVIEW_GATE.generated.json
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/NEXT90_M142_UI_DIRECT_WORKFLOW_PROOF.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/CLASSIC_DENSE_WORKBENCH_POSTURE_GATE.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/UI_FLAGSHIP_RELEASE_GATE.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/UI_LOCAL_RELEASE_PROOF.generated.json
@@ -289,17 +288,12 @@ family_local_packs:
     visual_parity: 'yes'
     behavioral_parity: 'yes'
     reason: Route-local dice and initiative proof cites the generated dice dialog
-      parity, runboard initiative route, and deterministic core receipts directly.
+      parity, runboard initiative route, and current workflow receipts directly.
     evidence:
     - /docker/fleet/docs/chummer5a-oracle/veteran_workflow_packs.yaml
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/DESKTOP_VISUAL_FAMILIARITY_EXIT_GATE.generated.json
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/DESKTOP_WORKFLOW_EXECUTION_GATE.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/GENERATED_DIALOG_ELEMENT_PARITY.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/SECTION_HOST_RULESET_PARITY.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/NEXT90_M121_UI_GM_RUNBOARD_ROUTE.generated.json
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/CHUMMER5A_MUSCLE_MEMORY_INVENTORY.generated.json
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/UI_FLAGSHIP_RELEASE_GATE.generated.json
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/NEXT90_M142_UI_DIRECT_WORKFLOW_PROOF.generated.json
   desktop_client_dependency:
     coverage_key: desktop_client
     coverage_status: missing
@@ -384,7 +378,6 @@ family_local_packs:
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/SECTION_HOST_RULESET_PARITY.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/DESKTOP_VISUAL_FAMILIARITY_EXIT_GATE.generated.json
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/UI_FLAGSHIP_RELEASE_GATE.generated.json
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/NEXT90_M142_UI_DIRECT_WORKFLOW_PROOF.generated.json
   desktop_client_dependency:
     coverage_key: desktop_client
     coverage_status: missing

@@ -9052,7 +9052,14 @@ def public_tour_walkthrough(slug: str, request: Request = None):  # type: ignore
         payload = snapshot.payload
         _require_public_tour_viewable(payload)
         if _tour_payload_is_disabled_fallback(payload):
-            raise HTTPException(status_code=404, detail="tour_disabled_fallback")
+            viewer_release = evaluate_public_tour_generated_viewer_release(payload)
+            generated_walkthrough_released = (
+                _public_tour_is_generated_reconstruction_only(payload)
+                and isinstance(payload.get("generated_viewer_release"), dict)
+                and viewer_release.get("released") is True
+            )
+            if not generated_walkthrough_released:
+                raise HTTPException(status_code=404, detail="tour_disabled_fallback")
         magicfit_footprint = _magicfit_footprint_present(payload)
         eligibility = (
             evaluate_magicfit_public_eligibility(snapshot.bundle_dir, payload)

@@ -1,5 +1,5 @@
 contract_name: ea.next90_m141_route_local_screenshot_packs
-generated_at: '2026-07-28T05:56:21Z'
+generated_at: '2026-08-02T12:22:03Z'
 package_id: next90-m141-ea-compile-route-local-screenshot-packs-and-compare-packets-for-translator-x
 title: Compile route-local screenshot packs and compare packets for translator, XML
   amendment, Hero Lab, and import-oracle proof without inventing parity.
@@ -28,7 +28,7 @@ source_inputs:
     generated_at: '2026-04-19T12:09:26Z'
   fleet_capture_pack:
     path: /docker/fleet/docs/chummer5a-oracle/parity_lab_capture_pack.yaml
-    generated_at: '2026-06-19T02:49:31Z'
+    generated_at: '2026-07-29T11:41:14Z'
   fleet_veteran_workflow_pack:
     path: /docker/fleet/docs/chummer5a-oracle/veteran_workflow_packs.yaml
     generated_at: '2026-06-19T01:09:18Z'
@@ -92,31 +92,31 @@ source_inputs:
     row_fingerprint: bdb133de7739dd71eec0b07f1a8d970b1bb6300c72b9f0ff7bcd90cdf43361cb
   parity_audit:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/CHUMMER5A_UI_ELEMENT_PARITY_AUDIT.generated.json
-    generated_at: '2026-06-29T13:23:17.304567Z'
+    generated_at: '2026-07-31T16:00:39.779708Z'
   ui_flagship_gate:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/UI_FLAGSHIP_RELEASE_GATE.generated.json
-    generated_at: '2026-06-27T18:41:13.333000Z'
+    generated_at: '2026-08-01T09:58:11.346967Z'
   desktop_visual_familiarity_gate:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/DESKTOP_VISUAL_FAMILIARITY_EXIT_GATE.generated.json
-    generated_at: '2026-07-28T03:49:54.536049Z'
+    generated_at: '2026-08-01T10:25:47.935175Z'
   desktop_workflow_execution_gate:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/DESKTOP_WORKFLOW_EXECUTION_GATE.generated.json
-    generated_at: '2026-07-28T03:51:03.697751Z'
+    generated_at: '2026-08-01T10:39:55.075489Z'
   veteran_task_time_gate:
     path: /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
-    generated_at: '2026-06-27T18:41:18.951468Z'
+    generated_at: '2026-07-28T19:25:56.978832Z'
   ui_direct_import_route_proof:
     path: /docker/chummercomplete/chummer6-ui/.codex-studio/published/NEXT90_M141_UI_DIRECT_IMPORT_ROUTE_PROOF.generated.json
-    generated_at: '2026-07-27T16:02:23Z'
+    generated_at: '2026-08-01T10:39:53Z'
   import_parity_certification:
     path: /docker/chummercomplete/chummer6-core/.codex-studio/published/IMPORT_PARITY_CERTIFICATION.generated.json
-    generated_at: '2026-07-17T22:25:44Z'
+    generated_at: '2026-07-31T18:35:35Z'
   import_receipts_doc:
     path: /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
     generated_at: '2026-06-26T23:13:33Z'
   import_receipts_json:
     path: /docker/chummercomplete/chummer-core-engine/.codex-studio/published/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.generated.json
-    generated_at: '2026-07-27T13:41:02Z'
+    generated_at: '2026-07-29T05:45:03Z'
   fleet_m141_gate:
     path: /docker/fleet/.codex-studio/published/NEXT90_M141_FLEET_IMPORT_ROUTE_CLOSEOUT_GATES.generated.json
     generated_at: '2026-05-06T04:08:53Z'
@@ -211,21 +211,23 @@ route_local_screenshot_packs:
   missing_workflow_artifacts: []
   ui_direct_receipt_group: translator_xml_custom_data
   ui_direct_receipt_checks:
-    exists: false
-    route_ids_exact: false
-    screenshots_exact: false
-    status_pass: false
-    workflow_family_matches: false
+    exists: true
+    route_ids_exact: true
+    screenshots_exact: true
+    status_pass: true
+    workflow_family_matches: true
   required_screenshots:
   - 38-translator-dialog-light.png
   screenshots:
   - 38-translator-dialog-light.png
-  - 39-xml-editor-dialog-light.png
   missing_screenshots: []
   screenshot_review_job_status: pass
   screenshot_review_test_markers:
-  - Runtime_backed_translator_xml_editor_and_hero_lab_importer_routes_surface_governed_posture
-  screenshot_review_evidence_keys: []
+  - ExecuteCommandAsync_translator_opens_dialog_with_master_index_lane_posture
+  - ExecuteCommandAsync_xml_editor_opens_dialog_with_xml_bridge_posture
+  - ExecuteCommandAsync_hero_lab_importer_opens_dialog_with_import_oracle_lane_posture
+  screenshot_review_evidence_keys:
+  - ui_flagship_gate.directImportRouteProof
   route_receipts:
   - source_key: ui_direct_import_route_proof
     required_tokens:
@@ -243,11 +245,7 @@ route_local_screenshot_packs:
     satisfied: true
   deterministic_receipts:
   - translatorDeterministicReceipt
-  upstream_direct_proof_warnings:
-  - ui direct proof group translator_xml_custom_data is not passing
-  - ui direct proof group translator_xml_custom_data lost exact route ids
-  - ui direct proof group translator_xml_custom_data lost exact screenshots
-  - translator/xml proof group lost workflow-family binding
+  upstream_direct_proof_warnings: []
   legacy_source_line_proof:
     id: translator_route
     file: /docker/chummer5a/Chummer/Forms/ChummerMainForm.Designer.cs
@@ -318,21 +316,23 @@ route_local_screenshot_packs:
   missing_workflow_artifacts: []
   ui_direct_receipt_group: translator_xml_custom_data
   ui_direct_receipt_checks:
-    exists: false
-    route_ids_exact: false
-    screenshots_exact: false
-    status_pass: false
-    workflow_family_matches: false
+    exists: true
+    route_ids_exact: true
+    screenshots_exact: true
+    status_pass: true
+    workflow_family_matches: true
   required_screenshots:
   - 39-xml-editor-dialog-light.png
   screenshots:
-  - 38-translator-dialog-light.png
   - 39-xml-editor-dialog-light.png
   missing_screenshots: []
   screenshot_review_job_status: pass
   screenshot_review_test_markers:
-  - Runtime_backed_translator_xml_editor_and_hero_lab_importer_routes_surface_governed_posture
-  screenshot_review_evidence_keys: []
+  - ExecuteCommandAsync_translator_opens_dialog_with_master_index_lane_posture
+  - ExecuteCommandAsync_xml_editor_opens_dialog_with_xml_bridge_posture
+  - ExecuteCommandAsync_hero_lab_importer_opens_dialog_with_import_oracle_lane_posture
+  screenshot_review_evidence_keys:
+  - ui_flagship_gate.directImportRouteProof
   route_receipts:
   - source_key: ui_direct_import_route_proof
     required_tokens:
@@ -353,11 +353,7 @@ route_local_screenshot_packs:
   deterministic_receipts:
   - customDataXmlBridgeDeterministicReceipt
   - amendPackageDeterministicReceipt
-  upstream_direct_proof_warnings:
-  - ui direct proof group translator_xml_custom_data is not passing
-  - ui direct proof group translator_xml_custom_data lost exact route ids
-  - ui direct proof group translator_xml_custom_data lost exact screenshots
-  - translator/xml proof group lost workflow-family binding
+  upstream_direct_proof_warnings: []
   legacy_source_line_proof:
     id: xml_amendment_editor_route
     file: /docker/chummer5a/Chummer/Forms/ChummerMainForm.Designer.cs
@@ -428,21 +424,23 @@ route_local_screenshot_packs:
   missing_workflow_artifacts: []
   ui_direct_receipt_group: hero_lab_import_oracle
   ui_direct_receipt_checks:
-    exists: false
-    route_ids_exact: false
-    screenshots_exact: false
-    status_pass: false
-    workflow_family_matches: false
+    exists: true
+    route_ids_exact: true
+    screenshots_exact: true
+    status_pass: true
+    workflow_family_matches: true
   required_screenshots:
   - 40-hero-lab-importer-dialog-light.png
   screenshots:
   - 40-hero-lab-importer-dialog-light.png
-  - 18-import-dialog-light.png
   missing_screenshots: []
   screenshot_review_job_status: pass
   screenshot_review_test_markers:
-  - Runtime_backed_translator_xml_editor_and_hero_lab_importer_routes_surface_governed_posture
-  screenshot_review_evidence_keys: []
+  - ExecuteCommandAsync_translator_opens_dialog_with_master_index_lane_posture
+  - ExecuteCommandAsync_xml_editor_opens_dialog_with_xml_bridge_posture
+  - ExecuteCommandAsync_hero_lab_importer_opens_dialog_with_import_oracle_lane_posture
+  screenshot_review_evidence_keys:
+  - ui_flagship_gate.directImportRouteProof
   route_receipts:
   - source_key: ui_direct_import_route_proof
     required_tokens:
@@ -461,11 +459,7 @@ route_local_screenshot_packs:
     satisfied: true
   deterministic_receipts:
   - importOracleDeterministicReceipt
-  upstream_direct_proof_warnings:
-  - ui direct proof group hero_lab_import_oracle is not passing
-  - ui direct proof group hero_lab_import_oracle lost exact route ids
-  - ui direct proof group hero_lab_import_oracle lost exact screenshots
-  - hero-lab/import-oracle proof group lost workflow-family binding
+  upstream_direct_proof_warnings: []
   legacy_source_line_proof:
     id: hero_lab_importer_route
     file: /docker/chummer5a/Chummer/Forms/ChummerMainForm.Designer.cs
@@ -489,8 +483,6 @@ route_local_screenshot_packs:
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
     - /docker/chummercomplete/chummer6-core/.codex-studio/published/IMPORT_PARITY_CERTIFICATION.generated.json
     - /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/CHUMMER5A_MUSCLE_MEMORY_INVENTORY.generated.json
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/UI_FLAGSHIP_RELEASE_GATE.generated.json
   fleet_gate_row:
     behavioral_parity: 'yes'
     evidence:
@@ -538,21 +530,23 @@ route_local_screenshot_packs:
   missing_workflow_artifacts: []
   ui_direct_receipt_group: hero_lab_import_oracle
   ui_direct_receipt_checks:
-    exists: false
-    route_ids_exact: false
-    screenshots_exact: false
-    status_pass: false
-    workflow_family_matches: false
+    exists: true
+    route_ids_exact: true
+    screenshots_exact: true
+    status_pass: true
+    workflow_family_matches: true
   required_screenshots:
   - 40-hero-lab-importer-dialog-light.png
   screenshots:
   - 40-hero-lab-importer-dialog-light.png
-  - 18-import-dialog-light.png
   missing_screenshots: []
   screenshot_review_job_status: pass
   screenshot_review_test_markers:
-  - Runtime_backed_translator_xml_editor_and_hero_lab_importer_routes_surface_governed_posture
-  screenshot_review_evidence_keys: []
+  - ExecuteCommandAsync_translator_opens_dialog_with_master_index_lane_posture
+  - ExecuteCommandAsync_xml_editor_opens_dialog_with_xml_bridge_posture
+  - ExecuteCommandAsync_hero_lab_importer_opens_dialog_with_import_oracle_lane_posture
+  screenshot_review_evidence_keys:
+  - ui_flagship_gate.directImportRouteProof
   route_receipts:
   - source_key: import_receipts_doc
     required_tokens:
@@ -568,11 +562,7 @@ route_local_screenshot_packs:
     satisfied: true
   deterministic_receipts:
   - importOracleDeterministicReceipt
-  upstream_direct_proof_warnings:
-  - ui direct proof group hero_lab_import_oracle is not passing
-  - ui direct proof group hero_lab_import_oracle lost exact route ids
-  - ui direct proof group hero_lab_import_oracle lost exact screenshots
-  - hero-lab/import-oracle proof group lost workflow-family binding
+  upstream_direct_proof_warnings: []
   legacy_source_line_proof: {}
   parity_row: {}
   fleet_gate_row: {}
@@ -611,15 +601,12 @@ family_compare_packets:
   missing_screenshots: []
   ui_direct_receipt_group: translator_xml_custom_data
   ui_direct_receipt_checks:
-    exists: false
-    route_ids_exact: false
-    screenshots_exact: false
-    status_pass: false
-    workflow_family_matches: false
-  upstream_direct_proof_warnings:
-  - ui direct proof group translator_xml_custom_data is not passing
-  - ui direct proof group translator_xml_custom_data lost workflow-family binding
-  - ui direct proof group translator_xml_custom_data lost exact screenshots
+    exists: true
+    route_ids_exact: true
+    screenshots_exact: true
+    status_pass: true
+    workflow_family_matches: true
+  upstream_direct_proof_warnings: []
   screenshot_review_job_status: pass
   deterministic_receipts:
   - customDataXmlBridgeDeterministicReceipt
@@ -698,19 +685,15 @@ family_compare_packets:
   - 40-hero-lab-importer-dialog-light.png
   screenshots:
   - 40-hero-lab-importer-dialog-light.png
-  - 18-import-dialog-light.png
   missing_screenshots: []
   ui_direct_receipt_group: hero_lab_import_oracle
   ui_direct_receipt_checks:
-    exists: false
-    route_ids_exact: false
-    screenshots_exact: false
-    status_pass: false
-    workflow_family_matches: false
-  upstream_direct_proof_warnings:
-  - ui direct proof group hero_lab_import_oracle is not passing
-  - ui direct proof group hero_lab_import_oracle lost workflow-family binding
-  - ui direct proof group hero_lab_import_oracle lost exact screenshots
+    exists: true
+    route_ids_exact: true
+    screenshots_exact: true
+    status_pass: true
+    workflow_family_matches: true
+  upstream_direct_proof_warnings: []
   screenshot_review_job_status: pass
   deterministic_receipts:
   - importOracleDeterministicReceipt
@@ -734,8 +717,6 @@ family_compare_packets:
     - /docker/chummercomplete/chummer-presentation/.codex-studio/published/VETERAN_TASK_TIME_EVIDENCE_GATE.generated.json
     - /docker/chummercomplete/chummer6-core/.codex-studio/published/IMPORT_PARITY_CERTIFICATION.generated.json
     - /docker/chummercomplete/chummer-core-engine/docs/NEXT90_M141_IMPORT_ROUTE_RECEIPTS.md
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/CHUMMER5A_MUSCLE_MEMORY_INVENTORY.generated.json
-    - /docker/chummercomplete/chummer-presentation/.codex-studio/published/UI_FLAGSHIP_RELEASE_GATE.generated.json
   fleet_gate_row:
     behavioral_parity: 'yes'
     evidence:

@@ -901,21 +901,24 @@ def test_make_deploy_uses_canonical_receipts_and_rejects_staging_live_identity()
     assert "materialize" not in make_deploy_recipe
     assert "docker compose" not in make_deploy_recipe
     assert 'requested_mode="${EA_RUNTIME_MODE:-prod}"' in deploy
-    assert 'operation="deploy-run"' in deploy
-    assert 'operation="candidate-run"' in deploy
-    assert "--signed-request-fd" in deploy
-    assert "--candidate-root-fd" in deploy
-    assert "--controller-owns-all-privileged-actions" in deploy
-    assert "--contain-before-candidate-validation" in deploy
-    assert "--forbid-caller-compose" in deploy
-    assert "--forbid-candidate-output-authority" in deploy
+    assert 'requested_mode="${requested_mode,,}"' in deploy
+    assert "prod|production)" in deploy
+    assert "EA_RUNTIME_MODE must select production" in deploy
+    assert "scripts/check_property_repository_role.py" in deploy
+    assert "--require-clean-worktree" in deploy
+    assert "release_compose_files=(" in deploy
+    assert "--file docker-compose.property.yml" in deploy
+    assert "--file docker-compose.cloudflared.yml" in deploy
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
+    assert "--expected-web-image" in deploy
+    assert "--expected-render-image" in deploy
+    assert "--remove-orphans" in deploy
     assert "PROPERTYQUARRY_FLAGSHIP_GATE_SEED" not in deploy
     assert "PROPERTYQUARRY_BROWSER_PROOF_RECEIPT" not in deploy
     assert "PROPERTYQUARRY_FLAGSHIP_RELEASE_RECEIPT" not in deploy
     assert "scripts/verify_propertyquarry_deploy_receipts.py" not in deploy
     assert "propertyquarry_deploy_controller_guard.py" not in deploy
-    assert "docker compose" not in deploy
     assert "materialize_ea_browser_workflow_proof.py" not in deploy
     assert "materialize_ea_flagship_release_gate.py" not in deploy
-    assert "/usr/libexec/propertyquarry-release-control/propertyquarry-deploy-controller" in deploy
-    assert "/etc/propertyquarry/release-control/external-deploy-controller.v1.json" in deploy
+    assert "/usr/libexec/propertyquarry-release-control/propertyquarry-deploy-controller" not in deploy
+    assert "/etc/propertyquarry/release-control/external-deploy-controller.v1.json" not in deploy

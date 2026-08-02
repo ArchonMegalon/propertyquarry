@@ -22181,8 +22181,8 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
     assert body.index('<header class="pqx-topbar"') < body.index("data-property-workbench-json")
     assert "runListingQueueMessage(found, toReview)" in script_body
     assert "lowered.includes('0 to review')" in script_body
-    assert "const detailQueueIsSourceBacklog = !(toReview > 0) && Number(sourceWork.total || 0) > 0 && sourceLeft > 0;" in script_body
-    assert "detailQueueIsSourceBacklog ? 'Checks left' : 'To review'" in script_body
+    assert "const toReviewPct = toReview > 0 ? Math.round((toReview / reviewDenominator) * 100) : 0;" in script_body
+    assert "localizeLiveCopy('To review')" in script_body
     assert "Nothing waiting to review" not in script_body
     assert "data-pqx-progress-eta" in body
     assert "data-pqx-running-provider-state" not in body
@@ -22195,7 +22195,9 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
     assert "Latest updates" not in running_body
     assert "Latest 10" not in running_body
     assert "<summary><strong>Updates</strong></summary>" in running_body
-    assert "visible_event_count.value < 10" in running_body
+    assert "visible_event_count.value < 6" in running_body
+    assert "visible_event_steps = namespace(value='|')" in running_body
+    assert "visible_event_steps.value = visible_event_steps.value ~ event_step_key ~ '|'" in running_body
     assert "suppressed_generic_listing_page" in running_body
     assert "could not load property search status" in running_body
     assert "checking run status" in running_body
@@ -22218,7 +22220,9 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
     landing_body = (repo_root / "ea/app/api/routes/landing.py").read_text(encoding="utf-8")
     assert '"settings": "/app/account"' in landing_body
     assert 'allowed.update({"properties", "search", "shortlist", "agents", "alerts", "billing", "account"})' in landing_body
-    assert ".reverse().slice(0, 10)" in script_body
+    assert "const seenGroups = new Set();" in script_body
+    assert "return rows.length >= 6;" in script_body
+    assert "if (seenGroups.has(group)) return false;" in script_body
     assert "const labelRunEvent = (event) => {" in script_body
     assert "return 'Preparing';" in script_body
     assert "return 'Details';" in script_body
@@ -22877,8 +22881,7 @@ def test_propertyquarry_in_progress_run_hides_search_form_and_shows_live_run(mon
     assert "Searching" in live.text
     assert 'data-pqx-progress-board' in live.text
     assert 'data-pqx-progress-eta' in live.text
-    assert "20 / 117 checks" in live.text
-    assert "29 sites" in live.text
+    assert "20 / 117 search queries" in live.text
     assert "20 / 117 checked" not in live.text
     assert "179 homes found" in live.text
     assert 'class="pqx-live-review-bars"' in live.text
@@ -27121,7 +27124,7 @@ def test_propertyquarry_run_script_treats_completed_partial_as_terminal() -> Non
 def test_propertyquarry_run_script_compacts_candidate_progress_to_fraction() -> None:
     bundle = _read_workbench_bundle()
     assert "const compactRunMessage = (value) => {" in bundle
-    assert "return `Checking home details ${candidateMatch[1]} / ${candidateMatch[2]}`;" in bundle
+    assert "return `Checking home details ${candidateMatch[1]} / ${candidateMatch[2]}${sourceSuffix}`;" in bundle
     assert "return `${scanLabel}${noPlan > 0 ? ` · ${noPlan} floorplans pending` : ''}`;" in bundle
 
 
@@ -27148,7 +27151,7 @@ def test_propertyquarry_run_script_preserves_non_empty_trail_from_omitted_or_emp
     assert "if (!Array.isArray(events)) return true;" in bundle
     assert "return events.length === 0;" in bundle
     assert "if (eventsNode && !shouldPreserveRenderedRunEvents(eventsNode, runPayload.events)) {" in bundle
-    assert "eventsNode.innerHTML = renderRunEvents(runPayload.events);" in bundle
+    assert "eventsNode.innerHTML = renderRunEvents(runPayload);" in bundle
     assert "events: pollRetryEvents()," in bundle
     assert "Using the last confirmed update while the next status check catches up." in bundle
     assert "Checking the latest search update." in bundle

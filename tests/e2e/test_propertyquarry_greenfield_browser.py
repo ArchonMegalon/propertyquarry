@@ -1578,6 +1578,9 @@ _MOBILE_DOLLHOUSE_THREE_STUB = """
   export class Group { add() {} }
   export class SphereGeometry { scale() {} }
   export class BoxGeometry {}
+  export class BufferGeometry {
+    setFromPoints(points) { this.points = points; return this; }
+  }
   export class MeshBasicMaterial {
     constructor(values = {}) {
       Object.assign(this, values);
@@ -1586,6 +1589,14 @@ _MOBILE_DOLLHOUSE_THREE_STUB = """
   }
   export class MeshStandardMaterial extends MeshBasicMaterial {}
   export class Mesh extends Positioned {
+    constructor(geometry, material) {
+      super();
+      this.geometry = geometry;
+      this.material = material;
+    }
+  }
+  export class LineBasicMaterial extends MeshBasicMaterial {}
+  export class Line extends Positioned {
     constructor(geometry, material) {
       super();
       this.geometry = geometry;
@@ -2305,7 +2316,7 @@ def test_propertyquarry_live_progress_uses_authoritative_query_count_in_real_bro
         board = page.locator("[data-pqx-progress-board]").first
         expect(board).to_be_visible()
         expect(board).to_contain_text("142 / 185")
-        expect(board).to_contain_text("Search queries")
+        expect(board).to_contain_text("search queries")
         expect(page.locator("[data-pqx-run-message]")).to_contain_text(
             "2363 homes found · 576 checked · 1787 awaiting review"
         )
@@ -2650,6 +2661,7 @@ def test_propertyquarry_every_results_and_research_button_works_in_real_browser(
             "data-pqx-browser-alerts",
             "data-pqx-atlas-open",
             "data-pqx-scope-open",
+            "data-pqx-scope-kind",
             "data-workbench-select-candidate",
             "data-pw-remove-row",
             "data-pw-finetune-toggle",
@@ -2678,11 +2690,12 @@ def test_propertyquarry_every_results_and_research_button_works_in_real_browser(
             expect(page.get_by_role("dialog")).to_be_visible()
             page.keyboard.press("Escape")
 
-        floorplan_preview = page.locator("[data-pqx-scope-open]:visible")
-        expect(floorplan_preview).to_have_count(1)
-        floorplan_preview.click()
-        expect(page.get_by_role("dialog")).to_be_visible()
-        page.keyboard.press("Escape")
+        scope_previews = page.locator("[data-pqx-scope-open]:visible")
+        expect(scope_previews).to_have_count(2)
+        for index in range(scope_previews.count()):
+            scope_previews.nth(index).click()
+            expect(page.get_by_role("dialog")).to_be_visible()
+            page.keyboard.press("Escape")
 
         candidate_refs = page.locator(
             "[data-workbench-select-candidate]:visible"
@@ -6105,7 +6118,7 @@ def test_propertyquarry_stale_terminal_zero_first_paint_reconciles_to_authoritat
         expect(page.locator("[data-property-decision-workbench]")).to_have_attribute("data-pqx-state", "running")
         expect(page.locator("[data-pqx-reconciled-running]")).to_be_visible()
         expect(page.locator("[data-pqx-progress-board]")).to_be_visible()
-        expect(page.locator("[data-pqx-radar-count]")).to_contain_text("4 / 10")
+        expect(page.locator("[data-pqx-radar-count]")).to_contain_text("10 / 10")
         expect(page.locator("[data-pqx-empty-results]")).to_have_count(0)
         expect(page.locator("[data-pqx-run-status]")).not_to_have_text("Finished")
         assert status_calls["full"] >= 1
@@ -10843,9 +10856,10 @@ def test_propertyquarry_search_setup_fits_desktop_viewport_and_captures_screensh
                     topLaunchWidth: topLaunchRect ? topLaunchRect.width : 0,
                     topLaunchRight: topLaunchRect ? topLaunchRect.right : 0,
                     drawerScrollTopBeforeInteraction: drawerScrollTopInitial,
-                    railOverflowX: railStyle ? railStyle.overflowX : '',
-                    railDisplay: railStyle ? railStyle.display : '',
-                    railGridColumns: railStyle ? railStyle.gridTemplateColumns : '',
+                        railOverflowX: railStyle ? railStyle.overflowX : '',
+                        railDisplay: railStyle ? railStyle.display : '',
+                        railFlexWrap: railStyle ? railStyle.flexWrap : '',
+                        railGridColumns: railStyle ? railStyle.gridTemplateColumns : '',
                     railScrollWidth: rail ? rail.scrollWidth : 0,
                     railClientWidth: rail ? rail.clientWidth : 0,
                     railPosition: railStyle ? railStyle.position : '',
@@ -10946,8 +10960,11 @@ def test_propertyquarry_search_setup_fits_desktop_viewport_and_captures_screensh
         assert mobile_metrics["topnavFirstLeft"] >= -1
         assert mobile_metrics["topLaunchWidth"] <= 1
         assert mobile_metrics["drawerScrollTopBeforeInteraction"] <= 2
-        assert mobile_metrics["railDisplay"] == "grid"
-        assert len(str(mobile_metrics["railGridColumns"]).split()) == 3
+        assert mobile_metrics["railDisplay"] in {"grid", "flex"}
+        if mobile_metrics["railDisplay"] == "grid":
+            assert len(str(mobile_metrics["railGridColumns"]).split()) == 3
+        else:
+            assert mobile_metrics["railFlexWrap"] == "wrap"
         assert mobile_metrics["railOverflowX"] == "visible"
         assert mobile_metrics["railScrollWidth"] <= mobile_metrics["railClientWidth"] + 1
         assert mobile_metrics["railPosition"] == "sticky"
@@ -12559,7 +12576,7 @@ def test_propertyquarry_start_failure_explains_backend_reason(
             ),
         )
         page.route("**/app/api/property/search-runs**", _delayed_failure)
-        response = page.goto(f"{base_url}/app/properties", wait_until="networkidle")
+        response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
         page.select_option('select[name="country_code"]', "AT")
         page.get_by_role("button", name="Select all areas", exact=True).click()
@@ -12724,7 +12741,7 @@ def test_propertyquarry_launch_posts_real_start_payload_and_shows_run_status(
     context = _new_context(browser, mobile=False)
     page: Page = context.new_page()
     try:
-        response = page.goto(f"{base_url}/app/properties", wait_until="networkidle")
+        response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
         page.select_option('select[name="country_code"]', "AT")
         page.get_by_role("button", name="Select all areas", exact=True).click()

@@ -22,7 +22,7 @@ RUNBOOK_PATH = ROOT / "RUNBOOK.md"
 CLOSEOUT_PLAN_PATH = ROOT / "FLAGSHIP_CLOSEOUT_PLAN.md"
 GLOBAL_FLAGSHIP_GOAL_PATH = ROOT / "docs" / "PROPERTYQUARRY_GLOBAL_FLAGSHIP_GOAL.md"
 VERIFY_RELEASE_ASSETS_PATH = ROOT / "scripts" / "verify_release_assets.sh"
-SMOKE_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "smoke-runtime.yml"
+NO_GITHUB_ACTIONS_PATH = ROOT / ".github" / "NO_GITHUB_ACTIONS.md"
 REAL_BROWSER_TEST_FILE = "tests/e2e/test_propertyquarry_greenfield_browser.py"
 EVIDENCE_SOURCE_TEST_FILE = "tests/test_property_evidence_overlays.py"
 EVIDENCE_SOURCE_CASE = "test_property_research_rows_preserve_evidence_states_and_original_article_link"
@@ -294,11 +294,25 @@ def test_flagship_release_receipt_is_materialized_or_expected_to_materialize() -
         assert any(str(item).strip() for item in [*blockers, *limitations])
 
 
-def test_multi_engine_workflow_selects_the_authoritative_packets_tours_cases() -> None:
-    workflow = SMOKE_WORKFLOW_PATH.read_text(encoding="utf-8")
+def test_remote_workflow_is_retired_for_local_docker_release_authority() -> None:
+    policy = NO_GITHUB_ACTIONS_PATH.read_text(encoding="utf-8")
+    normalized_policy = " ".join(policy.split())
 
-    for case in REQUIRED_PACKETS_TOURS_REAL_BROWSER_CASES:
-        assert f"{REAL_BROWSER_TEST_FILE}::{case}" in workflow
+    assert "not as an execution or release-authority plane" in normalized_policy
+    assert "governed local Docker host" in normalized_policy
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in normalized_policy
+    assert "Adding a `.yml` or `.yaml` file under `.github/workflows/`" in normalized_policy
+    workflow_root = ROOT / ".github" / "workflows"
+    workflow_files = (
+        [
+            path
+            for path in workflow_root.iterdir()
+            if path.is_file() and path.suffix.casefold() in {".yml", ".yaml"}
+        ]
+        if workflow_root.exists()
+        else []
+    )
+    assert workflow_files == []
 
 
 def test_flagship_closeout_claim_is_scoped_to_the_proven_propertyquarry_surface() -> None:

@@ -7652,6 +7652,15 @@ def test_public_tour_routes_serve_provider_neutral_responsive_walkthrough_varian
     mobile_bytes = b"mobile-720p60-video"
     (bundle_dir / "walkthrough-desktop.mp4").write_bytes(desktop_bytes)
     (bundle_dir / "walkthrough-mobile.mp4").write_bytes(mobile_bytes)
+    (bundle_dir / "walkthrough-review.json").write_text(
+        json.dumps(
+            {
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
+            }
+        ),
+        encoding="utf-8",
+    )
     (bundle_dir / "tour.json").write_text(
         json.dumps(
             {
@@ -7660,6 +7669,7 @@ def test_public_tour_routes_serve_provider_neutral_responsive_walkthrough_varian
                     "display_title": "Danube Flats",
                     "video_relpath": "walkthrough-desktop.mp4",
                     "video_mobile_relpath": "walkthrough-mobile.mp4",
+                    "video_sidecar_relpath": "walkthrough-review.json",
                     "scenes": [
                     {
                         "name": "Living room",
@@ -8865,6 +8875,8 @@ def test_public_tour_routes_expose_propertyquarry_3dvista_private_viewer_proof(
     (vista_dir / "locale").mkdir()
     (vista_dir / "locale" / "en.txt").write_text("#: locale=en\n", encoding="utf-8")
     (vista_dir / "runtime.wasm").write_bytes(b"\0asm\x01\0\0\0")
+    (vista_dir / "media" / "panorama_living_room").mkdir(parents=True)
+    (vista_dir / "media" / "panorama_kitchen").mkdir(parents=True)
     (bundle_dir / "walkthrough.mp4").write_bytes(b"video")
     (bundle_dir / "scene-01.jpg").write_bytes(b"fake-jpeg-data")
     (bundle_dir / "tour.private.json").write_text(

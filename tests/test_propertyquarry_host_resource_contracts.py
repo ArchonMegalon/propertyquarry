@@ -58,9 +58,9 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
         "propertyquarry-api": ("1536m", 128, "${PROPERTYQUARRY_API_RESTART_POLICY:-on-failure:3}"),
         "propertyquarry-migrate": ("768m", 64, "no"),
         "propertyquarry-worker": (
-            "1536m",
+            "4g",
             128,
-            "${PROPERTYQUARRY_WORKER_RESTART_POLICY:-on-failure:3}",
+            "${PROPERTYQUARRY_WORKER_RESTART_POLICY:-unless-stopped}",
         ),
         "propertyquarry-scheduler": (
             "1536m",
@@ -84,11 +84,10 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
             memory_default=memory_default,
             pids_default=pids_default,
             restart_default=restart_default,
-            independent_memswap_limit=(
-                "${PROPERTYQUARRY_RENDER_MEMORY_SWAP_LIMIT:-4g}"
-                if name == "propertyquarry-render-tools"
-                else None
-            ),
+            independent_memswap_limit={
+                "propertyquarry-worker": "${PROPERTYQUARRY_WORKER_MEMORY_SWAP_LIMIT:-6g}",
+                "propertyquarry-render-tools": "${PROPERTYQUARRY_RENDER_MEMORY_SWAP_LIMIT:-4g}",
+            }.get(name),
         )
 
     for name in (

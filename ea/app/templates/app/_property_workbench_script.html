@@ -22,6 +22,7 @@
           'Dark mode': 'Dunkelmodus',
           'Light mode': 'Hellmodus',
           'Searching': 'Suche läuft',
+          'Search progress': 'Suchfortschritt',
           'Results ready': 'Ergebnisse bereit',
           'Paused': 'Pausiert',
           'estimating': 'wird geschätzt',
@@ -32,6 +33,8 @@
           'Queued for execution.': 'Zur Ausführung eingeplant.',
           'checking': 'wird geprüft',
           'Homes': 'Immobilien',
+          'Homes found': 'Immobilien gefunden',
+          'Homes checked': 'Geprüft',
           'To review': 'Zu prüfen',
           'Checks left': 'Offene Prüfungen',
           'Checked': 'Geprüft',
@@ -43,6 +46,7 @@
           'Search is still running.': 'Suche läuft weiter.',
           'Preparing': 'Vorbereitung',
           'Sources': 'Quellen',
+          'Search queries': 'Suchanfragen',
           'Details': 'Details',
           'Checks': 'Prüfungen',
           'Shortlist': 'Engere Auswahl',
@@ -99,6 +103,7 @@
                 'Dark mode': 'Modo oscuro',
                 'Light mode': 'Modo claro',
                 'Searching': 'Buscando',
+                'Search progress': 'Progreso de búsqueda',
                 'Results ready': 'Resultados listos',
                 'Paused': 'En pausa',
                 'estimating': 'calculando',
@@ -109,6 +114,8 @@
                 'Queued for execution.': 'En cola para ejecutarse.',
                 'checking': 'revisando',
                 'Homes': 'Propiedades',
+                'Homes found': 'Propiedades encontradas',
+                'Homes checked': 'Propiedades revisadas',
                 'To review': 'Por revisar',
                 'Checks left': 'Revisiones pendientes',
                 'Checked': 'Revisado',
@@ -120,6 +127,7 @@
                 'Search is still running.': 'La búsqueda sigue en curso.',
                 'Preparing': 'Preparando',
                 'Sources': 'Fuentes',
+                'Search queries': 'Consultas de búsqueda',
                 'Details': 'Detalles',
                 'Checks': 'Revisiones',
                 'Shortlist': 'Selección',
@@ -207,21 +215,51 @@
           ? `${toReview[1]} zu prüfen`
           : `${toReview[1]} por revisar`;
       }
-      const workLeft = text.match(/^(\d+) (sources|checks) left$/i);
+      const workLeft = text.match(/^(\d+) (sources|checks|search queries) left$/i);
       if (workLeft) {
-        const unit = workLeft[2].toLowerCase() === 'checks'
+        const rawUnit = workLeft[2].toLowerCase();
+        const unit = rawUnit === 'checks'
           ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
-          : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+          : (
+              rawUnit === 'search queries'
+                ? (clientLocale.startsWith('de') ? 'Suchanfragen' : 'consultas de búsqueda')
+                : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes')
+            );
         return clientLocale.startsWith('de')
           ? `${workLeft[1]} ${unit} offen`
           : `${workLeft[1]} ${unit} pendientes`;
       }
-      const workProgress = text.match(/^(\d+)\s*\/\s*(\d+)\s+(sources|checks)$/i);
+      const workProgress = text.match(/^(\d+)\s*\/\s*(\d+)\s+(sources|checks|search queries)$/i);
       if (workProgress) {
-        const unit = workProgress[3].toLowerCase() === 'checks'
+        const rawUnit = workProgress[3].toLowerCase();
+        const unit = rawUnit === 'checks'
           ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
-          : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+          : (
+              rawUnit === 'search queries'
+                ? (clientLocale.startsWith('de') ? 'Suchanfragen' : 'consultas de búsqueda')
+                : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes')
+            );
         return `${workProgress[1]} / ${workProgress[2]} ${unit}`;
+      }
+      const detailedQueue = text.match(
+        /^(\d+) homes? found · (\d+) checked · (\d+) awaiting review · (\d+)\s*\/\s*(\d+) (sources|checks|search queries) complete$/i
+      );
+      if (detailedQueue) {
+        const foundTotal = Number(detailedQueue[1] || 0);
+        const awaitingReviewTotal = Number(detailedQueue[3] || 0);
+        const completedWorkTotal = Number(detailedQueue[4] || 0);
+        const workTotal = Number(detailedQueue[5] || 0);
+        const workRemainingTotal = Math.max(0, workTotal - completedWorkTotal);
+        const compactParts = [localizeLiveCopy(`${foundTotal} homes found`)];
+        if (awaitingReviewTotal > 0) {
+          compactParts.push(localizeLiveCopy(`${awaitingReviewTotal} to review`));
+        }
+        if (workRemainingTotal > 0) {
+          compactParts.push(
+            localizeLiveCopy(`${workRemainingTotal} ${String(detailedQueue[6] || 'sources').toLowerCase()} left`)
+          );
+        }
+        return compactParts.join(' · ');
       }
       const percentEstimating = text.match(/^(\d+)% · estimating$/i);
       if (percentEstimating) {
@@ -269,10 +307,15 @@
         [/\b(\d+) to review\b/gi, (_match, count) => (
           clientLocale.startsWith('de') ? `${count} zu prüfen` : `${count} por revisar`
         )],
-        [/\b(\d+) (sources|checks) left\b/gi, (_match, count, rawUnit) => {
-          const unit = String(rawUnit || '').toLowerCase() === 'checks'
+        [/\b(\d+) (sources|checks|search queries) left\b/gi, (_match, count, rawUnit) => {
+          const normalizedUnit = String(rawUnit || '').toLowerCase();
+          const unit = normalizedUnit === 'checks'
             ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
-            : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+            : (
+                normalizedUnit === 'search queries'
+                  ? (clientLocale.startsWith('de') ? 'Suchanfragen' : 'consultas de búsqueda')
+                  : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes')
+              );
           return clientLocale.startsWith('de')
             ? `${count} ${unit} offen`
             : `${count} ${unit} pendientes`;
@@ -3231,11 +3274,11 @@
 	        if (['source_detail_check', 'listing_detail_check', 'source_fetch', 'source_fetch_page'].includes(step)) {
 	          return 'Details';
 	        }
-	        if (['source_previewing', 'source_assessing', 'source_ranking'].includes(step)) {
-	          return 'Current check';
-	        }
+	        if (step === 'source_previewing') return 'Checks';
+	        if (step === 'source_assessing') return 'Property fit';
+	        if (step === 'source_ranking') return 'Ranking';
 	        if (['source_fetching', 'source_extracting', 'source_preview_prepare', 'source_rank_prep'].includes(step)) {
-	          return 'Source scan';
+	          return 'Checks';
 	        }
 	        if (step === 'source_shortlist') return 'Shortlist';
 	        if (['source_low_fit_ranked', 'source_discovery_penalty'].includes(step)) return 'Tradeoffs';
@@ -3283,8 +3326,12 @@
       });
 		      return rows.map((event) => {
 		        const label = labelRunEvent(event);
-		        const message = compactRunMessage(event?.message || 'Search is still running.');
-		        return `<div class="pqx-event-card"><strong>${escapeHtml(localizeLiveCopy(label))}</strong><span class="pqx-note">${escapeHtml(localizedLiveMessage(message))}</span></div>`;
+            const rawMessage = String(event?.message || 'Search is still running.').trim();
+            const directlyLocalizedMessage = localizeLiveCopy(rawMessage);
+            const message = directlyLocalizedMessage !== rawMessage
+              ? directlyLocalizedMessage
+              : localizedLiveMessage(compactRunMessage(rawMessage));
+		        return `<div class="pqx-event-card"><strong>${escapeHtml(localizeLiveCopy(label))}</strong><span class="pqx-note">${escapeHtml(message)}</span></div>`;
 		      }).join('') || '<div class="pqx-empty">Waiting for the next useful update.</div>';
 	    };
     const displayRunMessage = (runPayload) => {
@@ -3821,8 +3868,12 @@
 	      const providerCheckTotal = Math.max(0, Number(sourceWork.total || 0), Number(providerDisplayTotal || 0));
 	      const providerCheckDone = providerCheckTotal > 0 ? Math.min(providerCheckTotal, Math.max(0, Number(sourceWork.done || 0))) : 0;
       const providerCheckValue = providerCheckTotal > 0 ? `${providerCheckDone} / ${providerCheckTotal}` : '0';
-      const providerCheckPct = providerCheckTotal > 0 && providerCheckDone > 0 ? Math.round((providerCheckDone / providerCheckTotal) * 100) : 0;
+      const providerCheckUnit = runSourceUnitLabel(summary, providerCheckTotal, providerDisplayTotal);
+      const providerCheckLabel = providerCheckTotal > 0
+        ? localizeLiveCopy(`${providerCheckValue} ${providerCheckUnit}`)
+        : localizeLiveCopy('Search progress');
       const reviewedPct = reviewed > 0 ? Math.round((reviewed / reviewDenominator) * 100) : 0;
+      const toReviewPct = toReview > 0 ? Math.round((toReview / reviewDenominator) * 100) : 0;
       const matchingTotal = rankedTotalFromSummary(summary);
 	      return `
 	        <div class="pqx-concierge-pulse">
@@ -3834,8 +3885,8 @@
 	        </div>
 	        <div class="pqx-source-progress" data-pqx-source-progress>
 		          <div class="pqx-source-progress-head">
-			            <strong data-pqx-radar-count>${escapeHtml(localizeLiveCopy('Search progress'))}</strong>
-			            <span class="pqx-small">${escapeHtml(matchingTotal)} ${escapeHtml(localizeLiveCopy('matching homes'))}</span>
+			            <strong data-pqx-radar-count>${escapeHtml(providerCheckLabel)}</strong>
+			            <span class="pqx-small">${escapeHtml(localizeLiveCopy(`${found || matchingTotal} homes found`))}</span>
 		          </div>
 	          <div class="pqx-live-review-bars" aria-label="${escapeHtml(localizeLiveCopy('Search totals'))}">
 		            <span>
@@ -3844,14 +3895,14 @@
 		              <em><u style="--progress: ${escapeHtml(foundBarPct)}"></u></em>
 		            </span>
 	            <span>
-	              <b>${escapeHtml(localizeLiveCopy('Homes checked'))}</b>
-			              <i>${escapeHtml(reviewed)} / ${escapeHtml(found || 0)}</i>
-		              <em><u style="--progress: ${escapeHtml(reviewedPct)}"></u></em>
+	              <b>${escapeHtml(localizeLiveCopy('To review'))}</b>
+			              <i>${escapeHtml(toReview || 0)}</i>
+		              <em><u style="--progress: ${escapeHtml(toReviewPct)}"></u></em>
 		            </span>
 		            <span>
-				              <b>${escapeHtml(localizeLiveCopy(runSourceUnitLabel(summary, providerCheckTotal, providerDisplayTotal) === 'search queries' ? 'Search queries' : 'Sources'))}</b>
-			              <i>${escapeHtml(providerCheckValue)}</i>
-			              <em><u style="--progress: ${escapeHtml(providerCheckPct)}"></u></em>
+				              <b>${escapeHtml(localizeLiveCopy('Homes checked'))}</b>
+			              <i>${escapeHtml(reviewed || 0)} / ${escapeHtml(found || 0)}</i>
+			              <em><u style="--progress: ${escapeHtml(reviewedPct)}"></u></em>
 		            </span>
 	          </div>
 	          <div class="pqx-progress-meter under-source" aria-hidden="true"><i class="pqx-progress-meter-fill" style="--progress: ${escapeHtml(progressFill)}"></i></div>

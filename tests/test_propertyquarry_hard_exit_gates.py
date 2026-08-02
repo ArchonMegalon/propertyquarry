@@ -1058,11 +1058,11 @@ def test_deploy_and_release_scripts_wire_3d_walkthrough_and_map_preview_as_exit_
     deploy = (ROOT / "scripts" / "deploy_propertyquarry.sh").read_text(encoding="utf-8")
     release = (ROOT / "scripts" / "property_release_gates.sh").read_text(encoding="utf-8")
 
-    assert 'PROPERTYQUARRY_EXTERNAL_CONTROLLER_PATH="/usr/libexec/propertyquarry-release-control/propertyquarry-deploy-controller"' in deploy
-    assert 'PROPERTYQUARRY_EXTERNAL_CONTROLLER_MANIFEST="/etc/propertyquarry/release-control/external-deploy-controller.v1.json"' in deploy
-    assert "--controller-owns-all-privileged-actions" in deploy
-    assert "--require-controller-self-attestation" in deploy
-    assert "--forbid-candidate-output-authority" in deploy
+    assert "Authoritative local-Docker PropertyQuarry deployment." in deploy
+    assert "scripts/check_property_repository_role.py" in deploy
+    assert "--require-clean-worktree" in deploy
+    assert "/usr/bin/docker compose" in deploy
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
     for candidate_owned_gate in (
         "scripts/propertyquarry_3d_browser_gate.py",
         "scripts/propertyquarry_walkthrough_quality_gate.py",

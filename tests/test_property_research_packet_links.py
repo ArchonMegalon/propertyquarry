@@ -945,6 +945,9 @@ def test_dual_write_failure_rolls_back_run_update(monkeypatch: pytest.MonkeyPatc
             if "INSERT INTO property_search_runs" in sql:
                 database_state["run_written"] = True
 
+        def fetchone(self) -> None:
+            return None
+
     class _Transaction:
         def __enter__(self) -> None:
             transaction_entries.append("entered")

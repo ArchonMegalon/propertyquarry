@@ -823,6 +823,7 @@ class BrowserActToolAdapter:
             "observed_usage_window_hours": observed_usage_window_hours,
             "observed_usage_burn_credits_per_hour": observed_usage_burn_credits_per_hour,
         }
+        return packet
 
     @classmethod
     def _extract_onemin_billing_sections(cls, value: object) -> dict[str, list[dict[str, object]]]:

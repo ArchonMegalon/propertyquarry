@@ -15,25 +15,25 @@
 
 ## Route summary
 - `menu:translator`: `pass`
-  - screenshots: `38-translator-dialog-light.png, 39-xml-editor-dialog-light.png`
+  - screenshots: `38-translator-dialog-light.png`
   - ui direct proof group: `translator_xml_custom_data`
   - `ui_direct_import_route_proof` -> `ok`
   - `import_receipts_doc` -> `ok`
   - `import_receipts_json` -> `ok`
 - `menu:xml_editor`: `pass`
-  - screenshots: `38-translator-dialog-light.png, 39-xml-editor-dialog-light.png`
+  - screenshots: `39-xml-editor-dialog-light.png`
   - ui direct proof group: `translator_xml_custom_data`
   - `ui_direct_import_route_proof` -> `ok`
   - `import_receipts_doc` -> `ok`
   - `import_receipts_json` -> `ok`
 - `menu:hero_lab_importer`: `pass`
-  - screenshots: `40-hero-lab-importer-dialog-light.png, 18-import-dialog-light.png`
+  - screenshots: `40-hero-lab-importer-dialog-light.png`
   - ui direct proof group: `hero_lab_import_oracle`
   - `ui_direct_import_route_proof` -> `ok`
   - `import_receipts_doc` -> `ok`
   - `import_receipts_json` -> `ok`
 - `workflow:import_oracle`: `pass`
-  - screenshots: `40-hero-lab-importer-dialog-light.png, 18-import-dialog-light.png`
+  - screenshots: `40-hero-lab-importer-dialog-light.png`
   - ui direct proof group: `hero_lab_import_oracle`
   - `import_receipts_doc` -> `ok`
   - `import_certification` -> `ok`
@@ -43,7 +43,7 @@
   - screenshots: `38-translator-dialog-light.png, 39-xml-editor-dialog-light.png`
   - compare artifacts: `menu:translator, menu:xml_editor`
 - `legacy_and_adjacent_import_oracles`: `pass`
-  - screenshots: `40-hero-lab-importer-dialog-light.png, 18-import-dialog-light.png`
+  - screenshots: `40-hero-lab-importer-dialog-light.png`
   - compare artifacts: `menu:hero_lab_importer, workflow:import_oracle`
 
 ## Closeout blockers
