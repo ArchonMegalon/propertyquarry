@@ -1540,6 +1540,8 @@ def test_prod_runtime_has_fresh_product_secrets_and_only_temp_state(
     assert first["PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"] != second[
         "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET"
     ]
+    assert first["PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED"] == "0"
+    assert first["PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED"] == "0"
     assert first[harness.CHROMIUM_EXECUTABLE_ENV] == HEADLESS_SHELL
     overlay_site = (
         dependency_overlay

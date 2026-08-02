@@ -98,8 +98,13 @@ builds, image pulls, `latest`, or any Docker prune operation. Migrations, schema
 check, the candidate API, session bootstrap, and the existing PostgreSQL
 Playwright test all run from the integration worktree and venv. Runtime state
 and secrets live under a mode-0700 temporary directory; both generated env
-files are mode 0600. Production runtime settings include a fresh, per-run
-property-search erasure secret. Before migration, the controller creates the
+files are mode 0600. Because scheduler and worker processes are deliberately
+outside this API/browser lane, their topology-heartbeat requirements are
+explicitly disabled only in the private candidate environment; database,
+startup-gate, admission, ingress, and schema readiness remain enforced. The
+separate deployment gate remains authoritative for multi-role heartbeat
+readiness. Production runtime settings include a fresh, per-run property-search
+erasure secret. Before migration, the controller creates the
 exact dedicated `NOLOGIN NOINHERIT` admission-capacity owner inside the
 disposable cluster and verifies that all elevated flags and outbound
 memberships are absent. After migration, it creates distinct

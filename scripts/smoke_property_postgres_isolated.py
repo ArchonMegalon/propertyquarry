@@ -3062,6 +3062,11 @@ def _runtime_environment(
         "PROPERTYQUARRY_IDENTITY_SESSION_SECRET": identity_session_secret,
         "PROPERTYQUARRY_POSTGRES_BROWSER_E2E": "1",
         "PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET": erasure_secret,
+        # This lane proves the candidate API and browser contract. It does not
+        # start scheduler/worker sidecars, so topology heartbeat readiness is
+        # explicitly outside this disposable process boundary.
+        "PROPERTYQUARRY_SCHEDULER_HEARTBEAT_REQUIRED": "0",
+        "PROPERTYQUARRY_WORKER_HEARTBEAT_REQUIRED": "0",
         CHROMIUM_EXECUTABLE_ENV: chromium_headless_shell,
         "PROPERTYQUARRY_REPO_ROOT": str(repo_root),
         "PROPERTYQUARRY_SUBSCRIBR_COMPLETION_DIR": str(paths["subscribr"]),
