@@ -42,6 +42,11 @@ except ModuleNotFoundError:
         playwright_engine_launch_browser,
     )
 
+try:
+    from scripts.propertyquarry_live_probe_auth import live_probe_request_headers
+except ModuleNotFoundError:
+    from propertyquarry_live_probe_auth import live_probe_request_headers  # type: ignore[no-redef]
+
 
 DEFAULT_ROUTE_BUDGET_MS = {
     "/sign-in": 1200,
@@ -1798,10 +1803,6 @@ def collect_constrained_client_browser_evidence(
             signed_navigation_count = 0
             signing_interception_errors: list[str] = []
             if probe_secret:
-                from scripts.propertyquarry_live_probe_auth import (
-                    live_probe_request_headers,
-                )
-
                 def record_interception_error(reason: str) -> None:
                     if (
                         len(signing_interception_errors) < 8
