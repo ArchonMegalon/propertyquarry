@@ -1143,13 +1143,6 @@ async def app_create_support_request(
     )
 
 
-@router.get("/app/support", include_in_schema=False)
-def app_support_legacy_redirect() -> RedirectResponse:
-    """Keep the authenticated support CTA on the canonical settings surface."""
-
-    return RedirectResponse("/app/settings/support", status_code=303)
-
-
 @router.get("/app/settings/support", response_class=HTMLResponse)
 def settings_support_detail(
     request: Request,
