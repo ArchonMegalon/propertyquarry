@@ -3960,12 +3960,32 @@
             <div class="pqx-source-list" data-pqx-source-breakdown>${renderSourceBreakdown(runPayload?.summary?.sources || [])}</div>
           </details>
       ` : '';
+      const shortlistHero = (count) => shortlistSurface ? `
+        <div class="pqx-shortlist-hero" data-pqx-premium-shortlist>
+          <div class="pqx-shortlist-hero-copy">
+            <span class="pqx-shortlist-eyebrow"><i aria-hidden="true"></i>${escapeHtml(localizeLiveCopy('Private collection'))}</span>
+            <h1>${escapeHtml(localizeLiveCopy('Your shortlist'))}</h1>
+            <p>${escapeHtml(localizeLiveCopy('Compare the spaces, fit, and trade-offs that are genuinely worth a closer look.'))}</p>
+          </div>
+          <div class="pqx-shortlist-hero-actions">
+            <span class="pqx-shortlist-count" aria-label="${escapeHtml(count)} ${escapeHtml(localizeLiveCopy(summaryLabel))}">
+              <strong>${escapeHtml(count)}</strong>
+              <span>${escapeHtml(localizeLiveCopy(investmentSearch ? 'opportunities' : 'homes'))}</span>
+            </span>
+            <a class="pqx-shortlist-refine" href="/app/search">
+              ${escapeHtml(localizeLiveCopy('Refine search'))}
+              <span aria-hidden="true">&#8599;</span>
+            </a>
+          </div>
+        </div>
+      ` : '';
       const panelClass = rows.length === 1 ? ' is-single-result' : '';
       if (!rows.length) {
         return `
           <section class="pqx-result-panel active${panelClass}" data-pqx-mobile-panel="results" data-pqx-ranked-candidates>
             <div class="pqx-result-panel-head">
               <div class="pqx-results-headline">
+                ${shortlistHero(0)}
                 <div class="pqx-note pqx-results-summary-row">
                   <a class="pqx-results-summary-link" href="#results-list"><b>0</b> ${summaryLabel}</a>
             ${filteredLabel}
@@ -4019,7 +4039,6 @@
         const visualMediaReady = Boolean(String(candidate?.floorplan_url || candidate?.source_virtual_tour_url || candidate?.vendor_tour_url || candidate?.tour?.provider_url || '').trim());
         const derivedPrimaryPrice = [
           candidate?.price_display,
-          candidate?.costs_display,
           candidate?.rent_display,
           facts?.price_display,
           facts?.rent_display,
@@ -4046,7 +4065,8 @@
         const primaryPrice = typeof derivedPrimaryPrice === 'number'
           ? `${String(candidate?.currency_code || facts?.currency_code || 'EUR').trim() || 'EUR'} ${Math.round(derivedPrimaryPrice).toLocaleString('en-US')}`
           : String(derivedPrimaryPrice || '').trim() || localizeLiveCopy('No price published');
-        const secondaryPrice = String(candidate?.costs_display || candidate?.price_per_sqm_display || candidate?.rent_display || facts?.price_per_sqm_display || '').trim();
+        const secondaryPriceCandidate = String(candidate?.costs_display || candidate?.price_per_sqm_display || candidate?.rent_display || facts?.price_per_sqm_display || '').trim();
+        const secondaryPrice = secondaryPriceCandidate === primaryPrice ? '' : secondaryPriceCandidate;
         const layout = String(candidate?.layout_display || '').trim();
         const fitSummary = summarizeCandidateCopy(
           candidate?.fit_summary
@@ -4056,7 +4076,7 @@
           || 'Open the property page for more context.'
         );
 	        const thumb = shortlistSurface
-	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span>'}</button>`
+	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Explore diorama and area map for'))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span><span class="pqx-result-diorama-empty-label" aria-hidden="true">Diorama not ready</span>'}<span class="pqx-shortlist-visual-chrome" aria-hidden="true"><span class="pqx-shortlist-visual-label">${escapeHtml(localizeLiveCopy('Spatial diorama'))}</span><span class="pqx-shortlist-visual-action">${escapeHtml(localizeLiveCopy('Explore'))} <b>&#8599;</b></span></span></button>`
 	          : (previewUrl
 	            ? `<span class="pqx-thumb"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async"></button></span>`
 	            : '');
@@ -4112,24 +4132,24 @@
             : '',
         ].filter(Boolean).join('');
         const actions = [
-          `<button class="pqx-result-open pqx-result-open-button" type="button" data-workbench-select-candidate data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Review'))} ${escapeHtml(title)}">${escapeHtml(localizeLiveCopy('Review'))}</button>`,
-          packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">${escapeHtml(localizeLiveCopy('Open property'))}</a>` : '',
+          `<button class="pqx-result-open pqx-result-open-button is-primary" type="button" data-workbench-select-candidate data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Review'))} ${escapeHtml(title)}">${escapeHtml(localizeLiveCopy('Review'))}</button>`,
+          packetUrl ? `<a class="pqx-result-open is-secondary" href="${escapeHtml(packetUrl)}">${escapeHtml(localizeLiveCopy('Open property'))}</a>` : '',
           propertyUrl && !shortlistSurface ? `<a class="pqx-result-open" href="${escapeHtml(propertyUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(localizeLiveCopy('Open listing'))}</a>` : '',
           tourPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(tourProgress)}%;" title="${escapeHtml(localizeLiveCopy(tourTooltip))}" aria-label="${escapeHtml(localizeLiveCopy(tourTooltip))}">${escapeHtml(localizeLiveCopy(tourLabel))}</button>` : '',
           flythroughPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(flythroughProgress)}%;" title="${escapeHtml(localizeLiveCopy(flythroughTooltip))}" aria-label="${escapeHtml(localizeLiveCopy(flythroughTooltip))}">${escapeHtml(localizeLiveCopy(flythroughLabel))}</button>` : '',
-          shortlistSurface ? `<button class="pqx-result-open pqx-result-open-button" type="button" data-pw-decision-state="archived" data-candidate-ref="${escapeHtml(candidateRef)}" data-pw-remove-row>Remove</button>` : '',
+          shortlistSurface ? `<button class="pqx-result-open pqx-result-open-button is-remove" type="button" data-pw-decision-state="archived" data-candidate-ref="${escapeHtml(candidateRef)}" data-pw-remove-row>Remove</button>` : '',
         ].filter(Boolean).join('');
         const personalFitScore = candidatePersonalFitScore(candidate);
         return `
-          <article class="pqx-result pqx-card${index === 0 ? ' is-top-ranked' : ''}" aria-current="${index === 0 ? 'true' : 'false'}" data-candidate-ref="${escapeHtml(candidateRef)}" data-candidate-packet-url="${escapeHtml(packetUrl)}" data-candidate-listing-url="${escapeHtml(propertyUrl)}" data-workbench-row>
+          <article class="pqx-result pqx-card${index === 0 ? ' is-top-ranked' : ''}" aria-current="${index === 0 ? 'true' : 'false'}" data-candidate-ref="${escapeHtml(candidateRef)}" data-candidate-packet-url="${escapeHtml(packetUrl)}" data-candidate-listing-url="${escapeHtml(propertyUrl)}"${shortlistSurface ? ' data-pqx-shortlist-card' : ''} data-workbench-row>
             <span class="pqx-result-main">
 	              <span class="pqx-result-media${shortlistSurface ? ' has-diorama' : (previewUrl ? '' : ' no-thumb')}">
                 ${thumb}
                 <span class="pqx-result-summary">
-                  <span class="pqx-result-kicker"><span class="pqx-rank">#${escapeHtml(candidate?.rank || index + 1)}</span>${location ? `<span>${escapeHtml(location)}</span>` : ''}</span>
+                  <span class="pqx-result-kicker">${shortlistSurface && index === 0 ? '<span class="pqx-shortlist-top-label">Top match</span>' : ''}<span class="pqx-rank">#${escapeHtml(candidate?.rank || index + 1)}</span>${location ? `<span>${escapeHtml(location)}</span>` : ''}</span>
                   <span class="pqx-result-title">${escapeHtml(title)}</span>
                   <span class="pqx-result-facts">${factChips}</span>
-                  <span class="pqx-note">${escapeHtml(localizedLiveMessage(fitSummary, 'Open the property page for more context.'))}</span>
+                  <span class="pqx-note${shortlistSurface ? ' pqx-shortlist-thesis' : ''}">${escapeHtml(localizedLiveMessage(fitSummary, 'Open the property page for more context.'))}</span>
                 </span>
               </span>
             </span>
@@ -4148,6 +4168,7 @@
         <section class="pqx-result-panel active${panelClass}" data-pqx-mobile-panel="results" data-pqx-ranked-candidates>
           <div class="pqx-result-panel-head">
             <div class="pqx-results-headline">
+              ${shortlistHero(rows.length)}
               <div class="pqx-note pqx-results-summary-row">
                 <a class="pqx-results-summary-link" href="#results-list"><b>${rows.length}</b> ${escapeHtml(localizeLiveCopy(summaryLabel))}</a>
                 ${filteredLabel}

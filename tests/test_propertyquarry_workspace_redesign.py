@@ -6522,6 +6522,39 @@ def test_property_results_do_not_hotlink_unverified_provider_thumbnails() -> Non
     assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" not in workbench_script
 
 
+def test_property_shortlist_premium_surface_keeps_dioramas_at_the_visual_center() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    results_template = (repo_root / "ea/app/templates/app/_property_results_list.html").read_text(encoding="utf-8")
+    workbench_template = (repo_root / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
+    workbench_script = (repo_root / "ea/app/templates/app/_property_workbench_script.html").read_text(encoding="utf-8")
+
+    assert 'class="pqx-shortlist-hero" data-pqx-premium-shortlist' in results_template
+    assert "Private collection" in results_template
+    assert "Your shortlist" in results_template
+    assert "Compare the spaces, fit, and trade-offs" in results_template
+    assert "data-pqx-shortlist-card" in results_template
+    assert "Spatial diorama" in results_template
+    assert "Diorama not ready" in results_template
+    assert "Explore diorama and area map for" in results_template
+    assert 'class="pqx-result-open pqx-result-open-button is-primary"' in results_template
+    assert 'class="pqx-result-open pqx-result-open-button is-remove"' in results_template
+
+    assert 'id="pqx-premium-shortlist-styles"' in workbench_template
+    assert '.pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card]' in workbench_template
+    assert ".pqx-shortlist-visual-chrome" in workbench_template
+    assert "@media (max-width: 760px)" in workbench_template
+    assert "@media (prefers-reduced-motion: reduce)" in workbench_template
+    assert ":focus-visible" in workbench_template
+
+    assert "const shortlistHero = (count) => shortlistSurface" in workbench_script
+    assert "${shortlistHero(rows.length)}" in workbench_script
+    assert "data-pqx-shortlist-card" in workbench_script
+    assert "Spatial diorama" in workbench_script
+    assert "Diorama not ready" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl;" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" not in workbench_script
+
+
 def test_propertyquarry_customer_copy_uses_sources_not_provider_coverage() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     files = [
@@ -22028,7 +22061,7 @@ def test_property_shortlist_surface_keeps_results_first_and_restores_desktop_rev
     assert 'data-candidate-listing-url="${escapeHtml(propertyUrl)}"' in body
     assert "const openRowTarget = () => {" not in body
     assert (
-        'packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">'
+        'packetUrl ? `<a class="pqx-result-open is-secondary" href="${escapeHtml(packetUrl)}">'
         "${escapeHtml(localizeLiveCopy('Open property'))}</a>`"
         in body
     )

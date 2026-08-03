@@ -40,6 +40,25 @@
 <section class="pqx-result-panel active{% if is_research_surface and not results %} is-empty-research{% endif %}" data-pqx-mobile-panel="results">
   <div class="pqx-result-panel-head">
     <div class="pqx-results-headline">
+      {% if is_shortlist_surface %}
+      <div class="pqx-shortlist-hero" data-pqx-premium-shortlist>
+        <div class="pqx-shortlist-hero-copy">
+          <span class="pqx-shortlist-eyebrow"><i aria-hidden="true"></i>Private collection</span>
+          <h1>Your shortlist</h1>
+          <p>Compare the spaces, fit, and trade-offs that are genuinely worth a closer look.</p>
+        </div>
+        <div class="pqx-shortlist-hero-actions">
+          <span class="pqx-shortlist-count" aria-label="{{ full_results_total }} {{ results_label }}">
+            <strong>{{ full_results_total }}</strong>
+            <span>{{ 'opportunities' if brief.get('search_goal') == 'investment' else 'homes' }}</span>
+          </span>
+          <a class="pqx-shortlist-refine" href="/app/search">
+            Refine search
+            <span aria-hidden="true">&#8599;</span>
+          </a>
+        </div>
+      </div>
+      {% endif %}
       {% if is_research_surface %}
       <div class="pqx-title" style="margin-bottom:12px;">
         <span>{{ hero_kicker or 'Property pages' }}</span>
@@ -135,7 +154,7 @@
 	    <span hidden></span>
 	    <dialog data-pqx-filtered-dialog aria-label="Homes outside this search" hidden></dialog>
 	    {% for candidate in visible_results %}
-    <article class="pqx-result pqx-card{% if candidate.get('recovered_by_filter') %} is-filter-recovered{% endif %}{% if loop.first %} is-top-ranked{% endif %}" aria-current="{{ 'true' if loop.first else 'false' }}" data-candidate-ref="{{ candidate.get('candidate_ref') }}" data-candidate-packet-url="{{ candidate.get('packet_url') or '' }}" data-candidate-listing-url="{{ candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url') or '' }}" data-tour-status="{{ candidate.get('tour', {}).get('status') or 'missing' }}" data-tour-eta="{{ candidate.get('tour', {}).get('eta_label') or '' }}" data-workbench-row>
+    <article class="pqx-result pqx-card{% if candidate.get('recovered_by_filter') %} is-filter-recovered{% endif %}{% if loop.first %} is-top-ranked{% endif %}" aria-current="{{ 'true' if loop.first else 'false' }}" data-candidate-ref="{{ candidate.get('candidate_ref') }}" data-candidate-packet-url="{{ candidate.get('packet_url') or '' }}" data-candidate-listing-url="{{ candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url') or '' }}" data-tour-status="{{ candidate.get('tour', {}).get('status') or 'missing' }}" data-tour-eta="{{ candidate.get('tour', {}).get('eta_label') or '' }}"{% if is_shortlist_surface %} data-pqx-shortlist-card{% endif %} data-workbench-row>
       {% set orientation_preview = candidate.get('orientation_preview') or {} %}
 		      {% set diorama_scene = candidate.get('diorama_scene') or {} %}
 		      {% set diorama_preview_url = candidate.get('diorama_preview_url') or diorama_scene.get('image_url') or '' %}
@@ -144,11 +163,12 @@
 		      {% set primary_preview_url = primary_preview_url if primary_preview_url.startswith('/') else '' %}
 	      {% set candidate_facts = candidate.get('property_facts') or {} %}
 	      {% set provisional_facts = candidate.get('provisional_facts') or candidate.get('facts') or {} %}
-	      {% set candidate_price_text = candidate.get('price_display') if candidate.get('price_display') and candidate.get('price_display') != 'n/a' else (candidate.get('costs_display') or candidate.get('rent_display') or candidate_facts.get('price_display') or candidate_facts.get('rent_display') or candidate_facts.get('price') or candidate_facts.get('rent') or provisional_facts.get('price_display') or provisional_facts.get('rent_display') or provisional_facts.get('price') or provisional_facts.get('rent') or '') %}
+	      {% set candidate_price_text = candidate.get('price_display') if candidate.get('price_display') and candidate.get('price_display') != 'n/a' else (candidate.get('rent_display') or candidate_facts.get('price_display') or candidate_facts.get('rent_display') or candidate_facts.get('price') or candidate_facts.get('rent') or provisional_facts.get('price_display') or provisional_facts.get('rent_display') or provisional_facts.get('price') or provisional_facts.get('rent') or '') %}
 	      {% set candidate_price_numeric = candidate.get('price_eur') or candidate.get('purchase_price_eur') or candidate.get('buy_price_eur') or candidate.get('rent_eur') or candidate.get('total_rent_eur') or candidate.get('monthly_rent_eur') or candidate_facts.get('price_eur') or candidate_facts.get('purchase_price_eur') or candidate_facts.get('buy_price_eur') or candidate_facts.get('rent_eur') or candidate_facts.get('total_rent_eur') or candidate_facts.get('monthly_rent_eur') or provisional_facts.get('price_eur') or provisional_facts.get('purchase_price_eur') or provisional_facts.get('buy_price_eur') or provisional_facts.get('rent_eur') or provisional_facts.get('total_rent_eur') or provisional_facts.get('monthly_rent_eur') %}
 	      {% set candidate_price_currency = candidate.get('currency_code') or candidate_facts.get('currency_code') or provisional_facts.get('currency_code') or ('EUR' if candidate_price_numeric else '') %}
       {% set primary_price = candidate_price_text or ((candidate_price_currency ~ ' ' ~ '{:,.0f}'.format(candidate_price_numeric|float)) if candidate_price_numeric else 'No price published') %}
       {% set secondary_price = candidate.get('costs_display') if candidate.get('price_display') and candidate.get('price_display') != 'n/a' else (candidate.get('price_per_sqm_display') or candidate.get('costs_display') or candidate.get('rent_display') or candidate_facts.get('price_per_sqm_display') or '') %}
+      {% if secondary_price == primary_price %}{% set secondary_price = '' %}{% endif %}
       {% set thesis_line = candidate.get('investment', {}).get('headline') if brief.get('search_goal') == 'investment' else '' %}
       {% set fit_tooltip = candidate.get('fit_summary') or ((candidate.get('match_reasons') or [])[:2]|join(' · ')) or 'How closely this home matches your search.' %}
       {% if not thesis_line %}
@@ -184,15 +204,15 @@
             data-pqx-shortlist-diorama
             data-pqx-atlas-open
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
-            aria-label="Open area map for {{ candidate.get('title') or 'property' }}"
-            {% if loop.first %}{% else %}data-pqx-deferred-preview-host{% endif %}
+            aria-label="Explore diorama and area map for {{ candidate.get('title') or 'property' }}"
+            {% if loop.index > 3 %}data-pqx-deferred-preview-host{% endif %}
           >
             {% if diorama_preview_url %}
             <img
-              {% if loop.first %}
+              {% if loop.index <= 3 %}
               src="{{ diorama_preview_url }}"
-              loading="eager"
-              fetchpriority="high"
+              loading="{{ 'eager' if loop.first else 'lazy' }}"
+              fetchpriority="{{ 'high' if loop.first else 'low' }}"
               {% else %}
               src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
               data-pqx-deferred-src="{{ diorama_preview_url }}"
@@ -206,8 +226,12 @@
             <span class="pqx-result-diorama-room room-main"></span>
             <span class="pqx-result-diorama-room room-side"></span>
             <span class="pqx-result-diorama-room room-terrace"></span>
-            <span class="pqx-result-diorama-empty-label" aria-hidden="true">Preview not available</span>
+            <span class="pqx-result-diorama-empty-label" aria-hidden="true">Diorama not ready</span>
             {% endif %}
+            <span class="pqx-shortlist-visual-chrome" aria-hidden="true">
+              <span class="pqx-shortlist-visual-label">Spatial diorama</span>
+              <span class="pqx-shortlist-visual-action">Explore <b>&#8599;</b></span>
+            </span>
           </button>
           {% elif primary_preview_url %}
           <span class="pqx-thumb">
@@ -223,7 +247,7 @@
           </span>
           {% endif %}
           <span class="pqx-result-summary">
-            <span class="pqx-result-kicker"><span class="pqx-rank">#{{ candidate.get('rank') }}</span>{% if candidate.get('location_label') %}<span>{{ candidate.get('location_label') }}</span>{% endif %}</span>
+            <span class="pqx-result-kicker">{% if is_shortlist_surface and loop.first %}<span class="pqx-shortlist-top-label">Top match</span>{% endif %}<span class="pqx-rank">#{{ candidate.get('rank') }}</span>{% if candidate.get('location_label') %}<span>{{ candidate.get('location_label') }}</span>{% endif %}</span>
             <span class="pqx-result-title">{{ candidate.get('title') }}</span>
             <span class="pqx-result-facts">
               {% if candidate.get('repair_flag_label') %}
@@ -260,6 +284,9 @@
               <a class="pqx-result-fact pqx-result-tour-link" href="{{ walkthrough.get('url') }}" title="{{ walkthrough.get('detail') or 'Open the walkthrough.' }}" aria-label="Walkthrough" data-rybbit-event="pq.flythrough.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">Walkthrough</a>
               {% endif %}
             </span>
+            {% if is_shortlist_surface and (candidate.get('fit_summary') or thesis_line) %}
+            <span class="pqx-note pqx-shortlist-thesis">{{ candidate.get('fit_summary') or thesis_line }}</span>
+            {% endif %}
           </span>
         </span>
       </span>
@@ -284,14 +311,14 @@
         {% endif %}
         <span class="pqx-result-actions">
           <button
-            class="pqx-result-open pqx-result-open-button"
+            class="pqx-result-open pqx-result-open-button is-primary"
             type="button"
             data-workbench-select-candidate
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
             aria-label="Review {{ candidate.get('title') or 'property' }}"
           >Review</button>
           {% if candidate.get('packet_url') %}
-          <a class="pqx-result-open" href="{{ candidate.get('packet_url') }}">Open property</a>
+          <a class="pqx-result-open is-secondary" href="{{ candidate.get('packet_url') }}">Open property</a>
           {% endif %}
           {% if (candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url')) and not shortlist_compact_actions %}
           <a class="pqx-result-open" href="{{ candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url') }}" target="_blank" rel="noopener noreferrer">Open listing</a>
@@ -304,7 +331,7 @@
           {% endif %}
         {% if surface_mode == 'shortlist' %}
           <button
-            class="pqx-result-open pqx-result-open-button"
+            class="pqx-result-open pqx-result-open-button is-remove"
             type="button"
             data-pw-decision-state="archived"
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
