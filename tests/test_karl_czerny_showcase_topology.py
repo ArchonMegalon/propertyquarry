@@ -121,7 +121,11 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     ]
     assert builder._ANALYSIS_SPEC["boundary_adjacency"] == {
         "required": [["balcony-loggia", "living-kitchen"]],
-        "forbidden": [["living-kitchen", "terrace"], ["balcony-loggia", "terrace"]],
+        "forbidden": [
+            ["living-kitchen", "terrace"],
+            ["balcony-loggia", "terrace"],
+            ["balcony-loggia", "entrance-vestibule"],
+        ],
     }
     source_geometry = builder._ANALYSIS_SPEC["source_geometry"]
     assert source_geometry["contract_name"] == "propertyquarry.floorplan_source_geometry.v1"
@@ -149,6 +153,23 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     assert source_portals["entrance-exit-gate"]["label"] == "Entrance / exit · Stairwell 3"
     assert source_portals["entrance-exit-gate"]["target_label"] == "Stairwell 3"
     assert source_portals["entrance-to-living"]["label"] == "Door · Wohnküche"
+    assert source_portals["living-to-balcony-loggia"] == {
+        "id": "living-to-balcony-loggia",
+        "label": "Door · Balkon / Loggia",
+        "kind": "door",
+        "room_ids": ["living-kitchen", "balcony-loggia"],
+        "room_sides": {"living-kitchen": "south", "balcony-loggia": "west"},
+        "center_px": {"x": 1360, "y": 1055},
+        "width_px": 80,
+        "target_room_id": "balcony-loggia",
+    }
+    portal_topology = builder._showcase_portal_topology()
+    assert portal_topology == {
+        "balcony_portal_id": "living-to-balcony-loggia",
+        "exit_portal_id": "entrance-exit-gate",
+        "source_pixel_separation": 565,
+        "status": "pass",
+    }
 
     measured_areas = {
         room_id: float(geometry["area_m2"])
@@ -203,3 +224,36 @@ def test_source_pixel_envelopes_drive_reviewed_plan_bounds(tmp_path: Path) -> No
     invalid_spec["rooms"][6]["source_bbox_px"]["x"] = 1000
     with pytest.raises(FloorplanAnalysisError, match="floorplan_source_bbox_drift:living-kitchen"):
         analyze_floorplan(source, specification=invalid_spec)
+
+
+def test_diorama_is_rendered_from_reviewed_source_geometry(tmp_path: Path) -> None:
+    source = tmp_path / "floorplan.webp"
+    source_projection = tmp_path / "diorama-source-floorplan.png"
+    preview = tmp_path / "diorama-preview.png"
+    Image.new("RGB", (1800, 1310), "white").save(source, format="WEBP")
+    analysis = analyze_floorplan(source, specification=builder._ANALYSIS_SPEC)
+
+    receipt = builder._save_source_locked_diorama(
+        floorplan_source=source,
+        floorplan_analysis=analysis,
+        source_crop_target=source_projection,
+        target=preview,
+    )
+
+    assert receipt["status"] == "pass"
+    assert receipt["renderer_version"] == "propertyquarry_bright_playful_cutaway_v1"
+    assert receipt["source_projection_kind"] == (
+        "source_pixel_geometry_with_verified_portals"
+    )
+    assert receipt["source_geometry_contract_name"] == (
+        "propertyquarry.floorplan_source_geometry.v1"
+    )
+    assert receipt["displayed_route_stop_count"] == len(builder.SPATIAL_ROOMS)
+    assert receipt["furnished_room_count"] == len(builder.SPATIAL_ROOMS)
+    assert all(receipt["checks"].values())
+    assert len(receipt["source_projection_sha256"]) == 64
+    assert len(receipt["preview_sha256"]) == 64
+    assert source_projection.is_file()
+    assert preview.is_file()
+    with Image.open(preview) as rendered:
+        assert rendered.size == (1600, 1100)

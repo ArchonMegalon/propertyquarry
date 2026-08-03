@@ -172,7 +172,11 @@
   ],
   "boundary_adjacency": {
     "required": [["balcony-loggia", "living-kitchen"]],
-    "forbidden": [["living-kitchen", "terrace"], ["balcony-loggia", "terrace"]]
+    "forbidden": [
+      ["living-kitchen", "terrace"],
+      ["balcony-loggia", "terrace"],
+      ["balcony-loggia", "entrance-vestibule"]
+    ]
   },
   "source_geometry": {
     "contract_name": "propertyquarry.floorplan_source_geometry.v1",
@@ -213,6 +217,16 @@
         "width_px": 90,
         "target_room_id": "outside",
         "target_label": "Stairwell 3"
+      },
+      {
+        "id": "living-to-balcony-loggia",
+        "label": "Door · Balkon / Loggia",
+        "kind": "door",
+        "room_ids": ["living-kitchen", "balcony-loggia"],
+        "room_sides": {"living-kitchen": "south", "balcony-loggia": "west"},
+        "center_px": {"x": 1360, "y": 1055},
+        "width_px": 80,
+        "target_room_id": "balcony-loggia"
       }
     ]
   }
