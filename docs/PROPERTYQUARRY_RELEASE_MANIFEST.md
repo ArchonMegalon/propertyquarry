@@ -7,7 +7,7 @@ This file is the concise, current release authority. Detailed dated notes are ar
 PropertyQuarry is a source/browser candidate whose production state is decided
 by the current local Docker deployment receipt:
 
-- The locally materialized candidate receipt covers `7/7` source cases, `16/16` flagship real-browser cases, and all eight required product journeys for the exact source identity recorded below. Local Compose deployment and its mode-`0600` operator receipt—not GitHub Actions—decide whether that candidate is live. This candidate includes explicit hosted/generated/blocked/expired 3D-tour truth, a topology-gated captured Matterport control, multi-node enforcement for 3DVista walkable claims, attributable unavailable/stale/verified area-evidence states, in-place shortlist history, Telegram delivery proof, production-mode PostgreSQL storage/browser parity, fail-closed production registration delivery, and canonical public-tour volume controls.
+- The locally materialized candidate receipt covers `7/7` source cases, `16/16` flagship real-browser cases, and all eight required product journeys for the exact source identity recorded below. Local Compose deployment and its mode-`0600` operator receipt—not GitHub Actions—decide whether that candidate is live. This candidate keeps the normal camera walkthrough primary, exposes 3D tour only for verified Matterport or 3DVista publications, labels generated reconstruction as an AI layout preview, enforces topology-gated Matterport and multi-node 3DVista walkable claims, and preserves attributable area evidence, in-place shortlist history, Telegram delivery proof, production-mode PostgreSQL storage/browser parity, fail-closed production registration delivery, and canonical public-tour volume controls.
 - Candidate/browser proof does not prove deployment, production storage, authentication, external delivery, observability, rollback, or disaster recovery.
 - A prior, separately observed public-edge check returned `200` for `/` after a narrow generated-tour permission repair and received a response from `/health/ready`; the observation has no current timestamp, immutable image binding, or exact-candidate authority and is therefore historical context only. At that observation, `/version` reported an incomplete release manifest without canonical release identity. None of those checks is deployment proof for this candidate.
 - Production promotion requires a passing exact-candidate local Docker receipt with distinct immutable web/render image IDs, completed migration, healthy services, and localhost readiness.
@@ -52,13 +52,13 @@ The marked JSON object is the single canonical release authority consumed by the
 <!-- propertyquarry-release-manifest-json:start -->
 ```json
 {
-  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:ac5869ac5a631af972714e4e58c57e32c89473ad066a703fca1997a7df7af36d",
+  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:f54f87490bab1220c96f178c07ff64a989df3cfdf7687254496e231027a3cf46",
   "release_branch": "main",
   "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
-  "release_commit_sha": "89b5bad8ff0e01586b24a952e56a82519b8fba96",
-  "release_deployment_id": "propertyquarry-governed-deploy-89b5bad8ff0e",
-  "release_generated_at": "2026-08-03T06:55:39Z",
-  "release_label": "propertyquarry-source-browser-candidate-89b5bad8ff0e",
+  "release_commit_sha": "e0d7dc9f5dbe0c80466c51c45947773f2a135874",
+  "release_deployment_id": "propertyquarry-governed-deploy-e0d7dc9f5dbe",
+  "release_generated_at": "2026-08-03T09:13:17Z",
+  "release_label": "propertyquarry-source-browser-candidate-e0d7dc9f5dbe",
   "release_manifest_schema": "propertyquarry.release_manifest.v1",
   "release_product": "PropertyQuarry",
   "release_public_origin": "https://propertyquarry.com",
