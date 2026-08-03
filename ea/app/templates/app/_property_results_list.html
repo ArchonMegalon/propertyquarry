@@ -179,7 +179,7 @@
         <span class="pqx-result-media{% if not primary_preview_url and not is_shortlist_surface %} no-thumb{% endif %}{% if is_shortlist_surface %} has-diorama{% endif %}">
           {% if is_shortlist_surface %}
           <button
-            class="pqx-result-diorama pqx-result-diorama-button{% if not (diorama_preview_url or primary_preview_url) %} is-placeholder{% endif %}"
+            class="pqx-result-diorama pqx-result-diorama-button{% if not diorama_preview_url %} is-placeholder{% endif %}"
             type="button"
             data-pqx-shortlist-diorama
             data-pqx-atlas-open
@@ -187,15 +187,15 @@
             aria-label="Open area map for {{ candidate.get('title') or 'property' }}"
             {% if loop.first %}{% else %}data-pqx-deferred-preview-host{% endif %}
           >
-            {% if diorama_preview_url or primary_preview_url %}
+            {% if diorama_preview_url %}
             <img
               {% if loop.first %}
-              src="{{ diorama_preview_url or primary_preview_url }}"
+              src="{{ diorama_preview_url }}"
               loading="eager"
               fetchpriority="high"
               {% else %}
               src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
-              data-pqx-deferred-src="{{ diorama_preview_url or primary_preview_url }}"
+              data-pqx-deferred-src="{{ diorama_preview_url }}"
               loading="lazy"
               fetchpriority="low"
               {% endif %}

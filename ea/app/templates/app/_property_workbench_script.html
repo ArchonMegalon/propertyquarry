@@ -4003,7 +4003,7 @@
 	          candidate?.diorama_preview_url,
 	          candidate?.diorama_scene?.image_url,
 	        ].map(clientRenderableImageUrl).find(Boolean) || '';
-	        const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;
+	        const shortlistPreviewUrl = dioramaPreviewUrl;
         const candidateRef = String(
           candidate?.candidate_ref
           || candidate?.listing_id

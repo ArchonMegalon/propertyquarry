@@ -6510,9 +6510,16 @@ def test_property_results_do_not_hotlink_unverified_provider_thumbnails() -> Non
 
     assert "diorama_preview_url if diorama_preview_url.startswith('/') else ''" in results_template
     assert "primary_preview_url if primary_preview_url.startswith('/') else ''" in results_template
+    assert "if not diorama_preview_url %} is-placeholder" in results_template
+    assert "{% if diorama_preview_url %}" in results_template
+    assert 'src="{{ diorama_preview_url }}"' in results_template
+    assert 'data-pqx-deferred-src="{{ diorama_preview_url }}"' in results_template
+    assert "diorama_preview_url or primary_preview_url" not in results_template
     assert "if ranked_preview_url.startswith('/')" in workbench_template
     assert "const clientRenderableImageUrl = (value) => {" in workbench_script
     assert "parsed.origin === window.location.origin ? candidateUrl : ''" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl;" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" not in workbench_script
 
 
 def test_propertyquarry_customer_copy_uses_sources_not_provider_coverage() -> None:
