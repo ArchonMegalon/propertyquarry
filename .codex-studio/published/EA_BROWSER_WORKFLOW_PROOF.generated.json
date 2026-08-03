@@ -5,7 +5,7 @@
   "proof_target": "propertyquarry",
   "version": 1,
   "kind": "proof_receipt",
-  "generated_at": "2026-08-02T20:13:15Z",
+  "generated_at": "2026-08-03T04:01:31Z",
   "generated_by": "scripts/materialize_ea_browser_workflow_proof.py",
   "status": "pass",
   "operator_summary": "PropertyQuarry browser workflow proof is published and green across the required journey matrix, source-backed contracts, and real-browser E2E.",
@@ -31,7 +31,7 @@
       "id": "propertyquarry.release-proof.v1",
       "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
     },
-    "code_commit": "26b05a7b25a2c3221e52e184ad17dee968a392ba",
+    "code_commit": "fe39375009ecd881bb64b35588f9abd5a9b75fd1",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
@@ -40,8 +40,8 @@
     "required_test_sources": [
       {
         "path": "tests/test_propertyquarry_workspace_redesign.py",
-        "sha256": "56bae36d6b05b3124cb3cc24b0ccae6a0e4ba74020be6e33c3b360e47ca9fbf8",
-        "git_blob_oid": "6a2d98ab9173ae84efff5facb42126b9e77558af"
+        "sha256": "063ae30bc5d6ccb85f8699fdf8fb2d657b5cae9aaae81cd3f3827eefea3f4625",
+        "git_blob_oid": "93f0f87ff87f629237db9993681da2dcf524d318"
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -71,10 +71,10 @@
       "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
     ],
     "exit_code": 0,
-    "duration_seconds": 22.031,
+    "duration_seconds": 23.853,
     "output_excerpt": [
       ".......                                                                  [100%]",
-      "7 passed in 20.25s"
+      "7 passed in 22.25s"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -106,10 +106,10 @@
         "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
       ],
       "exit_code": 0,
-      "duration_seconds": 22.031,
+      "duration_seconds": 23.853,
       "output_excerpt": [
         ".......                                                                  [100%]",
-        "7 passed in 20.25s"
+        "7 passed in 22.25s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -134,10 +134,10 @@
         "test_property_research_rows_preserve_evidence_states_and_original_article_link"
       ],
       "exit_code": 0,
-      "duration_seconds": 2.689,
+      "duration_seconds": 1.861,
       "output_excerpt": [
         ".                                                                        [100%]",
-        "1 passed in 1.18s"
+        "1 passed in 1.05s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -178,10 +178,10 @@
       "test_propertyquarry_research_evidence_states_and_links_render_in_real_browser"
     ],
     "exit_code": 0,
-    "duration_seconds": 90.203,
+    "duration_seconds": 92.05,
     "output_excerpt": [
       "................                                                         [100%]",
-      "16 passed in 88.46s (0:01:28)"
+      "16 passed in 90.14s (0:01:30)"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -200,7 +200,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "26b05a7b25a2c3221e52e184ad17dee968a392ba",
+    "runtime_commit_sha": "fe39375009ecd881bb64b35588f9abd5a9b75fd1",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
