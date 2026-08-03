@@ -52,7 +52,7 @@ The marked JSON object is the single canonical release authority consumed by the
 <!-- propertyquarry-release-manifest-json:start -->
 ```json
 {
-  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:f1df6f44fada9716d016a5e8e759d9e05a94a3d428312bbfdcfe1b5bb6e8e4c1",
+  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:85e8afb486c2686174cac0c5a6b46f944a15dafbd20b401ee4c931eae0a75bcf",
   "release_branch": "main",
   "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
   "release_commit_sha": "91cb600e90727940af68fc2f1f65ad2cd60b4479",
