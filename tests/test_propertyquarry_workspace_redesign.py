@@ -511,7 +511,7 @@ def test_property_shortlist_templates_expose_visual_actions_without_hidden_agent
     feedback_script = (repo_root / "ea/app/templates/app/_property_workbench_feedback_script.html").read_text(encoding="utf-8")
 
     assert "loop.first and brief.get('plan_key') == 'agent'" not in results
-    assert ">Walkthrough</a>" in results
+    assert ">Camera walkthrough</a>" in results
     assert ">3D tour</a>" in results
     assert 'class="pqx-result-fact pqx-result-tour-link"' in results
     assert "tour.get('url')" in results
@@ -530,10 +530,12 @@ def test_property_shortlist_templates_expose_visual_actions_without_hidden_agent
     assert "selected.get('diorama_preview_url')" in review
     assert "selected.get('diorama_preview_url')" in workbench
     assert "candidate?.diorama_preview_url" in feedback_script
-    assert "selected.get('verified_tour_url') or selected.get('open_tour_url')" in review
-    assert "selected.get('verified_tour_url') or selected.get('open_tour_url')" in workbench
+    assert "selected.get('verified_tour_url') or selected.get('open_tour_url')" not in review
+    assert "selected.get('verified_tour_url') or selected.get('open_tour_url')" not in workbench
+    assert "selected.get('verified_tour_url') or selected_tour.get('url')" in review
+    assert "selected.get('verified_tour_url') or selected_tour.get('url')" in workbench
     assert "candidate?.verified_tour_url" in feedback_script
-    assert "candidate?.open_tour_url" in feedback_script
+    assert "candidate?.open_tour_url" not in feedback_script
     assert "{{ selected_tour.get('provider_label') or '3D tour' }}" not in review
     assert "{{ selected_tour.get('provider_label') or '3D tour' }}" not in workbench
     assert "{{ selected_flythrough.get('provider_label') or 'Walkthrough' }}" not in review
@@ -542,7 +544,7 @@ def test_property_shortlist_templates_expose_visual_actions_without_hidden_agent
     assert "candidate?.flythrough?.provider_label || 'Rendered walkthrough'" not in script
     assert "Rendered walkthrough" not in script
     assert "<summary><strong>More actions</strong></summary>" not in review
-    assert "Request walkthrough" in review
+    assert "Request camera walkthrough" in review
     assert "Open 3D tour" in review
     assert "Open listing" in review
     assert "Open property" in review
@@ -16187,7 +16189,7 @@ def test_property_research_matterport_bundle_uses_authenticated_exact_run_handof
 
     assert page.status_code == 200
     assert "Original tour available" in page.text
-    assert "Open original tour" in page.text
+    assert "Open 3D tour" in page.text
     assert raw_provider_url not in page.text
     assert canonical_provider_url not in page.text
     assert retired_local_url not in page.text
@@ -28589,7 +28591,7 @@ def test_property_research_packet_renders_request_actions_when_hosted_tour_is_no
     assert "Warm Scandinavian" in rendered_html
     assert "Trump gold" in rendered_html
     assert 'data-pw-visual-request="flythrough"' in rendered_html
-    assert '>Request walkthrough</button>' in rendered_html
+    assert '>Request camera walkthrough</button>' in rendered_html
     assert 'data-pw-walkthrough-provider="magicfit"' not in rendered_html
     assert "data-pw-walkthrough-provider-select" not in rendered_html
     assert rendered_html.count('data-pw-visual-style-required="1"') >= 2
@@ -28771,7 +28773,7 @@ def test_property_workbench_client_payload_drops_unvalidated_visual_urls(
     assert "vendor_tour_url" not in payload
 
 
-def test_property_workbench_client_payload_keeps_validated_visual_urls() -> None:
+def test_property_workbench_client_payload_keeps_floorplan_but_hides_raw_provider_url() -> None:
     floorplan_url = "https://assets.example.test/plans/unit-17.png"
     source_virtual_tour_url = "https://my.matterport.com/show/?m=verified-model"
     payload = landing_property_workspace_payload._property_workbench_client_candidate_payload(
@@ -28786,7 +28788,8 @@ def test_property_workbench_client_payload_keeps_validated_visual_urls() -> None
     )
 
     assert payload["floorplan_url"] == floorplan_url
-    assert payload["source_virtual_tour_url"] == source_virtual_tour_url
+    assert "source_virtual_tour_url" not in payload
+    assert "tour_url" not in payload
 
 
 @pytest.mark.parametrize(
@@ -28840,7 +28843,7 @@ def test_property_workbench_client_payload_strips_unsafe_nested_visual_targets_a
     assert payload["tour"]["status"] == "unavailable"
     assert payload["flythrough"]["status"] == "unavailable"
     assert payload["tour"]["status_detail"] == "Tour not available yet."
-    assert payload["flythrough"]["status_detail"] == "Walkthrough not available yet."
+    assert payload["flythrough"]["status_detail"] == "Camera walkthrough not available yet."
     for key in (
         "tour_url",
         "verified_tour_url",
@@ -28860,7 +28863,7 @@ def test_property_workbench_client_payload_strips_unsafe_nested_visual_targets_a
     assert "floorplan_urls_json" not in payload["property_facts"]
 
 
-def test_property_workbench_client_payload_preserves_only_validated_nested_visual_targets() -> None:
+def test_property_workbench_client_payload_preserves_assets_but_hides_unhosted_visual_targets() -> None:
     provider_viewer_url = "https://my.matterport.com/show/?m=verified-model"
     floorplan_url = "https://assets.example.test/plans/unit-17.png"
     walkthrough_url = "https://assets.example.test/tours/unit-17-walkthrough.mp4"
@@ -28895,19 +28898,19 @@ def test_property_workbench_client_payload_preserves_only_validated_nested_visua
     )
 
     assert payload["floorplan_url"] == floorplan_url
-    assert payload["source_virtual_tour_url"] == provider_viewer_url
-    assert payload["tour_url"] == provider_viewer_url
-    assert payload["verified_tour_url"] == provider_viewer_url
-    assert payload["open_tour_url"] == provider_viewer_url
+    assert "source_virtual_tour_url" not in payload
+    assert "tour_url" not in payload
+    assert "verified_tour_url" not in payload
+    assert "open_tour_url" not in payload
     assert "flythrough_url" not in payload
     assert payload["preview_image_url"] == preview_url
     assert payload["diorama_preview_url"] == diorama_url
     assert payload["orientation_preview"] == {"image_url": map_preview_url}
     assert payload["diorama_scene"] == {"image_url": diorama_url}
-    assert payload["tour"]["url"] == provider_viewer_url
-    assert payload["tour"]["embed_url"] == provider_viewer_url
-    assert payload["tour"]["provider_url"] == provider_viewer_url
-    assert payload["tour"]["status"] == "source"
+    assert "url" not in payload["tour"]
+    assert "embed_url" not in payload["tour"]
+    assert "provider_url" not in payload["tour"]
+    assert payload["tour"]["status"] == "unavailable"
     assert payload["flythrough"]["status"] == "unavailable"
     assert "url" not in payload["flythrough"]
     assert "embed_url" not in payload["flythrough"]
@@ -29067,7 +29070,7 @@ def test_property_workbench_client_payload_rejects_deeply_encoded_network_image_
         assert "media_urls_json" not in payload.get("property_facts", {})
 
 
-def test_property_workbench_client_payload_uses_valid_verified_tour_after_invalid_raw_urls() -> None:
+def test_property_workbench_client_payload_rejects_raw_provider_tour_after_invalid_urls() -> None:
     verified_tour_url = "https://my.matterport.com/show/?m=verified-fallback-model"
     payload = landing_property_workspace_payload._property_workbench_client_candidate_payload(
         {
@@ -29080,10 +29083,10 @@ def test_property_workbench_client_payload_uses_valid_verified_tour_after_invali
         }
     )
 
-    assert payload["tour_status"] == "ready"
-    assert payload["tour_url"] == verified_tour_url
-    assert payload["verified_tour_url"] == verified_tour_url
-    assert payload["open_tour_url"] == verified_tour_url
+    assert payload["tour_status"] == "unavailable"
+    assert "tour_url" not in payload
+    assert "verified_tour_url" not in payload
+    assert "open_tour_url" not in payload
 
 
 def test_property_tour_requestability_does_not_treat_panorama_asset_as_live_viewer() -> None:
@@ -29251,7 +29254,7 @@ def test_property_research_packet_opens_nested_verified_provider_tour(monkeypatc
     rendered_html = re.sub(r"<script\b[^>]*>.*?</script>", " ", packet.text, flags=re.IGNORECASE | re.DOTALL)
     rendered_html = re.sub(r"<style\b[^>]*>.*?</style>", " ", rendered_html, flags=re.IGNORECASE | re.DOTALL)
     assert f'href="{verified_provider_url}"' in rendered_html
-    assert ">Open original tour</a>" in rendered_html
+    assert ">Open 3D tour</a>" in rendered_html
     assert "Request 3D tour" not in rendered_html
     assert "Retry 3D tour" not in rendered_html
 
@@ -30319,7 +30322,7 @@ def test_property_research_packet_shows_ready_walkthrough_inside_visual_console(
     assert f'href="{hosted_href}"' in rendered_html
     assert f'href="{verified_walkthrough_href.replace("&", "&amp;")}"' in rendered_html
     assert '>Open 3D tour</a>' in rendered_html
-    assert '>Open walkthrough</a>' in rendered_html
+    assert '>Open camera walkthrough</a>' in rendered_html
     assert "Walkthrough is ready." in rendered_html
     assert "Open now." in rendered_html
     assert 'data-prd-visual-card="walkthrough"' in packet.text
@@ -30403,7 +30406,7 @@ def test_property_research_packet_keeps_ready_tour_in_visual_rail_while_walkthro
     rendered_html = re.sub(r"<style\b[^>]*>.*?</style>", " ", rendered_html, flags=re.IGNORECASE | re.DOTALL)
     assert f'href="{hosted_href}"' in rendered_html
     assert '>Open 3D tour</a>' in rendered_html
-    assert "Preparing walkthrough" in rendered_html
+    assert "Preparing camera walkthrough" in rendered_html
     rail_match = re.search(
         r'<div\s+class="prd-visual-rail(?P<class_suffix>[^"]*)".*?<strong data-prd-visual-label>(?P<label>.*?)</strong>.*?<p class="prd-visual-status"[^>]*>(?P<status>.*?)</p>',
         packet.text,

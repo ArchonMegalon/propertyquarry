@@ -820,8 +820,8 @@
       const safeFallback = String(fallback || '').trim();
       if (!raw) return safeFallback;
       const normalized = raw.toLowerCase();
-      if (['3d tour', 'tour', 'walkthrough'].includes(normalized)) return raw;
-      if (normalized.includes('walkthrough')) return 'Walkthrough';
+      if (['3d tour', 'tour'].includes(normalized)) return raw;
+      if (normalized.includes('walkthrough')) return 'Camera walkthrough';
       if (normalized.includes('tour') || normalized.includes('360') || normalized.includes('virtual')) return '3D tour';
       return safeFallback;
     };

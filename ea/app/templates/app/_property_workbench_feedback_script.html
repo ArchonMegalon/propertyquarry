@@ -178,7 +178,6 @@
     ).trim();
     const selectedTourUrlForCandidate = (candidate) => String(
       candidate?.verified_tour_url
-      || candidate?.open_tour_url
       || candidate?.tour?.url
       || candidate?.tour_url
       || ''
@@ -197,21 +196,21 @@
       const resolvedFlythroughUrl = selectedWalkthroughUrlForCandidate(candidate);
       const tourStatus = String(candidate?.tour_status || tour.status || '').trim().toLowerCase();
       const flythroughStatus = String(candidate?.flythrough_status || flythrough.status || '').trim().toLowerCase();
+      if (candidateVisualPendingStates.has(flythroughStatus)) {
+        return [String(flythrough.detail || flythrough.label || 'Preparing camera walkthrough.').trim(), String(flythrough.eta_label || '').trim() ? `ETA ${String(flythrough.eta_label || '').trim()}` : '']
+          .filter(Boolean)
+          .join(' · ');
+      }
       if (candidateVisualPendingStates.has(tourStatus)) {
         return [String(tour.detail || tour.label || 'Preparing 3D tour.').trim(), String(tour.eta_label || '').trim() ? `ETA ${String(tour.eta_label || '').trim()}` : '']
           .filter(Boolean)
           .join(' · ');
       }
-      if (candidateVisualPendingStates.has(flythroughStatus)) {
-        return [String(flythrough.detail || flythrough.label || 'Preparing walkthrough.').trim(), String(flythrough.eta_label || '').trim() ? `ETA ${String(flythrough.eta_label || '').trim()}` : '']
-          .filter(Boolean)
-          .join(' · ');
+      if (candidateVisualTerminalStates.has(flythroughStatus)) {
+        return String(flythrough.detail || 'Camera walkthrough not available yet.').trim();
       }
       if (candidateVisualTerminalStates.has(tourStatus)) {
         return String(tour.detail || tour.eta_label || '3D tour not available yet.').trim();
-      }
-      if (candidateVisualTerminalStates.has(flythroughStatus)) {
-        return String(flythrough.detail || 'Walkthrough not available yet.').trim();
       }
       const visualPropertyUrl = String(candidate?.property_url || candidate?.source_url || candidate?.listing_url || '').trim();
       const visualMediaReady = Boolean(String(candidate?.floorplan_url || candidate?.source_virtual_tour_url || candidate?.vendor_tour_url || tour.provider_url || '').trim());
@@ -223,7 +222,6 @@
     const embeddedTourUrlForCandidate = (candidate) => {
       for (const value of [
         candidate?.verified_tour_url,
-        candidate?.open_tour_url,
         candidate?.tour?.embed_url,
         candidate?.tour?.url,
         candidate?.tour_url,
@@ -305,12 +303,62 @@
       };
       const visualPropertyUrl = String(candidate.property_url || candidate.source_url || candidate.listing_url || '').trim();
       const visualMediaReady = Boolean(String(candidate.floorplan_url || candidate.source_virtual_tour_url || candidate.vendor_tour_url || tour.provider_url || '').trim());
-      if (resolvedTourUrl) {
+      if (resolvedFlythroughUrl) {
         appendActionControl(node, {
-          label: String(tour.control_label || tour.label || 'Open 3D tour').trim() || 'Open 3D tour',
-          href: resolvedTourUrl,
+          label: 'Open camera walkthrough',
+          href: resolvedFlythroughUrl,
           link: true,
           primary: true,
+          attributes: {
+            'data-rybbit-event': 'pq.flythrough.opened',
+            'data-rybbit-prop-surface': 'research',
+          },
+        });
+      } else if (flythroughPending && visualMediaReady && visualPropertyUrl) {
+        appendVisualStateButton({
+          label: String(flythrough.label || 'Camera walkthrough queued').trim() || 'Camera walkthrough queued',
+          requestKind: 'flythrough',
+          state: flythroughStatus || 'queued',
+          progress: flythroughProgress,
+          detail: String(flythrough.detail || flythrough.label || 'Preparing camera walkthrough.').trim(),
+          eta: String(flythrough.eta_label || '').trim(),
+          pollSeconds: Math.max(0, Number(flythrough.poll_after_seconds || 0) || 0),
+          walkthroughProvider: 'default',
+          disabled: true,
+        });
+      } else if (flythroughTerminal && visualMediaReady && visualPropertyUrl) {
+        appendVisualStateButton({
+          label: String(flythrough.label || (['blocked', 'failed'].includes(flythroughStatus) ? 'Retry camera walkthrough' : 'Request camera walkthrough')).trim(),
+          requestKind: 'flythrough',
+          state: flythroughStatus || 'blocked',
+          detail: String(flythrough.detail || '').trim(),
+          eta: '',
+          pollSeconds: 0,
+          walkthroughProvider: 'default',
+        });
+      } else if (visualMediaReady && visualPropertyUrl) {
+        appendActionControl(node, {
+          label: 'Request camera walkthrough',
+          attributes: {
+            'data-pw-visual-request': 'flythrough',
+            'data-pw-visual-style-required': '1',
+            'data-pw-walkthrough-provider': 'default',
+            'data-property-url': visualPropertyUrl,
+            'data-source-ref': String(candidate.source_ref || ''),
+            'data-candidate-ref': candidateRef,
+            'data-run-id': runId,
+            'data-rybbit-event': 'pq.flythrough.opened',
+            'data-rybbit-prop-cta-key': 'request_flythrough',
+            'data-rybbit-prop-surface': 'research',
+          },
+        });
+      }
+      if (resolvedTourUrl) {
+        appendActionControl(node, {
+          label: 'Open 3D tour',
+          href: resolvedTourUrl,
+          link: true,
+          primary: false,
           attributes: {
             'data-rybbit-event': 'pq.tour.opened',
             'data-rybbit-prop-surface': 'research',
@@ -342,7 +390,7 @@
           label: 'Open property',
           href: String(candidate.packet_url || ''),
           link: true,
-          primary: !resolvedTourUrl,
+          primary: !resolvedFlythroughUrl && !resolvedTourUrl && !(visualMediaReady && visualPropertyUrl),
           attributes: {
             'data-rybbit-event': 'pq.property.opened',
             'data-rybbit-prop-surface': 'research',
@@ -398,54 +446,6 @@
             'data-run-id': runId,
             'data-rybbit-event': 'pq.tour.opened',
             'data-rybbit-prop-cta-key': 'request_tour',
-            'data-rybbit-prop-surface': 'research',
-          },
-        });
-      }
-      if (resolvedFlythroughUrl) {
-        appendActionControl(actions, {
-          label: String(flythrough.label || 'Open walkthrough').trim() || 'Open walkthrough',
-          href: resolvedFlythroughUrl,
-          link: true,
-          attributes: {
-            'data-rybbit-prop-surface': 'research',
-          },
-        });
-      } else if (flythroughPending && visualMediaReady && visualPropertyUrl) {
-        appendVisualStateButton({
-          label: String(flythrough.label || 'Walkthrough queued').trim() || 'Walkthrough queued',
-          requestKind: 'flythrough',
-          state: flythroughStatus || 'queued',
-          progress: flythroughProgress,
-          detail: String(flythrough.detail || flythrough.label || 'Preparing walkthrough.').trim(),
-          eta: String(flythrough.eta_label || '').trim(),
-          pollSeconds: Math.max(0, Number(flythrough.poll_after_seconds || 0) || 0),
-          walkthroughProvider: 'default',
-          disabled: true,
-        });
-      } else if (flythroughTerminal && visualMediaReady && visualPropertyUrl) {
-        appendVisualStateButton({
-          label: String(flythrough.label || (['blocked', 'failed'].includes(flythroughStatus) ? 'Retry walkthrough' : 'Request walkthrough')).trim(),
-          requestKind: 'flythrough',
-          state: flythroughStatus || 'blocked',
-          detail: String(flythrough.detail || '').trim(),
-          eta: '',
-          pollSeconds: 0,
-          walkthroughProvider: 'default',
-        });
-      } else if (visualMediaReady && visualPropertyUrl) {
-        appendActionControl(actions, {
-          label: 'Request walkthrough',
-          attributes: {
-            'data-pw-visual-request': 'flythrough',
-            'data-pw-visual-style-required': '1',
-            'data-pw-walkthrough-provider': 'default',
-            'data-property-url': visualPropertyUrl,
-            'data-source-ref': String(candidate.source_ref || ''),
-            'data-candidate-ref': candidateRef,
-            'data-run-id': runId,
-            'data-rybbit-event': 'pq.flythrough.opened',
-            'data-rybbit-prop-cta-key': 'request_flythrough',
             'data-rybbit-prop-surface': 'research',
           },
         });

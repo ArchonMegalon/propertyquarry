@@ -348,27 +348,35 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
             normalized_candidate_url
         ):
             continue
-        # A recognized public provider viewer is a valid original-tour target.
-        # It is distinct from a first-party hosted-tour proof, but may be
-        # projected as the verified customer-safe source URL.
-        safe_provider_candidate = _property_workbench_client_provider_viewer_url(
+        safe_ready_tour_url = _property_workbench_client_safe_web_or_local_url(
             normalized_candidate_url
         )
-        if safe_provider_candidate:
-            return safe_provider_candidate
-        ready_tour_url = _property_visual_ready_tour_url(
-            tour_url=normalized_candidate_url,
-            open_tour_url=normalized_candidate_url,
-        )
-        safe_ready_tour_url = _property_workbench_client_safe_web_or_local_url(ready_tour_url)
         if not safe_ready_tour_url or _property_workbench_client_url_is_tracking(safe_ready_tour_url):
+            continue
+        # A raw provider URL is source evidence, never the public action. Only
+        # a first-party hosted bundle with a verified 3DVista or Matterport
+        # control may become the optional 3D-tour target.
+        if property_tour_hosting._hosted_property_tour_reference_parts(safe_ready_tour_url) is None:
+            continue
+        provider = str(
+            property_tour_hosting._hosted_property_tour_verified_provider(
+                safe_ready_tour_url
+            )
+            or ""
+        ).strip().lower()
+        if provider not in {"3dvista", "matterport"}:
             continue
         verified_hosted_url = str(
             property_tour_hosting._hosted_property_tour_verified_open_url(safe_ready_tour_url)
             or ""
         ).strip()
         safe_hosted_url = _property_workbench_client_safe_web_or_local_url(verified_hosted_url)
-        if safe_hosted_url and not _property_workbench_client_url_is_tracking(safe_hosted_url):
+        if (
+            safe_hosted_url
+            and not _property_workbench_client_url_is_tracking(safe_hosted_url)
+            and property_tour_hosting._hosted_property_tour_reference_parts(safe_hosted_url)
+            is not None
+        ):
             return safe_hosted_url
     return ""
 
@@ -425,18 +433,38 @@ def _property_workbench_candidate_flythrough_url(
         or raw_flythrough.get("embed_url")
         or raw_flythrough.get("provider_url")
     )
-    # Never turn a loose video URL into customer-ready walkthrough copy. The
-    # hosted bundle verifier below is the only authority for that claim.
-    if not ready_tour_url:
-        return ""
-    resolved_url = property_tour_hosting._hosted_property_tour_walkthrough_open_url(
+    raw_tour = dict(raw.get("tour") or {}) if isinstance(raw.get("tour"), dict) else {}
+    hosted_sources = (
         ready_tour_url,
         raw_url,
+        raw.get("tour_url"),
+        raw.get("open_tour_url"),
+        raw.get("verified_tour_url"),
+        raw.get("generated_reconstruction_url"),
+        raw.get("layout_preview_url"),
+        raw_tour.get("url"),
+        raw_tour.get("tour_url"),
+        raw_tour.get("open_tour_url"),
+        raw_tour.get("generated_reconstruction_url"),
+        raw_tour.get("layout_preview_url"),
     )
-    resolved_url = _property_workbench_client_safe_web_or_local_url(resolved_url)
-    if not resolved_url or _property_workbench_client_url_is_tracking(resolved_url):
-        return ""
-    return resolved_url
+    seen: set[str] = set()
+    for hosted_source in hosted_sources:
+        normalized_source = str(hosted_source or "").strip()
+        if not normalized_source or normalized_source in seen:
+            continue
+        seen.add(normalized_source)
+        # Never turn a loose video URL into customer-ready walkthrough copy.
+        # The exact hosted bundle remains the only publication authority, but
+        # it no longer depends on an optional spatial-provider tour being ready.
+        resolved_url = property_tour_hosting._hosted_property_tour_walkthrough_open_url(
+            normalized_source,
+            raw_url,
+        )
+        resolved_url = _property_workbench_client_safe_web_or_local_url(resolved_url)
+        if resolved_url and not _property_workbench_client_url_is_tracking(resolved_url):
+            return resolved_url
+    return ""
 
 
 def _property_workbench_candidate_diorama_preview_url(candidate: dict[str, object]) -> str:
@@ -698,6 +726,8 @@ def _property_workbench_client_tour_payload(
     if reason_key:
         compact["reason_key"] = reason_key
     normalized_kind = "flythrough" if str(request_kind or "").strip().lower() == "flythrough" else "tour"
+    if normalized_kind == "flythrough":
+        compact["media_kind"] = "camera_walkthrough"
     status = str(raw.get("status") or "").strip().lower()
     generated_reconstruction_ready = bool(
         normalized_kind == "tour"
@@ -719,8 +749,13 @@ def _property_workbench_client_tour_payload(
     if safe_validated_url and not _property_workbench_client_url_is_tracking(safe_validated_url):
         compact["url"] = safe_validated_url
         compact["embed_url"] = safe_validated_url
+        status = "ready"
+        compact["status"] = "ready"
         if normalized_kind == "flythrough":
             compact["customer_claim_ready"] = True
+        else:
+            generated_reconstruction_ready = False
+            compact.pop("tour_media_mode", None)
     if safe_provider_url:
         compact["provider_url"] = safe_provider_url
     if generated_reconstruction_ready and safe_validated_url:
@@ -744,6 +779,9 @@ def _property_workbench_client_tour_payload(
         "Request walkthrough",
         "Retry 3D tour",
         "Retry walkthrough",
+        "Camera walkthrough available",
+        "Camera walkthrough queued",
+        "Camera walkthrough rendering",
         "Walkthrough available",
         "Walkthrough queued",
         "Walkthrough rendering",
@@ -752,8 +790,22 @@ def _property_workbench_client_tour_payload(
         label = str(raw.get(key) or "").strip()
         if label in safe_labels:
             compact[key] = label
+    if safe_validated_url:
+        compact["label"] = (
+            "Camera walkthrough available"
+            if normalized_kind == "flythrough"
+            else "3D tour available"
+        )
+        compact.pop("control_label", None)
     provider_label = str(raw.get("provider_label") or "").strip()
-    if provider_label in {"3D tour", "AI-generated 3D tour", "Layout tour", "Original tour", "Walkthrough"}:
+    if provider_label in {
+        "3D tour",
+        "AI-generated 3D tour",
+        "Layout tour",
+        "Original tour",
+        "Camera walkthrough",
+        "Walkthrough",
+    }:
         compact["provider_label"] = provider_label
     eta_label = str(raw.get("eta_label") or "").strip().lower()
     active_statuses = {"queued", "pending", "processing", "running", "in_progress", "started", "rendering", "repairing"}
@@ -762,7 +814,7 @@ def _property_workbench_client_tour_payload(
         compact["eta_label"] = eta_label
     if status in {"ready", "created", "existing", "source"}:
         compact["status_detail"] = (
-            "Walkthrough is ready."
+            "Camera walkthrough is ready."
             if normalized_kind == "flythrough"
             else (
                 _PROPERTY_GENERATED_TOUR_STATUS_DETAIL
@@ -771,14 +823,14 @@ def _property_workbench_client_tour_payload(
             )
         )
     elif status in {"queued", "pending"}:
-        compact["status_detail"] = "Walkthrough queued." if normalized_kind == "flythrough" else "Queued."
+        compact["status_detail"] = "Camera walkthrough queued." if normalized_kind == "flythrough" else "Queued."
     elif status in {"processing", "running", "in_progress", "started", "rendering", "repairing"}:
-        compact["status_detail"] = "Walkthrough rendering." if normalized_kind == "flythrough" else "Rendering."
+        compact["status_detail"] = "Camera walkthrough rendering." if normalized_kind == "flythrough" else "Rendering."
     elif status in {"blocked", "failed", "skipped", "not_applicable", "unavailable", "missing"}:
         terminal_detail = (
             {
-                "property_tour_video_delivery_failed": "The walkthrough could not be published. You can try again.",
-            }.get(reason_key, "Walkthrough not available yet.")
+                "property_tour_video_delivery_failed": "The camera walkthrough could not be published. You can try again.",
+            }.get(reason_key, "Camera walkthrough not available yet.")
             if normalized_kind == "flythrough"
             else {
                 "listing_expired": "The source listing has expired, and no captured source is available for a 3D tour.",
@@ -926,11 +978,6 @@ def _property_workbench_client_candidate_payload(
     derived_floorplan_url = _property_candidate_floorplan_url(raw, facts=derived_facts)
     if derived_floorplan_url:
         compact["floorplan_url"] = derived_floorplan_url
-    derived_source_virtual_tour_url = _property_workbench_client_provider_viewer_url(
-        _property_candidate_source_virtual_tour_url(raw, facts=derived_facts)
-    )
-    if derived_source_virtual_tour_url:
-        compact["source_virtual_tour_url"] = derived_source_virtual_tour_url
     ready_tour_url = _property_workbench_candidate_ready_tour_url(raw)
     generated_layout_url = _property_workbench_candidate_generated_layout_url(raw)
     if ready_tour_url:
@@ -970,19 +1017,15 @@ def _property_workbench_client_candidate_payload(
     if diorama_preview_url:
         compact["diorama_preview_url"] = diorama_preview_url
     tour_payload = _property_workbench_client_tour_payload(
-        raw.get("tour"),
+        raw.get("tour") if isinstance(raw.get("tour"), dict) else {},
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),
-        validated_url=ready_tour_url or generated_layout_url,
-        validated_provider_url=(
-            dict(raw.get("tour") or {}).get("provider_url")
-            if isinstance(raw.get("tour"), dict)
-            else ""
-        ),
+        validated_url=ready_tour_url,
+        validated_provider_url="",
     )
     if tour_payload:
         compact["tour"] = tour_payload
     flythrough_payload = _property_workbench_client_tour_payload(
-        raw.get("flythrough"),
+        raw.get("flythrough") if isinstance(raw.get("flythrough"), dict) else {},
         fallback_reason=raw.get("flythrough_reason"),
         request_kind="flythrough",
         validated_url=flythrough_url,

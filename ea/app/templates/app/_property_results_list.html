@@ -181,19 +181,19 @@
       {% set tour_status = (tour.get('status') or '')|lower %}
       {% set tour_pending = tour_status in ['queued', 'pending', 'processing', 'running', 'in_progress', 'started', 'rendering', 'repairing'] %}
       {% set tour_progress = tour.get('progress_pct') if tour.get('progress_pct') is not none else (100 if tour.get('url') else 0) %}
-      {% set tour_tooltip = (tour.get('detail') or ('Open the 3D tour.' if tour.get('url') else 'Preparing 3D tour.')) ~ ((' · ETA ' ~ tour.get('eta_label')) if tour.get('eta_label') else '') %}
+      {% set tour_tooltip = (tour.get('detail') or ('Open the verified 3D tour.' if tour.get('url') else 'Preparing verified 3D tour.')) ~ ((' · ETA ' ~ tour.get('eta_label')) if tour.get('eta_label') else '') %}
       {% set tour_progress_label = 'Preparing 3D tour' if tour_pending else (tour.get('label') or '3D tour') %}
       {% set walkthrough = candidate.get('flythrough') or {} %}
       {% set walkthrough_status = (walkthrough.get('status') or '')|lower %}
       {% set walkthrough_pending = walkthrough_status in ['queued', 'pending', 'processing', 'running', 'in_progress', 'started', 'rendering', 'repairing'] %}
       {% set walkthrough_progress = walkthrough.get('progress_pct') if walkthrough.get('progress_pct') is not none else (100 if walkthrough.get('url') else 0) %}
-      {% set walkthrough_label = walkthrough.get('label') or ('Walkthrough' if walkthrough.get('url') else ('Preparing walkthrough' if walkthrough_pending else 'Request walkthrough')) %}
-      {% set walkthrough_tooltip = (walkthrough.get('detail') or ('Open the walkthrough.' if walkthrough.get('url') else ('Preparing walkthrough.' if walkthrough_pending else 'Request when you want a guided walkthrough.'))) ~ ((' · ETA ' ~ walkthrough.get('eta_label')) if walkthrough.get('eta_label') else '') %}
+      {% set walkthrough_label = walkthrough.get('label') or ('Camera walkthrough' if walkthrough.get('url') else ('Preparing camera walkthrough' if walkthrough_pending else 'Request camera walkthrough')) %}
+      {% set walkthrough_tooltip = (walkthrough.get('detail') or ('Open the normal camera walkthrough.' if walkthrough.get('url') else ('Preparing camera walkthrough.' if walkthrough_pending else 'Request a normal camera walkthrough.'))) ~ ((' · ETA ' ~ walkthrough.get('eta_label')) if walkthrough.get('eta_label') else '') %}
       {% set visual_delivery_note = '' %}
-      {% if tour.get('status_detail') and (tour.get('url') or tour_pending or tour_status == 'blocked') %}
-      {% set visual_delivery_note = tour.get('status_detail') %}
-      {% elif walkthrough.get('status_detail') and (walkthrough.get('url') or walkthrough_pending or walkthrough_status == 'blocked') %}
+      {% if walkthrough.get('status_detail') and (walkthrough.get('url') or walkthrough_pending or walkthrough_status == 'blocked') %}
       {% set visual_delivery_note = walkthrough.get('status_detail') %}
+      {% elif tour.get('status_detail') and (tour.get('url') or tour_pending or tour_status == 'blocked') %}
+      {% set visual_delivery_note = tour.get('status_detail') %}
       {% endif %}
       <span class="pqx-result-main">
         <span class="pqx-result-media{% if not primary_preview_url and not is_shortlist_surface %} no-thumb{% endif %}{% if is_shortlist_surface %} has-diorama{% endif %}">
@@ -277,11 +277,11 @@
               {% if brief.get('search_goal') == 'investment' and candidate.get('investment', {}).get('market_delta_display') %}
               <span class="pqx-result-fact">{{ candidate.get('investment', {}).get('market_delta_display') }}</span>
               {% endif %}
-              {% if tour.get('url') %}
-              <a class="pqx-result-fact pqx-result-tour-link" href="{{ tour.get('url') }}" title="{{ tour.get('detail') or 'Open the 3D tour.' }}" aria-label="3D tour" data-rybbit-event="pq.tour.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">3D tour</a>
-              {% endif %}
               {% if walkthrough.get('url') %}
-              <a class="pqx-result-fact pqx-result-tour-link" href="{{ walkthrough.get('url') }}" title="{{ walkthrough.get('detail') or 'Open the walkthrough.' }}" aria-label="Walkthrough" data-rybbit-event="pq.flythrough.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">Walkthrough</a>
+              <a class="pqx-result-fact pqx-result-tour-link" href="{{ walkthrough.get('url') }}" title="{{ walkthrough.get('detail') or 'Open the normal camera walkthrough.' }}" aria-label="Camera walkthrough" data-rybbit-event="pq.flythrough.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">Camera walkthrough</a>
+              {% endif %}
+              {% if tour.get('url') %}
+              <a class="pqx-result-fact pqx-result-tour-link" href="{{ tour.get('url') }}" title="{{ tour.get('detail') or 'Open the verified 3D tour.' }}" aria-label="3D tour" data-rybbit-event="pq.tour.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">3D tour</a>
               {% endif %}
             </span>
             {% if is_shortlist_surface and (candidate.get('fit_summary') or thesis_line) %}

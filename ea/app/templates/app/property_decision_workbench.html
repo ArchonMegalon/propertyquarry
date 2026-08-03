@@ -13832,7 +13832,7 @@
         {% set mobile_is_shortlist_surface = surface_mode == 'shortlist' %}
         {% set selected_visual_property_url = selected.get('property_url') or selected.get('source_url') or selected.get('listing_url') %}
         {% set selected_tour = selected.get('tour', {}) %}
-        {% set selected_tour_url = selected.get('verified_tour_url') or selected.get('open_tour_url') or selected_tour.get('url') or selected.get('tour_url') or '' %}
+        {% set selected_tour_url = selected.get('verified_tour_url') or selected_tour.get('url') or selected.get('tour_url') or '' %}
         {% set selected_flythrough = selected.get('flythrough', {}) %}
         {%- set selected_flythrough_claim_ready = selected_flythrough.get('customer_claim_ready') == true -%}
         {% set selected_visual_media_ready = selected.get('floorplan_url') or selected.get('source_virtual_tour_url') or selected.get('vendor_tour_url') %}
@@ -13846,38 +13846,38 @@
         {% set selected_tour_progress = selected_tour.get('progress_pct') if selected_tour.get('progress_pct') is not none else (100 if selected_tour_url else 0) %}
         {% set selected_flythrough_progress = selected_flythrough.get('progress_pct') if selected_flythrough.get('progress_pct') is not none else (100 if selected_flythrough.get('url') else 0) %}
         {% set selected_visual_status = '' %}
-        {% if selected_tour_pending %}
+        {% if selected_flythrough_pending %}
+        {% set selected_visual_status = (selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or selected_flythrough.get('label') or 'Preparing camera walkthrough.') ~ ((' · ETA ' ~ selected_flythrough.get('eta_label')) if selected_flythrough.get('eta_label') else '') %}
+        {% elif selected_tour_pending %}
         {% set selected_visual_status = (selected_tour.get('status_detail') or selected_tour.get('detail') or selected_tour.get('label') or 'Preparing 3D tour.') ~ ((' · ETA ' ~ selected_tour.get('eta_label')) if selected_tour.get('eta_label') else '') %}
-        {% elif selected_flythrough_pending %}
-        {% set selected_visual_status = (selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or selected_flythrough.get('label') or 'Preparing walkthrough.') ~ ((' · ETA ' ~ selected_flythrough.get('eta_label')) if selected_flythrough.get('eta_label') else '') %}
+        {% elif selected_flythrough_terminal %}
+        {% set selected_visual_status = selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or 'Camera walkthrough not available yet.' %}
         {% elif selected_tour_terminal %}
         {% set selected_visual_status = selected_tour.get('status_detail') or selected_tour.get('detail') or selected_tour.get('eta_label') or '3D tour not available yet.' %}
-        {% elif selected_flythrough_terminal %}
-        {% set selected_visual_status = selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or 'Walkthrough not available yet.' %}
         {% elif mobile_is_shortlist_surface and selected_tour_url and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
-        {% set selected_visual_status = '3D tour and walkthrough ready.' %}
+        {% set selected_visual_status = 'Camera walkthrough and 3D tour ready.' %}
         {% elif mobile_is_shortlist_surface and selected_tour_url %}
         {% set selected_visual_status = '3D tour ready.' %}
         {% elif mobile_is_shortlist_surface and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
-        {% set selected_visual_status = 'Walkthrough ready.' %}
+        {% set selected_visual_status = 'Camera walkthrough ready.' %}
         {% endif %}
         {% set mobile_visual_preview = '' %}
         {% if selected_tour_url and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
-        {% set mobile_visual_preview = '3D tour and walkthrough available' %}
+        {% set mobile_visual_preview = 'Camera walkthrough and 3D tour available' %}
         {% elif selected_tour_url %}
         {% set mobile_visual_preview = '3D tour available' %}
         {% elif selected_flythrough_claim_ready and selected_flythrough.get('url') %}
-        {% set mobile_visual_preview = 'Walkthrough available' %}
+        {% set mobile_visual_preview = 'Camera walkthrough available' %}
         {% elif selected_tour_pending %}
         {% set mobile_visual_preview = selected_tour.get('label') or '3D tour in progress' %}
         {% elif selected_flythrough_pending %}
-        {% set mobile_visual_preview = selected_flythrough.get('label') or 'Walkthrough in progress' %}
+        {% set mobile_visual_preview = selected_flythrough.get('label') or 'Camera walkthrough in progress' %}
         {% elif selected_tour_terminal %}
         {% set mobile_visual_preview = selected_tour.get('label') or ('Retry 3D tour' if selected_tour_status in ['blocked', 'failed'] else 'Request 3D tour') %}
         {% elif selected_flythrough_terminal %}
-        {% set mobile_visual_preview = selected_flythrough.get('label') or ('Retry walkthrough' if selected_flythrough_status in ['blocked', 'failed'] else 'Request walkthrough') %}
+        {% set mobile_visual_preview = selected_flythrough.get('label') or ('Retry camera walkthrough' if selected_flythrough_status in ['blocked', 'failed'] else 'Request camera walkthrough') %}
         {% elif selected_visual_request_ready %}
-        {% set mobile_visual_preview = 'Request 3D tour or walkthrough' %}
+        {% set mobile_visual_preview = 'Request camera walkthrough or 3D tour' %}
         {% elif selected_visual_property_url %}
         {% set mobile_visual_preview = 'Visuals not published yet' %}
         {% endif %}

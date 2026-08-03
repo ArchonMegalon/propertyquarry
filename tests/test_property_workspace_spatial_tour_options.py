@@ -1,0 +1,286 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from app.api.routes import landing_property_workspace_payload as workspace_payload
+from app.product import property_tour_hosting
+
+
+def _matterport_payload() -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    return {
+        "matterport_url": "https://my.matterport.com/show/?m=MODEL123",
+        "matterport_model_publication": {
+            "contract_name": "propertyquarry.matterport_model_publication.v1",
+            "status": "pass",
+            "model_sid": "MODEL123",
+            "model_available": True,
+            "checked_at": (now - timedelta(minutes=5)).isoformat(),
+            "asset_valid_until": (now + timedelta(hours=12)).isoformat(),
+            "proof_valid_until": (now + timedelta(hours=12)).isoformat(),
+            "enabled_sweep_count": 23,
+            "available_sweep_count": 23,
+            "connected_component_count": 1,
+            "room_count": 6,
+            "navigation_edge_count": 49,
+            "source_sha256": "a" * 64,
+        },
+    }
+
+
+def test_verified_matterport_uses_first_party_control_route(monkeypatch) -> None:
+    payload = _matterport_payload()
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_payload_for_url",
+        lambda _url, *, principal_id="": payload,
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_has_3dvista_export",
+        lambda _url, *, principal_id="": False,
+    )
+
+    assert (
+        property_tour_hosting._hosted_property_tour_verified_provider(
+            "/tours/sdk-loft"
+        )
+        == "matterport"
+    )
+    assert (
+        property_tour_hosting._hosted_property_tour_verified_open_url(
+            "/tours/sdk-loft"
+        )
+        == "/tours/sdk-loft/control/matterport"
+    )
+
+
+def test_verified_3dvista_uses_first_party_control_route(monkeypatch) -> None:
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_payload_for_url",
+        lambda _url, *, principal_id="": {"slug": "vista-loft"},
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_has_3dvista_export",
+        lambda _url, *, principal_id="": True,
+    )
+
+    assert (
+        property_tour_hosting._hosted_property_tour_verified_provider(
+            "/tours/vista-loft"
+        )
+        == "3dvista"
+    )
+    assert (
+        property_tour_hosting._hosted_property_tour_verified_open_url(
+            "/tours/vista-loft"
+        )
+        == "/tours/vista-loft/control/3dvista"
+    )
+
+
+def test_matterport_fails_closed_without_current_connected_multi_room_proof(
+    monkeypatch,
+) -> None:
+    payload = _matterport_payload()
+    publication = dict(payload["matterport_model_publication"])
+    publication["checked_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=31)
+    ).isoformat()
+    payload["matterport_model_publication"] = publication
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_payload_for_url",
+        lambda _url, *, principal_id="": payload,
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_has_3dvista_export",
+        lambda _url, *, principal_id="": False,
+    )
+
+    assert property_tour_hosting._hosted_property_tour_verified_provider(
+        "/tours/sdk-loft"
+    ) == ""
+
+    publication["checked_at"] = datetime.now(timezone.utc).isoformat()
+    publication["room_count"] = 1
+    assert property_tour_hosting._hosted_property_tour_verified_provider(
+        "/tours/sdk-loft"
+    ) == ""
+
+
+def test_workspace_rejects_raw_provider_url_and_projects_verified_hosted_tour(
+    monkeypatch,
+) -> None:
+    raw_provider = "https://my.matterport.com/show/?m=MODEL123"
+    assert workspace_payload._property_workbench_candidate_ready_tour_url(
+        {"tour_url": raw_provider}
+    ) == ""
+
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_verified_provider",
+        lambda _url, *, principal_id="": "matterport",
+    )
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_verified_open_url",
+        lambda _url, *, principal_id="": "/tours/sdk-loft/control/matterport",
+    )
+    assert workspace_payload._property_workbench_candidate_ready_tour_url(
+        {"tour_url": "/tours/sdk-loft", "source_virtual_tour_url": raw_provider}
+    ) == "/tours/sdk-loft/control/matterport"
+
+
+def test_camera_walkthrough_does_not_depend_on_optional_spatial_tour(
+    monkeypatch,
+) -> None:
+    calls: list[str] = []
+
+    def _resolve(source_url: object, _walkthrough_url: object = "") -> str:
+        source = str(source_url or "")
+        calls.append(source)
+        if source == "/tours/camera-only":
+            return "/tours/camera-only?pane=flythrough-pane&autoplay=1"
+        return ""
+
+    monkeypatch.setattr(
+        property_tour_hosting,
+        "_hosted_property_tour_walkthrough_open_url",
+        _resolve,
+    )
+
+    result = workspace_payload._property_workbench_candidate_flythrough_url(
+        {
+            "tour_url": "/tours/camera-only",
+            "flythrough_url": "https://cdn.example.test/loose-video.mp4",
+        },
+        ready_tour_url="",
+    )
+
+    assert result == "/tours/camera-only?pane=flythrough-pane&autoplay=1"
+    assert "/tours/camera-only" in calls
+
+
+def test_client_payload_separates_default_camera_video_from_optional_3d_tour(
+    monkeypatch,
+) -> None:
+    raw_provider = "https://my.matterport.com/show/?m=MODEL123"
+    monkeypatch.setattr(
+        workspace_payload,
+        "_property_workbench_candidate_ready_tour_url",
+        lambda _candidate: "/tours/sdk-loft/control/matterport",
+    )
+    monkeypatch.setattr(
+        workspace_payload,
+        "_property_workbench_candidate_generated_layout_url",
+        lambda _candidate: "",
+    )
+    monkeypatch.setattr(
+        workspace_payload,
+        "_property_workbench_candidate_flythrough_url",
+        lambda _candidate, *, ready_tour_url: "/tours/sdk-loft?pane=flythrough-pane&autoplay=1",
+    )
+
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {
+            "tour": {
+                "status": "ready",
+                "provider_url": raw_provider,
+            },
+            "source_virtual_tour_url": raw_provider,
+        }
+    )
+
+    assert result["flythrough"]["url"] == "/tours/sdk-loft?pane=flythrough-pane&autoplay=1"
+    assert result["flythrough"]["media_kind"] == "camera_walkthrough"
+    assert result["flythrough"]["label"] == "Camera walkthrough available"
+    assert result["tour"]["url"] == "/tours/sdk-loft/control/matterport"
+    assert result["tour"]["label"] == "3D tour available"
+    assert "provider_url" not in result["tour"]
+    assert "source_virtual_tour_url" not in result
+
+
+def test_generated_reconstruction_is_not_projected_as_provider_3d_tour(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        workspace_payload,
+        "_property_workbench_candidate_ready_tour_url",
+        lambda _candidate: "",
+    )
+    monkeypatch.setattr(
+        workspace_payload,
+        "_property_workbench_candidate_generated_layout_url",
+        lambda _candidate: "/tours/ai-layout/control/generated-reconstruction",
+    )
+    monkeypatch.setattr(
+        workspace_payload,
+        "_property_workbench_candidate_flythrough_url",
+        lambda _candidate, *, ready_tour_url: "",
+    )
+
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {
+            "tour_status": "ready",
+            "tour": {
+                "status": "ready",
+                "tour_media_mode": "generated_reconstruction",
+                "label": "Open AI-generated 3D tour",
+            },
+        }
+    )
+
+    assert result["tour_url"] == ""
+    assert result["generated_reconstruction_url"].endswith(
+        "/control/generated-reconstruction"
+    )
+    assert "url" not in result["tour"]
+
+
+def test_results_template_presents_camera_walkthrough_before_optional_3d_tour() -> None:
+    template_root = Path(__file__).resolve().parents[1] / "ea/app/templates/app"
+    template = (template_root / "_property_results_list.html").read_text(
+        encoding="utf-8"
+    )
+    selected_review = (
+        template_root / "_property_selected_review_panel.html"
+    ).read_text(encoding="utf-8")
+    workbench = (template_root / "property_decision_workbench.html").read_text(
+        encoding="utf-8"
+    )
+    feedback_script = (
+        template_root / "_property_workbench_feedback_script.html"
+    ).read_text(encoding="utf-8")
+    workbench_script = (
+        template_root / "_property_workbench_script.html"
+    ).read_text(encoding="utf-8")
+    research_detail = (template_root / "property_research_detail.html").read_text(
+        encoding="utf-8"
+    )
+
+    camera_link = template.index('aria-label="Camera walkthrough"')
+    provider_link = template.index('aria-label="3D tour"')
+    assert camera_link < provider_link
+    assert "Open the normal camera walkthrough." in template
+    assert "Open the verified 3D tour." in template
+    assert selected_review.index("Open camera walkthrough") < selected_review.index(
+        "Open 3D tour"
+    )
+    assert "selected.get('open_tour_url')" not in selected_review
+    assert "selected.get('open_tour_url')" not in workbench
+    assert "candidate?.open_tour_url" not in feedback_script
+    assert feedback_script.index("Open camera walkthrough") < feedback_script.index(
+        "Open 3D tour"
+    )
+    assert "return 'Camera walkthrough';" in workbench_script
+    assert "eyebrow': 'AI layout preview'" in research_detail
+    assert "visual_rail_label_display = 'AI-generated 3D tour'" not in research_detail
+    assert research_detail.index("{% if visual_ready_walkthrough %}") < research_detail.index(
+        "{% elif visual_ready_tour %}"
+    )
+    assert "Camera walkthroughs and verified 3D tours" in research_detail
