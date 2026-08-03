@@ -978,14 +978,14 @@ def build_browser_gate_receipt(
                         )
                     except Exception as exc:
                         screenshot_error = f"{type(exc).__name__}: {str(exc)[:240]}"
+                bad_console = _bad_console_messages(console_messages)
+                bad_http = _bad_responses(responses, browser_base_url=browser_base_url)
+                bad_request_failures = _bad_request_failures(request_failures, browser_base_url=browser_base_url)
                 recovery_state = (
                     _exercise_provider_recovery(page, provider=provider_key, timeout_ms=timeout_ms)
                     if provider_key == "3dvista"
                     else {}
                 )
-                bad_console = _bad_console_messages(console_messages)
-                bad_http = _bad_responses(responses, browser_base_url=browser_base_url)
-                bad_request_failures = _bad_request_failures(request_failures, browser_base_url=browser_base_url)
                 frame_url = str(state.get("provider_frame_url") or "")
                 rendered_ok = _provider_rendered_ok(provider_key, state)
                 load_button_required_ok = clicked or not load_button.count()

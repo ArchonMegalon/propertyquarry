@@ -304,6 +304,7 @@ _3DVISTA_EXPORT_ALLOWED_EXTENSIONS = frozenset(
         ".wasm",
         ".webm",
         ".webp",
+        ".woff2",
         ".xml",
     }
 )
@@ -12068,10 +12069,10 @@ def _tour_control_external_iframe_html(
     </style>
   </head>
   <body>
-    <div class="provider-frame-wrap" aria-busy="true" data-provider-state="loading">
-      <iframe id="provider-frame" src="about:blank" data-src="{html.escape(initial_provider_src_raw)}" title="{title}" aria-label="{provider_badge}: {title}" allowfullscreen loading="eager" referrerpolicy="no-referrer"></iframe>
+    <main class="provider-frame-wrap" aria-busy="true" data-provider-state="loading">
+      <iframe class="provider-frame" id="provider-frame" src="about:blank" data-src="{html.escape(initial_provider_src_raw)}" title="{title}" aria-label="{provider_badge}: {title}" allowfullscreen loading="eager" referrerpolicy="no-referrer"></iframe>
       {fullscreen_recovery_html}
-    </div>
+    </main>
     <div class="shell">
       <div class="viewer-actions"><a href="{clean_return_href}" aria-label="Back to tour" title="Back to tour"><span aria-hidden="true">&#8592;</span></a></div>
       <div class="badge">{provider_badge}</div>
@@ -14531,7 +14532,12 @@ def public_tour_control_viewer(slug: str, viewer_mode: str, request: Request) ->
         raise HTTPException(status_code=404, detail="tour_control_panorama_export_hidden")
     if isinstance(payload.get("walkable_scene"), dict):
         primary_control_path = _public_tour_primary_control_path(payload)
-        if not primary_control_path:
+        three_d_vista_probe_ready = (
+            normalized_viewer_mode
+            in {"3dvista", "3d_vista", "three_d_vista"}
+            and _3dvista_private_viewer_proof_ready(payload, slug=slug)
+        )
+        if not primary_control_path and not three_d_vista_probe_ready:
             raise HTTPException(status_code=404, detail="tour_control_acceptance_missing")
     nonce = _public_tour_csp_nonce()
     if normalized_viewer_mode in {

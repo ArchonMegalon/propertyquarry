@@ -8999,6 +8999,7 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
     vista_dir.mkdir(parents=True)
     (vista_dir / "index.htm").write_text("<html><script src='tdvplayer.js'></script><div>tourviewer</div></html>", encoding="utf-8")
     (vista_dir / "tdvplayer.js").write_text("window.TDVPlayer = true;", encoding="utf-8")
+    (vista_dir / "viewer.woff2").write_bytes(b"font-data")
     (bundle_dir / "scene-01.jpg").write_bytes(b"fake-jpeg-data")
     (bundle_dir / "tour.private.json").write_text(
         json.dumps(
@@ -9020,6 +9021,7 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
                 "title": "Unrendered 3DVista",
                 "display_title": "Unrendered 3DVista",
                 "hosted_url": f"https://propertyquarry.com/tours/{slug}",
+                "walkable_scene": {"representation_kind": "ai_reconstruction"},
                 "scenes": [
                     {
                         "name": "Panorama",
@@ -9045,6 +9047,7 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
     page = client.get(f"/tours/{slug}", headers={"host": "propertyquarry.com"})
     control = client.get(f"/tours/{slug}/control/3dvista", headers={"host": "propertyquarry.com"})
     asset = client.get(f"/tours/3dvista/{slug}/3dvista/index.htm", headers={"host": "propertyquarry.com"})
+    font = client.get(f"/tours/3dvista/{slug}/3dvista/viewer.woff2", headers={"host": "propertyquarry.com"})
 
     assert page.status_code == 200
     assert "Open 3D tour" not in page.text
@@ -9052,6 +9055,24 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
     assert control.status_code == 200
     assert f"/tours/3dvista/{slug}/3dvista/index.htm" in control.text
     assert asset.status_code == 200
+    assert font.status_code == 200
+
+
+def test_public_tour_fullscreen_provider_shell_has_accessible_main_and_frame() -> None:
+    from app.api.routes.public_tours import _tour_control_external_iframe_html
+
+    body = _tour_control_external_iframe_html(
+        title="Accessible 3DVista",
+        iframe_src="/tours/3dvista/accessible-tour/3dvista/index.htm",
+        badge="3D Tour",
+        payload={"slug": "accessible-tour"},
+        nonce="test-nonce",
+    )
+
+    assert '<main class="provider-frame-wrap"' in body
+    assert '<iframe class="provider-frame"' in body
+    assert 'title="Accessible 3DVista"' in body
+    assert 'aria-label="3D Tour: Accessible 3DVista"' in body
 
 
 def test_public_tour_hides_external_3dvista_without_browser_render_proof_but_keeps_probe_control(
