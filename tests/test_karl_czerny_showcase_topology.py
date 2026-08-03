@@ -205,7 +205,9 @@ def test_karl_czerny_viewer_uses_component_local_portal_mapping() -> None:
     assert "const canonicalPortalWorld = portal" in viewer
     assert "const components = measuredComponents.length ? measuredComponents" in viewer
     assert "Entrance / exit · Stairwell 3" in viewer
-    assert "Door → ${targetRoom?.label || targetId || 'next room'}" in viewer
+    assert "const isLoggiaDoor" in viewer
+    assert "? 'Loggia door'" in viewer
+    assert "Doorway: ${connectedLabels.join(' ↔ ')}" in viewer
 
 
 def test_source_pixel_envelopes_drive_reviewed_plan_bounds(tmp_path: Path) -> None:

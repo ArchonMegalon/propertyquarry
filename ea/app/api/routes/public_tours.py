@@ -12623,71 +12623,125 @@ def _tour_control_panorama_html(
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>__PQ_TITLE__ - __PQ_PROVIDER__</title>
     <style nonce="__PQ_NONCE__">
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: dark;
+        --pq-ink: #101716;
+        --pq-paper: #f7f4ee;
+        --pq-glass: rgba(15, 22, 21, .72);
+        --pq-line: rgba(255, 255, 255, .16);
+        --pq-muted: rgba(247, 244, 238, .68);
+        --pq-accent: #c86f4a;
+        --pq-accent-soft: #e9b596;
+        --pq-sage: #8ea69b;
+        --pq-radius: 18px;
+      }
       * { box-sizing: border-box; }
-      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #080b0e; color: #fff; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0b1110; color: var(--pq-paper); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body::before { content: ''; position: fixed; inset: 0; z-index: 9; pointer-events: none; background: linear-gradient(180deg, rgba(5,9,8,.34) 0%, transparent 24%, transparent 68%, rgba(5,9,8,.48) 100%), radial-gradient(circle at 50% 44%, transparent 48%, rgba(4,8,7,.2) 100%); }
+      button, a { -webkit-tap-highlight-color: transparent; }
       #viewer { position: fixed; inset: 0; touch-action: none; cursor: grab; }
       #viewer.dragging { cursor: grabbing; }
       #viewer canvas { display: block; width: 100%; height: 100%; }
-      .topbar { position: fixed; z-index: 20; top: max(12px, env(safe-area-inset-top)); left: 12px; right: 12px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; pointer-events: none; }
-      .glass { background: rgba(8,11,14,.72); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 18px 50px rgba(0,0,0,.22); backdrop-filter: blur(16px); border-radius: 14px; }
-      .identity { padding: 11px 13px; max-width: min(620px, calc(100vw - 86px)); }
-      .identity strong { display: block; font-size: 14px; line-height: 1.2; }
-      .identity span { display: block; margin-top: 4px; color: rgba(255,255,255,.72); font-size: 11px; line-height: 1.35; }
-      .icon-button { pointer-events: auto; min-width: 44px; min-height: 44px; border: 1px solid rgba(255,255,255,.22); background: rgba(8,11,14,.72); color: white; border-radius: 13px; cursor: pointer; font: inherit; }
-      .icon-button[aria-pressed="true"] { color: #10151a; background: #fff; border-color: #fff; }
-      .top-actions { display: flex; gap: 7px; pointer-events: auto; }
-      .zoom-controls { position: fixed; z-index: 20; right: 12px; top: 50%; transform: translateY(-50%); display: grid; gap: 7px; }
-      .zoom-controls .icon-button { font-size: 20px; font-weight: 600; line-height: 1; }
-      .scene-rail { position: fixed; z-index: 20; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(980px, calc(100vw - 28px)); display: flex; gap: 8px; overflow-x: auto; padding: 8px; scroll-padding-inline: 42%; scroll-snap-type: x proximity; overscroll-behavior-inline: contain; scrollbar-width: none; }
+      .topbar { position: fixed; z-index: 20; top: max(18px, env(safe-area-inset-top)); left: 18px; right: 18px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; pointer-events: none; }
+      .glass { background: var(--pq-glass); border: 1px solid var(--pq-line); box-shadow: 0 24px 60px rgba(0,0,0,.26), inset 0 1px 0 rgba(255,255,255,.06); backdrop-filter: blur(22px) saturate(1.15); -webkit-backdrop-filter: blur(22px) saturate(1.15); border-radius: var(--pq-radius); }
+      .identity { position: relative; pointer-events: auto; padding: 13px 15px 12px; min-width: min(330px, calc(100vw - 380px)); max-width: min(480px, calc(100vw - 310px)); }
+      .identity-kicker { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; color: var(--pq-accent-soft); font-size: 9px; font-weight: 800; line-height: 1.2; letter-spacing: .16em; text-transform: uppercase; }
+      .identity-kicker::before { content: ''; width: 16px; height: 1px; background: currentColor; }
+      .identity strong { display: block; overflow: hidden; font-family: Georgia, "Times New Roman", serif; font-size: clamp(17px, 1.5vw, 21px); font-weight: 500; line-height: 1.12; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
+      .identity-meta { display: flex; align-items: center; gap: 7px; margin-top: 8px; }
+      .trust-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 22px; padding: 0 8px; border: 1px solid rgba(171,203,187,.28); border-radius: 999px; color: rgba(229,241,234,.85); background: rgba(121,153,137,.14); font-size: 9px; font-weight: 750; letter-spacing: .04em; white-space: nowrap; }
+      .trust-chip::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #a9c5b6; box-shadow: 0 0 0 3px rgba(169,197,182,.12); }
+      .disclosure { position: relative; min-width: 0; color: var(--pq-muted); font-size: 10px; }
+      .disclosure summary { list-style: none; cursor: pointer; white-space: nowrap; }
+      .disclosure summary::-webkit-details-marker { display: none; }
+      .disclosure summary::after { content: ' +'; color: var(--pq-accent-soft); }
+      .disclosure[open] summary::after { content: ' −'; }
+      .disclosure-copy { position: absolute; top: calc(100% + 12px); left: -96px; width: min(390px, calc(100vw - 36px)); padding: 12px 14px; border: 1px solid var(--pq-line); border-radius: 14px; color: rgba(247,244,238,.8); background: rgba(12,18,17,.94); box-shadow: 0 18px 48px rgba(0,0,0,.4); font-size: 10px; line-height: 1.5; }
+      .top-actions { display: flex; gap: 3px; padding: 4px; pointer-events: auto; }
+      .icon-button { pointer-events: auto; min-width: 44px; min-height: 44px; border: 1px solid transparent; background: transparent; color: rgba(247,244,238,.78); border-radius: 13px; padding: 0 13px; cursor: pointer; font: 750 11px/1 Inter,system-ui,sans-serif; letter-spacing: .015em; transition: color .18s ease, background .18s ease, border-color .18s ease, transform .18s ease; }
+      .icon-button:hover { color: #fff; background: rgba(255,255,255,.08); }
+      .icon-button:active { transform: scale(.96); }
+      .icon-button[aria-pressed="true"] { color: var(--pq-ink); background: var(--pq-paper); border-color: rgba(255,255,255,.7); box-shadow: 0 5px 18px rgba(0,0,0,.22); }
+      .zoom-controls { position: fixed; z-index: 20; right: 18px; top: 50%; transform: translateY(-50%); display: grid; gap: 4px; padding: 4px; }
+      .zoom-controls .icon-button { width: 42px; min-width: 42px; min-height: 42px; padding: 0; font-size: 18px; font-weight: 500; line-height: 1; }
+      .scene-rail { position: fixed; z-index: 20; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(880px, calc(100vw - 36px)); display: flex; gap: 5px; overflow-x: auto; padding: 5px; scroll-padding-inline: 42%; scroll-snap-type: x proximity; overscroll-behavior-inline: contain; scrollbar-width: none; }
       .scene-rail[hidden] { display: none; }
       .scene-rail::-webkit-scrollbar { display: none; }
-      .scene-button { flex: 0 0 auto; min-height: 42px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.09); color: white; border-radius: 10px; padding: 0 14px; cursor: pointer; font: inherit; scroll-snap-align: center; }
-      .scene-button.active { color: #10151a; background: #fff; border-color: #fff; }
+      .scene-button { display: inline-flex; align-items: center; gap: 9px; flex: 0 0 auto; min-height: 46px; border: 1px solid transparent; background: transparent; color: rgba(247,244,238,.67); border-radius: 14px; padding: 0 14px 0 9px; cursor: pointer; font: 700 11px/1 Inter,system-ui,sans-serif; scroll-snap-align: center; transition: color .18s ease, background .18s ease, transform .18s ease; }
+      .scene-button:hover { color: #fff; background: rgba(255,255,255,.07); }
+      .scene-number { display: inline-grid; place-items: center; width: 29px; height: 29px; flex: 0 0 29px; border: 1px solid rgba(255,255,255,.18); border-radius: 50%; color: rgba(247,244,238,.72); font-size: 9px; font-variant-numeric: tabular-nums; }
+      .scene-label { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .scene-button.active { color: var(--pq-ink); background: var(--pq-paper); box-shadow: 0 6px 22px rgba(0,0,0,.24); }
+      .scene-button.active .scene-number { color: #fff; background: var(--pq-accent); border-color: var(--pq-accent); }
       .hotspot-layer { position: fixed; inset: 0; z-index: 12; pointer-events: none; overflow: hidden; --pq-safe-top: env(safe-area-inset-top, 0px); --pq-safe-right: env(safe-area-inset-right, 0px); --pq-safe-bottom: env(safe-area-inset-bottom, 0px); --pq-safe-left: env(safe-area-inset-left, 0px); }
-      .hotspot { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; max-width: calc(100vw - var(--pq-safe-left) - var(--pq-safe-right) - 20px); overflow: hidden; border: 0; color: #111820; background: #fff; min-height: 38px; border-radius: 999px; padding: 0 14px 0 11px; font: 700 12px/1 Inter,system-ui,sans-serif; box-shadow: 0 9px 30px rgba(0,0,0,.38); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; }
+      .hotspot { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; max-width: calc(100vw - var(--pq-safe-left) - var(--pq-safe-right) - 20px); overflow: hidden; border: 1px solid rgba(255,255,255,.74); color: var(--pq-ink); background: rgba(247,244,238,.94); min-height: 44px; border-radius: 999px; padding: 0 16px 0 8px; font: 750 11px/1 Inter,system-ui,sans-serif; box-shadow: 0 12px 34px rgba(0,0,0,.32); backdrop-filter: blur(14px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; transition: transform .18s ease, background .18s ease; }
+      .hotspot:hover { transform: translate(-50%,-50%) translateY(-2px); background: #fff; }
       .hotspot.unplaced { visibility: hidden; pointer-events: none; }
-      .hotspot::before { content: '→'; display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 7px; border-radius: 50%; color: white; background: #111820; }
-      .floorplan { position: fixed; z-index: 19; right: 12px; bottom: 76px; width: min(260px, 36vw); padding: 8px; transition: opacity .2s ease, transform .2s ease; }
+      .hotspot::before { content: '→'; display: inline-grid; place-items: center; width: 29px; height: 29px; margin-right: 8px; border-radius: 50%; color: white; background: var(--pq-accent); font-size: 14px; font-weight: 500; }
+      .floorplan { position: fixed; z-index: 19; right: 18px; bottom: 88px; width: min(290px, 34vw); padding: 6px; transition: opacity .2s ease, transform .2s ease; }
       .floorplan[hidden] { display: none; }
       .floorplan.collapsed { opacity: 0; pointer-events: none; transform: translateY(12px); }
-      .floorplan-stage { position: relative; border-radius: 9px; overflow: hidden; background: white; }
-      .floorplan-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 8px; color:#182028; background:#fff; font-size:11px; font-weight:700; }
-      .floorplan-toolbar button { border:1px solid #cbd1d4; border-radius:999px; padding:5px 8px; background:#f5f7f7; color:#182028; cursor:pointer; font:inherit; }
+      .floorplan-stage { position: relative; border-radius: 13px; overflow: hidden; background: var(--pq-paper); }
+      .floorplan-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:36px; padding:6px 8px 6px 10px; color:#18201e; background:var(--pq-paper); font-size:9px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+      .floorplan-toolbar button { min-height:32px; border:1px solid #d5d1c9; border-radius:999px; padding:0 10px; background:#ece8df; color:#18201e; cursor:pointer; font:750 9px/1 Inter,system-ui,sans-serif; letter-spacing:0; text-transform:none; }
       .floorplan img { display: block; width: 100%; max-height: 34vh; object-fit: contain; }
-      .floorplan-pin { position: absolute; width: 24px; height: 24px; transform: translate(-50%,-50%); border: 2px solid #fff; border-radius: 50%; background: #182028; color: white; font-size: 10px; cursor: pointer; }
-      .floorplan-pin.active { background: #ee6b45; box-shadow: 0 0 0 4px rgba(238,107,69,.24); }
-      .street-context { position: fixed; z-index: 20; left: 12px; bottom: 76px; display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 13px; color: #182028; background: rgba(255,255,255,.94); border: 1px solid rgba(255,255,255,.8); border-radius: 999px; box-shadow: 0 8px 24px rgba(0,0,0,.3); font: 700 11px/1 Inter,system-ui,sans-serif; text-decoration: none; }
-      .street-context::before { content: '↗'; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: white; background: #111820; }
+      .floorplan-pin { position: absolute; width: 27px; height: 27px; transform: translate(-50%,-50%); border: 2px solid var(--pq-paper); border-radius: 50%; background: #26322f; color: white; box-shadow: 0 3px 10px rgba(0,0,0,.24); font: 750 9px/1 Inter,system-ui,sans-serif; cursor: pointer; }
+      .floorplan-pin::after { content: ''; position: absolute; inset: -10px; border-radius: 50%; }
+      .floorplan-pin.active { background: var(--pq-accent); box-shadow: 0 0 0 4px rgba(200,111,74,.22), 0 4px 12px rgba(0,0,0,.28); }
+      .street-context { position: fixed; z-index: 20; left: 18px; bottom: 88px; display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 14px 0 8px; color: #18201e; background: rgba(247,244,238,.94); border: 1px solid rgba(255,255,255,.8); border-radius: 999px; box-shadow: 0 10px 28px rgba(0,0,0,.28); backdrop-filter: blur(14px); font: 750 10px/1 Inter,system-ui,sans-serif; text-decoration: none; }
+      .street-context::before { content: '↗'; display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; color: white; background: #26322f; }
       .street-context[hidden] { display: none; }
       .dollhouse-layer { position: fixed; inset: 0; z-index: 13; pointer-events: none; overflow: hidden; }
       .dollhouse-layer[hidden] { display: none; }
-      .dollhouse-node { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; min-height: 34px; border: 1px solid rgba(255,255,255,.8); border-radius: 999px; padding: 0 11px; color: #111820; background: rgba(255,255,255,.94); box-shadow: 0 8px 24px rgba(0,0,0,.3); cursor: pointer; font: 700 11px/1 Inter,system-ui,sans-serif; white-space: nowrap; }
-      .dollhouse-portal-label { position: absolute; transform: translate(-50%,-50%); pointer-events: none; min-height: 24px; border: 1px solid rgba(238,107,69,.9); border-radius: 999px; padding: 0 8px; color: #fff; background: rgba(29,38,48,.94); box-shadow: 0 6px 18px rgba(0,0,0,.28); font: 700 10px/1 Inter,system-ui,sans-serif; white-space: nowrap; }
-      .dollhouse-node.active { color: #fff; background: #ee6b45; border-color: #fff; }
-      .dollhouse-node.unavailable { color: rgba(255,255,255,.76); background: rgba(24,32,40,.88); border-color: rgba(255,255,255,.3); cursor: default; }
-      .dollhouse-note { position: fixed; z-index: 20; left: 50%; top: max(86px, calc(env(safe-area-inset-top) + 74px)); transform: translateX(-50%); padding: 8px 11px; color: rgba(255,255,255,.82); font-size: 11px; line-height: 1.35; text-align: center; pointer-events: none; }
+      .dollhouse-node { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; min-height: 40px; border: 1px solid rgba(255,255,255,.52); border-radius: 999px; padding: 0 13px; color: #16201d; background: rgba(247,244,238,.93); box-shadow: 0 9px 26px rgba(0,0,0,.26); backdrop-filter: blur(12px); cursor: pointer; font: 750 10px/1 Inter,system-ui,sans-serif; white-space: nowrap; }
+      .dollhouse-room-dimension { color: rgba(22,32,29,.62); font-weight: 650; }
+      .dollhouse-portal-label { position: absolute; transform: translate(-50%,-50%); pointer-events: none; display: inline-flex; align-items: center; gap: 6px; min-height: 26px; border: 1px solid rgba(233,181,150,.46); border-radius: 999px; padding: 0 9px 0 7px; color: rgba(255,245,238,.9); background: rgba(27,38,35,.88); box-shadow: 0 6px 18px rgba(0,0,0,.24); backdrop-filter: blur(10px); font: 750 9px/1 Inter,system-ui,sans-serif; white-space: nowrap; }
+      .dollhouse-portal-label::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--pq-accent-soft); }
+      .dollhouse-node.active { color: #fff; background: var(--pq-accent); border-color: rgba(255,255,255,.8); }
+      .dollhouse-node.active .dollhouse-room-dimension { color: rgba(255,255,255,.76); }
+      .dollhouse-node.unavailable { color: rgba(247,244,238,.68); background: rgba(31,42,39,.84); border-color: rgba(255,255,255,.22); cursor: default; }
+      .dollhouse-node.unavailable .dollhouse-room-dimension { color: rgba(247,244,238,.5); }
+      .dollhouse-node.exit-gate { padding-left: 9px; color: #f4eee5; background: rgba(33,47,43,.92); border-color: rgba(169,197,182,.5); }
+      .dollhouse-node.exit-gate::before { content: '↗'; display: inline-grid; place-items: center; width: 23px; height: 23px; margin-right: 7px; border-radius: 50%; color: #21312c; background: #b5c9bd; }
+      .dollhouse-note { position: fixed; z-index: 20; left: 50%; top: max(92px, calc(env(safe-area-inset-top) + 80px)); transform: translateX(-50%); max-width: min(520px, calc(100vw - 36px)); padding: 8px 12px; color: rgba(247,244,238,.68); font-size: 9px; font-weight: 650; line-height: 1.35; letter-spacing: .04em; text-align: center; pointer-events: none; }
       .dollhouse-note[hidden] { display: none; }
       .dollhouse-reset { display: none; }
       body[data-mode="dollhouse"] .dollhouse-reset { display: inline-flex; align-items: center; justify-content: center; }
-      .status { position: fixed; z-index: 25; left: 50%; top: 50%; transform: translate(-50%,-50%); padding: 12px 16px; font-size: 13px; pointer-events: none; }
+      .status { position: fixed; z-index: 25; left: 50%; top: 50%; transform: translate(-50%,-50%); padding: 12px 16px; color: rgba(247,244,238,.86); font-size: 11px; font-weight: 700; letter-spacing: .03em; pointer-events: none; }
       .status[hidden] { display: none; }
       .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
-      :is(.icon-button, .scene-button, .hotspot, .floorplan-toolbar button, .floorplan-pin, .dollhouse-node, .street-context):focus-visible { outline: 2px solid #ee6b45; outline-offset: 3px; }
+      :is(.icon-button, .scene-button, .hotspot, .floorplan-toolbar button, .floorplan-pin, .dollhouse-node, .street-context, .disclosure summary):focus-visible { outline: 2px solid var(--pq-accent-soft); outline-offset: 3px; }
       @media (max-width: 720px) {
-        .floorplan { width: min(220px, 52vw); bottom: 74px; }
-        .topbar { gap: 7px; }
-        .identity { padding: 9px 10px; max-width: calc(100vw - 142px); }
-        .identity strong { font-size: 13px; }
-        .identity span { max-width: 58vw; font-size: 10px; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
-        .icon-button { min-width: 40px; min-height: 40px; padding: 0 8px; font-size: 11px; }
-        .top-actions { gap: 5px; }
-        .zoom-controls { right: 9px; }
-        .scene-button { min-height: 40px; padding: 0 12px; font-size: 12px; }
-        .street-context { left: 9px; bottom: 74px; max-width: calc(100vw - 18px); }
-        .dollhouse-note { top: max(104px, calc(env(safe-area-inset-top) + 94px)); width: calc(100vw - 30px); }
+        .topbar { top: max(10px, env(safe-area-inset-top)); left: 10px; right: 10px; gap: 7px; }
+        .identity { min-width: 0; width: auto; max-width: calc(100vw - 167px); padding: 10px 11px 9px; border-radius: 15px; }
+        .identity-kicker { margin-bottom: 3px; font-size: 7px; letter-spacing: .12em; }
+        .identity strong { font-size: 15px; }
+        .identity-meta { margin-top: 6px; }
+        .trust-chip { min-height: 20px; padding: 0 6px; font-size: 7px; }
+        .disclosure summary { font-size: 8px; }
+        .disclosure-copy { position: fixed; top: calc(max(10px, env(safe-area-inset-top)) + 78px); left: 10px; width: calc(100vw - 20px); }
+        .top-actions { gap: 1px; padding: 3px; border-radius: 15px; }
+        .icon-button { min-width: 42px; min-height: 42px; padding: 0 9px; font-size: 9px; }
+        .zoom-controls { right: 10px; padding: 3px; border-radius: 15px; }
+        .zoom-controls .icon-button { width: 40px; min-width: 40px; min-height: 40px; }
+        .scene-rail { bottom: max(10px, env(safe-area-inset-bottom)); width: calc(100vw - 20px); border-radius: 16px; }
+        .scene-button { min-height: 44px; padding: 0 11px 0 7px; font-size: 10px; }
+        .scene-number { width: 27px; height: 27px; flex-basis: 27px; }
+        .scene-label { max-width: 130px; }
+        .floorplan-toolbar button { min-height: 40px; }
+        .floorplan { right: 10px; bottom: 72px; width: min(230px, 62vw); }
+        .street-context { left: 10px; bottom: 72px; max-width: calc(100vw - 20px); }
+        .dollhouse-note { top: max(96px, calc(env(safe-area-inset-top) + 86px)); width: calc(100vw - 24px); }
+        .dollhouse-node { min-height: 44px; max-width: calc(100vw - 20px); overflow: hidden; text-overflow: ellipsis; }
+        .dollhouse-room-dimension { display: none; }
       }
-      @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+      @media (max-width: 380px) {
+        .trust-chip { padding-inline: 7px; font-size: 0; }
+        .trust-chip::after { content: 'Plan checked'; font-size: 7px; }
+        .disclosure summary { width: 22px; overflow: hidden; font-size: 0; text-align: center; }
+        .disclosure summary::before { content: 'i'; font: 800 9px/1 Georgia,serif; }
+      }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
     </style>
   </head>
   <body data-viewer="__PQ_VIEWER__">
@@ -12695,8 +12749,8 @@ def _tour_control_panorama_html(
     <div class="hotspot-layer" id="hotspots" aria-label="Navigation hotspots"></div>
     <div class="dollhouse-layer" id="dollhouse-nodes" aria-label="Dollhouse room navigation" hidden></div>
     <header class="topbar">
-      <div class="identity glass"><strong id="scene-title">__PQ_TITLE__</strong><span title="__PQ_PROVIDER____PQ_DISCLOSURE__">__PQ_PROVIDER____PQ_DISCLOSURE__</span></div>
-      <div class="top-actions"><button class="icon-button" id="dollhouse-toggle" type="button" aria-label="Open 3D dollhouse" aria-pressed="false">Dollhouse</button><button class="icon-button" id="map-toggle" type="button" aria-label="Open floor plan" aria-pressed="false">Map</button><button class="icon-button" id="fullscreen" type="button" aria-label="Enter full screen">⛶</button></div>
+      <div class="identity glass"><div class="identity-kicker">__PQ_PROVIDER__</div><strong id="scene-title">__PQ_TITLE__</strong><div class="identity-meta"><span class="trust-chip">Source-plan checked</span><details class="disclosure"><summary>About this view</summary><span class="disclosure-copy">__PQ_DISCLOSURE_TEXT__</span></details></div></div>
+      <div class="top-actions glass"><button class="icon-button" id="dollhouse-toggle" type="button" aria-label="Open 3D dollhouse" aria-pressed="false">Dollhouse</button><button class="icon-button" id="map-toggle" type="button" aria-label="Open floor plan" aria-pressed="false">Map</button><button class="icon-button" id="fullscreen" type="button" aria-label="Enter full screen">⛶</button></div>
     </header>
     <div class="zoom-controls" aria-label="View zoom controls"><button class="icon-button" id="dollhouse-reset" type="button" aria-label="Reset dollhouse view" title="Reset to plan-aligned view">↺</button><button class="icon-button" id="zoom-in" type="button" aria-label="Zoom in">+</button><button class="icon-button" id="zoom-out" type="button" aria-label="Zoom out">−</button></div>
     <nav class="scene-rail glass" id="scene-rail" aria-label="Tour spaces"></nav>
@@ -12741,13 +12795,13 @@ def _tour_control_panorama_html(
       const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
       panoramaScene.add(new THREE.Mesh(geometry, material));
       const dollhouseScene = new THREE.Scene();
-      dollhouseScene.background = new THREE.Color(0x151a1f);
-      dollhouseScene.fog = new THREE.Fog(0x151a1f, 18, 34);
+      dollhouseScene.background = new THREE.Color(0x18211f);
+      dollhouseScene.fog = new THREE.Fog(0x18211f, 19, 36);
       const dollhouseCamera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, .1, 80);
       const dollhouseGroup = new THREE.Group();
       dollhouseScene.add(dollhouseGroup);
-      dollhouseScene.add(new THREE.HemisphereLight(0xffffff, 0x35404b, 2.2));
-      const dollhouseSun = new THREE.DirectionalLight(0xfff4df, 2.8);
+      dollhouseScene.add(new THREE.HemisphereLight(0xfffbf1, 0x34453f, 2.35));
+      const dollhouseSun = new THREE.DirectionalLight(0xffead2, 2.65);
       dollhouseSun.position.set(-7, 16, 9);
       dollhouseScene.add(dollhouseSun);
       const loader = new THREE.TextureLoader();
@@ -12855,7 +12909,7 @@ def _tour_control_panorama_html(
           new THREE.Vector3(x, .125, z),
         ];
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color: 0xffc7a9, transparent: true, opacity: .88 });
+        const material = new THREE.LineBasicMaterial({ color: 0xe1a27f, transparent: true, opacity: .9 });
         const line = new THREE.Line(geometry, material);
         line.name = name;
         dollhouseGroup.add(line);
@@ -13092,18 +13146,21 @@ def _tour_control_panorama_html(
         };
         for (const room of rooms) {
           const sceneId = String(room.scene_id || '');
-          const baseColor = room.kind === 'exterior' ? 0x87a39b : (sceneId ? 0xd9d4c8 : 0x666d75);
+          const roomName = String(room.label || '').toLowerCase();
+          const isOutdoorRoom = room.kind === 'exterior' || /balcony|balkon|loggia|terrace|garden/.test(roomName);
+          const isEntryRoom = /entrance|vestibule|entry|vorraum|eingang/.test(roomName);
+          const baseColor = isOutdoorRoom ? 0x91aa9d : (isEntryRoom ? 0xe3c7ae : (sceneId ? 0xddd7ca : 0x68726e));
           const floorMaterial = new THREE.MeshStandardMaterial({ color: baseColor, roughness: .78, metalness: .02 });
           const wallMaterial = new THREE.MeshStandardMaterial({
-            color: sceneId ? 0xf4f0e8 : 0x7b8289,
+            color: sceneId ? 0xf4eee2 : 0x77817d,
             roughness: .82,
             transparent: true,
-            opacity: room.kind === 'exterior' ? .66 : .78,
+            opacity: isOutdoorRoom ? .62 : .8,
           });
           // Keep walls as a thin architectural cutaway so the measured
           // footprint remains legible against the source plan in the default
           // top view. Orbiting still reveals the full room volume.
-          const wallHeight = room.kind === 'exterior' ? .16 : Math.max(.32, Math.min(.72, room.height * .24));
+          const wallHeight = isOutdoorRoom ? .16 : Math.max(.32, Math.min(.72, room.height * .24));
           const openingFor = match => match ? { center: match.start + match.span / 2, width: Math.min(.92, match.span * .58) } : null;
           const roomFloors = [];
           for (const component of room.components) {
@@ -13134,7 +13191,17 @@ def _tour_control_panorama_html(
           const marker = document.createElement('button');
           marker.type = 'button';
           marker.className = `dollhouse-node${sceneId ? '' : ' unavailable'}`;
-          marker.textContent = room.dimension_label ? `${room.label || 'Space'} · ${room.dimension_label}` : (room.label || 'Space');
+          const roomNameElement = document.createElement('span');
+          roomNameElement.className = 'dollhouse-room-name';
+          roomNameElement.textContent = room.label || 'Space';
+          marker.appendChild(roomNameElement);
+          if (room.dimension_label) {
+            const roomDimension = document.createElement('span');
+            roomDimension.className = 'dollhouse-room-dimension';
+            roomDimension.textContent = ` · ${room.dimension_label}`;
+            marker.appendChild(roomDimension);
+          }
+          marker.setAttribute('aria-label', room.dimension_label ? `${room.label || 'Space'}, ${room.dimension_label}` : (room.label || 'Space'));
           marker.dataset.worldX = String(room.x + room.width / 2);
           marker.dataset.worldY = String(wallHeight + .28);
           marker.dataset.worldZ = String(room.z + room.depth / 2);
@@ -13175,16 +13242,27 @@ def _tour_control_panorama_html(
         for (const portal of sourcePortals.filter(value => String(value.kind || '') === 'door')) {
           const world = canonicalPortalWorld(portal);
           if (!world) continue;
-          const targetId = String(portal.target_room_id || portal.room_ids?.find(value => value !== String(portal.room_ids?.[0] || '')) || '');
+          const roomIds = Array.isArray(portal.room_ids) ? portal.room_ids.map(value => String(value || '')) : [];
+          const targetId = String(portal.target_room_id || roomIds[1] || roomIds[0] || '');
           const targetRoom = rooms.find(value => String(value.id || '') === targetId);
           const label = document.createElement('div');
           label.className = 'dollhouse-portal-label';
-          label.textContent = String(portal.label || `Door → ${targetRoom?.label || targetId || 'next room'}`).replace(/ · .+$/, '');
+          const portalName = String(portal.label || '').replace(/ · .+$/, '').trim();
+          const connectedRooms = roomIds.map(roomId => rooms.find(value => String(value.id || '') === roomId)).filter(Boolean);
+          const cleanRoomLabel = room => String(room?.label || room?.id || '').replace(/ · .+$/, '').trim();
+          const connectedLabels = connectedRooms.map(cleanRoomLabel).filter(Boolean);
+          const targetRoomLabel = cleanRoomLabel(targetRoom);
+          const isLoggiaDoor = /balcony|balkon|loggia|terrace/.test(`${portal.id || ''} ${portalName} ${connectedLabels.join(' ')}`.toLowerCase());
+          label.textContent = isLoggiaDoor
+            ? 'Loggia door'
+            : (targetRoomLabel ? `To ${targetRoomLabel}` : (portalName || 'Doorway'));
           label.dataset.worldX = String(world.x);
           label.dataset.worldY = '.58';
           label.dataset.worldZ = String(world.z);
           label.dataset.portalId = String(portal.id || '');
-          label.title = `Door route: entrance vestibule to ${targetRoom?.label || targetId || 'next room'}`;
+          label.title = connectedLabels.length > 1
+            ? `Doorway: ${connectedLabels.join(' ↔ ')}`
+            : `Doorway to ${targetRoomLabel || targetId || 'next room'}`;
           dollhouseNodes.appendChild(label);
         }
         return true;
@@ -13241,6 +13319,7 @@ def _tour_control_panorama_html(
           '.zoom-controls',
           '.dollhouse-note:not([hidden])',
           '.street-context:not([hidden])',
+          '.disclosure[open] .disclosure-copy',
         ];
         const obstacleRects = obstacleSelectors.flatMap(selector => [...document.querySelectorAll(selector)]).flatMap(element => {
           const style = getComputedStyle(element);
@@ -13400,6 +13479,7 @@ def _tour_control_panorama_html(
           '.zoom-controls',
           '.scene-rail:not([hidden])',
           '.floorplan:not([hidden]):not(.collapsed)',
+          '.disclosure[open] .disclosure-copy',
         ];
         const obstacleElements = [...new Set(obstacleSelectors.flatMap(selector => [...document.querySelectorAll(selector)]))];
         const obstacleRects = obstacleElements.flatMap(element => {
@@ -13504,7 +13584,7 @@ def _tour_control_panorama_html(
         if (activeButton) activeButton.scrollIntoView({ block: 'nearest', inline: 'center' });
         for (const [sceneId, meshes] of dollhouseRoomMeshes.entries()) {
           for (const mesh of meshes) {
-            mesh.material.color.setHex(sceneId === id ? 0xd08a5f : Number(mesh.userData.baseColor || 0xd9d4c8));
+            mesh.material.color.setHex(sceneId === id ? 0xc86f4a : Number(mesh.userData.baseColor || 0xddd7ca));
           }
         }
       }
@@ -13586,12 +13666,20 @@ def _tour_control_panorama_html(
         const normalized = String(value || '').trim();
         return /^https:\/\/(?:www\.)?google\.com\/maps\/(?:@|\?)/.test(normalized) ? normalized : '';
       }
-      for (const node of nodes) {
+      nodes.forEach((node, index) => {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'scene-button';
         button.dataset.sceneId = String(node.id);
-        button.textContent = node.label || 'Space';
+        button.setAttribute('aria-label', node.label || 'Space');
+        const number = document.createElement('span');
+        number.className = 'scene-number';
+        number.setAttribute('aria-hidden', 'true');
+        number.textContent = String(index + 1).padStart(2, '0');
+        const label = document.createElement('span');
+        label.className = 'scene-label';
+        label.textContent = node.label || 'Space';
+        button.append(number, label);
         button.addEventListener('click', () => loadNode(String(node.id)));
         rail.appendChild(button);
         if (spec.floorplan_url && node.floorplan_x_pct >= 0 && node.floorplan_y_pct >= 0) {
@@ -13606,7 +13694,7 @@ def _tour_control_panorama_html(
           pin.addEventListener('click', () => loadNode(String(node.id)));
           floorplanPins.appendChild(pin);
         }
-      }
+      });
       const dollhouseReady = buildDollhouse();
       dollhouseToggle.hidden = !dollhouseReady;
       let showingDerivedFloorplan = false;
@@ -13779,13 +13867,12 @@ def _tour_control_panorama_html(
     </script>
   </body>
 </html>"""
-    disclosure_html = f" · {disclosure}" if disclosure else ""
     rendered = (
         document.replace("__PQ_NONCE__", nonce_attr)
         .replace("__PQ_TITLE__", title)
         .replace("__PQ_PROVIDER__", safe_provider_label)
         .replace("__PQ_VIEWER__", safe_viewer_name)
-        .replace("__PQ_DISCLOSURE__", disclosure_html)
+        .replace("__PQ_DISCLOSURE_TEXT__", disclosure)
         .replace("__PQ_THREE_MODULE__", _PUBLIC_TOUR_THREE_MODULE_PATH)
         .replace("__PQ_DATA__", data_json)
     )
@@ -13821,6 +13908,10 @@ def _tour_control_panorama_html(
             "space": "Raum",
             "continue": "Weiter",
             "unavailable": "Für diesen Raum ist kein Quellpanorama verfügbar.",
+            "source_checked": "Mit Quellgrundriss geprüft",
+            "about_view": "Zu dieser Ansicht",
+            "loggia_door": "Loggia-Tür",
+            "doorway": "Türdurchgang",
         },
         "de-DE": {
             "dollhouse": "3D-Modell",
@@ -13850,6 +13941,10 @@ def _tour_control_panorama_html(
             "space": "Raum",
             "continue": "Weiter",
             "unavailable": "Für diesen Raum ist kein Quellpanorama verfügbar.",
+            "source_checked": "Mit Quellgrundriss geprüft",
+            "about_view": "Zu dieser Ansicht",
+            "loggia_door": "Loggia-Tür",
+            "doorway": "Türdurchgang",
         },
         "es-CR": {
             "dollhouse": "Modelo 3D",
@@ -13879,6 +13974,10 @@ def _tour_control_panorama_html(
             "space": "espacio",
             "continue": "Continuar",
             "unavailable": "No hay un panorama de origen disponible para este espacio.",
+            "source_checked": "Verificado con el plano fuente",
+            "about_view": "Acerca de esta vista",
+            "loggia_door": "Puerta de la logia",
+            "doorway": "Puerta",
         },
     }[normalized_locale]
     replacements = (
@@ -13897,6 +13996,8 @@ def _tour_control_panorama_html(
         ('aria-label="Reset dollhouse view"', f'aria-label="{copy["reset_dollhouse"]}"'),
         ('title="Reset to plan-aligned view"', f'title="{copy["reset_dollhouse"]}"'),
         ('aria-label="Tour spaces"', f'aria-label="{copy["tour_spaces"]}"'),
+        ('>Source-plan checked</span>', f'>{copy["source_checked"]}</span>'),
+        ('>About this view</summary>', f'>{copy["about_view"]}</summary>'),
         ('alt="Property floor plan"', f'alt="{copy["floorplan"]}"'),
         (
             "Floorplan-measured AI model · dimensions from source plan; approximate, not measured",
@@ -13930,6 +14031,8 @@ def _tour_control_panorama_html(
             f"announcer.textContent = `{copy['now_viewing']}: ${{activeNode.label || '{copy['space']}'}}`;",
         ),
         ("hotspot.label || 'Continue'", f"hotspot.label || '{copy['continue']}'"),
+        ("? 'Loggia door'", f"? '{copy['loggia_door']}'"),
+        ("(portalName || 'Doorway')", f"(portalName || '{copy['doorway']}')"),
         (
             "mapToggle.setAttribute('aria-label', expanded ? 'Close floor plan' : 'Open floor plan');",
             f"mapToggle.setAttribute('aria-label', expanded ? '{copy['close_floorplan']}' : '{copy['open_floorplan']}');",
