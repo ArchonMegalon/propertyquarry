@@ -618,6 +618,18 @@ def analyze_floorplan(
             source_bboxes=source_bboxes,
         )
 
+    entry_room_id = str(specification.get("entry_room_id") or "").strip()
+    if entry_room_id and entry_room_id not in room_ids:
+        raise FloorplanAnalysisError("floorplan_entry_room_unknown")
+    if entry_room_id and not any(
+        str(portal.get("kind") or "").strip() == "exit_gate"
+        and entry_room_id in {str(value or "").strip() for value in list(portal.get("room_ids") or [])}
+        and "outside" in {str(value or "").strip() for value in list(portal.get("room_ids") or [])}
+        for portal in list(source_geometry.get("portals") or [])
+        if isinstance(portal, dict)
+    ):
+        raise FloorplanAnalysisError("floorplan_entry_exit_gate_missing")
+
     content_bbox = _content_bbox(image)
     analysis: dict[str, object] = {
         "contract_name": ANALYZER_CONTRACT,
@@ -632,6 +644,7 @@ def analyze_floorplan(
         "doorway_edges": edges,
         "boundary_adjacency": boundary_adjacency,
         "source_geometry": source_geometry,
+        "entry_room_id": entry_room_id,
         "room_count": len(rooms),
         "minimum_dimension_confidence": round(
             min(float(room["confidence"]) for room in rooms), 4

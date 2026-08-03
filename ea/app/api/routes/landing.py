@@ -8607,6 +8607,82 @@ def property_research_packet(
             )
         )
     ooda_summary_rows.extend(_property_distance_ooda_rows_for_preferences(facts, preferences))
+    onemin_evaluation = (
+        dict(candidate.get("onemin_evaluation") or {})
+        if isinstance(candidate.get("onemin_evaluation"), dict)
+        else dict(fact_enrichment.get("onemin_evaluation") or {})
+        if isinstance(fact_enrichment.get("onemin_evaluation"), dict)
+        else {}
+    )
+    onemin_judgment = (
+        dict(onemin_evaluation.get("judgment") or {})
+        if isinstance(onemin_evaluation.get("judgment"), dict)
+        else {}
+    )
+    onemin_ooda = (
+        dict(onemin_evaluation.get("ooda") or {})
+        if isinstance(onemin_evaluation.get("ooda"), dict)
+        else {}
+    )
+    onemin_rows: list[dict[str, object]] = []
+    if (
+        str(onemin_evaluation.get("status") or "").strip().lower() == "succeeded"
+        and onemin_evaluation.get("manager_routed") is True
+    ):
+        recommendation = str(
+            onemin_judgment.get("recommendation") or "consider"
+        ).strip().replace("_", " ").title()
+        try:
+            confidence_percent = max(
+                0,
+                min(100, int(round(float(onemin_judgment.get("confidence") or 0) * 100))),
+            )
+        except (TypeError, ValueError):
+            confidence_percent = 0
+        summary_copy = str(onemin_judgment.get("summary") or "").strip()
+        if summary_copy:
+            onemin_rows.append(
+                _object_detail_row(
+                    "1minAI judgment",
+                    summary_copy,
+                    f"{recommendation} · {confidence_percent}% confidence",
+                )
+            )
+        for strength in list(onemin_judgment.get("strengths") or [])[:2]:
+            if str(strength or "").strip():
+                onemin_rows.append(
+                    _object_detail_row("Strength", str(strength).strip(), "1minAI")
+                )
+        for risk in list(onemin_judgment.get("risks") or [])[:2]:
+            if str(risk or "").strip():
+                onemin_rows.append(
+                    _object_detail_row("Watch-out", str(risk).strip(), "1minAI")
+                )
+        for action in list(onemin_ooda.get("actions") or [])[:2]:
+            if not isinstance(action, dict):
+                continue
+            action_status = str(action.get("status") or "planned").strip().lower()
+            distance = action.get("observed_distance_m")
+            place_name = str(action.get("place_name") or "").strip()
+            if action_status == "verified" and distance not in (None, ""):
+                action_detail = (
+                    f"Google Maps verified {place_name or 'the matching place'} "
+                    f"at {int(distance):,} m straight-line distance."
+                )
+            else:
+                blockers = ", ".join(
+                    str(item).replace("_", " ")
+                    for item in list(action.get("blockers") or [])[:2]
+                    if str(item or "").strip()
+                )
+                action_detail = blockers or str(action.get("reason") or "Research planned.").strip()
+            onemin_rows.append(
+                _object_detail_row(
+                    str(action.get("label") or action.get("fact_key") or "Maps research").strip(),
+                    action_detail,
+                    f"Google Maps · {action_status.replace('_', ' ').title()}",
+                )
+            )
     investment_run_target = run_target + ("&investment=1" if "?" in run_target else "?investment=1")
     try:
         feedback_suggestions = dict(product.property_feedback_suggestions(property_facts=facts, assessment=assessment or candidate))
@@ -9126,6 +9202,19 @@ def property_research_packet(
             "items": ooda_summary_rows[:6],
         },
     ]
+    if onemin_rows:
+        research_sections.insert(
+            0,
+            {
+                "eyebrow": "1minAI via EA 1min Manager",
+                "title": "AI property judgment",
+                "copy": (
+                    "A qualitative advisory read grounded in verified facts. "
+                    "The deterministic PropertyQuarry fit score remains authoritative."
+                ),
+                "items": onemin_rows[:7],
+            },
+        )
     if packet_score_rows:
         research_sections.append(
             {

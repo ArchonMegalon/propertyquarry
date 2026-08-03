@@ -2094,7 +2094,7 @@ class PropertyFactProvenanceOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: str = Field(default="", max_length=80)
-    method: Literal["", "straight_line_osm"] = ""
+    method: Literal["", "straight_line_osm", "straight_line_google_maps"] = ""
     observed_at: str = Field(default="", max_length=64)
     expires_at: str = Field(default="", max_length=64)
     freshness: Literal["", "fresh", "stale", "unknown"] = ""
@@ -2242,6 +2242,120 @@ class PropertyFactProviderReceiptOut(BaseModel):
     reason_code: str = Field(default="", pattern=r"^[a-z0-9_]{0,96}$")
 
 
+class PropertyOneminJudgmentOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recommendation: Literal["", "shortlist", "consider", "hold", "reject"] = ""
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0, allow_inf_nan=False)
+    summary: str = Field(default="", max_length=600)
+    strengths: list[str] = Field(default_factory=list, max_length=6)
+    risks: list[str] = Field(default_factory=list, max_length=6)
+    evidence_keys: list[str] = Field(default_factory=list, max_length=12)
+    missing_fact_keys: list[str] = Field(default_factory=list, max_length=12)
+
+
+class PropertyOneminProviderReceiptOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = Field(default="", max_length=80)
+    query_digest: str = Field(default="", pattern=r"^(|sha256:[0-9a-f]{64})$")
+    receipt_url: str = Field(default="", max_length=2048)
+    provider_object_id: str = Field(default="", max_length=120)
+    coordinate_digest: str = Field(default="", pattern=r"^(|sha256:[0-9a-f]{64})$")
+
+
+class PropertyOneminBrowserReceiptOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    site: str = Field(default="", max_length=120)
+    account_ref: str = Field(default="", max_length=160)
+    work_type: Literal["research"] = "research"
+    task_summary: str = Field(default="", max_length=300)
+    requested_actions: list[str] = Field(default_factory=list, max_length=6)
+    completed_actions: list[str] = Field(default_factory=list, max_length=6)
+    context_used: list[str] = Field(default_factory=list, max_length=6)
+    quality_gate: str = Field(default="", max_length=300)
+    staged_items: list[str] = Field(default_factory=list, max_length=6)
+    final_surface_url: str = Field(default="", max_length=2048)
+    total_visible: str = Field(default="", max_length=80)
+    notification_policy: Literal["action_required_only"] = "action_required_only"
+    stop_condition: str = Field(default="", max_length=80)
+    irreversible_actions_attempted: list[str] = Field(default_factory=list, max_length=0)
+    blockers: list[str] = Field(default_factory=list, max_length=6)
+    evidence: dict[str, str] = Field(default_factory=dict, max_length=2)
+
+
+class PropertyOneminOodaActionOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str = Field(default="", max_length=40)
+    fact_key: str = Field(default="", max_length=80, pattern=r"^[a-z0-9_]*$")
+    label: str = Field(default="", max_length=120)
+    provider: Literal["google_maps_browseract"] = "google_maps_browseract"
+    work_type: Literal["research"] = "research"
+    reason: str = Field(default="", max_length=240)
+    travel_mode: Literal["walking", "driving", "bicycling", "transit"] = "walking"
+    priority: int = Field(default=1, ge=1, le=9)
+    status: Literal["planned", "verified", "unavailable", "blocked", "skipped"] = "planned"
+    observed_distance_m: int | None = Field(default=None, ge=1, le=5_000_000)
+    place_name: str = Field(default="", max_length=160)
+    blockers: list[str] = Field(default_factory=list, max_length=6)
+    provider_receipt: PropertyOneminProviderReceiptOut = Field(
+        default_factory=PropertyOneminProviderReceiptOut
+    )
+    browser_receipt: PropertyOneminBrowserReceiptOut = Field(
+        default_factory=PropertyOneminBrowserReceiptOut
+    )
+
+
+class PropertyOneminOodaOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["propertyquarry.onemin-ooda.v1"]
+    phase: Literal["observe", "orient", "decide", "act"] = "observe"
+    actions: list[PropertyOneminOodaActionOut] = Field(default_factory=list, max_length=2)
+
+
+class PropertyOneminManagerReceiptOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: Literal["provider.onemin.code_generate"] = "provider.onemin.code_generate"
+    action_kind: Literal["property.evaluate"] = "property.evaluate"
+    provider: Literal["1minAI"] = "1minAI"
+    provider_backend: str = Field(default="", max_length=80)
+    provider_account_name: str = Field(default="", max_length=120)
+    provider_key_slot: str = Field(default="", max_length=80)
+    model: str = Field(default="", max_length=120)
+    tokens_in: int = Field(default=0, ge=0, le=10_000_000)
+    tokens_out: int = Field(default=0, ge=0, le=10_000_000)
+    manager_routed: StrictBool = False
+    input_digest: str = Field(default="", pattern=r"^(|sha256:[0-9a-f]{64})$")
+    evaluated_at: str = Field(default="", max_length=64)
+
+
+class PropertyOneminErrorOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(default="", pattern=r"^[a-z0-9_]{0,96}$")
+
+
+class PropertyOneminEvaluationOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["propertyquarry.onemin-evaluation.v1"]
+    status: Literal["disabled", "unavailable", "succeeded"]
+    input_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    manager_routed: StrictBool = False
+    cache_hit: StrictBool = False
+    evaluated_at: str = Field(default="", max_length=64)
+    judgment: PropertyOneminJudgmentOut = Field(default_factory=PropertyOneminJudgmentOut)
+    ooda: PropertyOneminOodaOut
+    receipt: PropertyOneminManagerReceiptOut = Field(
+        default_factory=PropertyOneminManagerReceiptOut
+    )
+    error: PropertyOneminErrorOut = Field(default_factory=PropertyOneminErrorOut)
+
+
 class PropertyFactEnrichmentOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2262,6 +2376,7 @@ class PropertyFactEnrichmentOut(BaseModel):
         default_factory=list,
         max_length=32,
     )
+    onemin_evaluation: PropertyOneminEvaluationOut
 
     @field_validator("updated_at")
     @classmethod

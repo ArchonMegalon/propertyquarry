@@ -60,7 +60,7 @@ DIORAMA_PALETTE = {
     "wash": (239, 234, 224),
 }
 SCENES = (
-    ("hall", "Entrance vestibule · 18.80 m²", 52.0, 81.5),
+    ("vorraum", "VR / Vorraum · 18.80 m²", 52.0, 81.5),
     ("bedroom-primary", "Bedroom · 16.86 m²", 36.5, 60.0),
     ("terrace", "Terrace · 7.78 m²", 24.5, 59.0),
     ("bedroom-guest", "Bedroom · 15.24 m²", 78.0, 42.0),
@@ -69,7 +69,7 @@ SCENES = (
     ("living-kitchen", "Wohnküche · 30.33 m²", 53.0, 68.0),
 )
 SCENE_INPUT_NAMES = {
-    "hall": "karl-czerny-hall.png",
+    "vorraum": "karl-czerny-hall.png",
     "bedroom-primary": "karl-czerny-bedroom-16-86.png",
     "terrace": "karl-czerny-terrace.png",
     "bedroom-guest": "karl-czerny-bedroom-15-24.png",
@@ -78,7 +78,7 @@ SCENE_INPUT_NAMES = {
     "living-kitchen": "karl-czerny-living-kitchen.png",
 }
 HOTSPOTS = {
-    "hall": (("Continue to Wohnküche", "living-kitchen", 154, ()),),
+    "vorraum": (("Continue from VR / Vorraum to Wohnküche", "living-kitchen", 154, ()),),
     "bedroom-primary": (
         ("Return to Wohnküche", "living-kitchen", 112, ()),
         ("Step onto terrace", "terrace", -76, ()),
@@ -102,7 +102,7 @@ HOTSPOTS = {
         ),
     ),
     "living-kitchen": (
-        ("Return to entrance vestibule", "hall", -154, ()),
+        ("Return to VR / Vorraum", "vorraum", -154, ()),
         ("Enter primary bedroom", "bedroom-primary", -92, ()),
         (
             "Through internal hall to second bedroom",
@@ -162,7 +162,7 @@ for _room in _ANALYSIS_ROOMS:
         "components": _components,
     }
 WALKTHROUGH_CHAPTERS = (
-    ("Entrance hall", 0.0),
+    ("VR / Vorraum · apartment entrance", 0.0),
     ("Primary bedroom", 5.0),
     ("Terrace", 16.0),
     ("Return via primary bedroom", 23.0),
@@ -283,7 +283,7 @@ def _showcase_portal_topology() -> dict[str, object]:
     if (
         str(exit_gate.get("kind") or "") != "exit_gate"
         or list(exit_gate.get("room_ids") or [])
-        != ["entrance-vestibule", "outside"]
+        != ["vorraum", "outside"]
         or str(exit_gate.get("target_room_id") or "") != "outside"
     ):
         raise RuntimeError("showcase_stairwell_exit_topology_invalid")
@@ -305,7 +305,7 @@ def _showcase_portal_topology() -> dict[str, object]:
         for pair in list(dict(_ANALYSIS_SPEC.get("boundary_adjacency") or {}).get("forbidden") or [])
         if isinstance(pair, (list, tuple)) and len(pair) == 2
     }
-    if frozenset(("entrance-vestibule", "balcony-loggia")) not in forbidden_pairs:
+    if frozenset(("vorraum", "balcony-loggia")) not in forbidden_pairs:
         raise RuntimeError("showcase_stairwell_balcony_adjacency_not_forbidden")
     return {
         "balcony_portal_id": "living-to-balcony-loggia",
@@ -691,6 +691,7 @@ def build(args: argparse.Namespace) -> Path:
     )
     layout_fidelity = {
         "contract_name": "propertyquarry.floorplan_spatial_fidelity.v1",
+        "entry_room_id": str(floorplan_analysis.get("entry_room_id") or ""),
         "boundary_adjacency": dict(floorplan_analysis.get("boundary_adjacency") or {}),
         "doorway_edges": [list(edge) for edge in list(floorplan_analysis.get("doorway_edges") or [])],
         "diorama_layout": diorama_layout,
@@ -767,7 +768,7 @@ def build(args: argparse.Namespace) -> Path:
         },
         "source_scope": {
             "supported_space": (
-                "Wohnküche, both bedrooms, entrance vestibule, internal hall, "
+                "Wohnküche, both bedrooms, VR / Vorraum with the apartment entrance, internal hall, "
                 "separate WC, bathroom, terrace, and the balcony/loggia as exterior rooms"
             ),
             "unsupported_rooms_omitted": False,
@@ -820,13 +821,14 @@ def build(args: argparse.Namespace) -> Path:
             "expected_scene_count": len(SCENES),
             "floorplan_relpath": "floorplan.webp",
             "derived_floorplan_relpath": "derived-floorplan.png",
-            "initial_scene_id": "hall",
+            "initial_scene_id": "vorraum",
             "representation_disclosure": DISCLOSURE,
             "representation_kind": "ai_reconstruction",
             "scenes": [_scene_payload(*scene) for scene in SCENES],
             "spatial_model": {
                 "layout_fidelity": layout_fidelity,
                 "analyzer_contract_name": ANALYZER_CONTRACT,
+                "entry_room_id": str(floorplan_analysis.get("entry_room_id") or ""),
                 "measured": True,
                 "rooms": spatial_rooms,
                 "source_geometry": dict(floorplan_analysis.get("source_geometry") or {}),

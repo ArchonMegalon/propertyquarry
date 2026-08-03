@@ -107,6 +107,14 @@ services:
       PROPERTYQUARRY_TEABLE_TENANT_NAME: "${PROPERTYQUARRY_TEABLE_TENANT_NAME:-PropertyQuarry}"
       PROPERTYQUARRY_TEABLE_TABLE_SYNC_CONFIG_JSON: "${PROPERTYQUARRY_TEABLE_TABLE_SYNC_CONFIG_JSON:-}"
       PROPERTYQUARRY_TEABLE_AUTO_SYNC: "${PROPERTYQUARRY_TEABLE_AUTO_SYNC:-0}"
+      # Property assessment jobs are queued by the API and executed by the
+      # least-privilege worker below. The API receives feature posture only;
+      # provider credentials remain out of the public-facing process.
+      PROPERTYQUARRY_ONEMIN_USE_EA_MANAGER: "${PROPERTYQUARRY_ONEMIN_USE_EA_MANAGER:-1}"
+      PROPERTYQUARRY_ONEMIN_EVALUATION_ENABLED: "${PROPERTYQUARRY_ONEMIN_EVALUATION_ENABLED:-0}"
+      PROPERTYQUARRY_ONEMIN_EVALUATION_MODEL: "${PROPERTYQUARRY_ONEMIN_EVALUATION_MODEL:-deepseek-chat}"
+      PROPERTYQUARRY_ONEMIN_GOOGLE_MAPS_OODA_ENABLED: "${PROPERTYQUARRY_ONEMIN_GOOGLE_MAPS_OODA_ENABLED:-0}"
+      PROPERTYQUARRY_ONEMIN_GOOGLE_MAPS_MAX_ACTIONS: "${PROPERTYQUARRY_ONEMIN_GOOGLE_MAPS_MAX_ACTIONS:-2}"
       PROPERTYQUARRY_ENABLE_PUBLIC_SIDE_SURFACES: "${PROPERTYQUARRY_ENABLE_PUBLIC_SIDE_SURFACES:-0}"
       PROPERTYQUARRY_ENABLE_PUBLIC_RESULTS: "${PROPERTYQUARRY_ENABLE_PUBLIC_RESULTS:-0}"
       PROPERTYQUARRY_ENABLE_PUBLIC_TOURS: "${PROPERTYQUARRY_ENABLE_PUBLIC_TOURS:-0}"
@@ -295,6 +303,23 @@ services:
       PROPERTYQUARRY_SEARCH_WORK_BACKOFF_BASE_SECONDS: "${PROPERTYQUARRY_SEARCH_WORK_BACKOFF_BASE_SECONDS:-15}"
       PROPERTYQUARRY_SEARCH_WORK_BACKOFF_MAX_SECONDS: "${PROPERTYQUARRY_SEARCH_WORK_BACKOFF_MAX_SECONDS:-300}"
       PROPERTYQUARRY_SEARCH_HTML_MAX_BYTES: "${PROPERTYQUARRY_SEARCH_HTML_MAX_BYTES:-8388608}"
+      # The durable worker is the only PropertyQuarry service allowed to call
+      # 1minAI or BrowserAct. OneMin selection still goes through EA Manager;
+      # Google Maps extraction additionally requires the user's governed
+      # connector binding and therefore fails closed when that binding is absent.
+      PROPERTYQUARRY_ONEMIN_USE_EA_MANAGER: "${PROPERTYQUARRY_ONEMIN_USE_EA_MANAGER:-1}"
+      PROPERTYQUARRY_ONEMIN_EVALUATION_ENABLED: "${PROPERTYQUARRY_ONEMIN_EVALUATION_ENABLED:-0}"
+      PROPERTYQUARRY_ONEMIN_EVALUATION_MODEL: "${PROPERTYQUARRY_ONEMIN_EVALUATION_MODEL:-deepseek-chat}"
+      PROPERTYQUARRY_ONEMIN_GOOGLE_MAPS_OODA_ENABLED: "${PROPERTYQUARRY_ONEMIN_GOOGLE_MAPS_OODA_ENABLED:-0}"
+      PROPERTYQUARRY_ONEMIN_GOOGLE_MAPS_MAX_ACTIONS: "${PROPERTYQUARRY_ONEMIN_GOOGLE_MAPS_MAX_ACTIONS:-2}"
+      ONEMIN_AI_API_KEY: "${ONEMIN_AI_API_KEY:-}"
+      BROWSERACT_API_KEY: "${BROWSERACT_API_KEY:-}"
+      PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_RUN_URL: "${PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_RUN_URL:-}"
+      PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID: "${PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID:-}"
+      # The fallback fleet stays in its existing host-owned manifest. Mount it
+      # read-only into the worker so EA 1min Manager can rotate away from a
+      # depleted slot without copying dozens of credentials into Compose.
+      ONEMIN_DIRECT_API_KEYS_JSON_FILE: /run/propertyquarry/onemin/onemin_api_keys.json
       DATABASE_URL: "${PROPERTYQUARRY_WORKER_DATABASE_URL:?Set a non-owner PROPERTYQUARRY_WORKER_DATABASE_URL for the durable worker}"
       PROPERTYQUARRY_RELEASE_COMMIT_SHA: "${PROPERTYQUARRY_RELEASE_COMMIT_SHA:-}"
       PROPERTYQUARRY_RELEASE_IMAGE_DIGEST: "${PROPERTYQUARRY_RELEASE_IMAGE_DIGEST:-}"
@@ -322,6 +347,12 @@ services:
     volumes:
       - ./config:/config:ro
       - ./config:/app/config:ro
+      - type: bind
+        source: "${ONEMIN_DIRECT_API_KEYS_JSON_FILE:?Set the host 1min key-manifest path for the PropertyQuarry worker}"
+        target: /run/propertyquarry/onemin/onemin_api_keys.json
+        read_only: true
+        bind:
+          create_host_path: false
       - propertyquarry_artifacts:/data/artifacts
       - propertyquarry_provider_ledger:/data/provider-ledger
     depends_on:

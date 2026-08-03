@@ -26,7 +26,7 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         frozenset(("bathroom", "circulation-hall")),
         frozenset(("circulation-hall", "living-kitchen")),
         frozenset(("circulation-hall", "guest-bedroom")),
-        frozenset(("living-kitchen", "entrance-vestibule")),
+        frozenset(("living-kitchen", "vorraum")),
         frozenset(("balcony-loggia", "living-kitchen")),
     }
     assert frozenset(("bathroom", "living-kitchen")) not in doorway_edges
@@ -46,7 +46,7 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         ) in builder.SPATIAL_ROOMS
         if scene_id
     }
-    assert room_by_scene_id["hall"] == "entrance-vestibule"
+    assert room_by_scene_id["vorraum"] == "vorraum"
     assert any(
         room_id == "circulation-hall"
         and scene_id == ""
@@ -78,8 +78,8 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
                 )
             )
 
-    assert builder.HOTSPOTS["hall"] == (
-        ("Continue to Wohnküche", "living-kitchen", 154, ()),
+    assert builder.HOTSPOTS["vorraum"] == (
+        ("Continue from VR / Vorraum to Wohnküche", "living-kitchen", 154, ()),
     )
     assert builder.HOTSPOTS["bath"][0][3] == ("circulation-hall",)
     assert next(
@@ -124,7 +124,7 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         "forbidden": [
             ["living-kitchen", "terrace"],
             ["balcony-loggia", "terrace"],
-            ["balcony-loggia", "entrance-vestibule"],
+            ["balcony-loggia", "vorraum"],
         ],
     }
     source_geometry = builder._ANALYSIS_SPEC["source_geometry"]
@@ -132,27 +132,33 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
     source_geometry_rooms = {
         str(room["id"]): room for room in source_geometry["rooms"]
     }
-    assert len(source_geometry_rooms["entrance-vestibule"]["components_px"]) == 2
+    assert builder._ANALYSIS_SPEC["entry_room_id"] == "vorraum"
+    assert "entrance-vestibule" not in source_rooms
+    assert len(source_geometry_rooms["vorraum"]["components_px"]) == 2
     assert source_geometry_rooms["living-kitchen"]["components_px"] == [
         {"x": 795, "y": 780, "width": 720, "height": 245}
     ]
     source_portals = {
         str(portal["id"]): portal for portal in source_geometry["portals"]
     }
-    assert source_portals["entrance-to-living"]["room_ids"] == [
-        "entrance-vestibule",
+    assert source_portals["vorraum-to-living"]["room_ids"] == [
+        "vorraum",
         "living-kitchen",
     ]
-    assert source_portals["entrance-to-living"]["room_sides"] == {
-        "entrance-vestibule": "north",
+    assert source_portals["vorraum-to-living"]["room_sides"] == {
+        "vorraum": "north",
         "living-kitchen": "south",
     }
     assert source_portals["entrance-exit-gate"]["kind"] == "exit_gate"
+    assert source_portals["entrance-exit-gate"]["room_ids"] == ["vorraum", "outside"]
+    assert source_portals["entrance-exit-gate"]["room_sides"] == {"vorraum": "west"}
     assert source_portals["entrance-exit-gate"]["target_room_id"] == "outside"
     assert source_portals["entrance-exit-gate"]["center_px"] == {"x": 795, "y": 1100}
-    assert source_portals["entrance-exit-gate"]["label"] == "Entrance / exit · Stairwell 3"
+    assert source_portals["entrance-exit-gate"]["label"] == (
+        "Apartment entrance · VR / Vorraum ↔ Stairwell 3"
+    )
     assert source_portals["entrance-exit-gate"]["target_label"] == "Stairwell 3"
-    assert source_portals["entrance-to-living"]["label"] == "Door · Wohnküche"
+    assert source_portals["vorraum-to-living"]["label"] == "Door · Wohnküche"
     assert source_portals["living-to-balcony-loggia"] == {
         "id": "living-to-balcony-loggia",
         "label": "Door · Balkon / Loggia",
@@ -183,7 +189,7 @@ def test_karl_czerny_showcase_matches_source_floorplan_topology() -> None:
         "circulation-hall": 3.50,
         "guest-bedroom": 15.24,
         "living-kitchen": 30.33,
-        "entrance-vestibule": 18.80,
+        "vorraum": 18.80,
         "balcony-loggia": 4.38,
     }
     for room_id, geometry in builder.MEASURED_ROOM_GEOMETRY.items():

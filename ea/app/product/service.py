@@ -172,6 +172,12 @@ from app.product.property_fact_enrichment import (
     property_fact_source_fingerprint,
     property_fact_value,
 )
+from app.product.property_onemin_evaluation import (
+    property_onemin_evaluation_needs_refresh,
+    property_onemin_safe_public_packet,
+    run_property_google_maps_ooda,
+    run_property_onemin_evaluation,
+)
 from app.product.property_tour_hosting import (
     _assert_governed_property_tour_slug_not_reserved,
     _configured_public_tour_hosts,
@@ -5641,9 +5647,15 @@ def _property_fact_merge_geo_research(
         )
         if not coordinate_exact or not provider_evidence:
             continue
+        evidence_provider = str(
+            provider_evidence.get("provider") or "openstreetmap_overpass"
+        ).strip()
+        evidence_method = str(
+            provider_evidence.get("method") or "straight_line_osm"
+        ).strip()
         field_evidence = {
-            "provider": "openstreetmap_overpass",
-            "method": "straight_line_osm",
+            "provider": evidence_provider,
+            "method": evidence_method,
             "observed_at": str(
                 provider_evidence.get("provider_observed_at") or ""
             ).strip(),
@@ -5678,6 +5690,9 @@ def _property_fact_merge_geo_research(
             ).strip(),
             "query_endpoint_url": str(
                 provider_evidence.get("query_endpoint_url") or ""
+            ).strip(),
+            "query_url": str(
+                provider_evidence.get("query_url") or ""
             ).strip(),
             "query_digest": str(
                 provider_evidence.get("query_digest") or ""
@@ -6402,7 +6417,7 @@ def _property_fact_safe_job_payload(job: Mapping[str, object]) -> dict[str, obje
         if isinstance(value, float) and not math.isfinite(value):
             value = None
         method = str(provenance.get("method") or "").strip()
-        if method not in {"", "straight_line_osm"}:
+        if method not in {"", "straight_line_osm", "straight_line_google_maps"}:
             method = ""
         freshness = str(provenance.get("freshness") or "").strip().lower()
         if freshness not in {"", "fresh", "stale", "unknown"}:
@@ -6699,6 +6714,9 @@ def _property_fact_safe_job_payload(job: Mapping[str, object]) -> dict[str, obje
             for row in list(job.get("provider_receipts") or [])[:32]
             if isinstance(row, Mapping)
         ],
+        "onemin_evaluation": property_onemin_safe_public_packet(
+            job.get("onemin_evaluation")
+        ),
         "retryable": bool(job.get("retryable"))
         and attempt < _PROPERTY_FACT_ENRICHMENT_MAX_ATTEMPTS
         and status != "terminal_error",
@@ -30025,6 +30043,16 @@ class ProductService:
                 ).strip().lower()
                 == "evaluating"
             )
+            assessment_only = assessment_only or bool(
+                not requested_plan
+                and property_onemin_evaluation_needs_refresh(
+                    candidate=candidate,
+                    facts=_property_fact_candidate_facts(candidate),
+                    preferences=preferences,
+                    plan=plan,
+                    score=zero_work_score,
+                )
+            )
             if not requested_plan and unsupported_missing:
                 terminal_status = "terminal_error" if required_only else "succeeded"
                 terminal = {
@@ -30408,6 +30436,84 @@ class ProductService:
                 include_resolved=True,
                 property_url=property_url,
             )
+            onemin_score = property_fact_score_projection(
+                candidate={**dict(candidate), "property_facts": merged_facts},
+                plan=plan_after,
+                preferences=preferences,
+            )
+            existing_onemin_evaluation = (
+                dict(candidate.get("onemin_evaluation") or {})
+                if isinstance(candidate.get("onemin_evaluation"), Mapping)
+                else {}
+            )
+            onemin_evaluation = run_property_onemin_evaluation(
+                tool_execution=self._container.tool_execution,
+                principal_id=principal_id,
+                run_id=run_id,
+                candidate_ref=candidate_ref,
+                candidate=candidate,
+                facts=merged_facts,
+                preferences=preferences,
+                plan=plan_after,
+                score=onemin_score,
+                existing=existing_onemin_evaluation,
+            )
+            google_research, onemin_evaluation = run_property_google_maps_ooda(
+                tool_execution=self._container.tool_execution,
+                principal_id=principal_id,
+                run_id=run_id,
+                candidate_ref=candidate_ref,
+                property_url=property_url,
+                facts=merged_facts,
+                plan=plan_after,
+                specs=property_fact_distance_specs(),
+                evaluation=onemin_evaluation,
+            )
+            google_observed_keys: set[str] = set()
+            if google_research:
+                google_action_keys = {
+                    str(row.get("fact_key") or "").strip()
+                    for row in list(
+                        dict(onemin_evaluation.get("ooda") or {}).get("actions")
+                        or []
+                    )
+                    if isinstance(row, Mapping)
+                    and str(row.get("status") or "").strip().lower()
+                    == "verified"
+                }
+                google_requested_plan = [
+                    dict(row)
+                    for row in plan_after
+                    if str(row.get("key") or "").strip() in google_action_keys
+                ]
+                (
+                    merged_facts,
+                    google_changed_labels,
+                    google_observed_keys,
+                ) = _property_fact_merge_geo_research(
+                    property_url=property_url,
+                    facts=merged_facts,
+                    requested_plan=google_requested_plan,
+                    research=google_research,
+                    geo_source_meta=geo_source_meta,
+                )
+                changed_labels = list(
+                    dict.fromkeys([*changed_labels, *google_changed_labels])
+                )
+                observed_keys = set(observed_keys).union(google_observed_keys)
+                plan_after = property_fact_requirement_plan(
+                    facts=merged_facts,
+                    preferences=preferences,
+                    include_resolved=True,
+                    property_url=property_url,
+                )
+                evidence = (
+                    dict(merged_facts.get("property_fact_evidence") or {})
+                    if isinstance(
+                        merged_facts.get("property_fact_evidence"), dict
+                    )
+                    else {}
+                )
             requested_keys = {
                 str(row.get("key") or "").strip()
                 for row in requested_fields
@@ -30470,6 +30576,7 @@ class ProductService:
                     previous_score = None
             updated_candidate = dict(candidate)
             updated_candidate["property_facts"] = merged_facts
+            updated_candidate["onemin_evaluation"] = onemin_evaluation
             if "property_facts_json" in updated_candidate:
                 updated_candidate["property_facts_json"] = merged_facts
             if assessment:
@@ -30673,7 +30780,15 @@ class ProductService:
                             rebased_facts[coordinate_key] = _property_fact_json_copy(
                                 coordinate_value
                             )
-                for field in response_fields:
+                google_fields_to_rebase = [
+                    dict(row)
+                    for row in plan_after
+                    if str(row.get("key") or "").strip()
+                    in google_observed_keys
+                    and str(row.get("state") or "").strip().lower()
+                    == "resolved"
+                ]
+                for field in [*response_fields, *google_fields_to_rebase]:
                     if str(field.get("state") or "") != "resolved":
                         continue
                     key = str(field.get("key") or "").strip()
@@ -30689,6 +30804,7 @@ class ProductService:
                     rebased_facts["property_fact_evidence"] = rebased_evidence
                 rebased_candidate = dict(latest_candidate)
                 rebased_candidate["property_facts"] = rebased_facts
+                rebased_candidate["onemin_evaluation"] = onemin_evaluation
                 if "property_facts_json" in rebased_candidate:
                     rebased_candidate["property_facts_json"] = rebased_facts
                 if assessment:
@@ -30812,8 +30928,9 @@ class ProductService:
                         "result_facts_digest": property_fact_input_digest(rebased_facts),
                         "poll_after_ms": 1500,
                         "provider_receipts": _property_fact_provider_receipts(
-                            final_fields
+                            [*final_fields, *google_fields_to_rebase]
                         ),
+                        "onemin_evaluation": onemin_evaluation,
                     }
                 )
                 jobs[job_id] = job

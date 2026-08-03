@@ -487,6 +487,7 @@ _PROPERTY_SEARCH_RUN_COMPACT_UI_CANDIDATE_KEYS = (
     "fact_requirement_plan",
     "search_score_context",
     "score_provenance",
+    "onemin_evaluation",
 )
 
 _PROPERTY_SEARCH_RUN_COMPACT_FACT_JOB_KEYS = (
@@ -515,6 +516,7 @@ _PROPERTY_SEARCH_RUN_COMPACT_FACT_JOB_KEYS = (
     "score",
     "error",
     "provider_receipts",
+    "onemin_evaluation",
 )
 
 
@@ -1101,7 +1103,10 @@ def _compact_property_search_run_record(record: dict[str, object]) -> dict[str, 
     def _compact_ui_candidate_row(value: object) -> dict[str, object]:
         payload = dict(value or {}) if isinstance(value, dict) else {}
         compact_candidate = {
-            key: _bounded_compact_value(payload[key])
+            key: _bounded_compact_value(
+                payload[key],
+                max_depth=5 if key == "onemin_evaluation" else 3,
+            )
             for key in _PROPERTY_SEARCH_RUN_COMPACT_UI_CANDIDATE_KEYS
             if payload.get(key) not in (None, "", [], {})
         }
@@ -1165,7 +1170,13 @@ def _compact_property_search_run_record(record: dict[str, object]) -> dict[str, 
                 if key == "fields"
                 else _bounded_compact_value(
                     payload[key],
-                    max_depth=4 if key == "provider_receipts" else 3,
+                    max_depth=(
+                        5
+                        if key == "onemin_evaluation"
+                        else 4
+                        if key == "provider_receipts"
+                        else 3
+                    ),
                 )
             )
             for key in _PROPERTY_SEARCH_RUN_COMPACT_FACT_JOB_KEYS

@@ -75,6 +75,9 @@ def validate_layout_contract(payload: dict[str, Any]) -> None:
             raise LayoutContractError("floorplan_analysis_doorway_edge_invalid")
         if str(edge[0]) not in room_ids or str(edge[1]) not in room_ids:
             raise LayoutContractError("floorplan_analysis_doorway_edge_unknown_room")
+    entry_room_id = str(payload.get("entry_room_id") or "").strip()
+    if entry_room_id and entry_room_id not in room_ids:
+        raise LayoutContractError("floorplan_analysis_entry_room_unknown")
     geometry = payload.get("source_geometry")
     if not isinstance(geometry, dict):
         raise LayoutContractError("floorplan_source_geometry_missing")
@@ -94,6 +97,14 @@ def validate_layout_contract(payload: dict[str, Any]) -> None:
             raise LayoutContractError("floorplan_source_portal_rooms_missing")
         if any(str(room_id) != "outside" and str(room_id) not in room_ids for room_id in room_refs):
             raise LayoutContractError("floorplan_source_portal_unknown_room")
+    if entry_room_id and not any(
+        str(portal.get("kind") or "").strip() == "exit_gate"
+        and entry_room_id in {str(value or "").strip() for value in list(portal.get("room_ids") or [])}
+        and "outside" in {str(value or "").strip() for value in list(portal.get("room_ids") or [])}
+        for portal in portals
+        if isinstance(portal, dict)
+    ):
+        raise LayoutContractError("floorplan_analysis_entry_exit_gate_missing")
     round_trip = payload.get("round_trip")
     if isinstance(round_trip, dict) and str(round_trip.get("status") or "").strip().lower() not in {"pass", "approved"}:
         raise LayoutContractError("floorplan_analysis_round_trip_failed")
@@ -112,7 +123,16 @@ def room_ids_in_walk_order(payload: dict[str, Any]) -> list[str]:
         left, right = str(edge[0]), str(edge[1])
         adjacency.setdefault(left, []).append(right)
         adjacency.setdefault(right, []).append(left)
-    start = "entrance-vestibule" if "entrance-vestibule" in adjacency else (room_ids[0] if room_ids else "")
+    declared_entry = str(payload.get("entry_room_id") or "").strip()
+    start = (
+        declared_entry
+        if declared_entry in adjacency
+        else "entrance-vestibule"
+        if "entrance-vestibule" in adjacency
+        else room_ids[0]
+        if room_ids
+        else ""
+    )
     order: list[str] = []
     pending = [start] if start else []
     while pending:
@@ -223,6 +243,7 @@ def source_geometry_projection(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     projection = {
         "contract_name": CONTRACT_NAME,
+        "entry_room_id": str(payload.get("entry_room_id") or "").strip(),
         "room_count": int(payload.get("room_count") or 0),
         "room_ids": [row["id"] for row in rooms],
         "rooms": rooms,

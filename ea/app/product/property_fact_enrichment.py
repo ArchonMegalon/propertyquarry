@@ -56,18 +56,29 @@ def _distance_fact_spec(
     required_preferences = tuple(
         value for value in normalized_preferences if value.startswith("max_distance_to_")
     )
+    default_evidence_providers = (
+        (normalized_provider, "google_maps_browseract")
+        if normalized_provider == "openstreetmap_overpass"
+        and not strict_evidence_provider
+        else (normalized_provider,)
+    )
     normalized_evidence_providers = tuple(
         dict.fromkeys(
             str(value).strip()
-            for value in (evidence_providers or (normalized_provider,))
+            for value in (evidence_providers or default_evidence_providers)
             if str(value).strip()
         )
     )
+    default_source_keys_by_provider: dict[str, Sequence[str]] = {
+        normalized_provider: normalized_aliases,
+    }
+    if "google_maps_browseract" in normalized_evidence_providers:
+        default_source_keys_by_provider["google_maps_browseract"] = normalized_aliases
     normalized_source_keys_by_provider = {
         str(provider_key): tuple(str(value) for value in source_keys)
         for provider_key, source_keys in dict(
             evidence_source_keys_by_provider
-            or {normalized_provider: normalized_aliases}
+            or default_source_keys_by_provider
         ).items()
     }
     return MappingProxyType(
@@ -958,6 +969,16 @@ def _provider_receipt_is_structurally_valid(
             return False
         expected_path = f"/api/0.6/{object_type}/{object_id}/{int(object_version)}"
         return receipt.path == expected_path and not receipt.query
+    if provider == "google_maps_browseract":
+        hostname = str(receipt.hostname or "").lower()
+        return bool(
+            object_type == "place"
+            and object_version == "1"
+            and 5 <= len(object_id) <= 120
+            and (hostname == "google.com" or hostname.endswith(".google.com"))
+            and receipt.path.startswith("/maps")
+            and object_id in urllib.parse.unquote(receipt.geturl())
+        )
     receipt_text = urllib.parse.unquote(receipt.geturl()).casefold()
     return object_id.casefold() in receipt_text and object_version.casefold() in receipt_text
 
@@ -997,6 +1018,22 @@ def _provider_query_binding_is_valid(
     query_schema = str(evidence.get("query_schema") or "").strip()
     if query_url is None or not query_schema:
         return False
+    if provider == "google_maps_browseract":
+        hostname = str(query_url.hostname or "").lower()
+        query = urllib.parse.parse_qs(query_url.query)
+        origin = next(iter(query.get("origin") or []), "").strip()
+        destination = next(iter(query.get("destination") or []), "").strip()
+        travel_mode = next(iter(query.get("travelmode") or []), "").strip()
+        if (
+            query_schema != "propertyquarry.google-maps-browseract-distance.v1"
+            or not (hostname == "google.com" or hostname.endswith(".google.com"))
+            or query_url.path != "/maps/dir/"
+            or next(iter(query.get("api") or []), "") != "1"
+            or origin != f"{listing_latitude:.8f},{listing_longitude:.8f}"
+            or not destination
+            or travel_mode not in {"walking", "driving", "bicycling", "transit"}
+        ):
+            return False
     expected = "sha256:" + hashlib.sha256(
         query_url.geturl().encode("utf-8")
     ).hexdigest()
@@ -1123,8 +1160,9 @@ def property_fact_distance_evidence_is_valid(
         poi_latitude,
         poi_longitude,
     )
-    # Provider distances are rounded to the nearest metre. Nothing wider than
-    # rounding tolerance is accepted into score or gate calculations.
+    # Provider distances are normalized to a coordinate-derived straight-line
+    # metre value. Nothing wider than rounding tolerance is accepted into
+    # score or gate calculations, including browser-backed Maps evidence.
     return abs(recomputed_distance - observed_distance) <= 1.0
 
 

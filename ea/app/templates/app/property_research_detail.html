@@ -4107,6 +4107,47 @@
       {% set fact_score_state = (fact_score.get('state') or 'final')|lower %}
       {% set fact_job_status = (fact_enrichment.get('status') or 'idle')|lower %}
       {% set fact_job_pending = fact_job_status in ['queued', 'running'] or (fact_job_status == 'idle' and fact_enrichment.get('start_url') and fact_fields) %}
+      {% set onemin = fact_enrichment.get('onemin_evaluation') or {} %}
+      {% set onemin_judgment = onemin.get('judgment') or {} %}
+      {% set onemin_ooda = onemin.get('ooda') or {} %}
+      {% if onemin.get('status') == 'succeeded' and onemin.get('manager_routed') %}
+      <section class="prd-panel prd-related-homes" data-property-onemin-evaluation>
+        <span class="prd-kicker">1minAI via EA 1min Manager</span>
+        <h2>AI property judgment</h2>
+        <p class="prd-section-copy">
+          {{ onemin_judgment.get('summary') or 'The evidence-bound qualitative review is ready.' }}
+        </p>
+        <div class="object-list">
+          <div class="prd-row">
+            <div>
+              <strong>{{ (onemin_judgment.get('recommendation') or 'consider')|replace('_', ' ')|title }}</strong>
+              <small>Qualitative recommendation grounded in verified facts</small>
+            </div>
+            <span class="prd-tag">{{ ((onemin_judgment.get('confidence') or 0) * 100)|round|int }}% confidence</span>
+          </div>
+          {% for action in (onemin_ooda.get('actions') or [])[:2] %}
+          <div class="prd-row">
+            <div>
+              <strong>{{ action.get('label') or action.get('fact_key') or 'Maps research' }}</strong>
+              <small>
+                {% if action.get('status') == 'verified' and action.get('observed_distance_m') %}
+                Google Maps verified {{ action.get('place_name') or 'the matching place' }} at {{ action.get('observed_distance_m') }} m straight-line distance.
+                {% elif action.get('blockers') %}
+                {{ action.get('blockers')|join(', ')|replace('_', ' ') }}
+                {% else %}
+                {{ action.get('reason') or 'Research planned.' }}
+                {% endif %}
+              </small>
+            </div>
+            <span class="prd-tag">Google Maps · {{ (action.get('status') or 'planned')|replace('_', ' ')|title }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        <p class="prd-fact-provenance">
+          Advisory only. The deterministic PropertyQuarry fit score remains authoritative.
+        </p>
+      </section>
+      {% endif %}
       {% if fact_fields or research_selected_distance_rows %}
       <section
         class="prd-panel prd-related-homes prd-fact-enrichment"

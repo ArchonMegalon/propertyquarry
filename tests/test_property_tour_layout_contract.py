@@ -10,6 +10,7 @@ from scripts.property_tour_layout_contract import (
     load_layout_contract,
     room_ids_in_walk_order,
     source_bounds_m,
+    validate_layout_contract,
     validate_walkable_scene,
 )
 
@@ -18,6 +19,7 @@ def _contract() -> dict[str, object]:
     return {
         "contract_name": "propertyquarry.floorplan_analysis.v2",
         "review_status": "approved",
+        "entry_room_id": "entrance-vestibule",
         "room_count": 3,
         "rooms": [
             {"id": "living-kitchen", "components": [{"x": 2, "z": 2, "width": 4, "depth": 3}]},
@@ -80,6 +82,14 @@ def test_layout_contract_rejects_route_drift() -> None:
         "portals": payload["source_geometry"]["portals"],  # type: ignore[index]
     }
     assert "route_room_order_mismatch" in validate_walkable_scene(scene, payload)
+
+
+def test_layout_contract_binds_declared_entry_room_to_the_exterior_exit_gate() -> None:
+    payload = _contract()
+    payload["entry_room_id"] = "living-kitchen"
+
+    with pytest.raises(LayoutContractError, match="floorplan_analysis_entry_exit_gate_missing"):
+        validate_layout_contract(payload)
 
 
 def test_layout_contract_rejects_geometry_locked_component_drift() -> None:
