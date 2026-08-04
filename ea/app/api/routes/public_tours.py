@@ -8125,12 +8125,23 @@ def _public_tour_control_security_headers(
 ) -> dict[str, str]:
     """Bind a freshly rendered control document to one strict CSP envelope."""
 
+    # A tour can retain an accepted AI-panorama fallback while its primary
+    # control has advanced to a verified provider iframe.  Bind the policy to
+    # what this response actually renders: the AI-only profile intentionally
+    # denies every frame, so applying it to a provider control turns the live
+    # iframe into chrome-error://chromewebdata despite a valid provider proof.
+    renders_provider_frame = bool(
+        re.search(r"<iframe\b", str(html_body or ""), flags=re.IGNORECASE)
+    )
+
     return _public_tour_security_headers(
         nonce=nonce,
         allow_jsdelivr=(not ai_panorama and "https://cdn.jsdelivr.net/" in html_body),
         allow_matterport=allow_matterport,
         allow_crezlo=allow_crezlo,
-        runtime_profile="ai_panorama" if ai_panorama else "document",
+        runtime_profile=(
+            "ai_panorama" if ai_panorama and not renders_provider_frame else "document"
+        ),
         script_hashes=_public_tour_inline_csp_hashes(html_body, tag_name="script"),
         style_hashes=_public_tour_inline_csp_hashes(html_body, tag_name="style"),
     )

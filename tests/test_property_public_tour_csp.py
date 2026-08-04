@@ -57,6 +57,25 @@ def test_public_tour_control_csp_stays_bound_across_sequential_nonces() -> None:
         previous_nonce = nonce
 
 
+def test_verified_provider_frame_wins_over_retained_ai_panorama_fallback_csp() -> None:
+    nonce = "PropertyQuarryHybridProviderNonce1"
+    html_body = _control_document(nonce)
+
+    headers = public_tours._public_tour_control_security_headers(
+        html_body=html_body,
+        nonce=nonce,
+        ai_panorama=True,
+    )
+
+    for header_name in (
+        "Content-Security-Policy",
+        "Content-Security-Policy-Report-Only",
+    ):
+        policy = headers[header_name]
+        assert "frame-src 'none'" not in policy
+        assert "frame-src 'self'" in policy
+
+
 def test_vendor_export_report_only_policy_accepts_required_inline_runtime_without_eval() -> None:
     headers = public_tours._public_tour_security_headers(
         runtime_profile="vendor_export",

@@ -185,6 +185,30 @@ def test_public_tour_control_response_binds_every_authored_block_to_header_nonce
         assert f'nonce="{nonce}"' in tag
 
 
+def test_primary_provider_control_iframe_is_not_blocked_by_retained_ai_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    slug = "csp-hybrid-provider"
+    _write_external_3dvista_bundle(tmp_path, slug=slug)
+    manifest_path = tmp_path / slug / "tour.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["walkable_scene"] = {"representation_kind": "ai_reconstruction"}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
+    monkeypatch.setenv("PROPERTYQUARRY_ENABLE_PUBLIC_TOURS", "1")
+
+    response = build_product_client(
+        principal_id="public-tour-csp-hybrid-test"
+    ).get(f"/tours/{slug}/control")
+
+    assert response.status_code == 200
+    assert "<iframe" in response.text
+    policy = response.headers["content-security-policy"]
+    assert "frame-src 'none'" not in policy
+    assert "frame-src 'self'" in policy
+
+
 def test_public_tour_csp_report_endpoint_accepts_bounded_reports_without_reflecting_secrets(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
