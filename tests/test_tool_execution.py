@@ -6054,6 +6054,15 @@ def test_crezlo_worker_script_path_resolves_existing_worker() -> None:
     assert path.exists()
 
 
+def test_crezlo_worker_uses_live_workspace_api_and_normalizes_bare_fqdn() -> None:
+    source = BrowserActToolAdapter._crezlo_worker_script_path().read_text(encoding="utf-8")
+
+    assert "https://api.caliqik.com/api/seller/tours/workspaces" in source
+    assert "https://tours.crezlo.com/api/seller/tours/workspaces" not in source
+    assert "rawWorkspaceDomain && !rawWorkspaceDomain.includes('.')" in source
+    assert "`${rawWorkspaceDomain}.crezlotours.com`" in source
+
+
 @pytest.mark.parametrize(
     ("service_key", "worker_name"),
     [

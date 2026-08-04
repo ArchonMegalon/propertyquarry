@@ -671,7 +671,10 @@ def test_propertyquarry_mobile_flagship_flow_runs_search_opens_research_map_and_
         page.locator("[data-prd-map-close]").click()
         expect(map_lightbox).not_to_be_visible()
 
-        request_walkthrough = page.get_by_role("button", name=re.compile("Request walkthrough", re.I)).first
+        request_walkthrough = page.get_by_role(
+            "button",
+            name=re.compile("Request camera walkthrough", re.I),
+        ).first
         expect(request_walkthrough).to_be_visible()
         request_walkthrough.click()
         with page.expect_response("**/app/api/signals/willhaben/property-tour", timeout=5_000) as visual_response:
@@ -1118,7 +1121,7 @@ def test_propertyquarry_renter_value_loop_survives_logout_and_relogin(
         expect(primary_row).to_be_visible()
 
         if market_case["tour_mode"] == "first_party":
-            tour_link = primary_row.locator('a[href*="/tours/"]').first
+            tour_link = primary_row.get_by_role("link", name="3D tour").first
             expect(tour_link).to_be_visible()
             observed_tour_href = str(tour_link.get_attribute("href") or "").strip()
             tour_entry = urllib.parse.urljoin(base_url, observed_tour_href)

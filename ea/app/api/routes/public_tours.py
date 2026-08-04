@@ -12925,7 +12925,7 @@ def _tour_control_panorama_html(
       .scene-button.active .scene-number { color: #fff; background: var(--pq-accent); border-color: var(--pq-accent); }
       .hotspot-layer { position: fixed; inset: 0; z-index: 12; pointer-events: none; overflow: hidden; --pq-safe-top: env(safe-area-inset-top, 0px); --pq-safe-right: env(safe-area-inset-right, 0px); --pq-safe-bottom: env(safe-area-inset-bottom, 0px); --pq-safe-left: env(safe-area-inset-left, 0px); }
       .hotspot { position: absolute; transform: translate(-50%,-50%); pointer-events: auto; max-width: calc(100vw - var(--pq-safe-left) - var(--pq-safe-right) - 20px); overflow: hidden; border: 1px solid rgba(255,255,255,.74); color: var(--pq-ink); background: rgba(247,244,238,.94); min-height: 44px; border-radius: 999px; padding: 0 16px 0 8px; font: 750 11px/1 Inter,system-ui,sans-serif; box-shadow: 0 12px 34px rgba(0,0,0,.32); backdrop-filter: blur(14px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; transition: transform .18s ease, background .18s ease; }
-      .hotspot:hover { transform: translate(-50%,-50%) translateY(-2px); background: #fff; }
+      .hotspot:hover { transform: translate(-50%,-50%); background: #fff; }
       .hotspot.unplaced { visibility: hidden; pointer-events: none; }
       .hotspot::before { content: '→'; display: inline-grid; place-items: center; width: 29px; height: 29px; margin-right: 8px; border-radius: 50%; color: white; background: var(--pq-accent); font-size: 14px; font-weight: 500; }
       .floorplan { position: fixed; z-index: 19; right: 18px; bottom: 88px; width: min(290px, 34vw); padding: 6px; transition: opacity .2s ease, transform .2s ease; }

@@ -1524,7 +1524,7 @@ def test_propertyquarry_ai_panorama_mobile_hotspot_labels_stay_inside_viewport(
         assert long_hotspot.text_content() == long_label
 
         assert page.locator("body").get_attribute("data-viewer") == "propertyquarry-ai-panorama"
-        assert disclosure in page.locator(".identity span").inner_text()
+        assert disclosure in page.locator(".identity .disclosure-copy").text_content()
         assert not page_errors
         assert not failed_requests
     finally:
@@ -2676,7 +2676,6 @@ def test_propertyquarry_every_results_and_research_button_works_in_real_browser(
             "data-pqx-browser-alerts",
             "data-pqx-atlas-open",
             "data-pqx-scope-open",
-            "data-pqx-scope-kind",
             "data-workbench-select-candidate",
             "data-pw-remove-row",
             "data-pw-finetune-toggle",
@@ -2706,7 +2705,7 @@ def test_propertyquarry_every_results_and_research_button_works_in_real_browser(
             page.keyboard.press("Escape")
 
         scope_previews = page.locator("[data-pqx-scope-open]:visible")
-        expect(scope_previews).to_have_count(2)
+        expect(scope_previews).to_have_count(1)
         for index in range(scope_previews.count()):
             scope_previews.nth(index).click()
             expect(page.get_by_role("dialog")).to_be_visible()

@@ -3992,6 +3992,22 @@ def _property_search_provider_worker_concurrency_for_plan(plan_key: object) -> i
     return max(1, min(desired, configured if configured > 0 else desired))
 
 
+def _property_search_preview_worker_concurrency_for_plan(
+    plan_key: object,
+    *,
+    exact_scope: bool,
+) -> int:
+    provider_cap = _property_search_provider_worker_concurrency_for_plan(plan_key)
+    if not exact_scope:
+        return provider_cap
+    configured = _property_search_provider_worker_concurrency()
+    # A provider cap limits how many distinct sources run at once. Exact-scope
+    # recovery still needs a small candidate-preview pool inside that source;
+    # otherwise a moved target near the end of a page serializes dozens of
+    # bounded detail requests and consumes the whole run timeout.
+    return max(provider_cap, min(3, configured if configured > 0 else provider_cap))
+
+
 def _property_search_provider_worker_warm_limit() -> int:
     raw_value = str(os.getenv("PROPERTYQUARRY_SEARCH_PROVIDER_WORKER_WARM_LIMIT") or "").strip()
     if not raw_value:
@@ -9786,7 +9802,10 @@ def _property_source_research_snapshot(property_url: str, image_urls: tuple[str,
     if not normalized:
         return {}
     try:
-        preview = _property_scout_page_preview(normalized, prefer_fast=True)
+        preview = _property_scout_page_preview_with_timeout(
+            normalized,
+            prefer_fast=True,
+        )
     except Exception:
         preview = {}
     facts = dict(preview.get("property_facts_json") or {}) if isinstance(preview, dict) else {}
@@ -34331,6 +34350,7 @@ class ProductService:
         for job in _property_search_interleave_by_provider_group(source_jobs):
             source_url = urllib.parse.urldefrag(str(job.get("url") or job.get("__source_url__") or "").strip())[0]
             platform = str(job.get("platform") or "").strip().lower()
+            prefer_fast = bool(job.get("__prefer_fast__", True))
             listing_urls: list[str] = []
             for property_url in list(job.get("__listing_urls__") or []):
                 normalized_property_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
@@ -34343,6 +34363,7 @@ class ProductService:
                     **dict(job),
                     "__source_url__": source_url,
                     "__platform__": platform,
+                    "__prefer_fast__": prefer_fast,
                     "__listing_urls__": listing_urls,
                 }
             )
@@ -34374,6 +34395,7 @@ class ProductService:
 
         def _task(job_index: int, property_url: str) -> tuple[int, str, dict[str, object] | None, str, str]:
             try:
+                prefer_fast = bool(normalized_jobs[job_index].get("__prefer_fast__", True))
                 cached_preview: dict[str, object] | None = None
                 if not force_refresh:
                     with cache_lock:
@@ -34381,9 +34403,15 @@ class ProductService:
                             cache_index=cache_index,
                             property_url=property_url,
                         )
-                if cached_preview:
+                if cached_preview and (
+                    prefer_fast
+                    or str(cached_preview.get("title_full") or "").strip()
+                ):
                     return job_index, property_url, dict(cached_preview), "hit", ""
-                preview = _property_scout_page_preview_with_timeout(property_url, prefer_fast=True)
+                preview = _property_scout_page_preview_with_timeout(
+                    property_url,
+                    prefer_fast=prefer_fast,
+                )
                 with cache_lock:
                     self._property_public_preview_cache_store(
                         cache_index=cache_index,
@@ -52944,12 +52972,16 @@ class ProductService:
         allow_soft_property_type_filter = "property_type" in discovery_relaxed_filter_keys
         allow_soft_area_filter = "min_area_m2" in discovery_relaxed_filter_keys
         allow_soft_availability_filter = "available_within_years" in discovery_relaxed_filter_keys
+        exact_scope_preview_requested = _property_search_has_exact_scope(
+            request_preferences=request_preferences,
+            location_hints=location_hints,
+        )
         provider_preview_worker_cap = max(
             1,
-            int(
-                dict(provider_worker_state or {}).get("worker_concurrency")
-                or _property_search_provider_worker_concurrency_for_plan(plan_key)
-                or 1
+            int(dict(provider_worker_state or {}).get("worker_concurrency") or 1),
+            _property_search_preview_worker_concurrency_for_plan(
+                plan_key,
+                exact_scope=exact_scope_preview_requested,
             ),
         )
         preview_scan_cap = (
@@ -52967,10 +52999,7 @@ class ProductService:
                 source_url=source_url,
                 source_label=raw_source_label,
             )
-            source_exact_scope_requested = _property_search_has_exact_scope(
-                request_preferences=request_preferences,
-                location_hints=location_hints,
-            )
+            source_exact_scope_requested = exact_scope_preview_requested
             source_location_hints = (
                 source_scope_location_hints
                 if source_scope_location_hints and (source_exact_scope_requested or not location_hints)
@@ -53010,6 +53039,11 @@ class ProductService:
                     "__source_url__": source_url,
                     "__source_label__": source_label,
                     "__source_scope_label__": raw_source_label,
+                    # Exact-scope matching needs detail fields such as
+                    # ``title_full``. Fetch them in the bounded parallel lane
+                    # so the source loop does not repeat every detail request
+                    # sequentially while the run timeout keeps ticking.
+                    "__prefer_fast__": not source_exact_scope_requested,
                     "__listing_urls__": preview_listing_urls,
                 }
             )
