@@ -9371,6 +9371,69 @@ def test_property_shortlist_legacy_diorama_alias_resolves_only_inside_scoped_can
         property_context={"run": {"summary": {"ranked_candidates": []}}},
     ) == legacy_ref
 
+    class _PrincipalScopedIndex:
+        def get_property_research_packet_link(
+            self,
+            *,
+            principal_id: str,
+            candidate_ref: str,
+            account_email: str = "",
+        ):
+            del account_email
+            if (
+                principal_id != "owned-principal"
+                or candidate_ref != canonical_ref
+            ):
+                return None
+            return {
+                "last_run_id": "owned-run",
+                "candidate": {
+                    "candidate_ref": canonical_ref,
+                    "packet_source_run_id": "owned-run",
+                    "title": "Canonical indexed diorama home",
+                    "property_url": "https://example.test/canonical-indexed-home",
+                },
+            }
+
+    indexed_context = {
+        "run": {
+            "run_id": "owned-run",
+            "summary": {"ranked_candidates": []},
+        }
+    }
+    assert landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context=indexed_context,
+        product=_PrincipalScopedIndex(),
+        principal_id="owned-principal",
+    ) == canonical_ref
+    recovered_candidates = list(
+        dict(indexed_context["run"]).get("summary", {}).get(
+            "ranked_candidates"
+        )
+        or []
+    )
+    assert [candidate["candidate_ref"] for candidate in recovered_candidates] == [
+        canonical_ref
+    ]
+    assert recovered_candidates[0]["diorama_preview_url"] == entry["asset_url"]
+
+    wrong_principal_context = {
+        "run": {
+            "run_id": "owned-run",
+            "summary": {"ranked_candidates": []},
+        }
+    }
+    assert landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context=wrong_principal_context,
+        product=_PrincipalScopedIndex(),
+        principal_id="different-principal",
+    ) == legacy_ref
+    assert not dict(wrong_principal_context["run"])["summary"][
+        "ranked_candidates"
+    ]
+
 
 def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
     monkeypatch,

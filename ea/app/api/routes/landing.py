@@ -2247,6 +2247,9 @@ def _property_resolve_scoped_curated_candidate_ref(
     *,
     requested_candidate_ref: object,
     property_context: dict[str, object],
+    product: Any | None = None,
+    principal_id: str = "",
+    access_email: str = "",
 ) -> str:
     """Resolve a governed legacy alias only within the principal-scoped payload."""
 
@@ -2274,6 +2277,12 @@ def _property_resolve_scoped_curated_candidate_ref(
 
     if _scoped_candidate_exists(normalized_requested_ref):
         return normalized_requested_ref
+    run_payload = (
+        dict(property_context.get("run") or {})
+        if isinstance(property_context.get("run"), dict)
+        else {}
+    )
+    scoped_run_id = str(run_payload.get("run_id") or "").strip()
     for candidate_ref in _property_curated_diorama_candidate_refs(
         normalized_requested_ref
     ):
@@ -2284,6 +2293,51 @@ def _property_resolve_scoped_curated_candidate_ref(
             continue
         if _scoped_candidate_exists(candidate_ref):
             return candidate_ref
+        if product is None or not scoped_run_id or not str(principal_id or "").strip():
+            continue
+        indexed_candidate, matched_run_id = _property_lookup_indexed_candidate(
+            product,
+            principal_id=str(principal_id or "").strip(),
+            access_email=str(access_email or "").strip(),
+            candidate_ref=candidate_ref,
+            run_id=scoped_run_id,
+        )
+        if indexed_candidate is None or not _property_constant_text_equal(
+            matched_run_id,
+            scoped_run_id,
+        ):
+            continue
+        recovered_candidate = dict(indexed_candidate)
+        curated_entry = _property_curated_diorama_preview_entry(
+            recovered_candidate
+        )
+        if curated_entry:
+            _property_apply_curated_diorama_preview(
+                recovered_candidate,
+                entry=curated_entry,
+            )
+        summary = (
+            dict(run_payload.get("summary") or {})
+            if isinstance(run_payload.get("summary"), dict)
+            else {}
+        )
+        ranked_candidates = [
+            dict(candidate)
+            for candidate in list(summary.get("ranked_candidates") or [])
+            if isinstance(candidate, dict)
+        ]
+        if not any(
+            _property_constant_text_equal(
+                _property_candidate_ref(candidate),
+                candidate_ref,
+            )
+            for candidate in ranked_candidates
+        ):
+            ranked_candidates.append(recovered_candidate)
+        summary["ranked_candidates"] = ranked_candidates
+        run_payload["summary"] = summary
+        property_context["run"] = run_payload
+        return candidate_ref
     return normalized_requested_ref
 
 
@@ -10317,6 +10371,9 @@ def app_shell(
                 property_context["selected_candidate_ref"] = _property_resolve_scoped_curated_candidate_ref(
                     requested_candidate_ref=candidate,
                     property_context=property_context,
+                    product=product,
+                    principal_id=context.principal_id,
+                    access_email=context.access_email,
                 )
             payload = _property_workspace_payload(
                 property_payload_section,
