@@ -18384,6 +18384,13 @@ def test_propertyquarry_results_template_marks_top_rank_and_watch_out_copy() -> 
     assert "100% · complete</span>" not in body
 
 
+def test_propertyquarry_shortlist_compacts_redundant_mid_width_topbar_actions() -> None:
+    body = (Path(__file__).resolve().parents[1] / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
+    assert '@media (min-width: 761px) and (max-width: 1600px)' in body
+    assert '.pqx-shell[data-pqx-surface="shortlist"] .pqx-primary-nav [data-pqx-nav-account]' in body
+    assert '.pqx-shell[data-pqx-surface="shortlist"] .pqx-top-actions > .pqx-link-button.subtle' in body
+
+
 def test_propertyquarry_workspace_routes_render_greenfield_surfaces(monkeypatch) -> None:
     principal_id = "pq-redesign-browser"
     client = build_property_client(principal_id=principal_id)
