@@ -212,7 +212,7 @@ unexpected="$(
     /usr/bin/sort -u |
     while IFS= read -r service; do
       case "${service}" in
-        ""|propertyquarry-api|propertyquarry-migrate|propertyquarry-worker|propertyquarry-scheduler|propertyquarry-render-tools|propertyquarry-db|propertyquarry-cloudflared)
+        ""|propertyquarry-api|propertyquarry-migrate|propertyquarry-worker|propertyquarry-scheduler|propertyquarry-render-tools|propertyquarry-db|propertyquarry-backup|propertyquarry-cloudflared)
           ;;
         *)
           /usr/bin/printf '%s\n' "${service}"
