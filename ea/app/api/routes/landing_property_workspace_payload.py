@@ -313,7 +313,11 @@ def _property_workbench_client_provider_viewer_url(value: object) -> str:
     return url if recognized == url else ""
 
 
-def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -> str:
+def _property_workbench_candidate_ready_tour_url(
+    candidate: dict[str, object],
+    *,
+    principal_id: str = "",
+) -> str:
     raw = dict(candidate or {})
     raw_tour_payload = dict(raw.get("tour") or {}) if isinstance(raw.get("tour"), dict) else {}
     recognized_source_url = _property_candidate_source_virtual_tour_url(raw)
@@ -360,14 +364,18 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
             continue
         provider = str(
             property_tour_hosting._hosted_property_tour_verified_provider(
-                safe_ready_tour_url
+                safe_ready_tour_url,
+                principal_id=principal_id,
             )
             or ""
         ).strip().lower()
         if provider not in {"3dvista", "matterport"}:
             continue
         verified_hosted_url = str(
-            property_tour_hosting._hosted_property_tour_verified_open_url(safe_ready_tour_url)
+            property_tour_hosting._hosted_property_tour_verified_open_url(
+                safe_ready_tour_url,
+                principal_id=principal_id,
+            )
             or ""
         ).strip()
         safe_hosted_url = _property_workbench_client_safe_web_or_local_url(verified_hosted_url)
@@ -424,6 +432,7 @@ def _property_workbench_candidate_flythrough_url(
     candidate: dict[str, object],
     *,
     ready_tour_url: str,
+    principal_id: str = "",
 ) -> str:
     raw = dict(candidate or {})
     raw_flythrough = dict(raw.get("flythrough") or {}) if isinstance(raw.get("flythrough"), dict) else {}
@@ -460,6 +469,7 @@ def _property_workbench_candidate_flythrough_url(
         resolved_url = property_tour_hosting._hosted_property_tour_walkthrough_open_url(
             normalized_source,
             raw_url,
+            principal_id=principal_id,
         )
         resolved_url = _property_workbench_client_safe_web_or_local_url(resolved_url)
         if resolved_url and not _property_workbench_client_url_is_tracking(resolved_url):
@@ -902,6 +912,7 @@ def _property_workbench_client_candidate_payload(
     candidate: dict[str, object],
     *,
     preserve_preview_media_facts: bool = False,
+    principal_id: str = "",
 ) -> dict[str, object]:
     raw = dict(candidate or {})
     facts = _property_workbench_client_facts(raw.get("property_facts"))
@@ -983,7 +994,10 @@ def _property_workbench_client_candidate_payload(
     derived_floorplan_url = _property_candidate_floorplan_url(raw, facts=derived_facts)
     if derived_floorplan_url:
         compact["floorplan_url"] = derived_floorplan_url
-    ready_tour_url = _property_workbench_candidate_ready_tour_url(raw)
+    ready_tour_url = _property_workbench_candidate_ready_tour_url(
+        raw,
+        principal_id=principal_id,
+    )
     generated_layout_url = _property_workbench_candidate_generated_layout_url(raw)
     if ready_tour_url:
         compact["tour_url"] = ready_tour_url
@@ -1004,6 +1018,7 @@ def _property_workbench_client_candidate_payload(
     flythrough_url = _property_workbench_candidate_flythrough_url(
         raw,
         ready_tour_url=ready_tour_url,
+        principal_id=principal_id,
     )
     if flythrough_url:
         compact["flythrough_url"] = flythrough_url
@@ -2343,7 +2358,8 @@ def property_workspace_payload(
                 "generated_reconstruction_url": raw_generated_reconstruction_url,
                 "layout_preview_url": generated_layout_preview_url,
                 "tour": tour_payload,
-            }
+            },
+            principal_id=workspace_principal_id,
         )
         if ready_tour_url:
             normalized["tour_url"] = ready_tour_url
@@ -3761,6 +3777,7 @@ def property_workspace_payload(
             open_flythrough_url = property_tour_hosting._hosted_property_tour_walkthrough_open_url(  # type: ignore[attr-defined]
                 candidate.get("tour_url"),
                 flythrough_url,
+                principal_id=workspace_principal_id,
             )
         except Exception:
             open_flythrough_url = ""
@@ -5967,10 +5984,15 @@ def property_workspace_payload(
                 _property_workbench_client_candidate_payload(
                     candidate,
                     preserve_preview_media_facts=bool(selected_candidate_ref) and candidate_ref == selected_candidate_ref,
+                    principal_id=workspace_principal_id,
                 )
             )
         client_selected = (
-            _property_workbench_client_candidate_payload(surface_selected_result, preserve_preview_media_facts=True)
+            _property_workbench_client_candidate_payload(
+                surface_selected_result,
+                preserve_preview_media_facts=True,
+                principal_id=workspace_principal_id,
+            )
             if surface_selected_result
             else (client_results[0] if client_results else {})
         )

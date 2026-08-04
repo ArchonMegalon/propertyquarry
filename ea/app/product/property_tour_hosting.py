@@ -3376,7 +3376,11 @@ def _hosted_property_tour_first_party_open_url(
     return ""
 
 
-def _hosted_property_tour_walkthrough_asset_url(tour_url: object) -> str:
+def _hosted_property_tour_walkthrough_asset_url(
+    tour_url: object,
+    *,
+    principal_id: object = "",
+) -> str:
     normalized_url = str(tour_url or "").strip()
     reference = _hosted_property_tour_reference_parts(normalized_url)
     if reference is None:
@@ -3386,7 +3390,10 @@ def _hosted_property_tour_walkthrough_asset_url(tour_url: object) -> str:
     manifest_path = bundle_dir / "tour.json"
     if not manifest_path.exists():
         return ""
-    payload = _load_hosted_property_tour_payload(bundle_dir)
+    payload = _load_hosted_property_tour_payload(
+        bundle_dir,
+        principal_id=str(principal_id or "").strip(),
+    )
     if not payload or not isinstance(payload, dict):
         return ""
     magicfit_footprint = bool(
@@ -3441,7 +3448,12 @@ def _hosted_property_tour_walkthrough_asset_url(tour_url: object) -> str:
     return ""
 
 
-def _hosted_property_tour_walkthrough_open_url(tour_url: object, walkthrough_url: object = "") -> str:
+def _hosted_property_tour_walkthrough_open_url(
+    tour_url: object,
+    walkthrough_url: object = "",
+    *,
+    principal_id: object = "",
+) -> str:
     normalized_tour_url = str(tour_url or "").strip()
     normalized_walkthrough_url = str(walkthrough_url or "").strip()
     verified_tour_source = normalized_tour_url
@@ -3471,7 +3483,10 @@ def _hosted_property_tour_walkthrough_open_url(tour_url: object, walkthrough_url
     # come from the exact hosted bundle, whose provider receipt, playable asset,
     # coverage proof, and publication posture are revalidated above.
     canonical_walkthrough_url = (
-        _hosted_property_tour_walkthrough_asset_url(verified_tour_source)
+        _hosted_property_tour_walkthrough_asset_url(
+            verified_tour_source,
+            principal_id=principal_id,
+        )
         if verified_tour_source
         else ""
     )

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.api.routes import landing as landing_routes
+from app.api.routes import landing_property_workspace_payload as workspace_payload_routes
 from app.services.property_curated_diorama import (
     build_curated_diorama_entry_index,
     build_curated_diorama_preview_index,
@@ -395,6 +396,61 @@ def test_landing_curated_diorama_applies_validated_camera_first_tour_binding() -
     )
     assert candidate["tour_status"] == "ready"
     assert candidate["tour_provider"] == "3dvista"
+
+
+def test_workspace_tour_and_walkthrough_readiness_are_owner_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        workspace_payload_routes.property_tour_hosting,
+        "_hosted_property_tour_verified_provider",
+        lambda _url, *, principal_id="": principal_calls.append(
+            ("provider", principal_id)
+        )
+        or "3dvista",
+    )
+    monkeypatch.setattr(
+        workspace_payload_routes.property_tour_hosting,
+        "_hosted_property_tour_verified_open_url",
+        lambda _url, *, principal_id="": principal_calls.append(
+            ("tour", principal_id)
+        )
+        or "/tours/karl/control/3dvista",
+    )
+    monkeypatch.setattr(
+        workspace_payload_routes.property_tour_hosting,
+        "_hosted_property_tour_walkthrough_open_url",
+        lambda _url, _walkthrough="", *, principal_id="": principal_calls.append(
+            ("walkthrough", principal_id)
+        )
+        or "/tours/karl?pane=flythrough-pane&autoplay=1",
+    )
+    candidate = {
+        "tour_url": "/tours/karl",
+        "flythrough_url": "/tours/karl/walkthrough",
+    }
+
+    tour_url = workspace_payload_routes._property_workbench_candidate_ready_tour_url(
+        candidate,
+        principal_id="user-owner",
+    )
+    walkthrough_url = (
+        workspace_payload_routes._property_workbench_candidate_flythrough_url(
+            candidate,
+            ready_tour_url=tour_url,
+            principal_id="user-owner",
+        )
+    )
+
+    assert tour_url == "/tours/karl/control/3dvista"
+    assert walkthrough_url == "/tours/karl?pane=flythrough-pane&autoplay=1"
+    assert [call for call in principal_calls if call[1]] == [
+        ("provider", "user-owner"),
+        ("tour", "user-owner"),
+        ("walkthrough", "user-owner"),
+    ]
 
 
 @pytest.mark.parametrize(

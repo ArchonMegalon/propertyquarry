@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app.product import property_tour_hosting
 from scripts.bind_property_tour_candidate import bind_property_tour_candidate
 
 
@@ -26,6 +27,7 @@ def _bundle(tmp_path: Path, *, principal_id: str = "") -> tuple[Path, str, str]:
         ),
         encoding="utf-8",
     )
+    (bundle / "walkthrough.mp4").write_bytes(b"verified-camera-walkthrough")
     private_payload: dict[str, object] = {
         "legacy_private_fields": {
             "video_provider": "propertyquarry_core_gold",
@@ -75,11 +77,41 @@ def test_candidate_binding_promotes_only_safe_walkthrough_proof_and_binds_owner(
     public_payload = json.loads((root / slug / "tour.json").read_text(encoding="utf-8"))
     private_payload = json.loads((root / slug / "tour.private.json").read_text(encoding="utf-8"))
     assert receipt["status"] == "bound"
-    assert public_payload["video_provider_key"] == "propertyquarry_core_gold"
-    assert public_payload["video_coverage_proof"] == "boundary_verified_frame_continuation"
+    assert "video_provider" not in public_payload
+    assert "video_provider_key" not in public_payload
+    assert "video_coverage_proof" not in public_payload
     assert "three_d_vista_target_provenance" not in public_payload
     assert private_payload["principal_id"] == "user-owned-property"
+    assert private_payload["video_provider_key"] == "propertyquarry_core_gold"
+    assert private_payload["video_coverage_proof"] == "boundary_verified_frame_continuation"
     assert receipt_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_candidate_binding_exposes_walkthrough_only_to_bound_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, slug, property_url_sha256 = _bundle(tmp_path)
+    bind_property_tour_candidate(
+        public_tour_dir=root,
+        slug=slug,
+        principal_id="user-owned-property",
+        property_url_sha256=property_url_sha256,
+    )
+    monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(root))
+    tour_url = f"/tours/{slug}"
+
+    assert property_tour_hosting._hosted_property_tour_walkthrough_open_url(
+        tour_url,
+    ) == ""
+    assert property_tour_hosting._hosted_property_tour_walkthrough_open_url(
+        tour_url,
+        principal_id="user-other-owner",
+    ) == ""
+    assert property_tour_hosting._hosted_property_tour_walkthrough_open_url(
+        tour_url,
+        principal_id="user-owned-property",
+    ) == f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
 
 
 def test_candidate_binding_rejects_cross_principal_rebind(tmp_path: Path) -> None:

@@ -197,7 +197,12 @@ def bind_property_tour_candidate(
         if not str(public_payload.get("video_relpath") or "").strip():
             raise ValueError("tour_candidate_binding_walkthrough_missing")
 
-        public_payload.update(safe_video_fields)
+        # Provider and coverage attestations are owner-scoped receipt data.
+        # Keep them in the mode-0600 private manifest; authenticated helpers
+        # merge them only after the principal binding succeeds.
+        for key in safe_video_fields:
+            public_payload.pop(key, None)
+        private_payload.update(safe_video_fields)
         private_payload["principal_id"] = normalized_principal
         _write_json_atomic(public_path, public_payload, mode=0o644)
         _write_json_atomic(private_path, private_payload, mode=0o600)

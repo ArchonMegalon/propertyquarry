@@ -81,6 +81,7 @@ COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_recovery.py /app/scr
 COPY --chmod=0444 scripts/propertyquarry_prater_governed_volume_bootstrap.py /app/scripts/propertyquarry_prater_governed_volume_bootstrap.py
 COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_closeout.py /app/scripts/propertyquarry_prater_ai_panorama_closeout.py
 COPY --chmod=0555 scripts/bind_property_search_candidate_tour.py /app/scripts/bind_property_search_candidate_tour.py
+COPY --chmod=0555 scripts/bind_property_tour_candidate.py /app/scripts/bind_property_tour_candidate.py
 COPY scripts/attach_provider_tour_layer.py /app/scripts/attach_provider_tour_layer.py
 COPY scripts/discover_property_tour_exports.py /app/scripts/discover_property_tour_exports.py
 COPY scripts/materialize_property_tour_export_manifest.py /app/scripts/materialize_property_tour_export_manifest.py
