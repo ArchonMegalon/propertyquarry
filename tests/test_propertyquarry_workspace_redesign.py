@@ -9525,6 +9525,33 @@ def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
         }
 
     monkeypatch.setattr(ProductService, "get_property_search_run_status", _fake_run_status)
+
+    def _fake_packet_link(
+        self,
+        *,
+        principal_id: str,
+        candidate_ref: str,
+        account_email: str = "",
+    ):
+        del self, account_email
+        if (
+            principal_id != "pq-shortlist-legacy-diorama-alias"
+            or candidate_ref != canonical_ref
+        ):
+            return None
+        return {
+            "last_run_id": "run-legacy-alias",
+            "candidate": {
+                **canonical_candidate,
+                "packet_source_run_id": "run-legacy-alias",
+            },
+        }
+
+    monkeypatch.setattr(
+        ProductService,
+        "get_property_research_packet_link",
+        _fake_packet_link,
+    )
     monkeypatch.setattr(
         ProductService,
         "list_property_saved_shortlist_candidates",
@@ -9556,12 +9583,15 @@ def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
 
     response = client.get(
         "/app/shortlist",
-        params={"run_id": "run-legacy-alias", "candidate": legacy_ref},
+        params={"candidate": legacy_ref},
         headers={"host": "propertyquarry.com"},
     )
 
     assert response.status_code == 200
     assert captured_property_state.get("selected_candidate_ref") == canonical_ref
+    assert dict(captured_property_state.get("run") or {}).get("run_id") == (
+        "run-legacy-alias"
+    )
     assert (
         captured_property_state.get("_rendered_selected_candidate_ref")
         == canonical_ref

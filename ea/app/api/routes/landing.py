@@ -10188,6 +10188,24 @@ def app_shell(
         product = build_product_service(container)
         if (
             property_brand
+            and resolved_section in {"properties", "shortlist"}
+            and str(candidate or "").strip()
+            and not normalized_run_id
+        ):
+            for indexed_candidate_ref in _property_curated_diorama_candidate_refs(
+                candidate
+            ):
+                indexed_candidate, indexed_run_id = _property_lookup_indexed_candidate(
+                    product,
+                    principal_id=context.principal_id,
+                    access_email=context.access_email,
+                    candidate_ref=indexed_candidate_ref,
+                )
+                if indexed_candidate is not None and indexed_run_id:
+                    normalized_run_id = indexed_run_id
+                    break
+        if (
+            property_brand
             and resolved_section == "properties"
             and not normalized_run_id
         ):
@@ -10244,7 +10262,7 @@ def app_shell(
                 principal_id=context.principal_id,
                 access_email=context.access_email,
                 status=status,
-                run_id=run_id,
+                run_id=normalized_run_id,
                 selected_candidate_ref=candidate,
                 selected_agent_id=requested_agent_id,
                 surface_mode=resolved_section,
