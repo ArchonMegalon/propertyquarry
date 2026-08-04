@@ -11,9 +11,11 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_MODES = ("matterport", "3dvista", "pano2vr", "krpano", "magicfit")
-PUBLIC_REQUIRED_PROVIDER_MODES = ("matterport", "magicfit")
+CORE_REQUIRED_PROVIDER_MODE_GROUPS = (("matterport", "3dvista"),)
+CORE_REQUIRED_PROVIDER_MODES = ("matterport", "3dvista")
+PUBLIC_REQUIRED_PROVIDER_MODES = (*CORE_REQUIRED_PROVIDER_MODES, "magicfit")
 RETIRED_PROVIDER_MODES: tuple[str, ...] = ()
-OPTIONAL_PROVIDER_MODES = ("3dvista", "pano2vr", "krpano")
+OPTIONAL_PROVIDER_MODES = ("pano2vr", "krpano")
 REQUIRED_CONTRACT_KEYS = (
     "schema",
     "provider",
@@ -158,6 +160,10 @@ def _check_blocked_contract(provider: str, contract: dict[str, Any], failures: l
 
 
 def _matterport_ready_count(contract: dict[str, Any]) -> int:
+    return _provider_ready_count(contract)
+
+
+def _provider_ready_count(contract: dict[str, Any]) -> int:
     ready_payload = contract.get("ready_payload")
     if not isinstance(ready_payload, dict):
         return 0
@@ -217,6 +223,15 @@ def build_tour_delivery_contract_receipt(tour_control_receipt_path: Path | None 
         else {}
     )
     matterport_ready_count = _matterport_ready_count(dict(matterport))
+    three_d_vista = (
+        contracts.get("3dvista")
+        if isinstance(contracts.get("3dvista"), dict)
+        else {}
+    )
+    three_d_vista_ready_count = _provider_ready_count(dict(three_d_vista))
+    core_ready_provider_modes = sorted(
+        ready_modes.intersection(CORE_REQUIRED_PROVIDER_MODES)
+    )
 
     return {
         "schema": "propertyquarry.tour_delivery_contract_shape_receipt.v1",
@@ -224,15 +239,25 @@ def build_tour_delivery_contract_receipt(tour_control_receipt_path: Path | None 
         "status": "pass" if not failures else "fail",
         "tour_control_receipt_path": str(receipt_path),
         "required_provider_modes": list(PUBLIC_REQUIRED_PROVIDER_MODES),
+        "core_required_provider_modes": list(CORE_REQUIRED_PROVIDER_MODES),
+        "core_required_provider_mode_groups": [
+            list(group) for group in CORE_REQUIRED_PROVIDER_MODE_GROUPS
+        ],
+        "core_ready_provider_modes": core_ready_provider_modes,
+        "core_requirement_satisfied": bool(core_ready_provider_modes),
         "optional_provider_modes": list(OPTIONAL_PROVIDER_MODES),
         "retired_provider_modes": list(RETIRED_PROVIDER_MODES),
         "required_providers": list(PUBLIC_REQUIRED_PROVIDER_MODES),
         "ready_provider_modes": sorted(ready_modes),
         "missing_provider_modes": sorted(missing_modes),
         "matterport_ready_count": matterport_ready_count,
+        "three_d_vista_ready_count": three_d_vista_ready_count,
+        "walkable_ready_count": (
+            matterport_ready_count + three_d_vista_ready_count
+        ),
         "failure_count": len(failures),
         "failures": failures,
-        "note": "Verifies public-safe tour delivery contracts, Chummer-derived ready/blocker vocabulary, white-label separation, and topology-gated Matterport readiness.",
+        "note": "Verifies public-safe tour delivery contracts, Chummer-derived ready/blocker vocabulary, white-label separation, and one provider-authentic topology-gated Matterport or licensed multi-node 3DVista tour for Core.",
     }
 
 

@@ -720,7 +720,8 @@ def test_3dvista_trial_branded_export_is_not_premium_ready(tmp_path: Path) -> No
         require_all_provider_modes=True,
     )
     assert verifier["provider_counts"]["3dvista"] == 0
-    assert "3dvista" in verifier["optional_provider_modes"]
+    assert "3dvista" not in verifier["optional_provider_modes"]
+    assert "3dvista" in verifier["core_missing_provider_modes"]
     blockers = verifier["provider_blockers"]["3dvista"]["reasons"]
     assert blockers[0]["reason"] == "missing_3dvista_export"
     vista_contract = verifier["delivery_contracts"]["3dvista"]
@@ -730,7 +731,7 @@ def test_3dvista_trial_branded_export_is_not_premium_ready(tmp_path: Path) -> No
     assert any("verified non-trial 3DVista" in item for item in vista_contract["required_to_send"])
     assert "private target-bound receipt" in " ".join(vista_contract["required_to_send"])
     assert vista_contract["white_label_contract"]["schema"] == "propertyquarry.tour_white_label_contract.v1"
-    assert vista_contract["white_label_contract"]["status"] == "review_required"
+    assert vista_contract["white_label_contract"]["status"] == "blocked"
     assert any("Private Viewer" in item for item in vista_contract["white_label_contract"]["required_to_white_label"])
     assert "Chummer RunSite/Horizon" in vista_contract["white_label_contract"]["cross_project_warning"]
     assert "created with the trial" not in json.dumps(vista_contract).lower()
@@ -820,7 +821,7 @@ def test_3dvista_white_label_contract_requires_review_for_non_propertyquarry_sou
 
     verifier = build_property_tour_control_receipt(tour_root=tmp_path / "public_tours", require_all_provider_modes=True)
     vista_contract = verifier["delivery_contracts"]["3dvista"]
-    assert vista_contract["white_label_contract"]["status"] == "review_required"
+    assert vista_contract["white_label_contract"]["status"] == "blocked"
     assert "Chummer RunSite/Horizon" in vista_contract["white_label_contract"]["cross_project_warning"]
     proof_basis = vista_contract["white_label_contract"]["proof_basis"]
     assert proof_basis["source_projects"] == []
@@ -891,10 +892,19 @@ def test_tour_delivery_contract_checker_accepts_unproven_matterport_and_3dvista_
     assert receipt["retired_provider_modes"] == []
     assert receipt["required_provider_modes"] == [
         "matterport",
+        "3dvista",
         "magicfit",
     ]
-    assert receipt["optional_provider_modes"] == ["3dvista", "pano2vr", "krpano"]
-    assert set(receipt["missing_provider_modes"]) == {"matterport", "magicfit"}
+    assert receipt["optional_provider_modes"] == ["pano2vr", "krpano"]
+    assert receipt["core_required_provider_mode_groups"] == [
+        ["matterport", "3dvista"]
+    ]
+    assert receipt["core_requirement_satisfied"] is False
+    assert set(receipt["missing_provider_modes"]) == {
+        "matterport",
+        "3dvista",
+        "magicfit",
+    }
     assert receipt["failures"] == []
 
 
@@ -941,6 +951,9 @@ def test_tour_delivery_contract_checker_accepts_topology_verified_matterport(
 
     assert receipt["status"] == "pass"
     assert receipt["matterport_ready_count"] == 1
+    assert receipt["three_d_vista_ready_count"] == 0
+    assert receipt["walkable_ready_count"] == 1
+    assert receipt["core_requirement_satisfied"] is True
     assert "matterport" in receipt["ready_provider_modes"]
     assert "matterport" not in receipt["missing_provider_modes"]
     assert receipt["retired_provider_modes"] == []

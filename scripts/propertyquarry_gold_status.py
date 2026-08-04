@@ -100,7 +100,8 @@ else:
 
 
 GOLD_STATUS_SCHEMA = "propertyquarry.gold_status.v1"
-CORE_REQUIRED_TOUR_PROVIDER_MODES = ("matterport",)
+CORE_REQUIRED_TOUR_PROVIDER_MODE_GROUPS = (("matterport", "3dvista"),)
+CORE_REQUIRED_TOUR_PROVIDER_MODES = ("matterport", "3dvista")
 ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES = ("magicfit", "magic", "omagic")
 # Legacy combined/operator vocabulary. New release decisions must use the
 # explicit core/advanced fields below rather than inferring policy from it.
@@ -2103,6 +2104,83 @@ def _missing_profile_provider_modes(
         for provider in required_modes
         if provider not in ready_modes or provider in explicit_missing
     ]
+
+
+def _missing_core_tour_provider_modes(
+    tour_receipt: dict[str, Any],
+) -> list[str]:
+    ready_modes = {
+        str(value or "").strip().lower()
+        for value in list(tour_receipt.get("ready_provider_modes") or [])
+        if str(value or "").strip()
+    }
+    raw_groups = tour_receipt.get("core_required_provider_mode_groups")
+    groups: list[tuple[str, ...]] = []
+    if isinstance(raw_groups, list):
+        for raw_group in raw_groups:
+            if not isinstance(raw_group, (list, tuple)):
+                continue
+            group = tuple(
+                dict.fromkeys(
+                    str(value or "").strip().lower()
+                    for value in raw_group
+                    if str(value or "").strip().lower()
+                    in CORE_REQUIRED_TOUR_PROVIDER_MODES
+                )
+            )
+            if group:
+                groups.append(group)
+    if not groups:
+        # Legacy receipts declared Matterport as the sole Core requirement.
+        # Preserve their fail-closed meaning instead of silently upgrading old
+        # evidence to the new either/or contract.
+        return _missing_profile_provider_modes(
+            tour_receipt,
+            required_field="core_required_provider_modes",
+            missing_field="core_missing_provider_modes",
+            default_required_modes=("matterport",),
+        )
+    missing: list[str] = []
+    for alternatives in groups:
+        if ready_modes.intersection(alternatives):
+            continue
+        missing.extend(alternatives)
+    return list(dict.fromkeys(missing))
+
+
+def _tour_delivery_core_provider_ok(
+    tour_delivery_contract: dict[str, Any],
+) -> bool:
+    ready_modes = {
+        str(value or "").strip().lower()
+        for value in list(
+            tour_delivery_contract.get("ready_provider_modes") or []
+        )
+        if str(value or "").strip()
+    }
+    raw_groups = tour_delivery_contract.get(
+        "core_required_provider_mode_groups"
+    )
+    if isinstance(raw_groups, list) and raw_groups:
+        valid_groups: list[tuple[str, ...]] = []
+        for raw_group in raw_groups:
+            if not isinstance(raw_group, (list, tuple)):
+                return False
+            group = tuple(
+                dict.fromkeys(
+                    str(value or "").strip().lower()
+                    for value in raw_group
+                    if str(value or "").strip().lower()
+                    in CORE_REQUIRED_TOUR_PROVIDER_MODES
+                )
+            )
+            if not group:
+                return False
+            valid_groups.append(group)
+        return all(ready_modes.intersection(group) for group in valid_groups)
+    # Legacy shape receipts remain valid only with their original Matterport
+    # proof; a legacy 3DVista row alone cannot be reinterpreted after the fact.
+    return "matterport" in ready_modes
 
 
 def _tour_provider_evidence_action(missing_provider_modes: list[str]) -> str:
@@ -6294,11 +6372,8 @@ def build_gold_status_receipt(
     )
 
     missing_provider_modes = _missing_provider_modes(tour_controls)
-    core_missing_provider_modes = _missing_profile_provider_modes(
-        tour_controls,
-        required_field="core_required_provider_modes",
-        missing_field="core_missing_provider_modes",
-        default_required_modes=CORE_REQUIRED_TOUR_PROVIDER_MODES,
+    core_missing_provider_modes = _missing_core_tour_provider_modes(
+        tour_controls
     )
     advanced_visual_tour_missing_provider_modes = _missing_profile_provider_modes(
         tour_controls,
@@ -6903,19 +6978,7 @@ def build_gold_status_receipt(
         or (
             tour_delivery_contract.get("status") == "pass"
             and not list(tour_delivery_contract.get("failures") or [])
-            and set(CORE_REQUIRED_TOUR_PROVIDER_MODES).issubset(
-                set(tour_delivery_contract.get("ready_provider_modes") or [])
-            )
-            and (
-                set(
-                    tour_delivery_contract.get("core_required_provider_modes")
-                    or tour_delivery_contract.get("required_provider_modes")
-                    or tour_delivery_contract.get("required_providers")
-                    or []
-                )
-                .intersection(CORE_REQUIRED_TOUR_PROVIDER_MODES)
-                == set(CORE_REQUIRED_TOUR_PROVIDER_MODES)
-            )
+            and _tour_delivery_core_provider_ok(tour_delivery_contract)
         )
     )
     map_preview_flagship_ok = (
@@ -7604,11 +7667,21 @@ def build_gold_status_receipt(
                 "area": "tour_delivery_contract_shape",
                 "status": tour_delivery_contract.get("status") or "missing",
                 "matterport_ready_count": tour_delivery_contract.get("matterport_ready_count"),
+                "three_d_vista_ready_count": tour_delivery_contract.get(
+                    "three_d_vista_ready_count"
+                ),
+                "walkable_ready_count": tour_delivery_contract.get(
+                    "walkable_ready_count"
+                ),
                 "ready_provider_modes": tour_delivery_contract.get("ready_provider_modes") or [],
                 "core_required_provider_modes": list(CORE_REQUIRED_TOUR_PROVIDER_MODES),
+                "core_required_provider_mode_groups": [
+                    list(group)
+                    for group in CORE_REQUIRED_TOUR_PROVIDER_MODE_GROUPS
+                ],
                 "missing_provider_modes": tour_delivery_contract.get("missing_provider_modes") or [],
                 "failures": list(tour_delivery_contract.get("failures") or [])[:12],
-                "action": "rerun check_property_tour_delivery_contract.py --write and keep public-safe ready_payload, blocked_reason, required_to_send, white-label separation, and topology-verified Matterport readiness passing",
+                "action": "rerun check_property_tour_delivery_contract.py --write and keep public-safe ready_payload, blocked_reason, required_to_send, white-label separation, and one topology-verified Matterport or licensed multi-node 3DVista Core tour passing",
             }
         )
     if not receipt_freshness_ok:
@@ -7830,6 +7903,12 @@ def build_gold_status_receipt(
             "area": "tour_delivery_contract_shape",
             "status": "pass",
             "matterport_ready_count": tour_delivery_contract.get("matterport_ready_count"),
+            "three_d_vista_ready_count": tour_delivery_contract.get(
+                "three_d_vista_ready_count"
+            ),
+            "walkable_ready_count": tour_delivery_contract.get(
+                "walkable_ready_count"
+            ),
             "ready_provider_modes": tour_delivery_contract.get("ready_provider_modes") or [],
             "receipt_path": str(tour_delivery_contract_receipt_path),
         }
@@ -8314,6 +8393,9 @@ def build_gold_status_receipt(
         "core_gold_status": "pass" if core_conditions_ok else "blocked",
         "advanced_visual_gold_status": advanced_visual_gold_status,
         "core_required_provider_modes": list(CORE_REQUIRED_TOUR_PROVIDER_MODES),
+        "core_required_provider_mode_groups": [
+            list(group) for group in CORE_REQUIRED_TOUR_PROVIDER_MODE_GROUPS
+        ],
         "advanced_visual_required_provider_modes": list(
             ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES
         ),
@@ -8532,6 +8614,10 @@ def build_gold_status_receipt(
             "magicfit_playback_ok": magicfit_playback_ok,
             "ready_provider_modes": tour_controls.get("ready_provider_modes"),
             "core_required_provider_modes": list(CORE_REQUIRED_TOUR_PROVIDER_MODES),
+            "core_required_provider_mode_groups": [
+                list(group)
+                for group in CORE_REQUIRED_TOUR_PROVIDER_MODE_GROUPS
+            ],
             "advanced_visual_required_provider_modes": list(
                 ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES
             ),
@@ -8911,10 +8997,12 @@ def build_gold_status_receipt(
             "ready_provider_modes": tour_delivery_contract.get("ready_provider_modes") or [],
             "missing_provider_modes": tour_delivery_contract.get("missing_provider_modes") or [],
             "matterport_ready_count": tour_delivery_contract.get("matterport_ready_count") if tour_delivery_contract_receipt_path is not None else None,
+            "three_d_vista_ready_count": tour_delivery_contract.get("three_d_vista_ready_count") if tour_delivery_contract_receipt_path is not None else None,
+            "walkable_ready_count": tour_delivery_contract.get("walkable_ready_count") if tour_delivery_contract_receipt_path is not None else None,
             "failure_count": len(list(tour_delivery_contract.get("failures") or [])) if tour_delivery_contract_receipt_path is not None else None,
             "failures": list(tour_delivery_contract.get("failures") or [])[:12] if tour_delivery_contract_receipt_path is not None else [],
             "receipt_path": str(tour_delivery_contract_receipt_path) if tour_delivery_contract_receipt_path is not None else "",
-            "note": "Public-safe tour delivery contract shape gate: Core Gold requires topology-verified Matterport; advanced walkthrough providers remain a separately governed claim.",
+            "note": "Public-safe tour delivery contract shape gate: Core Gold requires one topology-verified Matterport or licensed multi-node 3DVista tour; advanced walkthrough providers remain a separately governed claim.",
         },
         "global_market_envelope": {
             **global_market_envelope_details,

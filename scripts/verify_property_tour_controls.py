@@ -106,7 +106,18 @@ except ModuleNotFoundError:
 
 
 PROVIDER_MODES = ("matterport", "3dvista", "pano2vr", "krpano", "magicfit")
-CORE_REQUIRED_PROVIDER_MODES = ("matterport",)
+# Core needs one provider-authentic, topology-verified walkable tour. Matterport
+# and licensed 3DVista are equivalent provider alternatives for that claim;
+# requiring both would turn an explicit either/or product contract into a vendor
+# lock-in gate.
+CORE_REQUIRED_PROVIDER_MODE_GROUPS = (("matterport", "3dvista"),)
+CORE_REQUIRED_PROVIDER_MODES = tuple(
+    dict.fromkeys(
+        provider
+        for group in CORE_REQUIRED_PROVIDER_MODE_GROUPS
+        for provider in group
+    )
+)
 ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES = ("magicfit",)
 # Compatibility envelope for operator tooling that historically treated the
 # interactive tour and walkthrough lanes as one Gold requirement.
@@ -133,6 +144,15 @@ def _required_provider_modes_for_scope(value: str) -> tuple[str, ...]:
             *ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES,
         )
     return CORE_REQUIRED_PROVIDER_MODES
+
+
+def _missing_core_provider_modes(ready_provider_modes: set[str]) -> list[str]:
+    missing: list[str] = []
+    for alternatives in CORE_REQUIRED_PROVIDER_MODE_GROUPS:
+        if ready_provider_modes.intersection(alternatives):
+            continue
+        missing.extend(alternatives)
+    return list(dict.fromkeys(missing))
 OPTIONAL_PROVIDER_CONFIGURED_BLOCKER_REASONS = {
     "krpano": {
         "missing_krpano_license_environment",
@@ -1945,26 +1965,41 @@ def build_property_tour_control_receipt(
             )
         ready_provider_modes = sorted(provider for provider, count in provider_counts.items() if count > 0)
         hidden_ready_provider_modes = sorted(provider for provider, count in provider_hidden_counts.items() if count > 0)
-        missing_provider_modes = [provider for provider in PUBLIC_REQUIRED_PROVIDER_MODES if provider not in ready_provider_modes]
-        core_missing_provider_modes = [
-            provider
-            for provider in CORE_REQUIRED_PROVIDER_MODES
-            if provider not in ready_provider_modes
-        ]
+        ready_provider_mode_set = set(ready_provider_modes)
+        core_missing_provider_modes = _missing_core_provider_modes(
+            ready_provider_mode_set
+        )
         advanced_visual_missing_provider_modes = [
             provider
             for provider in ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES
-            if provider not in ready_provider_modes
+            if provider not in ready_provider_mode_set
         ]
-        selected_missing_provider_modes = [
+        missing_provider_mode_set = set(core_missing_provider_modes)
+        missing_provider_mode_set.update(advanced_visual_missing_provider_modes)
+        missing_provider_modes = [
             provider
-            for provider in selected_required_provider_modes
-            if provider not in ready_provider_modes
+            for provider in PUBLIC_REQUIRED_PROVIDER_MODES
+            if provider in missing_provider_mode_set
         ]
+        selected_missing_provider_modes = list(core_missing_provider_modes)
+        if normalized_gold_scope == "advanced_visual":
+            selected_missing_provider_modes.extend(
+                advanced_visual_missing_provider_modes
+            )
+        selected_missing_provider_modes = list(
+            dict.fromkeys(selected_missing_provider_modes)
+        )
         global_failed_probes = sum(provider_probe_failure_counts.values())
+        selected_probe_failure_modes: set[str] = set()
+        if core_missing_provider_modes:
+            selected_probe_failure_modes.update(CORE_REQUIRED_PROVIDER_MODES)
+        if normalized_gold_scope == "advanced_visual":
+            selected_probe_failure_modes.update(
+                ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES
+            )
         selected_failed_probes = sum(
             provider_probe_failure_counts[provider]
-            for provider in selected_required_provider_modes
+            for provider in selected_probe_failure_modes
         )
         provider_blockers = _summarize_provider_blockers(provider_blocker_reason_counts)
         status = (
@@ -2009,6 +2044,10 @@ def build_property_tour_control_receipt(
             "ready_provider_modes": ready_provider_modes,
             "hidden_ready_provider_modes": hidden_ready_provider_modes,
             "core_required_provider_modes": list(CORE_REQUIRED_PROVIDER_MODES),
+            "core_required_provider_mode_groups": [
+                list(group) for group in CORE_REQUIRED_PROVIDER_MODE_GROUPS
+            ],
+            "core_requirement_satisfied": not core_missing_provider_modes,
             "advanced_visual_required_provider_modes": list(ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES),
             "core_missing_provider_modes": core_missing_provider_modes,
             "advanced_visual_missing_provider_modes": advanced_visual_missing_provider_modes,
@@ -2036,8 +2075,8 @@ def build_property_tour_control_receipt(
             "require_all_provider_modes": bool(require_all_provider_modes),
             "tours": tours,
             "notes": [
-                "Core Gold requires a fresh topology-verified Matterport capture for interactive customer tour delivery.",
-                "3DVista remains an optional provider lane and a walkable claim is rejected unless its export contains multiple spatial panorama nodes.",
+                "Core Gold requires one provider-authentic walkable tour: either a fresh topology-verified Matterport capture or a licensed, verified multi-node 3DVista export.",
+                "A 3DVista walkable claim is rejected unless its export contains multiple spatial panorama nodes and PropertyQuarry-specific license/provenance evidence.",
                 "Pano2VR is tracked as an optional/internal export lane and does not block the public tour-control gold gate.",
                 "Optional panorama export lanes can count as ready from verified local evidence even when the panorama control shell stays intentionally hidden on the public route.",
                 "MagicFit is an Advanced Visual Gold walkthrough lane and is ready only when the manifest points to a receipt-backed local playable video asset or a live-probed allowlisted hosted video URL with provider=magicfit.",
@@ -2062,6 +2101,12 @@ def _receipt_summary(receipt: dict[str, object]) -> dict[str, object]:
         "provider_blockers": receipt.get("provider_blockers"),
         "ready_provider_modes": receipt.get("ready_provider_modes"),
         "core_required_provider_modes": receipt.get("core_required_provider_modes"),
+        "core_required_provider_mode_groups": receipt.get(
+            "core_required_provider_mode_groups"
+        ),
+        "core_requirement_satisfied": receipt.get(
+            "core_requirement_satisfied"
+        ),
         "advanced_visual_required_provider_modes": receipt.get("advanced_visual_required_provider_modes"),
         "core_missing_provider_modes": receipt.get("core_missing_provider_modes"),
         "advanced_visual_missing_provider_modes": receipt.get("advanced_visual_missing_provider_modes"),

@@ -43,6 +43,27 @@ def _existing_python_executable_identity() -> dict[str, object]:
 _PYTHON_EXECUTABLE_IDENTITY = _existing_python_executable_identity()
 
 
+def test_core_tour_policy_accepts_current_3dvista_alternative_but_not_legacy_relabel() -> None:
+    current = {
+        "ready_provider_modes": ["3dvista"],
+        "core_required_provider_modes": ["matterport", "3dvista"],
+        "core_required_provider_mode_groups": [["matterport", "3dvista"]],
+        "core_missing_provider_modes": [],
+    }
+    assert gold_status._missing_core_tour_provider_modes(current) == []
+    assert gold_status._tour_delivery_core_provider_ok(current) is True
+
+    legacy = {
+        "ready_provider_modes": ["3dvista"],
+        "core_required_provider_modes": ["matterport"],
+        "core_missing_provider_modes": ["matterport"],
+    }
+    assert gold_status._missing_core_tour_provider_modes(legacy) == [
+        "matterport"
+    ]
+    assert gold_status._tour_delivery_core_provider_ok(legacy) is False
+
+
 def _secure_test_chromium_executable_identity(tmp_path: Path) -> dict[str, object]:
     chromium_dir = tmp_path / "controller-browser" / "chromium-145"
     chromium_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -4313,15 +4334,20 @@ def _bts_methodology_contract_payload(*, status: str = "pass") -> dict[str, obje
 
 
 def _tour_delivery_contract_payload(*, status: str = "pass") -> dict[str, object]:
-    failures = [] if status == "pass" else ["Matterport must remain a first-class ready provider mode"]
+    failures = [] if status == "pass" else ["A provider-authentic Core tour must remain ready"]
     return {
         "schema": "propertyquarry.tour_delivery_contract_shape_receipt.v1",
         "status": status,
         "required_provider_modes": ["matterport", "3dvista", "magicfit"],
+        "core_required_provider_modes": ["matterport", "3dvista"],
+        "core_required_provider_mode_groups": [["matterport", "3dvista"]],
+        "core_requirement_satisfied": status == "pass",
         "optional_provider_modes": ["pano2vr", "krpano"],
         "ready_provider_modes": ["3dvista", "krpano", "magicfit", "matterport", "pano2vr"] if status == "pass" else ["krpano", "magicfit", "pano2vr"],
         "missing_provider_modes": [] if status == "pass" else ["3dvista", "matterport"],
         "matterport_ready_count": 29 if status == "pass" else 0,
+        "three_d_vista_ready_count": 1 if status == "pass" else 0,
+        "walkable_ready_count": 30 if status == "pass" else 0,
         "failure_count": len(failures),
         "failures": failures,
     }
@@ -5261,11 +5287,12 @@ def test_gold_status_blocks_when_required_tour_provider_modes_are_missing(tmp_pa
             "status": "pass",
             "provider_counts": {"matterport": 0, "3dvista": 0, "pano2vr": 0, "krpano": 0, "magicfit": 0},
             "ready_provider_modes": [],
-            "core_required_provider_modes": ["matterport"],
-            "core_missing_provider_modes": ["matterport"],
+            "core_required_provider_modes": ["matterport", "3dvista"],
+            "core_required_provider_mode_groups": [["matterport", "3dvista"]],
+            "core_missing_provider_modes": ["matterport", "3dvista"],
             "advanced_visual_required_provider_modes": ["magicfit"],
             "advanced_visual_missing_provider_modes": ["magicfit"],
-            "missing_provider_modes": ["matterport", "magicfit"],
+            "missing_provider_modes": ["matterport", "3dvista", "magicfit"],
             "next_required_actions": [{"provider": "magicfit", "action": "import a walkthrough"}],
             "delivery_contracts": {
                 "3dvista": {
@@ -6396,6 +6423,8 @@ def test_gold_status_passes_only_when_all_required_evidence_is_present(tmp_path:
     }.issubset(pass_areas)
     assert receipt["bts_methodology"]["source_section_count"] == 5
     assert receipt["tour_delivery_contract_shape"]["matterport_ready_count"] == 29
+    assert receipt["tour_delivery_contract_shape"]["three_d_vista_ready_count"] == 1
+    assert receipt["tour_delivery_contract_shape"]["walkable_ready_count"] == 30
     assert receipt["browser_rendered_3d"]["ready"] is True
     assert receipt["generated_reconstruction_glb"]["ready"] is True
     assert receipt["generated_reconstruction_glb"]["glb_size_bytes"] == 30700
@@ -6998,7 +7027,7 @@ def test_gold_status_blocks_when_tour_delivery_contract_fails(tmp_path: Path) ->
     assert receipt["status"] == "blocked"
     assert receipt["tour_delivery_contract_shape"]["status"] == "fail"
     assert blocker["matterport_ready_count"] == 0
-    assert "topology-verified Matterport readiness" in blocker["action"]
+    assert "Matterport or licensed multi-node 3DVista" in blocker["action"]
 
 
 def test_gold_status_blocks_when_public_sign_in_account_creation_smoke_is_missing(tmp_path: Path) -> None:
