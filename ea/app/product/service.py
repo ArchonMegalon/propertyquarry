@@ -6022,17 +6022,28 @@ def _property_fact_find_candidate(
                 row = dict(raw)
                 row.setdefault("source_label", source_label)
                 candidates.append(row)
+    embedded_candidate: dict[str, object] | None = None
     for candidate in candidates:
         if hmac.compare_digest(property_fact_candidate_ref(candidate), normalized_ref):
-            return candidate
+            embedded_candidate = candidate
+            break
     # Durable run rows deliberately omit large candidate arrays after their
     # bounded research packets have been indexed. Fact enrichment is a
     # one-candidate partial mutation, so hydrate only the exact run membership
     # instead of expanding the full run or treating omitted packets as deleted.
     principal_id = str(record.get("principal_id") or "").strip()
     run_id = str(record.get("run_id") or "").strip()
+    durable_packet_authoritative = bool(
+        principal_id
+        and run_id
+        and _property_search_run_database_url()
+        and str(record.get("payload_retention_status") or "").strip().lower()
+        in {"bounded_projection", "compact_only"}
+    )
+    if isinstance(embedded_candidate, dict) and not durable_packet_authoritative:
+        return embedded_candidate
     if not principal_id or not run_id or not _property_search_run_database_url():
-        return None
+        return embedded_candidate
     try:
         indexed_link = (
             _property_search_storage._load_property_research_packet_link_for_run(
@@ -6079,7 +6090,7 @@ def _property_fact_find_candidate(
             normalized_ref,
         )
     ):
-        return None
+        return embedded_candidate
     if isinstance(record, dict):
         hydrated_summary = dict(record.get("summary") or {})
         # Keep the partial run row bounded to this exact packet. Other

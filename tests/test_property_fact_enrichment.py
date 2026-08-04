@@ -4321,6 +4321,66 @@ def test_fact_candidate_hydrates_only_exact_indexed_packet_after_run_compaction(
     assert bounded_candidates[0]["candidate_ref"] == candidate_ref
 
 
+def test_fact_candidate_prefers_exact_packet_over_lossy_bounded_preview(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-bounded-preview"
+    run_id = "run-property-facts-bounded-preview"
+    candidate_ref = "candidate-bounded-preview"
+    indexed_candidate = _candidate(candidate_ref=candidate_ref)
+    indexed_candidate["property_facts"] = {
+        "address": "Karl-Czerny-Gasse 2, 1020 Wien",
+        **{f"durable_fact_{index}": index for index in range(40)},
+    }
+    compact_candidate = copy.deepcopy(indexed_candidate)
+    compact_candidate["property_facts"] = {
+        "address": "Karl-Czerny-Gasse 2, 1020 Wien"
+    }
+    record: dict[str, object] = {
+        "run_id": run_id,
+        "principal_id": principal_id,
+        "status": "completed_partial",
+        "payload_retention_status": "compact_only",
+        "summary": {
+            "fact_enrichment_jobs": {},
+            "research_candidates": [compact_candidate],
+        },
+    }
+    observed: list[dict[str, str]] = []
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_run_database_url",
+        lambda: "postgresql://durable.test/property",
+    )
+
+    def _load_indexed(**kwargs: str) -> dict[str, object]:
+        observed.append(dict(kwargs))
+        return {"candidate": copy.deepcopy(indexed_candidate)}
+
+    monkeypatch.setattr(
+        product_service._property_search_storage,
+        "_load_property_research_packet_link_for_run",
+        _load_indexed,
+    )
+
+    hydrated = product_service._property_fact_find_candidate(
+        record,
+        candidate_ref=candidate_ref,
+    )
+
+    assert hydrated == indexed_candidate
+    assert hydrated != compact_candidate
+    assert observed == [
+        {
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "candidate_ref": candidate_ref,
+        }
+    ]
+    assert record["summary"]["research_candidates"] == [indexed_candidate]
+
+
 def test_fact_candidate_recovers_membership_removed_by_legacy_partial_writer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
