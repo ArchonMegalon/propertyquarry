@@ -18,9 +18,8 @@ Finish PropertyQuarry as a premium, production-ready property evaluation and pre
 
 - Branch: `integration/property-origin-main-20260728`.
 - The pre-maintenance envelope and remote baseline were `03609f23c482f21a6a079ffd9ef36752c20fb711`; use `git rev-parse HEAD` and `git rev-parse '@{upstream}'` for the final post-maintenance envelope instead of copying an older handoff hash.
-- Deployed source before the image-retention maintenance release: `b4ff5c084a14fa265962b3f9a7fb6b64bdc77d82`.
-- Web image: `sha256:e854a2db5af7fdc37e5b37c4483c065a27c08bb9d613b8bfeea9e750d2b997ff`.
-- Render image: `sha256:8daf78acd92c89bc49a703b9d685066b1330ee7521714010b6027089e10bf873`.
+- Previous deployed source was `b4ff5c084a14fa265962b3f9a7fb6b64bdc77d82`; the final browser-audited runtime candidate is `965681e0b3c7694abe0251ddf74a6e0d0e940bba`.
+- Previous verified web/render images were `sha256:e854a2db5af7fdc37e5b37c4483c065a27c08bb9d613b8bfeea9e750d2b997ff` and `sha256:8daf78acd92c89bc49a703b9d685066b1330ee7521714010b6027089e10bf873`. Read the final local deployment receipt for the rebuilt current IDs.
 - The exact legacy shortlist alias, canonical Karl candidate, normal-camera walkthrough, and licensed 3DVista control were production-verified before this maintenance patch. Focused retention/deployment/diorama/media-link gate: 8/8 passed. The full affected greenfield browser file was then covered fail-fast across exact continuation points: 127 passed and 1 intentional skip.
 - Database: 437 MiB / 458,431,511 bytes. Retention is live and a direct production run found zero eligible rows. The largest relation is `observation_events` at 156,516,352 bytes; current evidence does not indicate runaway PropertyQuarry DB growth.
 
