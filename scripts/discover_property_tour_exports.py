@@ -65,6 +65,21 @@ else:
         validate_3dvista_target_provenance,
     )
 
+if __package__:
+    from .property_tour_runtime_paths import (
+        preferred_public_tour_root,
+        running_container_incoming_tour_dir,
+        running_container_public_tour_dir,
+        snapshot_running_container_public_tours,
+    )
+else:
+    from property_tour_runtime_paths import (
+        preferred_public_tour_root,
+        running_container_incoming_tour_dir,
+        running_container_public_tour_dir,
+        snapshot_running_container_public_tours,
+    )
+
 
 PROVIDERS = ("3dvista", "pano2vr", "krpano", "magicfit")
 PROVIDER_DROP_LAYOUTS = {
@@ -113,15 +128,58 @@ OPERATOR_DROP_LANE_SLUG = "_operator-import-lane"
 
 
 def _default_drop_dir() -> Path:
-    return Path(
+    configured = str(
         os.getenv("PROPERTYQUARRY_TOUR_EXPORT_DROP_DIR")
         or os.getenv("PROPERTYQUARRY_TOUR_EXPORT_INCOMING_DIR")
-        or "/data/incoming_property_tours"
-    ).expanduser()
+        or ""
+    ).strip()
+    if configured:
+        return Path(configured).expanduser()
+    runtime_root = running_container_incoming_tour_dir(
+        os.getenv("PROPERTYQUARRY_RUNTIME_CONTAINER") or ""
+    )
+    if runtime_root is not None:
+        return runtime_root.expanduser().resolve()
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_drop = repo_root / "state" / "incoming_property_tours"
+    if repo_drop.is_dir():
+        return repo_drop.resolve()
+    return Path("/data/incoming_property_tours")
 
 
 def _artifact_dir() -> Path:
     return Path(os.getenv("EA_ARTIFACT_DIR") or "/data/artifacts").expanduser()
+
+
+def _default_public_tour_dir() -> Path:
+    repo_root = Path(__file__).resolve().parents[1]
+    return preferred_public_tour_root(
+        configured_root=os.getenv("EA_PUBLIC_TOUR_DIR") or "",
+        repo_root=repo_root,
+        fallback_root="/docker/property/state/public_property_tours",
+        runtime_container=os.getenv("PROPERTYQUARRY_RUNTIME_CONTAINER") or "",
+    )
+
+
+@contextlib.contextmanager
+def _cli_public_tour_dir(explicit: str = "") -> Iterable[Path]:
+    requested = str(explicit or "").strip()
+    if requested:
+        yield Path(requested).expanduser().resolve()
+        return
+    runtime_container = os.getenv("PROPERTYQUARRY_RUNTIME_CONTAINER") or ""
+    runtime_root = running_container_public_tour_dir(runtime_container)
+    if runtime_root is not None:
+        yield runtime_root.expanduser().resolve()
+        return
+    snapshot_root, snapshot_handle = snapshot_running_container_public_tours(runtime_container)
+    if snapshot_root is not None and snapshot_handle is not None:
+        try:
+            yield snapshot_root
+        finally:
+            snapshot_handle.cleanup()
+        return
+    yield _default_public_tour_dir()
 
 
 def _safe_slug(value: object) -> str:
@@ -388,7 +446,7 @@ def _public_bundle_provider_state(*, bundle_dir: Path, slug: str, provider: str)
             )
             if not target_subdir or not entry_relpath.startswith(f"{target_subdir}/"):
                 return {}
-            _normalized, errors = validate_3dvista_target_provenance(
+            normalized, errors = validate_3dvista_target_provenance(
                 dict(provenance),
                 target_slug=slug,
                 export_dir=bundle_dir / target_subdir,
@@ -400,9 +458,11 @@ def _public_bundle_provider_state(*, bundle_dir: Path, slug: str, provider: str)
                 "evidence": "public_bundle_3dvista_import",
                 "entry_relpath": entry_relpath,
                 "control_path": f"/tours/{slug}/control/3dvista",
+                "artifact_sha256": str(dict(normalized.get("artifact") or {}).get("sha256") or "").strip(),
+                "reviewed_at": str(dict(normalized.get("review") or {}).get("reviewed_at") or "").strip(),
             }
         if provider_url:
-            _normalized, errors = validate_3dvista_target_provenance(
+            normalized, errors = validate_3dvista_target_provenance(
                 dict(provenance),
                 target_slug=slug,
                 provider_url=provider_url,
@@ -412,6 +472,8 @@ def _public_bundle_provider_state(*, bundle_dir: Path, slug: str, provider: str)
             return {
                 "evidence": "private_allowlisted_3dvista_url",
                 "control_path": f"/tours/{slug}/control/3dvista",
+                "artifact_sha256": str(dict(normalized.get("artifact") or {}).get("sha256") or "").strip(),
+                "reviewed_at": str(dict(normalized.get("review") or {}).get("reviewed_at") or "").strip(),
             }
         return {}
     if provider == "pano2vr":
@@ -551,11 +613,23 @@ def _entry_candidate_sample(export_dir: Path, *, limit: int = 6) -> list[str]:
 def _provider_drop_diagnostics(export_dir: Path, provider: str) -> dict[str, object]:
     if provider not in MARKERS_BY_PROVIDER:
         return {}
-    marker_label = f"{provider}_runtime_marker"
-    return {
+    entry, entry_relpath = _verified_entry(export_dir, provider)
+    common = {
         "file_count": _file_count(export_dir),
         "present_sample": _relative_file_sample(export_dir),
         "entry_candidates": _entry_candidate_sample(export_dir),
+    }
+    if entry is not None:
+        return {
+            **common,
+            "runtime_marker_status": "verified",
+            "verified_entry": entry_relpath,
+            "missing": [],
+        }
+    marker_label = f"{provider}_runtime_marker"
+    return {
+        **common,
+        "runtime_marker_status": "missing",
         "missing": [marker_label],
         "missing_markers": list(MARKERS_BY_PROVIDER[provider]),
     }
@@ -600,6 +674,49 @@ def _ignored_duplicate_drop_row(row: dict[str, Any]) -> dict[str, Any]:
     return duplicate
 
 
+def _verified_drop_matches_live_bundle(row: dict[str, Any], live_state: dict[str, str]) -> bool:
+    incoming_sha256 = str(row.get("artifact_sha256") or "").strip().lower()
+    live_sha256 = str(live_state.get("artifact_sha256") or "").strip().lower()
+    return bool(incoming_sha256 and live_sha256 and incoming_sha256 == live_sha256)
+
+
+def _verified_drop_is_older_than_live_bundle(row: dict[str, Any], live_state: dict[str, str]) -> bool:
+    try:
+        incoming_reviewed_at = datetime.fromisoformat(
+            str(row.get("reviewed_at") or "").strip().replace("Z", "+00:00")
+        )
+        live_reviewed_at = datetime.fromisoformat(
+            str(live_state.get("reviewed_at") or "").strip().replace("Z", "+00:00")
+        )
+    except ValueError:
+        return False
+    if incoming_reviewed_at.tzinfo is None or live_reviewed_at.tzinfo is None:
+        return False
+    return incoming_reviewed_at < live_reviewed_at
+
+
+def _resolved_existing_verified_import_row(
+    row: dict[str, Any],
+    *,
+    live_state: dict[str, str],
+) -> dict[str, Any]:
+    resolved = dict(row)
+    exact_match = _verified_drop_matches_live_bundle(row, live_state)
+    resolved["status"] = (
+        "already_imported_live_bundle" if exact_match else "superseded_by_newer_live_bundle"
+    )
+    resolved["resolution"] = (
+        "the exact verified provider artifact is already active in the live tour bundle; no import or replacement is needed"
+        if exact_match
+        else "the live provider artifact has a newer target review; preserve it and archive this older drop instead of replacing the live bundle"
+    )
+    resolved["live_evidence"] = str(live_state.get("evidence") or "").strip()
+    resolved["live_control_path"] = str(live_state.get("control_path") or "").strip()
+    if str(live_state.get("entry_relpath") or "").strip():
+        resolved["live_entry_relpath"] = str(live_state.get("entry_relpath") or "").strip()
+    return resolved
+
+
 def _repair_manifest_rows(rejected: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in rejected:
@@ -641,6 +758,8 @@ def _repair_manifest_rows(rejected: Iterable[dict[str, Any]]) -> list[dict[str, 
             "entry_candidates",
             "missing",
             "missing_markers",
+            "runtime_marker_status",
+            "verified_entry",
             "provenance_errors",
             "provenance_receipt",
         ):
@@ -792,6 +911,13 @@ def _evaluate_candidate_layout(*, slug: str, provider: str, export_dir: Path, ma
             row["export_zip"] = str(export_zip)
         if provenance_path is not None:
             row["provenance_receipt"] = str(provenance_path)
+            provenance = load_json_object(provenance_path)
+            row["artifact_sha256"] = str(
+                dict(provenance.get("artifact") or {}).get("sha256") or ""
+            ).strip()
+            row["reviewed_at"] = str(
+                dict(provenance.get("review") or {}).get("reviewed_at") or ""
+            ).strip()
         return "import", row
     if provider == "krpano":
         panorama = _discover_panorama(export_dir)
@@ -854,11 +980,25 @@ def build_discovery_receipt(*, drop_dir: Path, public_tour_dir: Path | None = No
                 group_imports.append(row)
             else:
                 group_rejected.append(row)
+        live_state = _public_bundle_provider_state(bundle_dir=bundle_dir, slug=slug, provider=provider)
         if group_imports:
-            imports.extend(group_imports)
+            already_imported = [
+                row
+                for row in group_imports
+                if live_state
+                and (
+                    _verified_drop_matches_live_bundle(row, live_state)
+                    or _verified_drop_is_older_than_live_bundle(row, live_state)
+                )
+            ]
+            pending_imports = [row for row in group_imports if row not in already_imported]
+            resolved_existing_imports.extend(
+                _resolved_existing_verified_import_row(row, live_state=live_state)
+                for row in already_imported
+            )
+            imports.extend(pending_imports)
             ignored_duplicate_drop_rows.extend(_ignored_duplicate_drop_row(row) for row in group_rejected)
             continue
-        live_state = _public_bundle_provider_state(bundle_dir=bundle_dir, slug=slug, provider=provider)
         if live_state:
             resolved_existing_imports.extend(
                 _resolved_existing_import_row(
@@ -897,6 +1037,8 @@ def build_discovery_receipt(*, drop_dir: Path, public_tour_dir: Path | None = No
             "3DVista rows additionally require a private target-bound provenance receipt for the exact slug and export bytes; provider samples and unapproved reuse fail closed.",
             "krpano rows require a real panorama/cubemap candidate; MagicFit rows require a playable video stream and receipt candidate before import.",
             "Rejected duplicate drop folders are ignored when another folder for the same slug/provider is already importable in this run.",
+            "Verified 3DVista drops whose artifact digest exactly matches the live bundle are resolved as already imported instead of being reimported.",
+            "Older verified 3DVista drops are resolved as superseded when the active live bundle has a later target review, preventing stale exports from replacing a newer correction.",
             "Rejected rows are resolved instead of repaired when the provider is already imported in the live tour bundle for the same slug.",
             "Rejected rows are also emitted in repair_manifest so status/UI repair can show exact missing assets without treating placeholders as verified tours.",
         ],
@@ -980,10 +1122,11 @@ def main() -> int:
     parser.add_argument("--manifest-write", default="")
     parser.add_argument("--fail-on-blocked", action="store_true")
     args = parser.parse_args()
-    receipt = build_discovery_receipt(
-        drop_dir=Path(args.drop_dir),
-        public_tour_dir=Path(args.public_tour_dir) if str(args.public_tour_dir or "").strip() else None,
-    )
+    with _cli_public_tour_dir(str(args.public_tour_dir or "")) as public_tour_dir:
+        receipt = build_discovery_receipt(
+            drop_dir=Path(args.drop_dir),
+            public_tour_dir=public_tour_dir,
+        )
     write_path = Path(args.write).expanduser() if str(args.write or "").strip() else _artifact_dir() / "property-tour-export-discovery.json"
     write_path.parent.mkdir(parents=True, exist_ok=True)
     write_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")

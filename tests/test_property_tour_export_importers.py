@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 from PIL import Image
 
+from scripts import discover_property_tour_exports as tour_export_discovery
 from scripts.discover_property_tour_exports import REJECTION_ACTIONS, build_discovery_receipt
 from scripts.import_3dvista_export import _normalize_web_readable_export_tree
 from scripts.intake_3dvista_gold_artifact import build_3dvista_intake_receipt
@@ -71,6 +72,170 @@ def _write_base_tour(tmp_path: Path, slug: str) -> Path:
         encoding="utf-8",
     )
     return bundle_dir
+
+
+def test_tour_export_discovery_default_public_root_prefers_runtime_volume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime-public-tours"
+    runtime_root.mkdir()
+    captured: dict[str, object] = {}
+
+    def fake_preferred_public_tour_root(**kwargs: object) -> Path:
+        captured.update(kwargs)
+        return runtime_root.resolve()
+
+    monkeypatch.setattr(
+        tour_export_discovery,
+        "preferred_public_tour_root",
+        fake_preferred_public_tour_root,
+    )
+
+    assert tour_export_discovery._default_public_tour_dir() == runtime_root.resolve()
+    assert captured["fallback_root"] == "/docker/property/state/public_property_tours"
+
+
+def test_tour_export_discovery_default_drop_root_prefers_runtime_mount(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime-incoming-tours"
+    runtime_root.mkdir()
+    monkeypatch.delenv("PROPERTYQUARRY_TOUR_EXPORT_DROP_DIR", raising=False)
+    monkeypatch.delenv("PROPERTYQUARRY_TOUR_EXPORT_INCOMING_DIR", raising=False)
+    monkeypatch.setattr(
+        tour_export_discovery,
+        "running_container_incoming_tour_dir",
+        lambda _container="": runtime_root,
+    )
+
+    assert tour_export_discovery._default_drop_dir() == runtime_root.resolve()
+
+
+def test_tour_export_discovery_cli_snapshots_unmounted_runtime_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime-snapshot"
+    runtime_root.mkdir()
+
+    class SnapshotHandle:
+        cleaned = False
+
+        def cleanup(self) -> None:
+            self.cleaned = True
+
+    handle = SnapshotHandle()
+    monkeypatch.setattr(
+        tour_export_discovery,
+        "running_container_public_tour_dir",
+        lambda _container="": None,
+    )
+    monkeypatch.setattr(
+        tour_export_discovery,
+        "snapshot_running_container_public_tours",
+        lambda _container="": (runtime_root.resolve(), handle),
+    )
+
+    with tour_export_discovery._cli_public_tour_dir() as selected:
+        assert selected == runtime_root.resolve()
+        assert handle.cleaned is False
+
+    assert handle.cleaned is True
+
+
+def test_tour_export_discovery_does_not_reimport_exact_live_3dvista_artifact(
+    tmp_path: Path,
+) -> None:
+    slug = "already-live-3dvista"
+    bundle_dir = _write_base_tour(tmp_path, slug)
+    drop_export = tmp_path / "drop" / slug / "3dvista"
+    drop_export.mkdir(parents=True)
+    (drop_export / "index.htm").write_text(
+        "<!doctype html><script src='lib/tdvplayer.js'></script>",
+        encoding="utf-8",
+    )
+    provenance_path = _write_3dvista_provenance(
+        drop_export,
+        slug,
+        entry_relpath="index.htm",
+    )
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    live_export = bundle_dir / "3dvista"
+    shutil.copytree(drop_export, live_export)
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "three_d_vista_entry_relpath": "3dvista/index.htm",
+                "three_d_vista_target_provenance": provenance,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    receipt = build_discovery_receipt(
+        drop_dir=tmp_path / "drop",
+        public_tour_dir=tmp_path / "public_tours",
+    )
+
+    assert receipt["status"] == "ready"
+    assert receipt["import_count"] == 0
+    assert receipt["resolved_existing_import_count"] == 1
+    resolved = receipt["resolved_existing_imports"][0]
+    assert resolved["status"] == "already_imported_live_bundle"
+    assert resolved["artifact_sha256"] == provenance["artifact"]["sha256"]
+    assert resolved["live_control_path"] == f"/tours/{slug}/control/3dvista"
+
+
+def test_tour_export_discovery_does_not_replace_newer_live_3dvista_artifact(
+    tmp_path: Path,
+) -> None:
+    slug = "newer-live-3dvista"
+    bundle_dir = _write_base_tour(tmp_path, slug)
+    drop_export = tmp_path / "drop" / slug / "3dvista"
+    drop_export.mkdir(parents=True)
+    (drop_export / "index.htm").write_text(
+        "<!doctype html><script src='lib/tdvplayer.js'></script><p>older</p>",
+        encoding="utf-8",
+    )
+    _write_3dvista_provenance(drop_export, slug, entry_relpath="index.htm")
+
+    live_export = bundle_dir / "3dvista"
+    live_export.mkdir()
+    (live_export / "index.htm").write_text(
+        "<!doctype html><script src='lib/tdvplayer.js'></script><p>newer</p>",
+        encoding="utf-8",
+    )
+    live_provenance_path = _write_3dvista_provenance(
+        live_export,
+        slug,
+        entry_relpath="index.htm",
+    )
+    live_provenance = json.loads(live_provenance_path.read_text(encoding="utf-8"))
+    live_provenance["review"]["reviewed_at"] = "2026-07-15T00:00:00+00:00"
+    live_provenance_path.write_text(json.dumps(live_provenance), encoding="utf-8")
+    (bundle_dir / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "three_d_vista_entry_relpath": "3dvista/index.htm",
+                "three_d_vista_target_provenance": live_provenance,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    receipt = build_discovery_receipt(
+        drop_dir=tmp_path / "drop",
+        public_tour_dir=tmp_path / "public_tours",
+    )
+
+    assert receipt["status"] == "ready"
+    assert receipt["import_count"] == 0
+    assert receipt["resolved_existing_import_count"] == 1
+    resolved = receipt["resolved_existing_imports"][0]
+    assert resolved["status"] == "superseded_by_newer_live_bundle"
+    assert "newer target review" in resolved["resolution"]
 
 
 def _write_3dvista_provenance(
@@ -3066,8 +3231,15 @@ def test_tour_export_discovery_rejects_placeholders_and_missing_tour_manifests(t
     assert pano_rejection["file_count"] == 1
     assert pano_rejection["present_sample"] == ["index.html"]
     assert pano_rejection["entry_candidates"] == ["index.html"]
+    assert pano_rejection["runtime_marker_status"] == "missing"
     assert pano_rejection["missing"] == ["pano2vr_runtime_marker"]
     assert pano_rejection["missing_markers"] == ["ggpkg", "ggskin", "pano.xml", "tour.js"]
+    orphan_rejection = next(row for row in receipt["rejected"] if row["provider"] == "3dvista")
+    assert orphan_rejection["reason"] == "tour_manifest_missing"
+    assert orphan_rejection["runtime_marker_status"] == "verified"
+    assert orphan_rejection["verified_entry"] == "index.html"
+    assert orphan_rejection["missing"] == []
+    assert "missing_markers" not in orphan_rejection
     for row in receipt["repair_manifest"]:
         assert row["status"] == "waiting_for_verified_assets"
         assert row["required_action"]
@@ -3076,7 +3248,13 @@ def test_tour_export_discovery_rejects_placeholders_and_missing_tour_manifests(t
     pano_repair = next(row for row in receipt["repair_manifest"] if row["provider"] == "pano2vr")
     assert pano_repair["file_count"] == 1
     assert pano_repair["present_sample"] == ["index.html"]
+    assert pano_repair["runtime_marker_status"] == "missing"
     assert pano_repair["missing_markers"] == ["ggpkg", "ggskin", "pano.xml", "tour.js"]
+    orphan_repair = next(row for row in receipt["repair_manifest"] if row["provider"] == "3dvista")
+    assert orphan_repair["runtime_marker_status"] == "verified"
+    assert orphan_repair["verified_entry"] == "index.html"
+    assert orphan_repair["missing"] == []
+    assert "missing_markers" not in orphan_repair
     assert any("import_pano2vr_export.py" in row["import_command_after_assets_arrive"] for row in receipt["repair_manifest"])
     assert any("import_krpano_walkable_scene.py" in row["import_command_after_assets_arrive"] for row in receipt["repair_manifest"])
     assert any("import_magicfit_walkthrough.py" in row["import_command_after_assets_arrive"] for row in receipt["repair_manifest"])

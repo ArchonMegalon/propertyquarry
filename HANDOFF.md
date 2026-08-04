@@ -29,7 +29,7 @@ Finish PropertyQuarry as a premium, production-ready property evaluation and pre
 
 ## Authoritative Karl state
 
-- Candidate: `cece2dad814fdf68`.
+- Public candidate alias: `cece2dad814fdf68`. The curated diorama manifest resolves it to scoped candidate `ad48357be22535c1`, source listing `1536069684` in 1020 Wien.
 - Property URL: `https://propertyquarry.com/app/shortlist?candidate=cece2dad814fdf68`.
 - Authoritative public walkthrough: `https://propertyquarry.com/tours/karl-czerny-gasse-2-urban-jungle/walkthrough`.
 - Authoritative licensed 3DVista tour: `https://propertyquarry.com/tours/3dvista/karl-czerny-gasse-2-urban-jungle/3dvista/index.htm`.
@@ -41,7 +41,8 @@ Finish PropertyQuarry as a premium, production-ready property evaluation and pre
 - Forbidden edges: stairwell → balcony/loggia, vorraum → balcony/loggia, living-kitchen → terrace, balcony/loggia → terrace.
 - Seven panorama sources, in intended order: `vorraum`, `living-kitchen`, `bedroom-primary`, `terrace`, `bedroom-guest`, `wc`, `bath`.
 - The public raw-panorama route intentionally rejects these AI reconstructions. Do not weaken that privacy/acceptance guard.
-- Telegram delivery of the authoritative walkthrough and 3DVista links already happened once. Receipt: `state/release/propertyquarry-karl-czerny-tour.telegram.receipt.json`, message ID 5037. Do not send a duplicate unless explicitly required.
+- Telegram delivery of the authoritative walkthrough and 3DVista links happened in message 5037. Message 5060 incorrectly requested a new export after a host-side discovery run read stale paths; message 5061 corrected it and confirmed that no upload is needed. Correction receipt: `_completion/notifications/propertyquarry-karl-tour-correction-20260804.json`.
+- Do not assign the coordinates of `Karl-Czerny Gasse 2, 1200 Wien` to this listing. That address is the saved commute destination, not proven listing identity. The source listing only establishes the 1020 postal area, so exact-distance enrichment must remain evidence-blocked until the listing provides an exact pin/address.
 
 ### 3DVista clean-floorplan correction — live and verified
 
@@ -88,7 +89,7 @@ Source hashes used for the run:
 - Public proof: `state/release/proof/karl-crezlo-public-clean-floorplan-open-20260804.png`, SHA-256 `e3247601c453ecf6812479c9daab8a9140d4538157817ae1a05f90f0fab11036`.
 - Redacted receipt: `state/release/propertyquarry-karl-crezlo-clean-floorplan.receipt.json`.
 
-## Crezlo worker fix ready to commit
+## Crezlo worker fix committed
 
 `scripts/crezlo_property_tour_worker.py` had two live-provider defects:
 
@@ -113,14 +114,25 @@ Checks already passed:
 - Live Tibor target-recovery canary against the current Willhaben target: 1 passed in 303.37 s; its individual search run retained the unchanged 180 s bounded timeout.
 - Syntax compilation and `git diff --check` passed. The pre-existing `public_tours.py` invalid-escape SyntaxWarning remains non-fatal and unrelated to this patch.
 
-## Local Playwright runtime restored
+## Durable Playwright worker fixed
 
-The worker expected `propertyquarry-playwright:local`, but the image was absent. This session:
+- The repository now tracks `docker/propertyquarry-playwright/Dockerfile`, `package.json`, and its exact lockfile.
+- Browser base and npm package are both pinned to current stable Playwright `1.62.1`; the base is additionally digest-pinned to `sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e`.
+- `scripts/build_propertyquarry_playwright_image.sh` reproducibly builds `propertyquarry-playwright:local`, asserts the installed version, runs a high-severity npm audit, and launches real headless Chromium.
+- Local rebuilt image ID: `sha256:2b4f2ac34a624fcf253efec7582b3a38c4835e4203b1dc7fe500c283d76e241c`.
+- Audit result: zero vulnerabilities. Browser smoke: pass.
 
-- Pulled `mcr.microsoft.com/playwright:v1.52.0-noble`, digest `sha256:a021500a801bab0611049217ffad6b9697d827205c15babb86a53bc1a61c02d5`.
-- Built local image `propertyquarry-playwright:local`, image ID `sha256:dfbe762d1e4c77d2f7a5c22326cae1ad2afad5fc9a460161d22518549cca15b7`, with `playwright@1.52.0` and `NODE_PATH=/opt/propertyquarry-playwright/node_modules`.
-- Verified a real headless Chromium launch: `playwright-runtime-ok`.
-- `npm install` reported one high-severity advisory in this pinned operator-only image. Do not silently ship it. Find or add the repository's durable image definition, pin the reviewed runtime, and audit before deployment.
+## Runtime-aware tour discovery fixed
+
+- Host-side discovery now resolves both the incoming bind mount and the live public-tour named volume from the running PropertyQuarry container. Named public volumes are inspected through a bounded temporary snapshot that is always cleaned up.
+- Runtime marker diagnostics now report verified 3DVista/Pano2VR entries instead of claiming markers are missing unconditionally.
+- Exact live artifacts are treated as already imported. Older reviewed 3DVista drops are treated as superseded when a newer live correction exists, so the clean Karl runtime cannot be overwritten by the older stamped drop.
+- Live dry run resolves Karl's older drop as `superseded_by_newer_live_bundle`; it does not emit a Karl import or repair request.
+
+## 1minAI / Google Maps OODA runtime truth
+
+- Production has 1minAI evaluation enabled, Google Maps fact OODA enabled, a live 1minAI key, and a principal-scoped BrowserAct binding/API key. A separate run URL is optional because the binding exists.
+- The remaining Karl distance blocker is source evidence, not provider configuration: the listing has no exact property pin/address. Preserve `exact_listing_coordinates_required`; do not fabricate coordinates from the commute destination.
 
 ## Current Crezlo acceptance result
 
@@ -146,10 +158,10 @@ The exact live seller requests were captured without persisting authorization va
 
 ## Immediate next actions
 
-1. Commit and push the reviewed source/test/handoff patch, deploy it, and refresh the public smoke proof. Preserve the clean 3DVista runtime receipt and do not overwrite the licensed vendor export with an unreceipted tree.
+1. Commit and push the reviewed source/test/handoff patch, deploy it, and refresh the public smoke proof. Preserve the clean 3DVista runtime receipt and do not overwrite the licensed vendor export with an older or unreceipted tree.
 2. Do not recreate or re-edit the Crezlo tour unless a new evidence-backed correction is required. It is provider-corrected but intentionally not imported/promoted because acceptance remains fail-closed.
-3. Add a durable reviewed definition for the locally restored `propertyquarry-playwright:local` operator image before treating that image as a shipped production dependency.
-4. Resume the separate remaining blocker: the dedicated Google Maps / 1minAI custom BrowserAct Workflow API binding required for OODA distance completion. Do not conflate that approval gate with Crezlo.
+3. Keep exact-distance OODA blocked until the source listing yields an exact pin/address. Provider configuration is complete; the Karl-Czerny address is only a commute target and must not be reused as property identity.
+4. MagicFit remains an optional Advanced Visual provider lane without a verified artifact. Core Gold remains valid through the licensed 3DVista tour; do not weaken provider acceptance to manufacture an Advanced Visual pass.
 
 ## Historical artifacts warning
 

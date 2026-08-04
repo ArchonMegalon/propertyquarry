@@ -1,0 +1,13 @@
+{
+  "name": "propertyquarry-playwright-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned browser dependency for PropertyQuarry tour automation",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}
