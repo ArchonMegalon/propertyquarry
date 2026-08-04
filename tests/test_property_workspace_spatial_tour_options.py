@@ -141,11 +141,17 @@ def test_camera_walkthrough_does_not_depend_on_optional_spatial_tour(
 ) -> None:
     calls: list[str] = []
 
-    def _resolve(source_url: object, _walkthrough_url: object = "") -> str:
+    def _resolve(
+        source_url: object,
+        _walkthrough_url: object = "",
+        *,
+        principal_id: object = "",
+    ) -> str:
+        del principal_id
         source = str(source_url or "")
         calls.append(source)
         if source == "/tours/camera-only":
-            return "/tours/camera-only?pane=flythrough-pane&autoplay=1"
+            return "/tours/camera-only/walkthrough"
         return ""
 
     monkeypatch.setattr(
@@ -162,7 +168,7 @@ def test_camera_walkthrough_does_not_depend_on_optional_spatial_tour(
         ready_tour_url="",
     )
 
-    assert result == "/tours/camera-only?pane=flythrough-pane&autoplay=1"
+    assert result == "/tours/camera-only/walkthrough"
     assert "/tours/camera-only" in calls
 
 
@@ -173,7 +179,7 @@ def test_client_payload_separates_default_camera_video_from_optional_3d_tour(
     monkeypatch.setattr(
         workspace_payload,
         "_property_workbench_candidate_ready_tour_url",
-        lambda _candidate: "/tours/sdk-loft/control/matterport",
+        lambda _candidate, *, principal_id="": "/tours/sdk-loft/control/matterport",
     )
     monkeypatch.setattr(
         workspace_payload,
@@ -183,7 +189,7 @@ def test_client_payload_separates_default_camera_video_from_optional_3d_tour(
     monkeypatch.setattr(
         workspace_payload,
         "_property_workbench_candidate_flythrough_url",
-        lambda _candidate, *, ready_tour_url: "/tours/sdk-loft?pane=flythrough-pane&autoplay=1",
+        lambda _candidate, *, ready_tour_url, principal_id="": "/tours/sdk-loft/walkthrough",
     )
 
     result = workspace_payload._property_workbench_client_candidate_payload(
@@ -196,7 +202,7 @@ def test_client_payload_separates_default_camera_video_from_optional_3d_tour(
         }
     )
 
-    assert result["flythrough"]["url"] == "/tours/sdk-loft?pane=flythrough-pane&autoplay=1"
+    assert result["flythrough"]["url"] == "/tours/sdk-loft/walkthrough"
     assert result["flythrough"]["media_kind"] == "camera_walkthrough"
     assert result["flythrough"]["label"] == "Camera walkthrough available"
     assert result["tour"]["url"] == "/tours/sdk-loft/control/matterport"
@@ -211,7 +217,7 @@ def test_generated_reconstruction_is_not_projected_as_provider_3d_tour(
     monkeypatch.setattr(
         workspace_payload,
         "_property_workbench_candidate_ready_tour_url",
-        lambda _candidate: "",
+        lambda _candidate, *, principal_id="": "",
     )
     monkeypatch.setattr(
         workspace_payload,
@@ -221,7 +227,7 @@ def test_generated_reconstruction_is_not_projected_as_provider_3d_tour(
     monkeypatch.setattr(
         workspace_payload,
         "_property_workbench_candidate_flythrough_url",
-        lambda _candidate, *, ready_tour_url: "",
+        lambda _candidate, *, ready_tour_url, principal_id="": "",
     )
 
     result = workspace_payload._property_workbench_client_candidate_payload(

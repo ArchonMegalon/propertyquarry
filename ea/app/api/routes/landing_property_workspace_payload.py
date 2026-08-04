@@ -1039,7 +1039,7 @@ def _property_workbench_client_candidate_payload(
     tour_payload = _property_workbench_client_tour_payload(
         raw.get("tour") if isinstance(raw.get("tour"), dict) else {},
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),
-        validated_url=ready_tour_url or generated_layout_url,
+        validated_url=ready_tour_url,
         validated_provider_url="",
     )
     if tour_payload:

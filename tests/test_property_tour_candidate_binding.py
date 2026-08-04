@@ -111,7 +111,7 @@ def test_candidate_binding_exposes_walkthrough_only_to_bound_owner(
     assert property_tour_hosting._hosted_property_tour_walkthrough_open_url(
         tour_url,
         principal_id="user-owned-property",
-    ) == f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
+    ) == f"/tours/{slug}/walkthrough"
 
 
 def test_candidate_binding_rejects_cross_principal_rebind(tmp_path: Path) -> None:
