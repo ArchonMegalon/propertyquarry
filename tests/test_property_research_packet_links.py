@@ -444,6 +444,40 @@ def test_membership_sync_reuses_exact_run_authority_during_internal_refresh() ->
     assert cursor.executed[0] == (authority_sql, ("tenant-a", "run-1"))
 
 
+def test_partial_membership_sync_upserts_without_pruning_compacted_candidates() -> None:
+    link = project_property_research_packet_links(
+        _record({"candidate_ref": "ref-a", "property_url": "https://example.test/one"})
+    )[0]
+
+    class _Cursor:
+        def __init__(self) -> None:
+            self.executed: list[tuple[str, object]] = []
+
+        def execute(self, sql: str, params: object) -> None:
+            self.executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self) -> tuple[str]:
+            if "INSERT INTO property_research_packet_run_memberships" in self.executed[-1][0]:
+                return ("ref-a",)
+            raise AssertionError(f"unexpected fetchone after {self.executed[-1][0]}")
+
+        def fetchall(self) -> list[tuple[str]]:
+            raise AssertionError("partial membership sync must not scan or delete other refs")
+
+    cursor = _Cursor()
+    assert sync_property_research_packet_run_memberships(
+        cursor,
+        principal_id="tenant-a",
+        run_id="run-1",
+        links=(link,),
+        prune_missing=False,
+    ) == 1
+    executed_sql = [sql for sql, _params in cursor.executed]
+    assert not any(sql.startswith("SELECT candidate_ref") for sql in executed_sql)
+    assert not any(sql.startswith("DELETE FROM") for sql in executed_sql)
+
+
+
 @pytest.mark.parametrize(
     ("writer_kind", "error_code"),
     (

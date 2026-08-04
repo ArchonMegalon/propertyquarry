@@ -4232,7 +4232,7 @@ def test_fact_enrichment_run_mutation_retries_durable_compare_and_swap(
     principal_id = "exec-property-facts-cas"
     run_id = "run-property-facts-cas"
     stored = _run_record(principal_id=principal_id, run_id=run_id, candidate=_candidate())
-    calls = {"cas": 0}
+    calls = {"cas": 0, "preserve_memberships": []}
 
     monkeypatch.setattr(product_service, "_property_search_run_database_url", lambda: "postgresql://durable.test/property")
     monkeypatch.setattr(
@@ -4243,6 +4243,9 @@ def test_fact_enrichment_run_mutation_retries_durable_compare_and_swap(
 
     def _cas(**kwargs: object) -> dict[str, object]:
         calls["cas"] += 1
+        calls["preserve_memberships"].append(
+            kwargs.get("preserve_unprojected_packet_memberships") is True
+        )
         if calls["cas"] == 1:
             return {"status": "record_changed", "record_sha256": "changed"}
         updated = copy.deepcopy(kwargs["updated_record"])
@@ -4258,10 +4261,120 @@ def test_fact_enrichment_run_mutation_retries_durable_compare_and_swap(
 
         assert result == "stored"
         assert calls["cas"] == 2
+        assert calls["preserve_memberships"] == [True, True]
         with product_service._PROPERTY_SEARCH_RUN_LOCK:
             assert product_service._PROPERTY_SEARCH_RUN_REGISTRY[run_id]["fact_test_marker"] == "stored"
     finally:
         _clear_run(run_id)
+
+
+def test_fact_candidate_hydrates_only_exact_indexed_packet_after_run_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-indexed"
+    run_id = "run-property-facts-indexed"
+    candidate_ref = "candidate-indexed"
+    candidate = _candidate(candidate_ref=candidate_ref)
+    record: dict[str, object] = {
+        "run_id": run_id,
+        "principal_id": principal_id,
+        "status": "completed_partial",
+        "summary": {"fact_enrichment_jobs": {}},
+    }
+    observed: list[dict[str, str]] = []
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_run_database_url",
+        lambda: "postgresql://durable.test/property",
+    )
+
+    def _load_indexed(**kwargs: str) -> dict[str, object]:
+        observed.append(dict(kwargs))
+        return {"candidate": copy.deepcopy(candidate)}
+
+    monkeypatch.setattr(
+        product_service._property_search_storage,
+        "_load_property_research_packet_link_for_run",
+        _load_indexed,
+    )
+
+    hydrated = product_service._property_fact_find_candidate(
+        record,
+        candidate_ref=candidate_ref,
+    )
+
+    assert hydrated == candidate
+    assert observed == [
+        {
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "candidate_ref": candidate_ref,
+        }
+    ]
+    assert record["summary"]["research_candidates"] == [candidate]
+    bounded = property_search_storage._bounded_property_search_run_payload(record)
+    bounded_candidates = list(
+        dict(bounded.get("summary") or {}).get("research_candidates") or []
+    )
+    assert len(bounded_candidates) == 1
+    assert bounded_candidates[0]["candidate_ref"] == candidate_ref
+
+
+def test_fact_candidate_recovers_membership_removed_by_legacy_partial_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-recovery"
+    run_id = "run-property-facts-recovery"
+    candidate_ref = "candidate-recovery"
+    candidate = _candidate(candidate_ref=candidate_ref)
+    record: dict[str, object] = {
+        "run_id": run_id,
+        "principal_id": principal_id,
+        "status": "completed_partial",
+        "summary": {
+            "fact_enrichment_jobs": {
+                "pfe_recovery": {
+                    "job_id": "pfe_recovery",
+                    "candidate_ref": candidate_ref,
+                    "status": "queued",
+                }
+            }
+        },
+    }
+    active_lookups: list[dict[str, str]] = []
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_run_database_url",
+        lambda: "postgresql://durable.test/property",
+    )
+    monkeypatch.setattr(
+        product_service._property_search_storage,
+        "_load_property_research_packet_link_for_run",
+        lambda **_kwargs: None,
+    )
+
+    def _load_active(**kwargs: str) -> dict[str, object]:
+        active_lookups.append(dict(kwargs))
+        return {"candidate": copy.deepcopy(candidate)}
+
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_research_packet_link_storage",
+        _load_active,
+    )
+
+    hydrated = product_service._property_fact_find_candidate(
+        record,
+        candidate_ref=candidate_ref,
+    )
+
+    assert hydrated == candidate
+    assert active_lookups == [
+        {"principal_id": principal_id, "candidate_ref": candidate_ref}
+    ]
+    assert record["summary"]["research_candidates"] == [candidate]
 
 
 def test_fact_enrichment_api_is_authenticated_same_origin_and_never_accepts_url(

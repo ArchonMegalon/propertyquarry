@@ -3048,6 +3048,7 @@ def _compare_and_swap_property_search_run_record(
     run_id: str,
     expected_record_sha256: str,
     updated_record: dict[str, object],
+    preserve_unprojected_packet_memberships: bool = False,
 ) -> dict[str, object]:
     """Atomically replace one exact run revision and its packet projections."""
 
@@ -3160,6 +3161,7 @@ def _compare_and_swap_property_search_run_record(
                         principal_id=normalized_principal,
                         run_id=normalized_run_id,
                         links=packet_links,
+                        prune_missing=not preserve_unprojected_packet_memberships,
                     )
                     persisted_record = _property_search_run_canonicalize_record(
                         dict(persisted_row[0] or {})

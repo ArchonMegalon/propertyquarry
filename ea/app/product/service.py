@@ -6025,7 +6025,70 @@ def _property_fact_find_candidate(
     for candidate in candidates:
         if hmac.compare_digest(property_fact_candidate_ref(candidate), normalized_ref):
             return candidate
-    return None
+    # Durable run rows deliberately omit large candidate arrays after their
+    # bounded research packets have been indexed. Fact enrichment is a
+    # one-candidate partial mutation, so hydrate only the exact run membership
+    # instead of expanding the full run or treating omitted packets as deleted.
+    principal_id = str(record.get("principal_id") or "").strip()
+    run_id = str(record.get("run_id") or "").strip()
+    if not principal_id or not run_id or not _property_search_run_database_url():
+        return None
+    try:
+        indexed_link = (
+            _property_search_storage._load_property_research_packet_link_for_run(
+                principal_id=principal_id,
+                run_id=run_id,
+                candidate_ref=normalized_ref,
+            )
+        )
+        # A partial writer from an older runtime may already have removed this
+        # exact membership before the preservation contract was introduced.
+        # Recover only when the run still carries the fact-job binding that
+        # could have been created solely from that candidate, then reinsert the
+        # membership on the next partial CAS.
+        summary_jobs = (
+            dict(dict(record.get("summary") or {}).get("fact_enrichment_jobs") or {})
+            if isinstance(record.get("summary"), dict)
+            else {}
+        )
+        job_binds_candidate = any(
+            isinstance(job, dict)
+            and hmac.compare_digest(
+                str(job.get("candidate_ref") or "").strip(),
+                normalized_ref,
+            )
+            for job in summary_jobs.values()
+        )
+        if not isinstance(indexed_link, dict) and job_binds_candidate:
+            indexed_link = _load_property_research_packet_link_storage(
+                principal_id=principal_id,
+                candidate_ref=normalized_ref,
+            )
+    except Exception:
+        indexed_link = None
+    indexed_candidate = (
+        dict(indexed_link.get("candidate") or {})
+        if isinstance(indexed_link, dict)
+        and isinstance(indexed_link.get("candidate"), dict)
+        else {}
+    )
+    if (
+        not indexed_candidate
+        or not hmac.compare_digest(
+            property_fact_candidate_ref(indexed_candidate),
+            normalized_ref,
+        )
+    ):
+        return None
+    if isinstance(record, dict):
+        hydrated_summary = dict(record.get("summary") or {})
+        # Keep the partial run row bounded to this exact packet. Other
+        # candidates remain in their indexed memberships and are hydrated on
+        # demand; sequential enrichments therefore cannot rebuild the large
+        # candidate array that compaction intentionally removed.
+        hydrated_summary["research_candidates"] = [indexed_candidate]
+        record["summary"] = hydrated_summary
+    return indexed_candidate
 
 
 def _property_fact_update_candidate_copies(
@@ -6170,6 +6233,7 @@ def _property_fact_mutate_run_record(
                 run_id=normalized_run_id,
                 expected_record_sha256=property_search_run_record_sha256(current),
                 updated_record=working,
+                preserve_unprojected_packet_memberships=True,
             )
             status = str(stored.get("status") or "").strip().lower()
             if status == "record_changed":
