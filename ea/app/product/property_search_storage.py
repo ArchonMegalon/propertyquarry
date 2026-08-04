@@ -25,7 +25,8 @@ from app.product.property_research_packet_links import (
 )
 
 
-_PROPERTY_SEARCH_RUN_TTL_SECONDS = 90 * 24 * 60 * 60
+_PROPERTY_SEARCH_RUN_TTL_SECONDS = 30 * 24 * 60 * 60
+_PROPERTY_SEARCH_MEMBERSHIP_TTL_SECONDS = 14 * 24 * 60 * 60
 _PROPERTY_SEARCH_RUN_DB_CONNECT_RETRY_SECONDS = 45.0
 _PROPERTY_SEARCH_RUN_DB_CONNECT_TIMEOUT_SECONDS = 3
 _PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION = 3
@@ -35,7 +36,7 @@ _PROPERTY_SEARCH_RUN_COMPACT_SOURCE_LIMIT = 64
 _PROPERTY_SEARCH_RUN_COMPACT_NESTED_LIST_LIMIT = 32
 _PROPERTY_SEARCH_RUN_COMPACT_TEXT_LIMIT = 2048
 _PROPERTY_SEARCH_RUN_DEFAULT_MAX_PAYLOAD_BYTES = 512 * 1024
-_PROPERTY_SEARCH_RUN_DEFAULT_MAX_ROWS_PER_PRINCIPAL = 500
+_PROPERTY_SEARCH_RUN_DEFAULT_MAX_ROWS_PER_PRINCIPAL = 100
 _PROPERTY_SEARCH_RUN_DEFAULT_RETENTION_BATCH_SIZE = 250
 _PROPERTY_SEARCH_ORPHANED_QUEUED_DEFAULT_STALE_SECONDS = 24 * 60 * 60
 _PROPERTY_SCOUT_COMPLETION_OBSERVATION_SCHEMA = (
@@ -3825,34 +3826,99 @@ def _list_property_search_run_records(
     return tuple(results)
 
 
-def _prune_property_search_run_records() -> dict[str, int]:
+def _enforce_property_search_global_run_quotas() -> dict[str, int]:
+    """Converge inactive over-quota principals in bounded, lock-safe batches."""
+
+    result = {
+        "quota_principals_processed": 0,
+        "quota_principals_blocked": 0,
+        "quota_runs_compacted": 0,
+        "quota_runs_deleted": 0,
+    }
     if not _property_search_run_database_url():
-        return {"memberships_deleted": 0, "runs_compacted": 0}
-    retention_seconds = _property_search_run_retention_seconds()
-    if retention_seconds <= 0:
-        return {"memberships_deleted": 0, "runs_compacted": 0}
+        return result
+    row_limit = _property_search_run_max_rows_per_principal()
+    principal_limit = min(_property_search_retention_batch_size(), 256)
+    with _property_search_run_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT principal_id
+                FROM property_search_runs
+                GROUP BY principal_id
+                HAVING COUNT(*) > %s
+                ORDER BY COUNT(*) DESC, principal_id ASC
+                LIMIT %s
+                """,
+                (row_limit, principal_limit),
+            )
+            principals = tuple(
+                str(row[0] or "").strip()
+                for row in list(cur.fetchall() or ())
+                if row and str(row[0] or "").strip()
+            )
+    for principal_id in principals:
+        try:
+            with _property_search_run_connect() as conn:
+                with _property_search_run_transaction(conn):
+                    with conn.cursor() as cur:
+                        _set_property_search_writer_contract(cur)
+                        quota = _enforce_property_search_principal_run_quota(
+                            cur,
+                            principal_id=principal_id,
+                        )
+        except RuntimeError as exc:
+            if str(exc) == "property_search_run_quota_exceeded_legal_hold_or_active":
+                result["quota_principals_blocked"] += 1
+                continue
+            raise
+        result["quota_principals_processed"] += 1
+        result["quota_runs_compacted"] += int(quota.get("compacted") or 0)
+        result["quota_runs_deleted"] += int(quota.get("deleted") or 0)
+    return result
+
+
+def _prune_property_search_run_records() -> dict[str, int]:
+    empty = {
+        "memberships_deleted": 0,
+        "runs_compacted": 0,
+        "quota_principals_processed": 0,
+        "quota_principals_blocked": 0,
+        "quota_runs_compacted": 0,
+        "quota_runs_deleted": 0,
+    }
+    if not _property_search_run_database_url():
+        return empty
     _require_property_search_run_schema()
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=retention_seconds)).isoformat()
+    quota_result = _enforce_property_search_global_run_quotas()
+    retention_seconds = _property_search_run_retention_seconds()
+    membership_retention_seconds = _property_search_membership_retention_seconds()
+    if retention_seconds <= 0 and membership_retention_seconds <= 0:
+        return {**empty, **quota_result}
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(seconds=retention_seconds)
+    ).isoformat()
+    membership_cutoff = (
+        datetime.now(timezone.utc) - timedelta(seconds=membership_retention_seconds)
+    ).isoformat()
     pruned_at = _now_iso()
     batch_size = _property_search_retention_batch_size()
     with _property_search_run_connect() as conn:
         with _property_search_run_transaction(conn):
             with conn.cursor() as cur:
                 _set_property_search_writer_contract(cur)
-                cur.execute(
-                    """
+                if membership_retention_seconds > 0:
+                    cur.execute(
+                        """
                     WITH expired AS (
                         SELECT memberships.ctid
                         FROM property_research_packet_run_memberships AS memberships
-                        JOIN property_search_runs AS runs
-                          ON runs.principal_id = memberships.principal_id
-                         AND runs.run_id = memberships.run_id
                         JOIN property_research_packet_links AS links
                           ON links.principal_id = memberships.principal_id
                          AND links.candidate_ref = memberships.candidate_ref
-                        WHERE runs.updated_at < %s
+                        WHERE memberships.created_at < %s
                           AND links.retention_state <> 'legal_hold'
-                        ORDER BY runs.updated_at ASC, memberships.run_id ASC,
+                        ORDER BY memberships.created_at ASC, memberships.run_id ASC,
                                  memberships.candidate_ref ASC
                         FOR UPDATE OF memberships SKIP LOCKED
                         LIMIT %s
@@ -3862,9 +3928,11 @@ def _prune_property_search_run_records() -> dict[str, int]:
                     WHERE memberships.ctid = expired.ctid
                     RETURNING memberships.principal_id, memberships.candidate_ref
                     """,
-                    (cutoff, batch_size),
-                )
-                expired_memberships = tuple(cur.fetchall() or ())
+                        (membership_cutoff, batch_size),
+                    )
+                    expired_memberships = tuple(cur.fetchall() or ())
+                else:
+                    expired_memberships = ()
                 refs_by_principal: dict[str, set[str]] = {}
                 for row in expired_memberships:
                     refs_by_principal.setdefault(str(row[0] or "").strip(), set()).add(
@@ -3876,8 +3944,9 @@ def _prune_property_search_run_records() -> dict[str, int]:
                         principal_id=membership_principal,
                         candidate_refs=candidate_refs,
                     )
-                cur.execute(
-                    f"""
+                if retention_seconds > 0:
+                    cur.execute(
+                        f"""
                 WITH stale_runs AS (
                     SELECT
                         principal_id,
@@ -3913,12 +3982,15 @@ def _prune_property_search_run_records() -> dict[str, int]:
                   AND runs.run_id = stale_runs.run_id
                 RETURNING runs.run_id
                 """,
-                    (cutoff, batch_size, pruned_at),
-                )
-                compacted_runs = tuple(cur.fetchall() or ())
+                        (cutoff, batch_size, pruned_at),
+                    )
+                    compacted_runs = tuple(cur.fetchall() or ())
+                else:
+                    compacted_runs = ()
     return {
         "memberships_deleted": len(expired_memberships),
         "runs_compacted": len(compacted_runs),
+        **quota_result,
     }
 
 
@@ -4161,14 +4233,43 @@ def _property_search_run_retention_seconds() -> int:
     return max(0, min(parsed, 10 * 365 * 24 * 60 * 60))
 
 
+def _property_search_membership_retention_seconds() -> int:
+    raw_value = str(
+        os.getenv("EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS") or ""
+    ).strip()
+    if not raw_value:
+        return _PROPERTY_SEARCH_MEMBERSHIP_TTL_SECONDS
+    try:
+        parsed = int(raw_value)
+    except Exception:
+        return _PROPERTY_SEARCH_MEMBERSHIP_TTL_SECONDS
+    return max(0, min(parsed, 10 * 365 * 24 * 60 * 60))
+
+
 def property_search_run_retention_policy() -> dict[str, str]:
     retention_seconds = _property_search_run_retention_seconds()
+    membership_retention_seconds = _property_search_membership_retention_seconds()
     return {
         "property_search_run_retention_status": "enabled" if retention_seconds > 0 else "disabled",
         "property_search_run_retention_seconds": str(retention_seconds),
         "property_search_run_retention_days": str(round(retention_seconds / 86400, 2)),
         "property_search_run_retention_env": "EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS",
         "property_search_run_retention_default_seconds": str(_PROPERTY_SEARCH_RUN_TTL_SECONDS),
+        "property_search_membership_retention_status": (
+            "enabled" if membership_retention_seconds > 0 else "disabled"
+        ),
+        "property_search_membership_retention_seconds": str(
+            membership_retention_seconds
+        ),
+        "property_search_membership_retention_days": str(
+            round(membership_retention_seconds / 86400, 2)
+        ),
+        "property_search_membership_retention_env": (
+            "EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS"
+        ),
+        "property_search_membership_retention_default_seconds": str(
+            _PROPERTY_SEARCH_MEMBERSHIP_TTL_SECONDS
+        ),
         "property_search_run_max_payload_bytes": str(
             _property_search_run_max_payload_bytes()
         ),

@@ -13,6 +13,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+from contextlib import nullcontext
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14347,16 +14348,22 @@ def test_property_search_runs_can_be_cleared_for_current_principal_only() -> Non
 
 def test_property_search_runs_keep_recent_history_but_prune_stale_payloads_by_default(monkeypatch) -> None:
     monkeypatch.delenv("EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS", raising=False)
-    assert product_service._property_search_run_retention_seconds() == 90 * 24 * 60 * 60
+    monkeypatch.delenv("EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS", raising=False)
+    assert product_service._property_search_run_retention_seconds() == 30 * 24 * 60 * 60
     assert property_search_storage.property_search_run_retention_policy() == {
         "property_search_run_retention_status": "enabled",
-        "property_search_run_retention_seconds": "7776000",
-        "property_search_run_retention_days": "90.0",
+        "property_search_run_retention_seconds": "2592000",
+        "property_search_run_retention_days": "30.0",
         "property_search_run_retention_env": "EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS",
-        "property_search_run_retention_default_seconds": "7776000",
+        "property_search_run_retention_default_seconds": "2592000",
+        "property_search_membership_retention_status": "enabled",
+        "property_search_membership_retention_seconds": "1209600",
+        "property_search_membership_retention_days": "14.0",
+        "property_search_membership_retention_env": "EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS",
+        "property_search_membership_retention_default_seconds": "1209600",
         "property_search_run_max_payload_bytes": "524288",
         "property_search_run_max_payload_env": "EA_PROPERTY_SEARCH_RUN_MAX_PAYLOAD_BYTES",
-        "property_search_run_max_rows_per_principal": "500",
+        "property_search_run_max_rows_per_principal": "100",
         "property_search_run_max_rows_per_principal_env": "EA_PROPERTY_SEARCH_RUN_MAX_ROWS_PER_PRINCIPAL",
         "property_search_retention_batch_size": "250",
         "property_search_retention_batch_size_env": "EA_PROPERTY_SEARCH_RETENTION_BATCH_SIZE",
@@ -14365,7 +14372,7 @@ def test_property_search_runs_keep_recent_history_but_prune_stale_payloads_by_de
     run_id = "retained-recent-run"
     stale_run_id = "pruned-stale-run"
     principal_id = "exec-property-search-run-retained"
-    old_timestamp = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    old_timestamp = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
     stale_timestamp = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
     old_record = product_service._new_property_search_run_record(
         run_id=run_id,
@@ -19475,6 +19482,85 @@ def test_property_search_run_postgres_retention_compacts_without_deleting_saved_
     assert loaded["summary"]["ranked_candidates"] == [{"candidate_ref": "saved-result", "title": "Saved result"}]
     assert "sources" not in loaded["summary"]
     assert any(row.get("run_id") == run_id for row in listed)
+
+
+def test_property_search_global_quota_converges_inactive_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Cursor:
+        def __init__(self, rows: tuple[tuple[str], ...] = ()) -> None:
+            self.rows = rows
+            self.executed: list[tuple[str, tuple[object, ...]]] = []
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return False
+
+        def execute(self, query: str, params: tuple[object, ...] = ()) -> None:
+            self.executed.append((query, params))
+
+        def fetchall(self) -> tuple[tuple[str], ...]:
+            return self.rows
+
+    class _Connection:
+        def __init__(self, cursor: _Cursor) -> None:
+            self._cursor = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self) -> _Cursor:
+            return self._cursor
+
+    discovery_cursor = _Cursor((("inactive-principal",),))
+    maintenance_cursor = _Cursor()
+    connections = iter(
+        (_Connection(discovery_cursor), _Connection(maintenance_cursor))
+    )
+    enforced: list[str] = []
+    monkeypatch.setattr(
+        property_search_storage,
+        "_property_search_run_database_url",
+        lambda: "postgresql://configured",
+    )
+    monkeypatch.setattr(
+        property_search_storage,
+        "_property_search_run_connect",
+        lambda: next(connections),
+    )
+    monkeypatch.setattr(
+        property_search_storage,
+        "_property_search_run_transaction",
+        lambda _conn: nullcontext(),
+    )
+    monkeypatch.setattr(
+        property_search_storage,
+        "_set_property_search_writer_contract",
+        lambda _cur: None,
+    )
+    monkeypatch.setattr(
+        property_search_storage,
+        "_enforce_property_search_principal_run_quota",
+        lambda _cur, *, principal_id: (
+            enforced.append(principal_id) or {"compacted": 7, "deleted": 5}
+        ),
+    )
+
+    result = property_search_storage._enforce_property_search_global_run_quotas()
+
+    assert enforced == ["inactive-principal"]
+    assert result == {
+        "quota_principals_processed": 1,
+        "quota_principals_blocked": 0,
+        "quota_runs_compacted": 7,
+        "quota_runs_deleted": 5,
+    }
+    assert "HAVING COUNT(*) > %s" in discovery_cursor.executed[0][0]
 
 
 def test_property_search_run_listing_requires_principal_unless_admin(monkeypatch: pytest.MonkeyPatch) -> None:

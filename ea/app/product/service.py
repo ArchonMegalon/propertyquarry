@@ -748,7 +748,7 @@ _PROPERTY_SCOUT_FLOORPLAN_ARCHIVE_HOST_MARKERS = (
     "justimmo.at",
     "immobilien.derstandard.at",
 )
-_PROPERTY_SEARCH_RUN_TTL_SECONDS = 90 * 24 * 60 * 60
+_PROPERTY_SEARCH_RUN_TTL_SECONDS = 30 * 24 * 60 * 60
 _PROPERTY_SEARCH_RUN_STALE_DEFAULT_SECONDS = 20 * 60
 _PROPERTY_SEARCH_RUN_STAGES = 8
 _PROPERTY_SEARCH_RUN_REGISTRY: dict[str, dict[str, object]] = {}
@@ -2729,14 +2729,7 @@ def _property_search_run_expired(at_iso: str, *, ttl_seconds: int = _PROPERTY_SE
 
 
 def _property_search_run_retention_seconds() -> int:
-    raw_value = str(os.getenv("EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS") or "").strip()
-    if not raw_value:
-        return _PROPERTY_SEARCH_RUN_TTL_SECONDS
-    try:
-        parsed = int(raw_value)
-    except Exception:
-        return _PROPERTY_SEARCH_RUN_TTL_SECONDS
-    return max(0, min(parsed, 10 * 365 * 24 * 60 * 60))
+    return _property_search_storage._property_search_run_retention_seconds()  # type: ignore[attr-defined]
 
 
 def _property_search_run_stale_seconds() -> int:
