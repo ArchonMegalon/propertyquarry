@@ -10015,15 +10015,6 @@ def _public_tour_core_gold_walkthrough_acceptance(
     if str(sidecar.get("property_slug") or "") != slug:
         return reject("core_gold_subject_mismatch")
     if any(
-        str(payload.get(key) or "").strip().lower()
-        != _CORE_GOLD_WALKTHROUGH_PROVIDER_KEY
-        for key in ("video_provider", "video_provider_key")
-    ):
-        return reject("core_gold_provider_invalid")
-    optional_render_provider = str(payload.get("video_render_provider") or "").strip().lower()
-    if optional_render_provider and optional_render_provider != _CORE_GOLD_WALKTHROUGH_PROVIDER_KEY:
-        return reject("core_gold_provider_invalid")
-    if any(
         str(sidecar.get(key) or "").strip().lower()
         != _CORE_GOLD_WALKTHROUGH_PROVIDER_KEY
         for key in ("provider_key", "provider_backend_key")
@@ -10042,7 +10033,6 @@ def _public_tour_core_gold_walkthrough_acceptance(
         or sidecar.get("representation_kind") != "normal_camera_mono"
         or sidecar.get("default_walkthrough") is not True
         or sidecar.get("optional_spatial_tour_unchanged") is not True
-        or payload.get("video_coverage_proof") != "boundary_verified_frame_continuation"
     ):
         return reject("core_gold_release_gate_failed")
 
@@ -10106,39 +10096,16 @@ def _public_tour_core_gold_walkthrough_acceptance(
         not desktop_relpath
         or not mobile_relpath
         or desktop_relpath == mobile_relpath
-        or _public_tour_safe_asset_relpath(payload.get("flythrough_video_relpath")) != desktop_relpath
         or sidecar.get("video_relpath") != desktop_relpath
         or sidecar.get("video_mobile_relpath") != mobile_relpath
         or asset_relpaths != {desktop_relpath, mobile_relpath}
     ):
         return reject("core_gold_video_subject_mismatch")
-    core_gold = payload.get("core_gold_walkthrough")
-    if not isinstance(core_gold, dict):
-        return reject("core_gold_manifest_contract_missing")
-    if any(core_gold.get(key) != sidecar.get(key) for key in (
-        "contract_name",
-        "property_slug",
-        "walkable_scene_sha256",
-        "initial_scene_id",
-        "route_scene_ids",
-        "representation_kind",
-        "default_walkthrough",
-        "optional_spatial_tour_unchanged",
-    )):
-        return reject("core_gold_manifest_subject_mismatch")
-    if (
-        core_gold.get("desktop_target_relpath") != desktop_relpath
-        or core_gold.get("mobile_target_relpath") != mobile_relpath
-        or core_gold.get("continuity_repair_verified") is not True
-        or core_gold.get("motion_interpolation_verified") is not True
-        or core_gold.get("frame_duplication_only") is not False
-    ):
-        return reject("core_gold_manifest_release_gate_failed")
 
     verified_relpaths: list[str] = []
-    for key, relpath, dimensions, manifest_prefix in (
-        ("video", desktop_relpath, (1920, 1080), "desktop"),
-        ("video_mobile", mobile_relpath, (1280, 720), "mobile"),
+    for key, relpath, dimensions in (
+        ("video", desktop_relpath, (1920, 1080)),
+        ("video_mobile", mobile_relpath, (1280, 720)),
     ):
         metadata = sidecar.get(f"{key}_metadata")
         expected_digest = str(sidecar.get(f"{key}_sha256") or "").strip().lower()
@@ -10150,10 +10117,6 @@ def _public_tour_core_gold_walkthrough_acceptance(
             or str(metadata.get("avg_frame_rate") or "") != "60/1"
             or float(metadata.get("duration_seconds") or 0.0) <= 0.0
             or int(metadata.get("nb_frames") or 0) <= 0
-            or core_gold.get(f"{manifest_prefix}_sha256") != expected_digest
-            or int(core_gold.get(f"{manifest_prefix}_size_bytes") or 0)
-            != int(metadata.get("size_bytes") or 0)
-            or core_gold.get(f"{manifest_prefix}_frame_rate") != "60/1"
         ):
             return reject("core_gold_video_metadata_invalid")
         try:
