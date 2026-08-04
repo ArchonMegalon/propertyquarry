@@ -253,6 +253,16 @@ OODA summary should be above the fold in the dossier:
 - `Decide`: keep, inspect, reject, or wait
 - `Act`: next step
 
+The qualitative assessment may use 1minAI only through the shared EA 1min
+Manager. It may explain the deterministic score and propose at most two lazy
+research actions; it must never change the score or turn an unknown into a
+fact. Google Maps research runs only in the durable worker through a dedicated
+`propertyquarry-operator` BrowserAct binding. A distance becomes evidence only
+when the result is bound to exact listing coordinates, a validated Google Maps
+URL, an identifier embedded in that URL, destination coordinates, a signed
+attestation, and a bounded freshness window. Provider failure or incomplete
+output leaves the fact unknown.
+
 ## 5. Data Contract
 
 The workbench should receive one normalized payload from the backend.

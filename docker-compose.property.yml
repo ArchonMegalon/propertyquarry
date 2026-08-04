@@ -307,8 +307,9 @@ services:
       PROPERTYQUARRY_SEARCH_HTML_MAX_BYTES: "${PROPERTYQUARRY_SEARCH_HTML_MAX_BYTES:-8388608}"
       # The durable worker is the only PropertyQuarry service allowed to call
       # 1minAI or BrowserAct. OneMin selection still goes through EA Manager;
-      # Google Maps extraction additionally requires the user's governed
-      # connector binding and therefore fails closed when that binding is absent.
+      # Google Maps extraction uses a dedicated worker-owned research binding;
+      # it never impersonates a PropertyQuarry user or exposes the API key to
+      # the public API process.
       PROPERTYQUARRY_ONEMIN_USE_EA_MANAGER: "${PROPERTYQUARRY_ONEMIN_USE_EA_MANAGER:-1}"
       PROPERTYQUARRY_ONEMIN_EVALUATION_ENABLED: "${PROPERTYQUARRY_ONEMIN_EVALUATION_ENABLED:-0}"
       PROPERTYQUARRY_ONEMIN_EVALUATION_MODEL: "${PROPERTYQUARRY_ONEMIN_EVALUATION_MODEL:-deepseek-chat}"
@@ -318,6 +319,7 @@ services:
       BROWSERACT_API_KEY: "${BROWSERACT_API_KEY:-}"
       PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_RUN_URL: "${PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_RUN_URL:-}"
       PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID: "${PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID:-}"
+      PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_PRINCIPAL_ID: "${PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_PRINCIPAL_ID:-propertyquarry-operator}"
       # The fallback fleet stays in its existing host-owned manifest. Mount it
       # read-only into the worker so EA 1min Manager can rotate away from a
       # depleted slot without copying dozens of credentials into Compose.

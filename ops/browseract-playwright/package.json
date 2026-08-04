@@ -1,0 +1,14 @@
+{
+  "name": "propertyquarry-browseract-operator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Governed BrowserAct account operator for PropertyQuarry Google Maps workflow provisioning.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "playwright": "1.62.1"
+  }
+}

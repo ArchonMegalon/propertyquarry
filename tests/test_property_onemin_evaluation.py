@@ -14,6 +14,7 @@ from app.product.property_fact_enrichment import (
     property_fact_distance_specs,
 )
 from app.product.property_onemin_evaluation import (
+    _google_maps_url_identity,
     property_onemin_safe_public_packet,
     run_property_google_maps_ooda,
     run_property_onemin_evaluation,
@@ -138,6 +139,93 @@ def _fixtures() -> tuple[dict[str, object], list[dict[str, object]], dict[str, o
     return facts, plan, spec
 
 
+def test_google_maps_url_identity_uses_only_exact_google_url_material() -> None:
+    final_url = (
+        "https://www.google.com/maps/place/Lidl/@48.23359,16.36534,17z/"
+        "data=!4m6!3m5!1s0x476d079da7c03951:0x629cc3d9b227236f!8m2"
+        "!3d48.23359!4d16.36534"
+    )
+
+    place_id, latitude, longitude = _google_maps_url_identity(final_url)
+
+    assert place_id == "0x476d079da7c03951:0x629cc3d9b227236f"
+    assert latitude == pytest.approx(48.23359)
+    assert longitude == pytest.approx(16.36534)
+    assert _google_maps_url_identity(
+        "https://example.test/maps/place/Lidl/@48.2,16.3"
+    ) == ("", None, None)
+
+
+def test_maps_ooda_accepts_canary_shape_only_when_url_binds_identity_and_coordinates(
+    monkeypatch,
+) -> None:
+    facts, plan, spec = _fixtures()
+
+    class _CanaryShapeToolExecution:
+        def execute_invocation(
+            self, request: ToolInvocationRequest
+        ) -> ToolInvocationResult:
+            return ToolInvocationResult(
+                tool_name=request.tool_name,
+                action_kind=request.action_kind,
+                target_ref="google-maps-canary",
+                output_json={
+                    "facts_json": {
+                        "place_name": "Lidl Österreich",
+                        "place_category": "Discounter",
+                        "place_id": None,
+                        "destination_latitude": None,
+                        "destination_longitude": None,
+                        "final_surface_url": (
+                            "https://www.google.com/maps/place/Lidl/"
+                            "@48.23359,16.36534,17z/data=!4m6!3m5!1s"
+                            "0x476d079da7c03951:0x629cc3d9b227236f!8m2"
+                            "!3d48.23359!4d16.36534"
+                        ),
+                        "visible_text": (
+                            "Lidl Österreich · Discounter · "
+                            "Klosterneuburger Str. 79, 1200 Wien"
+                        ),
+                    }
+                },
+                receipt_json={"requested_workflow_id": "workflow-google-maps"},
+            )
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID", raising=False
+    )
+    research, completed = run_property_google_maps_ooda(
+        tool_execution=_CanaryShapeToolExecution(),
+        principal_id="property-user-42",
+        run_id="run-canary",
+        candidate_ref="candidate-canary",
+        property_url="https://example.test/listing/42",
+        facts=facts,
+        plan=plan,
+        specs=[spec],
+        evaluation={
+            "status": "succeeded",
+            "ooda": {
+                "actions": [
+                    {
+                        "fact_key": "nearest_supermarket_m",
+                        "label": "Nearest supermarket",
+                        "travel_mode": "walking",
+                        "priority": 1,
+                    }
+                ]
+            },
+        },
+    )
+
+    action = completed["ooda"]["actions"][0]
+    assert action["status"] == "verified"
+    assert action["provider_receipt"]["provider_object_id"] == (
+        "0x476d079da7c03951:0x629cc3d9b227236f"
+    )
+    assert research["nearest_supermarket_m"] > 0
+
+
 def test_manager_backed_evaluation_drives_governed_maps_ooda(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.services.onemin_manager.active_onemin_manager",
@@ -214,6 +302,105 @@ def test_manager_backed_evaluation_drives_governed_maps_ooda(monkeypatch) -> Non
     validated = PropertyOneminEvaluationOut.model_validate(public_packet)
     assert validated.receipt.manager_routed is True
     assert validated.ooda.actions[0].browser_receipt.completed_actions
+
+
+def test_maps_ooda_keeps_worker_binding_authority_off_the_user_principal(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID", "maps-binding-test"
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_PRINCIPAL_ID",
+        "propertyquarry-operator",
+    )
+    facts, plan, spec = _fixtures()
+    evaluation = {
+        "status": "succeeded",
+        "ooda": {
+            "phase": "decide",
+            "actions": [
+                {
+                    "action_id": "maps-research-1",
+                    "fact_key": "nearest_supermarket_m",
+                    "label": "Nearest supermarket",
+                    "reason": "Resolve the selected soft filter.",
+                    "travel_mode": "walking",
+                    "priority": 1,
+                    "status": "planned",
+                }
+            ],
+        },
+    }
+    tool_execution = _FakeToolExecution()
+
+    research, completed = run_property_google_maps_ooda(
+        tool_execution=tool_execution,
+        principal_id="property-user-42",
+        run_id="run-test",
+        candidate_ref="candidate-test",
+        property_url="https://example.test/listing/42",
+        facts=facts,
+        plan=plan,
+        specs=[spec],
+        evaluation=evaluation,
+    )
+
+    request = tool_execution.requests[0]
+    assert request.payload_json["binding_id"] == "maps-binding-test"
+    assert request.context_json["principal_id"] == "propertyquarry-operator"
+    assert request.context_json["requesting_principal_id"] == "property-user-42"
+    assert request.context_json["provider_binding_principal_id"] == (
+        "propertyquarry-operator"
+    )
+    assert research["nearest_supermarket_m"] > 0
+    assert completed["ooda"]["actions"][0]["status"] == "verified"
+
+
+def test_maps_ooda_fails_closed_when_binding_principal_is_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID", "maps-binding-test"
+    )
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_PRINCIPAL_ID", raising=False
+    )
+    facts, plan, spec = _fixtures()
+    evaluation = {
+        "status": "succeeded",
+        "ooda": {
+            "actions": [
+                {
+                    "action_id": "maps-research-1",
+                    "fact_key": "nearest_supermarket_m",
+                    "label": "Nearest supermarket",
+                    "travel_mode": "walking",
+                    "priority": 1,
+                    "status": "planned",
+                }
+            ]
+        },
+    }
+    tool_execution = _FakeToolExecution()
+
+    research, completed = run_property_google_maps_ooda(
+        tool_execution=tool_execution,
+        principal_id="property-user-42",
+        run_id="run-test",
+        candidate_ref="candidate-test",
+        property_url="https://example.test/listing/42",
+        facts=facts,
+        plan=plan,
+        specs=[spec],
+        evaluation=evaluation,
+    )
+
+    assert research == {}
+    assert tool_execution.requests == []
+    action = completed["ooda"]["actions"][0]
+    assert action["status"] == "unavailable"
+    assert action["blockers"] == ["browser_binding_principal_required"]
 
 
 def test_evaluation_fails_closed_without_active_manager(monkeypatch) -> None:

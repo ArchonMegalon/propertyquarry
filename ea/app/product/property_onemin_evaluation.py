@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import os
 import re
@@ -583,6 +582,39 @@ def _google_maps_host(value: object) -> bool:
     ) and parsed.path.startswith("/maps")
 
 
+def _google_maps_url_identity(
+    value: object,
+) -> tuple[str, float | None, float | None]:
+    url = str(value or "").strip()
+    if not _google_maps_host(url):
+        return "", None, None
+    decoded = urllib.parse.unquote(url)
+    identifier_match = re.search(r"!1s([^!/?&#]{3,160})", decoded)
+    place_id = (
+        _bounded_text(identifier_match.group(1), limit=120)
+        if identifier_match
+        else ""
+    )
+    coordinate_match = re.search(
+        r"/@(-?\d{1,2}(?:\.\d+)?),(-?\d{1,3}(?:\.\d+)?)(?:,|/|$)",
+        decoded,
+    )
+    if coordinate_match is None:
+        coordinate_match = re.search(
+            r"!3d(-?\d{1,2}(?:\.\d+)?).*?!4d(-?\d{1,3}(?:\.\d+)?)",
+            decoded,
+        )
+    if coordinate_match is None:
+        return place_id, None, None
+    latitude = _finite_float(
+        coordinate_match.group(1), minimum=-90.0, maximum=90.0
+    )
+    longitude = _finite_float(
+        coordinate_match.group(2), minimum=-180.0, maximum=180.0
+    )
+    return place_id, latitude, longitude
+
+
 def _google_maps_query_url(
     *,
     latitude: float,
@@ -634,6 +666,14 @@ def _classification_for_google_result(
     haystack = f"{category} {place_name}".casefold()
     search_label = str(spec.get("search_label") or "").strip().casefold()
     aliases = {
+        "supermarket": (
+            "supermarket",
+            "supermarkt",
+            "discount supermarket",
+            "discounter",
+            "grocery",
+            "lebensmittel",
+        ),
         "underground": ("subway", "metro", "u-bahn", "underground"),
         "medical care": ("doctor", "clinic", "hospital", "medical"),
         "shopping center": ("shopping centre", "shopping center", "mall"),
@@ -835,6 +875,11 @@ def run_property_google_maps_ooda(
                 "listing_longitude": longitude,
                 "travel_mode": travel_mode,
             },
+            "workflow_inputs_json": {
+                "KeyWords": f"{search_label} near {latitude:.8f},{longitude:.8f}",
+                "language": "de",
+                "country": "at",
+            },
         }
         run_url = str(
             os.getenv("PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_RUN_URL") or ""
@@ -842,10 +887,32 @@ def run_property_google_maps_ooda(
         binding_id = str(
             os.getenv("PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID") or ""
         ).strip()
+        binding_principal_id = str(
+            os.getenv("PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_PRINCIPAL_ID") or ""
+        ).strip()
         if run_url:
             payload["run_url"] = run_url
         if binding_id:
             payload["binding_id"] = binding_id
+        if binding_id and not binding_principal_id:
+            browser_receipt = _browser_receipt(
+                action=action,
+                query_url=query_url,
+                final_url="",
+                place_name="",
+                evidence_text="",
+                status="unavailable",
+                blockers=("browser_binding_principal_required",),
+            )
+            completed_actions.append(
+                {
+                    **action,
+                    "status": "unavailable",
+                    "blockers": ["browser_binding_principal_required"],
+                    "browser_receipt": browser_receipt,
+                }
+            )
+            continue
         try:
             result = tool_execution.execute_invocation(
                 ToolInvocationRequest(
@@ -855,7 +922,17 @@ def run_property_google_maps_ooda(
                     action_kind="property.fact.research",
                     payload_json=payload,
                     context_json={
-                        "principal_id": str(principal_id or "").strip(),
+                        # BrowserAct is a worker-owned research provider, not an
+                        # end-user account. Keep its connector authority on the
+                        # dedicated service principal while retaining the user
+                        # principal only as an internal audit relationship.
+                        "principal_id": (
+                            binding_principal_id
+                            if binding_id
+                            else str(principal_id or "").strip()
+                        ),
+                        "requesting_principal_id": str(principal_id or "").strip(),
+                        "provider_binding_principal_id": binding_principal_id,
                         "suppress_telegram_delivery": True,
                     },
                 )
@@ -887,21 +964,31 @@ def run_property_google_maps_ooda(
         )
         place_name = _bounded_text(found.get("place_name"), limit=160)
         category = _bounded_text(found.get("place_category"), limit=160)
-        place_id = _bounded_text(found.get("place_id"), limit=120)
+        final_url = _bounded_text(found.get("final_surface_url"), limit=1800)
+        url_place_id, url_latitude, url_longitude = _google_maps_url_identity(
+            final_url
+        )
+        place_id = _bounded_text(
+            found.get("place_id") or url_place_id, limit=120
+        )
         poi_latitude = _finite_float(
             found.get("destination_latitude"), minimum=-90.0, maximum=90.0
         )
+        if poi_latitude is None:
+            poi_latitude = url_latitude
         poi_longitude = _finite_float(
             found.get("destination_longitude"), minimum=-180.0, maximum=180.0
         )
-        final_url = _bounded_text(found.get("final_surface_url"), limit=1800)
+        if poi_longitude is None:
+            poi_longitude = url_longitude
         visible_text = _bounded_text(found.get("visible_text"), limit=1200)
         classification = _classification_for_google_result(
             spec=spec,
             category=category,
             place_name=place_name,
         )
-        exact_key = str(found.get("fact_key") or "").strip() == fact_key
+        returned_fact_key = str(found.get("fact_key") or "").strip()
+        exact_key = not returned_fact_key or returned_fact_key == fact_key
         receipt_binds_place = bool(place_id and place_id in urllib.parse.unquote(final_url))
         valid = bool(
             exact_key

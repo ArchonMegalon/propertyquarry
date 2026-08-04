@@ -2062,6 +2062,11 @@ def test_tool_execution_service_executes_browseract_extract_with_native_workflow
                     "browseract_workflow_id": "workflow-google-maps",
                 }
             },
+            "browseract_workflow_input_names_json": [
+                "KeyWords",
+                "language",
+                "country",
+            ],
         },
         status="enabled",
     )
@@ -2081,8 +2086,8 @@ def test_tool_execution_service_executes_browseract_extract_with_native_workflow
             "status": "finished",
             "output": {
                 "string": json.dumps(
-                    {
-                        "facts_json": {
+                    [
+                        {
                             "fact_key": "supermarket",
                             "place_name": "BILLA",
                             "place_category": "Supermarket",
@@ -2092,7 +2097,7 @@ def test_tool_execution_service_executes_browseract_extract_with_native_workflow
                             "final_surface_url": "https://www.google.com/maps/dir/?api=1&destination=48.2251,16.4012",
                             "visible_text": "BILLA — Supermarket",
                         }
-                    }
+                    ]
                 )
             },
         },
@@ -2126,6 +2131,13 @@ def test_tool_execution_service_executes_browseract_extract_with_native_workflow
                     "listing_longitude": 16.4,
                     "travel_mode": "walking",
                 },
+                "workflow_inputs_json": {
+                    "KeyWords": "supermarket near 48.224,16.400",
+                    "language": "de",
+                    "country": "at",
+                    "unapproved_input": "must not cross the binding boundary",
+                    "service_name": "must not override the reserved input",
+                },
             },
             context_json={"principal_id": "exec-1"},
         )
@@ -2138,6 +2150,11 @@ def test_tool_execution_service_executes_browseract_extract_with_native_workflow
     assert json.loads(str(workflow_inputs["requested_fields_json"])) == result.output_json["requested_fields"]
     assert json.loads(str(workflow_inputs["account_hints_json"]))["fact_key"] == "supermarket"
     assert workflow_inputs["query_url"].startswith("https://www.google.com/maps/dir/")
+    assert workflow_inputs["KeyWords"] == "supermarket near 48.224,16.400"
+    assert workflow_inputs["language"] == "de"
+    assert workflow_inputs["country"] == "at"
+    assert "unapproved_input" not in workflow_inputs
+    assert workflow_inputs["service_name"] == "google_maps_distance_research"
     assert result.output_json["facts_json"]["place_id"] == "ChIJexample"
     assert result.output_json["verification_source"] == "browseract_workflow"
     assert result.output_json["requested_workflow_id"] == "workflow-google-maps"
