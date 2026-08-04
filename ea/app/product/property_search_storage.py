@@ -37,6 +37,10 @@ _PROPERTY_SEARCH_RUN_COMPACT_TEXT_LIMIT = 2048
 _PROPERTY_SEARCH_RUN_DEFAULT_MAX_PAYLOAD_BYTES = 512 * 1024
 _PROPERTY_SEARCH_RUN_DEFAULT_MAX_ROWS_PER_PRINCIPAL = 500
 _PROPERTY_SEARCH_RUN_DEFAULT_RETENTION_BATCH_SIZE = 250
+_PROPERTY_SEARCH_ORPHANED_QUEUED_DEFAULT_STALE_SECONDS = 24 * 60 * 60
+_PROPERTY_SCOUT_COMPLETION_OBSERVATION_SCHEMA = (
+    "propertyquarry.property_scout_completion_observation.v1"
+)
 _PROPERTY_SEARCH_RUN_TERMINAL_STATUSES = frozenset(
     {"processed", "completed", "completed_partial", "failed", "cancelled", "noop"}
 )
@@ -314,6 +318,13 @@ _PROPERTY_SEARCH_RUN_COMPACT_SUMMARY_KEYS = (
     "can_auto_repair",
     "repair_parent_run_id",
     "repair_parent_run_ids",
+    "execution_pickup_status",
+    "execution_pickup_reason",
+    "execution_pickup_attempt",
+    "execution_pickup_consecutive_attempt",
+    "orphaned_queue_recovered_at",
+    "orphaned_payload_original_bytes",
+    "orphaned_payload_original_sha256",
     "eligible_tour_total",
     "pending_tour_total",
     "ready_tour_total",
@@ -1628,6 +1639,15 @@ def _property_search_retention_batch_size() -> int:
     )
 
 
+def _property_search_orphaned_queued_stale_seconds() -> int:
+    return _bounded_int_env(
+        "EA_PROPERTY_SEARCH_ORPHANED_QUEUED_STALE_SECONDS",
+        default=_PROPERTY_SEARCH_ORPHANED_QUEUED_DEFAULT_STALE_SECONDS,
+        minimum=60 * 60,
+        maximum=30 * 24 * 60 * 60,
+    )
+
+
 def _property_search_json_bytes(value: object) -> bytes:
     return json.dumps(
         value,
@@ -1637,6 +1657,109 @@ def _property_search_json_bytes(value: object) -> bytes:
         allow_nan=False,
         default=str,
     ).encode("utf-8")
+
+
+def _bounded_property_scout_completion_observation(
+    payload: dict[str, object],
+    *,
+    run_id: str = "",
+    actor: str = "",
+) -> dict[str, object]:
+    """Project a scout completion into a small, evidence-linked audit event.
+
+    The complete run remains in ``property_search_runs`` and independently
+    materialized research packets. Observation rows are an audit/status feed;
+    duplicating candidate, source, and receipt trees there caused unbounded
+    TOAST growth without adding a second authoritative evidence source.
+    """
+
+    source = dict(payload or {})
+    source_bytes = _property_search_json_bytes(source)
+    bounded: dict[str, object] = {
+        "audit_schema": _PROPERTY_SCOUT_COMPLETION_OBSERVATION_SCHEMA,
+        "payload_retention_status": "bounded_completion_observation",
+        "run_id": str(run_id or source.get("run_id") or "").strip()[:256],
+        "status": str(source.get("status") or "processed").strip().lower()[:64],
+        "generated_at": str(source.get("generated_at") or _now_iso()).strip()[:64],
+        "actor": str(actor or source.get("actor") or "property_scout").strip()[:160],
+        "durable_run_storage": "property_search_runs",
+        "source_payload_bytes": len(source_bytes),
+        "source_payload_sha256": hashlib.sha256(source_bytes).hexdigest(),
+    }
+    for key in (
+        "sources_total",
+        "source_variant_total",
+        "provider_total",
+        "provider_group_total",
+        "raw_listing_total",
+        "scanned_listing_total",
+        "location_mismatch_candidate_total",
+        "listing_total",
+        "reviewed_listing_total",
+        "duplicate_listing_total",
+        "filtered_property_type_total",
+        "filtered_area_total",
+        "filtered_availability_total",
+        "filtered_floorplan_total",
+        "filtered_generic_page_total",
+        "filtered_listing_mode_total",
+        "filtered_low_fit_total",
+        "held_back_total",
+        "filtered_total",
+        "score_demoted_total",
+        "evaluating_candidate_total",
+        "required_fact_research_candidate_total",
+        "required_fact_research_attempted_total",
+        "required_fact_research_resolved_total",
+        "required_fact_research_pending_total",
+        "provider_repair_task_opened_total",
+        "provider_repair_task_existing_total",
+        "review_created_total",
+        "review_existing_total",
+        "review_deferred_total",
+        "notified_total",
+        "email_notified_total",
+        "notification_suppressed_total",
+        "tour_created_total",
+        "tour_existing_total",
+        "flythrough_rendered_total",
+        "flythrough_existing_total",
+        "flythrough_failed_total",
+        "high_fit_total",
+        "watch_notified_total",
+        "filter_near_miss_notified_total",
+        "failed_total",
+        "research_task_total",
+        "research_task_pending_total",
+    ):
+        value = source.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            bounded[key] = value
+    for key in (
+        "required_fact_resolution_pending",
+        "required_fact_resolution_exhausted",
+        "required_fact_hold_applied",
+        "can_auto_repair",
+    ):
+        if isinstance(source.get(key), bool):
+            bounded[key] = bool(source[key])
+    for key in (
+        "repair_status",
+        "repair_status_label",
+        "completion_reason",
+        "results_delivery_blocked_reason",
+        "customer_status_message",
+    ):
+        value = str(source.get(key) or "").strip()
+        if value:
+            bounded[key] = value[:320]
+    timing = dict(source.get("timing_ms") or {}) if isinstance(source.get("timing_ms"), dict) else {}
+    run_total = timing.get("run_total")
+    if isinstance(run_total, (int, float)) and not isinstance(run_total, bool):
+        bounded["run_total_ms"] = run_total
+    return bounded
 
 
 def _bounded_property_search_run_payload(
@@ -1786,6 +1909,51 @@ def _bounded_property_search_run_payload(
     return strict_minimal
 
 
+def _orphaned_property_search_run_terminal_record(
+    record: dict[str, object],
+    *,
+    recovered_at: str | None = None,
+) -> dict[str, object]:
+    """Fail closed and compact an old queued run that has no durable job."""
+
+    recovered = str(recovered_at or _now_iso()).strip() or _now_iso()
+    source = dict(record or {})
+    source_bytes = _property_search_json_bytes(source)
+    summary = dict(source.get("summary") or {}) if isinstance(source.get("summary"), dict) else {}
+    summary.update(
+        {
+            "status": "failed",
+            "repair_status": "degraded",
+            "repair_status_label": "Needs attention",
+            "can_auto_repair": True,
+            "execution_pickup_status": "expired_without_durable_job",
+            "execution_pickup_reason": "orphaned_queued_run_expired",
+            "orphaned_queue_recovered_at": recovered,
+            "orphaned_payload_original_bytes": len(source_bytes),
+            "orphaned_payload_original_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        }
+    )
+    events = [dict(row) for row in list(source.get("events") or [])[-15:] if isinstance(row, dict)]
+    events.append(
+        {
+            "at": recovered,
+            "step": "orphaned_queue_expired",
+            "status": "failed",
+            "message": "Queued search expired because no durable work job exists.",
+        }
+    )
+    terminal = {
+        **source,
+        "status": "failed",
+        "current_step": "orphaned_queue_expired",
+        "message": "Queued search expired because no durable work job exists.",
+        "updated_at": recovered,
+        "summary": summary,
+        "events": events,
+    }
+    return _bounded_property_search_run_payload(terminal)
+
+
 def _compact_property_search_run_json_sql() -> str:
     preference_drop_sql = " ".join(
         f"- '{key}'"
@@ -1871,6 +2039,294 @@ def _set_property_search_writer_contract(cursor: object) -> None:
             _property_search_erasure_key_id(),
         ),
     )
+
+
+def _compact_property_scout_completion_observations(
+    *,
+    limit: int = 25,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Compact legacy duplicated scout observations in bounded batches."""
+
+    if not _property_search_run_database_url():
+        return {
+            "candidates": 0,
+            "compacted": 0,
+            "payload_bytes_before": 0,
+            "payload_bytes_after": 0,
+        }
+    _require_property_search_run_schema()
+    batch_limit = max(1, min(int(limit or 0), 500))
+    predicate = """
+        event_type = 'property_scout_sync_completed'
+        AND COALESCE(payload_json->>'audit_schema', '') <> %s
+    """
+    if dry_run:
+        with _property_search_run_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)::bigint,
+                           COALESCE(SUM(pg_column_size(payload_json)), 0)::bigint
+                    FROM observation_events
+                    WHERE {predicate}
+                    """,
+                    (_PROPERTY_SCOUT_COMPLETION_OBSERVATION_SCHEMA,),
+                )
+                row = cur.fetchone() or (0, 0)
+        return {
+            "candidates": max(0, int(row[0] or 0)),
+            "compacted": 0,
+            "payload_bytes_before": max(0, int(row[1] or 0)),
+            "payload_bytes_after": 0,
+        }
+
+    with _property_search_run_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT observation_id
+                FROM observation_events
+                WHERE {predicate}
+                ORDER BY created_at ASC, observation_id ASC
+                LIMIT %s
+                """,
+                (_PROPERTY_SCOUT_COMPLETION_OBSERVATION_SCHEMA, batch_limit),
+            )
+            observation_ids = tuple(str(row[0] or "").strip() for row in cur.fetchall() or ())
+
+    compacted = 0
+    bytes_before = 0
+    bytes_after = 0
+    from psycopg.types.json import Json
+
+    for observation_id in observation_ids:
+        if not observation_id:
+            continue
+        with _property_search_run_connect() as conn:
+            with _property_search_run_transaction(conn):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT payload_json, pg_column_size(payload_json)
+                        FROM observation_events
+                        WHERE observation_id = %s AND {predicate}
+                        FOR UPDATE
+                        """,
+                        (
+                            observation_id,
+                            _PROPERTY_SCOUT_COMPLETION_OBSERVATION_SCHEMA,
+                        ),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        continue
+                    source = dict(row[0] or {})
+                    bounded = _bounded_property_scout_completion_observation(
+                        source,
+                        run_id=str(source.get("run_id") or ""),
+                        actor=str(source.get("actor") or "property_scout"),
+                    )
+                    cur.execute(
+                        """
+                        UPDATE observation_events
+                        SET payload_json = %s
+                        WHERE observation_id = %s
+                          AND COALESCE(payload_json->>'audit_schema', '') <> %s
+                        """,
+                        (
+                            Json(bounded),
+                            observation_id,
+                            _PROPERTY_SCOUT_COMPLETION_OBSERVATION_SCHEMA,
+                        ),
+                    )
+                    if not cur.rowcount:
+                        continue
+                    compacted += 1
+                    bytes_before += max(0, int(row[1] or 0))
+                    bytes_after += len(_property_search_json_bytes(bounded))
+    return {
+        "candidates": len(observation_ids),
+        "compacted": compacted,
+        "payload_bytes_before": bytes_before,
+        "payload_bytes_after": bytes_after,
+    }
+
+
+def _terminalize_orphaned_property_search_run_records(
+    *,
+    principal_id: str = "",
+    limit: int = 250,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Terminalize old queued rows only when no durable work job exists."""
+
+    if not _property_search_run_database_url():
+        return {
+            "candidates": 0,
+            "terminalized": 0,
+            "payload_bytes_before": 0,
+            "payload_bytes_after": 0,
+        }
+    _require_property_search_run_schema()
+    normalized_principal = str(principal_id or "").strip()
+    batch_limit = max(1, min(int(limit or 0), 2_000))
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=_property_search_orphaned_queued_stale_seconds()
+    )
+    principal_predicate = "AND runs.principal_id = %s" if normalized_principal else ""
+    predicate = f"""
+        runs.status IN ('queued', 'starting')
+        AND runs.updated_at < %s
+        AND COALESCE(
+            runs.payload_json->>'current_step',
+            runs.payload_json#>>'{{summary,current_step}}',
+            ''
+        ) IN ('', 'queued', 'starting')
+        {principal_predicate}
+        AND NOT EXISTS (
+            SELECT 1
+            FROM property_search_work_jobs AS jobs
+            WHERE jobs.principal_id = runs.principal_id
+              AND jobs.run_id = runs.run_id
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM property_research_packet_run_memberships AS memberships
+            JOIN property_research_packet_links AS links
+              ON links.principal_id = memberships.principal_id
+             AND links.candidate_ref = memberships.candidate_ref
+            WHERE memberships.principal_id = runs.principal_id
+              AND memberships.run_id = runs.run_id
+              AND links.retention_state = 'legal_hold'
+        )
+    """
+    predicate_params: tuple[object, ...] = (
+        (cutoff, normalized_principal) if normalized_principal else (cutoff,)
+    )
+    if dry_run:
+        with _property_search_run_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)::bigint,
+                           COALESCE(SUM(pg_column_size(runs.payload_json)), 0)::bigint
+                    FROM property_search_runs AS runs
+                    WHERE {predicate}
+                    """,
+                    predicate_params,
+                )
+                row = cur.fetchone() or (0, 0)
+        return {
+            "candidates": max(0, int(row[0] or 0)),
+            "terminalized": 0,
+            "payload_bytes_before": max(0, int(row[1] or 0)),
+            "payload_bytes_after": 0,
+        }
+
+    with _property_search_run_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT runs.principal_id, runs.run_id
+                FROM property_search_runs AS runs
+                WHERE {predicate}
+                ORDER BY runs.updated_at ASC, runs.run_id ASC
+                LIMIT %s
+                """,
+                (*predicate_params, batch_limit),
+            )
+            candidates = tuple(
+                (str(row[0] or "").strip(), str(row[1] or "").strip())
+                for row in cur.fetchall() or ()
+            )
+
+    terminalized = 0
+    bytes_before = 0
+    bytes_after = 0
+    from psycopg.types.json import Json
+
+    for candidate_principal, run_id in candidates:
+        if not candidate_principal or not run_id:
+            continue
+        with _property_search_run_connect() as conn:
+            with _property_search_run_transaction(conn):
+                with conn.cursor() as cur:
+                    _set_property_search_writer_contract(cur)
+                    cur.execute(
+                        "SELECT property_search_assert_principal_write_allowed(%s, %s)",
+                        (candidate_principal, run_id),
+                    )
+                    cur.fetchone()
+                    cur.execute(
+                        """
+                        SELECT runs.payload_json, pg_column_size(runs.payload_json)
+                        FROM property_search_runs AS runs
+                        WHERE runs.principal_id = %s
+                          AND runs.run_id = %s
+                          AND runs.status IN ('queued', 'starting')
+                          AND runs.updated_at < %s
+                          AND COALESCE(
+                              runs.payload_json->>'current_step',
+                              runs.payload_json#>>'{summary,current_step}',
+                              ''
+                          ) IN ('', 'queued', 'starting')
+                          AND NOT EXISTS (
+                              SELECT 1 FROM property_search_work_jobs AS jobs
+                              WHERE jobs.principal_id = runs.principal_id
+                                AND jobs.run_id = runs.run_id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM property_research_packet_run_memberships AS memberships
+                              JOIN property_research_packet_links AS links
+                                ON links.principal_id = memberships.principal_id
+                               AND links.candidate_ref = memberships.candidate_ref
+                              WHERE memberships.principal_id = runs.principal_id
+                                AND memberships.run_id = runs.run_id
+                                AND links.retention_state = 'legal_hold'
+                          )
+                        FOR UPDATE OF runs
+                        """,
+                        (candidate_principal, run_id, cutoff),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        continue
+                    recovered_at = _now_iso()
+                    terminal = _orphaned_property_search_run_terminal_record(
+                        dict(row[0] or {}),
+                        recovered_at=recovered_at,
+                    )
+                    compact = _compact_property_search_run_record(terminal)
+                    cur.execute(
+                        """
+                        UPDATE property_search_runs
+                        SET payload_json = %s,
+                            compact_json = %s,
+                            status = 'failed',
+                            updated_at = %s
+                        WHERE principal_id = %s AND run_id = %s
+                        """,
+                        (
+                            Json(terminal),
+                            Json(compact),
+                            recovered_at,
+                            candidate_principal,
+                            run_id,
+                        ),
+                    )
+                    if not cur.rowcount:
+                        continue
+                    terminalized += 1
+                    bytes_before += max(0, int(row[1] or 0))
+                    bytes_after += len(_property_search_json_bytes(terminal))
+    return {
+        "candidates": len(candidates),
+        "terminalized": terminalized,
+        "payload_bytes_before": bytes_before,
+        "payload_bytes_after": bytes_after,
+    }
 
 
 def _record_property_search_erasure_fence(

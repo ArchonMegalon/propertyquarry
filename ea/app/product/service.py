@@ -237,9 +237,11 @@ from app.product.property_tour_hosting import (
     _write_hosted_property_tour_payload_with_slug_lock_held,
 )
 from app.product.property_search_storage import (
+    _bounded_property_scout_completion_observation,
     _bounded_property_search_run_payload,
     _compare_and_swap_property_search_run_record,
     _compact_pruned_property_search_run_record,
+    _compact_property_scout_completion_observations,
     _delete_property_search_run_record as _delete_property_search_run_record_storage,
     _erase_property_search_account_data as _erase_property_search_account_data_storage,
     _export_property_research_packet_data_for_principal as _export_property_research_packet_data_storage,
@@ -257,6 +259,7 @@ from app.product.property_search_storage import (
     _prune_property_search_run_records,
     _store_property_search_run_compact_record,
     _store_property_search_run_record,
+    _terminalize_orphaned_property_search_run_records,
 )
 from app.product.property_search_work_queue import (
     PostgresPropertySearchWorkQueue,
@@ -52207,6 +52210,42 @@ class ProductService:
             raise RuntimeError(str(result.get("reason") or "property_search_work_skipped"))
         return result
 
+    def maintain_bounded_property_search_storage(
+        self,
+        *,
+        limit: int = 80,
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        """Bound legacy duplicated observations and orphaned queued runs."""
+
+        bounded_limit = max(1, min(int(limit or 0), 500))
+        orphaned = _terminalize_orphaned_property_search_run_records(
+            limit=bounded_limit,
+            dry_run=dry_run,
+        )
+        observations = _compact_property_scout_completion_observations(
+            limit=min(bounded_limit, 25),
+            dry_run=dry_run,
+        )
+        return {
+            "generated_at": _now_iso(),
+            "dry_run": bool(dry_run),
+            "orphaned_queued_runs": orphaned,
+            "scout_completion_observations": observations,
+            "terminalized": int(orphaned.get("terminalized") or 0),
+            "observations_compacted": int(observations.get("compacted") or 0),
+            "payload_bytes_reclaimed": max(
+                0,
+                int(orphaned.get("payload_bytes_before") or 0)
+                - int(orphaned.get("payload_bytes_after") or 0),
+            )
+            + max(
+                0,
+                int(observations.get("payload_bytes_before") or 0)
+                - int(observations.get("payload_bytes_after") or 0),
+            ),
+        }
+
     def reconcile_stale_property_search_runs(
         self,
         *,
@@ -56608,29 +56647,10 @@ class ProductService:
         )
         if lifecycle:
             payload["search_agent_lifecycle"] = lifecycle
-        completion_projection = _bounded_property_search_run_payload(
-            {
-                "run_id": property_search_run_id,
-                "principal_id": principal_id,
-                "status": str(payload.get("status") or "processed"),
-                "created_at": str(payload.get("generated_at") or _now_iso()),
-                "updated_at": str(payload.get("generated_at") or _now_iso()),
-                "summary": payload,
-            }
-        )
-        completion_observation = (
-            dict(completion_projection.get("summary") or {})
-            if isinstance(completion_projection.get("summary"), dict)
-            else {}
-        )
-        completion_observation.update(
-            {
-                "run_id": property_search_run_id,
-                "status": str(payload.get("status") or "processed"),
-                "generated_at": str(payload.get("generated_at") or _now_iso()),
-                "actor": str(actor or "").strip() or "property_scout",
-                "payload_retention_status": "bounded_projection",
-            }
+        completion_observation = _bounded_property_scout_completion_observation(
+            payload,
+            run_id=property_search_run_id,
+            actor=str(actor or "").strip() or "property_scout",
         )
         self._record_product_event(
             principal_id=principal_id,

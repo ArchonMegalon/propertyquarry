@@ -64,6 +64,126 @@ _TEST_DISTANCE_CLASSIFICATION_TAGS = {
 }
 
 
+def test_property_scout_completion_observation_is_small_and_evidence_linked() -> None:
+    payload = {
+        "generated_at": "2026-08-04T01:02:03+00:00",
+        "status": "completed_partial",
+        "provider_total": 27,
+        "listing_total": 412,
+        "reviewed_listing_total": 93,
+        "required_fact_research_pending_total": 7,
+        "required_fact_resolution_pending": True,
+        "repair_status": "degraded",
+        "timing_ms": {"run_total": 1234.5, "provider_fetch_total": 987.6},
+        "sources": [
+            {
+                "source_label": f"provider-{index}",
+                "ranked_candidates": [
+                    {"title": "large duplicated candidate", "body": "x" * 20_000}
+                ],
+            }
+            for index in range(40)
+        ],
+        "ranked_candidates": [{"title": "x" * 10_000} for _ in range(40)],
+    }
+
+    projected = property_search_storage._bounded_property_scout_completion_observation(
+        payload,
+        run_id="run-audit-1",
+        actor="scheduler",
+    )
+
+    serialized = property_search_storage._property_search_json_bytes(projected)
+    source_bytes = property_search_storage._property_search_json_bytes(payload)
+    assert len(serialized) < 8 * 1024
+    assert projected["audit_schema"] == "propertyquarry.property_scout_completion_observation.v1"
+    assert projected["payload_retention_status"] == "bounded_completion_observation"
+    assert projected["run_id"] == "run-audit-1"
+    assert projected["provider_total"] == 27
+    assert projected["listing_total"] == 412
+    assert projected["required_fact_resolution_pending"] is True
+    assert projected["run_total_ms"] == 1234.5
+    assert projected["source_payload_bytes"] == len(source_bytes)
+    assert projected["source_payload_sha256"] == hashlib.sha256(source_bytes).hexdigest()
+    assert "sources" not in projected
+    assert "ranked_candidates" not in projected
+
+
+def test_orphaned_queued_property_search_run_terminal_projection_is_compact() -> None:
+    source = {
+        "run_id": "orphaned-run-1",
+        "principal_id": "principal-orphaned-1",
+        "status": "queued",
+        "current_step": "queued",
+        "created_at": "2026-07-01T00:00:00+00:00",
+        "updated_at": "2026-07-01T00:00:00+00:00",
+        "events": [
+            {
+                "at": "2026-07-01T00:00:00+00:00",
+                "step": "queued",
+                "status": "queued",
+                "message": "Queued.",
+            }
+        ],
+        "summary": {
+            "status": "queued",
+            "sources": [
+                {"source_label": f"provider-{index}", "body": "x" * 50_000}
+                for index in range(30)
+            ],
+        },
+    }
+    source_bytes = property_search_storage._property_search_json_bytes(source)
+
+    terminal = property_search_storage._orphaned_property_search_run_terminal_record(
+        source,
+        recovered_at="2026-08-04T01:02:03+00:00",
+    )
+
+    summary = dict(terminal.get("summary") or {})
+    assert terminal["status"] == "failed"
+    assert terminal["payload_retention_status"] == "compact_only"
+    assert len(property_search_storage._property_search_json_bytes(terminal)) <= 512 * 1024
+    assert "sources" not in summary
+    assert summary["execution_pickup_status"] == "expired_without_durable_job"
+    assert summary["execution_pickup_reason"] == "orphaned_queued_run_expired"
+    assert summary["orphaned_payload_original_bytes"] == len(source_bytes)
+    assert summary["orphaned_payload_original_sha256"] == hashlib.sha256(source_bytes).hexdigest()
+
+
+def test_bounded_property_search_storage_maintenance_aggregates_reclaimed_bytes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        product_service,
+        "_terminalize_orphaned_property_search_run_records",
+        lambda **kwargs: {
+            "candidates": 3,
+            "terminalized": 3,
+            "payload_bytes_before": 30_000,
+            "payload_bytes_after": 3_000,
+        },
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_compact_property_scout_completion_observations",
+        lambda **kwargs: {
+            "candidates": 5,
+            "compacted": 5,
+            "payload_bytes_before": 50_000,
+            "payload_bytes_after": 5_000,
+        },
+    )
+
+    service = object.__new__(ProductService)
+    summary = service.maintain_bounded_property_search_storage(
+        limit=80,
+        dry_run=False,
+    )
+
+    assert summary["terminalized"] == 3
+    assert summary["observations_compacted"] == 5
+    assert summary["payload_bytes_reclaimed"] == 72_000
+
+
 def test_property_search_durable_write_merge_never_regresses_query_progress() -> None:
     previous = {
         "run_id": "run-monotonic",

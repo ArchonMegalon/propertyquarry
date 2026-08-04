@@ -80,7 +80,7 @@ class _FakeToolExecution:
                 tokens_in=420,
                 tokens_out=180,
             )
-        if request.tool_name == "provider.browseract.account_facts":
+        if request.tool_name == "browseract.extract_account_facts":
             fact_key = str(request.payload_json["account_hints_json"]["fact_key"])
             return ToolInvocationResult(
                 tool_name=request.tool_name,
@@ -189,7 +189,7 @@ def test_manager_backed_evaluation_drives_governed_maps_ooda(monkeypatch) -> Non
 
     assert [request.tool_name for request in tool_execution.requests] == [
         "provider.onemin.code_generate",
-        "provider.browseract.account_facts",
+        "browseract.extract_account_facts",
     ]
     assert all(request.context_json["suppress_telegram_delivery"] for request in tool_execution.requests)
     action = completed["ooda"]["actions"][0]

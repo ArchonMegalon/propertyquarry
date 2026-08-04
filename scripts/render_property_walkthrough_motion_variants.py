@@ -234,10 +234,12 @@ def render_variants(
             }
         )
 
+    provider_key = "propertyquarry_core_gold" if source_is_continuity_master else "magicfit"
     payload: dict[str, object] = {
         "contract_name": "propertyquarry.walkthrough_delivery_variants.v1",
         "status": "pass",
-        "provider_key": "magicfit",
+        "provider_key": provider_key,
+        "provider_backend_key": provider_key,
         "source_video_path": str(source_video_path),
         "source_video_sha256": source_sha,
         "source_receipt_path": str(source_receipt_path),

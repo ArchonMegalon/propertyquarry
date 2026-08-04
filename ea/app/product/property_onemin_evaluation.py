@@ -851,7 +851,7 @@ def run_property_google_maps_ooda(
                 ToolInvocationRequest(
                     session_id=f"property-maps:{run_id}"[:160],
                     step_id=f"maps:{candidate_ref}:{fact_key}"[:160],
-                    tool_name="provider.browseract.account_facts",
+                    tool_name="browseract.extract_account_facts",
                     action_kind="property.fact.research",
                     payload_json=payload,
                     context_json={

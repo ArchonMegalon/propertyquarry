@@ -1448,6 +1448,18 @@ def _run_scheduler_property_search_recovery(container, log: logging.Logger) -> d
     service = build_product_service(container)
     principal_ids = tuple(str(value or "").strip() for value in _scheduler_property_scout_principal_ids(container) if str(value or "").strip())
     aggregate = {"scanned": 0, "stale_total": 0, "repaired": 0, "replacement_started": 0, "errors": 0}
+    maintenance = {
+        "terminalized": 0,
+        "observations_compacted": 0,
+        "payload_bytes_reclaimed": 0,
+    }
+    try:
+        bounded_storage = service.maintain_bounded_property_search_storage(limit=80)
+        for key in maintenance:
+            maintenance[key] = int(bounded_storage.get(key) or 0)
+    except Exception:
+        aggregate["errors"] += 1
+        log.exception("scheduler bounded property search storage maintenance failed")
     if principal_ids:
         for principal_id in principal_ids:
             try:
@@ -1476,6 +1488,9 @@ def _run_scheduler_property_search_recovery(container, log: logging.Logger) -> d
         "repaired": int(aggregate.get("repaired") or 0),
         "replacement_started": int(aggregate.get("replacement_started") or 0),
         "errors": int(aggregate.get("errors") or 0),
+        "orphaned_queued_runs_terminalized": maintenance["terminalized"],
+        "scout_completion_observations_compacted": maintenance["observations_compacted"],
+        "storage_payload_bytes_reclaimed": maintenance["payload_bytes_reclaimed"],
     }
 
 

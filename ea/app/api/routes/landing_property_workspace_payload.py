@@ -753,7 +753,7 @@ def _property_workbench_client_tour_payload(
         compact["status"] = "ready"
         if normalized_kind == "flythrough":
             compact["customer_claim_ready"] = True
-        else:
+        elif not generated_reconstruction_ready:
             generated_reconstruction_ready = False
             compact.pop("tour_media_mode", None)
     if safe_provider_url:
@@ -794,7 +794,11 @@ def _property_workbench_client_tour_payload(
         compact["label"] = (
             "Camera walkthrough available"
             if normalized_kind == "flythrough"
-            else "3D tour available"
+            else (
+                "Open AI-generated 3D tour"
+                if generated_reconstruction_ready
+                else "3D tour available"
+            )
         )
         compact.pop("control_label", None)
     provider_label = str(raw.get("provider_label") or "").strip()
@@ -1019,7 +1023,7 @@ def _property_workbench_client_candidate_payload(
     tour_payload = _property_workbench_client_tour_payload(
         raw.get("tour") if isinstance(raw.get("tour"), dict) else {},
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),
-        validated_url=ready_tour_url,
+        validated_url=ready_tour_url or generated_layout_url,
         validated_provider_url="",
     )
     if tour_payload:

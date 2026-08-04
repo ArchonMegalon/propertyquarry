@@ -8652,12 +8652,27 @@ def _public_tour_file_from_snapshot(
     payload = snapshot.payload
     _require_public_tour_viewable(payload)
     safe_relpath = _public_tour_safe_asset_relpath(asset_path)
+    magicfit_namespace = safe_relpath.lower().startswith("magicfit-media/")
+    magicfit_footprint = _magicfit_footprint_present(payload)
+    magicfit_eligibility = (
+        evaluate_magicfit_public_eligibility(snapshot.bundle_dir, payload)
+        if magicfit_namespace or magicfit_footprint
+        else None
+    )
+    walkthrough_acceptance = _public_tour_walkthrough_acceptance(
+        payload,
+        bundle_dir=snapshot.bundle_dir,
+        eligibility=magicfit_eligibility,
+    )
+    walkthrough_asset = safe_relpath in set(
+        walkthrough_acceptance.get("asset_relpaths") or []
+    )
     ai_panorama_refs, ai_panorama_accepted_refs = (
         _public_tour_ai_panorama_asset_paths(payload)
     )
     ai_panorama_asset_digests: dict[str, str] = {}
     ai_panorama_expected_digest = ""
-    if _public_tour_ai_panorama_scene(payload):
+    if _public_tour_ai_panorama_scene(payload) and not walkthrough_asset:
         if safe_relpath not in ai_panorama_accepted_refs:
             raise HTTPException(status_code=404, detail="tour_file_not_found")
         _require_public_tour_ai_panorama_release(
@@ -8681,21 +8696,6 @@ def _public_tour_file_from_snapshot(
         )
         if version_token and version_token != ai_panorama_expected_digest:
             raise HTTPException(status_code=404, detail="tour_file_not_found")
-    magicfit_namespace = safe_relpath.lower().startswith("magicfit-media/")
-    magicfit_footprint = _magicfit_footprint_present(payload)
-    magicfit_eligibility = (
-        evaluate_magicfit_public_eligibility(snapshot.bundle_dir, payload)
-        if magicfit_namespace or magicfit_footprint
-        else None
-    )
-    walkthrough_acceptance = _public_tour_walkthrough_acceptance(
-        payload,
-        bundle_dir=snapshot.bundle_dir,
-        eligibility=magicfit_eligibility,
-    )
-    walkthrough_asset = safe_relpath in set(
-        walkthrough_acceptance.get("asset_relpaths") or []
-    )
     magicfit_asset_unverified = bool(
         magicfit_footprint
         and walkthrough_asset
@@ -9934,6 +9934,253 @@ def _tour_control_matterport_html(payload: dict[str, object]) -> str:
 </html>"""
 
 
+_CORE_GOLD_WALKTHROUGH_CONTRACT = "propertyquarry.core_gold_walkthrough.v1"
+_CORE_GOLD_WALKTHROUGH_PROVIDER_KEY = "propertyquarry_core_gold"
+
+
+def _public_tour_canonical_object_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _public_tour_core_gold_declared(payload: dict[str, object]) -> bool:
+    return any(
+        str(payload.get(key) or "").strip().lower()
+        == _CORE_GOLD_WALKTHROUGH_PROVIDER_KEY
+        for key in ("video_provider", "video_provider_key", "video_render_provider")
+    ) or isinstance(payload.get("core_gold_walkthrough"), dict)
+
+
+def _public_tour_core_gold_file_sha256(
+    bundle_dir: Path,
+    relpath: str,
+    *,
+    expected_size: int,
+) -> str:
+    safe_relpath = _public_tour_safe_asset_relpath(relpath)
+    if not safe_relpath or PurePosixPath(safe_relpath).suffix.lower() != ".mp4":
+        raise ValueError("core_gold_video_relpath_invalid")
+    resolved_bundle = bundle_dir.resolve()
+    unresolved = resolved_bundle
+    for part in PurePosixPath(safe_relpath).parts:
+        unresolved = unresolved / part
+        if unresolved.is_symlink():
+            raise ValueError("core_gold_video_symlink")
+    candidate = unresolved.resolve()
+    if resolved_bundle not in candidate.parents or not candidate.is_file():
+        raise ValueError("core_gold_video_unavailable")
+    details = candidate.stat()
+    if expected_size <= 0 or details.st_size != expected_size or details.st_size > 512 * 1024 * 1024:
+        raise ValueError("core_gold_video_size_mismatch")
+    digest = hashlib.sha256()
+    with candidate.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _public_tour_core_gold_walkthrough_acceptance(
+    payload: dict[str, object],
+    *,
+    sidecar: dict[str, object],
+    bundle_dir: Path,
+    scope: str,
+    asset_relpaths: set[str],
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "allowed": False,
+        "declared": True,
+        "scope": scope,
+        "asset_relpaths": sorted(asset_relpaths),
+        "status": "core_gold_acceptance_invalid",
+        "verified_video_relpath": "",
+        "verified_video_relpaths": [],
+    }
+
+    def reject(status: str) -> dict[str, object]:
+        return {**result, "status": status}
+
+    slug = str(payload.get("slug") or "").strip()
+    if scope != "top_level":
+        return reject("core_gold_scope_invalid")
+    if str(sidecar.get("contract_name") or "") != _CORE_GOLD_WALKTHROUGH_CONTRACT:
+        return reject("core_gold_contract_invalid")
+    if str(sidecar.get("property_slug") or "") != slug:
+        return reject("core_gold_subject_mismatch")
+    if any(
+        str(payload.get(key) or "").strip().lower()
+        != _CORE_GOLD_WALKTHROUGH_PROVIDER_KEY
+        for key in ("video_provider", "video_provider_key")
+    ):
+        return reject("core_gold_provider_invalid")
+    optional_render_provider = str(payload.get("video_render_provider") or "").strip().lower()
+    if optional_render_provider and optional_render_provider != _CORE_GOLD_WALKTHROUGH_PROVIDER_KEY:
+        return reject("core_gold_provider_invalid")
+    if any(
+        str(sidecar.get(key) or "").strip().lower()
+        != _CORE_GOLD_WALKTHROUGH_PROVIDER_KEY
+        for key in ("provider_key", "provider_backend_key")
+    ):
+        return reject("core_gold_provider_invalid")
+    if (
+        str(sidecar.get("status") or "").strip().lower() != "installed"
+        or str(sidecar.get("delivery_status") or "").strip().lower() != "installed"
+        or sidecar.get("launch_eligible") is not True
+        or sidecar.get("full_decode_verified") is not True
+        or sidecar.get("motion_interpolation_verified") is not True
+        or sidecar.get("frame_duplication_only") is not False
+        or str(sidecar.get("continuity_repair_status") or "").strip().lower() != "pass"
+        or str(sidecar.get("composition") or "").strip()
+        != "manifest_graph_bound_panorama_camera_walkthrough"
+        or sidecar.get("representation_kind") != "normal_camera_mono"
+        or sidecar.get("default_walkthrough") is not True
+        or sidecar.get("optional_spatial_tour_unchanged") is not True
+        or payload.get("video_coverage_proof") != "boundary_verified_frame_continuation"
+    ):
+        return reject("core_gold_release_gate_failed")
+
+    walkable_scene = payload.get("walkable_scene")
+    if not isinstance(walkable_scene, dict):
+        return reject("core_gold_scene_graph_missing")
+    scene_hash = _public_tour_canonical_object_sha256(walkable_scene)
+    if str(sidecar.get("walkable_scene_sha256") or "").lower() != scene_hash:
+        return reject("core_gold_scene_graph_mismatch")
+    scenes = list(walkable_scene.get("scenes") or [])
+    if not scenes or not all(isinstance(row, dict) for row in scenes):
+        return reject("core_gold_scene_graph_invalid")
+    scene_by_id = {
+        str(row.get("id") or "").strip(): row
+        for row in scenes
+        if str(row.get("id") or "").strip()
+    }
+    if len(scene_by_id) != len(scenes):
+        return reject("core_gold_scene_graph_invalid")
+    route_scene_ids = [str(value or "").strip() for value in list(sidecar.get("route_scene_ids") or [])]
+    initial_scene_id = str(walkable_scene.get("initial_scene_id") or "").strip()
+    if (
+        not route_scene_ids
+        or route_scene_ids[0] != initial_scene_id
+        or str(sidecar.get("initial_scene_id") or "").strip() != initial_scene_id
+        or not set(scene_by_id).issubset(route_scene_ids)
+    ):
+        return reject("core_gold_route_coverage_invalid")
+    boundary_checks = list(sidecar.get("boundary_checks") or [])
+    if len(boundary_checks) != len(route_scene_ids) - 1:
+        return reject("core_gold_route_boundary_invalid")
+    for index, row in enumerate(boundary_checks):
+        if not isinstance(row, dict):
+            return reject("core_gold_route_boundary_invalid")
+        source, target = route_scene_ids[index : index + 2]
+        if (
+            row.get("source") != source
+            or row.get("target") != target
+            or str(row.get("status") or "").lower() != "pass"
+        ):
+            return reject("core_gold_route_boundary_invalid")
+        hotspot_targets = {
+            str(hotspot.get("target_scene_id") or "").strip()
+            for hotspot in list(scene_by_id[source].get("hotspots") or [])
+            if isinstance(hotspot, dict)
+        }
+        if target not in hotspot_targets:
+            return reject("core_gold_route_shortcut_detected")
+    expected_labels = [str(scene_by_id[scene_id].get("label") or "") for scene_id in route_scene_ids]
+    if (
+        list(sidecar.get("route_labels") or []) != expected_labels
+        or list(sidecar.get("covered_route_labels") or []) != expected_labels
+        or int(sidecar.get("segment_count") or 0) != len(route_scene_ids)
+        or len(list(sidecar.get("transition_offsets_seconds") or [])) != len(route_scene_ids) - 1
+    ):
+        return reject("core_gold_route_labels_invalid")
+
+    desktop_relpath = _public_tour_safe_asset_relpath(payload.get("video_relpath"))
+    mobile_relpath = _public_tour_safe_asset_relpath(payload.get("video_mobile_relpath"))
+    if (
+        not desktop_relpath
+        or not mobile_relpath
+        or desktop_relpath == mobile_relpath
+        or _public_tour_safe_asset_relpath(payload.get("flythrough_video_relpath")) != desktop_relpath
+        or sidecar.get("video_relpath") != desktop_relpath
+        or sidecar.get("video_mobile_relpath") != mobile_relpath
+        or asset_relpaths != {desktop_relpath, mobile_relpath}
+    ):
+        return reject("core_gold_video_subject_mismatch")
+    core_gold = payload.get("core_gold_walkthrough")
+    if not isinstance(core_gold, dict):
+        return reject("core_gold_manifest_contract_missing")
+    if any(core_gold.get(key) != sidecar.get(key) for key in (
+        "contract_name",
+        "property_slug",
+        "walkable_scene_sha256",
+        "initial_scene_id",
+        "route_scene_ids",
+        "representation_kind",
+        "default_walkthrough",
+        "optional_spatial_tour_unchanged",
+    )):
+        return reject("core_gold_manifest_subject_mismatch")
+    if (
+        core_gold.get("desktop_target_relpath") != desktop_relpath
+        or core_gold.get("mobile_target_relpath") != mobile_relpath
+        or core_gold.get("continuity_repair_verified") is not True
+        or core_gold.get("motion_interpolation_verified") is not True
+        or core_gold.get("frame_duplication_only") is not False
+    ):
+        return reject("core_gold_manifest_release_gate_failed")
+
+    verified_relpaths: list[str] = []
+    for key, relpath, dimensions, manifest_prefix in (
+        ("video", desktop_relpath, (1920, 1080), "desktop"),
+        ("video_mobile", mobile_relpath, (1280, 720), "mobile"),
+    ):
+        metadata = sidecar.get(f"{key}_metadata")
+        expected_digest = str(sidecar.get(f"{key}_sha256") or "").strip().lower()
+        if (
+            not isinstance(metadata, dict)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)
+            or (int(metadata.get("width") or 0), int(metadata.get("height") or 0)) != dimensions
+            or str(metadata.get("codec_name") or "").lower() != "h264"
+            or str(metadata.get("avg_frame_rate") or "") != "60/1"
+            or float(metadata.get("duration_seconds") or 0.0) <= 0.0
+            or int(metadata.get("nb_frames") or 0) <= 0
+            or core_gold.get(f"{manifest_prefix}_sha256") != expected_digest
+            or int(core_gold.get(f"{manifest_prefix}_size_bytes") or 0)
+            != int(metadata.get("size_bytes") or 0)
+            or core_gold.get(f"{manifest_prefix}_frame_rate") != "60/1"
+        ):
+            return reject("core_gold_video_metadata_invalid")
+        try:
+            actual_digest = _public_tour_core_gold_file_sha256(
+                bundle_dir,
+                relpath,
+                expected_size=int(metadata.get("size_bytes") or 0),
+            )
+        except (OSError, ValueError):
+            return reject("core_gold_video_unavailable")
+        if actual_digest != expected_digest:
+            return reject("core_gold_video_hash_mismatch")
+        verified_relpaths.append(relpath)
+    if abs(
+        float(dict(sidecar.get("video_metadata") or {}).get("duration_seconds") or 0.0)
+        - float(dict(sidecar.get("video_mobile_metadata") or {}).get("duration_seconds") or 0.0)
+    ) > 0.05:
+        return reject("core_gold_video_duration_mismatch")
+    return {
+        **result,
+        "allowed": True,
+        "status": "core_gold_accepted",
+        "verified_video_relpath": desktop_relpath,
+        "verified_video_relpaths": verified_relpaths,
+    }
+
+
 def _public_tour_walkthrough_acceptance(
     payload: dict[str, object],
     *,
@@ -10004,13 +10251,14 @@ def _public_tour_walkthrough_acceptance(
                 else ""
             ),
         }
+    core_gold_declared = _public_tour_core_gold_declared(payload)
     if not raw_sidecar_relpath:
         return {
             "allowed": False,
-            "declared": False,
+            "declared": core_gold_declared,
             "scope": scope,
             "asset_relpaths": sorted(asset_relpaths),
-            "status": "legacy_unreviewed",
+            "status": "core_gold_sidecar_missing" if core_gold_declared else "legacy_unreviewed",
         }
     sidecar_relpath = _public_tour_safe_asset_relpath(raw_sidecar_relpath)
     if not slug or not sidecar_relpath or PurePosixPath(sidecar_relpath).suffix.lower() != ".json":
@@ -10022,9 +10270,9 @@ def _public_tour_walkthrough_acceptance(
             "status": "sidecar_invalid",
         }
     try:
-        bundle_dir = _resolved_tour_bundle(slug)
-        sidecar_path = (bundle_dir / sidecar_relpath).resolve()
-        if bundle_dir != sidecar_path and bundle_dir not in sidecar_path.parents:
+        selected_bundle_dir = (bundle_dir or _resolved_tour_bundle(slug)).resolve()
+        sidecar_path = (selected_bundle_dir / sidecar_relpath).resolve()
+        if selected_bundle_dir != sidecar_path and selected_bundle_dir not in sidecar_path.parents:
             raise ValueError("sidecar_outside_bundle")
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     except Exception:
@@ -10043,6 +10291,23 @@ def _public_tour_walkthrough_acceptance(
             "asset_relpaths": sorted(asset_relpaths),
             "status": "sidecar_invalid",
         }
+    if core_gold_declared or sidecar.get("contract_name") == _CORE_GOLD_WALKTHROUGH_CONTRACT:
+        try:
+            return _public_tour_core_gold_walkthrough_acceptance(
+                payload,
+                sidecar=sidecar,
+                bundle_dir=selected_bundle_dir,
+                scope=scope,
+                asset_relpaths=asset_relpaths,
+            )
+        except (OSError, TypeError, ValueError, OverflowError):
+            return {
+                "allowed": False,
+                "declared": True,
+                "scope": scope,
+                "asset_relpaths": sorted(asset_relpaths),
+                "status": "core_gold_acceptance_invalid",
+            }
     acceptance_status = str(sidecar.get("acceptance_status") or "unreviewed").strip().lower()
     disqualified = (
         acceptance_status in {"disqualified", "rejected", "failed"}
@@ -11764,7 +12029,22 @@ def _tour_control_external_iframe_html(
           </div>
           <div id="thumbs" class="thumbs"></div>"""
             if scene_data
-            else """<p class="empty">Photos and floorplans are not attached yet.</p>"""
+            else (
+                """<p class="empty">Use <strong>Floorplan</strong> inside the 3D tour to view the reviewed layout.</p>"""
+                if str(payload.get("three_d_vista_entry_relpath") or "").strip()
+                else """<p class="empty">Supporting layout media is not available yet.</p>"""
+            )
+        )
+        media_summary = (
+            "Reviewed floorplan and spatial preview."
+            if scene_data
+            and all(str(scene.get("role") or "") in {"floorplan", "layout"} for scene in scene_data)
+            else (
+                "Floorplan available inside the 3D tour."
+                if not scene_data
+                and str(payload.get("three_d_vista_entry_relpath") or "").strip()
+                else "Photos and floorplan."
+            )
         )
         return f"""<!doctype html>
 <html lang="en">
@@ -11787,7 +12067,7 @@ def _tour_control_external_iframe_html(
       .summary h1 {{ margin: 0; max-width: 72ch; overflow-wrap: anywhere; font-size: 1.35rem; line-height: 1.12; letter-spacing: 0; }}
       .grid {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 460px); gap: 14px; align-items: start; }}
       .panel {{ border: 1px solid var(--line); border-radius: 8px; background: var(--panel); overflow: hidden; }}
-      .provider-panel {{ min-height: min(74vh, 820px); display: grid; grid-template-rows: auto 1fr; }}
+      .provider-panel {{ height: min(82dvh, 920px); min-height: 620px; display: grid; grid-template-rows: auto 1fr; }}
       .provider-launch {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; border-bottom: 1px solid var(--line); }}
       .provider-launch strong {{ display: block; margin-bottom: 3px; }}
       .provider-actions {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }}
@@ -11886,7 +12166,7 @@ def _tour_control_external_iframe_html(
         <aside class="panel evidence" aria-label="Inside the space">
           <div>
             <h2>Inside the space</h2>
-            <p class="hint">Photos and floorplan.</p>
+            <p class="hint">{media_summary}</p>
           </div>
           {walkthrough_html}
           {scene_viewer_html}
