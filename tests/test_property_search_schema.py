@@ -129,6 +129,8 @@ def _relations_for(version: int) -> set[str]:
             "idx_propertyquarry_retention_runs_started",
             "idx_propertyquarry_retention_single_running",
         }
+    if version == 20:
+        return {"idx_property_search_work_principal_run"}
     raise AssertionError(f"unexpected migration version: {version}")
 
 
@@ -478,15 +480,19 @@ def test_upgrade_from_schema_v13_applies_erasure_privacy_and_admission() -> None
     )
 
     assert result.previous_version == 13
-    assert result.current_version == 19
-    assert result.applied_versions == (14, 15, 16, 17, 18, 19)
+    assert result.current_version == schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION
+    assert result.applied_versions == tuple(
+        range(14, schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION + 1)
+    )
     executed_migrations = {
         migration.version
         for sql, _params in database.executed
         for migration in schema.PROPERTY_SEARCH_MIGRATIONS
         if sql == " ".join(migration.sql.split())
     }
-    assert executed_migrations == {14, 15, 16, 17, 18, 19}
+    assert executed_migrations == set(
+        range(14, schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION + 1)
+    )
 
 
 def test_upgrade_from_schema_v14_applies_privacy_and_distributed_admission() -> None:
@@ -500,13 +506,16 @@ def test_upgrade_from_schema_v14_applies_privacy_and_distributed_admission() -> 
     )
 
     assert result.previous_version == 14
-    assert result.current_version == 19
-    assert result.applied_versions == (15, 16, 17, 18, 19)
+    assert result.current_version == schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION
+    assert result.applied_versions == tuple(
+        range(15, schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION + 1)
+    )
     assert _relations_for(15).issubset(database.relations)
     assert _relations_for(16).issubset(database.relations)
     assert _relations_for(17).issubset(database.relations)
     assert _relations_for(18).issubset(database.relations)
     assert _relations_for(19).issubset(database.relations)
+    assert _relations_for(20).issubset(database.relations)
 
 
 def test_upgrade_from_schema_v4_installs_content_ledger_and_delivery_projection() -> (
@@ -869,6 +878,18 @@ def test_schema_v11_installs_digest_only_erasure_fences_and_write_guards() -> No
     assert "tgenabled IN ('O', 'A')" in Path(schema.__file__).read_text(
         encoding="utf-8"
     )
+
+
+def test_schema_v20_allows_fact_work_without_duplicating_search_execution() -> None:
+    migration = schema.PROPERTY_SEARCH_MIGRATIONS[19]
+    migration_sql = " ".join(migration.sql.split())
+
+    assert migration.version == 20
+    assert migration.name == "durable_fact_enrichment_work"
+    assert "DROP INDEX IF EXISTS idx_property_search_work_principal_run" in migration_sql
+    assert "CREATE UNIQUE INDEX idx_property_search_work_principal_run" in migration_sql
+    assert "payload_json->>'work_kind'" in migration_sql
+    assert "= 'property_search_run'" in migration_sql
 
 
 def test_schema_v12_installs_content_account_ownership_fences() -> None:
@@ -1559,4 +1580,5 @@ def test_migration_checksums_are_stable_and_unique() -> None:
         "25a1fcfc28060abc309f7c767889964b23e694c3ae88209105b23a6ca33ac797",
         "eae758d281c5447d984f15e7d367e3fb181d06f79b6f0b5d277d6b91a2d455e8",
         "3cee796e77912373a948ee9d9f4613ace502374cad74e753b5073f46366aa96a",
+        "abbe200c888213b41c99c432e523056090b94a83bfc8c8de5eaa436f90199e42",
     ]

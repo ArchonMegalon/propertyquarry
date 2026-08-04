@@ -98,6 +98,33 @@ def property_search_work_idempotency_key(
     return "property-search:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
+PROPERTY_SEARCH_RUN_WORK_KIND = "property_search_run"
+PROPERTY_FACT_ENRICHMENT_WORK_KIND = "property_fact_enrichment"
+
+
+def property_fact_enrichment_work_idempotency_key(
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    fact_job_id: str,
+    attempt: int,
+) -> str:
+    """Return a tenant-scoped key for one durable fact-enrichment attempt."""
+
+    source = "\0".join(
+        (
+            "fact-enrichment",
+            str(principal_id or "").strip(),
+            str(run_id or "").strip(),
+            str(candidate_ref or "").strip(),
+            str(fact_job_id or "").strip(),
+            str(max(1, int(attempt or 1))),
+        )
+    )
+    return "property-fact:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
 def validated_property_search_work_payload(
     payload_json: dict[str, object],
 ) -> dict[str, object]:
@@ -208,6 +235,48 @@ class InMemoryPropertySearchWorkQueue:
             self._jobs[job.job_id] = job
             self._idempotency[idempotency_key] = job.job_id
             self._runs[(principal_id, run_id)] = job.job_id
+            return PropertySearchWorkEnqueueResult(job=job, created=True)
+
+    def enqueue_fact_enrichment(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        payload_json: dict[str, object],
+        idempotency_key: str,
+        max_attempts: int = 3,
+    ) -> PropertySearchWorkEnqueueResult:
+        normalized_principal = str(principal_id or "").strip()
+        normalized_run = str(run_id or "").strip()
+        key = str(idempotency_key or "").strip()
+        if not normalized_principal or not normalized_run or not key:
+            raise ValueError("property_fact_work_identity_required")
+        payload = validated_property_search_work_payload(payload_json)
+        if str(payload.get("work_kind") or "").strip() != PROPERTY_FACT_ENRICHMENT_WORK_KIND:
+            raise ValueError("property_fact_work_kind_invalid")
+        now = self._now()
+        with self._lock:
+            existing_id = self._idempotency.get(key)
+            if existing_id:
+                return PropertySearchWorkEnqueueResult(
+                    job=self._jobs[existing_id],
+                    created=False,
+                )
+            job = PropertySearchWorkJob(
+                job_id=uuid4().hex,
+                principal_id=normalized_principal,
+                run_id=normalized_run,
+                idempotency_key=key,
+                payload_json=payload,
+                status="queued",
+                attempt_count=0,
+                max_attempts=max(1, int(max_attempts or 1)),
+                available_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            self._jobs[job.job_id] = job
+            self._idempotency[key] = job.job_id
             return PropertySearchWorkEnqueueResult(job=job, created=True)
 
     def claim(self, *, lease_owner: str, lease_seconds: int) -> PropertySearchWorkJob | None:
@@ -572,7 +641,14 @@ class PostgresPropertySearchWorkQueue:
                         f"""
                         SELECT {self._RETURNING_COLUMNS}
                         FROM property_search_work_jobs
-                        WHERE idempotency_key = %s OR (principal_id = %s AND run_id = %s)
+                        WHERE idempotency_key = %s OR (
+                            principal_id = %s
+                            AND run_id = %s
+                            AND COALESCE(
+                                payload_json->>'work_kind',
+                                '{PROPERTY_SEARCH_RUN_WORK_KIND}'
+                            ) = '{PROPERTY_SEARCH_RUN_WORK_KIND}'
+                        )
                         ORDER BY (idempotency_key = %s) DESC
                         LIMIT 1
                         """,
@@ -602,6 +678,76 @@ class PostgresPropertySearchWorkQueue:
                                 principal_id=principal_id,
                                 candidate_refs=affected_refs,
                             )
+                conn.commit()
+        return PropertySearchWorkEnqueueResult(job=self._from_row(row), created=created)
+
+    def enqueue_fact_enrichment(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        payload_json: dict[str, object],
+        idempotency_key: str,
+        max_attempts: int = 3,
+    ) -> PropertySearchWorkEnqueueResult:
+        from psycopg.types.json import Json
+
+        from app.product.property_search_storage import _property_search_principal_key
+
+        normalized_principal = str(principal_id or "").strip()
+        normalized_run = str(run_id or "").strip()
+        key = str(idempotency_key or "").strip()
+        if not normalized_principal or not normalized_run or not key:
+            raise ValueError("property_fact_work_identity_required")
+        principal_key = _property_search_principal_key(normalized_principal)
+        if not principal_key:
+            raise ValueError("property_search_principal_key_required")
+        payload = validated_property_search_work_payload(payload_json)
+        if str(payload.get("work_kind") or "").strip() != PROPERTY_FACT_ENRICHMENT_WORK_KIND:
+            raise ValueError("property_fact_work_kind_invalid")
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_writer_contract(cur)
+                self._acquire_write_authority(
+                    cur,
+                    principal_key=principal_key,
+                    run_id=normalized_run,
+                )
+                cur.execute(
+                    f"""
+                    INSERT INTO property_search_work_jobs
+                        (job_id, principal_id, run_id, principal_key, idempotency_key,
+                         payload_json, status, attempt_count, max_attempts, available_at,
+                         created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW())
+                    ON CONFLICT DO NOTHING
+                    RETURNING {self._RETURNING_COLUMNS}
+                    """,
+                    (
+                        uuid4().hex,
+                        normalized_principal,
+                        normalized_run,
+                        principal_key,
+                        key,
+                        Json(payload),
+                        max(1, int(max_attempts or 1)),
+                    ),
+                )
+                row = cur.fetchone()
+                created = row is not None
+                if row is None:
+                    cur.execute(
+                        f"""
+                        SELECT {self._RETURNING_COLUMNS}
+                        FROM property_search_work_jobs
+                        WHERE idempotency_key = %s
+                        LIMIT 1
+                        """,
+                        (key,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise RuntimeError("property_fact_work_enqueue_conflict_unresolved")
                 conn.commit()
         return PropertySearchWorkEnqueueResult(job=self._from_row(row), created=created)
 

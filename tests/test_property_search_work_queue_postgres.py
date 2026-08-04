@@ -7,7 +7,9 @@ from uuid import uuid4
 import pytest
 
 from app.product.property_search_work_queue import (
+    PROPERTY_FACT_ENRICHMENT_WORK_KIND,
     PostgresPropertySearchWorkQueue,
+    property_fact_enrichment_work_idempotency_key,
     property_search_work_idempotency_key,
 )
 from app.product.property_search_storage import _property_search_principal_key
@@ -147,6 +149,62 @@ def test_postgres_enqueue_rolls_back_run_when_job_payload_cannot_be_persisted() 
                     (principal_id, run_id),
                 )
                 assert cur.fetchone()[0] == 0
+    finally:
+        _cleanup(database_url, principal_ids=(principal_id,))
+
+
+def test_postgres_fact_attempt_shares_parent_run_without_duplicate_search_job() -> None:
+    database_url = _db_url()
+    repository = PostgresPropertySearchWorkQueue(database_url)
+    suffix = uuid4().hex
+    principal_id = f"queue-fact-{suffix}"
+    run_id = f"run-{suffix}"
+    candidate_ref = f"candidate-{suffix}"
+    fact_job_id = f"pfe_{suffix}"
+    try:
+        repository.enqueue_run(
+            run_record=_record(principal_id=principal_id, run_id=run_id),
+            payload_json={"actor": "contract"},
+            idempotency_key=f"search-{suffix}",
+        )
+        key = property_fact_enrichment_work_idempotency_key(
+            principal_id=principal_id,
+            run_id=run_id,
+            candidate_ref=candidate_ref,
+            fact_job_id=fact_job_id,
+            attempt=1,
+        )
+        payload = {
+            "work_kind": PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+            "candidate_ref": candidate_ref,
+            "fact_job_id": fact_job_id,
+        }
+        first = repository.enqueue_fact_enrichment(
+            principal_id=principal_id,
+            run_id=run_id,
+            payload_json=payload,
+            idempotency_key=key,
+        )
+        duplicate = repository.enqueue_fact_enrichment(
+            principal_id=principal_id,
+            run_id=run_id,
+            payload_json=payload,
+            idempotency_key=key,
+        )
+
+        assert first.created is True
+        assert duplicate.created is False
+        assert duplicate.job.job_id == first.job.job_id
+
+        import psycopg
+
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM property_search_work_jobs WHERE principal_id = %s AND run_id = %s",
+                    (principal_id, run_id),
+                )
+                assert cur.fetchone()[0] == 2
     finally:
         _cleanup(database_url, principal_ids=(principal_id,))
 

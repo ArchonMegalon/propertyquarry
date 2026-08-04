@@ -2344,6 +2344,18 @@ WHERE status = 'running';
 """
 
 
+_DURABLE_FACT_ENRICHMENT_WORK_SCHEMA_V20 = r"""
+DROP INDEX IF EXISTS idx_property_search_work_principal_run;
+
+CREATE UNIQUE INDEX idx_property_search_work_principal_run
+ON property_search_work_jobs(principal_id, run_id)
+WHERE COALESCE(
+    payload_json->>'work_kind',
+    'property_search_run'
+) = 'property_search_run';
+"""
+
+
 PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
     PropertySearchMigration(1, "property_search_runs_tenant_schema", _RUN_SCHEMA_V1),
     PropertySearchMigration(
@@ -2425,6 +2437,11 @@ PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
         19,
         "bounded_storage_retention_control",
         _BOUNDED_STORAGE_RETENTION_CONTROL_SCHEMA_V19,
+    ),
+    PropertySearchMigration(
+        20,
+        "durable_fact_enrichment_work",
+        _DURABLE_FACT_ENRICHMENT_WORK_SCHEMA_V20,
     ),
 )
 LATEST_PROPERTY_SEARCH_SCHEMA_VERSION = PROPERTY_SEARCH_MIGRATIONS[-1].version

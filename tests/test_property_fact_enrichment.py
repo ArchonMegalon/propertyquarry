@@ -42,6 +42,11 @@ from app.product.property_location_research import (
     PROPERTY_FACT_OSM_QUERY_SCHEMA,
     property_fact_osm_nearby_query,
 )
+from app.product.property_search_work_queue import (
+    PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+    InMemoryPropertySearchWorkQueue,
+    PropertySearchWorkJob,
+)
 from app.product.service import (
     ProductService,
     _property_fact_fresh_geo_snapshot,
@@ -4080,6 +4085,114 @@ def test_fact_enrichment_no_work_returns_complete_resolved_snapshot(
         assert PropertyFactEnrichmentOut(**stale).status == "retryable_error"
     finally:
         _clear_run(run_id)
+
+
+def test_prod_fact_enrichment_dispatches_to_durable_worker_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-durable-dispatch"
+    run_id = "run-property-facts-durable-dispatch"
+    candidate_ref = "candidate-durable-dispatch"
+    candidate = _candidate(candidate_ref=candidate_ref)
+    client = build_property_operator_client(principal_id=principal_id)
+    service = ProductService(client.app.state.container)
+    _seed_run(
+        _run_record(
+            principal_id=principal_id,
+            run_id=run_id,
+            candidate=candidate,
+        )
+    )
+    repository = InMemoryPropertySearchWorkQueue()
+    monkeypatch.setattr(
+        product_service,
+        "_property_fact_validated_source_url",
+        lambda url: str(url),
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_durable_work_required",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_work_queue_repository",
+        lambda: repository,
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "_launch_property_candidate_fact_enrichment",
+        lambda self, **kwargs: pytest.fail("prod API launched provider work locally"),
+    )
+    try:
+        started = service.start_property_candidate_fact_enrichment(
+            principal_id=principal_id,
+            run_id=run_id,
+            candidate_ref=candidate_ref,
+        )
+
+        jobs = repository.list_jobs()
+        assert started["status"] == "queued"
+        assert len(jobs) == 1
+        assert jobs[0].payload_json["work_kind"] == PROPERTY_FACT_ENRICHMENT_WORK_KIND
+        assert jobs[0].payload_json["candidate_ref"] == candidate_ref
+        assert "property_url" not in jobs[0].payload_json
+    finally:
+        _clear_run(run_id)
+
+
+def test_durable_worker_consumes_fact_work_for_completed_search_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-worker-dispatch"
+    run_id = "run-property-facts-worker-dispatch"
+    candidate_ref = "candidate-worker-dispatch"
+    fact_job_id = "pfe_worker_dispatch"
+    client = build_property_operator_client(principal_id=principal_id)
+    service = ProductService(client.app.state.container)
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda **kwargs: {
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "status": "processed",
+        },
+    )
+    consumed: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        ProductService,
+        "_run_property_candidate_fact_enrichment",
+        lambda self, **kwargs: consumed.append(dict(kwargs)),
+    )
+    queued_at = datetime.now(timezone.utc)
+    job = PropertySearchWorkJob(
+        job_id="durable-fact-work",
+        principal_id=principal_id,
+        run_id=run_id,
+        idempotency_key="durable-fact-key",
+        payload_json={
+            "work_kind": PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+            "candidate_ref": candidate_ref,
+            "fact_job_id": fact_job_id,
+        },
+        status="leased",
+        attempt_count=1,
+        max_attempts=3,
+        available_at=queued_at,
+    )
+
+    result = service.execute_property_search_work_job(job)
+
+    assert result["status"] == "fact_enrichment_consumed"
+    assert consumed == [
+        {
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "candidate_ref": candidate_ref,
+            "job_id": fact_job_id,
+        }
+    ]
 
 
 def test_fact_enrichment_partial_retry_api_preserves_complete_snapshot(

@@ -262,8 +262,11 @@ from app.product.property_search_storage import (
     _terminalize_orphaned_property_search_run_records,
 )
 from app.product.property_search_work_queue import (
+    PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+    PROPERTY_SEARCH_RUN_WORK_KIND,
     PostgresPropertySearchWorkQueue,
     PropertySearchWorkJob,
+    property_fact_enrichment_work_idempotency_key,
     property_search_work_idempotency_key,
     property_search_work_max_attempts,
 )
@@ -30287,12 +30290,20 @@ class ProductService:
             raise RuntimeError("property_fact_job_state_invalid")
         if bool(outcome.get("launch")) and launch_worker:
             launch_job_id = str(outcome.get("job_id") or dict(outcome.get("job") or {}).get("job_id") or "").strip()
-            self._launch_property_candidate_fact_enrichment(
-                principal_id=normalized_principal,
-                run_id=normalized_run_id,
-                candidate_ref=normalized_candidate_ref,
-                job_id=launch_job_id,
-            )
+            if _property_search_durable_work_required():
+                self._enqueue_property_candidate_fact_enrichment(
+                    principal_id=normalized_principal,
+                    run_id=normalized_run_id,
+                    candidate_ref=normalized_candidate_ref,
+                    job=dict(outcome.get("job") or {}),
+                )
+            else:
+                self._launch_property_candidate_fact_enrichment(
+                    principal_id=normalized_principal,
+                    run_id=normalized_run_id,
+                    candidate_ref=normalized_candidate_ref,
+                    job_id=launch_job_id,
+                )
         companion_job: dict[str, object] | None = None
         if not required_only:
             latest_record = _load_property_search_run_record(
@@ -30333,6 +30344,52 @@ class ProductService:
             }
         )
         return payload
+
+    def _enqueue_property_candidate_fact_enrichment(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        candidate_ref: str,
+        job: dict[str, object],
+    ) -> bool:
+        """Dispatch provider-backed fact work without exposing keys to the API."""
+
+        fact_job_id = str(job.get("job_id") or "").strip()
+        attempt = max(1, int(job.get("attempt") or 1))
+        if not fact_job_id:
+            raise RuntimeError("property_fact_work_job_id_required")
+        from app.telemetry import TELEMETRY_PARENT_KEY, serialize_current_trace_parent
+
+        work_payload: dict[str, object] = {
+            "work_kind": PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "candidate_ref": candidate_ref,
+            "fact_job_id": fact_job_id,
+            "fact_attempt": attempt,
+        }
+        telemetry_parent = serialize_current_trace_parent()
+        if telemetry_parent:
+            work_payload[TELEMETRY_PARENT_KEY] = telemetry_parent
+        queue_key = property_fact_enrichment_work_idempotency_key(
+            principal_id=principal_id,
+            run_id=run_id,
+            candidate_ref=candidate_ref,
+            fact_job_id=fact_job_id,
+            attempt=attempt,
+        )
+        enqueue_result = _property_search_work_queue_repository().enqueue_fact_enrichment(
+            principal_id=principal_id,
+            run_id=run_id,
+            payload_json=work_payload,
+            idempotency_key=queue_key,
+            max_attempts=property_search_work_max_attempts(),
+        )
+        queued = enqueue_result.job
+        if queued.principal_id != principal_id or queued.run_id != run_id:
+            raise RuntimeError("property_fact_work_queue_identity_mismatch")
+        return bool(enqueue_result.created)
 
     def _launch_property_candidate_fact_enrichment(
         self,
@@ -52290,6 +52347,29 @@ class ProductService:
         record = _load_property_search_run_record(run_id=run_id, principal_id=principal_id)
         if not isinstance(record, dict):
             raise RuntimeError("property_search_work_run_missing")
+        work_kind = str(
+            job.payload_json.get("work_kind") or PROPERTY_SEARCH_RUN_WORK_KIND
+        ).strip()
+        if work_kind == PROPERTY_FACT_ENRICHMENT_WORK_KIND:
+            candidate_ref = str(job.payload_json.get("candidate_ref") or "").strip()
+            fact_job_id = str(job.payload_json.get("fact_job_id") or "").strip()
+            if not candidate_ref or not fact_job_id:
+                raise RuntimeError("property_fact_work_payload_invalid")
+            if len(candidate_ref) > 512 or len(fact_job_id) > 128:
+                raise RuntimeError("property_fact_work_payload_invalid")
+            self._run_property_candidate_fact_enrichment(
+                principal_id=principal_id,
+                run_id=run_id,
+                candidate_ref=candidate_ref,
+                job_id=fact_job_id,
+            )
+            return {
+                "status": "fact_enrichment_consumed",
+                "run_id": run_id,
+                "principal_id": principal_id,
+            }
+        if work_kind != PROPERTY_SEARCH_RUN_WORK_KIND:
+            raise RuntimeError("property_search_work_kind_invalid")
         status = str(record.get("status") or "").strip().lower()
         if status in (_PROPERTY_SEARCH_TERMINAL_STATUSES - {"failed"}):
             return {

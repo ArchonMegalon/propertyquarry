@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.product.property_search_work_queue import (
+    PROPERTY_FACT_ENRICHMENT_WORK_KIND,
     InMemoryPropertySearchWorkQueue,
     PropertySearchWorkQueueSnapshot,
+    property_fact_enrichment_work_idempotency_key,
     property_search_work_idempotency_key,
 )
 
@@ -222,3 +224,43 @@ def test_observability_snapshot_reports_only_identity_free_active_work() -> None
     completed = repository.observability_snapshot()
     assert completed.depth == 0
     assert completed.oldest_item_age_seconds == 0.0
+
+
+def test_fact_attempt_can_share_a_run_with_the_search_job_idempotently() -> None:
+    clock = _Clock()
+    repository = InMemoryPropertySearchWorkQueue(now=clock)
+    repository.enqueue_run(
+        run_record=_record(),
+        payload_json={"actor": "search"},
+        idempotency_key="search-key",
+    )
+    fact_key = property_fact_enrichment_work_idempotency_key(
+        principal_id="principal-a",
+        run_id="run-a",
+        candidate_ref="candidate-a",
+        fact_job_id="pfe_123",
+        attempt=1,
+    )
+    payload = {
+        "work_kind": PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+        "candidate_ref": "candidate-a",
+        "fact_job_id": "pfe_123",
+    }
+
+    fact = repository.enqueue_fact_enrichment(
+        principal_id="principal-a",
+        run_id="run-a",
+        payload_json=payload,
+        idempotency_key=fact_key,
+    )
+    duplicate = repository.enqueue_fact_enrichment(
+        principal_id="principal-a",
+        run_id="run-a",
+        payload_json=payload,
+        idempotency_key=fact_key,
+    )
+
+    assert fact.created is True
+    assert duplicate.created is False
+    assert duplicate.job.job_id == fact.job.job_id
+    assert len(repository.list_jobs()) == 2
