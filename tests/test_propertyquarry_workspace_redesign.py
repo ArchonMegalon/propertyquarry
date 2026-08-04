@@ -9327,6 +9327,156 @@ def test_property_workbench_selected_review_prefers_diorama_cover(monkeypatch) -
     )
 
 
+def test_property_shortlist_legacy_diorama_alias_resolves_only_inside_scoped_candidates(
+    monkeypatch,
+) -> None:
+    canonical_ref = "canonical-diorama-home"
+    legacy_ref = "legacy-diorama-link"
+    entry = {
+        "candidate_refs": [canonical_ref, legacy_ref],
+        "asset_url": "/static/property/research/canonical-diorama-home.webp",
+        "preview_kind": "rendered_diorama",
+        "representation": "illustrative",
+        "source_basis": "listing_floorplan_and_reference_images",
+        "truth_boundary": "Illustrative reconstruction; not listing evidence.",
+        "alt": "Illustrative 3D diorama of the canonical home",
+    }
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_entry_index",
+        lambda: {
+            f"candidate:{canonical_ref}": entry,
+            f"candidate:{legacy_ref}": entry,
+        },
+    )
+
+    scoped_context = {
+        "run": {
+            "summary": {
+                "ranked_candidates": [
+                    {
+                        "candidate_ref": canonical_ref,
+                        "title": "Canonical diorama home",
+                    }
+                ]
+            }
+        }
+    }
+    assert landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context=scoped_context,
+    ) == canonical_ref
+    assert landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context={"run": {"summary": {"ranked_candidates": []}}},
+    ) == legacy_ref
+
+
+def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
+    monkeypatch,
+) -> None:
+    principal_id = "pq-shortlist-legacy-diorama-alias"
+    client = build_property_client(principal_id=principal_id)
+    start_workspace(client, mode="personal", workspace_name="Alias Diorama Office")
+    canonical_ref = "canonical-diorama-home"
+    legacy_ref = "legacy-diorama-link"
+    diorama_url = "/static/property/research/canonical-diorama-home.webp"
+    first_photo_url = "https://cdn.example.test/first-ranked-photo.jpg"
+    entry = {
+        "candidate_refs": [canonical_ref, legacy_ref],
+        "asset_url": diorama_url,
+        "preview_kind": "rendered_diorama",
+        "representation": "illustrative",
+        "source_basis": "listing_floorplan_and_reference_images",
+        "truth_boundary": "Illustrative reconstruction; not listing evidence.",
+        "alt": "Illustrative 3D diorama of the canonical home",
+    }
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_entry_index",
+        lambda: {
+            f"candidate:{canonical_ref}": entry,
+            f"candidate:{legacy_ref}": entry,
+        },
+    )
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_preview_index",
+        lambda: {
+            f"candidate:{canonical_ref}": diorama_url,
+            f"candidate:{legacy_ref}": diorama_url,
+        },
+    )
+    candidates = [
+        {
+            "candidate_ref": "first-ranked-home",
+            "title": "First ranked home",
+            "recommendation": "shortlist",
+            "fit_score": 92,
+            "preview_image_url": first_photo_url,
+            "property_url": "https://example.test/first-ranked-home",
+            "source_label": "Willhaben",
+            "property_facts": {"price_eur": 500000, "area_m2": 80, "rooms": 3},
+        },
+        {
+            "candidate_ref": canonical_ref,
+            "listing_id": "canonical-listing-id",
+            "title": "Canonical diorama home",
+            "recommendation": "shortlist",
+            "fit_score": 84,
+            "property_url": "https://example.test/canonical-diorama-home",
+            "source_label": "Willhaben",
+            "property_facts": {"price_eur": 540000, "area_m2": 88, "rooms": 3},
+        },
+    ]
+
+    def _fake_run_status(self, *, principal_id: str, run_id: str, **_kwargs):
+        return {
+            "run_id": run_id,
+            "principal_id": principal_id,
+            "status": "processed",
+            "progress": 100,
+            "summary": {
+                "sources_total": 1,
+                "listing_total": 2,
+                "ranked_candidates": candidates,
+                "sources": [
+                    {
+                        "source_label": "Willhaben",
+                        "listing_total": 2,
+                        "top_candidates": candidates,
+                    }
+                ],
+            },
+            "events": [],
+        }
+
+    monkeypatch.setattr(ProductService, "get_property_search_run_status", _fake_run_status)
+    monkeypatch.setattr(
+        ProductService,
+        "list_property_saved_shortlist_candidates",
+        lambda self, *, principal_id, status=None: [],
+    )
+
+    response = client.get(
+        "/app/shortlist",
+        params={"run_id": "run-legacy-alias", "candidate": legacy_ref},
+        headers={"host": "propertyquarry.com"},
+    )
+
+    assert response.status_code == 200
+    assert re.search(
+        rf'<img[^>]+src="{re.escape(diorama_url)}"[^>]+data-pw-cover-image',
+        response.text,
+        flags=re.IGNORECASE,
+    )
+    assert not re.search(
+        rf'<img[^>]+src="{re.escape(first_photo_url)}"[^>]+data-pw-cover-image',
+        response.text,
+        flags=re.IGNORECASE,
+    )
+
+
 def test_property_workspace_payload_derives_diorama_preview_from_ready_generated_layout(monkeypatch) -> None:
     diorama_url = "https://cdn.example.test/workbench-derived-diorama.png"
     generated_reconstruction_url = "https://propertyquarry.com/tours/workbench-derived-layout"

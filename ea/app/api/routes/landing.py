@@ -2221,6 +2221,72 @@ def _property_curated_diorama_preview_image(candidate: dict[str, object]) -> str
     return ""
 
 
+def _property_curated_diorama_candidate_refs(candidate_ref: object) -> tuple[str, ...]:
+    normalized_candidate_ref = str(candidate_ref or "").strip().lower()
+    if not normalized_candidate_ref:
+        return ()
+    entry = _property_curated_diorama_entry_index().get(
+        f"candidate:{normalized_candidate_ref}"
+    )
+    if not isinstance(entry, dict):
+        return ()
+    candidate_refs = entry.get("candidate_refs")
+    if not isinstance(candidate_refs, list):
+        return ()
+    normalized_refs: list[str] = []
+    for raw_candidate_ref in candidate_refs:
+        normalized = str(raw_candidate_ref or "").strip().lower()
+        if normalized and normalized not in normalized_refs:
+            normalized_refs.append(normalized)
+    if normalized_candidate_ref not in normalized_refs:
+        return ()
+    return tuple(normalized_refs)
+
+
+def _property_resolve_scoped_curated_candidate_ref(
+    *,
+    requested_candidate_ref: object,
+    property_context: dict[str, object],
+) -> str:
+    """Resolve a governed legacy alias only within the principal-scoped payload."""
+
+    normalized_requested_ref = str(requested_candidate_ref or "").strip()
+    if not normalized_requested_ref:
+        return ""
+
+    def _scoped_candidate_exists(candidate_ref: str) -> bool:
+        if _property_lookup_candidate(
+            property_context=property_context,
+            candidate_ref=candidate_ref,
+        ) is not None:
+            return True
+        for raw_candidate in list(
+            property_context.get("saved_shortlist_candidates") or []
+        ):
+            if not isinstance(raw_candidate, dict):
+                continue
+            if _property_constant_text_equal(
+                _property_candidate_ref(dict(raw_candidate)).lower(),
+                candidate_ref.lower(),
+            ):
+                return True
+        return False
+
+    if _scoped_candidate_exists(normalized_requested_ref):
+        return normalized_requested_ref
+    for candidate_ref in _property_curated_diorama_candidate_refs(
+        normalized_requested_ref
+    ):
+        if _property_constant_text_equal(
+            candidate_ref.lower(),
+            normalized_requested_ref.lower(),
+        ):
+            continue
+        if _scoped_candidate_exists(candidate_ref):
+            return candidate_ref
+    return normalized_requested_ref
+
+
 def _property_apply_curated_diorama_preview(
     candidate: dict[str, object],
     *,
@@ -10248,7 +10314,10 @@ def app_shell(
                 )
         if property_brand and resolved_section in property_sections:
             if property_context is not None and property_payload_section in {"properties", "shortlist"}:
-                property_context["selected_candidate_ref"] = str(candidate or "").strip()
+                property_context["selected_candidate_ref"] = _property_resolve_scoped_curated_candidate_ref(
+                    requested_candidate_ref=candidate,
+                    property_context=property_context,
+                )
             payload = _property_workspace_payload(
                 property_payload_section,
                 status=status,

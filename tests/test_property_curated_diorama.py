@@ -461,6 +461,13 @@ def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
         for entry in entries
     ) == 40
     assert sum(entry["preview_kind"] == "rendered_diorama" for entry in entries) == 1
+    rendered_entry = next(
+        entry for entry in entries if entry["preview_kind"] == "rendered_diorama"
+    )
+    assert rendered_entry["candidate_refs"] == [
+        "ad48357be22535c1",
+        "cece2dad814fdf68",
+    ]
     assert all(
         entry["preview_kind"]
         in {"illustrative_drawn_diorama", "rendered_diorama"}
