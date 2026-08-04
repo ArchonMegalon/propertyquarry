@@ -1032,6 +1032,24 @@
         : {};
       window.history.pushState({ ...currentState, propertyquarryCandidate: normalizedRef }, '', url);
     };
+    const replaceCandidateQueryParam = (candidateRef = '') => {
+      const normalizedRef = String(candidateRef || '').trim();
+      const url = new URL(window.location.href);
+      if (String(url.searchParams.get('candidate') || '').trim() === normalizedRef) return;
+      if (normalizedRef) url.searchParams.set('candidate', normalizedRef);
+      else url.searchParams.delete('candidate');
+      const currentState = window.history.state && typeof window.history.state === 'object'
+        ? window.history.state
+        : {};
+      window.history.replaceState({ ...currentState, propertyquarryCandidate: normalizedRef }, '', url);
+    };
+    const canonicalBrowserCandidateRef = (candidateRef = '') => {
+      const requestedRef = String(candidateRef || '').trim();
+      if (requestedRef && candidateByRef.has(requestedRef)) return requestedRef;
+      const selectedPayloadRef = String(selectedCandidatePayload?.candidate_ref || '').trim();
+      if (selectedPayloadRef && candidateByRef.has(selectedPayloadRef)) return selectedPayloadRef;
+      return String(candidates[0]?.candidate_ref || '').trim();
+    };
     const selectCandidate = (candidateRef, { updateUrl = true } = {}) => {
       const candidate = candidateByRef.get(String(candidateRef || '')) || candidates[0];
       if (!candidate) return;
@@ -1253,7 +1271,7 @@
     bindWorkbenchRows(root);
     window.addEventListener('popstate', () => {
       const candidateRef = String(new URL(window.location.href).searchParams.get('candidate') || '').trim();
-      selectCandidate(candidateRef || candidates[0]?.candidate_ref || '', { updateUrl: false });
+      selectCandidate(canonicalBrowserCandidateRef(candidateRef), { updateUrl: false });
     });
     const initialRowsPanel = root.querySelector('[data-workbench-row]')?.closest('[data-pqx-mobile-panel]');
     if (initialRowsPanel) {
@@ -1324,8 +1342,12 @@
         );
       }
     });
-    const urlCandidate = new URL(window.location.href).searchParams.get('candidate');
-    if (urlCandidate) selectCandidate(urlCandidate, { updateUrl: false });
+    const urlCandidate = String(new URL(window.location.href).searchParams.get('candidate') || '').trim();
+    if (urlCandidate) {
+      const initialCandidateRef = canonicalBrowserCandidateRef(urlCandidate);
+      selectCandidate(initialCandidateRef, { updateUrl: false });
+      if (initialCandidateRef && initialCandidateRef !== urlCandidate) replaceCandidateQueryParam(initialCandidateRef);
+    }
     else if (typeof refreshSelectedCandidatePreview === 'function') {
       const initialSelectedRef = String(root.querySelector('[data-workbench-row][aria-current="true"]')?.getAttribute('data-candidate-ref') || candidates[0]?.candidate_ref || '').trim();
       if (initialSelectedRef) {

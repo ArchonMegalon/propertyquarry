@@ -96,6 +96,17 @@ def _approved_hosted_tour_binding(
     return binding
 
 
+def test_workbench_legacy_candidate_link_uses_server_selected_canonical_ref() -> None:
+    script = Path(
+        "ea/app/templates/app/_property_workbench_feedback_script.html"
+    ).read_text(encoding="utf-8")
+
+    assert "const canonicalBrowserCandidateRef = (candidateRef = '') =>" in script
+    assert "candidateByRef.has(selectedPayloadRef)" in script
+    assert "selectCandidate(initialCandidateRef, { updateUrl: false });" in script
+    assert "replaceCandidateQueryParam(initialCandidateRef);" in script
+
+
 def test_curated_diorama_v2_requires_complete_approved_governance(tmp_path: Path) -> None:
     static_root = tmp_path / "static"
     asset = static_root / "property" / "research" / "approved.png"
