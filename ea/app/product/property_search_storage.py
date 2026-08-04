@@ -39,6 +39,7 @@ _PROPERTY_SEARCH_RUN_DEFAULT_MAX_PAYLOAD_BYTES = 512 * 1024
 _PROPERTY_SEARCH_RUN_DEFAULT_MAX_ROWS_PER_PRINCIPAL = 100
 _PROPERTY_SEARCH_RUN_DEFAULT_RETENTION_BATCH_SIZE = 250
 _PROPERTY_SEARCH_ORPHANED_QUEUED_DEFAULT_STALE_SECONDS = 24 * 60 * 60
+_PROPERTY_SEARCH_RESULTS_DELIVERY_DEFAULT_RETRY_SECONDS = 5 * 60
 _PROPERTY_SCOUT_COMPLETION_OBSERVATION_SCHEMA = (
     "propertyquarry.property_scout_completion_observation.v1"
 )
@@ -106,6 +107,53 @@ def _property_search_principal_key(principal_id: object) -> str:
         hashlib.sha256,
     ).hexdigest()
     return f"hmac-sha256:{digest}"
+
+
+def _property_search_results_delivery_retry_seconds() -> int:
+    """Bound repeated delivery probes without delaying newly changed rows."""
+
+    try:
+        parsed = int(
+            str(
+                os.getenv("EA_PROPERTY_SEARCH_RESULTS_DELIVERY_RETRY_SECONDS")
+                or _PROPERTY_SEARCH_RESULTS_DELIVERY_DEFAULT_RETRY_SECONDS
+            ).strip()
+        )
+    except (TypeError, ValueError):
+        parsed = _PROPERTY_SEARCH_RESULTS_DELIVERY_DEFAULT_RETRY_SECONDS
+    return max(15, min(parsed, 24 * 60 * 60))
+
+
+def _property_search_delivery_work_due(
+    record: dict[str, object],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether a compact row needs immediate migration or a due retry."""
+
+    try:
+        compact_schema_version = int(record.get("compact_schema_version") or 0)
+    except (TypeError, ValueError):
+        compact_schema_version = 0
+    if compact_schema_version != _PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION:
+        return True
+    if not bool(record.get("delivery_pending", True)):
+        return False
+    checked_at_raw = str(record.get("delivery_checked_at") or "").strip()
+    if not checked_at_raw:
+        return True
+    try:
+        checked_at = datetime.fromisoformat(checked_at_raw.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return checked_at.astimezone(timezone.utc) <= reference.astimezone(timezone.utc) - timedelta(
+        seconds=_property_search_results_delivery_retry_seconds()
+    )
 
 
 def _property_search_erasure_secret() -> str:
@@ -3736,13 +3784,19 @@ def _list_property_search_run_records(
         if normalized_statuses:
             rows = [row for row in rows if str(row.get("status") or "").strip().lower() in normalized_statuses]
         if lightweight:
-            rows = [_compact_property_search_run_record(row) for row in rows]
+            lightweight_rows: list[dict[str, object]] = []
+            for row in rows:
+                compact = _compact_property_search_run_record(row)
+                delivery_checked_at = str(row.get("delivery_checked_at") or "").strip()
+                if delivery_checked_at:
+                    compact["delivery_checked_at"] = delivery_checked_at
+                lightweight_rows.append(compact)
+            rows = lightweight_rows
         if delivery_work_only:
             rows = [
                 row
                 for row in rows
-                if str(row.get("compact_schema_version") or "") != str(_PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION)
-                or bool(row.get("delivery_pending", True))
+                if _property_search_delivery_work_due(row)
             ]
             rows.sort(
                 key=lambda row: (
@@ -3788,13 +3842,16 @@ def _list_property_search_run_records(
         where_clauses.append("status = ANY(%s)")
         params.append(list(normalized_statuses))
     if delivery_work_only:
+        delivery_retry_seconds = _property_search_results_delivery_retry_seconds()
         where_clauses.append(
             "(compact_schema_version <> %s "
             "OR NOT (compact_json @> jsonb_build_object("
             "'compact_schema_version', compact_schema_version)) "
-            "OR delivery_pending)"
+            "OR (delivery_pending AND (delivery_checked_at IS NULL "
+            "OR delivery_checked_at <= CURRENT_TIMESTAMP - (%s * INTERVAL '1 second'))))"
         )
         params.append(_PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION)
+        params.append(delivery_retry_seconds)
     if where_clauses:
         query += " WHERE " + " AND ".join(where_clauses)
     if delivery_work_only:

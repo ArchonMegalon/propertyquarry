@@ -4882,14 +4882,19 @@ def _list_property_search_run_records(
         rows = [row for row in rows if str(row.get("status") or "").strip().lower() in normalized_statuses]
     rows.sort(key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""), reverse=True)
     if lightweight:
-        rows = [_property_search_storage._compact_property_search_run_record(row) for row in rows]  # type: ignore[attr-defined]
+        lightweight_rows: list[dict[str, object]] = []
+        for row in rows:
+            compact = _property_search_storage._compact_property_search_run_record(row)  # type: ignore[attr-defined]
+            delivery_checked_at = str(row.get("delivery_checked_at") or "").strip()
+            if delivery_checked_at:
+                compact["delivery_checked_at"] = delivery_checked_at
+            lightweight_rows.append(compact)
+        rows = lightweight_rows
     if delivery_work_only:
         rows = [
             row
             for row in rows
-            if str(row.get("compact_schema_version") or "")
-            != str(_property_search_storage._PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION)  # type: ignore[attr-defined]
-            or bool(row.get("delivery_pending", True))
+            if _property_search_storage._property_search_delivery_work_due(row)  # type: ignore[attr-defined]
         ]
     return tuple(rows[:normalized_limit])
 
@@ -52299,7 +52304,9 @@ class ProductService:
                     )
                     pickup_status = str(pickup.get("status") or "").strip()
                     if pickup_status in {"started", "queued"}:
-                        repaired += 1
+                        pickup_created = bool(pickup.get("job_created"))
+                        if pickup_status == "started" or pickup_created:
+                            repaired += 1
                         recovered.append(
                             {
                                 "run_id": run_id,
@@ -52308,12 +52315,14 @@ class ProductService:
                                 "repair_status": "",
                                 "replacement_run_id": "",
                                 "execution_pickup_status": pickup_status,
+                                "execution_pickup_created": pickup_created,
                                 "execution_pickup_reason": pickup_reason,
                                 "parent_run_ids": list(parent_run_ids),
                             }
                         )
                         continue
                 before_summary = dict(record.get("summary") or {}) if isinstance(record.get("summary"), dict) else {}
+                before_repair_status = str(before_summary.get("repair_status") or "").strip()
                 before_replacement = str(before_summary.get("repair_replacement_run_id") or "").strip()
                 snapshot = self.get_property_search_run_status(
                     principal_id=state_principal,
@@ -52326,8 +52335,9 @@ class ProductService:
                     if isinstance(snapshot.get("summary"), dict)
                     else {}
                 )
+                after_repair_status = str(after_summary.get("repair_status") or "").strip()
                 after_replacement = str(after_summary.get("repair_replacement_run_id") or "").strip()
-                if str(after_summary.get("repair_status") or "").strip():
+                if after_repair_status != before_repair_status:
                     repaired += 1
                 if after_replacement and after_replacement != before_replacement:
                     replacement_started += 1
@@ -52336,7 +52346,7 @@ class ProductService:
                         "run_id": run_id,
                         "principal_id": state_principal,
                         "status": str(snapshot.get("status") or "").strip(),
-                        "repair_status": str(after_summary.get("repair_status") or "").strip(),
+                        "repair_status": after_repair_status,
                         "replacement_run_id": after_replacement,
                     }
                 )

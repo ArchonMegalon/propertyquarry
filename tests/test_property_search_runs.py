@@ -986,6 +986,43 @@ def test_property_search_delivery_work_filter_runs_before_limit(monkeypatch: pyt
     assert [row["run_id"] for row in rows] == ["older-pending"]
 
 
+def test_property_search_delivery_work_filter_defers_recent_pending_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_RESULTS_DELIVERY_RETRY_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    registry = {
+        "recent-pending": {
+            "run_id": "recent-pending",
+            "principal_id": "principal-delivery-cooldown",
+            "status": "processed",
+            "updated_at": (now - timedelta(hours=1)).isoformat(),
+            "delivery_checked_at": (now - timedelta(seconds=60)).isoformat(),
+            "summary": {"eligible_tour_total": 1, "pending_tour_total": 1},
+        },
+        "due-pending": {
+            "run_id": "due-pending",
+            "principal_id": "principal-delivery-cooldown",
+            "status": "processed",
+            "updated_at": (now - timedelta(hours=1)).isoformat(),
+            "delivery_checked_at": (now - timedelta(seconds=301)).isoformat(),
+            "summary": {"eligible_tour_total": 1, "pending_tour_total": 1},
+        },
+    }
+
+    rows = property_search_storage._list_property_search_run_records(
+        limit=10,
+        statuses=("processed",),
+        principal_id="principal-delivery-cooldown",
+        lightweight=True,
+        delivery_work_only=True,
+        registry=registry,
+    )
+
+    assert [row["run_id"] for row in rows] == ["due-pending"]
+
+
 def test_property_search_delivery_work_query_prioritizes_schema_then_durable_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1038,8 +1075,10 @@ def test_property_search_delivery_work_query_prioritizes_schema_then_durable_cur
     assert observed["params"] == [
         ["processed"],
         property_search_storage._PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION,
+        property_search_storage._PROPERTY_SEARCH_RESULTS_DELIVERY_DEFAULT_RETRY_SECONDS,
         40,
     ]
+    assert "delivery_checked_at <= CURRENT_TIMESTAMP" in normalized_query
 
 
 def test_property_search_compact_backfill_uses_updated_at_compare_and_swap(
@@ -8376,6 +8415,66 @@ def test_property_search_recovery_picks_up_stale_replacement_run(monkeypatch) ->
     assert scout_calls[0]["max_results_per_source"] == 1
     assert scout_calls[0]["property_search_preferences"]["__property_search_run_id__"] == replacement_run_id
     assert replacement_calls == []
+
+
+def test_property_search_recovery_counts_only_new_repair_work(monkeypatch) -> None:
+    principal_id = "principal-recovery-idempotency"
+    service = ProductService(SimpleNamespace(preference_profiles=SimpleNamespace()))
+    records = (
+        {
+            "run_id": "run-existing-queue-job",
+            "principal_id": principal_id,
+            "status": "queued",
+            "current_step": "queued",
+            "summary": {},
+        },
+        {
+            "run_id": "run-unchanged-repair",
+            "principal_id": principal_id,
+            "status": "in_progress",
+            "current_step": "source_previewing",
+            "summary": {
+                "repair_status": "repairing",
+                "repair_replacement_run_id": "replacement-existing",
+            },
+        },
+    )
+    monkeypatch.setattr(product_service, "_list_property_search_run_records", lambda **_kwargs: records)
+    monkeypatch.setattr(product_service, "_property_search_run_is_stale", lambda _record: True)
+    monkeypatch.setattr(product_service, "_property_search_active_run_is_stale", lambda _record: True)
+    monkeypatch.setattr(
+        ProductService,
+        "_property_search_run_should_pick_up_execution",
+        lambda _self, record: (
+            (True, (), "startup_checkpoint_stale")
+            if record["run_id"] == "run-existing-queue-job"
+            else (False, (), "")
+        ),
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "_pick_up_property_search_run_execution",
+        lambda _self, **_kwargs: {
+            "status": "queued",
+            "job_created": False,
+        },
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "get_property_search_run_status",
+        lambda _self, **_kwargs: dict(records[1]),
+    )
+
+    summary = service.reconcile_stale_property_search_runs(
+        principal_id=principal_id,
+        limit=20,
+    )
+
+    assert summary["stale_total"] == 2
+    assert summary["repaired"] == 0
+    assert summary["replacement_started"] == 0
+    assert summary["recovered"][0]["execution_pickup_status"] == "queued"
+    assert summary["recovered"][0]["execution_pickup_created"] is False
 
 
 def test_property_search_status_picks_up_stale_replacement_run_from_lightweight_poll(monkeypatch) -> None:

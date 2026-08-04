@@ -1344,9 +1344,9 @@ def _scheduler_property_maintenance_order(principal_ids: tuple[str, ...]) -> tup
 
 def _scheduler_property_search_recovery_interval_seconds() -> float:
     try:
-        return max(15.0, float(os.environ.get("EA_SCHEDULER_PROPERTY_SEARCH_RECOVERY_INTERVAL_SECONDS") or 60.0))
+        return max(15.0, float(os.environ.get("EA_SCHEDULER_PROPERTY_SEARCH_RECOVERY_INTERVAL_SECONDS") or 300.0))
     except Exception:
-        return 60.0
+        return 300.0
 
 
 def _scheduler_property_search_recovery_timeout_seconds() -> float:
