@@ -9407,28 +9407,38 @@ def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
             f"candidate:{legacy_ref}": diorama_url,
         },
     )
-    candidates = [
+    ranked_candidates = [
         {
-            "candidate_ref": "first-ranked-home",
-            "title": "First ranked home",
+            "candidate_ref": f"ranked-home-{index}",
+            "title": f"Ranked home {index}",
             "recommendation": "shortlist",
-            "fit_score": 92,
-            "preview_image_url": first_photo_url,
-            "property_url": "https://example.test/first-ranked-home",
+            "fit_score": 93 - index,
+            "preview_image_url": first_photo_url if index == 0 else "",
+            "property_url": f"https://example.test/ranked-home-{index}",
             "source_label": "Willhaben",
-            "property_facts": {"price_eur": 500000, "area_m2": 80, "rooms": 3},
-        },
-        {
-            "candidate_ref": canonical_ref,
-            "listing_id": "canonical-listing-id",
-            "title": "Canonical diorama home",
-            "recommendation": "shortlist",
-            "fit_score": 84,
-            "property_url": "https://example.test/canonical-diorama-home",
-            "source_label": "Willhaben",
-            "property_facts": {"price_eur": 540000, "area_m2": 88, "rooms": 3},
-        },
+            "property_facts": {
+                "price_eur": 500000 + index * 1000,
+                "area_m2": 80,
+                "rooms": 3,
+            },
+        }
+        for index in range(24)
     ]
+    canonical_candidate = {
+        "candidate_ref": canonical_ref,
+        "listing_id": "canonical-listing-id",
+        "title": "Canonical diorama home",
+        "recommendation": "review",
+        "fit_score": 41,
+        "property_url": "https://example.test/canonical-diorama-home",
+        "source_label": "Willhaben",
+        "property_facts": {
+            "price_eur": 540000,
+            "area_m2": 88,
+            "rooms": 3,
+            "postal_name": "1020 Wien",
+        },
+    }
 
     def _fake_run_status(self, *, principal_id: str, run_id: str, **_kwargs):
         return {
@@ -9438,13 +9448,13 @@ def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
             "progress": 100,
             "summary": {
                 "sources_total": 1,
-                "listing_total": 2,
-                "ranked_candidates": candidates,
+                "listing_total": 25,
+                "ranked_candidates": ranked_candidates,
                 "sources": [
                     {
                         "source_label": "Willhaben",
-                        "listing_total": 2,
-                        "top_candidates": candidates,
+                        "listing_total": 25,
+                        "top_candidates": [canonical_candidate],
                     }
                 ],
             },
@@ -9457,6 +9467,29 @@ def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
         "list_property_saved_shortlist_candidates",
         lambda self, *, principal_id, status=None: [],
     )
+    captured_property_state: dict[str, object] = {}
+    original_workspace_payload = landing_routes._property_workspace_payload
+
+    def _capturing_workspace_payload(section, *, status, property_state):
+        captured_property_state.update(dict(property_state))
+        payload = original_workspace_payload(
+            section,
+            status=status,
+            property_state=property_state,
+        )
+        captured_property_state["_rendered_selected_candidate_ref"] = str(
+            dict(payload.get("decision_workbench") or {}).get(
+                "selected_candidate_ref"
+            )
+            or ""
+        )
+        return payload
+
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_workspace_payload",
+        _capturing_workspace_payload,
+    )
 
     response = client.get(
         "/app/shortlist",
@@ -9465,11 +9498,23 @@ def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
     )
 
     assert response.status_code == 200
-    assert re.search(
-        rf'<img[^>]+src="{re.escape(diorama_url)}"[^>]+data-pw-cover-image',
+    assert captured_property_state.get("selected_candidate_ref") == canonical_ref
+    assert (
+        captured_property_state.get("_rendered_selected_candidate_ref")
+        == canonical_ref
+    )
+    cover_sources = re.findall(
+        r'<img[^>]+src="([^"]*)"[^>]+data-pw-cover-image',
         response.text,
         flags=re.IGNORECASE,
     )
+    rendered_candidate_refs = re.findall(
+        r'data-candidate-ref="([^"]+)"',
+        response.text,
+        flags=re.IGNORECASE,
+    )
+    assert diorama_url in cover_sources, (cover_sources, rendered_candidate_refs)
+    assert canonical_ref in rendered_candidate_refs
     assert not re.search(
         rf'<img[^>]+src="{re.escape(first_photo_url)}"[^>]+data-pw-cover-image',
         response.text,

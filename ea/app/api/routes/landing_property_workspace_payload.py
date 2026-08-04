@@ -2006,6 +2006,9 @@ def property_workspace_payload(
     run_health = dict(property_state.get("run_health") or {})
     packet_recovery = dict(property_state.get("packet_recovery") or {})
     route_recovery = dict(property_state.get("route_recovery") or {})
+    selected_candidate_ref = str(
+        property_state.get("selected_candidate_ref") or ""
+    ).strip()
     run_events = property_run_customer_visible_events(run_payload=run_payload)
     raw_run_summary = dict(run_payload.get("summary") or {})
     run_summary = _property_customer_run_summary(raw_run_summary, preferences=property_preferences)
@@ -2206,6 +2209,34 @@ def property_workspace_payload(
         synthesized_ranked_candidates.sort(key=lambda item: float(item.get("fit_score") or 0.0), reverse=True)
     explicit_run_surface = bool(str(run_payload.get("run_id") or "").strip())
     active_run_candidates = ranked_candidates or synthesized_ranked_candidates
+    explicitly_selected_source_candidate: dict[str, object] = {}
+    if selected_candidate_ref and not any(
+        _property_candidate_ref(candidate) == selected_candidate_ref
+        for candidate in active_run_candidates
+    ):
+        for source in raw_run_sources:
+            source_label = str(
+                source.get("source_label") or source.get("label") or ""
+            ).strip()
+            for candidate_key in (
+                "top_candidates",
+                "research_candidates",
+                "evaluating_candidates",
+            ):
+                for raw_candidate in list(source.get(candidate_key) or []):
+                    if not isinstance(raw_candidate, dict):
+                        continue
+                    candidate = dict(raw_candidate)
+                    if _property_candidate_ref(candidate) != selected_candidate_ref:
+                        continue
+                    candidate.setdefault("source_label", source_label)
+                    candidate["_explicitly_selected_source_candidate"] = True
+                    explicitly_selected_source_candidate = candidate
+                    break
+                if explicitly_selected_source_candidate:
+                    break
+            if explicitly_selected_source_candidate:
+                break
     if normalized_section == "search" and explicit_run_surface and not active_run_candidates:
         active_run_candidates = [
             {**dict(candidate), "_active_run_ranked": True}
@@ -2219,6 +2250,10 @@ def property_workspace_payload(
             shortlist_candidates = _dedupe_shortlist_candidates([*active_run_candidates, *shortlist_candidates])
     elif not shortlist_candidates:
         shortlist_candidates = list(active_run_candidates)
+    if explicitly_selected_source_candidate:
+        shortlist_candidates = _dedupe_shortlist_candidates(
+            [*shortlist_candidates, explicitly_selected_source_candidate]
+        )
     if not compact_summary_surface and active_run_candidates and not list(run_summary_for_surface.get("ranked_candidates") or []):
         run_summary_for_surface = {
             **dict(run_summary_for_surface),
@@ -2507,7 +2542,6 @@ def property_workspace_payload(
         )
     delivery_proof_rows = _delivery_proof_rows(run_summary)
     artifact_receipt_rows = _artifact_receipt_rows(run_summary)
-    selected_candidate_ref = str(property_state.get("selected_candidate_ref") or "").strip()
     run_id = str(run_payload.get("run_id") or "").strip()
     run_suffix = f"?run_id={run_id}" if run_id else ""
     signed_in_billing_href = str(billing_handoff.get("open_href") or "").strip() or f"/app/billing{run_suffix}"
@@ -4292,7 +4326,30 @@ def property_workspace_payload(
 
     first_paint_candidates = [] if management_surface else list(shortlist_candidates)
     if normalized_section in {"properties", "shortlist"}:
-        first_paint_candidates = first_paint_candidates[:_PROPERTY_PROPERTIES_FIRST_PAINT_RESULT_LIMIT]
+        selected_first_paint_candidate = next(
+            (
+                candidate
+                for candidate in first_paint_candidates
+                if _property_candidate_ref(candidate) == selected_candidate_ref
+            ),
+            None,
+        )
+        first_paint_candidates = first_paint_candidates[
+            :_PROPERTY_PROPERTIES_FIRST_PAINT_RESULT_LIMIT
+        ]
+        if (
+            selected_first_paint_candidate is not None
+            and not any(
+                _property_candidate_ref(candidate) == selected_candidate_ref
+                for candidate in first_paint_candidates
+            )
+        ):
+            first_paint_candidates = [
+                *first_paint_candidates[
+                    : max(_PROPERTY_PROPERTIES_FIRST_PAINT_RESULT_LIMIT - 1, 0)
+                ],
+                selected_first_paint_candidate,
+            ]
     search_surface_fallback_candidates: list[tuple[dict[str, object], dict[str, object], str]] = []
 
     def _append_workbench_candidate(
