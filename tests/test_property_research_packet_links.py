@@ -123,6 +123,34 @@ def test_root_research_candidate_is_projected_for_partial_fact_mutation() -> Non
     }
 
 
+def test_bounded_fact_packet_precedes_lossy_ui_candidate_during_projection() -> None:
+    full_evidence = "e" * 3_000
+    compact_evidence = full_evidence[:2_048]
+    full_candidate = {
+        "candidate_ref": "fact-authoritative-ref",
+        "property_url": "https://example.test/fact-authoritative",
+        "property_facts": {
+            "nearest_supermarket_m": 240,
+            "source_evidence": full_evidence,
+        },
+    }
+    compact_candidate = {
+        **full_candidate,
+        "property_facts": {
+            "nearest_supermarket_m": 240,
+            "source_evidence": compact_evidence,
+        },
+    }
+    record = _record(compact_candidate)
+    record["payload_retention_status"] = "compact_only"
+    record["summary"]["research_candidates"] = [full_candidate]
+
+    links = project_property_research_packet_links(record)
+
+    packet = dict(links[0]["packet_json"])
+    assert packet["property_facts"]["source_evidence"] == full_evidence
+
+
 def test_missing_ref_uses_existing_stable_derived_v1_contract() -> None:
     candidate = {
         "title": "Apartment",

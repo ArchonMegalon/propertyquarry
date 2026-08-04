@@ -205,7 +205,19 @@ def _merge_packet_candidate_values(current: object, incoming: object) -> object:
 def _candidate_occurrences(record: Mapping[str, object]) -> Iterable[tuple[dict[str, object], int]]:
     summary = dict(record.get("summary") or {}) if isinstance(record.get("summary"), dict) else {}
     rank = 0
-    for key in _RUN_CANDIDATE_KEYS:
+    run_candidate_keys = _RUN_CANDIDATE_KEYS
+    if str(record.get("payload_retention_status") or "").strip().lower() in {
+        "bounded_projection",
+        "compact_only",
+    }:
+        # Fact enrichment hydrates one exact packet into this root list. Read
+        # it before lossy UI previews so merge precedence cannot replace full
+        # evidence strings or nested receipts with their compact projections.
+        run_candidate_keys = (
+            "research_candidates",
+            *(key for key in _RUN_CANDIDATE_KEYS if key != "research_candidates"),
+        )
+    for key in run_candidate_keys:
         rows = summary.get(key)
         if not isinstance(rows, (list, tuple)):
             continue
