@@ -521,6 +521,9 @@ EA_RETENTION_PROFILE=aggressive bash scripts/db_retention.sh
 # optional per-table override
 EA_RETENTION_DELIVERY_SENT_DAYS=14 bash scripts/db_retention.sh
 
+# optional expired/revoked workspace-session grace window
+EA_RETENTION_WORKSPACE_ACCESS_SESSIONS_DAYS=7 bash scripts/db_retention.sh
+
 # optional table allowlist (CSV)
 EA_RETENTION_TABLES=execution_events,delivery_outbox bash scripts/db_retention.sh
 

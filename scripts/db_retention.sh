@@ -24,6 +24,7 @@ Environment:
   EA_RETENTION_DELIVERY_SENT_DAYS            default: 30
   EA_RETENTION_APPROVAL_REQUESTS_DAYS        default: 120
   EA_RETENTION_APPROVAL_DECISIONS_DAYS       default: 120
+  EA_RETENTION_WORKSPACE_ACCESS_SESSIONS_DAYS default: 7
   EA_RETENTION_TABLES                        Optional CSV subset of the strict allowlist
   EA_RETENTION_SKIP_TABLES                   Optional CSV skip list
   EA_RETENTION_BATCH_SIZE                    Rows per transaction (default: 500; max: 10000)
@@ -76,6 +77,7 @@ case "${RETENTION_PROFILE}" in
     DEFAULT_DELIVERY_SENT_DAYS=7
     DEFAULT_APPROVAL_REQUESTS_DAYS=60
     DEFAULT_APPROVAL_DECISIONS_DAYS=60
+    DEFAULT_WORKSPACE_ACCESS_SESSIONS_DAYS=1
     ;;
   conservative)
     DEFAULT_EXECUTION_EVENTS_DAYS=180
@@ -84,6 +86,7 @@ case "${RETENTION_PROFILE}" in
     DEFAULT_DELIVERY_SENT_DAYS=60
     DEFAULT_APPROVAL_REQUESTS_DAYS=180
     DEFAULT_APPROVAL_DECISIONS_DAYS=180
+    DEFAULT_WORKSPACE_ACCESS_SESSIONS_DAYS=30
     ;;
   standard)
     DEFAULT_EXECUTION_EVENTS_DAYS=90
@@ -92,6 +95,7 @@ case "${RETENTION_PROFILE}" in
     DEFAULT_DELIVERY_SENT_DAYS=30
     DEFAULT_APPROVAL_REQUESTS_DAYS=120
     DEFAULT_APPROVAL_DECISIONS_DAYS=120
+    DEFAULT_WORKSPACE_ACCESS_SESSIONS_DAYS=7
     ;;
   *)
     echo "EA_RETENTION_PROFILE must be aggressive|standard|conservative" >&2
@@ -105,6 +109,7 @@ OBSERVATIONS_DAYS="${EA_RETENTION_OBSERVATIONS_DAYS:-${DEFAULT_OBSERVATIONS_DAYS
 DELIVERY_SENT_DAYS="${EA_RETENTION_DELIVERY_SENT_DAYS:-${DEFAULT_DELIVERY_SENT_DAYS}}"
 APPROVAL_REQUESTS_DAYS="${EA_RETENTION_APPROVAL_REQUESTS_DAYS:-${DEFAULT_APPROVAL_REQUESTS_DAYS}}"
 APPROVAL_DECISIONS_DAYS="${EA_RETENTION_APPROVAL_DECISIONS_DAYS:-${DEFAULT_APPROVAL_DECISIONS_DAYS}}"
+WORKSPACE_ACCESS_SESSIONS_DAYS="${EA_RETENTION_WORKSPACE_ACCESS_SESSIONS_DAYS:-${DEFAULT_WORKSPACE_ACCESS_SESSIONS_DAYS}}"
 BATCH_SIZE="${EA_RETENTION_BATCH_SIZE:-500}"
 MAX_ROWS_PER_TABLE="${EA_RETENTION_MAX_ROWS_PER_TABLE:-10000}"
 LOCK_TIMEOUT_MS="${EA_RETENTION_LOCK_TIMEOUT_MS:-2000}"
@@ -126,7 +131,8 @@ require_integer_range() {
 
 for value_name in \
   EXECUTION_EVENTS_DAYS POLICY_DECISIONS_DAYS OBSERVATIONS_DAYS \
-  DELIVERY_SENT_DAYS APPROVAL_REQUESTS_DAYS APPROVAL_DECISIONS_DAYS
+  DELIVERY_SENT_DAYS APPROVAL_REQUESTS_DAYS APPROVAL_DECISIONS_DAYS \
+  WORKSPACE_ACCESS_SESSIONS_DAYS
 do
   require_integer_range "${value_name}" "${!value_name}" 1 3650
 done
@@ -148,11 +154,12 @@ DEFAULT_TABLES=(
   delivery_outbox
   approval_decisions
   approval_requests
+  workspace_access_sessions
 )
 
 is_allowed_table() {
   case "$1" in
-    execution_events|policy_decisions|observation_events|delivery_outbox|approval_decisions|approval_requests)
+    execution_events|policy_decisions|observation_events|delivery_outbox|approval_decisions|approval_requests|workspace_access_sessions)
       return 0
       ;;
     *)
@@ -222,6 +229,9 @@ predicate_for_table() {
       ;;
     approval_requests)
       printf "status IN ('approved','denied','expired','cancelled') AND created_at < CURRENT_TIMESTAMP - INTERVAL '%s days'" "${APPROVAL_REQUESTS_DAYS}"
+      ;;
+    workspace_access_sessions)
+      printf "((status IN ('revoked','expired') AND updated_at < CURRENT_TIMESTAMP - INTERVAL '%s days') OR (status = 'active' AND CASE WHEN expires_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}' THEN expires_at::timestamptz ELSE NULL END < CURRENT_TIMESTAMP - INTERVAL '%s days'))" "${WORKSPACE_ACCESS_SESSIONS_DAYS}" "${WORKSPACE_ACCESS_SESSIONS_DAYS}"
       ;;
   esac
 }
@@ -326,6 +336,7 @@ if [[ "${APPLY}" == "1" ]]; then
       '${RETENTION_PROFILE}',current_user,${BATCH_SIZE},${MAX_ROWS_PER_TABLE},
       pg_database_size(current_database()),
       jsonb_build_object('tables','$(IFS=, ; printf '%s' "${TABLES[*]}")',
+                         'workspace_access_sessions_days',${WORKSPACE_ACCESS_SESSIONS_DAYS},
                          'lock_timeout_ms',${LOCK_TIMEOUT_MS},
                          'statement_timeout_ms',${STATEMENT_TIMEOUT_MS},
                          'vacuum_after_apply',${VACUUM_AFTER_APPLY})

@@ -192,6 +192,10 @@ def test_schema_v19_and_operator_lane_are_journaled_batched_and_scheduled() -> N
     assert "EA_RETENTION_MAX_ROWS_PER_TABLE" in retention_script
     assert "propertyquarry_retention_runs" in retention_script
     assert "retention table is not allowlisted" in retention_script
+    assert "EA_RETENTION_WORKSPACE_ACCESS_SESSIONS_DAYS" in retention_script
+    assert "workspace_access_sessions" in retention_script
+    assert "status IN ('revoked','expired')" in retention_script
+    assert "CASE WHEN expires_at ~" in retention_script
     assert 'if [[ "${running}" != "true" ]]' in retention_script
     assert "pg_ls_waldir" in size_script
     assert "toast_bytes" in size_script

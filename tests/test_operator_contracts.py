@@ -868,6 +868,7 @@ def test_db_visibility_and_retention_help_contracts_cover_release_baseline_flags
     assert "EA_RETENTION_PROFILE" in db_retention_help
     assert "EA_RETENTION_TABLES" in db_retention_help
     assert "EA_RETENTION_SKIP_TABLES" in db_retention_help
+    assert "EA_RETENTION_WORKSPACE_ACCESS_SESSIONS_DAYS" in db_retention_help
 
     assert "SUPPORT_INCLUDE_DB_SIZE=0|1" in support_bundle_help
     assert "SUPPORT_DB_SIZE_LIMIT=<n>" in support_bundle_help

@@ -27,9 +27,12 @@ mutation is allowlisted, journaled, bounded, resumable, and owner-operated.
   remains possible so an operator can recover from low-water state.
 - The reconstructible map-preview cache is pruned oldest-first to both 2,048
   entries and 256 MiB. Neither limit applies to durable artifact records.
-- Generic DB retention accepts only six reviewed runtime tables. Apply mode is
+- Generic DB retention accepts only seven reviewed runtime tables. Apply mode is
   recorded in `propertyquarry_retention_runs`, uses `SKIP LOCKED` batches and
   per-table ceilings, and never invokes `VACUUM FULL`.
+- Workspace access sessions are not audit authority. Revoked/expired rows and
+  active rows whose parseable expiry is past the configured grace window are
+  eligible after 7 days by default; malformed or missing expiries fail closed.
 - PostgreSQL physical space reclamation is a distinct maintenance operation.
   Ordinary deletes and compaction make pages reusable but do not promise a
   smaller relation file.
@@ -42,6 +45,7 @@ mutation is allowlisted, journaled, bounded, resumable, and owner-operated.
 | Packet links/memberships | per-run projection; memberships age out in batches | writer contract; held links/memberships preserved |
 | Observation/execution/policy events | payload admission plus reviewed TTL windows | owner-only retention command |
 | Delivery/approval rows | terminal-status TTL only | owner-only retention command |
+| Workspace access sessions | terminal/expired TTL after a bounded grace window | owner-only retention command; active future/unknown expiries preserved |
 | Source listing cache | TTL plus fixed entry ceiling | cache writer; fully reconstructible |
 | Map-preview cache | 2,048 entries and 256 MiB, oldest first | API cache writer; fully reconstructible |
 | Durable text artifacts | 16 MiB/write plus 10 GiB free-space admission | no generic deletion; owner lifecycle only |
