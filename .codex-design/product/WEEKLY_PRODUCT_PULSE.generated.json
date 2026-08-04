@@ -1,7 +1,7 @@
 {
   "contract_name": "ea.weekly_product_pulse",
   "contract_version": 2,
-  "generated_at": "2026-08-04T14:23:25Z",
+  "generated_at": "2026-08-04T15:16:56Z",
   "as_of": "2026-08-04",
   "scorecard_source": ".codex-design/product/PRODUCT_HEALTH_SCORECARD.yaml",
   "release_truth_source": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
@@ -10,10 +10,10 @@
     "resolved_path": "/docker/property/.codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
     "present": true,
     "size_bytes": 23528,
-    "mtime_utc": "2026-08-04T14:23:22Z",
-    "sha256": "60473747166dfb39c79d1210b807e4c2de9dc3f44c2251e63f558804c07143ca",
+    "mtime_utc": "2026-08-04T15:16:52Z",
+    "sha256": "0fde9888f6a04b1a8d82cdb418104e87b285caef812aa3115e2982b41ec31e08",
     "git_repo_root": "/docker/property",
-    "git_head": "e08ba5c1e86811db59add4154bf9537fdd46268e",
+    "git_head": "c9d9907e8e4b3d3b5c347588fac0ab195eacc94f",
     "git_branch": "integration/property-origin-main-20260728",
     "repo_relative_path": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json"
   },
@@ -155,13 +155,13 @@
     "provider_route_stewardship": {
       "default_status": "PropertyQuarry routes are governed by local truth surfaces.",
       "canary_status": "Browser execution proof is published for the source/browser candidate; protected live evidence remains separate.",
-      "review_due": "2026-08-11T14:23:25Z",
+      "review_due": "2026-08-11T15:16:56Z",
       "next_decision": "Complete the protected launch profile and live receipts, then re-materialize this pulse."
     },
     "journey_gate_source": "/docker/fleet/.codex-studio/published/JOURNEY_GATES.generated.json",
     "journey_gate_git_head": "99f7fc42bac6a172d4ec2c02ed59807461d10038",
     "flagship_release_receipt_source": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
-    "flagship_release_receipt_git_head": "e08ba5c1e86811db59add4154bf9537fdd46268e",
+    "flagship_release_receipt_git_head": "c9d9907e8e4b3d3b5c347588fac0ab195eacc94f",
     "scorecard_source": ".codex-design/product/PRODUCT_HEALTH_SCORECARD.yaml",
     "release_pipeline_source": ".codex-design/product/RELEASE_PIPELINE.md",
     "governor_loop_source": ".codex-design/product/PRODUCT_GOVERNOR_AND_AUTOPILOT_LOOP.md",
