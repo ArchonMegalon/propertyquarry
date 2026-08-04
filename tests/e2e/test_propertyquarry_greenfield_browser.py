@@ -4130,7 +4130,12 @@ def test_propertyquarry_home_example_media_links_open_real_public_tour_targets(
         tour_href = page.get_by_role("link", name="3D tour available").get_attribute("href")
         walkthrough_href = page.get_by_role("link", name="Walkthrough available").get_attribute("href")
         assert tour_href == f"/tours/{slug}/control/3dvista"
-        assert walkthrough_href == f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
+        assert walkthrough_href == f"/tours/{slug}/walkthrough"
+        walkthrough_response = public_context.request.get(
+            f"{base_url}{walkthrough_href}"
+        )
+        assert walkthrough_response.ok
+        assert walkthrough_response.headers["content-type"].startswith("video/mp4")
         assert "#tour-preview" not in page.content()
         assert "#walkthrough-preview" not in page.content()
     finally:

@@ -11,6 +11,7 @@ cd "${APP_ROOT}"
 COMPOSE_PROJECT_NAME="${PROPERTYQUARRY_COMPOSE_PROJECT_NAME:-property}"
 LOCAL_RECEIPT="${PROPERTYQUARRY_LOCAL_DEPLOYMENT_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-local-deployment.v1.json}"
 ADMISSION_RECEIPT="${PROPERTYQUARRY_ADMISSION_DATABASE_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-admission-database.v1.json}"
+IMAGE_RETENTION_RECEIPT="${PROPERTYQUARRY_IMAGE_RETENTION_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-image-retention.v1.json}"
 PREFLIGHT_ONLY=0
 SKIP_BUILD=0
 
@@ -344,6 +345,14 @@ python3 scripts/propertyquarry_local_deployment_receipt.py \
   --compose-project "${COMPOSE_PROJECT_NAME}" \
   --local-origin "http://127.0.0.1:${local_port}" \
   --write "${LOCAL_RECEIPT}"
+
+python3 scripts/propertyquarry_image_retention.py \
+  --apply \
+  --expected-web-image "${web_image}" \
+  --expected-render-image "${render_image}" \
+  --keep-previous 1 \
+  --write "${IMAGE_RETENTION_RECEIPT}" \
+  > /dev/null
 
 /usr/bin/printf 'DEPLOYED local Docker deployment runtime=%s envelope=%s receipt=%s\n' \
   "${runtime_sha}" "${head_sha}" "${LOCAL_RECEIPT}"

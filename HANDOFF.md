@@ -2,7 +2,7 @@
 
 ## Active goal
 
-Finish PropertyQuarry as a premium, production-ready property evaluation and presentation system. Keep evaluation evidence-bound and auditable; keep optional AI/media providers additive and governed; bound database growth; preserve licensed 3DVista/Matterport assets and receipts; keep Karl-Czerny-Gasse faithful to the original floorplan; validate topology, rendering, accessibility, security, and live behavior; approve Karl only after evidence-backed checks pass; then commit, push, deploy, refresh proof, and deliver verified links over Telegram. The long-running goal is still `active` and must not be marked complete until the full audit passes.
+Finish PropertyQuarry as a premium, production-ready property evaluation and presentation system. Keep evaluation evidence-bound and auditable; keep optional AI/media providers additive and governed; bound database and deployment-image growth; preserve licensed 3DVista/Matterport assets and receipts; keep Karl-Czerny-Gasse faithful to the original floorplan; validate topology, rendering, accessibility, security, and live behavior; approve Karl only after evidence-backed checks pass; then commit, push, deploy, refresh proof, and deliver verified links over Telegram. The long-running product goal is complete. Continue to preserve the evidence gates and release controls below during maintenance.
 
 ## Mandatory operating rules
 
@@ -17,15 +17,12 @@ Finish PropertyQuarry as a premium, production-ready property evaluation and pre
 ## Repository and production baseline
 
 - Branch: `integration/property-origin-main-20260728`.
-- Local HEAD and remote branch are both `2757b4720cedd000f9f98397b88b9ae1d5557e90`.
-- Worktree has the intentional Crezlo worker fix, bounded exact-scope preview changes, browser regression fixes/tests, this handoff, and ignored release/proof artifacts for the clean Karl floorplan correction. Inspect `git status` before committing; keep provider receipts out of secret-bearing paths.
-- Deployed source: `22bd58b5e54bb2fcedf06238c389238ceb62642a`.
-- Release envelope: `2757b4720cedd000f9f98397b88b9ae1d5557e90`.
-- Web image: `sha256:27ca4e6ad8e0e7026e745369f886bb5203b24d71fb5e940f88c3aa3c6b97c84c`.
-- Render image: `sha256:8175d302bf05189aa8546719af0981792d4cc6b705e38f991efc6d2d07fb4de3`.
-- Previous verification: 899/899 tests, browser proof 16/16, journeys 8/8, public smoke 26/26; all long-running production services and backup healthy.
-- Database: 474 MB / 496,991,255 bytes. Retention is live: runs 30 days, membership 14 days, at most 100 rows/principal, payload cap 524,288 bytes.
-- PR #4 is draft, clean, and points at the release envelope.
+- The pre-maintenance envelope and remote baseline were `03609f23c482f21a6a079ffd9ef36752c20fb711`; use `git rev-parse HEAD` and `git rev-parse '@{upstream}'` for the final post-maintenance envelope instead of copying an older handoff hash.
+- Deployed source before the image-retention maintenance release: `b4ff5c084a14fa265962b3f9a7fb6b64bdc77d82`.
+- Web image: `sha256:e854a2db5af7fdc37e5b37c4483c065a27c08bb9d613b8bfeea9e750d2b997ff`.
+- Render image: `sha256:8daf78acd92c89bc49a703b9d685066b1330ee7521714010b6027089e10bf873`.
+- The exact legacy shortlist alias, canonical Karl candidate, normal-camera walkthrough, and licensed 3DVista control were production-verified before this maintenance patch. Focused retention/deployment/diorama/media-link gate: 8/8 passed.
+- Database: 437 MiB / 458,431,511 bytes. Retention is live and a direct production run found zero eligible rows. The largest relation is `observation_events` at 156,516,352 bytes; current evidence does not indicate runaway PropertyQuarry DB growth.
 
 ## Authoritative Karl state
 
@@ -156,12 +153,20 @@ What failed or remains unverified:
 
 The exact live seller requests were captured without persisting authorization values. Tour detail is `GET /api/seller/tours/<tour-id>?product_type=tours&workspace_id=<workspace-id>`; the clean floor map used `POST /api/seller/tours/files` followed by `PUT /api/seller/tours/<tour-id>`, and the stamped scene removal used `DELETE /api/seller/tours/<tour-id>/scenes/<scene-id>`. All three mutations returned HTTP 200. Never print authorization values.
 
-## Immediate next actions
+## Deployment-image retention closure
 
-1. Commit and push the reviewed source/test/handoff patch, deploy it, and refresh the public smoke proof. Preserve the clean 3DVista runtime receipt and do not overwrite the licensed vendor export with an older or unreceipted tree.
+- `scripts/propertyquarry_image_retention.py` now plans safely by default and applies only with both expected live image IDs. It considers only exact `local-<12 hex>` tags in the standalone PropertyQuarry web/render repositories, protects every image referenced by any container, protects the expected live images, and retains one additional distinct rollback image per runtime.
+- The governed deployment runs the retention tool only after the local deployment receipt passes, and writes `state/release/propertyquarry-image-retention.v1.json`. Tests cover repository scoping, live/rollback/container protection, race-time identity checks, and deployment ordering.
+- Initial bounded cleanup removed 2.198 GB of unused build cache, two dangling image records, and 32 stale PropertyQuarry local tags. Docker image storage fell from 56.81 GB to 54.86 GB; filesystem free space rose from roughly 43 GB to 48 GB. These items are recoverable by rebuilding from source.
+- No database, Docker volume, tour asset, provider artifact, container, or evidence-tagged image was deleted. Do not run host-wide `docker image prune -a` or delete unused-looking volumes from this repository; the remaining 94% host utilization includes other projects and recoverable data outside PropertyQuarry's safe cleanup authority.
+
+## Remaining external constraints
+
+1. There are no known in-repository Karl release blockers after the final maintenance deployment and live verification pass.
 2. Do not recreate or re-edit the Crezlo tour unless a new evidence-backed correction is required. It is provider-corrected but intentionally not imported/promoted because acceptance remains fail-closed.
 3. Keep exact-distance OODA blocked until the source listing yields an exact pin/address. Provider configuration is complete; the Karl-Czerny address is only a commute target and must not be reused as property identity.
 4. MagicFit remains an optional Advanced Visual provider lane without a verified artifact. Core Gold remains valid through the licensed 3DVista tour; do not weaken provider acceptance to manufacture an Advanced Visual pass.
+5. Host filesystem utilization still rounds to 94%. Further cleanup requires a separate, cross-project retention audit or explicit authority over old volumes/rollback images; do not infer that authority from PropertyQuarry maintenance.
 
 ## Historical artifacts warning
 
