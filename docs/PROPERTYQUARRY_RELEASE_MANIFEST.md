@@ -52,13 +52,13 @@ The marked JSON object is the single canonical release authority consumed by the
 <!-- propertyquarry-release-manifest-json:start -->
 ```json
 {
-  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:53728c184b373403fac1ae8915faa5b726733ef11cce53299f99605713307c40",
+  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:59e53bdac9ed274d0fc6318649ba83de0ca8f867ba39303f605bd917b3157990",
   "release_branch": "main",
   "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
-  "release_commit_sha": "b909955c324d4730712b620daedc6e15f9d0703f",
-  "release_deployment_id": "propertyquarry-governed-deploy-b909955c324d",
-  "release_generated_at": "2026-08-04T16:08:49Z",
-  "release_label": "propertyquarry-source-browser-candidate-b909955c324d",
+  "release_commit_sha": "ceab9b0e155535a0a7d4896761afcffb782d89b0",
+  "release_deployment_id": "propertyquarry-governed-deploy-ceab9b0e1555",
+  "release_generated_at": "2026-08-04T16:28:22Z",
+  "release_label": "propertyquarry-source-browser-candidate-ceab9b0e1555",
   "release_manifest_schema": "propertyquarry.release_manifest.v1",
   "release_product": "PropertyQuarry",
   "release_public_origin": "https://propertyquarry.com",
