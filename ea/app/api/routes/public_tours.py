@@ -11891,6 +11891,35 @@ def _tour_control_provider_recovery_script() -> str:
     """
 
 
+def _tour_control_3dvista_vr_href(value: object) -> str:
+    """Return a provider-safe 3DVista URL that starts in optional VR mode."""
+
+    safe_src = _public_tour_safe_frame_url(value)
+    if not safe_src or safe_src == "about:blank":
+        return ""
+    parsed = urllib.parse.urlsplit(safe_src)
+    local_export = bool(re.match(r"^/tours/3dvista/", parsed.path))
+    if not local_export and not _safe_3dvista_external_url(safe_src):
+        return ""
+    query_parts = [part for part in parsed.query.split("&") if part]
+    has_vr_mode = any(
+        urllib.parse.unquote_plus(part.split("=", 1)[0]).strip().lower() == "vr"
+        for part in query_parts
+    )
+    if not has_vr_mode:
+        query_parts.append("vr")
+    candidate = urllib.parse.urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            "&".join(query_parts),
+            parsed.fragment,
+        )
+    )
+    return _public_tour_safe_frame_url(candidate)
+
+
 def _tour_control_external_iframe_html(
     *,
     title: str,
@@ -11900,6 +11929,7 @@ def _tour_control_external_iframe_html(
     fullscreen_href: str = "",
     fullscreen: bool = False,
     nonce: str = "",
+    vr_href: str = "",
 ) -> str:
     nonce_attr = html.escape(_public_tour_normalized_nonce(nonce) or _public_tour_csp_nonce(), quote=True)
     payload = payload or {}
@@ -11958,6 +11988,13 @@ def _tour_control_external_iframe_html(
         or "#"
     )
     clean_fullscreen_href = html.escape(safe_fullscreen_href)
+    safe_vr_href = _tour_control_3dvista_vr_href(vr_href)
+    vr_action_html = (
+        f'<a href="{html.escape(safe_vr_href, quote=True)}" target="_blank" '
+        'rel="noopener noreferrer" data-tour-mode="vr">View with 3D glasses</a>'
+        if safe_vr_href
+        else ""
+    )
     payload_slug = str(payload.get("slug") or "").strip()
     return_href = f"/tours/{urllib.parse.quote(payload_slug, safe='')}" if payload_slug else "#"
     clean_return_href = html.escape(_public_tour_safe_navigation_url(return_href, allow_fragment=True) or "#")
@@ -12125,6 +12162,7 @@ def _tour_control_external_iframe_html(
             <div class="provider-actions">
               <a href="{clean_fullscreen_href}">Full screen</a>
               <a href="{html.escape(initial_provider_src_raw, quote=True)}" target="_blank" rel="noopener noreferrer">Open 3D tour in new tab</a>
+              {vr_action_html}
             </div>
           </div>
           <div class="provider-frame-wrap" aria-busy="true" data-provider-state="loading">
@@ -12400,6 +12438,7 @@ def _tour_control_3dvista_html(payload: dict[str, object], *, nonce: str = "") -
             fullscreen_href=f"/tours/{urllib.parse.quote(raw_slug, safe='')}/control/3dvista?fullscreen=1" if raw_slug else iframe_src,
             fullscreen=bool(payload.get("_tour_control_fullscreen")),
             nonce=nonce,
+            vr_href=_tour_control_3dvista_vr_href(iframe_src),
         )
     raise HTTPException(status_code=404, detail="tour_control_3dvista_export_missing")
 
