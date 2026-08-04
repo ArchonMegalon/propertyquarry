@@ -843,6 +843,8 @@ def run_property_google_maps_ooda(
         if travel_mode not in _TRAVEL_MODES:
             travel_mode = "walking"
         destination = f"nearest {search_label} near {latitude:.8f},{longitude:.8f}"
+        listing_address = _bounded_text(facts.get("address"), limit=320)
+        workflow_location = listing_address or f"{latitude:.8f},{longitude:.8f}"
         query_url = _google_maps_query_url(
             latitude=latitude,
             longitude=longitude,
@@ -876,7 +878,12 @@ def run_property_google_maps_ooda(
                 "travel_mode": travel_mode,
             },
             "workflow_inputs_json": {
-                "KeyWords": f"{search_label} near {latitude:.8f},{longitude:.8f}",
+                # The licensed workflow types this value into the Google Maps
+                # search box. A source address resolves reliably there, while
+                # a bare comma-joined coordinate pair can be interpreted as a
+                # broad account-local search. Coordinates remain the evidence
+                # and distance basis, and are the fail-safe fallback.
+                "KeyWords": f"{search_label} near {workflow_location}",
                 "language": "de",
                 "country": "at",
             },

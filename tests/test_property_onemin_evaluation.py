@@ -279,6 +279,9 @@ def test_manager_backed_evaluation_drives_governed_maps_ooda(monkeypatch) -> Non
         "provider.onemin.code_generate",
         "browseract.extract_account_facts",
     ]
+    assert tool_execution.requests[1].payload_json["workflow_inputs_json"][
+        "KeyWords"
+    ] == "supermarket near Karlsplatz 1, 1010 Wien"
     assert all(request.context_json["suppress_telegram_delivery"] for request in tool_execution.requests)
     action = completed["ooda"]["actions"][0]
     assert action["status"] == "verified"
@@ -355,6 +358,45 @@ def test_maps_ooda_keeps_worker_binding_authority_off_the_user_principal(
     )
     assert research["nearest_supermarket_m"] > 0
     assert completed["ooda"]["actions"][0]["status"] == "verified"
+
+
+def test_maps_ooda_uses_exact_coordinates_when_listing_address_is_missing(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_GOOGLE_MAPS_BROWSERACT_BINDING_ID", raising=False
+    )
+    facts, plan, spec = _fixtures()
+    facts.pop("address")
+    tool_execution = _FakeToolExecution()
+
+    run_property_google_maps_ooda(
+        tool_execution=tool_execution,
+        principal_id="property-user-42",
+        run_id="run-test",
+        candidate_ref="candidate-test",
+        property_url="https://example.test/listing/42",
+        facts=facts,
+        plan=plan,
+        specs=[spec],
+        evaluation={
+            "status": "succeeded",
+            "ooda": {
+                "actions": [
+                    {
+                        "fact_key": "nearest_supermarket_m",
+                        "label": "Nearest supermarket",
+                        "travel_mode": "walking",
+                        "priority": 1,
+                    }
+                ]
+            },
+        },
+    )
+
+    assert tool_execution.requests[0].payload_json["workflow_inputs_json"][
+        "KeyWords"
+    ] == "supermarket near 48.20820000,16.37380000"
 
 
 def test_maps_ooda_fails_closed_when_binding_principal_is_missing(
