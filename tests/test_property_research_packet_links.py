@@ -102,6 +102,27 @@ def test_rank_beyond_compact_ui_limit_survives_packet_projection() -> None:
     assert dict(target["packet_json"])["packet_source_rank"] == 45
 
 
+def test_root_research_candidate_is_projected_for_partial_fact_mutation() -> None:
+    record = _record()
+    record["summary"] = {
+        "research_candidates": [
+            {
+                "candidate_ref": "fact-hydrated-ref",
+                "property_url": "https://example.test/fact-hydrated",
+                "property_facts": {"nearest_supermarket_m": 240},
+            }
+        ]
+    }
+
+    links = project_property_research_packet_links(record)
+
+    assert len(links) == 1
+    assert links[0]["candidate_ref"] == "fact-hydrated-ref"
+    assert dict(links[0]["packet_json"])["property_facts"] == {
+        "nearest_supermarket_m": 240
+    }
+
+
 def test_missing_ref_uses_existing_stable_derived_v1_contract() -> None:
     candidate = {
         "title": "Apartment",

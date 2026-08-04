@@ -21,6 +21,7 @@ _RUN_CANDIDATE_KEYS = (
     "ranked_candidates",
     "results",
     "top_candidates",
+    "research_candidates",
     "_delivery_candidates",
 )
 _SOURCE_CANDIDATE_KEYS = (
