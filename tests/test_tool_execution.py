@@ -2040,6 +2040,173 @@ def test_tool_execution_service_executes_builtin_browseract_extract_handler() ->
     assert result.receipt_json["requested_run_url"] == "https://browseract.example/run"
 
 
+def test_tool_execution_service_executes_browseract_extract_with_native_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_runtime = ToolRuntimeService(
+        tool_registry=InMemoryToolRegistryRepository(),
+        connector_bindings=InMemoryConnectorBindingRepository(),
+    )
+    service = _tool_execution_service(
+        tool_runtime=tool_runtime,
+        artifacts=InMemoryArtifactRepository(),
+    )
+    binding = tool_runtime.upsert_connector_binding(
+        principal_id="exec-1",
+        connector_name="browseract",
+        external_account_ref="browseract-maps",
+        scope_json={"scopes": ["google_maps_distance_research"]},
+        auth_metadata_json={
+            "browseract_service_workflows_json": {
+                "google_maps_distance_research": {
+                    "browseract_workflow_id": "workflow-google-maps",
+                }
+            },
+        },
+        status="enabled",
+    )
+    adapter = service._browseract_module._adapter
+    captured: dict[str, object] = {}
+
+    def _run_workflow(*, workflow_id: str, input_values: dict[str, object]) -> dict[str, object]:
+        captured.update({"workflow_id": workflow_id, "input_values": input_values})
+        return {"id": "task-maps-1"}
+
+    monkeypatch.setenv("BROWSERACT_API_KEY", "test-browseract-key")
+    monkeypatch.setattr(adapter, "_run_browseract_workflow_task_with_inputs", _run_workflow)
+    monkeypatch.setattr(
+        adapter,
+        "_wait_for_browseract_task",
+        lambda **_: {
+            "status": "finished",
+            "output": {
+                "string": json.dumps(
+                    {
+                        "facts_json": {
+                            "fact_key": "supermarket",
+                            "place_name": "BILLA",
+                            "place_category": "Supermarket",
+                            "place_id": "ChIJexample",
+                            "destination_latitude": 48.2251,
+                            "destination_longitude": 16.4012,
+                            "final_surface_url": "https://www.google.com/maps/dir/?api=1&destination=48.2251,16.4012",
+                            "visible_text": "BILLA — Supermarket",
+                        }
+                    }
+                )
+            },
+        },
+    )
+
+    result = service.execute_invocation(
+        ToolInvocationRequest(
+            session_id="session-browseract-maps-workflow-1",
+            step_id="step-browseract-maps-workflow-1",
+            tool_name="browseract.extract_account_facts",
+            action_kind="account.extract",
+            payload_json={
+                "binding_id": binding.binding_id,
+                "principal_id": "exec-1",
+                "service_name": "google_maps_distance_research",
+                "requested_fields": [
+                    "fact_key",
+                    "place_name",
+                    "place_category",
+                    "place_id",
+                    "destination_latitude",
+                    "destination_longitude",
+                    "final_surface_url",
+                    "visible_text",
+                ],
+                "instructions": "Return only coordinate-bound Google Maps evidence.",
+                "account_hints_json": {
+                    "query_url": "https://www.google.com/maps/dir/?api=1&origin=48.224,16.400&destination=supermarket",
+                    "fact_key": "supermarket",
+                    "listing_latitude": 48.224,
+                    "listing_longitude": 16.4,
+                    "travel_mode": "walking",
+                },
+            },
+            context_json={"principal_id": "exec-1"},
+        )
+    )
+
+    assert captured["workflow_id"] == "workflow-google-maps"
+    workflow_inputs = captured["input_values"]
+    assert isinstance(workflow_inputs, dict)
+    assert workflow_inputs["service_name"] == "google_maps_distance_research"
+    assert json.loads(str(workflow_inputs["requested_fields_json"])) == result.output_json["requested_fields"]
+    assert json.loads(str(workflow_inputs["account_hints_json"]))["fact_key"] == "supermarket"
+    assert workflow_inputs["query_url"].startswith("https://www.google.com/maps/dir/")
+    assert result.output_json["facts_json"]["place_id"] == "ChIJexample"
+    assert result.output_json["verification_source"] == "browseract_workflow"
+    assert result.output_json["requested_workflow_id"] == "workflow-google-maps"
+    assert result.output_json["browseract_task_id"] == "task-maps-1"
+    assert result.output_json["missing_fields"] == []
+    assert result.receipt_json["requested_workflow_id"] == "workflow-google-maps"
+    assert result.receipt_json["browseract_task_id"] == "task-maps-1"
+
+
+def test_tool_execution_service_browseract_extract_workflow_fails_closed_without_facts_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_runtime = ToolRuntimeService(
+        tool_registry=InMemoryToolRegistryRepository(),
+        connector_bindings=InMemoryConnectorBindingRepository(),
+    )
+    service = _tool_execution_service(
+        tool_runtime=tool_runtime,
+        artifacts=InMemoryArtifactRepository(),
+    )
+    binding = tool_runtime.upsert_connector_binding(
+        principal_id="exec-1",
+        connector_name="browseract",
+        external_account_ref="browseract-maps",
+        scope_json={"scopes": ["google_maps_distance_research"]},
+        auth_metadata_json={"browseract_workflow_id": "workflow-google-maps"},
+        status="enabled",
+    )
+    adapter = service._browseract_module._adapter
+    monkeypatch.setenv("BROWSERACT_API_KEY", "test-browseract-key")
+    monkeypatch.setattr(
+        adapter,
+        "_run_browseract_workflow_task_with_inputs",
+        lambda **_: {"id": "task-maps-2"},
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_wait_for_browseract_task",
+        lambda **_: {
+            "status": "finished",
+            "output": {"string": json.dumps({"summary": "A nearby supermarket exists."})},
+        },
+    )
+
+    result = service.execute_invocation(
+        ToolInvocationRequest(
+            session_id="session-browseract-maps-workflow-missing-1",
+            step_id="step-browseract-maps-workflow-missing-1",
+            tool_name="browseract.extract_account_facts",
+            action_kind="account.extract",
+            payload_json={
+                "binding_id": binding.binding_id,
+                "principal_id": "exec-1",
+                "service_name": "google_maps_distance_research",
+                "requested_fields": ["place_id", "destination_latitude", "destination_longitude"],
+            },
+            context_json={"principal_id": "exec-1"},
+        )
+    )
+
+    assert result.output_json["discovery_status"] == "missing"
+    assert result.output_json["verification_source"] == "missing"
+    assert result.output_json["missing_fields"] == ["place_id", "destination_latitude", "destination_longitude"]
+    assert result.output_json["requested_workflow_id"] == "workflow-google-maps"
+    assert result.output_json["browseract_task_id"] == ""
+    assert result.output_json["live_discovery_error"] == "browseract_workflow_facts_missing:task-maps-2"
+    assert result.output_json["facts_json"] == {"service_name": "google_maps_distance_research"}
+
+
 def test_tool_execution_service_executes_builtin_browseract_inventory_handler() -> None:
     tool_runtime = ToolRuntimeService(
         tool_registry=InMemoryToolRegistryRepository(),
