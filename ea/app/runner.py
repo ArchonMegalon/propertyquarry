@@ -1353,10 +1353,37 @@ def _scheduler_property_search_recovery_timeout_seconds() -> float:
     return max(30.0, _env_float("EA_SCHEDULER_PROPERTY_SEARCH_RECOVERY_TIMEOUT_SECONDS", 240.0))
 
 
+_PROPERTY_SCOUT_SYNTHETIC_PRINCIPAL_IDS = frozenset(
+    {
+        "cf-email:thumbnail-audit@propertyquarry.local",
+        "pq-auth-performance-smoke",
+        "pq-live-mobile-smoke",
+    }
+)
+
+
+def _scheduler_property_scout_excluded_principal_ids() -> frozenset[str]:
+    configured = {
+        part.strip()
+        for part in str(os.environ.get("EA_PROPERTY_SCOUT_EXCLUDED_PRINCIPAL_IDS") or "").split(",")
+        if part.strip()
+    }
+    return frozenset(_PROPERTY_SCOUT_SYNTHETIC_PRINCIPAL_IDS | configured)
+
+
 def _scheduler_property_scout_principal_ids(container) -> tuple[str, ...]:  # type: ignore[no-untyped-def]
+    excluded = _scheduler_property_scout_excluded_principal_ids()
     raw = str(os.environ.get("EA_PROPERTY_SCOUT_PRINCIPAL_IDS") or "").strip()
     if raw:
-        values = tuple(sorted({part.strip() for part in raw.split(",") if part.strip()}))
+        values = tuple(
+            sorted(
+                {
+                    part.strip()
+                    for part in raw.split(",")
+                    if part.strip() and part.strip() not in excluded
+                }
+            )
+        )
         if values:
             return values
     onboarding_service = getattr(container, "onboarding", None)
@@ -1370,6 +1397,7 @@ def _scheduler_property_scout_principal_ids(container) -> tuple[str, ...]:  # ty
                             str(value or "").strip()
                             for value in list_principals(limit=1000)
                             if str(value or "").strip()
+                            and str(value or "").strip() not in excluded
                         }
                     )
                 )
@@ -1385,7 +1413,7 @@ def _scheduler_property_scout_principal_ids(container) -> tuple[str, ...]:  # ty
         str(getattr(getattr(settings, "auth", None), "default_principal_id", "") or "").strip(),
         str(os.environ.get("EA_DEFAULT_PRINCIPAL_ID") or "").strip(),
     }
-    return tuple(sorted(value for value in principal_candidates if value))
+    return tuple(sorted(value for value in principal_candidates if value and value not in excluded))
 
 
 def _run_scheduler_property_scout(container, log: logging.Logger) -> dict[str, object]:  # type: ignore[no-untyped-def]
