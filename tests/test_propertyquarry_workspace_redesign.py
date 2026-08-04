@@ -9608,6 +9608,7 @@ def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
     )
     assert diorama_url in cover_sources, (cover_sources, rendered_candidate_refs)
     assert canonical_ref in rendered_candidate_refs
+    assert "Selected home" in response.text
     assert not re.search(
         rf'<img[^>]+src="{re.escape(first_photo_url)}"[^>]+data-pw-cover-image',
         response.text,
@@ -18368,6 +18369,8 @@ def test_property_surface_state_builds_search_form_state_snapshot() -> None:
 def test_propertyquarry_results_template_marks_top_rank_and_watch_out_copy() -> None:
     body = (Path(__file__).resolve().parents[1] / "ea/app/templates/app/_property_results_list.html").read_text(encoding="utf-8")
     assert "is-top-ranked" in body
+    assert "Closest available" in body
+    assert "Selected home" in body
     assert "mismatch_reasons" in body
     assert "pqx-progress-button" in body
     assert "walkthrough_tooltip" in body

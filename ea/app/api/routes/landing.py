@@ -2308,6 +2308,10 @@ def _property_resolve_scoped_curated_candidate_ref(
         ):
             continue
         recovered_candidate = dict(indexed_candidate)
+        # This row is restored solely so an owned legacy deep link can remain
+        # useful.  Keep that provenance through rendering so it is presented
+        # as the selected home, never promoted as if the ranking chose it.
+        recovered_candidate["_explicitly_selected_source_candidate"] = True
         curated_entry = _property_curated_diorama_preview_entry(
             recovered_candidate
         )

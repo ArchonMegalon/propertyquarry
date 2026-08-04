@@ -966,6 +966,7 @@ def _property_workbench_client_candidate_payload(
             "personal_fit_score",
             "fit_label",
             "fit_summary",
+            "selected_via_link",
             "budget_revalidated",
             "revalidated_from_old_brief",
             "packet_url",
@@ -4456,8 +4457,7 @@ def property_workspace_payload(
         diorama_preview_url = _property_workbench_candidate_diorama_preview_url(candidate)
         ready_tour_url = str(tour_payload.get("url") or "").strip()
         ready_tour_status = str(tour_payload.get("status") or "").strip().lower()
-        workbench_results.append(
-            build_property_workbench_candidate_snapshot(
+        workbench_candidate = build_property_workbench_candidate_snapshot(
                 candidate_ref=candidate_ref,
                 rank=len(workbench_results) + 1,
                 title=_property_result_title_display(candidate.get("title") or "Home"),
@@ -4554,7 +4554,9 @@ def property_workspace_payload(
                 repair_flag_label=repair_flag_label,
                 repair_flag_detail=repair_flag_detail,
             )
-        )
+        if bool(candidate.get("_explicitly_selected_source_candidate")):
+            workbench_candidate["selected_via_link"] = True
+        workbench_results.append(workbench_candidate)
         tour_payload = _tour_payload(candidate)
         results_table_rows.append(
             {

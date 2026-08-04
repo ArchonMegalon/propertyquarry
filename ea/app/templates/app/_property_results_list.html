@@ -154,7 +154,9 @@
 	    <span hidden></span>
 	    <dialog data-pqx-filtered-dialog aria-label="Homes outside this search" hidden></dialog>
 	    {% for candidate in visible_results %}
-    <article class="pqx-result pqx-card{% if candidate.get('recovered_by_filter') %} is-filter-recovered{% endif %}{% if loop.first %} is-top-ranked{% endif %}" aria-current="{{ 'true' if loop.first else 'false' }}" data-candidate-ref="{{ candidate.get('candidate_ref') }}" data-candidate-packet-url="{{ candidate.get('packet_url') or '' }}" data-candidate-listing-url="{{ candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url') or '' }}" data-tour-status="{{ candidate.get('tour', {}).get('status') or 'missing' }}" data-tour-eta="{{ candidate.get('tour', {}).get('eta_label') or '' }}"{% if is_shortlist_surface %} data-pqx-shortlist-card{% endif %} data-workbench-row>
+    {% set is_selected_candidate = candidate.get('candidate_ref') and candidate.get('candidate_ref') == selected.get('candidate_ref') %}
+    {% set is_strong_top_match = loop.first and (candidate.get('fit_score') or candidate.get('personal_fit_score') or 0)|int >= 70 %}
+    <article class="pqx-result pqx-card{% if candidate.get('recovered_by_filter') %} is-filter-recovered{% endif %}{% if loop.first %} is-top-ranked{% endif %}{% if is_selected_candidate %} is-selected-candidate{% endif %}" aria-current="{{ 'true' if is_selected_candidate else 'false' }}" data-candidate-ref="{{ candidate.get('candidate_ref') }}" data-candidate-packet-url="{{ candidate.get('packet_url') or '' }}" data-candidate-listing-url="{{ candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url') or '' }}" data-tour-status="{{ candidate.get('tour', {}).get('status') or 'missing' }}" data-tour-eta="{{ candidate.get('tour', {}).get('eta_label') or '' }}"{% if is_shortlist_surface %} data-pqx-shortlist-card{% endif %} data-workbench-row>
       {% set orientation_preview = candidate.get('orientation_preview') or {} %}
 		      {% set diorama_scene = candidate.get('diorama_scene') or {} %}
 		      {% set diorama_preview_url = candidate.get('diorama_preview_url') or diorama_scene.get('image_url') or '' %}
@@ -247,7 +249,7 @@
           </span>
           {% endif %}
           <span class="pqx-result-summary">
-            <span class="pqx-result-kicker">{% if is_shortlist_surface and loop.first %}<span class="pqx-shortlist-top-label">Top match</span>{% endif %}<span class="pqx-rank">#{{ candidate.get('rank') }}</span>{% if candidate.get('location_label') %}<span>{{ candidate.get('location_label') }}</span>{% endif %}</span>
+            <span class="pqx-result-kicker">{% if is_shortlist_surface and loop.first %}<span class="pqx-shortlist-top-label">{{ 'Top match' if is_strong_top_match else 'Closest available' }}</span>{% elif is_shortlist_surface and candidate.get('selected_via_link') %}<span class="pqx-shortlist-top-label">Selected home</span>{% endif %}<span class="pqx-rank">#{{ candidate.get('rank') }}</span>{% if candidate.get('location_label') %}<span>{{ candidate.get('location_label') }}</span>{% endif %}</span>
             <span class="pqx-result-title">{{ candidate.get('title') }}</span>
             <span class="pqx-result-facts">
               {% if candidate.get('repair_flag_label') %}
