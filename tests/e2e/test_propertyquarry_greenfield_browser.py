@@ -8824,7 +8824,7 @@ def test_propertyquarry_shortlist_and_research_have_browser_performance_budget(
         )
         assert page.locator(".pqx-results-summary-row", has_text=re.compile(r"(saved|matching) (homes|opportunities)", re.I)).is_visible()
         expect(page.locator("[data-property-app-shell]")).to_be_visible()
-        expect(page.locator('a[href*="/app/research/"]').first).to_be_visible()
+        expect(page.locator('a[href*="/app/research/"]:visible').first).to_be_visible()
         _assert_property_shell_visual_gates(page, max_appbar_height=92)
 
         packet_href = page.locator('a[href*="/app/research/"]').first.get_attribute("href")
@@ -8933,7 +8933,7 @@ def test_propertyquarry_research_detail_is_mobile_optimized_and_visuals_are_opt_
         assert response is not None and response.ok
         expect(page.locator("[data-property-research-detail]")).to_be_visible()
         expect(page.locator(".prd-media-frame")).to_be_visible()
-        expect(page.get_by_role("button", name=re.compile("Request walkthrough", re.I))).to_be_visible()
+        expect(page.get_by_role("button", name=re.compile("Request camera walkthrough", re.I))).to_be_visible()
         expect(page.get_by_role("button", name="Copy link")).to_be_hidden()
         assert visual_requests == []
         _assert_no_horizontal_overflow(page)
@@ -9080,7 +9080,7 @@ def test_propertyquarry_research_detail_is_mobile_optimized_and_visuals_are_opt_
         page.screenshot(path=str(screenshot_path), full_page=True, animations="disabled", caret="hide")
         assert screenshot_path.exists() and screenshot_path.stat().st_size > 20_000
 
-        request_button = page.get_by_role("button", name=re.compile("Request walkthrough", re.I)).first
+        request_button = page.get_by_role("button", name=re.compile("Request camera walkthrough", re.I)).first
         request_button.click()
         _choose_research_visual_style(page, accept_external_processing=True)
         page.wait_for_timeout(500)
@@ -9162,7 +9162,7 @@ def test_propertyquarry_visual_request_does_not_invent_eta_before_backend_suppli
         packet_url = packet_href if packet_href.startswith("http") else f"{base_url}{packet_href}"
         response = page.goto(packet_url, wait_until="domcontentloaded")
         assert response is not None and response.ok
-        request_button = page.get_by_role("button", name=re.compile("Request walkthrough", re.I)).first
+        request_button = page.get_by_role("button", name=re.compile("Request camera walkthrough", re.I)).first
         request_button.click()
         _choose_research_visual_style(page, accept_external_processing=True)
         page.wait_for_timeout(900)
@@ -9830,8 +9830,8 @@ def test_propertyquarry_research_detail_surfaces_generated_diorama_and_layout_to
         )
         generated_tour_card = page.locator("[data-prd-visual-card='generated_reconstruction']")
         expect(generated_tour_card).to_be_visible()
-        expect(generated_tour_card).to_contain_text("AI-generated 3D tour")
-        expect(page.locator(".prd-status-badge")).to_contain_text("AI-generated 3D tour available")
+        expect(generated_tour_card).to_contain_text("AI layout preview")
+        expect(page.locator(".prd-status-badge")).to_contain_text("AI layout preview available")
         expect(page.locator("[data-prd-visual-status]")).to_contain_text(
             (
                 "AI-generated from the floor plan and listing photos. "
@@ -9840,7 +9840,7 @@ def test_propertyquarry_research_detail_surfaces_generated_diorama_and_layout_to
         )
         expect(page.get_by_role("button", name=re.compile("Request 3D tour", re.I))).to_have_count(0)
         _assert_no_horizontal_overflow(page)
-        open_generated_tour = page.get_by_role("link", name="Open AI-generated 3D tour").first
+        open_generated_tour = page.get_by_role("link", name="Open AI layout preview").first
         expect(open_generated_tour).to_have_attribute(
             "href",
             re.compile(r".*/tours/generated-reconstruction-loft$"),
@@ -13884,7 +13884,7 @@ def test_propertyquarry_walkthrough_request_is_user_initiated_in_real_browser(
         packet_url = packet_href if packet_href.startswith("http") else f"{base_url}{packet_href}"
         response = page.goto(packet_url, wait_until="domcontentloaded")
         assert response is not None and response.ok
-        request_button = page.get_by_role("button", name="Request walkthrough")
+        request_button = page.get_by_role("button", name="Request camera walkthrough")
         expect(request_button).to_be_visible()
         request_button.click()
         _choose_research_visual_style(page, accept_external_processing=True)
@@ -14097,7 +14097,7 @@ def test_propertyquarry_ready_tour_rail_stays_on_tour_while_walkthrough_queue_is
         expect(page.locator("[data-prd-visual-status]")).to_contain_text("3D tour is ready.", timeout=10000)
         expect(page.get_by_role("button", name="Open 3D tour").first).to_be_visible()
 
-        request_button = page.get_by_role("button", name="Request walkthrough").first
+        request_button = page.get_by_role("button", name="Request camera walkthrough").first
         expect(request_button).to_be_visible()
 
         request_button.click()
@@ -14366,7 +14366,7 @@ def test_propertyquarry_visual_request_uses_listing_url_fallback_in_real_browser
         packet_url = packet_href if packet_href.startswith("http") else f"{base_url}{packet_href}"
         response = page.goto(packet_url, wait_until="networkidle")
         assert response is not None and response.ok
-        request_button = page.get_by_role("button", name="Request walkthrough")
+        request_button = page.get_by_role("button", name="Request camera walkthrough")
         expect(request_button).to_be_visible()
         assert str(request_button.get_attribute("data-property-url") or "").endswith("/listing-url-only-loft")
         request_button.click()

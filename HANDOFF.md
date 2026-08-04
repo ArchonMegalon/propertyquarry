@@ -21,7 +21,7 @@ Finish PropertyQuarry as a premium, production-ready property evaluation and pre
 - Deployed source before the image-retention maintenance release: `b4ff5c084a14fa265962b3f9a7fb6b64bdc77d82`.
 - Web image: `sha256:e854a2db5af7fdc37e5b37c4483c065a27c08bb9d613b8bfeea9e750d2b997ff`.
 - Render image: `sha256:8daf78acd92c89bc49a703b9d685066b1330ee7521714010b6027089e10bf873`.
-- The exact legacy shortlist alias, canonical Karl candidate, normal-camera walkthrough, and licensed 3DVista control were production-verified before this maintenance patch. Focused retention/deployment/diorama/media-link gate: 8/8 passed.
+- The exact legacy shortlist alias, canonical Karl candidate, normal-camera walkthrough, and licensed 3DVista control were production-verified before this maintenance patch. Focused retention/deployment/diorama/media-link gate: 8/8 passed. The full affected greenfield browser file was then covered fail-fast across exact continuation points: 127 passed and 1 intentional skip.
 - Database: 437 MiB / 458,431,511 bytes. Retention is live and a direct production run found zero eligible rows. The largest relation is `observation_events` at 156,516,352 bytes; current evidence does not indicate runaway PropertyQuarry DB growth.
 
 ## Authoritative Karl state
@@ -110,6 +110,7 @@ Checks already passed:
 - Affected greenfield browser tests: 2 passed.
 - Live Tibor target-recovery canary against the current Willhaben target: 1 passed in 303.37 s; its individual search run retained the unchanged 180 s bounded timeout.
 - Syntax compilation and `git diff --check` passed. The pre-existing `public_tours.py` invalid-escape SyntaxWarning remains non-fatal and unrelated to this patch.
+- The final 128-case greenfield browser audit also removed stale generic camera-walkthrough labels and a hidden-responsive-link assumption from the tests. One real copy mismatch was fixed in the product: generated reconstruction is now consistently labeled `AI layout preview` / `AI layout preview available`, while its non-360 disclosure remains mandatory.
 
 ## Durable Playwright worker fixed
 
