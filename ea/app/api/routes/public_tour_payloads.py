@@ -480,6 +480,7 @@ _PUBLIC_TOUR_TOP_LEVEL_KEYS = frozenset(
         "video_relpath",
         "video_mobile_relpath",
         "video_sidecar_relpath",
+        "walkthrough_sidecar_relpath",
         "video_source",
         "room_visit_plan",
         "generated_reconstruction",
@@ -2279,13 +2280,12 @@ def redacted_public_tour_payload(
             else:
                 rendered[key.replace("_relpath", "_url")] = public_tour_file_url(slug, relpath)
             continue
-        if key == "video_sidecar_relpath":
+        if key in {"video_sidecar_relpath", "walkthrough_sidecar_relpath"}:
             if not expose_asset_relpaths:
                 continue
             relpath = public_tour_safe_asset_relpath(payload.get(key))
             if (
                 relpath
-                and relpath.startswith(_PUBLIC_TOUR_GENERATED_RECONSTRUCTION_PREFIX)
                 and PurePosixPath(relpath).suffix.lower() == ".json"
             ):
                 rendered[key] = relpath
