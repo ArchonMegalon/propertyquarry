@@ -10074,11 +10074,17 @@ def _public_tour_core_gold_walkthrough_acceptance(
             or str(row.get("status") or "").lower() != "pass"
         ):
             return reject("core_gold_route_boundary_invalid")
-        hotspot_targets = {
-            str(hotspot.get("target_scene_id") or "").strip()
-            for hotspot in list(scene_by_id[source].get("hotspots") or [])
-            if isinstance(hotspot, dict)
-        }
+        hotspot_targets: set[str] = set()
+        for hotspot in list(scene_by_id[source].get("hotspots") or []):
+            if not isinstance(hotspot, dict):
+                continue
+            canonical_target = str(hotspot.get("target") or "").strip()
+            legacy_target = str(hotspot.get("target_scene_id") or "").strip()
+            if canonical_target and legacy_target and canonical_target != legacy_target:
+                return reject("core_gold_route_boundary_invalid")
+            hotspot_target = canonical_target or legacy_target
+            if hotspot_target:
+                hotspot_targets.add(hotspot_target)
         if target not in hotspot_targets:
             return reject("core_gold_route_shortcut_detected")
     expected_labels = [str(scene_by_id[scene_id].get("label") or "") for scene_id in route_scene_ids]

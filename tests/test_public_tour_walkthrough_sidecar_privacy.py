@@ -72,7 +72,7 @@ def _core_gold_fixture(tmp_path: Path) -> tuple[dict[str, object], dict[str, obj
             {
                 "id": "entry",
                 "label": "Entrance",
-                "hotspots": [{"target_scene_id": "living"}],
+                "hotspots": [{"target": "living"}],
             },
             {"id": "living", "label": "Living room", "hotspots": []},
         ],
@@ -185,3 +185,30 @@ def test_core_gold_private_sidecar_remains_fail_closed(
 
     assert acceptance["allowed"] is False
     assert acceptance["status"] == expected_status
+
+
+def test_core_gold_rejects_conflicting_canonical_and_legacy_hotspot_targets(
+    tmp_path: Path,
+) -> None:
+    payload, sidecar = _core_gold_fixture(tmp_path)
+    walkable_scene = payload["walkable_scene"]
+    assert isinstance(walkable_scene, dict)
+    scenes = walkable_scene["scenes"]
+    assert isinstance(scenes, list)
+    entry = scenes[0]
+    assert isinstance(entry, dict)
+    entry["hotspots"] = [
+        {"target": "living", "target_scene_id": "different-room"}
+    ]
+    sidecar["walkable_scene_sha256"] = _public_tour_canonical_object_sha256(
+        walkable_scene
+    )
+    (tmp_path / "tour.walkthrough.json").write_text(
+        json.dumps(sidecar),
+        encoding="utf-8",
+    )
+
+    acceptance = _public_tour_walkthrough_acceptance(payload, bundle_dir=tmp_path)
+
+    assert acceptance["allowed"] is False
+    assert acceptance["status"] == "core_gold_route_boundary_invalid"
