@@ -160,6 +160,13 @@ The exact live seller requests were captured without persisting authorization va
 - Initial bounded cleanup removed 2.198 GB of unused build cache, two dangling image records, and 32 stale PropertyQuarry local tags. Docker image storage fell from 56.81 GB to 54.86 GB; filesystem free space rose from roughly 43 GB to 48 GB. These items are recoverable by rebuilding from source.
 - No database, Docker volume, tour asset, provider artifact, container, or evidence-tagged image was deleted. Do not run host-wide `docker image prune -a` or delete unused-looking volumes from this repository; the remaining 94% host utilization includes other projects and recoverable data outside PropertyQuarry's safe cleanup authority.
 
+## Stale hosted-tour delivery reconciliation
+
+- The production scheduler audit found 28 terminal search runs, 15–31 days old, being reconsidered every five minutes because five first-party tour URLs had reached `created` but never passed the owner-scoped hosted-tour acceptance verifier.
+- `ProductService._refresh_property_search_results_delivery_state` now gives a new or newly observed tour a bounded verification grace period, then records an unverified tour as `blocked` with `hosted_tour_verification_expired`. The URL remains in the durable candidate evidence, while customer-facing projections continue to reject it through the existing verifier.
+- `EA_PROPERTY_SEARCH_RESULTS_TOUR_VERIFICATION_MAX_PENDING_SECONDS` controls the grace period. It defaults to 72 hours and is clamped to 15 minutes–30 days. A newer provider event renews the grace period, so a late legitimate tour is not expired using only the older search timestamp.
+- Regression coverage: `tests/test_property_search_delivery_expiry.py`. The focused service/runner/storage/tour slice passed 132 tests; the combined greenfield and public-tour Chromium suite passed 157 tests with one intentional skip.
+
 ## Remaining external constraints
 
 1. There are no known in-repository Karl release blockers after the final maintenance deployment and live verification pass.

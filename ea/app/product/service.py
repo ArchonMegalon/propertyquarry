@@ -46027,6 +46027,56 @@ class ProductService:
             else self._property_search_tour_events_by_source(principal_id=principal_id)
         )
 
+        def _delivery_datetime(value: object) -> datetime | None:
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except (OverflowError, TypeError, ValueError):
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        try:
+            tour_verification_max_pending_seconds = int(
+                str(
+                    os.getenv(
+                        "EA_PROPERTY_SEARCH_RESULTS_TOUR_VERIFICATION_MAX_PENDING_SECONDS"
+                    )
+                    or 72 * 60 * 60
+                ).strip()
+            )
+        except (TypeError, ValueError):
+            tour_verification_max_pending_seconds = 72 * 60 * 60
+        tour_verification_max_pending_seconds = max(
+            15 * 60,
+            min(tour_verification_max_pending_seconds, 30 * 24 * 60 * 60),
+        )
+        timing_receipts = (
+            dict(refreshed.get("timing_receipts") or {})
+            if isinstance(refreshed.get("timing_receipts"), dict)
+            else {}
+        )
+        delivery_reference_candidates = [
+            _delivery_datetime(refreshed.get("updated_at")),
+            _delivery_datetime(timing_receipts.get("completed_at")),
+            _delivery_datetime(timing_receipts.get("results_compiled_at")),
+            _delivery_datetime(timing_receipts.get("results_delivery_ready_at")),
+        ]
+        delivery_reference_at = max(
+            (
+                value
+                for value in delivery_reference_candidates
+                if value is not None
+            ),
+            default=None,
+        )
+        verification_expiry_cutoff = datetime.now(timezone.utc) - timedelta(
+            seconds=tour_verification_max_pending_seconds
+        )
+
         def _latest_tour_event_for_candidate(source_ref: str, property_url: str) -> dict[str, object] | None:
             wanted_source = str(source_ref or "").strip()
             if not wanted_source:
@@ -46065,12 +46115,21 @@ class ProductService:
                 existing_tour_url = str(candidate_row.get("tour_url") or "").strip()
                 existing_status = str(candidate_row.get("tour_status") or "").strip().lower()
                 blocked_reason = str(candidate_row.get("blocked_reason") or "").strip()
+                candidate_verification_reference_at = delivery_reference_at
                 if supports_tour and source_ref:
                     latest_event = _latest_tour_event_for_candidate(
                         source_ref=source_ref,
                         property_url=candidate_property_url,
                     )
                     if latest_event is not None:
+                        latest_event_at = _delivery_datetime(
+                            latest_event.get("created_at")
+                        )
+                        if latest_event_at is not None and (
+                            candidate_verification_reference_at is None
+                            or latest_event_at > candidate_verification_reference_at
+                        ):
+                            candidate_verification_reference_at = latest_event_at
                         payload = dict(latest_event.get("payload") or {})
                         event_type = str(latest_event.get("event_type") or "").strip().lower()
                         latest_tour_url = str(payload.get("tour_url") or "").strip()
@@ -46097,6 +46156,19 @@ class ProductService:
                         ready_total += 1
                         candidate_row["tour_status"] = "ready"
                         candidate_row["blocked_reason"] = ""
+                    elif blocked_reason or tour_status in {"blocked", "failed", "skipped"}:
+                        blocked_total += 1
+                    elif (
+                        supports_tour
+                        and candidate_verification_reference_at is not None
+                        and candidate_verification_reference_at
+                        <= verification_expiry_cutoff
+                    ):
+                        blocked_total += 1
+                        candidate_row["tour_status"] = "blocked"
+                        candidate_row["blocked_reason"] = (
+                            "hosted_tour_verification_expired"
+                        )
                     else:
                         candidate_row["tour_status"] = str(candidate_row.get("tour_status") or "created").strip() or "created"
                 elif supports_tour and _property_tour_status_is_pending(tour_status):
