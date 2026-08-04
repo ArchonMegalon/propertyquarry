@@ -55,6 +55,46 @@ def _manifest_for(asset: Path, *, asset_url: str = "/static/property/research/ap
     }
 
 
+def _approved_hosted_tour_binding(
+    *,
+    candidate_refs: list[str] | None = None,
+    listing_ids: list[str] | None = None,
+    reviewed_at: str = "2026-08-04T15:45:33Z",
+    evidence_sha256: str = "f653f438caafe3c4f4802c3692f2ae0919cc457d61b1602bfcd9a01be0279e38",
+) -> dict[str, object]:
+    resolved_candidate_refs = sorted(candidate_refs or ["candidate-a"])
+    resolved_listing_ids = sorted(listing_ids or ["123456"])
+    binding: dict[str, object] = {
+        "binding_contract": "propertyquarry.curated_hosted_tour_binding.v1",
+        "slug": "karl-czerny-gasse-2-urban-jungle",
+        "provider": "3dvista",
+        "default_mode": "camera_walkthrough",
+        "hosted_tour_url": "/tours/karl-czerny-gasse-2-urban-jungle",
+        "walkthrough_url": "/tours/karl-czerny-gasse-2-urban-jungle/walkthrough",
+        "spatial_tour_url": "/tours/3dvista/karl-czerny-gasse-2-urban-jungle/3dvista/index.htm",
+        "property_url_sha256": "c20cc5d801fa85982874524703514160d3aa6003456738ba0c816d6d4a825431",
+    }
+    binding_payload = {
+        **binding,
+        "candidate_refs": resolved_candidate_refs,
+        "listing_ids": resolved_listing_ids,
+    }
+    binding["binding_sha256"] = hashlib.sha256(
+        json.dumps(
+            binding_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    binding["review"] = {
+        "status": "approved",
+        "reviewed_by": "codex-release-owner",
+        "reviewed_at": reviewed_at,
+        "evidence_sha256": evidence_sha256,
+    }
+    return binding
+
+
 def test_curated_diorama_v2_requires_complete_approved_governance(tmp_path: Path) -> None:
     static_root = tmp_path / "static"
     asset = static_root / "property" / "research" / "approved.png"
@@ -330,6 +370,125 @@ def test_landing_curated_drawn_diorama_overrides_stale_runtime_preview(
     }
 
 
+def test_landing_curated_diorama_applies_validated_camera_first_tour_binding() -> None:
+    candidate: dict[str, object] = {
+        "candidate_ref": "candidate-a",
+        "title": "A city home",
+    }
+    landing_routes._property_apply_curated_diorama_preview(
+        candidate,
+        entry={
+            "asset_url": "/static/property/research/approved.webp",
+            "representation": "illustrative",
+            "candidate_refs": ["candidate-a"],
+            "listing_ids": ["123456"],
+            "hosted_tour": _approved_hosted_tour_binding(),
+        },
+    )
+
+    assert candidate["flythrough_url"] == (
+        "/tours/karl-czerny-gasse-2-urban-jungle/walkthrough"
+    )
+    assert candidate["flythrough_status"] == "ready"
+    assert candidate["tour_url"] == (
+        "/tours/karl-czerny-gasse-2-urban-jungle"
+    )
+    assert candidate["tour_status"] == "ready"
+    assert candidate["tour_provider"] == "3dvista"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("default_mode", "stereoscopic"),
+        ("provider", "unverified-viewer"),
+        ("hosted_tour_url", "/tours/another-home"),
+        ("walkthrough_url", "/tours/another-home/walkthrough"),
+        ("spatial_tour_url", "https://vendor.invalid/tour"),
+    ],
+)
+def test_landing_curated_diorama_rejects_invalid_tour_binding(
+    field: str,
+    value: str,
+) -> None:
+    hosted_tour = _approved_hosted_tour_binding()
+    hosted_tour[field] = value
+    candidate: dict[str, object] = {"candidate_ref": "candidate-a"}
+
+    landing_routes._property_apply_curated_diorama_preview(
+        candidate,
+        entry={
+            "asset_url": "/static/property/research/approved.webp",
+            "candidate_refs": ["candidate-a"],
+            "listing_ids": ["123456"],
+            "hosted_tour": hosted_tour,
+        },
+    )
+
+    assert candidate["diorama_preview_url"] == (
+        "/static/property/research/approved.webp"
+    )
+    assert "tour_url" not in candidate
+    assert "flythrough_url" not in candidate
+
+
+def test_legacy_curated_alias_restores_and_marks_ranked_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_ref = "ad48357be22535c1"
+    legacy_ref = "cece2dad814fdf68"
+    candidate = {
+        "candidate_ref": canonical_ref,
+        "title": "Karl candidate",
+        "property_url": "https://listing.invalid/1536069684",
+    }
+    property_context: dict[str, object] = {
+        "run": {
+            "run_id": "owned-run",
+            "summary": {"ranked_candidates": [candidate]},
+        }
+    }
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_candidate_ref",
+        lambda row: str(row.get("candidate_ref") or ""),
+    )
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_candidate_refs",
+        lambda _candidate_ref: (canonical_ref, legacy_ref),
+    )
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_preview_entry",
+        lambda _candidate: {
+            "asset_url": "/static/property/research/ad48357be22535c1-ai-diorama.webp",
+            "representation": "illustrative",
+            "candidate_refs": [canonical_ref, legacy_ref],
+            "listing_ids": ["1536069684"],
+            "hosted_tour": _approved_hosted_tour_binding(
+                candidate_refs=[canonical_ref, legacy_ref],
+                listing_ids=["1536069684"],
+            ),
+        },
+    )
+
+    selected_ref = landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context=property_context,
+    )
+
+    assert selected_ref == canonical_ref
+    restored = property_context["run"]["summary"]["ranked_candidates"][0]
+    assert restored["_explicitly_selected_source_candidate"] is True
+    assert restored["_selected_candidate_ref"] == canonical_ref
+    assert restored["diorama_preview_url"].endswith(
+        "ad48357be22535c1-ai-diorama.webp"
+    )
+    assert restored["flythrough_url"].endswith("/walkthrough")
+    assert restored["tour_provider"] == "3dvista"
+
+
 def test_exact_shortlist_run_renders_all_drawn_diorama_thumbnails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -468,6 +627,10 @@ def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
         "ad48357be22535c1",
         "cece2dad814fdf68",
     ]
+    assert rendered_entry["hosted_tour"] == _approved_hosted_tour_binding(
+        candidate_refs=["ad48357be22535c1", "cece2dad814fdf68"],
+        listing_ids=["1536069684"],
+    )
     assert all(
         entry["preview_kind"]
         in {"illustrative_drawn_diorama", "rendered_diorama"}

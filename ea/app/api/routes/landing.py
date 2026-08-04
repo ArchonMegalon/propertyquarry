@@ -15,7 +15,7 @@ import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -236,6 +236,9 @@ _PROPERTY_BILLING_DIRECT_VERIFICATION_CACHE: dict[str, object] = {
 _PROPERTYQUARRY_EXAMPLE_SHORTLIST_DIORAMA_VERSION = "20260724d2"
 _PROPERTY_CURATED_DIORAMA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "data" / "property_diorama_previews.json"
 _PROPERTY_CURATED_DIORAMA_STATIC_ROOT = Path(__file__).resolve().parents[2] / "static"
+_PROPERTY_CURATED_HOSTED_TOUR_BINDING_CONTRACT = (
+    "propertyquarry.curated_hosted_tour_binding.v1"
+)
 _PROPERTY_ORIGINAL_TOUR_HANDOFF_PURPOSE = "property-original-tour-handoff-v1"
 _PROPERTY_ORIGINAL_TOUR_HANDOFF_TTL_SECONDS = 15 * 60
 _PROPERTY_ORIGINAL_TOUR_HANDOFF_MAX_TOKEN_CHARS = 1536
@@ -2257,12 +2260,32 @@ def _property_resolve_scoped_curated_candidate_ref(
     if not normalized_requested_ref:
         return ""
 
-    def _scoped_candidate_exists(candidate_ref: str) -> bool:
-        if _property_lookup_candidate(
+    def _scoped_candidate(candidate_ref: str) -> dict[str, object] | None:
+        source_candidate = _property_lookup_candidate(
             property_context=property_context,
             candidate_ref=candidate_ref,
-        ) is not None:
-            return True
+        )
+        if source_candidate is not None:
+            return dict(source_candidate)
+        run_payload = (
+            dict(property_context.get("run") or {})
+            if isinstance(property_context.get("run"), dict)
+            else {}
+        )
+        summary = (
+            dict(run_payload.get("summary") or {})
+            if isinstance(run_payload.get("summary"), dict)
+            else {}
+        )
+        for raw_candidate in list(summary.get("ranked_candidates") or []):
+            if not isinstance(raw_candidate, dict):
+                continue
+            candidate = dict(raw_candidate)
+            if _property_constant_text_equal(
+                _property_candidate_ref(candidate).lower(),
+                candidate_ref.lower(),
+            ):
+                return candidate
         for raw_candidate in list(
             property_context.get("saved_shortlist_candidates") or []
         ):
@@ -2272,10 +2295,67 @@ def _property_resolve_scoped_curated_candidate_ref(
                 _property_candidate_ref(dict(raw_candidate)).lower(),
                 candidate_ref.lower(),
             ):
-                return True
-        return False
+                return dict(raw_candidate)
+        return None
 
-    if _scoped_candidate_exists(normalized_requested_ref):
+    def _restore_selected_candidate(
+        candidate_ref: str,
+        candidate: dict[str, object],
+    ) -> None:
+        recovered_candidate = dict(candidate)
+        # A deep link restores this owned historical row for direct review. It
+        # must remain distinguishable from the search ranking and must survive
+        # shortlist scope filters that apply to ordinary merged results.
+        recovered_candidate["_explicitly_selected_source_candidate"] = True
+        recovered_candidate["_selected_candidate_ref"] = candidate_ref
+        curated_entry = _property_curated_diorama_preview_entry(
+            recovered_candidate
+        )
+        if curated_entry:
+            _property_apply_curated_diorama_preview(
+                recovered_candidate,
+                entry=curated_entry,
+            )
+        run_payload = (
+            dict(property_context.get("run") or {})
+            if isinstance(property_context.get("run"), dict)
+            else {}
+        )
+        summary = (
+            dict(run_payload.get("summary") or {})
+            if isinstance(run_payload.get("summary"), dict)
+            else {}
+        )
+        ranked_candidates = [
+            dict(raw_candidate)
+            for raw_candidate in list(summary.get("ranked_candidates") or [])
+            if isinstance(raw_candidate, dict)
+        ]
+        replacement_index = next(
+            (
+                index
+                for index, raw_candidate in enumerate(ranked_candidates)
+                if _property_constant_text_equal(
+                    _property_candidate_ref(raw_candidate).lower(),
+                    candidate_ref.lower(),
+                )
+            ),
+            None,
+        )
+        if replacement_index is None:
+            ranked_candidates.append(recovered_candidate)
+        else:
+            ranked_candidates[replacement_index] = recovered_candidate
+        summary["ranked_candidates"] = ranked_candidates
+        run_payload["summary"] = summary
+        property_context["run"] = run_payload
+
+    requested_candidate = _scoped_candidate(normalized_requested_ref)
+    if requested_candidate is not None:
+        _restore_selected_candidate(
+            normalized_requested_ref,
+            requested_candidate,
+        )
         return normalized_requested_ref
     run_payload = (
         dict(property_context.get("run") or {})
@@ -2291,7 +2371,9 @@ def _property_resolve_scoped_curated_candidate_ref(
             normalized_requested_ref.lower(),
         ):
             continue
-        if _scoped_candidate_exists(candidate_ref):
+        scoped_candidate = _scoped_candidate(candidate_ref)
+        if scoped_candidate is not None:
+            _restore_selected_candidate(candidate_ref, scoped_candidate)
             return candidate_ref
         if product is None or not scoped_run_id or not str(principal_id or "").strip():
             continue
@@ -2307,40 +2389,7 @@ def _property_resolve_scoped_curated_candidate_ref(
             scoped_run_id,
         ):
             continue
-        recovered_candidate = dict(indexed_candidate)
-        # This row is restored solely so an owned legacy deep link can remain
-        # useful.  Keep that provenance through rendering so it is presented
-        # as the selected home, never promoted as if the ranking chose it.
-        recovered_candidate["_explicitly_selected_source_candidate"] = True
-        curated_entry = _property_curated_diorama_preview_entry(
-            recovered_candidate
-        )
-        if curated_entry:
-            _property_apply_curated_diorama_preview(
-                recovered_candidate,
-                entry=curated_entry,
-            )
-        summary = (
-            dict(run_payload.get("summary") or {})
-            if isinstance(run_payload.get("summary"), dict)
-            else {}
-        )
-        ranked_candidates = [
-            dict(candidate)
-            for candidate in list(summary.get("ranked_candidates") or [])
-            if isinstance(candidate, dict)
-        ]
-        if not any(
-            _property_constant_text_equal(
-                _property_candidate_ref(candidate),
-                candidate_ref,
-            )
-            for candidate in ranked_candidates
-        ):
-            ranked_candidates.append(recovered_candidate)
-        summary["ranked_candidates"] = ranked_candidates
-        run_payload["summary"] = summary
-        property_context["run"] = run_payload
+        _restore_selected_candidate(candidate_ref, dict(indexed_candidate))
         return candidate_ref
     return normalized_requested_ref
 
@@ -2384,6 +2433,140 @@ def _property_apply_curated_diorama_preview(
     candidate["diorama_alt"] = alt
     candidate["diorama_representation"] = representation
     candidate["diorama_scene"] = scene
+    hosted_tour = entry.get("hosted_tour")
+    if not isinstance(hosted_tour, dict):
+        return
+    binding_contract = str(hosted_tour.get("binding_contract") or "").strip()
+    slug = str(hosted_tour.get("slug") or "").strip().lower()
+    provider = str(hosted_tour.get("provider") or "").strip().lower()
+    default_mode = str(hosted_tour.get("default_mode") or "").strip().lower()
+    hosted_tour_url = str(hosted_tour.get("hosted_tour_url") or "").strip()
+    walkthrough_url = str(hosted_tour.get("walkthrough_url") or "").strip()
+    spatial_tour_url = str(hosted_tour.get("spatial_tour_url") or "").strip()
+    property_url_sha256 = str(
+        hosted_tour.get("property_url_sha256") or ""
+    ).strip().lower()
+    binding_sha256 = str(hosted_tour.get("binding_sha256") or "").strip().lower()
+    review = (
+        dict(hosted_tour.get("review") or {})
+        if isinstance(hosted_tour.get("review"), dict)
+        else {}
+    )
+    candidate_refs = sorted(
+        {
+            str(value or "").strip().lower()
+            for value in list(entry.get("candidate_refs") or [])
+            if str(value or "").strip()
+        }
+    )
+    listing_ids = sorted(
+        {
+            str(value or "").strip().lower()
+            for value in list(entry.get("listing_ids") or [])
+            if str(value or "").strip()
+        }
+    )
+    expected_walkthrough_url = f"/tours/{slug}/walkthrough"
+    expected_hosted_tour_url = f"/tours/{slug}"
+    expected_spatial_tour_url = f"/tours/3dvista/{slug}/3dvista/index.htm"
+    binding_payload = {
+        "binding_contract": binding_contract,
+        "candidate_refs": candidate_refs,
+        "default_mode": default_mode,
+        "hosted_tour_url": hosted_tour_url,
+        "listing_ids": listing_ids,
+        "property_url_sha256": property_url_sha256,
+        "provider": provider,
+        "slug": slug,
+        "spatial_tour_url": spatial_tour_url,
+        "walkthrough_url": walkthrough_url,
+    }
+    expected_binding_sha256 = hashlib.sha256(
+        json.dumps(
+            binding_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    reviewed_at = str(review.get("reviewed_at") or "").strip()
+    try:
+        parsed_reviewed_at = datetime.fromisoformat(
+            reviewed_at.replace("Z", "+00:00")
+        )
+    except ValueError:
+        parsed_reviewed_at = None
+    if (
+        binding_contract != _PROPERTY_CURATED_HOSTED_TOUR_BINDING_CONTRACT
+        or not candidate_refs
+        or not listing_ids
+        or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None
+        or provider != "3dvista"
+        or default_mode != "camera_walkthrough"
+        or hosted_tour_url != expected_hosted_tour_url
+        or walkthrough_url != expected_walkthrough_url
+        or spatial_tour_url != expected_spatial_tour_url
+        or re.fullmatch(r"[0-9a-f]{64}", property_url_sha256) is None
+        or re.fullmatch(r"[0-9a-f]{64}", binding_sha256) is None
+        or not hmac.compare_digest(binding_sha256, expected_binding_sha256)
+        or str(review.get("status") or "").strip().lower() != "approved"
+        or not str(review.get("reviewed_by") or "").strip()
+        or parsed_reviewed_at is None
+        or parsed_reviewed_at.tzinfo is None
+        or parsed_reviewed_at.astimezone(timezone.utc)
+        > datetime.now(timezone.utc) + timedelta(minutes=5)
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(review.get("evidence_sha256") or "").strip().lower(),
+        )
+        is None
+    ):
+        return
+    # Candidate readiness is resolved from the governed bundle root. The
+    # direct 3DVista path remains binding evidence, but cannot prove bundle
+    # ownership when used as the canonical candidate URL.
+    candidate["tour_url"] = hosted_tour_url
+    candidate["verified_tour_url"] = hosted_tour_url
+    candidate["open_tour_url"] = hosted_tour_url
+    candidate["tour_status"] = "ready"
+    candidate["tour_provider"] = provider
+    tour = (
+        dict(candidate.get("tour") or {})
+        if isinstance(candidate.get("tour"), dict)
+        else {}
+    )
+    tour.update(
+        {
+            "status": "ready",
+            "provider": provider,
+            "provider_key": provider,
+            "provider_label": "3D tour",
+            "label": "3D tour available",
+            "control_label": "Open 3D tour",
+            "url": hosted_tour_url,
+            "tour_url": hosted_tour_url,
+            "open_tour_url": hosted_tour_url,
+            "embed_url": hosted_tour_url,
+        }
+    )
+    candidate["tour"] = tour
+    candidate["flythrough_url"] = walkthrough_url
+    candidate["flythrough_status"] = "ready"
+    flythrough = (
+        dict(candidate.get("flythrough") or {})
+        if isinstance(candidate.get("flythrough"), dict)
+        else {}
+    )
+    flythrough.update(
+        {
+            "status": "ready",
+            "provider_label": "Camera walkthrough",
+            "label": "Camera walkthrough available",
+            "url": walkthrough_url,
+            "embed_url": walkthrough_url,
+            "customer_claim_ready": True,
+        }
+    )
+    candidate["flythrough"] = flythrough
 
 
 def _property_candidate_diorama_preview_image(candidate: dict[str, object]) -> str:

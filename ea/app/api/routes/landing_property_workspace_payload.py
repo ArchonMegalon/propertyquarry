@@ -1917,9 +1917,20 @@ def property_workspace_payload(
         for candidate in list(property_meta.get("shortlist_candidates") or [])
         if isinstance(candidate, dict)
     ]
+    def _workspace_candidate_ref(candidate: dict[str, object]) -> str:
+        restored_ref = str(candidate.get("_selected_candidate_ref") or "").strip().lower()
+        if (
+            bool(candidate.get("_explicitly_selected_source_candidate"))
+            and re.fullmatch(r"[0-9a-f]{16}", restored_ref) is not None
+        ):
+            return restored_ref
+        return _property_candidate_ref(candidate)
+
     def _shortlist_identity(candidate: dict[str, object]) -> str:
         facts = dict(candidate.get("property_facts") or {}) if isinstance(candidate.get("property_facts"), dict) else {}
         for value in (
+            candidate.get("_selected_candidate_ref"),
+            candidate.get("candidate_ref"),
             candidate.get("property_ref"),
             candidate.get("property_url"),
             candidate.get("source_url"),
@@ -1927,7 +1938,6 @@ def property_workspace_payload(
             facts.get("listing_url"),
             candidate.get("source_ref"),
             candidate.get("listing_id"),
-            candidate.get("candidate_ref"),
         ):
             normalized = str(value or "").strip()
             if normalized:
@@ -2212,7 +2222,7 @@ def property_workspace_payload(
     active_run_candidates = ranked_candidates or synthesized_ranked_candidates
     explicitly_selected_source_candidate: dict[str, object] = {}
     if selected_candidate_ref and not any(
-        _property_candidate_ref(candidate) == selected_candidate_ref
+        _workspace_candidate_ref(candidate) == selected_candidate_ref
         for candidate in active_run_candidates
     ):
         for source in raw_run_sources:
@@ -2228,7 +2238,7 @@ def property_workspace_payload(
                     if not isinstance(raw_candidate, dict):
                         continue
                     candidate = dict(raw_candidate)
-                    if _property_candidate_ref(candidate) != selected_candidate_ref:
+                    if _workspace_candidate_ref(candidate) != selected_candidate_ref:
                         continue
                     candidate.setdefault("source_label", source_label)
                     candidate["_explicitly_selected_source_candidate"] = True
@@ -4275,6 +4285,8 @@ def property_workspace_payload(
         listing_mode: str,
         selected_locations: list[str],
     ) -> bool:
+        if bool(candidate.get("_explicitly_selected_source_candidate")):
+            return True
         active_run_ranked = bool(candidate.get("_active_run_ranked"))
         source_family = str(candidate.get("source_family") or facts.get("source_family") or "").strip().lower()
         has_price_signal = bool(_candidate_price_signal(facts, listing_mode=listing_mode, title=candidate.get("title")))
@@ -4331,7 +4343,7 @@ def property_workspace_payload(
             (
                 candidate
                 for candidate in first_paint_candidates
-                if _property_candidate_ref(candidate) == selected_candidate_ref
+                if _workspace_candidate_ref(candidate) == selected_candidate_ref
             ),
             None,
         )
@@ -4341,7 +4353,7 @@ def property_workspace_payload(
         if (
             selected_first_paint_candidate is not None
             and not any(
-                _property_candidate_ref(candidate) == selected_candidate_ref
+                _workspace_candidate_ref(candidate) == selected_candidate_ref
                 for candidate in first_paint_candidates
             )
         ):
@@ -4397,7 +4409,16 @@ def property_workspace_payload(
         map_url = str(candidate.get("map_url") or "").strip() or _property_candidate_maps_url(candidate)
         tour_status_line = _tour_status_line(candidate)
         ooda_detail = _distance_line(candidate)
-        candidate_ref = str(packet_url or "").split("/app/research/", 1)[-1].split("?", 1)[0] if "/app/research/" in packet_url else _property_candidate_ref(candidate)
+        if bool(candidate.get("_explicitly_selected_source_candidate")):
+            candidate_ref = _workspace_candidate_ref(candidate)
+        else:
+            candidate_ref = (
+                str(packet_url or "")
+                .split("/app/research/", 1)[-1]
+                .split("?", 1)[0]
+                if "/app/research/" in packet_url
+                else _workspace_candidate_ref(candidate)
+            )
         if not packet_url and candidate_ref:
             packet_url = f"/app/research/{candidate_ref}"
             if run_id:
