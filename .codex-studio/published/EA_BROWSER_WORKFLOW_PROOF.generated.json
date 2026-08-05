@@ -5,7 +5,7 @@
   "proof_target": "propertyquarry",
   "version": 1,
   "kind": "proof_receipt",
-  "generated_at": "2026-08-05T06:01:24Z",
+  "generated_at": "2026-08-05T07:39:06Z",
   "generated_by": "scripts/materialize_ea_browser_workflow_proof.py",
   "status": "pass",
   "operator_summary": "PropertyQuarry browser workflow proof is published and green across the required journey matrix, source-backed contracts, and real-browser E2E.",
@@ -31,7 +31,7 @@
       "id": "propertyquarry.release-proof.v1",
       "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
     },
-    "code_commit": "9f1eeb9710a8e39375cd1a261c2c63f968a4f434",
+    "code_commit": "19a460e4ebdcf484d29b0473e3855810685ebbe6",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
@@ -40,8 +40,8 @@
     "required_test_sources": [
       {
         "path": "tests/test_propertyquarry_workspace_redesign.py",
-        "sha256": "207fc45fff4dffa8f7657498aace5094f7346b00961834b596c229b465cc19be",
-        "git_blob_oid": "ea716db9974a4f464e42caab26b5aaa7d6671409"
+        "sha256": "e798332267de038a65689951766e6fc52a063c608bb6cfdac212d99693d7275d",
+        "git_blob_oid": "8ae4e66860082f50979a4fe419235d6adc3946a4"
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -71,7 +71,7 @@
       "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
     ],
     "exit_code": 0,
-    "duration_seconds": 23.376,
+    "duration_seconds": 23.278,
     "output_excerpt": [
       ".......                                                                  [100%]",
       "=============================== warnings summary ===============================",
@@ -79,7 +79,7 @@
       "  /docker/property/.propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.",
       "    from starlette.testclient import TestClient as TestClient  # noqa",
       "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
-      "7 passed, 1 warning in 21.37s"
+      "7 passed, 1 warning in 21.30s"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -111,7 +111,7 @@
         "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
       ],
       "exit_code": 0,
-      "duration_seconds": 23.376,
+      "duration_seconds": 23.278,
       "output_excerpt": [
         ".......                                                                  [100%]",
         "=============================== warnings summary ===============================",
@@ -119,7 +119,7 @@
         "  /docker/property/.propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.",
         "    from starlette.testclient import TestClient as TestClient  # noqa",
         "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
-        "7 passed, 1 warning in 21.37s"
+        "7 passed, 1 warning in 21.30s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -144,10 +144,10 @@
         "test_property_research_rows_preserve_evidence_states_and_original_article_link"
       ],
       "exit_code": 0,
-      "duration_seconds": 2.62,
+      "duration_seconds": 2.398,
       "output_excerpt": [
         ".                                                                        [100%]",
-        "1 passed in 1.53s"
+        "1 passed in 1.34s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -188,7 +188,7 @@
       "test_propertyquarry_research_evidence_states_and_links_render_in_real_browser"
     ],
     "exit_code": 0,
-    "duration_seconds": 107.86,
+    "duration_seconds": 101.703,
     "output_excerpt": [
       "................                                                         [100%]",
       "=============================== warnings summary ===============================",
@@ -202,7 +202,7 @@
       "  /docker/property/.propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/uvicorn/protocols/websockets/websockets_impl.py:17: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated",
       "    from websockets.server import WebSocketServerProtocol",
       "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
-      "16 passed, 3 warnings in 105.39s (0:01:45)"
+      "16 passed, 3 warnings in 99.18s (0:01:39)"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -221,7 +221,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "9f1eeb9710a8e39375cd1a261c2c63f968a4f434",
+    "runtime_commit_sha": "19a460e4ebdcf484d29b0473e3855810685ebbe6",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
