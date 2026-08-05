@@ -4130,9 +4130,17 @@ def test_propertyquarry_home_example_media_links_open_real_public_tour_targets(
         tour_href = page.get_by_role("link", name="3D tour available").get_attribute("href")
         walkthrough_href = page.get_by_role("link", name="Walkthrough available").get_attribute("href")
         assert tour_href == f"/tours/{slug}/control/3dvista"
-        assert walkthrough_href == f"/tours/{slug}/walkthrough"
-        walkthrough_response = public_context.request.get(
+        assert walkthrough_href == f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
+        viewer_response = public_context.request.get(
             f"{base_url}{walkthrough_href}"
+        )
+        assert viewer_response.ok
+        assert viewer_response.headers["content-type"].startswith("text/html")
+        viewer_markup = viewer_response.text()
+        assert 'id="tour-video"' in viewer_markup
+        assert f"/tours/{slug}/walkthrough" in viewer_markup
+        walkthrough_response = public_context.request.get(
+            f"{base_url}/tours/{slug}/walkthrough"
         )
         assert walkthrough_response.ok
         assert walkthrough_response.headers["content-type"].startswith("video/mp4")
@@ -9831,7 +9839,7 @@ def test_propertyquarry_research_detail_surfaces_generated_diorama_and_layout_to
         generated_tour_card = page.locator("[data-prd-visual-card='generated_reconstruction']")
         expect(generated_tour_card).to_be_visible()
         expect(generated_tour_card).to_contain_text("AI layout preview")
-        expect(page.locator(".prd-status-badge")).to_contain_text("AI layout preview available")
+        expect(page.locator(".prd-status-badge")).to_contain_text("AI-generated 3D tour available")
         expect(page.locator("[data-prd-visual-status]")).to_contain_text(
             (
                 "AI-generated from the floor plan and listing photos. "

@@ -19,7 +19,7 @@ Environment:
   PROPERTYQUARRY_DB_CONTAINER_NAME Deployed DB container alias
   EA_DB_CONTAINER                  Explicit Postgres container override
   POSTGRES_USER                    Postgres user (default: postgres)
-  POSTGRES_DB                      Database name (ea; propertyquarry for propertyquarry-db)
+  POSTGRES_DB                      Database name (default: propertyquarry; set ea for legacy EA)
   EA_DB_SIZE_LIMIT                 Largest tables to print (default: 20)
   EA_DB_SIZE_SCHEMA                Optional schema filter (for example: public)
   EA_DB_SIZE_SORT_KEY              total|table|index|toast|dead (default: total)
@@ -48,12 +48,20 @@ else
   DC=(docker-compose)
 fi
 
-DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"
-DB_CONTAINER="${EA_DB_CONTAINER:-${PROPERTYQUARRY_DB_CONTAINER_NAME:-${DB_SERVICE}}}"
+DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-propertyquarry-db}}"
+if [[ -n "${EA_DB_CONTAINER:-}" ]]; then
+  DB_CONTAINER="${EA_DB_CONTAINER}"
+elif [[ -n "${PROPERTYQUARRY_DB_CONTAINER_NAME:-}" ]]; then
+  DB_CONTAINER="${PROPERTYQUARRY_DB_CONTAINER_NAME}"
+elif [[ "${DB_SERVICE}" == "propertyquarry-db" ]]; then
+  DB_CONTAINER="propertyquarry-db-live"
+else
+  DB_CONTAINER="${DB_SERVICE}"
+fi
 DB_USER="${POSTGRES_USER:-postgres}"
 if [[ -n "${POSTGRES_DB:-}" ]]; then
   DB_NAME="${POSTGRES_DB}"
-elif [[ "${DB_SERVICE}" == "propertyquarry-db" ]]; then
+elif [[ "${DB_SERVICE}" == "propertyquarry-db" || "${DB_CONTAINER}" == propertyquarry-db* ]]; then
   DB_NAME="propertyquarry"
 else
   DB_NAME="ea"
