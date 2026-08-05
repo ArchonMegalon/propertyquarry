@@ -29,6 +29,12 @@ from app.services.property_market_catalog import (
     provider_options,
     selectable_property_platform_keys,
 )
+from scripts.propertyquarry_live_http_security import validated_live_base_origin
+from scripts.propertyquarry_live_probe_auth import live_probe_request_headers
+from scripts.propertyquarry_live_probe_secret_scope import (
+    read_release_probe_secret_from_stdin,
+    scrub_release_probe_secret_environment,
+)
 
 
 _TARGET_CONTEXT_BY_COUNTRY = {
@@ -959,25 +965,48 @@ def _fetch_provider_payload(
     timeout_seconds: float,
     api_token: str = "",
     principal_id: str = "",
+    release_probe_secret: str = "",
 ) -> dict[str, object]:
     params = urllib.parse.urlencode({"country": country_code})
     url = urllib.parse.urljoin(base_url.rstrip("/") + "/", f"app/api/property/providers?{params}")
-    normalized_api_token = str(api_token or "").strip() or _default_api_token()
+    normalized_release_probe_secret = str(release_probe_secret or "").strip()
+    normalized_api_token = (
+        ""
+        if normalized_release_probe_secret
+        else str(api_token or "").strip() or _default_api_token()
+    )
     normalized_principal_id = str(principal_id or "").strip() or _default_principal_id()
+    headers = _request_headers(
+        user_agent="PropertyQuarry-live-provider-smoke/1.0",
+        principal_id=normalized_principal_id,
+        api_token=normalized_api_token,
+    )
+    if normalized_release_probe_secret:
+        headers = live_probe_request_headers(
+            url=url,
+            authorized_origin=validated_live_base_origin(base_url),
+            headers=headers,
+            release_probe_secret=normalized_release_probe_secret,
+            method="GET",
+        )
     request = urllib.request.Request(
         url,
-        headers=_request_headers(
-            user_agent="PropertyQuarry-live-provider-smoke/1.0",
-            principal_id=normalized_principal_id,
-            api_token=normalized_api_token,
-        ),
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = response.read(220_000)
     except urllib.error.HTTPError as exc:
         exc.read(220_000)
-        auth_suffix = ": api token missing or rejected" if int(exc.code or 0) == 401 and not normalized_api_token else ""
+        auth_suffix = ""
+        if int(exc.code or 0) == 401:
+            auth_suffix = (
+                ": release probe missing or rejected"
+                if normalized_release_probe_secret
+                else ": api token missing or rejected"
+                if not normalized_api_token
+                else ""
+            )
         raise RuntimeError(f"provider_catalog_http_{int(exc.code or 0)}{auth_suffix}") from exc
     return json.loads(body.decode("utf-8", errors="replace"))
 
@@ -1000,6 +1029,7 @@ def build_live_provider_smoke_receipt(
     resume_checkpoint_path: str | Path = "",
     api_token: str = "",
     principal_id: str = "",
+    release_probe_secret: str = "",
 ) -> dict[str, object]:
     requested_countries = tuple(dict.fromkeys(str(country or "").strip().upper() for country in countries if str(country or "").strip()))
     all_search_ready_scope = _all_search_ready_countries_enabled() if all_search_ready_countries is None else bool(all_search_ready_countries)
@@ -1008,9 +1038,20 @@ def build_live_provider_smoke_receipt(
         normalized_countries = ("AT", "CR")
     enabled = _enabled()
     dry_run = _dry_run()
-    normalized_api_token = str(api_token or "").strip() or _default_api_token()
+    normalized_release_probe_secret = str(release_probe_secret or "").strip()
+    normalized_api_token = (
+        ""
+        if normalized_release_probe_secret
+        else str(api_token or "").strip() or _default_api_token()
+    )
     normalized_principal_id = str(principal_id or "").strip() or _default_principal_id()
     should_execute_search_matrix = _execute_search_matrix_enabled() if execute_search_matrix is None else bool(execute_search_matrix)
+    if normalized_release_probe_secret and (
+        should_execute_search_matrix or execute_cross_country_sanitization
+    ):
+        raise ValueError(
+            "release_probe_mode_is_read_only; disable search-matrix execution and cross-country sanitization"
+        )
     effective_search_run_timeout_seconds = _effective_search_run_timeout_seconds(
         timeout_seconds,
         enabled=enabled,
@@ -1025,6 +1066,7 @@ def build_live_provider_smoke_receipt(
             timeout_seconds=timeout,
             api_token=normalized_api_token,
             principal_id=normalized_principal_id,
+            release_probe_secret=normalized_release_probe_secret,
         )
     )
     for country in normalized_countries:
@@ -1326,6 +1368,11 @@ def main() -> int:
     parser.add_argument("--resume-from", default="", help="Optional checkpoint/final receipt whose passed targeted search rows should be reused.")
     parser.add_argument("--base-url", default=os.getenv("PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_BASE_URL") or "http://localhost:8097")
     parser.add_argument("--api-token", default=_default_api_token(), help="Optional API token. Defaults to PROPERTYQUARRY_LIVE_API_TOKEN or EA_API_TOKEN from env/.env.")
+    parser.add_argument(
+        "--release-probe-secret-stdin",
+        action="store_true",
+        help="Read the protected read-only release-probe credential once from bounded stdin.",
+    )
     parser.add_argument("--principal-id", default=_default_principal_id(), help="Optional principal id for authenticated live probes.")
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
     parser.add_argument(
@@ -1353,6 +1400,18 @@ def main() -> int:
         help="Probe runtime provider catalogs without submitting cross-country search-run sanitization cases.",
     )
     args = parser.parse_args()
+    release_probe_secret = read_release_probe_secret_from_stdin(
+        parser,
+        enabled=bool(args.release_probe_secret_stdin),
+    )
+    scrub_release_probe_secret_environment()
+    if release_probe_secret and not (
+        args.no_execute_search_matrix and args.no_cross_country_sanitization
+    ):
+        parser.error(
+            "--release-probe-secret-stdin requires --no-execute-search-matrix "
+            "and --no-cross-country-sanitization"
+        )
     execute_search_matrix = None
     if args.execute_search_matrix:
         execute_search_matrix = True
@@ -1377,6 +1436,7 @@ def main() -> int:
             resume_checkpoint_path=args.resume_from,
             api_token=str(args.api_token or "").strip(),
             principal_id=str(args.principal_id or "").strip(),
+            release_probe_secret=release_probe_secret,
         )
     except KeyboardInterrupt:
         if args.write and Path(args.write).exists():

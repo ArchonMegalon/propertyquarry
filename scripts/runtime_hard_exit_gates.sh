@@ -1,7 +1,30 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
+set +x
 
-EA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Retain the client-side probe credential only in this shell.  Authenticated
+# read-only probes receive it through bounded stdin; no child process inherits
+# either the client credential or the server-side verifier authority.
+release_probe_secret="${PROPERTYQUARRY_LIVE_PROBE_SECRET:-${PROPERTYQUARRY_PERFORMANCE_RELEASE_PROBE_SECRET:-}}"
+unset PROPERTYQUARRY_LIVE_PROBE_SECRET PROPERTYQUARRY_PERFORMANCE_RELEASE_PROBE_SECRET
+unset PROPERTYQUARRY_RELEASE_PROBE_SECRET PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID
+unset EA_API_TOKEN PROPERTYQUARRY_LIVE_API_TOKEN
+
+if [[ ${#release_probe_secret} -gt 4096 || "${release_probe_secret}" == *$'\n'* || "${release_probe_secret}" == *$'\r'* ]]; then
+  unset release_probe_secret
+  echo "error: release-probe credential must be one line of at most 4096 bytes" >&2
+  exit 2
+fi
+
+# Resolve the repository with shell builtins so the retained, non-exported
+# credential cannot reach a command-substitution child.
+script_path="${BASH_SOURCE[0]}"
+script_dir="${script_path%/*}"
+if [[ "${script_dir}" == "${script_path}" ]]; then
+  script_dir="."
+fi
+cd -- "${script_dir}/.."
+EA_ROOT="${PWD}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [[ -z "${PYTHON_BIN}" ]]; then
   if [[ -x "${EA_ROOT}/.venv/bin/python" ]]; then
@@ -18,8 +41,11 @@ Usage:
 
 Runs the runtime-only hard exit bundle that a live deploy must pass:
   - smoke_help
-  - smoke_api
   - verify_pocket_audio_archive
+
+Generic runtime mode also runs smoke_api. PropertyQuarry runtime mode replaces
+that generic route/auth contract with its dedicated public, authenticated,
+mobile, and provider smokes.
 
 `smoke_api_tibor.sh` stays in the full hard-exit bundle because it mutates
 deeper task-contract state and is not a live-deploy-safe probe.
@@ -27,11 +53,14 @@ deeper task-contract state and is not a live-deploy-safe probe.
 Optional PropertyQuarry runtime lane:
   Set PROPERTYQUARRY_RUNTIME_GATES=1 to additionally run the deployed runtime
   public/authenticated/mobile/provider smokes against PROPERTYQUARRY_LIVE_SMOKE_BASE_URL
-  (default http://localhost:8097). Authenticated/provider probes require
-  EA_API_TOKEN and use PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL,
-  PROPERTYQUARRY_LIVE_SMOKE_COUNTRY_CODE,
-  PROPERTYQUARRY_LIVE_MOBILE_SMOKE_PRINCIPAL_ID, and
-  PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_PRINCIPAL_ID when provided. In this mode,
+  (default https://propertyquarry.com). PROPERTYQUARRY_LIVE_PROBE_SECRET is required
+  for the signed, read-only authenticated, mobile, and provider-catalog probes;
+  it is captured before child
+  processes start and passed only through bounded stdin. The credential is not
+  passed to the anonymous public smoke. The authenticated/mobile probes use the
+  fixed synthetic release-probe identity and PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL
+  (default Free); the provider probe may use
+  PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_PRINCIPAL_ID. In this mode,
   verify_pocket_audio_archive remains informative but will warn instead of
   failing the PropertyQuarry-specific runtime lane.
 EOF
@@ -45,53 +74,63 @@ case "$(printf '%s' "${PROPERTYQUARRY_RUNTIME_GATES:-0}" | tr '[:upper:]' '[:low
     ;;
 esac
 
-propertyquarry_base_url="${PROPERTYQUARRY_LIVE_SMOKE_BASE_URL:-http://localhost:8097}"
-propertyquarry_principal_id="${PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_PRINCIPAL_ID:-${EA_PRINCIPAL_ID:-cf-email:tibor.girschele@gmail.com}}"
+propertyquarry_base_url="${PROPERTYQUARRY_LIVE_SMOKE_BASE_URL:-https://propertyquarry.com}"
+propertyquarry_probe_principal_id="propertyquarry-release-probe"
+propertyquarry_probe_plan_label="${PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL:-Free}"
 
 cd "${EA_ROOT}"
 bash scripts/smoke_help.sh
-env -u EA_API_TOKEN bash scripts/smoke_api.sh
-if [[ "${propertyquarry_runtime_gates_enabled}" == "1" ]]; then
+if [[ "${propertyquarry_runtime_gates_enabled}" == "0" ]]; then
+  env -u EA_API_TOKEN bash scripts/smoke_api.sh
+  "${PYTHON_BIN}" scripts/verify_pocket_audio_archive.py
+else
+  if [[ -z "${release_probe_secret}" ]]; then
+    echo "PROPERTYQUARRY_RUNTIME_GATES=1 requires PROPERTYQUARRY_LIVE_PROBE_SECRET for signed read-only runtime smokes." >&2
+    exit 2
+  fi
   if ! "${PYTHON_BIN}" scripts/verify_pocket_audio_archive.py; then
     echo "PROPERTYQUARRY_RUNTIME_GATES=1 active: verify_pocket_audio_archive.py failed, continuing because Pocket archive backfill is outside the PropertyQuarry runtime lane." >&2
   fi
-else
-  "${PYTHON_BIN}" scripts/verify_pocket_audio_archive.py
-fi
-
-if [[ "${propertyquarry_runtime_gates_enabled}" == "1" ]]; then
   mkdir -p _completion/smoke
 
-  PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_live_public_smoke.py \
+  env -u EA_API_TOKEN PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_live_public_smoke.py \
     --base-url "${propertyquarry_base_url}" \
     --write _completion/smoke/property-live-public-latest.json \
     --timeout-seconds 8
 
-  if [[ -n "${EA_API_TOKEN:-}" ]]; then
-    PYTHONPATH=ea EA_API_TOKEN="${EA_API_TOKEN}" "${PYTHON_BIN}" scripts/propertyquarry_live_authenticated_smoke.py \
-      --base-url "${propertyquarry_base_url}" \
-      --principal-id "${propertyquarry_principal_id}" \
-      --expected-plan-label "${PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL:-Agent}" \
-      --country-code "${PROPERTYQUARRY_LIVE_SMOKE_COUNTRY_CODE:-AT}" \
-      --write _completion/smoke/property-live-authenticated-latest.json \
-      --timeout-seconds 8
+  env -u EA_API_TOKEN -u PROPERTYQUARRY_LIVE_API_TOKEN \
+    PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_live_authenticated_smoke.py \
+    --release-probe-secret-stdin \
+    --base-url "${propertyquarry_base_url}" \
+    --principal-id "${propertyquarry_probe_principal_id}" \
+    --expected-plan-label "${propertyquarry_probe_plan_label}" \
+    --country-code "${PROPERTYQUARRY_LIVE_SMOKE_COUNTRY_CODE:-AT}" \
+    --write _completion/smoke/property-live-authenticated-latest.json \
+    --timeout-seconds 8 \
+    <<<"${release_probe_secret}"
 
-    PYTHONPATH=ea EA_API_TOKEN="${EA_API_TOKEN}" "${PYTHON_BIN}" scripts/propertyquarry_live_mobile_surface_smoke.py \
-      --base-url "${propertyquarry_base_url}" \
-      --host-header "${PROPERTYQUARRY_LIVE_HOST_HEADER:-propertyquarry.com}" \
-      --api-token "${EA_API_TOKEN}" \
-      --principal-id "${PROPERTYQUARRY_LIVE_MOBILE_SMOKE_PRINCIPAL_ID:-pq-live-mobile-smoke}" \
-      --seed-research-detail-fixture \
-      --write _completion/smoke/property-live-mobile-surface-latest.json
+  env -u EA_API_TOKEN -u PROPERTYQUARRY_LIVE_API_TOKEN \
+    PYTHONPATH=ea "${PYTHON_BIN}" scripts/propertyquarry_live_mobile_surface_smoke.py \
+    --release-probe-secret-stdin \
+    --base-url "${propertyquarry_base_url}" \
+    --host-header "${PROPERTYQUARRY_LIVE_HOST_HEADER:-propertyquarry.com}" \
+    --principal-id "${propertyquarry_probe_principal_id}" \
+    --expected-plan-label "${propertyquarry_probe_plan_label}" \
+    --write _completion/smoke/property-live-mobile-surface-latest.json \
+    <<<"${release_probe_secret}"
 
+  env -u EA_API_TOKEN -u PROPERTYQUARRY_LIVE_API_TOKEN \
     PROPERTYQUARRY_LIVE_PROVIDER_SMOKE=1 \
-      PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_DRY_RUN=0 \
-      PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_PRINCIPAL_ID="${propertyquarry_principal_id}" \
-      PYTHONPATH=ea EA_API_TOKEN="${EA_API_TOKEN}" "${PYTHON_BIN}" scripts/property_live_provider_smoke.py \
-      --base-url "${propertyquarry_base_url}" \
-      --write _completion/smoke/property-live-provider-latest.json \
-      --timeout-seconds 8
-  else
-    echo "PROPERTYQUARRY_RUNTIME_GATES=1 requested but EA_API_TOKEN is not set; skipping authenticated/mobile/provider PropertyQuarry runtime smokes." >&2
-  fi
+    PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_DRY_RUN=0 \
+    PYTHONPATH=ea "${PYTHON_BIN}" scripts/property_live_provider_smoke.py \
+    --release-probe-secret-stdin \
+    --base-url "${propertyquarry_base_url}" \
+    --principal-id "${propertyquarry_probe_principal_id}" \
+    --no-execute-search-matrix \
+    --no-cross-country-sanitization \
+    --write _completion/smoke/property-live-provider-latest.json \
+    --timeout-seconds 8 \
+    <<<"${release_probe_secret}"
+
+  unset release_probe_secret
 fi
