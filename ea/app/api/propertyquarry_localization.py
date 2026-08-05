@@ -80,6 +80,70 @@ _DE_AT = {
     "PropertyQuarry Shortlist": "PropertyQuarry Merkliste",
     "PropertyQuarry Research": "PropertyQuarry Recherche",
     "Skip to content": "Zum Inhalt springen",
+    "Product": "Produkt",
+    "How it works": "So funktioniert es",
+    "Pricing": "Preise",
+    "Sign in": "Anmelden",
+    "Open search": "Suche öffnen",
+    "Email sign-in": "Mit E-Mail anmelden",
+    "Your privacy choice": "Ihre Datenschutzauswahl",
+    "Optional analytics help us understand which public pages are useful. They stay off unless you allow them. Essential security and preference cookies still work.": (
+        "Optionale Analysen helfen uns zu verstehen, welche öffentlichen Seiten nützlich sind. "
+        "Sie bleiben deaktiviert, bis Sie zustimmen. Notwendige Sicherheits- und "
+        "Einstellungscookies funktionieren weiterhin."
+    ),
+    "Review cookie settings": "Cookie-Einstellungen prüfen",
+    "Reject optional analytics": "Optionale Analysen ablehnen",
+    "Allow analytics": "Analysen erlauben",
+    "Search once. See the right homes. Decide faster.": (
+        "Einmal suchen. Die richtigen Immobilien sehen. Schneller entscheiden."
+    ),
+    "One brief, matching homes, and the details that matter before a viewing.": (
+        "Ein Suchprofil, passende Immobilien und die entscheidenden Details vor der Besichtigung."
+    ),
+    "Brief": "Suchprofil",
+    "Decide": "Entscheiden",
+    "Example shortlist": "Beispiel-Merkliste",
+    "Tap any row to open the example.": "Öffnen Sie ein Beispiel mit einem Klick.",
+    "Example": "Beispiel",
+    "Sample homes": "Beispielimmobilien",
+    "3 examples": "3 Beispiele",
+    "Example home with a 3D tour and walkthrough.": (
+        "Beispielimmobilie mit 3D-Tour und Rundgang."
+    ),
+    "Quiet layout near transit": "Ruhiger Grundriss mit guter Anbindung",
+    "Good fit. Parking still unclear.": "Gute Eignung. Parkplatz noch ungeklärt.",
+    "Strong price, open questions": "Attraktiver Preis, offene Fragen",
+    "Strong price. Check the details.": "Attraktiver Preis. Details prüfen.",
+    "Must-haves stay clear": "Unverzichtbares bleibt klar",
+    "Area, mode, and must-haves can exclude.": (
+        "Gebiet, Angebotsart und Muss-Kriterien können Ergebnisse ausschließen."
+    ),
+    "Preferences shape fit": "Präferenzen bestimmen die Eignung",
+    "Schools, errands, noise, and commute adjust order.": (
+        "Schulen, Alltagswege, Lärm und Pendelzeit beeinflussen die Reihenfolge."
+    ),
+    "Details stay together": "Alle Details an einem Ort",
+    "Costs, floorplans, tours, and open questions stay with the home.": (
+        "Kosten, Grundrisse, Touren und offene Fragen bleiben bei der Immobilie."
+    ),
+    "Property onboarding": "Immobiliensuche einrichten",
+    "Set up your property search.": "Richten Sie Ihre Immobiliensuche ein.",
+    "Create an account, then start with your brief.": (
+        "Erstellen Sie ein Konto und beginnen Sie mit Ihrem Suchprofil."
+    ),
+    "Email": "E-Mail",
+    "Create your account.": "Erstellen Sie Ihr Konto.",
+    "Send verification code": "Bestätigungscode senden",
+    "Privacy": "Datenschutz",
+    "Terms": "Nutzungsbedingungen",
+    "Support": "Hilfe",
+    "Imprint": "Impressum",
+    "Cookie settings": "Cookie-Einstellungen",
+    "Subprocessors": "Unterauftragsverarbeiter",
+    "Refunds": "Rückerstattungen",
+    "Disclaimers": "Haftungsausschlüsse",
+    "Ready": "Bereit",
     "Try again": "Erneut versuchen",
     "Search": "Suche",
     "Shortlist": "Merkliste",
@@ -348,6 +412,72 @@ _ES_CR = {
     "PropertyQuarry Shortlist": "Favoritos de PropertyQuarry",
     "PropertyQuarry Research": "Investigación de PropertyQuarry",
     "Skip to content": "Saltar al contenido",
+    "Product": "Producto",
+    "How it works": "Cómo funciona",
+    "Pricing": "Precios",
+    "Sign in": "Iniciar sesión",
+    "Open search": "Abrir búsqueda",
+    "Email sign-in": "Iniciar sesión por correo",
+    "Your privacy choice": "Su elección de privacidad",
+    "Optional analytics help us understand which public pages are useful. They stay off unless you allow them. Essential security and preference cookies still work.": (
+        "Los análisis opcionales nos ayudan a entender qué páginas públicas son útiles. "
+        "Permanecen desactivados hasta que usted los permita. Las cookies esenciales de "
+        "seguridad y preferencias siguen funcionando."
+    ),
+    "Review cookie settings": "Revisar la configuración de cookies",
+    "Reject optional analytics": "Rechazar análisis opcionales",
+    "Allow analytics": "Permitir análisis",
+    "Search once. See the right homes. Decide faster.": (
+        "Busque una vez. Vea las propiedades adecuadas. Decida más rápido."
+    ),
+    "One brief, matching homes, and the details that matter before a viewing.": (
+        "Un perfil, propiedades adecuadas y los detalles importantes antes de una visita."
+    ),
+    "Brief": "Perfil",
+    "Decide": "Decidir",
+    "Example shortlist": "Lista de muestra",
+    "Tap any row to open the example.": "Seleccione cualquier fila para abrir el ejemplo.",
+    "Example": "Ejemplo",
+    "Sample homes": "Propiedades de muestra",
+    "3 examples": "3 ejemplos",
+    "Example home with a 3D tour and walkthrough.": (
+        "Propiedad de ejemplo con recorrido 3D y visita guiada."
+    ),
+    "Quiet layout near transit": "Distribución tranquila cerca del transporte",
+    "Good fit. Parking still unclear.": (
+        "Buena compatibilidad. El estacionamiento aún no está claro."
+    ),
+    "Strong price, open questions": "Buen precio, preguntas pendientes",
+    "Strong price. Check the details.": "Buen precio. Revise los detalles.",
+    "Must-haves stay clear": "Los requisitos indispensables quedan claros",
+    "Area, mode, and must-haves can exclude.": (
+        "La zona, modalidad y requisitos indispensables pueden excluir resultados."
+    ),
+    "Preferences shape fit": "Las preferencias definen la compatibilidad",
+    "Schools, errands, noise, and commute adjust order.": (
+        "Escuelas, diligencias, ruido y desplazamientos ajustan el orden."
+    ),
+    "Details stay together": "Los detalles permanecen juntos",
+    "Costs, floorplans, tours, and open questions stay with the home.": (
+        "Costos, planos, recorridos y preguntas pendientes permanecen con la propiedad."
+    ),
+    "Property onboarding": "Configuración de búsqueda de propiedades",
+    "Set up your property search.": "Configure su búsqueda de propiedades.",
+    "Create an account, then start with your brief.": (
+        "Cree una cuenta y empiece con su perfil de búsqueda."
+    ),
+    "Email": "Correo electrónico",
+    "Create your account.": "Cree su cuenta.",
+    "Send verification code": "Enviar código de verificación",
+    "Privacy": "Privacidad",
+    "Terms": "Términos",
+    "Support": "Ayuda",
+    "Imprint": "Aviso legal",
+    "Cookie settings": "Configuración de cookies",
+    "Subprocessors": "Subprocesadores",
+    "Refunds": "Reembolsos",
+    "Disclaimers": "Descargos de responsabilidad",
+    "Ready": "Listo",
     "Try again": "Intentar de nuevo",
     "Search": "Buscar",
     "Shortlist": "Favoritos",

@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
@@ -265,6 +266,117 @@ def test_terminal_result_shell_localizes_dynamic_counts_facts_and_actions() -> N
         "EUR 49 | Úselo solo si Helle Gartenwohnung necesita un contexto de mercado más amplio antes de decidir.",
     ):
         assert expected in spanish
+
+
+@pytest.mark.parametrize(
+    ("locale", "expected"),
+    [
+        (
+            "de-AT",
+            (
+                "Produkt",
+                "So funktioniert es",
+                "Preise",
+                "Anmelden",
+                "Suche öffnen",
+                "Mit E-Mail anmelden",
+                "Ihre Datenschutzauswahl",
+                "Optionale Analysen ablehnen",
+                "Analysen erlauben",
+                "Einmal suchen. Die richtigen Immobilien sehen. Schneller entscheiden.",
+                "Ein Suchprofil, passende Immobilien und die entscheidenden Details vor der Besichtigung.",
+                "Beispiel-Merkliste",
+                "Beispielimmobilien",
+                "Ruhiger Grundriss mit guter Anbindung",
+                "Attraktiver Preis, offene Fragen",
+                "Unverzichtbares bleibt klar",
+                "Präferenzen bestimmen die Eignung",
+                "Alle Details an einem Ort",
+                "Immobiliensuche einrichten",
+                "Richten Sie Ihre Immobiliensuche ein.",
+                "Erstellen Sie ein Konto und beginnen Sie mit Ihrem Suchprofil.",
+                "E-Mail",
+                "Bestätigungscode senden",
+                "Datenschutz",
+                "Nutzungsbedingungen",
+                "Cookie-Einstellungen",
+                "Unterauftragsverarbeiter",
+                "Rückerstattungen",
+                "Haftungsausschlüsse",
+            ),
+        ),
+        (
+            "es-CR",
+            (
+                "Producto",
+                "Cómo funciona",
+                "Precios",
+                "Iniciar sesión",
+                "Abrir búsqueda",
+                "Iniciar sesión por correo",
+                "Su elección de privacidad",
+                "Rechazar análisis opcionales",
+                "Permitir análisis",
+                "Busque una vez. Vea las propiedades adecuadas. Decida más rápido.",
+                "Un perfil, propiedades adecuadas y los detalles importantes antes de una visita.",
+                "Lista de muestra",
+                "Propiedades de muestra",
+                "Distribución tranquila cerca del transporte",
+                "Buen precio, preguntas pendientes",
+                "Los requisitos indispensables quedan claros",
+                "Las preferencias definen la compatibilidad",
+                "Los detalles permanecen juntos",
+                "Configuración de búsqueda de propiedades",
+                "Configure su búsqueda de propiedades.",
+                "Cree una cuenta y empiece con su perfil de búsqueda.",
+                "Correo electrónico",
+                "Enviar código de verificación",
+                "Privacidad",
+                "Términos",
+                "Configuración de cookies",
+                "Subprocesadores",
+                "Reembolsos",
+                "Descargos de responsabilidad",
+            ),
+        ),
+    ],
+)
+def test_public_home_and_registration_first_impression_is_coherently_localized(
+    locale: str,
+    expected: tuple[str, ...],
+) -> None:
+    source = _propertyquarry_document(
+        """
+        <nav><span>Product</span><a>How it works</a><a>Pricing</a><a>Sign in</a>
+        <a>Open search</a><a>Email sign-in</a></nav>
+        <section><h2>Your privacy choice</h2>
+        <p>Optional analytics help us understand which public pages are useful. They stay off unless you allow them. Essential security and preference cookies still work.</p>
+        <button>Reject optional analytics</button><button>Allow analytics</button></section>
+        <main><h1>Search once. See the right homes. Decide faster.</h1>
+        <p>One brief, matching homes, and the details that matter before a viewing.</p>
+        <h2>Example shortlist</h2><strong>Sample homes</strong>
+        <h3>Quiet layout near transit</h3><h3>Strong price, open questions</h3>
+        <h3>Must-haves stay clear</h3><h3>Preferences shape fit</h3>
+        <h3>Details stay together</h3>
+        <p>Property onboarding</p><h1>Set up your property search.</h1>
+        <p>Create an account, then start with your brief.</p><label>Email</label>
+        <button>Send verification code</button><a>Privacy</a><a>Terms</a>
+        <a>Cookie settings</a><a>Subprocessors</a><a>Refunds</a><a>Disclaimers</a>
+        </main>
+        """
+    ).decode("utf-8")
+
+    localized = localize_propertyquarry_html(
+        source,
+        locale=locale,
+        path="/",
+        query_string=f"lang={locale}".encode("ascii"),
+    )
+
+    for translated in expected:
+        assert translated in localized
+    assert "Search once. See the right homes. Decide faster." not in localized
+    assert "Set up your property search." not in localized
 
 
 def test_all_public_catalogs_cover_the_global_route_shell_without_review_claim() -> None:
