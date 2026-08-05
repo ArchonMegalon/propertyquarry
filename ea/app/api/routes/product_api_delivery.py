@@ -1785,6 +1785,14 @@ def _create_property_billing_order_payfunnels(
     )
 
 
+def _property_billing_checkout_provider(*, plan_key: str) -> str:
+    if payfunnels_configured(plan_key=plan_key):
+        return "payfunnels"
+    if paypal_configured():
+        return "paypal"
+    return ""
+
+
 @router.post("/signals/property/billing/checkout/order", response_model=PropertyBillingCheckoutOut)
 def create_property_billing_checkout_order(
     body: PropertyBillingCheckoutCreateIn,
@@ -1792,7 +1800,22 @@ def create_property_billing_checkout_order(
     container: AppContainer = Depends(get_container),
     context: RequestContext = Depends(get_request_context),
 ) -> PropertyBillingCheckoutOut:
-    return _create_property_billing_order_payfunnels(body=body, request=request, container=container, context=context)
+    provider = _property_billing_checkout_provider(plan_key=body.plan_key)
+    if provider == "payfunnels":
+        return _create_property_billing_order_payfunnels(
+            body=body,
+            request=request,
+            container=container,
+            context=context,
+        )
+    if provider == "paypal":
+        return create_property_billing_order(
+            body=body,
+            request=request,
+            container=container,
+            context=context,
+        )
+    raise HTTPException(status_code=409, detail="property_billing_not_configured")
 
 
 @router.post("/signals/property/billing/payfunnels/order", response_model=PropertyBillingCheckoutOut, include_in_schema=False)

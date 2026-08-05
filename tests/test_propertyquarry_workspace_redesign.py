@@ -26159,7 +26159,7 @@ def test_propertyquarry_shortlist_shows_media_ready_status_without_direct_media_
     monkeypatch.setattr(
         landing_property_research.property_tour_hosting,
         "_hosted_property_tour_walkthrough_asset_url",
-        lambda _url: verified_walkthrough_href,
+        lambda _url, *, principal_id="": verified_walkthrough_href,
     )
 
     shortlist = client.get("/app/shortlist", params={"run_id": "run-43"}, headers={"host": "propertyquarry.com"})
@@ -30600,7 +30600,7 @@ def test_property_research_packet_shows_ready_walkthrough_inside_visual_console(
     monkeypatch.setattr(
         landing_property_research.property_tour_hosting,
         "_hosted_property_tour_walkthrough_asset_url",
-        lambda _url: "https://propertyquarry.com/tours/files/walkthrough-ready-loft/walkthrough.mp4",
+        lambda _url, *, principal_id="": "https://propertyquarry.com/tours/files/walkthrough-ready-loft/walkthrough.mp4",
     )
 
     packet_ref = landing_property_research._property_candidate_ref(

@@ -1043,6 +1043,14 @@ def _property_workbench_client_candidate_payload(
         validated_provider_url="",
     )
     if tour_payload:
+        if generated_layout_url:
+            # The captured/provider tour remains blocked, but the disclosed
+            # AI layout visual itself is ready and has a safe first-party URL.
+            tour_payload["status"] = "ready"
+            tour_payload["status_detail"] = (
+                "AI-generated from the floor plan and listing photos. "
+                "It is an interactive spatial aid, not a captured 360° tour."
+            )
         compact["tour"] = tour_payload
     flythrough_payload = _property_workbench_client_tour_payload(
         raw.get("flythrough") if isinstance(raw.get("flythrough"), dict) else {},

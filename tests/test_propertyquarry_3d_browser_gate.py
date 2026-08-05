@@ -12,6 +12,10 @@ from scripts import propertyquarry_3d_browser_gate as gate
 SLUG = "verified-3dvista-provider-only"
 
 
+def test_default_demo_is_the_published_karl_3dvista_tour() -> None:
+    assert gate.DEFAULT_DEMO_SLUG == "karl-czerny-gasse-2-urban-jungle"
+
+
 def _accepted_walkthrough_state() -> dict[str, object]:
     return {
         "video_count": 1,

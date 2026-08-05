@@ -39,6 +39,27 @@
           'Checks left': 'Offene Prüfungen',
           'Checked': 'Geprüft',
           'Sites': 'Portale',
+          'Providers': 'Portale',
+          'Saved pages': 'Gespeicherte Seiten',
+          'Edit search': 'Suche bearbeiten',
+          'It is meaningfully cheaper.': 'Deutlich günstiger.',
+          'Tour not available yet.': '3D-Tour noch nicht verfügbar.',
+          'Media preview not available.': 'Medienvorschau nicht verfügbar.',
+          'Best part': 'Größter Vorteil',
+          'Keep in mind': 'Zu beachten',
+          'Best points': 'Größte Vorteile',
+          'Things to watch': 'Zu beachten',
+          'Price level': 'Preisniveau',
+          'Adjust search': 'Suche anpassen',
+          'Viewing requested': 'Besichtigung angefragt',
+          'Documents requested': 'Unterlagen angefragt',
+          'Offer candidate': 'Kaufangebot erwägen',
+          'Archived': 'Archiviert',
+          'Premium market report': 'Premium-Marktbericht',
+          'Open checkout': 'Zur Kasse',
+          'Why it works': 'Warum sie passt',
+          'Visuals': 'Visualisierungen',
+          'Request camera walkthrough or 3D tour': 'Kamera-Rundgang oder 3D-Tour anfordern',
           'Search totals': 'Suchsummen',
           'Updates': 'Aktualisierungen',
           'Checking the saved search.': 'Gespeicherte Suche wird geprüft.',
@@ -120,6 +141,27 @@
                 'Checks left': 'Revisiones pendientes',
                 'Checked': 'Revisado',
                 'Sites': 'Portales',
+                'Providers': 'Portales',
+                'Saved pages': 'Páginas guardadas',
+                'Edit search': 'Editar búsqueda',
+                'It is meaningfully cheaper.': 'Es considerablemente más económica.',
+                'Tour not available yet.': 'El recorrido 3D aún no está disponible.',
+                'Media preview not available.': 'Vista previa multimedia no disponible.',
+                'Best part': 'Punto fuerte',
+                'Keep in mind': 'Tenga en cuenta',
+                'Best points': 'Puntos fuertes',
+                'Things to watch': 'Tenga en cuenta',
+                'Price level': 'Nivel de precio',
+                'Adjust search': 'Ajustar búsqueda',
+                'Viewing requested': 'Visita solicitada',
+                'Documents requested': 'Documentos solicitados',
+                'Offer candidate': 'Candidata para oferta',
+                'Archived': 'Archivada',
+                'Premium market report': 'Informe de mercado premium',
+                'Open checkout': 'Ir al pago',
+                'Why it works': 'Por qué funciona',
+                'Visuals': 'Visualizaciones',
+                'Request camera walkthrough or 3D tour': 'Solicitar recorrido con cámara o recorrido 3D',
                 'Search totals': 'Totales de búsqueda',
                 'Updates': 'Actualizaciones',
                 'Checking the saved search.': 'Revisando la búsqueda guardada.',
@@ -197,6 +239,12 @@
       const matchingTotal = text.match(/^(\d+) (matching homes|matching opportunities|saved homes|saved opportunities)$/i);
       if (matchingTotal) {
         return `${matchingTotal[1]} ${liveCopyCatalog[String(matchingTotal[2]).toLowerCase()] || matchingTotal[2]}`;
+      }
+      const matchesTotal = text.match(/^(\d+) matches$/i);
+      if (matchesTotal) {
+        return clientLocale.startsWith('de')
+          ? `${matchesTotal[1]} Treffer`
+          : `${matchesTotal[1]} coincidencias`;
       }
       const roomsLabel = text.match(/^(\d+(?:[.,]\d+)?) rooms?(\s*\|\s*.+)?$/i);
       if (roomsLabel) {

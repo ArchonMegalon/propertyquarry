@@ -1221,7 +1221,7 @@ def test_checker_activation_binds_proof_to_current_fleet_and_rollout_boundary() 
         )
 
 
-def test_storage_source_check_tracks_governed_v19_order_and_checksum() -> None:
+def test_storage_source_check_tracks_governed_v20_order_and_checksum() -> None:
     schema_source = schema_check.SCHEMA_SOURCE.read_text(encoding="utf-8")
     checker_source = Path(schema_check.__file__).read_text(encoding="utf-8")
 
@@ -1234,7 +1234,7 @@ def test_storage_source_check_tracks_governed_v19_order_and_checksum() -> None:
         (migration.version, migration.name)
         for migration in property_search_schema.PROPERTY_SEARCH_MIGRATIONS
     )
-    assert contracts[-1] == (19, "bounded_storage_retention_control")
+    assert contracts[-1] == (20, "durable_fact_enrichment_work")
     assert property_search_schema.PROPERTY_SEARCH_MIGRATIONS[9].checksum == (
         "83f07c1d91968753e454c79972110881259a01953a6755cfef020adf55e92bc4"
     )
@@ -1264,4 +1264,7 @@ def test_storage_source_check_tracks_governed_v19_order_and_checksum() -> None:
     )
     assert property_search_schema.PROPERTY_SEARCH_MIGRATIONS[18].checksum == (
         "3cee796e77912373a948ee9d9f4613ace502374cad74e753b5073f46366aa96a"
+    )
+    assert property_search_schema.PROPERTY_SEARCH_MIGRATIONS[19].checksum == (
+        "abbe200c888213b41c99c432e523056090b94a83bfc8c8de5eaa436f90199e42"
     )

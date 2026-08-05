@@ -45,6 +45,30 @@ def test_current_durable_worker_passes_positive_security_contract() -> None:
     ) == []
 
 
+def test_billing_credentials_are_scoped_to_the_api_service() -> None:
+    services = security_posture._resolved_compose_services(_compose())
+    api_environment = services["propertyquarry-api"]["environment"]
+    assert isinstance(api_environment, dict)
+    for name in (
+        "PAYFUNNELS_API_KEY",
+        "PAYFUNNELS_API_BASE",
+        "PAYFUNNELS_WEBHOOK_SECRET",
+        "PAYFUNNELS_PLUS_CHECKOUT_URL",
+        "PAYFUNNELS_AGENT_CHECKOUT_URL",
+        "PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT",
+        "PAYPAL_CLIENT_ID",
+        "PAYPAL_SECRET",
+        "PAYPAL_API_BASE",
+    ):
+        assert name in api_environment
+        for service_name, service in services.items():
+            if service_name == "propertyquarry-api":
+                continue
+            environment = service.get("environment", {})
+            assert isinstance(environment, dict)
+            assert name not in environment
+
+
 def test_security_posture_receipt_includes_worker_and_render_database_controls() -> None:
     receipt = security_posture.build_security_posture_receipt()
 

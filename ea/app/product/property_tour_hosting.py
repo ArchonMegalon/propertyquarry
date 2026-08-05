@@ -3495,14 +3495,15 @@ def _hosted_property_tour_walkthrough_open_url(
     slug = _hosted_property_tour_slug_from_url(verified_tour_source) or _hosted_property_tour_slug_from_url(canonical_walkthrough_url)
     if not slug:
         return canonical_walkthrough_url
-    walkthrough_path = f"/tours/{urllib.parse.quote(slug, safe='')}/walkthrough"
+    walkthrough_path = f"/tours/{urllib.parse.quote(slug, safe='')}"
+    walkthrough_query = "pane=flythrough-pane&autoplay=1"
     for source_url in (verified_tour_source, canonical_walkthrough_url):
         normalized_source = str(source_url or "").strip()
         if not normalized_source:
             continue
         parsed = urllib.parse.urlparse(normalized_source)
         if not parsed.scheme and not parsed.netloc and str(parsed.path or "").startswith("/tours/"):
-            return walkthrough_path
+            return f"{walkthrough_path}?{walkthrough_query}"
         if not parsed.scheme or not parsed.netloc:
             continue
         branded_tour_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, f"/tours/{slug}", "", "", ""))
@@ -3513,7 +3514,7 @@ def _hosted_property_tour_walkthrough_open_url(
                     parsed.netloc,
                     walkthrough_path,
                     "",
-                    "",
+                    walkthrough_query,
                     "",
                 )
             )

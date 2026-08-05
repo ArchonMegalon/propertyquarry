@@ -28,7 +28,7 @@ else
   DC=(docker-compose)
 fi
 
-DB_CONTAINER="${EA_DB_CONTAINER:-${DB_SERVICE}}"
+DB_CONTAINER="${EA_DB_CONTAINER:-${PROPERTYQUARRY_DB_CONTAINER_NAME:-${DB_SERVICE}}}"
 DB_USER="${POSTGRES_USER:-postgres}"
 DB_NAME="${POSTGRES_DB:-ea}"
 
@@ -63,14 +63,22 @@ TABLES=(
 )
 
 echo "== PropertyQuarry DB status =="
-"${DC[@]}" up -d "${DB_SERVICE}" >/dev/null
+if [[ "$(docker inspect --format '{{.State.Running}}' "${DB_CONTAINER}" 2>/dev/null || true)" != "true" ]]; then
+  "${DC[@]}" up -d "${DB_SERVICE}" >/dev/null
+fi
 
+db_ready="false"
 for _ in $(seq 1 30); do
   if docker exec "${DB_CONTAINER}" pg_isready -U "${DB_USER}" >/dev/null 2>&1; then
+    db_ready="true"
     break
   fi
   sleep 1
 done
+if [[ "${db_ready}" != "true" ]]; then
+  echo "database container ${DB_CONTAINER} did not become ready" >&2
+  exit 1
+fi
 
 echo "-- table presence --"
 for t in "${TABLES[@]}"; do

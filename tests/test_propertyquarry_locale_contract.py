@@ -57,7 +57,7 @@ def test_propertyquarry_route_shell_preserves_explicit_fallback_boundaries() -> 
     assert "Los textos legales, de proveedores y aún no traducidos permanecen en inglés." in response.text
 
 
-def test_propertyquarry_anonymous_home_ignores_ambient_language_for_a_coherent_first_visit() -> None:
+def test_propertyquarry_anonymous_home_uses_supported_browser_language_coherently() -> None:
     client = build_property_client(principal_id="pq-ui-locale-default")
     client.headers.pop("X-EA-Principal-ID", None)
 
@@ -70,14 +70,14 @@ def test_propertyquarry_anonymous_home_ignores_ambient_language_for_a_coherent_f
     )
 
     assert response.status_code == 200
-    assert re.search(r'<html\b[^>]*\blang="en"', response.text)
-    assert response.headers["content-language"] == "en"
-    assert ">Skip to content</a>" in response.text
-    assert "<span>Match</span>" in response.text
-    assert ">Open property</a>" in response.text
-    assert "Zum Inhalt springen" not in response.text
-    assert "Übereinstimmung" not in response.text
-    assert ">Immobilie öffnen</a>" not in response.text
+    assert re.search(r'<html\b[^>]*\blang="de-DE"', response.text)
+    assert response.headers["content-language"] == "de-DE"
+    assert ">Zum Inhalt springen</a>" in response.text
+    assert "<span>Übereinstimmung</span>" in response.text
+    assert ">Immobilie öffnen</a>" in response.text
+    assert ">Skip to content</a>" not in response.text
+    assert "<span>Match</span>" not in response.text
+    assert ">Open property</a>" not in response.text
 
 
 def test_propertyquarry_locale_resolver_uses_only_governed_complete_ui_locales() -> None:

@@ -29,7 +29,7 @@ except ModuleNotFoundError:
 from app.product.property_tour_hosting import persist_hosted_property_tour_browser_render_proof
 
 
-DEFAULT_DEMO_SLUG = "luxury-residence-with-breathtaking-skyline-views-danubeflats-vienna-layout-first-742df65557"
+DEFAULT_DEMO_SLUG = "karl-czerny-gasse-2-urban-jungle"
 DEFAULT_PROVIDERS = ("3dvista",)
 FAILURE_PATTERNS = (
     "violates the following content security policy",

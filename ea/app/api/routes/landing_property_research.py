@@ -1410,7 +1410,7 @@ def _property_tour_media_payload(
         status_label = "AI 360 tour available"
         status_detail = _PROPERTY_AI_360_DISCLOSURE
     elif generated_reconstruction_ready:
-        status_label = "AI layout preview available"
+        status_label = "AI-generated 3D tour available"
         status_detail = (
             "AI-generated from the floor plan and listing photos. "
             "It is an interactive spatial aid, not a captured 360° tour."
@@ -1472,7 +1472,7 @@ def _property_tour_media_payload(
         "generated_reconstruction_label": (
             "Open AI 360 tour"
             if ai_360_ready
-            else ("Open AI layout preview" if generated_reconstruction_ready else "")
+            else ("Open AI-generated 3D tour" if generated_reconstruction_ready else "")
         ),
         "generated_reconstruction_status_detail": (
             _PROPERTY_AI_360_DISCLOSURE
@@ -1498,7 +1498,7 @@ def _property_tour_media_payload(
             "Open 3D tour"
             if open_tour_href
             else (
-                "Open AI layout preview"
+                "Open AI-generated 3D tour"
                 if generated_reconstruction_href and not ai_360_ready
                 else (
                     "Open AI 360 tour"
@@ -1518,7 +1518,7 @@ def _property_tour_media_payload(
             else (
                 "AI 360 reconstruction"
                 if ai_360_ready
-                else ("AI layout preview" if generated_reconstruction_href else "")
+                else ("AI-generated 3D tour" if generated_reconstruction_href else "")
             )
         ),
         "provider_key": (
