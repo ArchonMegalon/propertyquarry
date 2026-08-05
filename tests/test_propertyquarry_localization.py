@@ -303,6 +303,11 @@ def test_terminal_result_shell_localizes_dynamic_counts_facts_and_actions() -> N
                 "Unterauftragsverarbeiter",
                 "Rückerstattungen",
                 "Haftungsausschlüsse",
+                "1. E-Mail",
+                "2. Details",
+                "3. Zugriff",
+                "4. Bereit",
+                "Schritt 1",
             ),
         ),
         (
@@ -337,6 +342,11 @@ def test_terminal_result_shell_localizes_dynamic_counts_facts_and_actions() -> N
                 "Subprocesadores",
                 "Reembolsos",
                 "Descargos de responsabilidad",
+                "1. Correo electrónico",
+                "2. Detalles",
+                "3. Acceso",
+                "4. Listo",
+                "Paso 1",
             ),
         ),
     ],
@@ -360,6 +370,8 @@ def test_public_home_and_registration_first_impression_is_coherently_localized(
         <h3>Details stay together</h3>
         <p>Property onboarding</p><h1>Set up your property search.</h1>
         <p>Create an account, then start with your brief.</p><label>Email</label>
+        <ol><li>1. Email</li><li>2. Details</li><li>3. Access</li><li>4. Ready</li></ol>
+        <p>Step 1</p>
         <button>Send verification code</button><a>Privacy</a><a>Terms</a>
         <a>Cookie settings</a><a>Subprocessors</a><a>Refunds</a><a>Disclaimers</a>
         </main>
