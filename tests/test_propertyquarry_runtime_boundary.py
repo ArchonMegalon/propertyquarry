@@ -39,6 +39,7 @@ def test_propertyquarry_runtime_profile_mounts_only_property_product_surface(
 
     assert {
         "/static",
+        "/.well-known/assetlinks.json",
         "/health",
         "/health/ready",
         "/version",
@@ -60,7 +61,14 @@ def test_propertyquarry_runtime_profile_mounts_only_property_product_surface(
         "/app/api/signals/property/search/run/{run_id}/candidates/{candidate_ref}/fact-enrichment",
         "/app/api/signals/willhaben/property-tour",
         "/app/api/access-sessions",
+        "/app/api/mobile/property-links",
         "/app/api/property/governed-spatial/tours/{slug}/status",
+        "/mobile/auth/bridge",
+        "/mobile/auth/redeem",
+        "/mobile/bridge.css",
+        "/mobile/bridge.js",
+        "/mobile/runtime-contract",
+        "/mobile/share/bridge",
         "/tours/{slug}",
     }.issubset(paths)
 

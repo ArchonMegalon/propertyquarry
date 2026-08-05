@@ -15,6 +15,7 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.delenv("EA_LEDGER_BACKEND", raising=False)
     monkeypatch.setenv("EA_API_TOKEN", "")
     monkeypatch.setenv("EA_RUNTIME_MODE", "dev")
+    monkeypatch.setenv("PROPERTYQUARRY_RUNTIME_PROFILE", "propertyquarry")
     monkeypatch.setenv("EA_DATABASE_URL", "")
     from app.api.app import create_app
 
