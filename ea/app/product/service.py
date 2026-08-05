@@ -54991,11 +54991,26 @@ class ProductService:
                     investment_research_mode=investment_research_mode,
                     available_within_years=available_within_years,
                 )
+                source_research_kwargs: dict[str, object] = {
+                    "property_url": property_url,
+                    "property_facts": detailed_facts,
+                    "image_urls": tuple(
+                        _property_nonempty_sequence(preview.get("media_urls_json"))
+                    ),
+                }
+                try:
+                    source_research_parameters = inspect.signature(
+                        _merge_property_facts_with_source_research
+                    ).parameters
+                except (TypeError, ValueError):
+                    source_research_parameters = {}
+                if "source_preview" in source_research_parameters or any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in source_research_parameters.values()
+                ):
+                    source_research_kwargs["source_preview"] = preview
                 detailed_facts = _merge_property_facts_with_source_research(
-                    property_url=property_url,
-                    property_facts=detailed_facts,
-                    image_urls=tuple(_property_nonempty_sequence(preview.get("media_urls_json"))),
-                    source_preview=preview,
+                    **source_research_kwargs,
                 )
                 preview["property_facts_json"] = detailed_facts
                 detailed_title = str(preview.get("title") or property_url).strip() or property_url
