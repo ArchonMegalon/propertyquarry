@@ -896,11 +896,17 @@ def test_db_operator_scripts_support_propertyquarry_service_aliases() -> None:
     assert "PROPERTYQUARRY_DB_SERVICE" in runbook
     assert 'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"' in db_bootstrap
     assert '"${DC[@]}" up -d "${DB_SERVICE}"' in db_bootstrap
-    assert 'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"' in db_status
+    assert (
+        'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-propertyquarry-db}}"'
+        in db_status
+    )
     assert '"${DC[@]}" up -d "${DB_SERVICE}"' in db_status
     assert 'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"' in db_retention
     assert '"${DC[@]}" up -d "${DB_SERVICE}"' in db_retention
-    assert 'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"' in db_size
+    assert (
+        'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-propertyquarry-db}}"'
+        in db_size
+    )
     assert '"${DC[@]}" up -d "${DB_SERVICE}"' in db_size
 
 
