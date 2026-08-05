@@ -363,6 +363,7 @@ def test_hard_exit_gate_targets_and_runtime_gate_scripts_are_wired() -> None:
     assert '--api-token "${EA_API_TOKEN}"' not in runtime_gate
     assert "--seed-research-detail-fixture" not in runtime_gate
     assert 'propertyquarry_probe_principal_id="propertyquarry-release-probe"' in runtime_gate
+    assert "PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_PRINCIPAL_ID" not in runtime_gate
     assert 'propertyquarry_probe_plan_label="${PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL:-Free}"' in runtime_gate
     assert 'propertyquarry_base_url="${PROPERTYQUARRY_LIVE_SMOKE_BASE_URL:-https://propertyquarry.com}"' in runtime_gate
     assert "--no-execute-search-matrix" in runtime_gate

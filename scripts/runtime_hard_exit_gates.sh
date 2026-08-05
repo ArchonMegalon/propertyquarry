@@ -55,12 +55,10 @@ Optional PropertyQuarry runtime lane:
   public/authenticated/mobile/provider smokes against PROPERTYQUARRY_LIVE_SMOKE_BASE_URL
   (default https://propertyquarry.com). PROPERTYQUARRY_LIVE_PROBE_SECRET is required
   for the signed, read-only authenticated, mobile, and provider-catalog probes;
-  it is captured before child
-  processes start and passed only through bounded stdin. The credential is not
-  passed to the anonymous public smoke. The authenticated/mobile probes use the
-  fixed synthetic release-probe identity and PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL
-  (default Free); the provider probe may use
-  PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_PRINCIPAL_ID. In this mode,
+  it is captured before child processes start and passed only through bounded
+  stdin. The credential is not passed to the anonymous public smoke. All three
+  protected probes use the fixed synthetic release-probe identity; customer UI
+  checks use PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL (default Free). In this mode,
   verify_pocket_audio_archive remains informative but will warn instead of
   failing the PropertyQuarry-specific runtime lane.
 EOF
