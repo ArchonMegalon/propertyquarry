@@ -155,9 +155,9 @@ The exact live seller requests were captured without persisting authorization va
 
 ## Deployment-image retention closure
 
-- `scripts/propertyquarry_image_retention.py` now plans safely by default and applies only with both expected live image IDs. It considers only exact `local-<12 hex>` tags in the standalone PropertyQuarry web/render repositories, protects every image referenced by any container, protects the expected live images, and retains one additional distinct rollback image per runtime.
+- `scripts/propertyquarry_image_retention.py` now plans safely by default and applies only with both expected live image IDs. It manages exact tag shapes for standalone web/render runtimes plus PropertyQuarry flagship candidates, local candidates, Playwright workers, and BrowserAct operator images. It protects every image referenced by any container, protects the expected live images, and retains one additional distinct rollback image for each runtime repository; ephemeral candidate/test images do not consume rollback slots.
 - The governed deployment runs the retention tool only after the local deployment receipt passes, and writes `state/release/propertyquarry-image-retention.v1.json`. Tests cover repository scoping, live/rollback/container protection, race-time identity checks, and deployment ordering.
-- Initial bounded cleanup removed 2.198 GB of unused build cache, two dangling image records, and 32 stale PropertyQuarry local tags. Docker image storage fell from 56.81 GB to 54.86 GB; filesystem free space rose from roughly 43 GB to 48 GB. These items are recoverable by rebuilding from source.
+- A later live audit found the host at 99% utilization with only 12 GiB free because older PropertyQuarry flagship/candidate/test images were outside the original local-runtime policy. Exact project-scoped removal of those unused images raised free space to 43 GiB and reduced utilization to 94%. The current runtime, one web rollback, the active render image, and all container-referenced images remain present. Removed images are recoverable by rebuilding from source.
 - No database, Docker volume, tour asset, provider artifact, container, or evidence-tagged image was deleted. Do not run host-wide `docker image prune -a` or delete unused-looking volumes from this repository; the remaining 94% host utilization includes other projects and recoverable data outside PropertyQuarry's safe cleanup authority.
 
 ## Stale hosted-tour delivery reconciliation
@@ -173,7 +173,7 @@ The exact live seller requests were captured without persisting authorization va
 2. Do not recreate or re-edit the Crezlo tour unless a new evidence-backed correction is required. It is provider-corrected but intentionally not imported/promoted because acceptance remains fail-closed.
 3. Keep exact-distance OODA blocked until the source listing yields an exact pin/address. Provider configuration is complete; the Karl-Czerny address is only a commute target and must not be reused as property identity.
 4. MagicFit remains an optional Advanced Visual provider lane without a verified artifact. Core Gold remains valid through the licensed 3DVista tour; do not weaken provider acceptance to manufacture an Advanced Visual pass.
-5. Host filesystem utilization still rounds to 94%. Further cleanup requires a separate, cross-project retention audit or explicit authority over old volumes/rollback images; do not infer that authority from PropertyQuarry maintenance.
+5. Host filesystem utilization still rounds to 94% with about 43 GiB free after the bounded PropertyQuarry cleanup. Further cleanup requires a separate, cross-project retention audit or explicit authority over old volumes/rollback images; do not infer that authority from PropertyQuarry maintenance.
 
 ## Historical artifacts warning
 

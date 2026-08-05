@@ -26,7 +26,10 @@ def _row(
 
 
 def test_plan_is_repo_scoped_and_keeps_live_active_and_rollback() -> None:
-    web, render = retention.TARGET_REPOSITORIES
+    web, render = retention.RUNTIME_REPOSITORIES
+    candidate = "propertyquarry-local-candidate"
+    playwright = "propertyquarry-playwright"
+    browseract = "propertyquarry-browseract-operator"
     web_current = _image("a")
     web_rollback = _image("b")
     web_old = _image("c")
@@ -34,6 +37,7 @@ def test_plan_is_repo_scoped_and_keeps_live_active_and_rollback() -> None:
     render_current = _image("e")
     render_rollback = _image("f")
     render_old = _image("1")
+    browseract_active = _image("4")
     rows = [
         _row(web, "local-aaaaaaaaaaaa", web_current, "2026-08-04T12:00:00Z"),
         _row(web, "local-bbbbbbbbbbbb", web_rollback, "2026-08-03T12:00:00Z"),
@@ -44,11 +48,15 @@ def test_plan_is_repo_scoped_and_keeps_live_active_and_rollback() -> None:
         _row(render, "local-111111111111", render_old, "2026-08-02T12:00:00Z"),
         _row("another-project", "local-222222222222", _image("2"), "2026-01-01T00:00:00Z"),
         _row(web, "flagship-333333333333", _image("3"), "2026-01-01T00:00:00Z"),
+        _row(candidate, "555555555555", _image("5"), "2026-08-04T11:00:00Z"),
+        _row(playwright, "local", _image("6"), "2026-08-04T11:00:00Z"),
+        _row(browseract, "1.0.0", browseract_active, "2026-08-04T11:00:00Z"),
+        _row(web, "debug-latest", _image("7"), "2026-01-01T00:00:00Z"),
     ]
 
     plan = retention.build_plan(
         rows,
-        active_image_ids={web_container},
+        active_image_ids={web_container, browseract_active},
         expected_images={web: web_current, render: render_current},
         keep_previous=1,
     )
@@ -56,7 +64,10 @@ def test_plan_is_repo_scoped_and_keeps_live_active_and_rollback() -> None:
     removable = {entry["reference"] for entry in plan["removable"]}
     assert removable == {
         f"{web}:local-cccccccccccc",
+        f"{web}:flagship-333333333333",
         f"{render}:local-111111111111",
+        f"{candidate}:555555555555",
+        f"{playwright}:local",
     }
     reasons = {
         entry["reference"]: entry["reasons"] for entry in plan["protected"]
@@ -66,10 +77,15 @@ def test_plan_is_repo_scoped_and_keeps_live_active_and_rollback() -> None:
     assert reasons[f"{web}:local-dddddddddddd"] == ["container_reference"]
     assert reasons[f"{render}:local-eeeeeeeeeeee"] == ["expected_live"]
     assert reasons[f"{render}:local-ffffffffffff"] == ["rollback"]
+    assert reasons[f"{browseract}:1.0.0"] == ["container_reference"]
+    assert all(
+        "debug-latest" not in reference
+        for reference in set(reasons) | removable
+    )
 
 
 def test_apply_rechecks_tag_identity_and_container_references(monkeypatch) -> None:
-    web = retention.TARGET_REPOSITORIES[0]
+    web = retention.RUNTIME_REPOSITORIES[0]
     removable = [
         {"reference": f"{web}:local-aaaaaaaaaaaa", "image_id": _image("a")},
         {"reference": f"{web}:local-bbbbbbbbbbbb", "image_id": _image("b")},

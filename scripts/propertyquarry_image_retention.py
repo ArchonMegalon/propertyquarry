@@ -12,11 +12,21 @@ from typing import Any
 
 
 SCHEMA = "propertyquarry-image-retention-v1"
-TARGET_REPOSITORIES = (
+RUNTIME_REPOSITORIES = (
     "propertyquarry-standalone-web-runtime",
     "propertyquarry-standalone-render-runtime",
 )
 LOCAL_TAG_PATTERN = re.compile(r"^local-[0-9a-f]{12}$")
+MANAGED_TAG_PATTERNS = {
+    RUNTIME_REPOSITORIES[0]: re.compile(
+        r"^(?:local-[0-9a-f]{12}|flagship-[0-9a-f]{12}(?:-[0-9a-f]{12}|-build)?)$"
+    ),
+    RUNTIME_REPOSITORIES[1]: LOCAL_TAG_PATTERN,
+    "propertyquarry-local-candidate": re.compile(r"^[0-9a-f]{12}$"),
+    "propertyquarry-playwright": re.compile(r"^local$"),
+    "propertyquarry-browseract-operator": re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$"),
+}
+TARGET_REPOSITORIES = tuple(MANAGED_TAG_PATTERNS)
 IMAGE_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -74,8 +84,8 @@ def _local_image_rows() -> list[dict[str, object]]:
         tag = str(row.get("Tag", ""))
         image_id = str(row.get("ID", ""))
         if (
-            repository in TARGET_REPOSITORIES
-            and LOCAL_TAG_PATTERN.fullmatch(tag)
+            repository in MANAGED_TAG_PATTERNS
+            and MANAGED_TAG_PATTERNS[repository].fullmatch(tag)
             and IMAGE_ID_PATTERN.fullmatch(image_id)
         ):
             rows.append(
@@ -109,9 +119,9 @@ def _expected_images(
 ) -> dict[str, str]:
     expected: dict[str, str] = {}
     if expected_web_image:
-        expected[TARGET_REPOSITORIES[0]] = expected_web_image
+        expected[RUNTIME_REPOSITORIES[0]] = expected_web_image
     if expected_render_image:
-        expected[TARGET_REPOSITORIES[1]] = expected_render_image
+        expected[RUNTIME_REPOSITORIES[1]] = expected_render_image
     for repository, image_id in expected.items():
         if not IMAGE_ID_PATTERN.fullmatch(image_id):
             raise ValueError(f"invalid expected image id for {repository}")
@@ -137,7 +147,7 @@ def build_plan(
         image_id = str(row.get("image_id", ""))
         if (
             repository not in grouped
-            or not LOCAL_TAG_PATTERN.fullmatch(tag)
+            or not MANAGED_TAG_PATTERNS[repository].fullmatch(tag)
             or not IMAGE_ID_PATTERN.fullmatch(image_id)
         ):
             continue
@@ -162,36 +172,46 @@ def build_plan(
             + ", ".join(sorted(missing_expected))
         )
 
-    protected_reasons: dict[str, set[str]] = {}
+    protected_reasons: dict[tuple[str, str], set[str]] = {}
     for repository, images in grouped.items():
         for image_id in images:
             if image_id in active_image_ids:
-                protected_reasons.setdefault(image_id, set()).add("container_reference")
+                protected_reasons.setdefault((repository, image_id), set()).add(
+                    "container_reference"
+                )
             if expected_images.get(repository) == image_id:
-                protected_reasons.setdefault(image_id, set()).add("expected_live")
+                protected_reasons.setdefault((repository, image_id), set()).add(
+                    "expected_live"
+                )
 
-        rollback_candidates = sorted(
-            (
-                image
-                for image_id, image in images.items()
-                if image_id not in protected_reasons
-            ),
-            key=lambda image: (
-                str(image["created"]),
-                str(image["image_id"]),
-            ),
-            reverse=True,
-        )
-        for image in rollback_candidates[:keep_previous]:
-            protected_reasons.setdefault(str(image["image_id"]), set()).add(
-                "rollback"
+        if repository in RUNTIME_REPOSITORIES:
+            rollback_candidates = sorted(
+                (
+                    image
+                    for image_id, image in images.items()
+                    if (repository, image_id) not in protected_reasons
+                    and any(
+                        LOCAL_TAG_PATTERN.fullmatch(str(tag))
+                        for tag in image["tags"]  # type: ignore[union-attr]
+                    )
+                ),
+                key=lambda image: (
+                    str(image["created"]),
+                    str(image["image_id"]),
+                ),
+                reverse=True,
             )
+            for image in rollback_candidates[:keep_previous]:
+                protected_reasons.setdefault(
+                    (repository, str(image["image_id"])), set()
+                ).add("rollback")
 
     protected: list[dict[str, object]] = []
     removable: list[dict[str, object]] = []
     for repository, images in grouped.items():
         for image_id, image in images.items():
-            target = protected if image_id in protected_reasons else removable
+            protection_key = (repository, image_id)
+            target = protected if protection_key in protected_reasons else removable
             for tag in sorted(set(image["tags"])):  # type: ignore[arg-type]
                 entry: dict[str, object] = {
                     "repository": repository,
@@ -202,7 +222,7 @@ def build_plan(
                     "size_bytes": image["size_bytes"],
                 }
                 if target is protected:
-                    entry["reasons"] = sorted(protected_reasons[image_id])
+                    entry["reasons"] = sorted(protected_reasons[protection_key])
                 target.append(entry)
 
     protected.sort(key=lambda item: str(item["reference"]))
@@ -215,7 +235,13 @@ def build_plan(
         "policy": {
             "repositories": list(TARGET_REPOSITORIES),
             "tag_pattern": LOCAL_TAG_PATTERN.pattern,
+            "tag_patterns": {
+                repository: pattern.pattern
+                for repository, pattern in MANAGED_TAG_PATTERNS.items()
+            },
             "keep_previous_distinct_images_per_repository": keep_previous,
+            "keep_previous_distinct_images_per_runtime_repository": keep_previous,
+            "ephemeral_images_have_no_rollback_retention": True,
             "protect_all_container_references": True,
             "protect_expected_live_images": True,
         },
