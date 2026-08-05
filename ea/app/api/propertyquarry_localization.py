@@ -995,13 +995,12 @@ def resolve_propertyquarry_locale(
             "cookie",
             query_locale_rejected=bool(query_values),
         )
-    accepted_locale = _accept_language_locale(_header_value(header_list, "accept-language"))
-    if accepted_locale is not None:
-        return PropertyQuarryLocaleDecision(
-            accepted_locale,
-            "accept-language",
-            query_locale_rejected=bool(query_values),
-        )
+    # The governed catalogs intentionally preserve English fallbacks for
+    # unreviewed legal, provider, customer, and listing copy. Automatically
+    # selecting one from ambient browser preferences can therefore produce a
+    # mixed-language first impression. Locale changes remain available through
+    # an explicit ``lang`` choice (and its resulting host-only cookie), while a
+    # first visit is consistently English.
     return PropertyQuarryLocaleDecision("en", "default", query_locale_rejected=bool(query_values))
 
 

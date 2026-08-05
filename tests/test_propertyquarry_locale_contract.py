@@ -13,7 +13,7 @@ def test_propertyquarry_public_route_shell_is_localized_without_native_review_cl
     client.headers.pop("X-EA-Principal-ID", None)
 
     response = client.get(
-        "/?ui_locale=de",
+        "/?lang=de-AT",
         headers={
             "host": "propertyquarry.com",
             "accept-language": "de-AT,de;q=0.9,en;q=0.8",
@@ -35,7 +35,7 @@ def test_propertyquarry_route_shell_preserves_explicit_fallback_boundaries() -> 
     start_workspace(client, mode="personal", workspace_name="Locale contract")
 
     response = client.get(
-        "/app/search?ui_locale=es",
+        "/app/search?lang=es-CR",
         headers={"host": "propertyquarry.com", "accept-language": "es-CR,es;q=0.9"},
     )
 
@@ -55,6 +55,29 @@ def test_propertyquarry_route_shell_preserves_explicit_fallback_boundaries() -> 
     ) in response.text
     assert 'data-pq-professional-review="false"' in response.text
     assert "Los textos legales, de proveedores y aún no traducidos permanecen en inglés." in response.text
+
+
+def test_propertyquarry_anonymous_home_ignores_ambient_language_for_a_coherent_first_visit() -> None:
+    client = build_property_client(principal_id="pq-ui-locale-default")
+    client.headers.pop("X-EA-Principal-ID", None)
+
+    response = client.get(
+        "/",
+        headers={
+            "host": "propertyquarry.com",
+            "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+        },
+    )
+
+    assert response.status_code == 200
+    assert re.search(r'<html\b[^>]*\blang="en"', response.text)
+    assert response.headers["content-language"] == "en"
+    assert ">Skip to content</a>" in response.text
+    assert "<span>Match</span>" in response.text
+    assert ">Open property</a>" in response.text
+    assert "Zum Inhalt springen" not in response.text
+    assert "Übereinstimmung" not in response.text
+    assert ">Immobilie öffnen</a>" not in response.text
 
 
 def test_propertyquarry_locale_resolver_uses_only_governed_complete_ui_locales() -> None:

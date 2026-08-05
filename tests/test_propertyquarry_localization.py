@@ -95,7 +95,7 @@ def _propertyquarry_document(body: str = "<p>Search</p>") -> bytes:
     ).encode("utf-8")
 
 
-def test_locale_resolution_is_allowlisted_and_uses_explicit_cookie_then_language_priority() -> None:
+def test_locale_resolution_is_allowlisted_and_uses_only_explicit_or_saved_selection() -> None:
     explicit = resolve_propertyquarry_locale(
         query_string=b"lang=de_AT",
         headers=[
@@ -115,16 +115,16 @@ def test_locale_resolution_is_allowlisted_and_uses_explicit_cookie_then_language
     assert invalid_query.source == "cookie"
     assert invalid_query.query_locale_rejected is True
 
-    accepted = resolve_propertyquarry_locale(
+    ambient = resolve_propertyquarry_locale(
         headers=[(b"accept-language", b"de-DE;q=0.4, es-CR;q=0.9, de-AT;q=0.7")],
     )
-    assert accepted.locale == "es-CR"
-    assert accepted.source == "accept-language"
+    assert ambient.locale == "en"
+    assert ambient.source == "default"
     assert normalize_propertyquarry_locale("qps-ploc") is None
     assert normalize_propertyquarry_locale("qps-ploc", allow_pseudo=True) == PROPERTYQUARRY_PSEUDO_LOCALE
 
 
-def test_accept_language_rejects_invalid_or_overprecise_q_values_instead_of_clamping() -> None:
+def test_ambient_accept_language_never_selects_a_partial_ui_translation() -> None:
     resolved = resolve_propertyquarry_locale(
         headers=[
             (
@@ -133,7 +133,8 @@ def test_accept_language_rejects_invalid_or_overprecise_q_values_instead_of_clam
             )
         ],
     )
-    assert resolved.locale == "es-CR"
+    assert resolved.locale == "en"
+    assert resolved.source == "default"
 
     duplicate = resolve_propertyquarry_locale(
         headers=[(b"accept-language", b"de-DE;q=0.9;q=0.8, es-CR;q=0.1234")],
@@ -144,7 +145,8 @@ def test_accept_language_rejects_invalid_or_overprecise_q_values_instead_of_clam
     valid_boundary = resolve_propertyquarry_locale(
         headers=[(b"accept-language", b"de-AT;q=1.000, es-CR;q=0.999")],
     )
-    assert valid_boundary.locale == "de-AT"
+    assert valid_boundary.locale == "en"
+    assert valid_boundary.source == "default"
 
 
 def test_locale_cookie_is_host_only_http_only_lax_and_secure_on_https() -> None:
