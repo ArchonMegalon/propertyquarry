@@ -9875,17 +9875,30 @@ def _property_scout_floorplan_media_urls(
 
 
 @lru_cache(maxsize=256)
-def _property_source_research_snapshot(property_url: str, image_urls: tuple[str, ...] = ()) -> dict[str, object]:
+def _property_source_research_snapshot(
+    property_url: str,
+    image_urls: tuple[str, ...] = (),
+    source_preview_json: str = "",
+) -> dict[str, object]:
     normalized = urllib.parse.urldefrag(str(property_url or "").strip())[0]
     if not normalized:
         return {}
-    try:
-        preview = _property_scout_page_preview_with_timeout(
-            normalized,
-            prefer_fast=True,
-        )
-    except Exception:
-        preview = {}
+    preview: dict[str, object] = {}
+    if source_preview_json:
+        try:
+            decoded_preview = json.loads(source_preview_json)
+            if isinstance(decoded_preview, dict):
+                preview = dict(decoded_preview)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            preview = {}
+    else:
+        try:
+            preview = _property_scout_page_preview_with_timeout(
+                normalized,
+                prefer_fast=True,
+            )
+        except Exception:
+            preview = {}
     facts = dict(preview.get("property_facts_json") or {}) if isinstance(preview, dict) else {}
     title = str(preview.get("title") or "").strip() if isinstance(preview, dict) else ""
     summary = str(preview.get("summary") or "").strip() if isinstance(preview, dict) else ""
@@ -9903,13 +9916,19 @@ def _property_source_research_snapshot(property_url: str, image_urls: tuple[str,
     labelled_floorplan_urls = _property_scout_floorplan_media_urls(image_urls)
     if labelled_floorplan_urls and "floorplan_urls_json" not in facts:
         facts["floorplan_urls_json"] = list(labelled_floorplan_urls)
-    try:
-        source_html = _property_scout_fetch_html_compat(normalized, timeout_seconds=4.0)
-    except Exception:
-        source_html = ""
+    provider_group = str(facts.get("provider_group") or "").strip().lower()
+    source_html = ""
+    if provider_group == "genossenschaften_at":
+        try:
+            source_html = _property_scout_fetch_html_compat(
+                normalized,
+                timeout_seconds=4.0,
+            )
+        except Exception:
+            source_html = ""
     plain_text = _property_html_fragment_text(source_html)
     lowered_text = plain_text.lower()
-    if "genossenschaften_at" == str(facts.get("provider_group") or "").strip().lower():
+    if provider_group == "genossenschaften_at":
         amount_match = re.search(r"finanzierungsbeitrag[^0-9]*([0-9][0-9\.\, ]+)", plain_text, flags=re.IGNORECASE)
         if amount_match:
             try:
@@ -10077,9 +10096,29 @@ def _merge_property_facts_with_source_research(
     property_url: str,
     property_facts: dict[str, object],
     image_urls: tuple[str, ...] = (),
+    source_preview: dict[str, object] | None = None,
 ) -> dict[str, object]:
     merged = dict(property_facts or {})
-    research = _property_source_research_snapshot(property_url, image_urls)
+    source_preview_json = (
+        json.dumps(
+            source_preview,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+            default=str,
+        )
+        if source_preview
+        else ""
+    )
+    research = (
+        _property_source_research_snapshot(
+            property_url,
+            image_urls,
+            source_preview_json,
+        )
+        if source_preview_json
+        else _property_source_research_snapshot(property_url, image_urls)
+    )
     if research:
         for key, value in research.items():
             existing = merged.get(key)
@@ -54956,6 +54995,7 @@ class ProductService:
                     property_url=property_url,
                     property_facts=detailed_facts,
                     image_urls=tuple(_property_nonempty_sequence(preview.get("media_urls_json"))),
+                    source_preview=preview,
                 )
                 preview["property_facts_json"] = detailed_facts
                 detailed_title = str(preview.get("title") or property_url).strip() or property_url
