@@ -18,6 +18,7 @@ GOOGLE_IDENTITY_TABLES = (
     "propertyquarry_google_identity_sessions",
     "propertyquarry_google_identity_audit",
     "propertyquarry_google_identity_consumed_states",
+    "propertyquarry_google_identity_mobile_handoffs",
     "propertyquarry_registration_challenges",
 )
 GOOGLE_IDENTITY_API_ROLE = "propertyquarry_api"
@@ -34,6 +35,10 @@ GOOGLE_IDENTITY_API_TABLE_GRANTS = (
     (
         "propertyquarry_google_identity_consumed_states",
         ("SELECT", "INSERT", "DELETE"),
+    ),
+    (
+        "propertyquarry_google_identity_mobile_handoffs",
+        ("SELECT", "INSERT", "UPDATE", "DELETE"),
     ),
     (
         "propertyquarry_registration_challenges",
@@ -208,6 +213,32 @@ GRANT SELECT, INSERT, UPDATE
     TO propertyquarry_api;
 """
 
+_IDENTITY_SCHEMA_V3 = r"""
+CREATE TABLE IF NOT EXISTS propertyquarry_google_identity_mobile_handoffs (
+    code_hash CHAR(64) PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    subject_hash CHAR(64) NOT NULL,
+    email TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    pkce_challenge CHAR(43) NOT NULL,
+    return_to TEXT NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS propertyquarry_google_identity_mobile_handoffs_expiry_idx
+    ON propertyquarry_google_identity_mobile_handoffs (expires_at);
+
+REVOKE ALL PRIVILEGES ON TABLE
+    propertyquarry_google_identity_mobile_handoffs
+    FROM PUBLIC, propertyquarry_api, propertyquarry_worker,
+         propertyquarry_scheduler;
+GRANT SELECT, INSERT, UPDATE, DELETE
+    ON TABLE propertyquarry_google_identity_mobile_handoffs
+    TO propertyquarry_api;
+"""
+
 GOOGLE_IDENTITY_MIGRATIONS = (
     PropertyQuarryGoogleIdentityMigration(
         1,
@@ -218,6 +249,11 @@ GOOGLE_IDENTITY_MIGRATIONS = (
         2,
         "propertyquarry_registration_challenges",
         _IDENTITY_SCHEMA_V2,
+    ),
+    PropertyQuarryGoogleIdentityMigration(
+        3,
+        "propertyquarry_mobile_identity_handoffs",
+        _IDENTITY_SCHEMA_V3,
     ),
 )
 LATEST_GOOGLE_IDENTITY_SCHEMA_VERSION = GOOGLE_IDENTITY_MIGRATIONS[-1].version

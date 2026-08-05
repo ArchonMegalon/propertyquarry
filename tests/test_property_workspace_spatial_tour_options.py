@@ -289,4 +289,7 @@ def test_results_template_presents_camera_walkthrough_before_optional_3d_tour() 
     assert research_detail.index("{% if visual_ready_walkthrough %}") < research_detail.index(
         "{% elif visual_ready_tour %}"
     )
-    assert "Camera walkthroughs and verified 3D tours" in research_detail
+    assert (
+        "Cinematic walkthroughs and immersive 3D tours, crafted for this home."
+        in research_detail
+    )

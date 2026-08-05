@@ -2,7 +2,7 @@
 
 Refreshed the EA-owned M142 receipt so it stays aligned with the current direct-proof package instead of stale blocker prose.
 
-The packet is pinned to canonical queue frontier `5399660048`, the live readiness posture is `desktop_client = missing`, and duplicate queue or registry rows fail closed across the design queue, Fleet queue, the approved `.codex-design local mirror`, and the mirrored registry task.
+The packet is pinned to canonical queue frontier `5399660048`, the live readiness posture is `desktop_client = warning`, and duplicate queue or registry rows fail closed across the design queue, Fleet queue, the approved `.codex-design local mirror`, and the mirrored registry task.
 This note keeps screenshot receipts and interaction receipts separate so family-local proof cannot collapse back into broad family prose.
 
 Current families:

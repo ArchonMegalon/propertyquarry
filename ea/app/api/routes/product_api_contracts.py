@@ -1985,6 +1985,31 @@ class PropertyScoutSyncOut(BaseModel):
     sources: list[PropertyScoutSourceOut] = Field(default_factory=list)
 
 
+class MobilePropertyLinkImportIn(StrictMutationIn):
+    property_url: str = Field(min_length=12, max_length=2048)
+    confirmed: Literal[True]
+    idempotency_key: str = Field(
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+
+    @field_validator("property_url")
+    @classmethod
+    def _validate_property_url(cls, value: str) -> str:
+        normalized = str(value or "").strip()
+        if normalized != value or not normalized.startswith("https://"):
+            raise ValueError("mobile_property_url_must_be_https")
+        return normalized
+
+
+class MobilePropertyLinkImportOut(BaseModel):
+    status: Literal["saved"]
+    property_ref: str = Field(min_length=1, max_length=256)
+    shortlist_url: str = Field(min_length=1, max_length=2048)
+    candidate: dict[str, object] = Field(default_factory=dict)
+
+
 PROPERTY_SEARCH_RUN_MAX_SELECTED_PLATFORMS = 64
 
 

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Capacitor resolves this generated Cordova compatibility resource by name. -->
+    <issue id="UnusedResources">
+        <ignore path="src/main/res/xml/config.xml" />
+    </issue>
+</lint>

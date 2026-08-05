@@ -6,8 +6,8 @@
 - frontier authority: live canonical queue rows and approved local mirror only; stale handoff or assignment frontier snippets are not proof
 
 ## Desktop readiness
-- `desktop_client`: `missing`
-- summary: Desktop flagship proof is still incomplete.
+- `desktop_client`: `warning`
+- summary: Desktop flagship proof is waiting on external host-proof capture.
 
 ## Mirror alignment
 - approved local mirror queue aligned: `True`

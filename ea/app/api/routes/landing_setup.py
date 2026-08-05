@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import urllib.parse
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
 from app.api.dependencies import CloudflareAccessIdentity, get_cloudflare_access_identity, get_container
 from app.api.routes.landing import (
@@ -659,6 +659,30 @@ def _complete_propertyquarry_google_identity_sign_in(
             error="google_oauth_propertyquarry_sign_in_failed",
             return_to=return_to,
         ))
+    if (
+        identity_session.return_to
+        == propertyquarry_google_identity.MOBILE_IDENTITY_RETURN_TO
+    ):
+        try:
+            handoff = propertyquarry_google_identity.create_propertyquarry_mobile_identity_handoff(
+                identity_session=identity_session,
+                database_url=str(
+                    getattr(container.settings, "database_url", "") or ""
+                ).strip(),
+            )
+        except RuntimeError as exc:
+            return finish(
+                _google_sign_in_error_redirect(
+                    error=str(exc),
+                    return_to="/app/search",
+                )
+            )
+        response = RedirectResponse(
+            "propertyquarry://auth/callback?"
+            + urllib.parse.urlencode({"code": handoff.code}),
+            status_code=303,
+        )
+        return finish(response)
     response = RedirectResponse(identity_session.return_to, status_code=303)
     response.set_cookie(
         propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME,
@@ -677,6 +701,191 @@ def _complete_propertyquarry_google_identity_sign_in(
         samesite="lax",
     )
     return finish(response)
+
+
+@router.post("/mobile/auth/redeem", include_in_schema=False)
+async def redeem_propertyquarry_mobile_identity(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+) -> JSONResponse:
+    if not propertyquarry_google_identity.propertyquarry_identity_host_allowed(
+        request.url.hostname
+    ):
+        raise HTTPException(status_code=400, detail="propertyquarry_host_required")
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="mobile_identity_payload_invalid") from exc
+    if not isinstance(body, dict) or set(body) != {"code", "pkce_verifier"}:
+        raise HTTPException(status_code=400, detail="mobile_identity_payload_invalid")
+    code = str(body.get("code") or "")
+    pkce_verifier = str(body.get("pkce_verifier") or "")
+    if code != code.strip() or pkce_verifier != pkce_verifier.strip():
+        raise HTTPException(status_code=400, detail="mobile_identity_payload_invalid")
+    try:
+        identity_session = propertyquarry_google_identity.redeem_propertyquarry_mobile_identity_handoff(
+            code=code,
+            pkce_verifier=pkce_verifier,
+            database_url=str(
+                getattr(container.settings, "database_url", "") or ""
+            ).strip(),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    secure_cookie = (
+        request.url.scheme == "https"
+        or forwarded_proto == "https"
+        or str(request.url.hostname or "").strip().lower().rstrip(".")
+        in {"propertyquarry.com", "www.propertyquarry.com"}
+    )
+    response = JSONResponse(
+        {
+            "status": "authenticated",
+            "return_to": identity_session.return_to,
+        }
+    )
+    response.set_cookie(
+        propertyquarry_google_identity.GOOGLE_IDENTITY_COOKIE_NAME,
+        identity_session.token,
+        max_age=identity_session.max_age_seconds,
+        path="/",
+        secure=secure_cookie,
+        httponly=True,
+        samesite="lax",
+    )
+    response.delete_cookie(
+        "ea_workspace_session",
+        path="/",
+        secure=secure_cookie,
+        httponly=True,
+        samesite="lax",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    return response
+
+
+def _propertyquarry_mobile_bridge_document(*, mode: str) -> HTMLResponse:
+    label = "Finishing secure sign-in" if mode == "auth" else "Adding property"
+    response = HTMLResponse(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
+        "<meta name=\"theme-color\" content=\"#101814\">"
+        "<link rel=\"stylesheet\" href=\"/mobile/bridge.css\">"
+        f"<title>{label} · PropertyQuarry</title></head>"
+        f"<body data-mobile-bridge=\"{mode}\"><main><div class=\"mark\" aria-hidden=\"true\"></div>"
+        f"<p class=\"eyebrow\">PropertyQuarry</p><h1>{label}</h1>"
+        "<p id=\"status\" role=\"status\">Checking the secure app handoff…</p>"
+        "<button id=\"retry\" type=\"button\" hidden>Try again</button>"
+        "</main><script src=\"/mobile/bridge.js\" defer></script></body></html>"
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; script-src 'self'; style-src 'self'; "
+        "connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    return response
+
+
+@router.get("/mobile/auth/bridge", include_in_schema=False)
+def propertyquarry_mobile_auth_bridge() -> HTMLResponse:
+    return _propertyquarry_mobile_bridge_document(mode="auth")
+
+
+@router.get("/mobile/share/bridge", include_in_schema=False)
+def propertyquarry_mobile_share_bridge() -> HTMLResponse:
+    return _propertyquarry_mobile_bridge_document(mode="share")
+
+
+@router.get("/mobile/bridge.css", include_in_schema=False)
+def propertyquarry_mobile_bridge_css() -> PlainTextResponse:
+    return PlainTextResponse(
+        """
+:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;background:#101814;color:#f5f1e8}
+*{box-sizing:border-box}body{min-height:100vh;min-height:100dvh;margin:0;background:radial-gradient(circle at 82% 18%,rgba(198,163,93,.24),transparent 32rem),linear-gradient(155deg,#17231d,#0d1511 66%,#080c0a)}
+main{width:min(31rem,calc(100% - 3rem));margin:0 auto;padding:max(5rem,18vh) 0 env(safe-area-inset-bottom)}
+.mark{width:2.2rem;height:2.2rem;margin:0 0 2rem;border:2px solid #d8bd80;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite}.eyebrow{margin:0 0 .7rem;color:#d8bd80;font-size:.72rem;font-weight:750;letter-spacing:.2em;text-transform:uppercase}
+h1{max-width:12ch;margin:0;font:400 clamp(2.5rem,10vw,4.2rem)/.96 Georgia,serif;letter-spacing:-.04em}#status{max-width:30ch;margin:1.4rem 0 0;color:#b7c1b9;line-height:1.55}button{margin-top:1.3rem;padding:.85rem 1.15rem;border:1px solid #d8bd80;border-radius:999px;background:#d8bd80;color:#111914;font:inherit;font-weight:700}@media(prefers-reduced-motion:reduce){.mark{animation:none}}@keyframes spin{to{transform:rotate(360deg)}}
+""".strip(),
+        media_type="text/css",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.get("/mobile/bridge.js", include_in_schema=False)
+def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
+    return PlainTextResponse(
+        r"""
+(() => {
+  'use strict';
+  const mode = document.body.dataset.mobileBridge;
+  const status = document.querySelector('#status');
+  const retry = document.querySelector('#retry');
+  const native = window.Capacitor?.Plugins?.PropertyQuarryNative;
+  const setStatus = (message, failed = false) => {
+    status.textContent = message;
+    retry.hidden = !failed;
+  };
+  const parseFailure = async (response) => {
+    try {
+      const payload = await response.json();
+      return payload?.detail || payload?.error?.message || `Request failed (${response.status})`;
+    } catch (_) {
+      return `Request failed (${response.status})`;
+    }
+  };
+  const auth = async () => {
+    if (!native) throw new Error('Open this page in the PropertyQuarry app.');
+    const pending = await native.getPendingAuth();
+    if (!pending?.code || !pending?.pkceVerifier) throw new Error('The secure sign-in handoff expired. Start sign-in again.');
+    const response = await fetch('/mobile/auth/redeem', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code: pending.code, pkce_verifier: pending.pkceVerifier})
+    });
+    if (!response.ok) throw new Error(await parseFailure(response));
+    const payload = await response.json();
+    await native.clearPendingAuth();
+    const shared = await native.getPendingShare();
+    location.replace(shared?.propertyUrl ? '/mobile/share/bridge' : (payload.return_to || '/app/search'));
+  };
+  const share = async () => {
+    if (!native) throw new Error('Open this page in the PropertyQuarry app.');
+    const pending = await native.getPendingShare();
+    if (!pending?.propertyUrl || !pending?.idempotencyKey) {
+      location.replace('/app/shortlist');
+      return;
+    }
+    setStatus('Evaluating the listing and preparing its shortlist card…');
+    const response = await fetch('/app/api/mobile/property-links', {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({property_url: pending.propertyUrl, confirmed: true, idempotency_key: pending.idempotencyKey})
+    });
+    if (response.status === 401) {
+      setStatus('Sign in securely to add this property…');
+      await native.startExternalLogin();
+      return;
+    }
+    if (!response.ok) throw new Error(await parseFailure(response));
+    const payload = await response.json();
+    await native.clearPendingShare();
+    location.replace(payload.shortlist_url || '/app/shortlist');
+  };
+  const run = () => (mode === 'auth' ? auth() : share()).catch((error) => {
+    setStatus(error?.message || 'The app handoff could not be completed.', true);
+  });
+  retry.addEventListener('click', run);
+  run();
+})();
+""".strip(),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/google/callback", response_class=HTMLResponse, response_model=None, name="google_oauth_browser_callback")

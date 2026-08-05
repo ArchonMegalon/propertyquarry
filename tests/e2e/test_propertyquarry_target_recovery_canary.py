@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import math
 import os
@@ -204,7 +205,7 @@ def _willhaben_ad_id(value: object) -> str:
 
 
 def _normalize_text(value: object) -> str:
-    return " ".join(str(value or "").strip().lower().split())
+    return " ".join(html.unescape(str(value or "")).strip().lower().split())
 
 
 def _coerce_float(value: object) -> float:
@@ -1076,9 +1077,39 @@ def _preview_property_type(facts: dict[str, object], *, title: str, summary: str
         return "house"
     if re.search(r"\b(baugrund|grundstück|grundstueck|plot of land|land for sale)\b", blob):
         return "land"
-    if re.search(r"\b(büro|buero|office|gewerbe)\b", blob):
+    if re.search(
+        r"\b(büro|buero|office|gewerbe|lager|logistik(?:fläche|flaeche)?|halle)\b",
+        blob,
+    ):
         return "office"
     return "apartment"
+
+
+def _preview_listing_mode(
+    *,
+    property_url: str,
+    title: str,
+    summary: str,
+    facts: dict[str, object],
+    fallback: str,
+) -> str:
+    evidence = property_service_module._property_candidate_listing_mode_evidence(
+        property_url=property_url,
+        title=title,
+        summary=summary,
+        property_facts=facts,
+    )
+    rent_signal = bool(
+        evidence.get("rent_text_signal") or evidence.get("rent_fact_signal")
+    )
+    buy_signal = bool(
+        evidence.get("buy_text_signal") or evidence.get("buy_fact_signal")
+    )
+    if buy_signal and not rent_signal:
+        return "buy"
+    if rent_signal and not buy_signal:
+        return "rent"
+    return fallback
 
 
 def _preview_title_is_generic_portal(title: str, *, source_label: str) -> bool:
@@ -1199,7 +1230,13 @@ def _discover_target_case_for_provider(
     payload: dict[str, object] = {
         "canonical_url": chosen_url,
         "title": str(chosen_preview.get("title") or "").strip(),
-        "listing_mode": listing_mode,
+        "listing_mode": _preview_listing_mode(
+            property_url=chosen_url,
+            title=str(chosen_preview.get("title") or "").strip(),
+            summary=str(chosen_preview.get("summary") or "").strip(),
+            facts=facts,
+            fallback=listing_mode,
+        ),
         "property_type": _preview_property_type(
             facts,
             title=str(chosen_preview.get("title") or "").strip(),
@@ -1476,6 +1513,128 @@ def test_target_recovery_scan_cap_covers_rank_window_and_target_position() -> No
 
     case.picked_index = 7
     assert _target_recovery_scan_cap(case, rank_threshold=5) == 8
+
+
+def test_neutral_review_bonus_decays_without_penalizing_personal_fit() -> None:
+    early_neutral = property_service_module._property_scout_rank_score(
+        property_url="https://example.test/early",
+        assessment={"fit_score": 50.0},
+        preview={
+            "title": "Early provider result",
+            "property_facts_json": {"postal_name": "1100 Wien"},
+        },
+        ordinal=1,
+    )
+    deep_review_ready = property_service_module._property_scout_rank_score(
+        property_url="https://example.test/deep",
+        assessment={"fit_score": 50.0},
+        preview={
+            "title": "Deep result with floor plan",
+            "property_facts_json": {
+                "has_floorplan": True,
+                "floorplan_count": 1,
+                "area_m2": 85.0,
+                "postal_name": "1100 Wien",
+            },
+        },
+        ordinal=20,
+    )
+    deep_personal_match = property_service_module._property_scout_rank_score(
+        property_url="https://example.test/deep-personal",
+        assessment={"fit_score": 82.0},
+        preview={"title": "Strong personal match", "property_facts_json": {}},
+        ordinal=20,
+    )
+
+    assert early_neutral == 52.0
+    assert deep_review_ready == 50.0
+    assert deep_personal_match == 82.0
+    assert deep_personal_match > early_neutral > deep_review_ready
+
+
+def test_encoded_listing_metadata_recovers_commercial_property_type() -> None:
+    encoded_title = (
+        "Gro&#xDF;z&#xFC;gige Lager- und Logistikfl&#xE4;che "
+        "mit 594 m&#xB2; in Wien"
+    )
+    extracted_title = property_service_module._property_scout_extract_meta_content(
+        f'<meta property="og:title" content="{encoded_title}">',
+        "og:title",
+    )
+
+    assert extracted_title == "Großzügige Lager- und Logistikfläche mit 594 m² in Wien"
+    assert _preview_property_type({}, title=encoded_title, summary="") == "office"
+
+
+@pytest.mark.parametrize(
+    ("listing_text", "postal_name"),
+    (
+        ("Büro in 2340 Mödling HIER | 2340 Mödling HIER", "2340 Mödling"),
+        (
+            "Eigentumswohnung in 2700 Wiener Neustadt zu kaufen",
+            "2700 Wiener Neustadt",
+        ),
+    ),
+)
+def test_listing_postal_evidence_removes_portal_call_to_action(
+    listing_text: str,
+    postal_name: str,
+) -> None:
+    evidence = property_service_module._property_postal_location_evidence(listing_text)
+
+    assert evidence
+    assert evidence[0]["postal_name"] == postal_name
+
+
+def test_wohnnet_detail_is_not_generic_and_uses_observed_buy_mode() -> None:
+    property_url = (
+        "https://www.wohnnet.at/immobilien/"
+        "eigentumswohnung-6382-kirchdorf-in-tirol-kauf-4-zimmer-297257291"
+    )
+    title = "K5 Top 4 - Obergeschosswohnung in exklusivem Neubau"
+    summary = "4 Zimmer Eigentumswohnung in 6382 Kirchdorf in Tirol zu kaufen"
+    facts = {"postal_name": "6382 Kirchdorf in Tirol", "rooms": 4.0}
+
+    assert not property_service_module._property_candidate_is_generic_listing_page(
+        property_url=property_url,
+        title=title,
+        summary=summary,
+        property_facts=facts,
+    )
+    assert property_service_module._property_candidate_is_generic_listing_page(
+        property_url="https://www.wohnnet.at/immobilien/",
+        title="Top-Immobilien auf wohnnet.at finden",
+        summary="Immobiliensuche in Österreich",
+        property_facts={},
+    )
+    assert _preview_listing_mode(
+        property_url=property_url,
+        title=title,
+        summary=summary,
+        facts=facts,
+        fallback="rent",
+    ) == "buy"
+
+
+def test_wiener_neustadt_exact_postal_scope_is_not_treated_as_vienna() -> None:
+    property_url = (
+        "https://www.wohnnet.at/immobilien/"
+        "halle-2700-wiener-neustadt-miete-297504551"
+    )
+
+    assert property_service_module._property_candidate_matches_requested_location(
+        location_hints=("2700 Wiener Neustadt",),
+        property_url=property_url,
+        title="Großzügige Lager- und Logistikfläche mit 594 m²",
+        summary="Halle in 2700 Wiener Neustadt HIER",
+        property_facts={
+            "postal_name": "2700 Wiener Neustadt",
+            "listing_postal_evidence": [
+                {"postal_code": "2700", "postal_name": "2700 Wiener Neustadt"}
+            ],
+        },
+        country_code="AT",
+    )
 
 
 def test_target_recovery_adaptive_scan_cap_tracks_bounded_provider_reordering() -> None:

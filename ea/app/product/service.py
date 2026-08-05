@@ -36,6 +36,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from html import escape as html_escape
+from html import unescape as _html_unescape
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping
@@ -9232,7 +9233,7 @@ def _property_realestate_international_preview_facts(source_url: str, source_htm
         source_html,
         flags=re.IGNORECASE | re.DOTALL,
     ):
-        raw_json = html.unescape(match.group(1).strip())
+        raw_json = _html_unescape(match.group(1).strip())
         try:
             payload = json.loads(raw_json)
         except Exception:
@@ -9440,7 +9441,11 @@ def _property_scout_page_preview(property_url: str, *, prefer_fast: bool = False
             }
     html = _property_scout_fetch_html_compat(normalized, timeout_seconds=4.0)
     title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-    title = compact_text(title_match.group(1) if title_match else "", fallback="", limit=160)
+    title = compact_text(
+        _html_unescape(title_match.group(1) if title_match else ""),
+        fallback="",
+        limit=160,
+    )
     og_title = _property_scout_extract_meta_content(html, "og:title")
     og_description = _property_scout_extract_meta_content(html, "og:description")
     meta_description = _property_scout_extract_meta_content(html, "description")
@@ -9535,21 +9540,53 @@ def _property_scout_page_preview(property_url: str, *, prefer_fast: bool = False
         property_facts["floorplan_recovery_diagnostics"] = floorplan_recovery_diagnostics
     if gallery_floorplan_diagnostics:
         property_facts["gallery_floorplan_diagnostics"] = gallery_floorplan_diagnostics
+    resolved_title = (
+        og_title
+        or title
+        or str(willhaben_packet_preview.get("title") or "")
+        or normalized
+    )
+    base_summary = og_description or meta_description
+    listing_mode_evidence = _property_candidate_listing_mode_evidence(
+        property_url=normalized,
+        title=resolved_title,
+        summary=base_summary,
+        property_facts=property_facts,
+    )
+    listing_mode = (
+        "rent"
+        if (
+            listing_mode_evidence.get("rent_text_signal")
+            or listing_mode_evidence.get("rent_fact_signal")
+        )
+        and not (
+            listing_mode_evidence.get("buy_text_signal")
+            or listing_mode_evidence.get("buy_fact_signal")
+        )
+        else "buy"
+    )
+    property_facts = _property_enrich_facts_from_listing_text(
+        facts=property_facts,
+        title=resolved_title,
+        summary=base_summary,
+        listing_mode=listing_mode,
+        property_url=normalized,
+    )
     summary = _property_preview_summary_from_facts(
-        base_summary=og_description or meta_description,
+        base_summary=base_summary,
         property_facts=property_facts,
     )
     property_facts = _property_enrich_missing_fact_research(
         facts=property_facts,
         property_url=normalized,
-        title=og_title or title or normalized,
+        title=resolved_title,
         summary=summary,
         source_label=urllib.parse.urlparse(normalized).netloc.lower(),
         floorplan_urls=tuple(floorplan_urls[:6]),
     )
     quiet_signal = _property_quiet_signal_from_floorplan(
         property_facts=property_facts,
-        title=og_title or title or normalized,
+        title=resolved_title,
         summary=summary,
     )
     if str(quiet_signal.get("signal") or "").strip().lower() not in {"", "none"}:
@@ -9562,7 +9599,7 @@ def _property_scout_page_preview(property_url: str, *, prefer_fast: bool = False
     return {
         "property_url": normalized,
         "listing_id": normalized,
-        "title": og_title or title or str(willhaben_packet_preview.get("title") or "") or normalized,
+        "title": resolved_title,
         "summary": summary or str(willhaben_packet_preview.get("summary") or ""),
         "property_facts_json": property_facts,
         "media_urls_json": media_urls[:12],
@@ -10266,7 +10303,7 @@ def _property_untrusted_listing_text_for_extraction(*parts: object) -> tuple[str
         for key, pattern in _PROPERTY_UNTRUSTED_INSTRUCTION_PATTERNS
         if pattern.search(raw_text)
     )
-    text = html.unescape(raw_text)
+    text = _html_unescape(raw_text)
     text = _PROPERTY_UNTRUSTED_LISTING_BLOCK_RE.sub(" ", text)
     text = _PROPERTY_UNTRUSTED_LISTING_TAG_RE.sub(" ", text)
     text = " ".join(text.split())
@@ -11179,8 +11216,28 @@ def _property_scout_rank_score(
     ordinal: int,
 ) -> float:
     fit_score = _property_alert_fit_score(assessment)
+    objective_review_boost = _property_scout_objective_review_boost(
+        property_url=property_url,
+        preview=preview,
+    )
     if fit_score > 0.0:
-        return max(0.0, min(100.0, fit_score + _property_scout_objective_review_boost(property_url=property_url, preview=preview)))
+        # Source order is a bounded relevance prior for neutral discovery.
+        # Decay only the non-personalized review-readiness bonus; never
+        # subtract from the assessment itself, so a strong personal match can
+        # still outrank an early provider result.
+        neutral_fallback_fit = abs(float(fit_score) - 50.0) <= 0.01
+        review_decay = (
+            min(
+                objective_review_boost,
+                max(0.0, float(max(1, int(ordinal)) - 1) * 3.0),
+            )
+            if neutral_fallback_fit
+            else 0.0
+        )
+        return max(
+            0.0,
+            min(100.0, fit_score + objective_review_boost - review_decay),
+        )
     text = " ".join(
         part
         for part in (
@@ -11197,7 +11254,7 @@ def _property_scout_rank_score(
         heuristic += 8.0
     if any(token in text for token in ("lift", "aufzug", "terrasse", "balkon")):
         heuristic += 4.0
-    return max(0.0, min(100.0, heuristic + _property_scout_objective_review_boost(property_url=property_url, preview=preview)))
+    return max(0.0, min(100.0, heuristic + objective_review_boost))
 
 
 def _property_search_source_scope_location(*, source_url: str = "", source_label: str = "") -> str:
@@ -11317,7 +11374,7 @@ def _property_postal_code_core(value: object) -> str:
 
 
 def _property_postal_location_evidence(value: object) -> tuple[dict[str, str], ...]:
-    raw_text = html.unescape(str(value or ""))
+    raw_text = _html_unescape(str(value or ""))
     if not raw_text.strip():
         return ()
     slug_expanded_text = re.sub(
@@ -11333,6 +11390,16 @@ def _property_postal_location_evidence(value: object) -> tuple[dict[str, str], .
         locality = compact_text(str(match.group("locality") or ""), fallback="", limit=80)
         locality = re.split(r"[/#?&=]", locality, maxsplit=1)[0]
         locality = re.split(r"\s+https?\b", locality, maxsplit=1, flags=re.IGNORECASE)[0]
+        # Portals frequently append an action label to otherwise useful
+        # postal evidence (for example "2700 Wiener Neustadt HIER" or
+        # "1020 Wien zu kaufen"). Keep that marketing copy out of provider
+        # queries and persisted location facts.
+        locality = re.sub(
+            r"\s+(?:hier|jetzt|zu\s+(?:kaufen|mieten)|zum\s+(?:kauf|mieten?))\b.*$",
+            "",
+            locality,
+            flags=re.IGNORECASE,
+        )
         locality = re.sub(
             r"\s+(?:m(?:²|2)|sqm|zimmer|rooms?|eur|€|usd|der\s+standard|willhaben|immobilien)\b.*$",
             "",
@@ -12317,7 +12384,9 @@ def _property_candidate_matches_requested_location(
 
     hint_text = " ".join(hints).lower()
     explicit_hint_postal_codes = frozenset(re.findall(r"\b\d{4,5}\b", hint_text))
-    wants_vienna = "wien" in hint_text or "vienna" in hint_text or any(str(code).startswith("1") for code in explicit_hint_postal_codes)
+    wants_vienna = bool(re.search(r"\b(?:wien|vienna)\b", hint_text)) or any(
+        str(code).startswith("1") for code in explicit_hint_postal_codes
+    )
     observed_listing_postal_codes = _property_listing_observed_postal_codes(
         title=title,
         summary=summary,
@@ -12907,7 +12976,7 @@ def _property_candidate_listing_mode_evidence(
         for key in ("listing_mode", "transaction_type", "marketing_type", "offer_type", "deal_type")
         if str(facts.get(key) or "").strip()
     )
-    text = html.unescape(
+    text = _html_unescape(
         " ".join(
             part
             for part in (
@@ -13137,11 +13206,13 @@ def _property_candidate_is_generic_listing_page(
         "/angebote",
         "/ausschreibungen",
         "/wettbewerbe",
-        "/immobilien/",
-        "/immobilien",
         "/overview",
         "/bestandsobjekte",
         "/gemeindewohnungen",
+    )
+    generic_url_marker_hit = bool(
+        path == "/immobilien"
+        or any(marker in path for marker in generic_url_markers)
     )
     generic_marker_hits = sum(1 for marker in generic_title_markers if marker in text)
     has_area_signal = any(str(facts.get(key) or "").strip() for key in ("area_sqm", "living_area_sqm", "usable_area_sqm", "area_m2", "living_area_m2"))
@@ -13173,7 +13244,7 @@ def _property_candidate_is_generic_listing_page(
         "garten",
     )
     return bool(
-        any(marker in url for marker in generic_url_markers)
+        generic_url_marker_hit
         or (
             any(marker in text for marker in non_listing_page_markers)
             and not any(signal in text for signal in residential_listing_signals)
@@ -14817,7 +14888,7 @@ def _property_distance_preference_score_adjustment(
     return adjustment, tuple(notes[:8])
 
 
-_PROPERTY_SEARCH_SCORE_ALGORITHM_VERSION = "propertyquarry.search-score.v1"
+_PROPERTY_SEARCH_SCORE_ALGORITHM_VERSION = "propertyquarry.search-score.v2"
 
 
 def _property_search_score_context(
@@ -14957,6 +15028,18 @@ def _property_search_score_candidate(
         preview=scoring_preview,
         ordinal=resolved_ordinal,
     )
+    objective_review_boost = _property_scout_objective_review_boost(
+        property_url=property_url,
+        preview=scoring_preview,
+    )
+    source_order_review_decay = (
+        min(
+            objective_review_boost,
+            max(0.0, float(resolved_ordinal - 1) * 3.0),
+        )
+        if abs(float(assessment_fit_score) - 50.0) <= 0.01
+        else 0.0
+    )
     ranked_fit_score = max(0.0, base_rank_score - resolved_location_penalty)
     unknowns_penalty_points = 0.0
     if resolved_unknowns_penalty:
@@ -15008,6 +15091,14 @@ def _property_search_score_candidate(
         "facts_digest": property_fact_input_digest(score_input_facts),
         "components": {
             "base_rank_score": round(float(base_rank_score), 2),
+            "objective_review_boost_points": round(
+                float(objective_review_boost),
+                2,
+            ),
+            "source_order_review_decay_points": round(
+                float(source_order_review_decay),
+                2,
+            ),
             "location_penalty_points": round(resolved_location_penalty, 2),
             "unknowns_penalty_points": round(float(unknowns_penalty_points), 2),
             "distance_adjustment_points": round(float(distance_adjustment), 2),
@@ -32071,6 +32162,295 @@ class ProductService:
             visible.append(row)
         return visible[:200]
 
+    @staticmethod
+    def _bounded_mobile_property_urls(
+        values: object,
+        *,
+        limit: int,
+    ) -> list[str]:
+        bounded: list[str] = []
+        seen: set[str] = set()
+        for value in list(values or []):
+            normalized = urllib.parse.urldefrag(str(value or "").strip())[0]
+            if (
+                not normalized.startswith("https://")
+                or len(normalized) > 2048
+                or normalized in seen
+            ):
+                continue
+            seen.add(normalized)
+            bounded.append(normalized)
+            if len(bounded) >= max(1, int(limit or 1)):
+                break
+        return bounded
+
+    @staticmethod
+    def _bounded_mobile_property_fact_value(
+        value: object,
+        *,
+        depth: int = 0,
+    ) -> object:
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, str):
+            return compact_text(value, fallback="", limit=2000)
+        if depth >= 3:
+            return compact_text(str(value), fallback="", limit=1000)
+        if isinstance(value, dict):
+            result: dict[str, object] = {}
+            for raw_key, nested in list(value.items())[:48]:
+                key = compact_text(str(raw_key or ""), fallback="", limit=120)
+                if key and key not in result:
+                    result[key] = ProductService._bounded_mobile_property_fact_value(
+                        nested,
+                        depth=depth + 1,
+                    )
+            return result
+        if isinstance(value, (list, tuple, set)):
+            return [
+                ProductService._bounded_mobile_property_fact_value(
+                    nested,
+                    depth=depth + 1,
+                )
+                for nested in list(value)[:24]
+            ]
+        return compact_text(str(value), fallback="", limit=1000)
+
+    @staticmethod
+    def _bounded_mobile_property_facts(
+        facts: dict[str, object],
+        *,
+        max_bytes: int = 48000,
+    ) -> dict[str, object]:
+        priority = (
+            "listing_id",
+            "address",
+            "street",
+            "postal_code",
+            "city",
+            "price",
+            "purchase_price",
+            "living_area_m2",
+            "rooms",
+            "property_type",
+            "latitude",
+            "longitude",
+            "source_virtual_tour_url",
+        )
+        keys = [key for key in priority if key in facts]
+        keys.extend(str(key) for key in facts if str(key) not in keys)
+        bounded: dict[str, object] = {}
+        for raw_key in keys[:128]:
+            key = compact_text(str(raw_key or ""), fallback="", limit=120)
+            if not key or key in bounded:
+                continue
+            value = ProductService._bounded_mobile_property_fact_value(
+                facts.get(raw_key),
+            )
+            candidate = {**bounded, key: value}
+            encoded = json.dumps(
+                candidate,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(encoded) <= max(1024, int(max_bytes or 0)):
+                bounded = candidate
+        if len(bounded) < len(facts):
+            bounded["mobile_storage_truncated"] = True
+        return bounded
+
+    def import_mobile_property_link(
+        self,
+        *,
+        principal_id: str,
+        property_url: str,
+        actor: str = "",
+        preference_person_id: str = "self",
+        idempotency_key: str = "",
+    ) -> dict[str, object]:
+        """Evaluate one explicitly confirmed Android share and save it once.
+
+        The native client is intentionally thin: URL allow-listing, fact
+        research, preference scoring, shortlist identity, and deduplication all
+        remain server authoritative. Tour rendering stays lazy so accepting a
+        share never blocks the user on a media provider.
+        """
+
+        normalized_principal = str(principal_id or "").strip()
+        normalized_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
+        if not normalized_principal:
+            return {"status": "unauthorized", "reason": "principal_required"}
+        if not normalized_url or not _property_scout_is_supported_listing_url(normalized_url):
+            return {"status": "invalid", "reason": "property_url_invalid"}
+
+        title = normalized_url
+        summary = ""
+        property_facts: dict[str, object] = {}
+        media_urls: list[str] = []
+        floorplan_urls: list[str] = []
+        panorama_urls: list[str] = []
+        source_virtual_tour_url = ""
+        try:
+            if _is_willhaben_property_url(normalized_url):
+                raw_packet = _load_willhaben_property_packet_compat(normalized_url)
+                packet = _validated_willhaben_captured_packet(
+                    property_url=normalized_url,
+                    packet=raw_packet,
+                )
+                if not packet:
+                    raise RuntimeError("willhaben_property_packet_invalid")
+                title = compact_text(
+                    str(packet.get("title") or normalized_url).strip(),
+                    fallback=normalized_url,
+                    limit=220,
+                )
+                summary = compact_text(
+                    str(raw_packet.get("description") or raw_packet.get("summary") or "").strip(),
+                    fallback="",
+                    limit=900,
+                )
+                raw_facts = packet.get("property_facts_json")
+                property_facts = dict(raw_facts) if isinstance(raw_facts, dict) else {}
+                media_urls = self._bounded_mobile_property_urls(
+                    packet.get("media_urls_json"), limit=16
+                )
+                floorplan_urls = self._bounded_mobile_property_urls(
+                    packet.get("floorplan_urls_json"), limit=6
+                )
+                panorama_urls = self._bounded_mobile_property_urls(
+                    packet.get("panorama_media_urls_json"), limit=8
+                )
+                source_virtual_tour_url = str(
+                    packet.get("source_virtual_tour_url")
+                    or property_facts.get("source_virtual_tour_url")
+                    or ""
+                ).strip()
+            else:
+                preview = _property_scout_page_preview(normalized_url)
+                title = compact_text(
+                    str(preview.get("title") or normalized_url).strip(),
+                    fallback=normalized_url,
+                    limit=220,
+                )
+                summary = compact_text(
+                    str(preview.get("description") or preview.get("summary") or "").strip(),
+                    fallback="",
+                    limit=900,
+                )
+                property_facts = _property_scout_candidate_payload_from_preview(
+                    property_url=normalized_url,
+                    preview=preview,
+                )
+                media_urls = self._bounded_mobile_property_urls(
+                    preview.get("media_urls_json"), limit=16
+                )
+                floorplan_urls = self._bounded_mobile_property_urls(
+                    preview.get("floorplan_urls_json"), limit=6
+                )
+                panorama_urls = self._bounded_mobile_property_urls(
+                    preview.get("panorama_media_urls_json"), limit=8
+                )
+                source_virtual_tour_url = _first_non_empty_text(
+                    preview.get("source_virtual_tour_url"),
+                    property_facts.get("source_virtual_tour_url"),
+                )
+        except Exception as exc:
+            diagnostic = _property_tour_execution_diagnostic(exc)
+            return {
+                "status": "blocked",
+                "reason": str(diagnostic.get("blocked_reason") or "property_preview_unavailable"),
+            }
+
+        property_facts = _merge_property_facts_with_source_research(
+            property_url=normalized_url,
+            property_facts=dict(property_facts),
+            image_urls=tuple(media_urls),
+        )
+        domain = "willhaben" if _is_willhaben_property_url(normalized_url) else "property_scout"
+        try:
+            assessment = self._preference_profiles.assess_candidate(
+                principal_id=normalized_principal,
+                person_id=str(preference_person_id or "").strip() or "self",
+                domain=domain,
+                object_type="listing",
+                object_id=str(
+                    property_facts.get("listing_id")
+                    or _saved_link_fallback_id(normalized_url)
+                ).strip(),
+                object_payload=property_facts,
+                persist=True,
+                require_existing_profile=True,
+            )
+        except Exception:
+            assessment = None
+        stored_property_facts = self._bounded_mobile_property_facts(property_facts)
+
+        candidate: dict[str, object] = {
+            "listing_title": title,
+            "title": title,
+            "summary": summary,
+            "property_url": normalized_url,
+            "source_url": normalized_url,
+            "property_facts_json": dict(stored_property_facts),
+            "property_facts": dict(stored_property_facts),
+            "assessment": dict(assessment or {}) if isinstance(assessment, dict) else {},
+            "recommendation": (
+                str(dict(assessment or {}).get("recommendation") or "").strip()
+                if isinstance(assessment, dict)
+                else ""
+            ),
+            "fit_score": _property_alert_fit_score(
+                dict(assessment or {}) if isinstance(assessment, dict) else None
+            ),
+            "media_urls_json": media_urls,
+            "floorplan_urls_json": floorplan_urls,
+            "panorama_media_urls_json": panorama_urls,
+            "source_virtual_tour_url": source_virtual_tour_url,
+            "mobile_share_import": True,
+        }
+        candidate["property_ref"] = self._property_saved_shortlist_property_ref(candidate)
+        saved = self.persist_property_saved_shortlist_candidates(
+            principal_id=normalized_principal,
+            candidates=[candidate],
+        )
+        property_ref = str(candidate.get("property_ref") or "").strip()
+        saved_candidate = next(
+            (
+                dict(row)
+                for row in saved
+                if isinstance(row, dict)
+                and str(row.get("property_ref") or "").strip() == property_ref
+            ),
+            candidate,
+        )
+        resolved_actor = str(actor or "").strip() or "android_share_import"
+        self._record_product_event(
+            principal_id=normalized_principal,
+            event_type="property_mobile_share_imported",
+            payload={
+                "property_ref": property_ref,
+                "property_url": normalized_url,
+                "actor": resolved_actor,
+                "idempotency_key": compact_text(
+                    str(idempotency_key or "").strip(),
+                    fallback="",
+                    limit=128,
+                ),
+            },
+            source_id=f"mobile-share:{property_ref}",
+            dedupe_key=(
+                f"{normalized_principal}|mobile-share|"
+                f"{str(idempotency_key or property_ref).strip()}"
+            ),
+        )
+        return {
+            "status": "saved",
+            "property_ref": property_ref,
+            "candidate": saved_candidate,
+            "shortlist_url": f"/app/shortlist?candidate={urllib.parse.quote(property_ref, safe='')}",
+        }
+
     def persist_property_saved_shortlist_candidates(
         self,
         *,
@@ -40539,7 +40919,7 @@ class ProductService:
         text = re.sub(r"<script[\s\S]*?</script>", " ", html_text, flags=re.IGNORECASE)
         text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
         text = re.sub(r"<[^>]+>", " ", text)
-        text = html.unescape(text)
+        text = _html_unescape(text)
         text = " ".join(text.split())
         postal_evidence = _property_postal_location_evidence(text)
         location_match = re.search(
@@ -53250,11 +53630,11 @@ class ProductService:
                 exact_scope=exact_scope_preview_requested,
             ),
         )
-        preview_scan_cap = (
-            0
-            if unlimited_provider_results
-            else _property_search_scan_cap_per_source()
-        )
+        # Commercially unlimited results remove the shortlist entitlement
+        # limit, not the host's bounded scan/ingest safety limit. Respect an
+        # explicit zero as unlimited, but never bypass a positive operator cap
+        # merely because the account is on the Agent plan.
+        preview_scan_cap = _property_search_scan_cap_per_source()
         source_preview_jobs: list[dict[str, object]] = []
         for source_spec in specs:
             source_url = urllib.parse.urldefrag(str(source_spec.get("url") or "").strip())[0]
@@ -53909,11 +54289,7 @@ class ProductService:
                 continue
 
             raw_listing_count = len(listing_urls)
-            scan_cap = (
-                0
-                if unlimited_provider_results
-                else _property_search_scan_cap_per_source()
-            )
+            scan_cap = _property_search_scan_cap_per_source()
             scan_truncated = bool(scan_cap and len(listing_urls) > scan_cap)
             if scan_cap:
                 listing_urls = listing_urls[:scan_cap]

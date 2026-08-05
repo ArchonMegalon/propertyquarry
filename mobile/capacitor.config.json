@@ -1,0 +1,22 @@
+{
+  "appId": "com.myexternalbrain.propertyquarry",
+  "appName": "PropertyQuarry",
+  "webDir": "www",
+  "server": {
+    "allowNavigation": [
+      "propertyquarry.com"
+    ],
+    "cleartext": false,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "Browser": {
+      "presentationStyle": "popover"
+    }
+  }
+}

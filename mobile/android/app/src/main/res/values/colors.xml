@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="quarry_ink">#101814</color>
+    <color name="colorPrimary">#D8BD80</color>
+    <color name="colorPrimaryDark">#101814</color>
+    <color name="colorAccent">#D8BD80</color>
+</resources>

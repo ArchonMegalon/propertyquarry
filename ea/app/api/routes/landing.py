@@ -157,6 +157,9 @@ from app.product.service import (
 from app.services.cloudflare_access import CloudflareAccessIdentity
 from app.services import google_oauth as google_oauth_service
 from app.services import propertyquarry_google_identity
+from app.services.propertyquarry_android_app_links import (
+    propertyquarry_android_app_link_statements,
+)
 from app.services import public_analytics_consent as analytics_consent
 from app.services.google_oauth import complete_google_oauth_callback
 from app.services.property_billing import payfunnels_configured, property_commercial_snapshot
@@ -2893,6 +2896,14 @@ def _request_is_austrian_ip(request: Request) -> bool:
 
 def _id_austria_sign_in_enabled_for_request(request: Request) -> bool:
     return _id_austria_sign_in_enabled() and _request_is_austrian_ip(request)
+
+
+@router.get("/.well-known/assetlinks.json", response_class=JSONResponse, include_in_schema=False)
+def propertyquarry_android_asset_links() -> JSONResponse:
+    response = JSONResponse(propertyquarry_android_app_link_statements())
+    response.headers["Cache-Control"] = "public, max-age=300"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @router.get("/manifest.webmanifest", response_class=JSONResponse, include_in_schema=False)
@@ -7340,6 +7351,9 @@ async def sign_in_google(
     identity_binding = str(
         request.query_params.get("identity_binding") or ""
     ).strip()
+    mobile_pkce_challenge = str(
+        request.query_params.get("mobile_challenge") or ""
+    ).strip()
     if request_brand(request).get("key") != "propertyquarry":
         return RedirectResponse(
             "/sign-in?"
@@ -7357,6 +7371,7 @@ async def sign_in_google(
             redirect_uri=identity_config.redirect_uri,
             return_to=return_to,
             expected_email_binding=identity_binding,
+            mobile_pkce_challenge=mobile_pkce_challenge,
         )
     except RuntimeError as exc:
         return RedirectResponse(

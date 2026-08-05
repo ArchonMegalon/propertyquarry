@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import html
+import html as html_lib
 import io
 import json
 import math
@@ -118,7 +118,7 @@ _PROPERTY_HTML_FRAGMENT_HIDDEN_BLOCK_RE = re.compile(
 
 def _property_html_fragment_text(fragment: object) -> str:
     visible_fragment = _PROPERTY_HTML_FRAGMENT_HIDDEN_BLOCK_RE.sub(" ", str(fragment or ""))
-    value = html.unescape(re.sub(r"<[^>]+>", " ", visible_fragment, flags=re.IGNORECASE | re.DOTALL))
+    value = html_lib.unescape(re.sub(r"<[^>]+>", " ", visible_fragment, flags=re.IGNORECASE | re.DOTALL))
     return " ".join(value.split())
 
 
@@ -576,7 +576,7 @@ def _property_scout_extract_meta_contents(html: str, property_name: str) -> tupl
     values: list[str] = []
     seen: set[str] = set()
     for match in pattern.finditer(str(html or "")):
-        value = str(match.group(1) or "").strip()
+        value = html_lib.unescape(str(match.group(1) or "")).strip()
         if value and value not in seen:
             seen.add(value)
             values.append(value)

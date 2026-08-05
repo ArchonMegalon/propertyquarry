@@ -124,6 +124,8 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
 
     empty_env_file = tmp_path / "empty-compose.env"
     empty_env_file.write_text("", encoding="utf-8")
+    onemin_key_manifest = tmp_path / "onemin-api-keys.json"
+    onemin_key_manifest.write_text("{}\n", encoding="utf-8")
     role_urls = {
         "PROPERTYQUARRY_API_DATABASE_URL": (
             "postgresql://pq_api:review-only@db/property"
@@ -171,6 +173,7 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
         "PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN": (
             "review-only-bridge-placeholder"
         ),
+        "ONEMIN_DIRECT_API_KEYS_JSON_FILE": str(onemin_key_manifest),
     }
     completed = subprocess.run(
         [

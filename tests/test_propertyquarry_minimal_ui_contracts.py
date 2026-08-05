@@ -62,11 +62,11 @@ def test_propertyquarry_shortlist_keeps_direct_tour_actions_and_compact_empty_me
     assert 'aria-label="Match score {{ row.get(\'score\') }}"' in public_example
 
     assert '>3D tour</a>' in results
-    assert '>Walkthrough</a>' in results
+    assert '>Camera walkthrough</a>' in results
     assert 'data-rybbit-event="pq.tour.opened"' in results
     assert 'data-rybbit-event="pq.flythrough.opened"' in results
     assert 'class="pqx-result-diorama-empty-label"' in results
-    assert "Preview not available" in results
+    assert "Diorama not ready" in results
 
 
 def test_propertyquarry_minimal_layer_preserves_route_and_runtime_hooks() -> None:

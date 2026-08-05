@@ -10097,6 +10097,7 @@ def test_agent_property_search_keeps_all_ranked_results_per_provider(monkeypatch
     client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Agent Unlimited Provider Results")
     service = ProductService(client.app.state.container)
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_SCAN_CAP_PER_SOURCE", "6")
 
     source_url = "https://www.willhaben.at/iad/immobilien/mietwohnungen/wien/wien-1020-leopoldstadt"
     listing_urls = [
@@ -10189,11 +10190,16 @@ def test_agent_property_search_keeps_all_ranked_results_per_provider(monkeypatch
     )
 
     source = dict(result["sources"][0])
-    assert result["listing_total"] == len(listing_urls)
-    assert source["listing_total"] == len(listing_urls)
-    assert len(source["top_candidates"]) == len(listing_urls)
-    assert len(source["research_candidates"]) == len(listing_urls)
-    assert {row["property_url"] for row in source["top_candidates"]} == set(listing_urls)
+    assert result["listing_total"] == 6
+    assert source["raw_listing_total"] == len(listing_urls)
+    assert source["scanned_listing_total"] == 6
+    assert source["scan_truncated"] is True
+    assert source["listing_total"] == 6
+    assert len(source["top_candidates"]) == 6
+    assert len(source["research_candidates"]) == 6
+    assert {row["property_url"] for row in source["top_candidates"]} == set(
+        listing_urls[:6]
+    )
 
 
 def test_property_search_soft_filters_do_not_change_discovered_hit_set(monkeypatch) -> None:

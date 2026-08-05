@@ -25,6 +25,8 @@ from app.api.routes.product_api_contracts import (
     GooglePhotosSignalSyncOut,
     GoogleSignalSyncOut,
     GoogleSignalSyncStatusOut,
+    MobilePropertyLinkImportIn,
+    MobilePropertyLinkImportOut,
     NoneverbiaSignalImportIn,
     NoneverbiaSignalImportOut,
     OneDriveDocumentQueryTelegramDeliveryOut,
@@ -1621,6 +1623,49 @@ def sync_direct_property_scout(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return PropertyScoutSyncOut(**payload)
+
+
+@router.post(
+    "/mobile/property-links",
+    response_model=MobilePropertyLinkImportOut,
+    status_code=201,
+)
+def import_mobile_property_link(
+    body: MobilePropertyLinkImportIn,
+    container: AppContainer = Depends(get_container),
+    context: RequestContext = Depends(get_request_context),
+) -> MobilePropertyLinkImportOut:
+    if (
+        context.authenticated is not True
+        or not str(context.principal_id or "").strip()
+        or str(context.auth_source or "").strip().lower()
+        in {"", "anonymous", "loopback_no_auth", "propertyquarry_release_probe"}
+    ):
+        raise HTTPException(status_code=401, detail="authentication_required")
+    service = build_product_service(container)
+    actor = str(
+        context.operator_id
+        or context.access_email
+        or context.principal_id
+        or "android_share_import"
+    ).strip()
+    try:
+        payload = service.import_mobile_property_link(
+            principal_id=context.principal_id,
+            property_url=body.property_url,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    status = str(payload.get("status") or "").strip().lower()
+    if status == "invalid":
+        raise HTTPException(status_code=400, detail=str(payload.get("reason") or "property_url_invalid"))
+    if status == "blocked":
+        raise HTTPException(status_code=422, detail=str(payload.get("reason") or "property_preview_unavailable"))
+    if status != "saved":
+        raise HTTPException(status_code=409, detail=str(payload.get("reason") or "property_import_failed"))
+    return MobilePropertyLinkImportOut(**payload)
 
 
 @router.post("/signals/property/search/run", response_model=PropertySearchRunStartOut, status_code=202)

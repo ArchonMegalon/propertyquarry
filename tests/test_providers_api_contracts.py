@@ -4466,7 +4466,10 @@ def test_browser_landing_exposes_google_onboarding_and_html_callback(monkeypatch
         resolved = owner.get(href, follow_redirects=False)
         assert resolved.status_code in {200, 303, 307}, href
 
-    setup = owner.get("/register")
+    # The link crawl above deliberately visits localized public URLs and may
+    # update the client's locale cookie. Pin English for this English-copy
+    # identity contract instead of depending on traversal order.
+    setup = owner.get("/register?lang=en")
     assert setup.status_code == 200
     _assert_no_product_drift(setup.text)
     assert "Set up your property search." in setup.text

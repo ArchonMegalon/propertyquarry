@@ -1,5 +1,5 @@
 contract_name: ea.next90_m141_route_local_screenshot_packs
-generated_at: '2026-08-02T12:22:03Z'
+generated_at: '2026-08-05T20:06:09Z'
 package_id: next90-m141-ea-compile-route-local-screenshot-packs-and-compare-packets-for-translator-x
 title: Compile route-local screenshot packs and compare packets for translator, XML
   amendment, Hero Lab, and import-oracle proof without inventing parity.
@@ -20,7 +20,7 @@ summary:
   family_count: 2
   family_pass_count: 2
   fleet_gate_status: pass
-  desktop_client_status: missing
+  desktop_client_status: warning
   queue_ready_to_mark_complete: false
 source_inputs:
   ea_compare_packs:
@@ -123,10 +123,10 @@ source_inputs:
   flagship_readiness:
     path: /docker/fleet/.codex-studio/published/FLAGSHIP_PRODUCT_READINESS.generated.json
     coverage_key: desktop_client
-    status: missing
-    summary: Desktop flagship proof is still incomplete.
-    reason_count: 10
-    row_fingerprint: 481a28a0488968b9c436a29bc069ac3fdeed03b3dd91969d640110659a909993
+    status: warning
+    summary: Desktop flagship proof is waiting on external host-proof capture.
+    reason_count: 1
+    row_fingerprint: 2f4e06cb0d598ab79e1d52ca7d1b21d4bcdfc6e126e641851b9df2f78735494f
 canonical_monitors:
   guide_markers:
     wave: true
@@ -171,28 +171,12 @@ canonical_monitors:
     runtime_blocker_count: 0
 desktop_client_readiness:
   coverage_key: desktop_client
-  status: missing
-  summary: Desktop flagship proof is still incomplete.
-  reason_count: 10
+  status: warning
+  summary: Desktop flagship proof is waiting on external host-proof capture.
+  reason_count: 1
   reasons:
-  - Executable desktop exit gate proof is missing or not passed. Desktop shell/install/support
-    liveliness must be proven from shipped artifacts.
-  - 'Executable gate blocker: Windows installer visual proof must be captured on a
-    Windows host before promotion can pass.'
-  - 'Executable gate blocker: Windows gate reason: Windows installer visual proof
-    is missing; capture progress and completion screenshots on a Windows host.'
-  - Dedicated user-journey tester audit is missing or not passed. A separate tester
-    shard must run the Linux binary like a user and prove visible workflow results.
-  - 'User-journey tester audit lacks verified existing PNG screenshot review for workflows:
-    file_new_character_visible_workspace, major_navigation_sanity, master_index_search_focus_stability,
-    minimal_character_build_save_reload, validation_or_export_smoke.'
-  - 'User-journey tester audit lacks required execution discipline: workflow_screenshot_review_must_prove_existing_pngs.'
-  - Windows desktop exit gate proof is missing, not passed, or lacks payload/sample
-    integrity proof.
-  - Release channel receipt is stale (452324s old; max 86400s).
-  - Release channel is not simultaneously published, release-proven, and Avalonia-desktop-backed.
-  - Release channel publishes Windows installer media, but executable-gate evidence
-    is missing passing Windows startup-smoke tuple proof.
+  - Promoted desktop tuple coverage still needs external host-proof capture before
+    flagship desktop claims can stay green.
 route_local_screenshot_packs:
 - route_id: menu:translator
   label: Translator route

@@ -8645,7 +8645,7 @@ def public_tour_payload(slug: str) -> JSONResponse:
 
 
 @router.get("/tours/files/{slug}/{asset_path:path}")
-@router.head("/tours/files/{slug}/{asset_path:path}")
+@router.head("/tours/files/{slug}/{asset_path:path}", include_in_schema=False)
 def public_tour_file(slug: str, asset_path: str, request: Request):
     with _public_tour_file_policy_snapshot(
         slug,
@@ -8936,7 +8936,7 @@ def _public_tour_file_from_snapshot(
 
 
 @router.get("/tours/viewer/{slug}/{asset_path:path}")
-@router.head("/tours/viewer/{slug}/{asset_path:path}")
+@router.head("/tours/viewer/{slug}/{asset_path:path}", include_in_schema=False)
 def public_tour_generated_reconstruction_preview_asset(slug: str, asset_path: str, request: Request):
     payload = _load_tour_with_private_receipt(slug)
     _require_public_tour_viewable(payload)
@@ -8957,7 +8957,7 @@ def public_tour_generated_reconstruction_preview_asset(slug: str, asset_path: st
 
 
 @router.get("/tours/pano2vr/{slug}/{asset_path:path}")
-@router.head("/tours/pano2vr/{slug}/{asset_path:path}")
+@router.head("/tours/pano2vr/{slug}/{asset_path:path}", include_in_schema=False)
 def public_tour_pano2vr_file(slug: str, asset_path: str, request: Request):
     with _public_tour_file_policy_snapshot(
         slug,
@@ -9006,7 +9006,7 @@ def public_tour_pano2vr_file(slug: str, asset_path: str, request: Request):
 
 
 @router.get("/tours/3dvista/{slug}/{asset_path:path}")
-@router.head("/tours/3dvista/{slug}/{asset_path:path}")
+@router.head("/tours/3dvista/{slug}/{asset_path:path}", include_in_schema=False)
 def public_tour_3dvista_file(slug: str, asset_path: str, request: Request):
     with _public_tour_file_policy_snapshot(
         slug,
@@ -9055,7 +9055,7 @@ def public_tour_3dvista_file(slug: str, asset_path: str, request: Request):
 
 
 @router.get("/tours/{slug}/walkthrough")
-@router.head("/tours/{slug}/walkthrough")
+@router.head("/tours/{slug}/walkthrough", include_in_schema=False)
 def public_tour_walkthrough(slug: str, request: Request = None):  # type: ignore[assignment]
     with _public_tour_file_policy_snapshot(
         slug,
@@ -9142,7 +9142,11 @@ def public_tour_walkthrough(slug: str, request: Request = None):  # type: ignore
 
 
 @router.get("/tours/{slug}/layout-preview", response_class=HTMLResponse)
-@router.head("/tours/{slug}/layout-preview", response_class=HTMLResponse)
+@router.head(
+    "/tours/{slug}/layout-preview",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
 def public_tour_generated_layout_preview(slug: str, request: Request) -> HTMLResponse:
     try:
         payload = _load_tour_with_private_receipt(slug)
@@ -10021,6 +10025,13 @@ def _public_tour_core_gold_walkthrough_acceptance(
     slug = str(payload.get("slug") or "").strip()
     if scope != "top_level":
         return reject("core_gold_scope_invalid")
+    if any(
+        str(payload.get(key) or "").strip()
+        and str(payload.get(key) or "").strip().lower()
+        != _CORE_GOLD_WALKTHROUGH_PROVIDER_KEY
+        for key in ("video_provider", "video_provider_key", "video_render_provider")
+    ):
+        return reject("core_gold_provider_invalid")
     if str(sidecar.get("contract_name") or "") != _CORE_GOLD_WALKTHROUGH_CONTRACT:
         return reject("core_gold_contract_invalid")
     if str(sidecar.get("property_slug") or "") != slug:
@@ -10126,21 +10137,43 @@ def _public_tour_core_gold_walkthrough_acceptance(
     ):
         metadata = sidecar.get(f"{key}_metadata")
         expected_digest = str(sidecar.get(f"{key}_sha256") or "").strip().lower()
+        try:
+            width = int(metadata.get("width") or 0) if isinstance(metadata, dict) else 0
+            height = int(metadata.get("height") or 0) if isinstance(metadata, dict) else 0
+            duration_seconds = (
+                float(metadata.get("duration_seconds") or 0.0)
+                if isinstance(metadata, dict)
+                else 0.0
+            )
+            frame_count = (
+                int(metadata.get("nb_frames") or 0)
+                if isinstance(metadata, dict)
+                else 0
+            )
+            size_bytes = (
+                int(metadata.get("size_bytes") or 0)
+                if isinstance(metadata, dict)
+                else 0
+            )
+        except (TypeError, ValueError, OverflowError):
+            return reject("core_gold_acceptance_invalid")
         if (
             not isinstance(metadata, dict)
             or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)
-            or (int(metadata.get("width") or 0), int(metadata.get("height") or 0)) != dimensions
+            or (width, height) != dimensions
             or str(metadata.get("codec_name") or "").lower() != "h264"
             or str(metadata.get("avg_frame_rate") or "") != "60/1"
-            or float(metadata.get("duration_seconds") or 0.0) <= 0.0
-            or int(metadata.get("nb_frames") or 0) <= 0
+            or not math.isfinite(duration_seconds)
+            or duration_seconds <= 0.0
+            or frame_count <= 0
+            or size_bytes <= 0
         ):
             return reject("core_gold_video_metadata_invalid")
         try:
             actual_digest = _public_tour_core_gold_file_sha256(
                 bundle_dir,
                 relpath,
-                expected_size=int(metadata.get("size_bytes") or 0),
+                expected_size=size_bytes,
             )
         except (OSError, ValueError):
             return reject("core_gold_video_unavailable")
@@ -14755,7 +14788,11 @@ def public_tour_page(
 
 
 @router.get("/tours/{slug}/control", response_class=HTMLResponse)
-@router.head("/tours/{slug}/control", response_class=HTMLResponse)
+@router.head(
+    "/tours/{slug}/control",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
 def public_tour_control(slug: str, request: Request) -> HTMLResponse:
     payload = _load_tour_with_private_receipt(slug)
     _require_public_tour_viewable(payload)
@@ -14819,7 +14856,11 @@ def public_tour_control(slug: str, request: Request) -> HTMLResponse:
 
 
 @router.get("/tours/{slug}/control/{viewer_mode}", response_class=HTMLResponse)
-@router.head("/tours/{slug}/control/{viewer_mode}", response_class=HTMLResponse)
+@router.head(
+    "/tours/{slug}/control/{viewer_mode}",
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
 def public_tour_control_viewer(slug: str, viewer_mode: str, request: Request) -> HTMLResponse:
     payload = _load_tour_with_private_receipt(slug)
     _require_public_tour_viewable(payload)
