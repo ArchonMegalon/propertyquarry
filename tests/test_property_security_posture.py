@@ -38,6 +38,12 @@ def test_current_durable_worker_passes_positive_security_contract() -> None:
         api=security_posture._compose_service_block(compose, "propertyquarry-api"),
     ) == []
 
+    services = security_posture._resolved_compose_services(compose)
+    assert security_posture._resolved_durable_worker_security_failures(
+        services["propertyquarry-worker"],
+        api=services["propertyquarry-api"],
+    ) == []
+
 
 def test_security_posture_receipt_includes_worker_and_render_database_controls() -> None:
     receipt = security_posture.build_security_posture_receipt()
@@ -73,6 +79,24 @@ def test_resolved_worker_security_contract_checks_the_effective_model() -> None:
 
     assert any("read-only root filesystem" in failure for failure in failures)
     assert any("must mount only" in failure for failure in failures)
+
+
+def test_resolved_worker_rejects_writable_or_host_created_1min_manifest() -> None:
+    services = security_posture._resolved_compose_services(_compose())
+    worker = deepcopy(services["propertyquarry-worker"])
+    volumes = worker["volumes"]
+    assert isinstance(volumes, list)
+    manifest = volumes[2]
+    assert isinstance(manifest, dict)
+    manifest["read_only"] = False
+    manifest["bind"] = {"create_host_path": True}
+
+    failures = security_posture._resolved_durable_worker_security_failures(
+        worker,
+        api=services["propertyquarry-api"],
+    )
+
+    assert any("read-only 1min key manifest" in failure for failure in failures)
 
 
 def test_resolved_runtime_contract_rejects_rogue_privileged_service() -> None:

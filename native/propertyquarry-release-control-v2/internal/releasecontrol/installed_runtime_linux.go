@@ -24,7 +24,7 @@ const (
 	installedChildDeadline = 5 * time.Second
 	installedHealthPoll    = 5 * time.Second
 	installedRuntimePoll   = 100 * time.Millisecond
-	installedSocketMode    = 0o600
+	installedSocketMode    = 0o660
 )
 
 const installedRequestSmokePayload = `{"envelope":{"expires_at":1100,"identity":{"audience":"propertyquarry-release-v2","candidate_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","environment":"propertyquarry-production","job":"propertyquarry-release-v2","ref":"refs/heads/main","repository":"owner/property","run_attempt":1,"run_id":"424242","workflow_ref":"owner/property/.github/workflows/propertyquarry-release-v2.yml@refs/heads/main","workflow_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"issued_at":1000,"nonce":"nonce-socket-request-1","operation":"release-preflight","request_id":"socket-request-1"},"envelope_digest":"sha256:f9c9160c494309599e9a8c0c768fee086dcc2e5a81f4d91735b630281085211b","request_signature":"sig:transport-conformance-test","schema":"propertyquarry.release-request.v2"}`
@@ -60,6 +60,9 @@ func serveInstalledSupervisor(ctx context.Context, paths installedRuntimePaths) 
 	if err != nil {
 		return err
 	}
+	if _, err := validateInstalledAuthorityState(paths); err != nil {
+		return err
+	}
 	before, err := prepareInstalledRuntimeDirectory(paths)
 	if err != nil {
 		return err
@@ -83,7 +86,7 @@ func serveInstalledSupervisor(ctx context.Context, paths installedRuntimePaths) 
 	after, err := inspectStableRootedDirectory(
 		paths.Root,
 		paths.RuntimeRoot,
-		expectedFileMetadata{Mode: 0o700, UID: paths.RuntimeUID, GID: paths.RuntimeGID},
+		expectedFileMetadata{Mode: 0o750, UID: paths.SocketUID, GID: paths.SocketGID},
 		false,
 	)
 	if err != nil || !sameInstalledDirectoryObject(before, after) {
@@ -123,7 +126,10 @@ func serveInstalledSupervisor(ctx context.Context, paths installedRuntimePaths) 
 }
 
 func prepareInstalledRuntimeDirectory(paths installedRuntimePaths) (stableIdentity, error) {
-	expected := expectedFileMetadata{Mode: 0o700, UID: paths.RuntimeUID, GID: paths.RuntimeGID}
+	if err := validateInstalledPrincipalContract(paths); err != nil {
+		return stableIdentity{}, err
+	}
+	expected := expectedFileMetadata{Mode: 0o750, UID: paths.SocketUID, GID: paths.SocketGID}
 	before, err := inspectStableRootedDirectory(paths.Root, paths.RuntimeRoot, expected, false)
 	if err != nil {
 		return stableIdentity{}, err
@@ -190,7 +196,10 @@ type installedRuntimeWatch struct {
 }
 
 func openInstalledRuntimeWatch(paths installedRuntimePaths) (*installedRuntimeWatch, error) {
-	expected := expectedFileMetadata{Mode: 0o700, UID: paths.RuntimeUID, GID: paths.RuntimeGID}
+	if err := validateInstalledPrincipalContract(paths); err != nil {
+		return nil, err
+	}
+	expected := expectedFileMetadata{Mode: 0o750, UID: paths.SocketUID, GID: paths.SocketGID}
 	before, err := inspectStableRootedDirectory(paths.Root, paths.RuntimeRoot, expected, false)
 	if err != nil {
 		return nil, err
@@ -295,6 +304,9 @@ func signalInstalledSupervisorRestart(
 	}
 	verification, err := validateInstalledLocalAuthority(Supervisor, paths)
 	if err != nil {
+		return err
+	}
+	if _, err := validateInstalledAuthorityState(paths); err != nil {
 		return err
 	}
 	socketIdentity, err := validateInstalledSocket(paths, true)
@@ -467,13 +479,33 @@ func handleInstalledConnection(
 		return err
 	}
 	defer intake.release()
-	if intake.peer.UID != paths.RuntimeUID || intake.peer.GID != paths.RuntimeGID ||
+	if !installedPeerAuthorized(intake.peer.UID, intake.peer.GID, paths) ||
 		intake.request == nil || !intake.request.envelopeDigestMatches {
 		return fmt.Errorf("installed local request rejected")
 	}
 	revalidated, err := validateInstalledLocalAuthority(Supervisor, paths)
 	if err != nil || !sameInstalledAuthority(startup, revalidated) {
 		return installedTerminalError{cause: fmt.Errorf("installed authority changed")}
+	}
+	requestBindings, err := authenticateInstalledRequestBindings(
+		paths,
+		revalidated,
+		intake.request,
+		time.Now(),
+	)
+	if err != nil {
+		return fmt.Errorf("installed local request authentication failed")
+	}
+	authenticatedAuthority, err := validateInstalledLocalAuthority(Supervisor, paths)
+	if err != nil || !sameInstalledAuthority(revalidated, authenticatedAuthority) {
+		return installedTerminalError{cause: fmt.Errorf("installed authority changed during request authentication")}
+	}
+	revalidated = authenticatedAuthority
+	stateGeneration, err := validateInstalledAuthorityState(paths)
+	if err != nil {
+		return installedTerminalError{
+			cause: fmt.Errorf("installed authority state changed during request authentication"),
+		}
 	}
 	role, ok := revalidated.Roles["controller-executable"]
 	if !ok {
@@ -487,14 +519,48 @@ func handleInstalledConnection(
 		_ = controller.Close()
 		return fmt.Errorf("installed response pipe changed")
 	}
-	response := os.NewFile(uintptr(intake.responseFD), "authenticated-response-pipe")
-	if response == nil {
+	controllerResponse, controllerWriter, err := os.Pipe()
+	if err != nil {
 		_ = controller.Close()
-		return installedTerminalError{cause: fmt.Errorf("response pipe wrapper failed")}
+		return installedTerminalError{cause: fmt.Errorf("private controller response pipe failed")}
 	}
-	intake.responseFD = -1
+	if err := validateReadPipe(int(controllerResponse.Fd())); err != nil {
+		_ = controllerResponse.Close()
+		_ = controllerWriter.Close()
+		_ = controller.Close()
+		return installedTerminalError{cause: fmt.Errorf("private controller response reader invalid")}
+	}
+	if err := validateWritePipe(int(controllerWriter.Fd())); err != nil {
+		_ = controllerResponse.Close()
+		_ = controllerWriter.Close()
+		_ = controller.Close()
+		return installedTerminalError{cause: fmt.Errorf("private controller response writer invalid")}
+	}
+	controllerRequest, requestWriter, err := os.Pipe()
+	if err != nil {
+		_ = controllerResponse.Close()
+		_ = controllerWriter.Close()
+		_ = controller.Close()
+		return installedTerminalError{cause: fmt.Errorf("private authenticated request pipe failed")}
+	}
+	if err := validateReadPipe(int(controllerRequest.Fd())); err != nil {
+		_ = controllerRequest.Close()
+		_ = requestWriter.Close()
+		_ = controllerResponse.Close()
+		_ = controllerWriter.Close()
+		_ = controller.Close()
+		return installedTerminalError{cause: fmt.Errorf("private authenticated request reader invalid")}
+	}
+	if err := validateWritePipe(int(requestWriter.Fd())); err != nil {
+		_ = controllerRequest.Close()
+		_ = requestWriter.Close()
+		_ = controllerResponse.Close()
+		_ = controllerWriter.Close()
+		_ = controller.Close()
+		return installedTerminalError{cause: fmt.Errorf("private authenticated request writer invalid")}
+	}
 	request := intake.request
-	eventID := "local-" + request.rawBodyDigest[len("sha256:"):len("sha256:")+32]
+	eventID := "local-" + request.rawBodyDigest[len("sha256:"):]
 	args := []string{
 		ControllerExecutable,
 		"--config", ControllerConfig,
@@ -503,40 +569,137 @@ func handleInstalledConnection(
 		"--event-id", eventID,
 		"--request-transport-digest", request.rawBodyDigest,
 		"--installed-local-authority-executable-fd", "4",
+		"--authenticated-request-fd", "5",
 	}
 	command := &exec.Cmd{
 		Path:       "/proc/self/fd/4",
 		Args:       args,
 		Env:        []string{},
 		Dir:        rootedUnchecked(paths.Root, paths.StateRoot),
-		ExtraFiles: []*os.File{response, controller},
+		ExtraFiles: []*os.File{controllerWriter, controller, controllerRequest},
 		SysProcAttr: &syscall.SysProcAttr{
 			Setpgid:   true,
 			Pdeathsig: syscall.SIGKILL,
 		},
 	}
+	if err := claimInstalledRequestReplay(
+		paths,
+		request,
+		requestBindings.rootPolicyDigest,
+		revalidated,
+		stateGeneration,
+	); err != nil {
+		_ = controllerRequest.Close()
+		_ = requestWriter.Close()
+		_ = controllerResponse.Close()
+		_ = controllerWriter.Close()
+		_ = controller.Close()
+		var replay installedReplayRejectedError
+		if errors.As(err, &replay) {
+			return fmt.Errorf("installed request replay rejected")
+		}
+		return installedTerminalError{
+			cause: fmt.Errorf("installed replay claim failed: %w", err),
+		}
+	}
 	if err := command.Start(); err != nil {
-		_ = response.Close()
+		_ = controllerRequest.Close()
+		_ = requestWriter.Close()
+		_ = controllerResponse.Close()
+		_ = controllerWriter.Close()
 		_ = controller.Close()
 		return installedTerminalError{cause: err}
 	}
-	_ = response.Close()
+	_ = controllerRequest.Close()
+	_ = controllerWriter.Close()
 	_ = controller.Close()
-	result := make(chan error, 1)
-	go func() { result <- command.Wait() }()
+	childResult := make(chan error, 1)
+	responseResult := make(chan error, 1)
+	requestResult := make(chan error, 1)
+	go func() { childResult <- command.Wait() }()
+	go func() {
+		responseResult <- awaitInstalledResponseEOF(
+			controllerResponse,
+			installedChildDeadline,
+		)
+	}()
+	go func() {
+		requestResult <- writeAuthenticatedRequestPipe(
+			requestWriter,
+			request.rawBody,
+			installedChildDeadline,
+		)
+	}()
 	timer := time.NewTimer(installedChildDeadline)
 	defer timer.Stop()
-	select {
-	case err := <-result:
-		if installedExitCode(err) != ExitProtocolFailure {
-			return installedTerminalError{cause: fmt.Errorf("fixed controller exit invalid")}
+	childFinished := false
+	responseFinished := false
+	requestFinished := false
+	for !childFinished || !responseFinished || !requestFinished {
+		select {
+		case err := <-childResult:
+			childFinished = true
+			if installedExitCode(err) != ExitProtocolFailure {
+				_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+				_ = controllerResponse.Close()
+				_ = requestWriter.Close()
+				if !responseFinished {
+					<-responseResult
+				}
+				if !requestFinished {
+					<-requestResult
+				}
+				return installedTerminalError{cause: fmt.Errorf("fixed controller exit invalid")}
+			}
+		case err := <-responseResult:
+			responseFinished = true
+			if err != nil {
+				_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+				_ = controllerResponse.Close()
+				_ = requestWriter.Close()
+				if !childFinished {
+					<-childResult
+				}
+				if !requestFinished {
+					<-requestResult
+				}
+				return installedTerminalError{cause: fmt.Errorf("fixed controller response invalid")}
+			}
+		case err := <-requestResult:
+			requestFinished = true
+			if err != nil {
+				_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+				_ = controllerResponse.Close()
+				if !childFinished {
+					<-childResult
+				}
+				if !responseFinished {
+					<-responseResult
+				}
+				return installedTerminalError{cause: fmt.Errorf("fixed controller request transfer invalid")}
+			}
+		case <-timer.C:
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+			_ = controllerResponse.Close()
+			_ = requestWriter.Close()
+			if !childFinished {
+				<-childResult
+			}
+			if !responseFinished {
+				<-responseResult
+			}
+			if !requestFinished {
+				<-requestResult
+			}
+			return installedTerminalError{cause: fmt.Errorf("fixed controller timed out")}
 		}
-		return nil
-	case <-timer.C:
-		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
-		<-result
-		return installedTerminalError{cause: fmt.Errorf("fixed controller timed out")}
 	}
+	_ = controllerResponse.Close()
+	return nil
+}
+
+func installedPeerAuthorized(uid, gid uint32, paths installedRuntimePaths) bool {
+	return uid == paths.CallerUID && gid == paths.CallerGID
 }
 
 func duplicateInstalledConnection(connection *net.UnixConn) (int, error) {
@@ -731,10 +894,13 @@ func installedHealthJSON(verification *installedAuthorityVerification) ([]byte, 
 }
 
 func validateInstalledSocket(paths installedRuntimePaths, connect bool) (stableIdentity, error) {
+	if err := validateInstalledPrincipalContract(paths); err != nil {
+		return stableIdentity{}, err
+	}
 	parentBefore, err := inspectStableRootedDirectory(
 		paths.Root,
 		paths.RuntimeRoot,
-		expectedFileMetadata{Mode: 0o700, UID: paths.RuntimeUID, GID: paths.RuntimeGID},
+		expectedFileMetadata{Mode: 0o750, UID: paths.SocketUID, GID: paths.SocketGID},
 		false,
 	)
 	if err != nil {
@@ -764,7 +930,7 @@ func validateInstalledSocket(paths installedRuntimePaths, connect bool) (stableI
 	identity := identityFromStat(*stat)
 	if identity.Mode&syscall.S_IFMT != syscall.S_IFSOCK || identity.Links != 1 ||
 		identity.Mode&0o7777 != installedSocketMode ||
-		identity.UID != paths.RuntimeUID || identity.GID != paths.RuntimeGID {
+		identity.UID != paths.SocketUID || identity.GID != paths.SocketGID {
 		return stableIdentity{}, fmt.Errorf("installed socket metadata invalid")
 	}
 	if connect {
@@ -785,7 +951,7 @@ func validateInstalledSocket(paths installedRuntimePaths, connect bool) (stableI
 	parentAfter, err := inspectStableRootedDirectory(
 		paths.Root,
 		paths.RuntimeRoot,
-		expectedFileMetadata{Mode: 0o700, UID: paths.RuntimeUID, GID: paths.RuntimeGID},
+		expectedFileMetadata{Mode: 0o750, UID: paths.SocketUID, GID: paths.SocketGID},
 		false,
 	)
 	if err != nil || parentAfter != parentBefore {
@@ -809,7 +975,7 @@ func rootedUnchecked(root, absolute string) string {
 }
 
 func installedExecutableFDAtFixedPosition(args []string) (int, bool) {
-	if len(args) != 12 || args[10] != "--installed-local-authority-executable-fd" {
+	if len(args) < 12 || args[10] != "--installed-local-authority-executable-fd" {
 		return 0, false
 	}
 	fd, err := strconv.Atoi(args[11])

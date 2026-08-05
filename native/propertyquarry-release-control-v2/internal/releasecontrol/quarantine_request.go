@@ -65,6 +65,7 @@ type quarantinedRequest struct {
 	requestSignature          string
 	envelope                  quarantinedEnvelope
 	authenticationEstablished bool
+	authenticatedKeyID        string
 }
 
 func (request *quarantinedRequest) release() {
@@ -88,6 +89,7 @@ func (request *quarantinedRequest) release() {
 	request.requestSignature = ""
 	request.envelope = quarantinedEnvelope{}
 	request.authenticationEstablished = false
+	request.authenticatedKeyID = ""
 }
 
 func parseQuarantinedRequest(raw []byte) (*quarantinedRequest, error) {

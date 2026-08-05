@@ -6,8 +6,8 @@ LC_ALL=C
 TZ=UTC
 export PATH LANG LC_ALL TZ
 
-SOURCE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-REPOSITORY_ROOT=$(CDPATH= cd -- "$SOURCE_ROOT/../.." && pwd)
+SOURCE_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+REPOSITORY_ROOT=$(CDPATH='' cd -- "$SOURCE_ROOT/../.." && pwd)
 DEFAULT_FINAL="$REPOSITORY_ROOT/build/propertyquarry-release-control-v2/linux-amd64"
 FINAL_ROOT=${1:-"$DEFAULT_FINAL"}
 GO_ARCHIVE=${PROPERTYQUARRY_GO_ARCHIVE:-}
@@ -16,12 +16,23 @@ EXPECTED_ARCHIVE_BYTES=66879095
 EXPECTED_GO_SHA=8da5fd321795754b994c64e3eb8a5a14ff47bd285559a7e876f3c79abafc67f9
 SCRATCH_EXECUTION_CONTRACT=linux-amd64-static-et-exec-v1
 WORK_ROOT=$(mktemp -d /tmp/propertyquarry-release-control-v2-repro.XXXXXX)
-trap 'rm -rf -- "$WORK_ROOT"' EXIT HUP INT TERM
 
 fail() {
   printf '%s\n' "error: $1" >&2
   exit 1
 }
+
+cleanup() {
+  status=$1
+  trap '' HUP INT TERM
+  trap - EXIT
+  rm -rf -- "$WORK_ROOT" || :
+  exit "$status"
+}
+trap 'cleanup "$?"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 digest() {
   digest_output=$(sha256sum -- "$1") || return 1
@@ -32,10 +43,15 @@ manifest_digest() (
   manifest_root=$1
   hash_list=$2
   manifest_path="$manifest_root/tools/source-files.txt"
+  expected_paths="${hash_list}.expected-paths"
+  observed_paths="${hash_list}.observed-paths"
+  sorted_expected_paths="${hash_list}.expected-paths.sorted"
+  sorted_observed_paths="${hash_list}.observed-paths.sorted"
   [ -f "$manifest_path" ] && [ ! -L "$manifest_path" ] || fail "copied source manifest is invalid"
   [ "$(realpath -e -- "$manifest_path")" = "$manifest_path" ] ||
     fail "copied source manifest contains a symlink"
   : >"$hash_list"
+  : >"$expected_paths"
   entry_count=0
   while IFS= read -r relative || [ -n "$relative" ]; do
     case "$relative" in
@@ -47,13 +63,27 @@ manifest_digest() (
       fail "copied source entry contains a symlink"
     file_sha=$(digest "$source_path") || fail "copied source entry cannot be hashed"
     printf '%s  %s\n' "$file_sha" "$relative" >>"$hash_list"
+    printf '%s\0' "$relative" >>"$expected_paths"
     entry_count=$((entry_count + 1))
   done <"$manifest_path"
   [ "$entry_count" -gt 0 ] || fail "copied source manifest is empty"
+  [ -z "$(find -P "$manifest_root" -mindepth 1 ! -type d ! -type f -printf x -quit)" ] ||
+    fail "copied source tree contains a symlink or special entry"
+  find -P "$manifest_root" -type f -printf '%P\0' >"$observed_paths" ||
+    fail "copied source tree cannot be enumerated"
+  LC_ALL=C sort -z "$expected_paths" >"$sorted_expected_paths" ||
+    fail "copied source manifest paths cannot be sorted"
+  LC_ALL=C sort -z "$observed_paths" >"$sorted_observed_paths" ||
+    fail "copied source tree paths cannot be sorted"
+  cmp "$sorted_expected_paths" "$sorted_observed_paths" >/dev/null ||
+    fail "copied source tree is not the exact source manifest"
   digest "$hash_list" || fail "copied source manifest cannot be hashed"
 )
 
 [ "$#" -le 1 ] || fail "usage: repro-build.sh [final-root]"
+REPOSITORY_SOURCE_SHA=$(
+  manifest_digest "$SOURCE_ROOT" "$WORK_ROOT/repository-source-hashes"
+) || exit 1
 [ -n "$GO_ARCHIVE" ] || fail "PROPERTYQUARRY_GO_ARCHIVE is required"
 [ -f "$GO_ARCHIVE" ] && [ ! -L "$GO_ARCHIVE" ] ||
   fail "toolchain archive must be a regular non-symlink file"
@@ -71,24 +101,36 @@ esac
 [ ! -L "$FINAL_ROOT" ] || fail "final output must not be a symlink"
 mkdir -p "$FINAL_ROOT"
 [ "$(realpath -e -- "$FINAL_ROOT")" = "$CANONICAL_FINAL" ] || fail "final output path changed"
+INITIAL_FINAL_IDENTITY=$(
+  /usr/bin/stat -Lc '%d:%i:%f:%u:%g' -- "$FINAL_ROOT"
+) || fail "final output identity is unavailable"
 
 EXPECTED_FINAL_FILES=$(printf '%s\n' \
   build-receipt.json \
   propertyquarry-release-controller-v2 \
   propertyquarry-release-supervisor-v2 \
   propertyquarry-release-watchdog-v2)
-CURRENT_FINAL_FILES=$(find "$FINAL_ROOT" -mindepth 1 -maxdepth 1 -printf '%f\n') ||
-  fail "final output cannot be enumerated"
-if [ -n "$CURRENT_FINAL_FILES" ]; then
-  CURRENT_FINAL_FILES=$(printf '%s\n' "$CURRENT_FINAL_FILES" | LC_ALL=C sort)
-  [ "$CURRENT_FINAL_FILES" = "$EXPECTED_FINAL_FILES" ] ||
-    fail "final bundle contains an unexpected entry"
-fi
-for entry in $EXPECTED_FINAL_FILES; do
-  target="$FINAL_ROOT/$entry"
-  [ ! -L "$target" ] || fail "final bundle target must not be a symlink"
-  [ ! -e "$target" ] || [ -f "$target" ] || fail "final bundle target type is invalid"
-done
+validate_final_entries() (
+  final_root=$1
+  unexpected=$(
+    find "$final_root" -mindepth 1 -maxdepth 1 \
+      ! \( \
+        -name build-receipt.json -o \
+        -name propertyquarry-release-controller-v2 -o \
+        -name propertyquarry-release-supervisor-v2 -o \
+        -name propertyquarry-release-watchdog-v2 \
+      \) \
+      -printf x -quit
+  ) || fail "final output cannot be enumerated"
+  [ -z "$unexpected" ] || fail "final bundle contains an unexpected entry"
+  for entry in $EXPECTED_FINAL_FILES; do
+    target="$final_root/$entry"
+    [ ! -L "$target" ] || fail "final bundle target must not be a symlink"
+    [ ! -e "$target" ] || [ -f "$target" ] ||
+      fail "final bundle target type is invalid"
+  done
+)
+validate_final_entries "$FINAL_ROOT"
 
 SOURCE_MANIFEST="$SOURCE_ROOT/tools/source-files.txt"
 [ -f "$SOURCE_MANIFEST" ] && [ ! -L "$SOURCE_MANIFEST" ] || fail "source manifest is invalid"
@@ -132,6 +174,8 @@ FIRST_SOURCE_SHA=$(manifest_digest "$FIRST_SOURCE" "$WORK_ROOT/source-a-hashes-b
 SECOND_SOURCE_SHA=$(manifest_digest "$SECOND_SOURCE" "$WORK_ROOT/source-b-hashes-before") ||
   fail "second source copy cannot be authenticated"
 [ "$FIRST_SOURCE_SHA" = "$SECOND_SOURCE_SHA" ] || fail "source copies differ"
+[ "$FIRST_SOURCE_SHA" = "$REPOSITORY_SOURCE_SHA" ] ||
+  fail "repository source changed while it was copied"
 
 PROPERTYQUARRY_GO_ARCHIVE="$GO_ARCHIVE" \
 PROPERTYQUARRY_BUILD_CACHE_ROOT="$WORK_ROOT/cache-a" \
@@ -306,11 +350,61 @@ PUBLISH_FILES=$(printf '%s\n' "$PUBLISH_FILES" | LC_ALL=C sort)
 [ -z "$(find "$PUBLISH_ROOT" -mindepth 1 -maxdepth 1 -type l -print -quit)" ] ||
   fail "publish bundle contains a symlink"
 
+exec 9<"$FINAL_ROOT" || fail "final output lock descriptor cannot be opened"
+/usr/bin/flock -n -x 9 || fail "another final bundle publisher is active"
+LOCKED_FINAL_IDENTITY=$(
+  /usr/bin/stat -Lc '%d:%i:%f:%u:%g' -- /proc/self/fd/9
+) || fail "final output lock identity is unavailable"
+[ "$LOCKED_FINAL_IDENTITY" = "$INITIAL_FINAL_IDENTITY" ] ||
+  fail "final output changed before publication"
+[ "$(/usr/bin/stat -Lc '%d:%i:%f:%u:%g' -- "$FINAL_ROOT")" = "$LOCKED_FINAL_IDENTITY" ] ||
+  fail "final output changed before publication"
+validate_final_entries "$FINAL_ROOT"
+if [ -e "$FINAL_ROOT/build-receipt.json" ]; then
+  rm -- "$FINAL_ROOT/build-receipt.json" ||
+    fail "previous final build receipt cannot be invalidated"
+fi
+[ ! -e "$FINAL_ROOT/build-receipt.json" ] &&
+  [ ! -L "$FINAL_ROOT/build-receipt.json" ] ||
+  fail "previous final build receipt remains visible"
+/usr/bin/sync -d "$FINAL_ROOT" ||
+  fail "final output receipt invalidation cannot be synchronized"
+
+for component in supervisor controller watchdog; do
+  name="propertyquarry-release-${component}-v2"
+  target="$FINAL_ROOT/$name"
+  if [ -e "$target" ]; then
+    rm -- "$target" || fail "previous final binary cannot be invalidated"
+  fi
+  [ ! -e "$target" ] && [ ! -L "$target" ] ||
+    fail "previous final binary remains visible"
+done
+/usr/bin/sync -d "$FINAL_ROOT" ||
+  fail "final output binary invalidation cannot be synchronized"
+
 for component in supervisor controller watchdog; do
   name="propertyquarry-release-${component}-v2"
   install -m 0755 "$PUBLISH_ROOT/$name" "$FINAL_ROOT/$name"
+  cmp "$PUBLISH_ROOT/$name" "$FINAL_ROOT/$name"
+  [ "$(stat -c '%a' -- "$FINAL_ROOT/$name")" = 755 ] ||
+    fail "published binary mode is invalid"
+  "$FIRST_SOURCE/tools/verify-static-elf.sh" "$FINAL_ROOT/$name" >/dev/null ||
+    fail "published binary is not scratch-executable static ELF"
+  /usr/bin/sync -d "$FINAL_ROOT/$name" ||
+    fail "published binary cannot be synchronized"
 done
+/usr/bin/sync -d "$FINAL_ROOT" ||
+  fail "published binary directory entries cannot be synchronized"
 install -m 0644 "$PUBLISH_ROOT/build-receipt.json" "$FINAL_ROOT/build-receipt.json"
+cmp "$PUBLISH_ROOT/build-receipt.json" "$FINAL_ROOT/build-receipt.json"
+[ "$(stat -c '%a' -- "$FINAL_ROOT/build-receipt.json")" = 644 ] ||
+  fail "published build receipt mode is invalid"
+/usr/bin/sync -d "$FINAL_ROOT/build-receipt.json" ||
+  fail "published build receipt cannot be synchronized"
+/usr/bin/sync -d "$FINAL_ROOT" ||
+  fail "published build receipt directory entry cannot be synchronized"
+[ "$(/usr/bin/stat -Lc '%d:%i:%f:%u:%g' -- "$FINAL_ROOT")" = "$LOCKED_FINAL_IDENTITY" ] ||
+  fail "final output changed during publication"
 
 FINAL_FILES=$(find "$FINAL_ROOT" -mindepth 1 -maxdepth 1 -printf '%f\n') ||
   fail "final bundle cannot be enumerated"

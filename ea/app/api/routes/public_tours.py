@@ -13964,7 +13964,7 @@ def _tour_control_panorama_html(
       }
       function _safeStreetViewUrl(value) {
         const normalized = String(value || '').trim();
-        return /^https:\/\/(?:www\.)?google\.com\/maps\/(?:@|\?)/.test(normalized) ? normalized : '';
+        return /^https:\\/\\/(?:www\\.)?google\\.com\\/maps\\/(?:@|\\?)/.test(normalized) ? normalized : '';
       }
       nodes.forEach((node, index) => {
         const button = document.createElement('button');

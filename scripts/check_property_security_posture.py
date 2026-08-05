@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCKER_BINARY = Path("/usr/bin/docker")
 EXPECTED_PROPERTY_SERVICES = {
     "propertyquarry-api",
+    "propertyquarry-backup",
     "propertyquarry-db",
     "propertyquarry-migrate",
     "propertyquarry-render-tools",
@@ -480,13 +481,14 @@ def _durable_worker_security_failures(
     expected_volumes = [
         "./config:/config:ro",
         "./config:/app/config:ro",
+        "type: bind",
         "propertyquarry_artifacts:/data/artifacts",
         "propertyquarry_provider_ledger:/data/provider-ledger",
     ]
     if _service_list_items(worker, "volumes") != expected_volumes:
         failures.append(
-            f"{prefix} must mount only property config, artifacts, and "
-            "provider-ledger storage"
+            f"{prefix} must mount only property config, the read-only 1min "
+            "key manifest, artifacts, and provider-ledger storage"
         )
     if _env_file_paths(worker):
         failures.append(
@@ -590,6 +592,17 @@ def _resolved_durable_worker_security_failures(
             "type": "bind",
         },
         {
+            "bind": {"create_host_path": False},
+            "read_only": True,
+            "source": str(
+                ROOT
+                / "${ONEMIN_DIRECT_API_KEYS_JSON_FILE:?Set the host 1min "
+                "key-manifest path for the PropertyQuarry worker}"
+            ),
+            "target": "/run/propertyquarry/onemin/onemin_api_keys.json",
+            "type": "bind",
+        },
+        {
             "source": "propertyquarry_artifacts",
             "target": "/data/artifacts",
             "type": "volume",
@@ -604,8 +617,8 @@ def _resolved_durable_worker_security_failures(
     ]
     if worker.get("volumes") != expected_volumes:
         failures.append(
-            f"{prefix} must mount only property config, artifacts, and "
-            "provider-ledger storage"
+            f"{prefix} must mount only property config, the read-only 1min "
+            "key manifest, artifacts, and provider-ledger storage"
         )
     if "env_file" in worker:
         failures.append(f"{prefix} must not load optional render environment bundles")

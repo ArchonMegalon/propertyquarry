@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -25,18 +26,20 @@ const (
 	fixtureNativeBuildDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 	localAuthVectorSeedHex   = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 	localAuthVectorKeyID     = "sha256:a050837d85070582ccf7394b0988847cc312cb88259b894899f6f239cf1791a5"
-	localAuthVectorTreeJSON  = `{"entries":[{"mode":420,"path":"installation-manifest.v2.json","sha256":"sha256:96a491ee16265cae3d9c2592bd0de0e345fa8a2c3792f555a59ef9601b5494c6","size":4460,"type":"file"},{"mode":420,"path":"package-payload-receipt.v2.json","sha256":"sha256:9361a60248905443a11039856190c03db64695777f363bf7e7c6e3d72c6e8db6","size":1568,"type":"file"},{"mode":493,"path":"rootfs","type":"directory"},{"mode":493,"path":"rootfs/etc","type":"directory"},{"mode":488,"path":"rootfs/etc/propertyquarry-release-control","type":"directory"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/controller-v2.json","sha256":"sha256:9f2b4d0075b998b9ebe3850e292d85e39393e6b7a140ddf0a643d49f81cb3652","size":3606,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/policy-v2.json","sha256":"sha256:0a3655d702d82060cc825adf47955b0b72df4755c863d565caee550a3c3309f7","size":1367,"type":"file"},{"mode":488,"path":"rootfs/etc/propertyquarry-release-control/trust.d","type":"directory"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/evidence-authority-v2.pem","sha256":"sha256:a284dcecd00e98802681345623e354e793d4b4a36353b6104c7ee3ae55b17b7c","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/lifecycle-cas-v2.pem","sha256":"sha256:55f7c6dfa1c440ccf3136606786b62208da7ae0fe30115b3ae363c630326d5dd","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/package-authority-v2.pem","sha256":"sha256:f0ff50dacf109dea7f716d7c03eb7a821aa3a283fd3fa02f4c14dbba7d3c3322","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/request-authority-v2.pem","sha256":"sha256:e09939a27210d627ff8f99ed638f8a9427300828750a1a99834ac6eebac6696d","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/resource-mediator-v2.pem","sha256":"sha256:28809799947151145ddd2933c334ddb16d0c2074cc53f91f29cc9976cc02a5d5","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/response-authority-v2.pem","sha256":"sha256:2ed116ed161dd76155eece777ab5dc15467f74c2e30fd7ecde560aa3a68d47a6","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/watchdog-v2.json","sha256":"sha256:8555a1406e62652b37f11b5bf3a97fceb8edb5dae08a6a1127de356e6d01e040","size":962,"type":"file"},{"mode":493,"path":"rootfs/usr","type":"directory"},{"mode":493,"path":"rootfs/usr/lib","type":"directory"},{"mode":493,"path":"rootfs/usr/lib/systemd","type":"directory"},{"mode":493,"path":"rootfs/usr/lib/systemd/system","type":"directory"},{"mode":420,"path":"rootfs/usr/lib/systemd/system/propertyquarry-release-control-v2.socket","sha256":"sha256:4790e1886b933a54f19f2bb046518fa66716acee1a7d187a92316a55feb163fc","size":457,"type":"file"},{"mode":420,"path":"rootfs/usr/lib/systemd/system/propertyquarry-release-control-v2@.service","sha256":"sha256:dd51606be55edf757eb268a617a198db6b5077e1f25e7a4a8a6be8b6344782f3","size":2971,"type":"file"},{"mode":420,"path":"rootfs/usr/lib/systemd/system/propertyquarry-release-watchdog-v2.service","sha256":"sha256:cf3a51a4b0a46d1d44050486a0eaca172b5626abf1703cc76477f9efc288b161","size":2859,"type":"file"},{"mode":493,"path":"rootfs/usr/lib/sysusers.d","type":"directory"},{"mode":420,"path":"rootfs/usr/lib/sysusers.d/propertyquarry-release-control-v2.conf","sha256":"sha256:21bedf39bf9917efb35329c0eb667aac7e6b7c9129f28ed77af9bd2fb6d9f4b0","size":299,"type":"file"},{"mode":493,"path":"rootfs/usr/lib/tmpfiles.d","type":"directory"},{"mode":420,"path":"rootfs/usr/lib/tmpfiles.d/propertyquarry-release-control-v2.conf","sha256":"sha256:945d1c9a34a9463356a8b6b923035a4d1d8054ce6f3b54cb6770db1222a092c2","size":991,"type":"file"},{"mode":493,"path":"rootfs/usr/libexec","type":"directory"},{"mode":493,"path":"rootfs/usr/libexec/propertyquarry-release-control","type":"directory"},{"mode":493,"path":"rootfs/usr/libexec/propertyquarry-release-control/propertyquarry-release-controller-v2","sha256":"sha256:91701cb5cae2b95bdee7b60d6c3d835fdd0b656b2a87e0d43f9b5fd332cac9ac","size":213,"type":"file"},{"mode":493,"path":"rootfs/usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2","sha256":"sha256:bbfe99a87120c006cbac5a71e4762c8e2f23b66c2429120cb8ad0d33e7916d12","size":213,"type":"file"},{"mode":493,"path":"rootfs/usr/libexec/propertyquarry-release-control/propertyquarry-release-watchdog-v2","sha256":"sha256:2c523ca473543691711cfcd358be23b5b28d0a7a179a5d5f004faebfcf53cf6a","size":211,"type":"file"},{"mode":493,"path":"rootfs/usr/share","type":"directory"},{"mode":493,"path":"rootfs/usr/share/propertyquarry-release-control-v2","type":"directory"},{"mode":493,"path":"rootfs/usr/share/propertyquarry-release-control-v2/schema","type":"directory"},{"mode":420,"path":"rootfs/usr/share/propertyquarry-release-control-v2/schema/controller-v2.schema.json","sha256":"sha256:1fbad13305775bd50eb0a6540ef62165dc5a4d674891b35eb5174b9cfaa77c68","size":6097,"type":"file"},{"mode":420,"path":"rootfs/usr/share/propertyquarry-release-control-v2/schema/watchdog-v2.schema.json","sha256":"sha256:96db0457b9390de7360f2b23b1dd2716ec42036f97157fbdc51543b8bc09f6f3","size":2643,"type":"file"}],"schema":"propertyquarry.release-control.payload-tree.v2"}`
-	localAuthVectorAuthJSON  = `{"authority_scope":{"authoritative_for_package_authentication":true,"external_production_authority":false,"kind":"local-docker","performs_release_effects":false,"public_launch_authority":false,"scope_id":"propertyquarry-local-docker"},"payload":{"directory_count":15,"file_count":21,"installation_manifest_sha256":"sha256:96a491ee16265cae3d9c2592bd0de0e345fa8a2c3792f555a59ef9601b5494c6","native_build_receipt_sha256":"sha256:cdd3ce09ab91ae315138d3ab516de5ceb6cc6c7ec0cc13e1f6e99dd564d16300","package_payload_receipt_sha256":"sha256:9361a60248905443a11039856190c03db64695777f363bf7e7c6e3d72c6e8db6","role_count":19,"tree_digest":"sha256:884dba36f555f872d1cecc6af09bdd9c20b44d5122e9eb4f385eb059e88e1ac0"},"schema":"propertyquarry.release-control.local-package-authentication.v2","signature_profile":{"algorithm":"ed25519","encoding":"raw-64-byte","key_id":"sha256:a050837d85070582ccf7394b0988847cc312cb88259b894899f6f239cf1791a5","signed_message":"domain-separated-uint64be-length-prefixed-canonical-json"},"version":2}`
-	localAuthVectorSigHex    = "8f1049151ecce7c67b031828c8d9452841a07f38d3d5e37a8a8ede6421a08584fa060e8a5be29486e61d6e57319c0eabefc6d1b246a85e304497b77b339fc603"
+	localAuthVectorTreeJSON  = `{"entries":[{"mode":420,"path":"installation-manifest.v2.json","sha256":"sha256:2598ae1f530cf2d8c5008c0a6a2010c4a661621f2b127be11d50a6078ba20462","size":4460,"type":"file"},{"mode":420,"path":"package-payload-receipt.v2.json","sha256":"sha256:d67b82ce02f5a2c2853ba96fd24f4f646bc6bd80c4f29ea938b1ab888d212d13","size":1568,"type":"file"},{"mode":493,"path":"rootfs","type":"directory"},{"mode":493,"path":"rootfs/etc","type":"directory"},{"mode":488,"path":"rootfs/etc/propertyquarry-release-control","type":"directory"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/controller-v2.json","sha256":"sha256:08b22112463d546e0e2472ca9ff3698707f051d7b96b58b8ddd043cba073dffa","size":3594,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/policy-v2.json","sha256":"sha256:b428c352fdf183fa7713bd663ef56e86afc5c054dce6a36b58c75a64b966a9c9","size":1355,"type":"file"},{"mode":488,"path":"rootfs/etc/propertyquarry-release-control/trust.d","type":"directory"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/evidence-authority-v2.pem","sha256":"sha256:a284dcecd00e98802681345623e354e793d4b4a36353b6104c7ee3ae55b17b7c","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/lifecycle-cas-v2.pem","sha256":"sha256:55f7c6dfa1c440ccf3136606786b62208da7ae0fe30115b3ae363c630326d5dd","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/package-authority-v2.pem","sha256":"sha256:f0ff50dacf109dea7f716d7c03eb7a821aa3a283fd3fa02f4c14dbba7d3c3322","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/request-authority-v2.pem","sha256":"sha256:e09939a27210d627ff8f99ed638f8a9427300828750a1a99834ac6eebac6696d","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/resource-mediator-v2.pem","sha256":"sha256:28809799947151145ddd2933c334ddb16d0c2074cc53f91f29cc9976cc02a5d5","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/trust.d/response-authority-v2.pem","sha256":"sha256:2ed116ed161dd76155eece777ab5dc15467f74c2e30fd7ecde560aa3a68d47a6","size":113,"type":"file"},{"mode":416,"path":"rootfs/etc/propertyquarry-release-control/watchdog-v2.json","sha256":"sha256:8555a1406e62652b37f11b5bf3a97fceb8edb5dae08a6a1127de356e6d01e040","size":962,"type":"file"},{"mode":493,"path":"rootfs/usr","type":"directory"},{"mode":493,"path":"rootfs/usr/lib","type":"directory"},{"mode":493,"path":"rootfs/usr/lib/systemd","type":"directory"},{"mode":493,"path":"rootfs/usr/lib/systemd/system","type":"directory"},{"mode":420,"path":"rootfs/usr/lib/systemd/system/propertyquarry-release-control-v2.socket","sha256":"sha256:4790e1886b933a54f19f2bb046518fa66716acee1a7d187a92316a55feb163fc","size":457,"type":"file"},{"mode":420,"path":"rootfs/usr/lib/systemd/system/propertyquarry-release-control-v2@.service","sha256":"sha256:dd51606be55edf757eb268a617a198db6b5077e1f25e7a4a8a6be8b6344782f3","size":2971,"type":"file"},{"mode":420,"path":"rootfs/usr/lib/systemd/system/propertyquarry-release-watchdog-v2.service","sha256":"sha256:cf3a51a4b0a46d1d44050486a0eaca172b5626abf1703cc76477f9efc288b161","size":2859,"type":"file"},{"mode":493,"path":"rootfs/usr/lib/sysusers.d","type":"directory"},{"mode":420,"path":"rootfs/usr/lib/sysusers.d/propertyquarry-release-control-v2.conf","sha256":"sha256:21bedf39bf9917efb35329c0eb667aac7e6b7c9129f28ed77af9bd2fb6d9f4b0","size":299,"type":"file"},{"mode":493,"path":"rootfs/usr/lib/tmpfiles.d","type":"directory"},{"mode":420,"path":"rootfs/usr/lib/tmpfiles.d/propertyquarry-release-control-v2.conf","sha256":"sha256:945d1c9a34a9463356a8b6b923035a4d1d8054ce6f3b54cb6770db1222a092c2","size":991,"type":"file"},{"mode":493,"path":"rootfs/usr/libexec","type":"directory"},{"mode":493,"path":"rootfs/usr/libexec/propertyquarry-release-control","type":"directory"},{"mode":493,"path":"rootfs/usr/libexec/propertyquarry-release-control/propertyquarry-release-controller-v2","sha256":"sha256:91701cb5cae2b95bdee7b60d6c3d835fdd0b656b2a87e0d43f9b5fd332cac9ac","size":213,"type":"file"},{"mode":493,"path":"rootfs/usr/libexec/propertyquarry-release-control/propertyquarry-release-supervisor-v2","sha256":"sha256:bbfe99a87120c006cbac5a71e4762c8e2f23b66c2429120cb8ad0d33e7916d12","size":213,"type":"file"},{"mode":493,"path":"rootfs/usr/libexec/propertyquarry-release-control/propertyquarry-release-watchdog-v2","sha256":"sha256:2c523ca473543691711cfcd358be23b5b28d0a7a179a5d5f004faebfcf53cf6a","size":211,"type":"file"},{"mode":493,"path":"rootfs/usr/share","type":"directory"},{"mode":493,"path":"rootfs/usr/share/propertyquarry-release-control-v2","type":"directory"},{"mode":493,"path":"rootfs/usr/share/propertyquarry-release-control-v2/schema","type":"directory"},{"mode":420,"path":"rootfs/usr/share/propertyquarry-release-control-v2/schema/controller-v2.schema.json","sha256":"sha256:112599aa4b3238bddcf3bc56a8e930ba85bb12463962475c11e4ba03146c9c81","size":6085,"type":"file"},{"mode":420,"path":"rootfs/usr/share/propertyquarry-release-control-v2/schema/watchdog-v2.schema.json","sha256":"sha256:96db0457b9390de7360f2b23b1dd2716ec42036f97157fbdc51543b8bc09f6f3","size":2643,"type":"file"}],"schema":"propertyquarry.release-control.payload-tree.v2"}`
+	localAuthVectorAuthJSON  = `{"authority_scope":{"authoritative_for_package_authentication":true,"external_production_authority":false,"kind":"local-docker","performs_release_effects":false,"public_launch_authority":false,"scope_id":"propertyquarry-local-docker"},"payload":{"directory_count":15,"file_count":21,"installation_manifest_sha256":"sha256:2598ae1f530cf2d8c5008c0a6a2010c4a661621f2b127be11d50a6078ba20462","native_build_receipt_sha256":"sha256:cdd3ce09ab91ae315138d3ab516de5ceb6cc6c7ec0cc13e1f6e99dd564d16300","package_payload_receipt_sha256":"sha256:d67b82ce02f5a2c2853ba96fd24f4f646bc6bd80c4f29ea938b1ab888d212d13","role_count":19,"tree_digest":"sha256:d1254b1e3c98fa3da11ed9f787ebeb2953cceebceb69d42abf226e6fb908b802"},"schema":"propertyquarry.release-control.local-package-authentication.v2","signature_profile":{"algorithm":"ed25519","encoding":"raw-64-byte","key_id":"sha256:a050837d85070582ccf7394b0988847cc312cb88259b894899f6f239cf1791a5","signed_message":"domain-separated-uint64be-length-prefixed-canonical-json"},"version":2}`
+	localAuthVectorSigHex    = "2afe451e6469a0a0b5b2f7cdb638937c4ffc70a587b68542bebd0e00dd837ea6729a4836bf95e96b2a850415e22ef4479be8d1a2460bdcb152175007846a8801"
 )
 
 type installedAuthorityFixture struct {
-	paths          installedRuntimePaths
-	authentication []byte
-	signature      []byte
-	publicPEM      []byte
-	keyID          string
-	privateKey     ed25519.PrivateKey
+	paths             installedRuntimePaths
+	authentication    []byte
+	signature         []byte
+	publicPEM         []byte
+	keyID             string
+	privateKey        ed25519.PrivateKey
+	requestKeyID      string
+	requestPrivateKey ed25519.PrivateKey
 }
 
 type installedHealthReady chan struct{}
@@ -61,9 +64,70 @@ func TestInstalledRuntimeDefaultPathsAreFixed(t *testing.T) {
 		paths.RequestSocket != "/run/propertyquarry-release-control-v2/request.sock" ||
 		paths.Controller != "/usr/libexec/propertyquarry-release-control/propertyquarry-release-controller-v2" ||
 		paths.RunningExecutable != "/proc/self/exe" ||
-		paths.RootUID != 0 || paths.RootGID != 0 ||
-		paths.RuntimeUID != uint32(os.Geteuid()) || paths.RuntimeGID != uint32(os.Getegid()) {
+		paths.PackageUID != 0 || paths.PackageGID != 0 ||
+		paths.PrivateConfigGID != uint32(os.Getegid()) ||
+		paths.AuthorityUID != installedAuthorityUID ||
+		paths.AuthorityGID != uint32(os.Getegid()) ||
+		paths.SocketUID != installedAuthorityUID ||
+		paths.SocketGID != uint32(os.Getegid()) ||
+		paths.CallerUID != installedCallerUID ||
+		paths.CallerGID != uint32(os.Getegid()) {
 		t.Fatalf("installed runtime path contract changed: %#v", paths)
+	}
+	if paths.AuthorityUID == paths.CallerUID {
+		t.Fatal("installed authority and caller principals collapsed")
+	}
+}
+
+func TestInstalledPeerAuthorizationRequiresCallerAndRejectsAuthority(t *testing.T) {
+	paths := defaultInstalledRuntimePaths()
+	if !installedPeerAuthorized(paths.CallerUID, paths.CallerGID, paths) {
+		t.Fatal("installed caller principal was rejected")
+	}
+	if installedPeerAuthorized(paths.AuthorityUID, paths.AuthorityGID, paths) {
+		t.Fatal("installed authority principal was accepted as a caller")
+	}
+	if installedPeerAuthorized(paths.CallerUID, paths.CallerGID+1, paths) {
+		t.Fatal("installed caller with the wrong primary group was accepted")
+	}
+}
+
+func TestInstalledPrincipalContractRejectsCollapsedProductionDefaults(t *testing.T) {
+	tests := map[string]func(*installedRuntimePaths){
+		"package-uid": func(paths *installedRuntimePaths) {
+			paths.PackageUID = 1
+		},
+		"package-gid": func(paths *installedRuntimePaths) {
+			paths.PackageGID = 1
+		},
+		"authority-uid": func(paths *installedRuntimePaths) {
+			paths.AuthorityUID = installedCallerUID
+			paths.SocketUID = installedCallerUID
+		},
+		"caller-uid": func(paths *installedRuntimePaths) {
+			paths.CallerUID = installedAuthorityUID
+		},
+		"socket-uid": func(paths *installedRuntimePaths) {
+			paths.SocketUID++
+		},
+		"private-gid": func(paths *installedRuntimePaths) {
+			paths.PrivateConfigGID++
+		},
+		"socket-gid": func(paths *installedRuntimePaths) {
+			paths.SocketGID++
+		},
+		"caller-gid": func(paths *installedRuntimePaths) {
+			paths.CallerGID++
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			paths := defaultInstalledRuntimePaths()
+			mutate(&paths)
+			if err := validateInstalledPrincipalContract(paths); err == nil {
+				t.Fatal("invalid installed principal contract accepted")
+			}
+		})
 	}
 }
 
@@ -86,16 +150,16 @@ func TestInstalledAuthenticationFixedSeedCrossLanguageVector(t *testing.T) {
 	}
 
 	tree := []byte(localAuthVectorTreeJSON)
-	if sha256Digest(tree) != "sha256:9bcf048c3bd0e7197ba3a33fd24df085d4140adcf327c09e14870ebff8e854e9" {
+	if sha256Digest(tree) != "sha256:ece7c5ae55eaa598706a0c1bb6279c725d318850bce1d088cadf8164aee4f37d" {
 		t.Fatal("canonical payload-tree JSON mismatch")
 	}
 	if domainSeparatedDigest([]byte("propertyquarry.release-control.payload-tree.v2\x00"), tree) !=
-		"sha256:884dba36f555f872d1cecc6af09bdd9c20b44d5122e9eb4f385eb059e88e1ac0" {
+		"sha256:d1254b1e3c98fa3da11ed9f787ebeb2953cceebceb69d42abf226e6fb908b802" {
 		t.Fatal("framed payload-tree digest mismatch")
 	}
 
 	authentication := []byte(localAuthVectorAuthJSON)
-	if sha256Digest(authentication) != "sha256:88c05d520ecd85db0eeb6f8823f5c034e528c2bf3a7363df5ab7a12f14db7282" {
+	if sha256Digest(authentication) != "sha256:c14c607c633932c9ac075a4b51ae3102ef6624a6806837cdf0b8a4a439b5e8af" {
 		t.Fatal("canonical authentication JSON mismatch")
 	}
 	parsed, err := parseLocalPackageAuthentication(authentication)
@@ -104,13 +168,13 @@ func TestInstalledAuthenticationFixedSeedCrossLanguageVector(t *testing.T) {
 	}
 	defer parsed.release()
 	if parsed.KeyID != localAuthVectorKeyID || parsed.Payload.TreeDigest !=
-		"sha256:884dba36f555f872d1cecc6af09bdd9c20b44d5122e9eb4f385eb059e88e1ac0" {
+		"sha256:d1254b1e3c98fa3da11ed9f787ebeb2953cceebceb69d42abf226e6fb908b802" {
 		t.Fatal("authentication vector contract mismatch")
 	}
 
 	message := domainSeparatedMessage([]byte(localAuthenticationDomain), authentication)
 	defer zero(message)
-	if sha256Digest(message) != "sha256:e99b6278dd9520d8106b9e60e23d07ce4b93fa04a8a3a107dcd6eb4978993314" {
+	if sha256Digest(message) != "sha256:219e955f8ee578e7ef80fe214695e3fc8eb7d05cc03b43b95e1be91f5b816ebf" {
 		t.Fatal("framed authentication message mismatch")
 	}
 	signature := ed25519.Sign(privateKey, message)
@@ -121,6 +185,16 @@ func TestInstalledAuthenticationFixedSeedCrossLanguageVector(t *testing.T) {
 }
 
 func newInstalledAuthorityFixture(t *testing.T) *installedAuthorityFixture {
+	return newInstalledAuthorityFixtureWithController(
+		t,
+		[]byte("#!/bin/sh\ncat <&5 >/dev/null\nexit 50\n"),
+	)
+}
+
+func newInstalledAuthorityFixtureWithController(
+	t *testing.T,
+	controllerBody []byte,
+) *installedAuthorityFixture {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "pqra.")
 	if err != nil {
@@ -131,10 +205,15 @@ func newInstalledAuthorityFixture(t *testing.T) *installedAuthorityFixture {
 	gid := uint32(os.Getgid())
 	paths := defaultInstalledRuntimePaths()
 	paths.Root = root
-	paths.RootUID = uid
-	paths.RootGID = gid
-	paths.RuntimeUID = uid
-	paths.RuntimeGID = gid
+	paths.PackageUID = uid
+	paths.PackageGID = gid
+	paths.PrivateConfigGID = gid
+	paths.AuthorityUID = uid
+	paths.AuthorityGID = gid
+	paths.SocketUID = uid
+	paths.SocketGID = gid
+	paths.CallerUID = uid
+	paths.CallerGID = gid
 	paths.RuntimeRoot = "/r"
 	paths.RequestSocket = "/r/request.sock"
 	paths.RunningExecutable = ""
@@ -144,8 +223,25 @@ func newInstalledAuthorityFixture(t *testing.T) *installedAuthorityFixture {
 		seed[index] = byte(index)
 	}
 	privateKey := ed25519.NewKeyFromSeed(seed)
+	zero(seed)
 	publicKey := privateKey.Public().(ed25519.PublicKey)
 	der, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestSeed := bytes.Repeat([]byte{0xa5}, ed25519.SeedSize)
+	requestPrivateKey := ed25519.NewKeyFromSeed(requestSeed)
+	zero(requestSeed)
+	requestPublicKey := requestPrivateKey.Public().(ed25519.PublicKey)
+	requestDER, err := x509.MarshalPKIXPublicKey(requestPublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestPublicPEM := pem.EncodeToMemory(
+		&pem.Block{Type: "PUBLIC KEY", Bytes: requestDER},
+	)
+	zero(requestDER)
+	_, requestKeyID, err := parseEd25519PublicAnchor(requestPublicPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,14 +252,20 @@ func newInstalledAuthorityFixture(t *testing.T) *installedAuthorityFixture {
 	}
 
 	fixtureMkdir(t, rootedUnchecked(root, paths.StateRoot), 0o700)
-	fixtureMkdir(t, rootedUnchecked(root, paths.RuntimeRoot), 0o700)
+	fixtureMkdir(t, rootedUnchecked(root, paths.RuntimeRoot), 0o750)
 	fixtureWrite(t, rootedUnchecked(root, paths.ExternalAnchor), publicPEM, 0o444)
 
 	roleValues := make(map[string][]byte, len(installedRoleContracts))
 	for _, contract := range installedRoleContracts {
 		value := []byte("role:" + contract.Role + "\n")
 		if contract.Role == "controller-executable" {
-			value = []byte("#!/bin/sh\nexit 50\n")
+			value = append([]byte(nil), controllerBody...)
+		}
+		if contract.Role == "root-policy" {
+			value = fixtureRootPolicy(t)
+		}
+		if contract.Role == "request-trust-root" {
+			value = append([]byte(nil), requestPublicPEM...)
 		}
 		if contract.Role == "package-trust-root" {
 			value = append([]byte(nil), publicPEM...)
@@ -177,9 +279,9 @@ func newInstalledAuthorityFixture(t *testing.T) *installedAuthorityFixture {
 
 	manifestRoles := make([]any, 0, len(installedRoleContracts))
 	for _, contract := range installedRoleContracts {
-		gidValue := paths.RootGID
+		gidValue := paths.PackageGID
 		if contract.Private {
-			gidValue = paths.RuntimeGID
+			gidValue = paths.PrivateConfigGID
 		}
 		value := roleValues[contract.Role]
 		manifestRoles = append(manifestRoles, map[string]any{
@@ -188,7 +290,7 @@ func newInstalledAuthorityFixture(t *testing.T) *installedAuthorityFixture {
 			"sha256": sha256Digest(value),
 			"size":   json.Number(strconv.Itoa(len(value))),
 			"mode":   json.Number(strconv.FormatUint(uint64(contract.Mode), 10)),
-			"uid":    json.Number(strconv.FormatUint(uint64(paths.RootUID), 10)),
+			"uid":    json.Number(strconv.FormatUint(uint64(paths.PackageUID), 10)),
 			"gid":    json.Number(strconv.FormatUint(uint64(gidValue), 10)),
 		})
 	}
@@ -258,13 +360,93 @@ func newInstalledAuthorityFixture(t *testing.T) *installedAuthorityFixture {
 	fixtureWrite(t, rootedUnchecked(root, paths.Authentication), authentication, 0o644)
 	fixtureWrite(t, rootedUnchecked(root, paths.Signature), signature, 0o644)
 	return &installedAuthorityFixture{
-		paths:          paths,
-		authentication: authentication,
-		signature:      signature,
-		publicPEM:      publicPEM,
-		keyID:          keyID,
-		privateKey:     privateKey,
+		paths:             paths,
+		authentication:    authentication,
+		signature:         signature,
+		publicPEM:         publicPEM,
+		keyID:             keyID,
+		privateKey:        privateKey,
+		requestKeyID:      requestKeyID,
+		requestPrivateKey: requestPrivateKey,
 	}
+}
+
+func fixtureRootPolicy(t *testing.T) []byte {
+	t.Helper()
+	value, err := decodeStrictJSON([]byte(crossLanguageGoldenRequest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := value.(map[string]any)
+	envelope := outer["envelope"].(map[string]any)
+	policy, err := canonicalJSON(map[string]any{
+		"schema":                 "propertyquarry.release-root-policy.v2",
+		"identity":               envelope["identity"],
+		"required_checks":        []any{"gold-launch-evidence"},
+		"decision_policy_digest": "sha256:" + strings.Repeat("a", 64),
+		"max_request_ttl":        json.Number("900"),
+		"max_preflight_validity": json.Number("3600"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy
+}
+
+func signedInstalledFixtureRequest(
+	t *testing.T,
+	fixture *installedAuthorityFixture,
+) []byte {
+	t.Helper()
+	value, err := decodeStrictJSON([]byte(crossLanguageGoldenRequest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := value.(map[string]any)
+	envelope := outer["envelope"].(map[string]any)
+	now := time.Now().Unix()
+	envelope["issued_at"] = json.Number(strconv.FormatInt(now-1, 10))
+	envelope["expires_at"] = json.Number(strconv.FormatInt(now+60, 10))
+	canonicalEnvelope, err := canonicalJSON(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer["envelope_digest"] = sha256Digest(canonicalEnvelope)
+	outer["request_signature"] = "unsigned-fixture"
+	unsignedRaw, err := canonicalJSON(outer)
+	if err != nil {
+		zero(canonicalEnvelope)
+		t.Fatal(err)
+	}
+	unsigned, err := parseQuarantinedRequest(unsignedRaw)
+	zero(unsignedRaw)
+	if err != nil {
+		zero(canonicalEnvelope)
+		t.Fatal(err)
+	}
+	defer unsigned.release()
+	if !bytes.Equal(unsigned.canonicalEnvelope, canonicalEnvelope) {
+		zero(canonicalEnvelope)
+		t.Fatal("fixture canonical envelope changed")
+	}
+	zero(canonicalEnvelope)
+	message, err := requestSignatureMessage(
+		unsigned.signaturePayload,
+		unsigned.canonicalEnvelope,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := ed25519.Sign(fixture.requestPrivateKey, message)
+	zero(message)
+	outer["request_signature"] = requestSignaturePrefix + "/" + fixture.requestKeyID + "/" +
+		base64.RawURLEncoding.EncodeToString(signature)
+	zero(signature)
+	raw, err := canonicalJSON(outer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func fixtureMkdir(t *testing.T, target string, mode os.FileMode) {
@@ -317,7 +499,11 @@ func fixtureResignPayloadTree(t *testing.T, fixture *installedAuthorityFixture) 
 	tree, err := collectPayloadTree(
 		fixture.paths.Root,
 		fixture.paths.PayloadRoot,
-		expectedFileMetadata{Mode: 0o755, UID: fixture.paths.RootUID, GID: fixture.paths.RootGID},
+		expectedFileMetadata{
+			Mode: 0o755,
+			UID:  fixture.paths.PackageUID,
+			GID:  fixture.paths.PackageGID,
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -433,9 +619,6 @@ func TestInstalledAuthorityRejectsAuthenticationAndFilesystemAttacks(t *testing.
 				t.Fatal(err)
 			}
 		},
-		"state-entry": func(t *testing.T, fixture *installedAuthorityFixture) {
-			fixtureWrite(t, filepath.Join(rootedUnchecked(fixture.paths.Root, fixture.paths.StateRoot), "unsigned-state"), []byte("x"), 0o600)
-		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -445,6 +628,21 @@ func TestInstalledAuthorityRejectsAuthenticationAndFilesystemAttacks(t *testing.
 				t.Fatalf("attack accepted: %#v", verification)
 			}
 		})
+	}
+}
+
+func TestInstalledStateIsSeparateFromGenericPackageValidation(t *testing.T) {
+	fixture := newInstalledAuthorityFixture(t)
+	stateEntry := filepath.Join(
+		rootedUnchecked(fixture.paths.Root, fixture.paths.StateRoot),
+		"unsigned-state",
+	)
+	fixtureWrite(t, stateEntry, []byte("x"), 0o600)
+	if _, err := validateInstalledLocalAuthority(Watchdog, fixture.paths); err != nil {
+		t.Fatalf("generic package validation traversed authority state: %v", err)
+	}
+	if _, err := validateEmptyInstalledAuthorityState(fixture.paths); err == nil {
+		t.Fatal("authority accepted non-empty installed state")
 	}
 }
 
@@ -478,7 +676,9 @@ func TestInstalledSupervisorOwnsSocketAndForksPinnedController(t *testing.T) {
 	_ = client.Close()
 	response := brokerPipe(t)
 	defer syscall.Close(response[0])
-	if err := sendBrokerWire(clientFD, []byte(crossLanguageGoldenRequest), brokerWireOptions{
+	request := signedInstalledFixtureRequest(t, fixture)
+	defer zero(request)
+	if err := sendBrokerWire(clientFD, request, brokerWireOptions{
 		responseFDs: []int{response[1]},
 		halfClose:   true,
 	}); err != nil {
@@ -493,6 +693,46 @@ func TestInstalledSupervisorOwnsSocketAndForksPinnedController(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("installed supervisor did not stop")
+	}
+}
+
+func TestInstalledBrokerNeverExposesControllerResponseBeforeValidation(t *testing.T) {
+	fixture := newInstalledAuthorityFixtureWithController(
+		t,
+		[]byte("#!/bin/sh\ncat <&5 >/dev/null\nprintf x >&3\nexit 50\n"),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	served := make(chan error, 1)
+	go func() { served <- serveInstalledSupervisor(ctx, fixture.paths) }()
+	socketPath := rootedUnchecked(fixture.paths.Root, fixture.paths.RequestSocket)
+	waitForInstalledSocket(t, socketPath, served)
+
+	client, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientFD := duplicateUnixFD(t, client)
+	_ = client.Close()
+	response := brokerPipe(t)
+	defer syscall.Close(response[0])
+	request := signedInstalledFixtureRequest(t, fixture)
+	defer zero(request)
+	if err := sendBrokerWire(clientFD, request, brokerWireOptions{
+		responseFDs: []int{response[1]},
+		halfClose:   true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	awaitPipeEOF(t, response[0])
+	select {
+	case err := <-served:
+		var terminal installedTerminalError
+		if !errors.As(err, &terminal) {
+			t.Fatalf("controller response contamination was not terminal: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("installed supervisor accepted a controller response byte")
 	}
 }
 
@@ -541,7 +781,7 @@ func TestInstalledPersistentLifecycleHealthAndRequestSmoke(t *testing.T) {
 	if _, err := inspectStableRootedDirectory(
 		fixture.paths.Root,
 		fixture.paths.StateRoot,
-		expectedFileMetadata{Mode: 0o700, UID: fixture.paths.RuntimeUID, GID: fixture.paths.RuntimeGID},
+		expectedFileMetadata{Mode: 0o700, UID: fixture.paths.AuthorityUID, GID: fixture.paths.AuthorityGID},
 		true,
 	); err != nil {
 		t.Fatalf("request smoke changed phase-A state: %v", err)
@@ -770,7 +1010,7 @@ func TestInstalledSupervisorExitsWhenActiveControllerDrifts(t *testing.T) {
 	}
 }
 
-func TestInstalledWatchdogExitsOnAnchorPackageOrStateDrift(t *testing.T) {
+func TestInstalledWatchdogExitsOnAnchorOrPackageDrift(t *testing.T) {
 	mutations := map[string]func(*testing.T, *installedAuthorityFixture){
 		"external-anchor": func(t *testing.T, fixture *installedAuthorityFixture) {
 			target := rootedUnchecked(fixture.paths.Root, fixture.paths.ExternalAnchor)
@@ -789,14 +1029,6 @@ func TestInstalledWatchdogExitsOnAnchorPackageOrStateDrift(t *testing.T) {
 				t.Fatal(err)
 			}
 			fixtureWrite(t, target, append(value, '\n'), 0o644)
-		},
-		"state": func(t *testing.T, fixture *installedAuthorityFixture) {
-			fixtureWrite(
-				t,
-				filepath.Join(rootedUnchecked(fixture.paths.Root, fixture.paths.StateRoot), "unsigned-state"),
-				[]byte("x"),
-				0o600,
-			)
 		},
 	}
 	for name, mutate := range mutations {

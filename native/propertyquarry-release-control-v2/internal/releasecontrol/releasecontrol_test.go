@@ -229,6 +229,101 @@ func TestControllerClosesResponsePipeWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestControllerDescriptorCleanupDeduplicatesAliases(t *testing.T) {
+	var closed []int
+	closeOwnedControllerDescriptors(
+		func(fd int) error {
+			closed = append(closed, fd)
+			return nil
+		},
+		ownedControllerDescriptor{fd: 7, owned: true},
+		ownedControllerDescriptor{fd: 7, owned: true},
+		ownedControllerDescriptor{fd: 8, owned: false},
+		ownedControllerDescriptor{fd: 9, owned: true},
+		ownedControllerDescriptor{fd: 9, owned: true},
+	)
+	if len(closed) != 2 || closed[0] != 7 || closed[1] != 9 {
+		t.Fatalf("controller descriptor cleanup was not unique and ordered: %v", closed)
+	}
+}
+
+func TestControllerRejectsAliasedDescriptorRolesBeforeConsumption(t *testing.T) {
+	tests := []struct {
+		name                       string
+		authenticatedAliasesWriter bool
+		authenticatedAliasesFile   bool
+	}{
+		{name: "response-and-installed-executable"},
+		{name: "response-and-authenticated-request", authenticatedAliasesWriter: true},
+		{name: "installed-executable-and-authenticated-request", authenticatedAliasesFile: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var responseFDs [2]int
+			if err := syscall.Pipe2(responseFDs[:], syscall.O_CLOEXEC); err != nil {
+				t.Fatal(err)
+			}
+			defer syscall.Close(responseFDs[0])
+
+			executablePath := t.TempDir() + "/controller"
+			if err := os.WriteFile(executablePath, []byte("controller"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			executableFD, err := syscall.Open(
+				executablePath,
+				syscall.O_RDONLY|syscall.O_CLOEXEC,
+				0,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			installedFD := executableFD
+			if test.name == "response-and-installed-executable" {
+				installedFD = responseFDs[1]
+			}
+			authenticatedFD := responseFDs[1]
+			if test.authenticatedAliasesFile {
+				authenticatedFD = executableFD
+			} else if !test.authenticatedAliasesWriter {
+				authenticatedFD = executableFD + responseFDs[1] + 1
+			}
+
+			args := []string{
+				"--config", ControllerConfig,
+				"--operation", "release-run",
+				"--response-fd", strconv.Itoa(responseFDs[1]),
+				"--event-id", "local-" + string(bytes.Repeat([]byte{'a'}, 64)),
+				"--request-transport-digest", "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)),
+				"--installed-local-authority-executable-fd", strconv.Itoa(installedFD),
+			}
+			if test.name != "response-and-installed-executable" {
+				args = append(
+					args,
+					"--authenticated-request-fd",
+					strconv.Itoa(authenticatedFD),
+				)
+			}
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			if code := Run(Controller, args, &stdout, &stderr); code != ExitProtocolFailure {
+				t.Fatalf("aliased descriptors returned %d", code)
+			}
+			if stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("aliased descriptor refusal emitted output")
+			}
+			if installedFD != executableFD {
+				_ = syscall.Close(executableFD)
+			}
+			buffer := make([]byte, 1)
+			count, err := syscall.Read(responseFDs[0], buffer)
+			if err != nil || count != 0 {
+				t.Fatalf("aliased descriptor refusal wrote a response: %q, %v", buffer[:count], err)
+			}
+		})
+	}
+}
+
 func TestConnectedUnixStreamValidation(t *testing.T) {
 	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
 	if err != nil {
