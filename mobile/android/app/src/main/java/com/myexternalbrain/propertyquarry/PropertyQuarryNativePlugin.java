@@ -116,7 +116,14 @@ public final class PropertyQuarryNativePlugin extends Plugin {
     @PluginMethod
     public void clearPendingAuth(PluginCall call) {
         if (!requireTrustedPath(call, Set.of("/mobile/auth/bridge"))) return;
-        preferences().edit().remove(AUTH_CODE).remove(PKCE_VERIFIER).apply();
+        boolean cleared = preferences().edit()
+            .remove(AUTH_CODE)
+            .remove(PKCE_VERIFIER)
+            .commit();
+        if (!cleared) {
+            call.reject("native_auth_cleanup_failed");
+            return;
+        }
         call.resolve();
     }
 
@@ -135,7 +142,14 @@ public final class PropertyQuarryNativePlugin extends Plugin {
     @PluginMethod
     public void clearPendingShare(PluginCall call) {
         if (!requireTrustedPath(call, Set.of("/mobile/share/bridge"))) return;
-        preferences().edit().remove(SHARED_URL).remove(SHARED_IDEMPOTENCY).apply();
+        boolean cleared = preferences().edit()
+            .remove(SHARED_URL)
+            .remove(SHARED_IDEMPOTENCY)
+            .commit();
+        if (!cleared) {
+            call.reject("native_share_cleanup_failed");
+            return;
+        }
         call.resolve();
     }
 

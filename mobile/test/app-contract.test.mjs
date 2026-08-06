@@ -77,6 +77,10 @@ test('native runtime and signing contracts fail closed', () => {
   assert.match(mainActivity, /pendingIntent = intent;/);
   assert.match(mainActivity, /if \(!runtimeReady \|\| !activityResumed\) return;/);
   assert.doesNotMatch(mainActivity, /onNewIntent[\s\S]{0,240}handleIntent\(intent\)/);
+  assert.match(nativePlugin, /remove\(PKCE_VERIFIER\)[\s\S]{0,80}\.commit\(\)/);
+  assert.match(nativePlugin, /remove\(SHARED_IDEMPOTENCY\)[\s\S]{0,80}\.commit\(\)/);
+  assert.match(nativePlugin, /native_auth_cleanup_failed/);
+  assert.match(nativePlugin, /native_share_cleanup_failed/);
 });
 
 test('Play listing copy and graphics satisfy exact size limits', () => {

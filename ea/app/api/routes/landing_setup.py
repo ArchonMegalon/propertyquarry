@@ -845,7 +845,7 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
       return await fetch(url, {...options, signal: controller.signal});
     } catch (error) {
       if (error?.name === 'AbortError') {
-        throw new Error('The secure sign-in service took too long. Check your connection and try again.');
+        throw new Error('The secure app service took too long. Check your connection and try again.');
       }
       throw error;
     } finally {
@@ -878,31 +878,49 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
     if (!response.ok) throw new Error(await parseFailure(response));
     const payload = await response.json();
     setStatus('Opening your property search…');
-    native.clearPendingAuth().catch(() => {});
+    await withTimeout(
+      native.clearPendingAuth(),
+      3000,
+      'Sign-in succeeded, but the app could not finish local cleanup. Try again.',
+    );
     const shared = await withTimeout(native.getPendingShare(), 3000, '').catch(() => null);
     location.replace(shared?.propertyUrl ? '/mobile/share/bridge' : (payload.return_to || '/app/search'));
   };
   const share = async () => {
     if (!native) throw new Error('Open this page in the PropertyQuarry app.');
-    const pending = await native.getPendingShare();
+    setStatus('Reading the shared property…');
+    const pending = await withTimeout(
+      native.getPendingShare(),
+      8000,
+      'The app is still waking up. Try again to add the property.',
+    );
     if (!pending?.propertyUrl || !pending?.idempotencyKey) {
       location.replace('/app/shortlist');
       return;
     }
     setStatus('Evaluating the listing and preparing its shortlist card…');
-    const response = await fetch('/app/api/mobile/property-links', {
+    const response = await fetchWithTimeout('/app/api/mobile/property-links', {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({property_url: pending.propertyUrl, confirmed: true, idempotency_key: pending.idempotencyKey})
-    });
+    }, 20000);
     if (response.status === 401) {
       setStatus('Sign in securely to add this property…');
-      await native.startExternalLogin();
+      await withTimeout(
+        native.startExternalLogin(),
+        8000,
+        'The secure browser did not open. Check your browser settings and try again.',
+      );
       return;
     }
     if (!response.ok) throw new Error(await parseFailure(response));
     const payload = await response.json();
-    await native.clearPendingShare();
+    setStatus('Opening your shortlist…');
+    await withTimeout(
+      native.clearPendingShare(),
+      3000,
+      'The property was added, but the app could not finish local cleanup. Try again.',
+    );
     location.replace(payload.shortlist_url || '/app/shortlist');
   };
   const run = () => {
@@ -918,7 +936,11 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
 })();
 """.strip(),
         media_type="application/javascript",
-        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Type": "application/javascript; charset=utf-8",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

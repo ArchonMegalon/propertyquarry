@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-06 16:53 UTC
+Updated: 2026-08-06 20:21 UTC
 
 ## Mission
 
@@ -43,6 +43,21 @@ The Android lifecycle half cannot reach testers until version 2 is accepted on
 the internal track after the upload-key cooldown. Until then, the deployed web
 bridge gives the installed version 1.0 app a bounded retry path rather than an
 endless spinner.
+
+A follow-up audit closed three remaining bridge gaps in the handoff commit:
+
+- successful auth/share cleanup now uses synchronous durable preference commits
+  and is awaited before navigation, preventing consumed handoffs from surviving
+  as stale local state after a process interruption;
+- every native and network operation in both auth and share modes now has a
+  bounded timeout and actionable retry state; and
+- `/mobile/bridge.js` explicitly declares UTF-8, preventing non-ASCII progress
+  copy from being decoded differently by standalone or embedded clients.
+
+The running API hotpatch was refreshed with these web changes at 2026-08-06
+20:20 UTC. Container health, local readiness, the public UTF-8/no-store headers,
+and BrowserAct-rendered bridge content all passed. It remains a writable-layer
+hotfix until the immutable web image is rebuilt from this published commit.
 
 ## Release state
 
@@ -87,7 +102,7 @@ eligible time.
 Path: mobile/android/app/build/outputs/bundle/release/app-release.aab
 Version name: 1.1.0
 Version code: 2
-SHA-256: b4c0882c4a2b606335820580de97825d10bb05048b1982e7844bbc723672b629
+SHA-256: d01c419ccd2b3efd186b89f1709cb44cca213c72aab2dc849c1eddbdf79b0ff7
 Min SDK: 24
 Target SDK: 36
 ```
@@ -219,6 +234,10 @@ and visually rechecked.
 - Secure sign-in route and mobile contract regression: `30 passed`.
 - Secure sign-in mobile web contract: `11/11 passed`.
 - Android preview build with lifecycle repair: `242` Gradle tasks, passed.
+- Follow-up bridge audit: `30 passed` for identity/mobile routes and `11/11`
+  mobile web contracts.
+- Android preview build with durable cleanup and bounded share/auth operations:
+  `242` Gradle tasks, passed.
 - Signed Android release build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.
