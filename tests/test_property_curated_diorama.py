@@ -502,7 +502,7 @@ def test_landing_curated_diorama_rejects_invalid_tour_binding(
 def test_legacy_curated_alias_restores_and_marks_ranked_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    canonical_ref = "ad48357be22535c1"
+    canonical_ref = "karl-czerny-gasse-2-private-showcase"
     legacy_ref = "cece2dad814fdf68"
     candidate = {
         "candidate_ref": canonical_ref,
@@ -532,7 +532,8 @@ def test_legacy_curated_alias_restores_and_marks_ranked_candidate(
             "asset_url": "/static/property/research/ad48357be22535c1-ai-diorama.webp",
             "representation": "illustrative",
             "candidate_refs": [canonical_ref, legacy_ref],
-            "listing_ids": ["1536069684"],
+            "listing_ids": [],
+            "binding_listing_ids": ["1536069684"],
             "hosted_tour": _approved_hosted_tour_binding(
                 candidate_refs=[canonical_ref, legacy_ref],
                 listing_ids=["1536069684"],
@@ -691,13 +692,28 @@ def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
         entry for entry in entries if entry["preview_kind"] == "rendered_diorama"
     )
     assert rendered_entry["candidate_refs"] == [
-        "ad48357be22535c1",
+        "karl-czerny-gasse-2-private-showcase",
         "cece2dad814fdf68",
     ]
+    assert rendered_entry["listing_ids"] == []
+    assert rendered_entry["binding_listing_ids"] == ["1536069684"]
     assert rendered_entry["hosted_tour"] == _approved_hosted_tour_binding(
-        candidate_refs=["ad48357be22535c1", "cece2dad814fdf68"],
+        candidate_refs=[
+            "karl-czerny-gasse-2-private-showcase",
+            "cece2dad814fdf68",
+        ],
         listing_ids=["1536069684"],
+        reviewed_at="2026-08-06T06:28:06Z",
+        evidence_sha256="423d24216c8690478440f59d15b93756f21341e60cafc205c6d128071fb53e7e",
     )
+    rendered_index = build_curated_diorama_entry_index(
+        payload,
+        static_root=repo_root / "ea" / "app" / "static",
+    )
+    assert "candidate:karl-czerny-gasse-2-private-showcase" in rendered_index
+    assert "candidate:cece2dad814fdf68" in rendered_index
+    assert "candidate:ad48357be22535c1" not in rendered_index
+    assert "listing:1536069684" not in rendered_index
     assert all(
         entry["preview_kind"]
         in {"illustrative_drawn_diorama", "rendered_diorama"}

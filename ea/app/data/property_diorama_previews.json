@@ -2627,10 +2627,11 @@
     {
       "rank": 41,
       "candidate_refs": [
-        "ad48357be22535c1",
+        "karl-czerny-gasse-2-private-showcase",
         "cece2dad814fdf68"
       ],
-      "listing_ids": [
+      "listing_ids": [],
+      "binding_listing_ids": [
         "1536069684"
       ],
       "preview_kind": "rendered_diorama",
@@ -2657,12 +2658,12 @@
         "walkthrough_url": "/tours/karl-czerny-gasse-2-urban-jungle/walkthrough",
         "spatial_tour_url": "/tours/3dvista/karl-czerny-gasse-2-urban-jungle/3dvista/index.htm",
         "property_url_sha256": "c20cc5d801fa85982874524703514160d3aa6003456738ba0c816d6d4a825431",
-        "binding_sha256": "d573a57c37d626bb2dad3979a7186b520e3010cf9c0f34ffdc76302c3da00acf",
+        "binding_sha256": "423d24216c8690478440f59d15b93756f21341e60cafc205c6d128071fb53e7e",
         "review": {
           "status": "approved",
           "reviewed_by": "codex-release-owner",
-          "reviewed_at": "2026-08-04T15:45:33Z",
-          "evidence_sha256": "f653f438caafe3c4f4802c3692f2ae0919cc457d61b1602bfcd9a01be0279e38"
+          "reviewed_at": "2026-08-06T06:28:06Z",
+          "evidence_sha256": "423d24216c8690478440f59d15b93756f21341e60cafc205c6d128071fb53e7e"
         }
       },
       "governance": {

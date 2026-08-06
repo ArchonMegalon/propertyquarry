@@ -2462,10 +2462,15 @@ def _property_apply_curated_diorama_preview(
             if str(value or "").strip()
         }
     )
+    raw_binding_listing_ids = entry.get("binding_listing_ids")
     listing_ids = sorted(
         {
             str(value or "").strip().lower()
-            for value in list(entry.get("listing_ids") or [])
+            for value in list(
+                raw_binding_listing_ids
+                if isinstance(raw_binding_listing_ids, list)
+                else entry.get("listing_ids") or []
+            )
             if str(value or "").strip()
         }
     )
