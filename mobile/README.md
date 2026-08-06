@@ -23,7 +23,7 @@ npm run test:web
 npm run android:preview:container
 ```
 
-The container build pins the Android image by digest, persists Gradle downloads and a preview-only debug signing identity in separate Docker volumes, and runs unit tests, lint, APK packaging and instrumentation-APK packaging from a clean tree. The preview APK is written to `android/app/build/outputs/apk/preview/app-preview.apk`.
+The container build pins the Android image by digest, persists Gradle downloads and a preview-only debug signing identity in separate Docker volumes, and runs unit tests, lint, APK packaging and instrumentation-APK packaging from a clean tree. An existing signed release-bundle directory is snapshotted and restored around that clean build so preview testing cannot invalidate release evidence. The preview APK is written to `android/app/build/outputs/apk/preview/app-preview.apk`.
 
 ## Release signing
 

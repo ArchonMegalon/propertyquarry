@@ -35,6 +35,7 @@ test('Capacitor stays isolated and cannot navigate to an arbitrary origin', () =
 test('native runtime and signing contracts fail closed', () => {
   const appGradle = read('android', 'app', 'build.gradle');
   const lintConfig = read('android', 'app', 'lint.xml');
+  const previewBuilder = read('scripts', 'build-preview-container.sh');
   const runtime = read(
     'android', 'app', 'src', 'main', 'java', 'com', 'myexternalbrain',
     'propertyquarry', 'PropertyQuarryRuntimeContract.java',
@@ -55,6 +56,9 @@ test('native runtime and signing contracts fail closed', () => {
   assert.match(appGradle, /verifyPropertyQuarryReleaseSigning/);
   assert.match(appGradle, /PROPERTYQUARRY_ANDROID_KEYSTORE_PATH/);
   assert.match(lintConfig, /src\/main\/res\/xml\/config\.xml/);
+  assert.match(previewBuilder, /propertyquarry_release_bundle_backup="\$\(mktemp -d\)"/);
+  assert.match(previewBuilder, /trap propertyquarry_restore_release_bundle EXIT/);
+  assert.match(previewBuilder, /cp -a "\$\{propertyquarry_release_bundle_backup\}\/\."/);
   assert.match(runtime, /requireExact\(payload, "walkthrough_default", "camera"\)/);
   assert.match(runtime, /"3dvista"\.equals\(providers\.getString\(0\)\)/);
   assert.match(runtime, /"matterport"\.equals\(providers\.getString\(1\)\)/);
