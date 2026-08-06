@@ -1696,6 +1696,25 @@ def test_propertyquarry_progress_best_so_far_skips_unconfirmed_search_candidate(
     assert card["detail_url"] == "/app/research/confirmed-flat?run_id=run-best-so-far"
 
 
+def test_propertyquarry_compact_live_run_keeps_safe_best_candidate_detail_link() -> None:
+    compact = landing_property_workspace_payload._property_workbench_client_run_payload(
+        {
+            "run_id": "run-best-so-far",
+            "status": "in_progress",
+            "current_property": {
+                "candidate_ref": "confirmed-flat",
+                "title": "Confirmed flat",
+                "status_label": "Best so far",
+                "detail_url": "/app/research/confirmed-flat?run_id=run-best-so-far",
+            },
+        }
+    )
+
+    assert compact["current_property"]["detail_url"] == (
+        "/app/research/confirmed-flat?run_id=run-best-so-far"
+    )
+
+
 def test_propertyquarry_browser_route_preview_uses_confirmed_distance_fallback_copy() -> None:
     body = _read_workbench_bundle()
 

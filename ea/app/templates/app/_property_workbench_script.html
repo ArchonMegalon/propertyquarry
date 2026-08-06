@@ -108,6 +108,7 @@
           'Hide search settings': 'Sucheinstellungen ausblenden',
           'Best so far': 'Bisher am besten',
           'Current property': 'Aktuelle Immobilie',
+          'Diorama preview in progress': 'Diorama-Vorschau wird erstellt',
           'Provider': 'Anbieter',
           'all found homes are checked': 'alle gefundenen Immobilien sind geprüft',
           'home details are still loading': 'Immobiliendetails werden noch geladen',
@@ -210,6 +211,7 @@
                 'Hide search settings': 'Ocultar configuración de búsqueda',
                 'Best so far': 'La mejor hasta ahora',
                 'Current property': 'Propiedad actual',
+                'Diorama preview in progress': 'Creando vista previa del diorama',
                 'Provider': 'Proveedor',
                 'all found homes are checked': 'todas las propiedades encontradas están revisadas',
                 'home details are still loading': 'los detalles de las propiedades aún se están cargando',
@@ -355,6 +357,10 @@
         [/\b(\d+) to review\b/gi, (_match, count) => (
           clientLocale.startsWith('de') ? `${count} zu prüfen` : `${count} por revisar`
         )],
+        [/\b(\d+(?:[.,]\d+)?) rooms?\b/gi, (_match, count) => (
+          clientLocale.startsWith('de') ? `${count} Zimmer` : `${count} habitaciones`
+        )],
+        [/\b(\d+(?:[.,]\d+)?) m2\b/gi, (_match, count) => `${count} m²`],
         [/\b(\d+) (sources|checks|search queries) left\b/gi, (_match, count, rawUnit) => {
           const normalizedUnit = String(rawUnit || '').toLowerCase();
           const unit = normalizedUnit === 'checks'
@@ -3782,7 +3788,7 @@
       property?.location_label,
       property?.price_display,
       property?.layout_display,
-    ].map((value) => String(value || '').trim()).filter((value, index, rows) => value && rows.indexOf(value) === index).join(' · ');
+    ].map((value) => localizeLiveCopy(String(value || '').trim())).filter((value, index, rows) => value && rows.indexOf(value) === index).join(' · ');
     const renderCurrentPropertyCard = (runPayload) => {
       const property = currentPropertyCardPayload(runPayload);
       if (!property || typeof property !== 'object') return '';

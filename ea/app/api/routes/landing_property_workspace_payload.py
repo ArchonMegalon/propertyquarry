@@ -1333,6 +1333,9 @@ def _property_workbench_client_run_payload(run_payload: dict[str, object]) -> di
         for key in ("status_label", "status_detail"):
             if current_property.get(key) not in (None, "", [], {}):
                 compact_current_property[key] = current_property.get(key)
+        detail_url = str(current_property.get("detail_url") or "").strip()
+        if detail_url.startswith("/app/research/") and not detail_url.startswith("//"):
+            compact_current_property["detail_url"] = detail_url
         if compact_current_property:
             compact_run["current_property"] = compact_current_property
     reliability = dict(raw_run.get("reliability") or {}) if isinstance(raw_run.get("reliability"), dict) else {}
