@@ -29,6 +29,8 @@ else
   propertyquarry_source_dirty="false"
 fi
 
+npm --prefix "${propertyquarry_mobile_root}" run test:web
+
 docker run --rm \
   -e "PROPERTYQUARRY_BUILD_UID=${propertyquarry_owner_uid}" \
   -e "PROPERTYQUARRY_BUILD_GID=${propertyquarry_owner_gid}" \
@@ -164,12 +166,12 @@ docker run --rm \
       "  \"bundletool_version\": \"${PROPERTYQUARRY_BUNDLETOOL_VERSION}\"," \
       "  \"bundletool_sha256\": \"${PROPERTYQUARRY_BUNDLETOOL_SHA256}\"," \
       "  \"bundletool_validate\": true," \
+      "  \"web_contract_tests\": true," \
+      "  \"release_unit_tests\": true," \
+      "  \"release_lint\": true," \
       "  \"jar_signature_verified\": true," \
       "  \"embedded_signer_matches_upload_certificate\": true," \
       "  \"upload_certificate_sha256\": \"${propertyquarry_signer_sha256}\"," \
-      "  \"play_app_signing\": \"pending_play_console\"," \
-      "  \"production_app_links\": \"pending_play_app_signing_sha256\"," \
-      "  \"play_release\": \"not_uploaded\"," \
       "  \"status\": \"upload_ready_local\"" \
       "}" \
       >"${propertyquarry_evidence}"

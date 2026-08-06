@@ -11,6 +11,7 @@
     "android:preview:container": "npm run sync && bash scripts/build-preview-container.sh",
     "android:release": "npm run sync && cd android && ./gradlew bundleRelease",
     "android:release:container": "npm run sync && bash scripts/build-release-container.sh",
+    "android:release:readiness": "node scripts/verify-release-readiness.mjs",
     "android:upload-key:provision": "bash scripts/provision-upload-key.sh"
   },
   "dependencies": {

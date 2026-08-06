@@ -52,7 +52,15 @@ set +a
 npm run android:release:container
 ```
 
-The release container runs the release unit tests and lint, builds the signed AAB, validates it with checksum-pinned Google Bundletool `1.18.3`, enforces the production package/version/SDK contract, verifies its JAR signature and exact upload-certificate identity, prints the public signing certificate, and writes `android/app/build/outputs/bundle/release/app-release.aab`. It also creates the ignored, secret-free receipt `build/propertyquarry-android-release-evidence.json`; external Play App Signing, production App Links and upload state remain explicitly pending until proven in Play Console. Passwords are inherited by name and are never included in the Docker command line or build log.
+The release container runs the web/store contract tests, release unit tests and lint, builds the signed AAB, validates it with checksum-pinned Google Bundletool `1.18.3`, enforces the production package/version/SDK contract, verifies its JAR signature and exact upload-certificate identity, prints the public signing certificate, and writes `android/app/build/outputs/bundle/release/app-release.aab`. It also creates the ignored, secret-free receipt `build/propertyquarry-android-release-evidence.json`. Passwords are inherited by name and are never included in the Docker command line or build log.
+
+After Play Console setup, save a redacted `propertyquarry.android.play_evidence.v1` receipt as `build/propertyquarry-google-play-evidence.json`, then run:
+
+```bash
+npm run android:release:readiness
+```
+
+The verifier cross-checks both receipts, the exact AAB digest and current Git commit against the live runtime contract, privacy page and Digital Asset Links. Exit `0` means release-ready, exit `2` means only external Play/App-Link proof is pending, and exit `1` means local evidence is invalid. An internal or closed test upload is sufficient for readiness; a production rollout remains a separate irreversible approval.
 
 ## Push posture
 
