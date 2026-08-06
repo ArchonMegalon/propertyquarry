@@ -73,6 +73,10 @@ test('native runtime and signing contracts fail closed', () => {
   assert.match(webViewClient, /isTrustedGoogleSignIn/);
   assert.match(webViewClient, /launchExternalLogin/);
   assert.match(mainActivity, /setOnCancelListener\(dialog -> resumePendingFlowOrStart\(\)\)/);
+  assert.match(mainActivity, /activityResumed = true;/);
+  assert.match(mainActivity, /pendingIntent = intent;/);
+  assert.match(mainActivity, /if \(!runtimeReady \|\| !activityResumed\) return;/);
+  assert.doesNotMatch(mainActivity, /onNewIntent[\s\S]{0,240}handleIntent\(intent\)/);
 });
 
 test('Play listing copy and graphics satisfy exact size limits', () => {

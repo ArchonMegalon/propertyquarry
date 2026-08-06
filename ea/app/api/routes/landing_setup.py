@@ -826,9 +826,31 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
   const status = document.querySelector('#status');
   const retry = document.querySelector('#retry');
   const native = window.Capacitor?.Plugins?.PropertyQuarryNative;
+  let running = false;
   const setStatus = (message, failed = false) => {
     status.textContent = message;
     retry.hidden = !failed;
+  };
+  const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+    Promise.resolve(promise).then(
+      (value) => { window.clearTimeout(timeout); resolve(value); },
+      (error) => { window.clearTimeout(timeout); reject(error); },
+    );
+  });
+  const fetchWithTimeout = async (url, options, timeoutMs) => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, {...options, signal: controller.signal});
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error('The secure sign-in service took too long. Check your connection and try again.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
   };
   const parseFailure = async (response) => {
     try {
@@ -840,17 +862,24 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
   };
   const auth = async () => {
     if (!native) throw new Error('Open this page in the PropertyQuarry app.');
-    const pending = await native.getPendingAuth();
+    setStatus('Reading the secure app handoff…');
+    const pending = await withTimeout(
+      native.getPendingAuth(),
+      8000,
+      'The app is still waking up. Try again to finish sign-in.',
+    );
     if (!pending?.code || !pending?.pkceVerifier) throw new Error('The secure sign-in handoff expired. Start sign-in again.');
-    const response = await fetch('/mobile/auth/redeem', {
+    setStatus('Confirming your secure sign-in…');
+    const response = await fetchWithTimeout('/mobile/auth/redeem', {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({code: pending.code, pkce_verifier: pending.pkceVerifier})
-    });
+    }, 15000);
     if (!response.ok) throw new Error(await parseFailure(response));
     const payload = await response.json();
-    await native.clearPendingAuth();
-    const shared = await native.getPendingShare();
+    setStatus('Opening your property search…');
+    native.clearPendingAuth().catch(() => {});
+    const shared = await withTimeout(native.getPendingShare(), 3000, '').catch(() => null);
     location.replace(shared?.propertyUrl ? '/mobile/share/bridge' : (payload.return_to || '/app/search'));
   };
   const share = async () => {
@@ -876,11 +905,16 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
     await native.clearPendingShare();
     location.replace(payload.shortlist_url || '/app/shortlist');
   };
-  const run = () => (mode === 'auth' ? auth() : share()).catch((error) => {
-    setStatus(error?.message || 'The app handoff could not be completed.', true);
-  });
+  const run = () => {
+    if (running) return;
+    running = true;
+    retry.hidden = true;
+    (mode === 'auth' ? auth() : share())
+      .catch((error) => setStatus(error?.message || 'The app handoff could not be completed.', true))
+      .finally(() => { running = false; });
+  };
   retry.addEventListener('click', run);
-  run();
+  window.setTimeout(run, 350);
 })();
 """.strip(),
         media_type="application/javascript",

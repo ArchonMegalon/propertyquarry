@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-06 14:09 UTC
+Updated: 2026-08-06 16:53 UTC
 
 ## Mission
 
@@ -11,6 +11,38 @@ ends. Do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## Secure sign-in incident and repair
+
+The installed internal build was observed hanging on `Finishing secure sign-in`
+after returning from Google. Live API access logs proved that the app loaded
+`/mobile/runtime-contract`, `/mobile/auth/bridge`, and `/mobile/bridge.js`, but
+never sent `POST /mobile/auth/redeem`. The server-side OAuth callback, PKCE
+exchange, HttpOnly WebView cookie, and redirect path remain covered by the green
+identity route suite. The failure boundary was the Android native bridge call
+before redemption.
+
+This handoff commit repairs both sides of that boundary:
+
+- `MainActivity` now defers pending auth/share navigation until the activity is
+  resumed and the runtime contract is ready, and prevents duplicate initial
+  navigation.
+- The mobile bridge now waits briefly for Android resume, bounds native calls
+  and redemption fetches with timeouts, exposes honest progress states, and
+  offers an actionable retry instead of spinning forever.
+
+The server-side bridge repair was hot-patched into the running
+`propertyquarry-api` container at 2026-08-06 16:52 UTC. The container returned
+healthy, local readiness and bridge probes returned HTTP 200, and the public
+Cloudflare response contained the new wake-up retry text with `Cache-Control:
+no-store`. This is a writable-container hotfix, not an immutable image release;
+the next production web deployment must build from this handoff commit or the
+hotfix will be lost on container recreation.
+
+The Android lifecycle half cannot reach testers until version 2 is accepted on
+the internal track after the upload-key cooldown. Until then, the deployed web
+bridge gives the installed version 1.0 app a bounded retry path rather than an
+endless spinner.
 
 ## Release state
 
@@ -55,7 +87,7 @@ eligible time.
 Path: mobile/android/app/build/outputs/bundle/release/app-release.aab
 Version name: 1.1.0
 Version code: 2
-SHA-256: a17256a66a73ae4de535361b0e9f324091584d96a0a6df692a296345d27dd7e6
+SHA-256: b4c0882c4a2b606335820580de97825d10bb05048b1982e7844bbc723672b629
 Min SDK: 24
 Target SDK: 36
 ```
@@ -184,6 +216,9 @@ and visually rechecked.
 - Mobile web contracts: `11/11 passed`.
 - npm audit: `0 vulnerabilities`.
 - Android preview build after dependency sync: `242` Gradle tasks, passed.
+- Secure sign-in route and mobile contract regression: `30 passed`.
+- Secure sign-in mobile web contract: `11/11 passed`.
+- Android preview build with lifecycle repair: `242` Gradle tasks, passed.
 - Signed Android release build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.

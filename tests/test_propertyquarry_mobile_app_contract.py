@@ -106,10 +106,13 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert "default-src 'none'" in auth.headers["content-security-policy"]
     assert "data-mobile-bridge=\"auth\"" in auth.text
     assert "data-mobile-bridge=\"share\"" in share.text
-    assert "fetch('/mobile/auth/redeem'" in script.text
+    assert "fetchWithTimeout('/mobile/auth/redeem'" in script.text
     assert "fetch('/app/api/mobile/property-links'" in script.text
     assert "method: 'POST'" in script.text
     assert "location.search" not in script.text
+    assert "const withTimeout" in script.text
+    assert "window.setTimeout(run, 350)" in script.text
+    assert "The app is still waking up. Try again to finish sign-in." in script.text
 
 
 def test_mobile_share_import_requires_auth_and_explicit_confirmation(
@@ -208,6 +211,19 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
         / "propertyquarry"
         / "PropertyQuarryRuntimeContract.java"
     ).read_text(encoding="utf-8")
+    main_activity = (
+        ROOT
+        / "mobile"
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "myexternalbrain"
+        / "propertyquarry"
+        / "MainActivity.java"
+    ).read_text(encoding="utf-8")
     all_mobile_text = "\n".join((manifest, runtime, json.dumps(package), json.dumps(capacitor)))
 
     assert capacitor["appId"] == "com.myexternalbrain.propertyquarry"
@@ -221,4 +237,8 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
     assert 'android:scheme="propertyquarry"' in manifest
     assert 'requireExact(payload, "walkthrough_default", "camera")' in runtime
     assert 'List.of("3dvista", "matterport")' not in runtime
+    assert "activityResumed = true;" in main_activity
+    assert "pendingIntent = intent;" in main_activity
+    assert "private void continueWhenReady()" in main_activity
+    assert "if (!runtimeReady || !activityResumed) return;" in main_activity
     assert "memorial" not in all_mobile_text.lower()

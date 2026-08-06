@@ -23,6 +23,8 @@ public final class MainActivity extends BridgeActivity {
 
     private final ExecutorService runtimeExecutor = Executors.newSingleThreadExecutor();
     private volatile boolean runtimeReady = false;
+    private boolean activityResumed = false;
+    private boolean navigationStarted = false;
     private Intent pendingIntent;
     private PropertyQuarryRuntimeContract.Verified verifiedRuntime;
 
@@ -39,11 +41,21 @@ public final class MainActivity extends BridgeActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (!runtimeReady) {
-            pendingIntent = intent;
-            return;
-        }
-        handleIntent(intent);
+        pendingIntent = intent;
+        continueWhenReady();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        activityResumed = true;
+        continueWhenReady();
+    }
+
+    @Override
+    public void onPause() {
+        activityResumed = false;
+        super.onPause();
     }
 
     @Override
@@ -76,17 +88,27 @@ public final class MainActivity extends BridgeActivity {
                 runOnUiThread(() -> {
                     verifiedRuntime = verified;
                     runtimeReady = true;
-                    Intent intent = pendingIntent;
-                    pendingIntent = null;
-                    if (intent == null || !handleIntent(intent)) {
-                        resumePendingFlowOrStart();
-                    }
+                    continueWhenReady();
                 });
             } catch (Exception exception) {
                 String reason = String.valueOf(exception.getMessage());
                 runOnUiThread(() -> showRuntimeFailure(reason));
             }
         });
+    }
+
+    private void continueWhenReady() {
+        if (!runtimeReady || !activityResumed) return;
+        Intent intent = pendingIntent;
+        pendingIntent = null;
+        if (intent != null && handleIntent(intent)) {
+            navigationStarted = true;
+            return;
+        }
+        if (!navigationStarted) {
+            navigationStarted = true;
+            resumePendingFlowOrStart();
+        }
     }
 
     private void resumePendingFlowOrStart() {
