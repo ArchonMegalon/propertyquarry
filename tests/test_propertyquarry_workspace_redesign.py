@@ -3988,7 +3988,7 @@ def test_propertyquarry_running_panel_does_not_use_raw_url_as_best_title(monkeyp
     assert "1010 Vienna" in response.text
 
 
-def test_propertyquarry_running_panel_does_not_use_raw_url_as_best_summary(monkeypatch) -> None:
+def test_propertyquarry_running_panel_hides_raw_url_but_keeps_safe_best_candidate(monkeypatch) -> None:
     client = build_property_client(principal_id="pq-running-url-summary")
     start_workspace(client, mode="personal", workspace_name="Running Url Summary Office")
 
@@ -4031,7 +4031,8 @@ def test_propertyquarry_running_panel_does_not_use_raw_url_as_best_summary(monke
     assert response.status_code == 200
     assert raw_url not in response.text
     rendered_html = re.sub(r"<script\b[^>]*>.*?</script>", " ", response.text, flags=re.IGNORECASE | re.DOTALL)
-    assert "Altbau near U6" not in rendered_html
+    assert "Best so far" in rendered_html
+    assert "Altbau near U6" in rendered_html
     assert "Diorama preparing" not in rendered_html
     assert "Diorama is being prepared" not in rendered_html
 
@@ -7344,7 +7345,7 @@ def test_propertyquarry_example_media_targets_use_real_public_tour_assets(
         "demo_href": "/tours/demo-home-tour",
         "tour_href": "/tours/demo-home-tour/control/3dvista",
         "tour_label": "3D tour available",
-        "walkthrough_href": "/tours/demo-home-tour?pane=flythrough-pane&autoplay=1",
+        "walkthrough_href": "/tours/demo-home-tour/walkthrough",
         "walkthrough_label": "Walkthrough available",
     }
 
@@ -7628,7 +7629,7 @@ def test_propertyquarry_example_shortlist_rows_keep_static_diorama_preview_when_
     rows = landing_routes._propertyquarry_example_shortlist_rows()
 
     assert rows[0]["tour_href"] == "/tours/demo-home-tour/control/3dvista"
-    assert rows[0]["walkthrough_href"] == "/tours/demo-home-tour?pane=flythrough-pane&autoplay=1"
+    assert rows[0]["walkthrough_href"] == "/tours/demo-home-tour/walkthrough"
     assert rows[0]["scope_preview"]["image_url"].startswith("/static/property/home/example-shortlist-diorama-1.webp?v=")
     assert rows[0]["scope_preview"]["preview_image_url"].startswith(
         "/static/property/home/example-shortlist-diorama-1.webp?v="
@@ -30608,7 +30609,7 @@ def test_property_research_packet_shows_ready_walkthrough_inside_visual_console(
         "tour_url": "https://propertyquarry.com/tours/walkthrough-ready-loft",
         "flythrough_status": "ready",
         "flythrough_provider": "magicfit",
-        "flythrough_url": "https://propertyquarry.com/tours/walkthrough-ready-loft?pane=flythrough-pane&autoplay=1",
+        "flythrough_url": "https://propertyquarry.com/tours/walkthrough-ready-loft/walkthrough",
         "property_facts": {
             "price_eur": 2650.0,
             "area_m2": 94.0,
@@ -30652,7 +30653,7 @@ def test_property_research_packet_shows_ready_walkthrough_inside_visual_console(
         "_hosted_property_tour_verified_provider",
         lambda _url, *, principal_id="": "3dvista",
     )
-    verified_walkthrough_href = "https://propertyquarry.com/tours/walkthrough-ready-loft?pane=flythrough-pane&autoplay=1"
+    verified_walkthrough_href = "https://propertyquarry.com/tours/walkthrough-ready-loft/walkthrough"
     monkeypatch.setattr(
         landing_property_research.property_tour_hosting,
         "_hosted_property_tour_walkthrough_asset_url",
