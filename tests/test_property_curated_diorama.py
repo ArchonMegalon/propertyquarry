@@ -557,6 +557,46 @@ def test_legacy_curated_alias_restores_and_marks_ranked_candidate(
     assert restored["tour_provider"] == "3dvista"
 
 
+def test_curated_alias_deep_link_resolves_owned_historical_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_ref = "karl-czerny-gasse-2-private-showcase"
+    legacy_ref = "cece2dad814fdf68"
+    observed_refs: list[str] = []
+
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_candidate_refs",
+        lambda _candidate_ref: (canonical_ref, legacy_ref),
+    )
+
+    def _lookup_across_runs(
+        _product: object,
+        **kwargs: object,
+    ) -> tuple[dict[str, object] | None, str]:
+        candidate_ref = str(kwargs.get("candidate_ref") or "")
+        observed_refs.append(candidate_ref)
+        if candidate_ref == canonical_ref:
+            return {"candidate_ref": canonical_ref}, "historical-karl-run"
+        return None, ""
+
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_lookup_candidate_across_runs",
+        _lookup_across_runs,
+    )
+
+    run_id = landing_routes._property_resolve_curated_candidate_run_id(
+        object(),
+        principal_id="owned-principal",
+        access_email="owner@example.com",
+        requested_candidate_ref=legacy_ref,
+    )
+
+    assert run_id == "historical-karl-run"
+    assert observed_refs == [canonical_ref]
+
+
 def test_exact_shortlist_run_renders_all_drawn_diorama_thumbnails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

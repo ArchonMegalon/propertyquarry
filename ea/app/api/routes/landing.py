@@ -3797,6 +3797,30 @@ def _property_lookup_candidate_across_runs(
     return None, ""
 
 
+def _property_resolve_curated_candidate_run_id(
+    product: Any,
+    *,
+    principal_id: str,
+    access_email: str = "",
+    requested_candidate_ref: object,
+) -> str:
+    """Resolve a governed candidate deep link to its owned historical run."""
+
+    for candidate_ref in _property_curated_diorama_candidate_refs(
+        requested_candidate_ref
+    ):
+        matched_candidate, matched_run_id = _property_lookup_candidate_across_runs(
+            product,
+            principal_id=principal_id,
+            access_email=access_email,
+            candidate_ref=candidate_ref,
+            max_runs=12,
+        )
+        if matched_candidate is not None and matched_run_id:
+            return matched_run_id
+    return ""
+
+
 def _property_compact_preference_overlay(payload: dict[str, object]) -> dict[str, object]:
     preferences = dict(payload or {})
     for heavy_key in (
@@ -10399,18 +10423,12 @@ def app_shell(
             and str(candidate or "").strip()
             and not normalized_run_id
         ):
-            for indexed_candidate_ref in _property_curated_diorama_candidate_refs(
-                candidate
-            ):
-                indexed_candidate, indexed_run_id = _property_lookup_indexed_candidate(
-                    product,
-                    principal_id=context.principal_id,
-                    access_email=context.access_email,
-                    candidate_ref=indexed_candidate_ref,
-                )
-                if indexed_candidate is not None and indexed_run_id:
-                    normalized_run_id = indexed_run_id
-                    break
+            normalized_run_id = _property_resolve_curated_candidate_run_id(
+                product,
+                principal_id=context.principal_id,
+                access_email=context.access_email,
+                requested_candidate_ref=candidate,
+            )
         if (
             property_brand
             and resolved_section == "properties"
