@@ -2626,6 +2626,9 @@
     },
     {
       "rank": 41,
+      "search_visibility": "suppressed",
+      "suppression_reason": "owner_removed_from_search_results",
+      "suppressed_at": "2026-08-06T07:59:00Z",
       "candidate_refs": [
         "karl-czerny-gasse-2-private-showcase",
         "cece2dad814fdf68"

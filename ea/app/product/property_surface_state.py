@@ -8,6 +8,9 @@ from typing import Callable
 from app.services.property_billing import normalize_property_plan_key, property_commercial_snapshot, property_plan_has_unlimited_provider_results
 from app.services.property_customer_copy import sanitize_property_marketing_copy, summarize_property_description_copy
 from app.services.property_market_catalog import supported_currency_codes
+from app.services.property_search_visibility import (
+    filter_property_search_run_visibility,
+)
 
 from app.product.models import (
     PropertyBillingTruthSnapshot,
@@ -502,6 +505,7 @@ def normalize_property_search_run_snapshot(raw_run: dict[str, object]) -> dict[s
         **original_payload,
         **PropertySearchRunSnapshot.from_dict(original_payload).to_dict(),
     }
+    payload = filter_property_search_run_visibility(payload)
     summary = dict(payload.get("summary") or {}) if isinstance(payload.get("summary"), dict) else {}
     status = str(payload.get("status") or summary.get("status") or "").strip().lower()
     sources = [dict(row) for row in list(summary.get("sources") or []) if isinstance(row, dict)]

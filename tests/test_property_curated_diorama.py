@@ -13,6 +13,7 @@ from app.api.routes import landing_property_workspace_payload as workspace_paylo
 from app.services.property_curated_diorama import (
     build_curated_diorama_entry_index,
     build_curated_diorama_preview_index,
+    curated_diorama_entry_is_approved,
     curated_diorama_governance_subject_sha256,
 )
 from tests.product_test_helpers import build_property_client
@@ -697,15 +698,12 @@ def test_tracked_curated_diorama_assets_are_not_orphaned() -> None:
     }
     manifest_path = repo_root / "ea" / "app" / "data" / "property_diorama_previews.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
-    index = build_curated_diorama_preview_index(
-        payload,
-        static_root=repo_root / "ea" / "app" / "static",
-    )
-    approved_assets = {
-        f"ea/app/static/{asset_url.removeprefix('/static/')}"
-        for asset_url in index.values()
+    declared_assets = {
+        f"ea/app/static/{str(entry.get('asset_url') or '').removeprefix('/static/')}"
+        for entry in list(payload.get("entries") or [])
+        if str(entry.get("asset_url") or "").startswith("/static/")
     }
-    assert tracked_assets == approved_assets
+    assert tracked_assets == declared_assets
 
 
 def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
@@ -737,6 +735,14 @@ def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
     ]
     assert rendered_entry["listing_ids"] == []
     assert rendered_entry["binding_listing_ids"] == ["1536069684"]
+    assert rendered_entry["search_visibility"] == "suppressed"
+    assert rendered_entry["suppression_reason"] == (
+        "owner_removed_from_search_results"
+    )
+    assert curated_diorama_entry_is_approved(
+        rendered_entry,
+        asset_sha256=rendered_entry["asset_sha256"],
+    )
     assert rendered_entry["hosted_tour"] == _approved_hosted_tour_binding(
         candidate_refs=[
             "karl-czerny-gasse-2-private-showcase",
@@ -750,8 +756,8 @@ def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
         payload,
         static_root=repo_root / "ea" / "app" / "static",
     )
-    assert "candidate:karl-czerny-gasse-2-private-showcase" in rendered_index
-    assert "candidate:cece2dad814fdf68" in rendered_index
+    assert "candidate:karl-czerny-gasse-2-private-showcase" not in rendered_index
+    assert "candidate:cece2dad814fdf68" not in rendered_index
     assert "candidate:ad48357be22535c1" not in rendered_index
     assert "listing:1536069684" not in rendered_index
     assert all(

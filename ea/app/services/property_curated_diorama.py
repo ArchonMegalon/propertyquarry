@@ -119,6 +119,11 @@ def build_curated_diorama_entry_index(
     for raw_entry in entries:
         if not isinstance(raw_entry, Mapping):
             continue
+        search_visibility = str(
+            raw_entry.get("search_visibility") or "visible"
+        ).strip().lower()
+        if search_visibility not in {"visible", "suppressed"}:
+            continue
         asset_url = str(raw_entry.get("asset_url") or "").strip()
         declared_sha256 = str(raw_entry.get("asset_sha256") or "").strip().lower()
         preview_kind = str(raw_entry.get("preview_kind") or "").strip()
@@ -175,6 +180,9 @@ def build_curated_diorama_entry_index(
         normalized_entry["representation"] = representation
         normalized_entry["source_basis"] = source_basis
         normalized_entry["truth_boundary"] = truth_boundary
+        normalized_entry["search_visibility"] = search_visibility
+        if search_visibility == "suppressed":
+            continue
         entry_index: dict[str, dict[str, object]] = {}
         for candidate_ref in candidate_refs:
             normalized = str(candidate_ref or "").strip().lower()
