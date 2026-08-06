@@ -36,6 +36,7 @@ test('native runtime and signing contracts fail closed', () => {
   const appGradle = read('android', 'app', 'build.gradle');
   const lintConfig = read('android', 'app', 'lint.xml');
   const previewBuilder = read('scripts', 'build-preview-container.sh');
+  const releaseBuilder = read('scripts', 'build-release-container.sh');
   const runtime = read(
     'android', 'app', 'src', 'main', 'java', 'com', 'myexternalbrain',
     'propertyquarry', 'PropertyQuarryRuntimeContract.java',
@@ -55,6 +56,10 @@ test('native runtime and signing contracts fail closed', () => {
 
   assert.match(appGradle, /verifyPropertyQuarryReleaseSigning/);
   assert.match(appGradle, /PROPERTYQUARRY_ANDROID_KEYSTORE_PATH/);
+  assert.match(appGradle, /versionCode 2/);
+  assert.match(appGradle, /versionName "1\.1\.0"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_code="2"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.0"/);
   assert.match(lintConfig, /src\/main\/res\/xml\/config\.xml/);
   assert.match(previewBuilder, /propertyquarry_release_bundle_backup="\$\(mktemp -d\)"/);
   assert.match(previewBuilder, /trap propertyquarry_restore_release_bundle EXIT/);
