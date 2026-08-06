@@ -3492,33 +3492,23 @@ def _hosted_property_tour_walkthrough_open_url(
     )
     if not canonical_walkthrough_url:
         return ""
-    slug = _hosted_property_tour_slug_from_url(verified_tour_source) or _hosted_property_tour_slug_from_url(canonical_walkthrough_url)
+    # The default walkthrough is the verified normal-camera clip itself. Keep
+    # the interactive 3D tour (and its optional 3D-glasses mode) on the separate
+    # tour control so the primary walkthrough action never opens a spatial pane.
+    # Do not expose the verified raw asset path: route it through the branded
+    # public walkthrough endpoint after the owner-scoped readiness check above.
+    slug = _hosted_property_tour_slug_from_url(verified_tour_source)
     if not slug:
-        return canonical_walkthrough_url
-    walkthrough_path = f"/tours/{urllib.parse.quote(slug, safe='')}"
-    walkthrough_query = "pane=flythrough-pane&autoplay=1"
-    for source_url in (verified_tour_source, canonical_walkthrough_url):
-        normalized_source = str(source_url or "").strip()
-        if not normalized_source:
-            continue
-        parsed = urllib.parse.urlparse(normalized_source)
-        if not parsed.scheme and not parsed.netloc and str(parsed.path or "").startswith("/tours/"):
-            return f"{walkthrough_path}?{walkthrough_query}"
-        if not parsed.scheme or not parsed.netloc:
-            continue
-        branded_tour_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, f"/tours/{slug}", "", "", ""))
-        if _is_branded_public_tour_url(branded_tour_url):
-            return urllib.parse.urlunparse(
-                (
-                    parsed.scheme,
-                    parsed.netloc,
-                    walkthrough_path,
-                    "",
-                    walkthrough_query,
-                    "",
-                )
-            )
-    return canonical_walkthrough_url
+        slug = _hosted_property_tour_slug_from_url(canonical_walkthrough_url)
+    if not slug:
+        return ""
+    route_path = f"/tours/{urllib.parse.quote(slug, safe='')}/walkthrough"
+    parsed_source = urllib.parse.urlparse(verified_tour_source)
+    if parsed_source.scheme and parsed_source.netloc:
+        return urllib.parse.urlunparse(
+            (parsed_source.scheme, parsed_source.netloc, route_path, "", "", "")
+        )
+    return route_path
 
 
 def _generated_reconstruction_relpath_file(bundle_dir: Path, relpath: object) -> Path | None:

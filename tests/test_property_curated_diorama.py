@@ -436,7 +436,7 @@ def test_workspace_tour_and_walkthrough_readiness_are_owner_scoped(
         lambda _url, _walkthrough="", *, principal_id="": principal_calls.append(
             ("walkthrough", principal_id)
         )
-        or "/tours/karl?pane=flythrough-pane&autoplay=1",
+        or "/tours/karl/walkthrough",
     )
     candidate = {
         "tour_url": "/tours/karl",
@@ -456,7 +456,7 @@ def test_workspace_tour_and_walkthrough_readiness_are_owner_scoped(
     )
 
     assert tour_url == "/tours/karl/control/3dvista"
-    assert walkthrough_url == "/tours/karl?pane=flythrough-pane&autoplay=1"
+    assert walkthrough_url == "/tours/karl/walkthrough"
     assert [call for call in principal_calls if call[1]] == [
         ("provider", "user-owner"),
         ("tour", "user-owner"),
