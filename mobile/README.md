@@ -36,6 +36,24 @@ Release builds fail closed unless all four values are present and the keystore p
 
 No signing material belongs in Git. Google Play App Signing should own the production app-signing key; the local key is an upload key only. Publish the Play app-signing SHA-256 fingerprint through `PROPERTYQUARRY_ANDROID_APP_LINK_SHA256_CERTS`, then verify the live Asset Links response before rollout.
 
+Provision a dedicated upload identity into an explicit directory outside the repository. The command fails closed instead of replacing an existing identity:
+
+```bash
+PROPERTYQUARRY_ANDROID_SIGNING_DIR=/absolute/private/path \
+  npm run android:upload-key:provision
+```
+
+The command creates a mode-`0600` PKCS#12 keystore, a public PEM certificate, and a mode-`0600` `android-release.env` file. Source that file only in the release shell, then use the digest-pinned Android build image:
+
+```bash
+set -a
+. /absolute/private/path/android-release.env
+set +a
+npm run android:release:container
+```
+
+The release container runs the release unit tests and lint, builds the signed AAB, validates it with checksum-pinned Google Bundletool `1.18.3`, enforces the production package/version/SDK contract, verifies its JAR signature and exact upload-certificate identity, prints the public signing certificate, and writes `android/app/build/outputs/bundle/release/app-release.aab`. It also creates the ignored, secret-free receipt `build/propertyquarry-android-release-evidence.json`; external Play App Signing, production App Links and upload state remain explicitly pending until proven in Play Console. Passwords are inherited by name and are never included in the Docker command line or build log.
+
 ## Push posture
 
 The manifest declares Android 13 notification capability, while Firebase configuration remains optional and secret-free. No `google-services.json` is committed. A release must not claim working push delivery until a PropertyQuarry-owned Firebase project, consent UI, token registration endpoint, deletion flow, and end-to-end receipt are configured.

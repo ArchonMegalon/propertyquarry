@@ -5,5 +5,8 @@ android/app/build/
 android/local.properties
 *.jks
 *.keystore
+*.p12
+*.pfx
+android-release.env
 release-secrets.properties
 store/graphics/*-source.png

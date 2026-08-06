@@ -9,7 +9,9 @@
     "test:web": "node --test test/*.test.mjs",
     "android:preview": "npm run sync && cd android && ./gradlew assemblePreview",
     "android:preview:container": "npm run sync && bash scripts/build-preview-container.sh",
-    "android:release": "npm run sync && cd android && ./gradlew bundleRelease"
+    "android:release": "npm run sync && cd android && ./gradlew bundleRelease",
+    "android:release:container": "npm run sync && bash scripts/build-release-container.sh",
+    "android:upload-key:provision": "bash scripts/provision-upload-key.sh"
   },
   "dependencies": {
     "@capacitor/android": "8.4.2",
