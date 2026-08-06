@@ -11,6 +11,10 @@ const APP_ID = "com.myexternalbrain.propertyquarry";
 const ORIGIN = "https://propertyquarry.com";
 const LOCAL_CONTRACT = "propertyquarry.android.release_evidence.v1";
 const PLAY_CONTRACT = "propertyquarry.android.play_evidence.v1";
+const UPLOAD_KEY_ACTIVATION_CONTRACT = "propertyquarry.google_play.upload_key_activation.v1";
+const PLAY_DEVELOPER_ACCOUNT_ID = "9007890349240845326";
+const PLAY_APP_ID = "4976153363318887490";
+const INTERNAL_TRACK_ID = "4701487190338825843";
 const ALLOWED_TEST_TRACKS = new Set(["internal", "closed"]);
 
 function check(id, state, detail) {
@@ -77,9 +81,11 @@ export async function auditAndroidRelease({
   mobileRoot,
   localEvidencePath = path.join(mobileRoot, "build/propertyquarry-android-release-evidence.json"),
   playEvidencePath = path.join(mobileRoot, "build/propertyquarry-google-play-evidence.json"),
+  uploadKeyActivationPath = path.join(mobileRoot, "build/propertyquarry-upload-key-activation-receipt.json"),
   origin = ORIGIN,
   fetchImpl = globalThis.fetch,
   gitHead,
+  now = new Date(),
 } = {}) {
   const checks = [];
   let localEvidence;
@@ -155,11 +161,65 @@ export async function auditAndroidRelease({
       playEvidence.upload_status === "completed" &&
       playEvidence.artifact_sha256 === localEvidence.artifact_sha256 &&
       playEvidence.production_rollout_started === false;
-    checks.push(check(
-      "play_evidence_contract",
-      exactPlayContract ? "pass" : "fail",
-      exactPlayContract ? `test_track_${playEvidence.release_track}` : "play_console_receipt_incomplete",
-    ));
+    if (exactPlayContract) {
+      checks.push(check(
+        "play_evidence_contract",
+        "pass",
+        `test_track_${playEvidence.release_track}`,
+      ));
+    } else {
+      try {
+        const activation = await readJson(uploadKeyActivationPath);
+        const screenshotPath = await safeRegularFile(
+          mobileRoot,
+          activation.evidence?.screenshot_path,
+        );
+        const screenshotSha256 = await sha256(screenshotPath);
+        const eligibleAt = Date.parse(activation.security_cooldown?.eligible_at || "");
+        const expectedDraftUrl = (
+          `https://play.google.com/console/u/0/developers/${PLAY_DEVELOPER_ACCOUNT_ID}`
+          + `/app/${PLAY_APP_ID}/tracks/${INTERNAL_TRACK_ID}/releases/2/prepare`
+        );
+        const exactActivationContract =
+          activation.contract_name === UPLOAD_KEY_ACTIVATION_CONTRACT &&
+          activation.developer_account_id === PLAY_DEVELOPER_ACCOUNT_ID &&
+          activation.play_app_id === PLAY_APP_ID &&
+          activation.application_id === APP_ID &&
+          activation.upload_key?.status === "active" &&
+          validFingerprint(activation.upload_key?.certificate_sha256) &&
+          normalizeFingerprint(activation.upload_key?.certificate_sha256) ===
+            normalizeFingerprint(localEvidence.upload_certificate_sha256) &&
+          activation.upload_key?.verified_in_play_console === true &&
+          activation.security_cooldown?.status === "upload_blocked_until_eligible_at" &&
+          Number.isFinite(eligibleAt) &&
+          activation.internal_release?.track === "internal" &&
+          activation.internal_release?.track_id === INTERNAL_TRACK_ID &&
+          activation.internal_release?.release_id === "2" &&
+          activation.internal_release?.draft_url === expectedDraftUrl &&
+          activation.internal_release?.status === "draft_upload_blocked_by_security_cooldown" &&
+          activation.internal_release?.artifact_sha256 === localEvidence.artifact_sha256 &&
+          activation.internal_release?.version_code === localEvidence.version_code &&
+          activation.internal_release?.version_name === localEvidence.version_name &&
+          activation.production_release_changed === false &&
+          validFingerprint(activation.evidence?.screenshot_sha256) &&
+          screenshotSha256 === normalizeFingerprint(activation.evidence?.screenshot_sha256);
+        if (!exactActivationContract) throw new Error("upload_key_activation_receipt_incomplete");
+        const eligibleAtIso = new Date(eligibleAt).toISOString();
+        checks.push(check(
+          "play_evidence_contract",
+          "blocked",
+          now.getTime() < eligibleAt
+            ? `upload_key_cooldown_until_${eligibleAtIso}`
+            : "internal_release_upload_pending",
+        ));
+      } catch (error) {
+        checks.push(check(
+          "play_evidence_contract",
+          "fail",
+          error.code === "ENOENT" ? "play_console_receipt_incomplete" : error.message,
+        ));
+      }
+    }
   }
 
   try {
@@ -252,6 +312,7 @@ function parseArguments(argv) {
     const value = argv[index];
     if (value === "--local-evidence") args.localEvidencePath = argv[++index];
     else if (value === "--play-evidence") args.playEvidencePath = argv[++index];
+    else if (value === "--upload-key-activation") args.uploadKeyActivationPath = argv[++index];
     else if (value === "--origin") args.origin = argv[++index];
     else throw new Error(`unknown_argument:${value}`);
   }

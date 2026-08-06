@@ -164,6 +164,9 @@ sending it through Telegram.
 - Added route-level locale regression coverage for the sign-in surface.
 - Updated supported Capacitor runtime packages without accepting the CLI audit
   regression.
+- Taught the release-readiness gate to verify the active-key/cooldown receipt,
+  fail closed on malformed evidence, and report the timed Play restriction as
+  an external blocker instead of a local release failure.
 - Preserved the preview-build guard that restores signed release bundles after
   Gradle `clean`.
 
@@ -178,12 +181,14 @@ and visually rechecked.
 - Locale contract: `6 passed`.
 - Registration and access contracts: `110 passed`.
 - Mobile app and release-installation contracts: `44 passed`.
-- Mobile web contracts: `9/9 passed`.
+- Mobile web contracts: `11/11 passed`.
 - npm audit: `0 vulnerabilities`.
 - Android preview build after dependency sync: `242` Gradle tasks, passed.
 - Signed Android release build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.
+- Release readiness: `0` failures and exactly `1` external blocker,
+  `upload_key_cooldown_until_2026-08-08T12:09:53.000Z`.
 
 The full repository-wide pytest run was stopped after it exposed the stale
 walkthrough assertion; the complete affected greenfield file and all targeted

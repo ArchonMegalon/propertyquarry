@@ -9,6 +9,7 @@ import { auditAndroidRelease } from "../scripts/verify-release-readiness.mjs";
 
 const APP_ID = "com.myexternalbrain.propertyquarry";
 const FINGERPRINT = "172772ee6f2a8f7f55d74b7653905b46d26389f8c17c000dd0e0877a3544e25e";
+const UPLOAD_FINGERPRINT = "a8887d6641bf7135e374b0d8504c841af5d726090fb81eae5967075b608116cf";
 const GIT_HEAD = "97bf109919e0c3ec3ae52c759974ebe239176d1a";
 
 function jsonResponse(payload) {
@@ -55,7 +56,7 @@ function liveFetch({ linksReady }) {
   };
 }
 
-async function fixture({ withPlayEvidence = false } = {}) {
+async function fixture({ withPlayEvidence = false, withCooldownEvidence = false } = {}) {
   const mobileRoot = await mkdtemp(path.join(os.tmpdir(), "propertyquarry-android-readiness-"));
   const artifactRelative = "android/app/build/outputs/bundle/release/app-release.aab";
   const artifactPath = path.join(mobileRoot, artifactRelative);
@@ -66,12 +67,14 @@ async function fixture({ withPlayEvidence = false } = {}) {
   const artifactSha256 = createHash("sha256").update(artifact).digest("hex");
   const localEvidencePath = path.join(mobileRoot, "build/propertyquarry-android-release-evidence.json");
   const playEvidencePath = path.join(mobileRoot, "build/propertyquarry-google-play-evidence.json");
+  const uploadKeyActivationPath = path.join(mobileRoot, "build/propertyquarry-upload-key-activation-receipt.json");
   await writeFile(localEvidencePath, JSON.stringify({
     contract_name: "propertyquarry.android.release_evidence.v1",
     source_commit: GIT_HEAD,
     source_dirty: false,
     application_id: APP_ID,
     version_code: 1,
+    version_name: "1.1.0",
     artifact_path: artifactRelative,
     artifact_sha256: artifactSha256,
     bundletool_validate: true,
@@ -80,6 +83,7 @@ async function fixture({ withPlayEvidence = false } = {}) {
     release_lint: true,
     jar_signature_verified: true,
     embedded_signer_matches_upload_certificate: true,
+    upload_certificate_sha256: UPLOAD_FINGERPRINT,
     status: "upload_ready_local",
   }));
   if (withPlayEvidence) {
@@ -91,11 +95,53 @@ async function fixture({ withPlayEvidence = false } = {}) {
       app_signing_certificate_sha256: FINGERPRINT,
       release_track: "internal",
       upload_status: "completed",
-      artifact_sha256: artifactSha256,
+      artifact_sha256: withCooldownEvidence ? "historical-version-one-artifact" : artifactSha256,
       production_rollout_started: false,
     }));
   }
-  return { mobileRoot, localEvidencePath, playEvidencePath, artifactPath };
+  if (withCooldownEvidence) {
+    const screenshotRelative = "build/propertyquarry-upload-key-cooldown.png";
+    const screenshot = Buffer.from("verified-play-cooldown-screenshot");
+    const screenshotSha256 = createHash("sha256").update(screenshot).digest("hex");
+    await writeFile(path.join(mobileRoot, screenshotRelative), screenshot);
+    await writeFile(uploadKeyActivationPath, JSON.stringify({
+      contract_name: "propertyquarry.google_play.upload_key_activation.v1",
+      developer_account_id: "9007890349240845326",
+      play_app_id: "4976153363318887490",
+      application_id: APP_ID,
+      upload_key: {
+        status: "active",
+        certificate_sha256: UPLOAD_FINGERPRINT,
+        verified_in_play_console: true,
+      },
+      security_cooldown: {
+        status: "upload_blocked_until_eligible_at",
+        eligible_at: "2026-08-08T12:09:53Z",
+      },
+      internal_release: {
+        track: "internal",
+        track_id: "4701487190338825843",
+        release_id: "2",
+        draft_url: "https://play.google.com/console/u/0/developers/9007890349240845326/app/4976153363318887490/tracks/4701487190338825843/releases/2/prepare",
+        status: "draft_upload_blocked_by_security_cooldown",
+        artifact_sha256: artifactSha256,
+        version_code: 1,
+        version_name: "1.1.0",
+      },
+      production_release_changed: false,
+      evidence: {
+        screenshot_path: screenshotRelative,
+        screenshot_sha256: screenshotSha256,
+      },
+    }));
+  }
+  return {
+    mobileRoot,
+    localEvidencePath,
+    playEvidencePath,
+    uploadKeyActivationPath,
+    artifactPath,
+  };
 }
 
 test("release readiness reports only external Play and App Link blockers", async (context) => {
@@ -126,6 +172,43 @@ test("release readiness passes with matching Play signing and internal-test evid
   assert.equal(report.failed_count, 0);
   assert.equal(report.blocked_count, 0);
   assert.equal(report.production_rollout_authorized, false);
+});
+
+test("release readiness reports a verified upload-key security cooldown as blocked", async (context) => {
+  const paths = await fixture({ withPlayEvidence: true, withCooldownEvidence: true });
+  context.after(() => rm(paths.mobileRoot, { recursive: true, force: true }));
+  const report = await auditAndroidRelease({
+    ...paths,
+    gitHead: GIT_HEAD,
+    now: new Date("2026-08-06T14:09:00Z"),
+    fetchImpl: liveFetch({ linksReady: true }),
+  });
+  assert.equal(report.status, "blocked");
+  assert.equal(report.failed_count, 0);
+  assert.equal(report.blocked_count, 1);
+  assert.match(
+    report.checks.find((row) => row.id === "play_evidence_contract").detail,
+    /^upload_key_cooldown_until_2026-08-08T12:09:53\.000Z$/,
+  );
+});
+
+test("release readiness rejects an unverified upload-key cooldown receipt", async (context) => {
+  const paths = await fixture({ withPlayEvidence: true, withCooldownEvidence: true });
+  context.after(() => rm(paths.mobileRoot, { recursive: true, force: true }));
+  await writeFile(
+    paths.uploadKeyActivationPath,
+    JSON.stringify({ contract_name: "propertyquarry.google_play.upload_key_activation.v1" }),
+  );
+  const report = await auditAndroidRelease({
+    ...paths,
+    gitHead: GIT_HEAD,
+    fetchImpl: liveFetch({ linksReady: true }),
+  });
+  assert.equal(report.status, "failed");
+  assert.equal(
+    report.checks.find((row) => row.id === "play_evidence_contract").state,
+    "fail",
+  );
 });
 
 test("release readiness fails when the signed AAB no longer matches its receipt", async (context) => {
