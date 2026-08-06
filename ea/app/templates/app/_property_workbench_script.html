@@ -3644,10 +3644,50 @@
           ? runPayload.summary.current_property
           : null);
       if (direct && (direct.title || direct.status_detail || direct.orientation_preview || direct.preview_image_url)) {
-        return direct;
+        return {
+          ...direct,
+          status_label: localizeLiveCopy(String(direct.status_label || 'Current property').trim() || 'Current property'),
+          status_detail: localizedLiveMessage(
+            direct.status_detail || direct.fit_summary || direct.summary,
+            'Open the property page for more context.'
+          ),
+        };
       }
       const ranked = rankedCandidatesFromRunPayload(runPayload);
-      const candidate = ranked[0];
+      const candidateIsConcrete = (row) => {
+        if (!row || typeof row !== 'object') return false;
+        const facts = {
+          ...(row.property_facts && typeof row.property_facts === 'object' ? row.property_facts : {}),
+          ...(row.property_facts_json && typeof row.property_facts_json === 'object' ? row.property_facts_json : {}),
+        };
+        const concreteSignals = [
+          facts.rooms,
+          facts.living_area_sqm,
+          facts.area_sqm,
+          facts.area_m2,
+          facts.usable_area_sqm,
+          facts.price_eur,
+          facts.purchase_price_eur,
+          facts.buy_price_eur,
+          facts.rent_eur,
+          facts.monthly_rent_eur,
+          facts.warm_rent_eur,
+          facts.cold_rent_eur,
+          facts.exact_address,
+          facts.street_address,
+        ];
+        if (concreteSignals.some((value) => value !== null && value !== undefined && value !== '' && Number(value) !== 0)) {
+          return true;
+        }
+        const summaryText = [row.title, row.summary, row.fit_summary].map((value) => String(value || '').trim()).filter(Boolean).join(' ').toLowerCase();
+        return ![
+          'search candidate',
+          'search-results page',
+          'search results page',
+          'extracting a concrete listing',
+        ].some((marker) => summaryText.includes(marker));
+      };
+      const candidate = ranked.find(candidateIsConcrete) || ranked[0];
       if (!candidate || typeof candidate !== 'object') return null;
       const facts = {
         ...(candidate.property_facts && typeof candidate.property_facts === 'object' ? candidate.property_facts : {}),
@@ -3702,7 +3742,7 @@
       ).trim();
       return {
         status_label: localizeLiveCopy(
-          Array.isArray(runPayload?.summary?.ranked_candidates) && runPayload.summary.ranked_candidates.length
+          candidateIsConcrete(candidate)
             ? 'Best so far'
             : 'Current property'
         ),

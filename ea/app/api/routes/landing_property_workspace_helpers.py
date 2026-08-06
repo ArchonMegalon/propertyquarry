@@ -1445,14 +1445,57 @@ def _property_progress_route_preview_rows(
     return rows[:3]
 
 
+def _property_progress_candidate_is_concrete(candidate: dict[str, object]) -> bool:
+    facts = _property_candidate_display_facts(candidate)
+    concrete_signals = (
+        facts.get("rooms"),
+        facts.get("living_area_sqm"),
+        facts.get("area_sqm"),
+        facts.get("area_m2"),
+        facts.get("usable_area_sqm"),
+        facts.get("price_eur"),
+        facts.get("purchase_price_eur"),
+        facts.get("buy_price_eur"),
+        facts.get("rent_eur"),
+        facts.get("monthly_rent_eur"),
+        facts.get("warm_rent_eur"),
+        facts.get("cold_rent_eur"),
+        facts.get("exact_address"),
+        facts.get("street_address"),
+    )
+    if any(value not in (None, "", 0, 0.0) for value in concrete_signals):
+        return True
+    summary_text = " ".join(
+        str(candidate.get(key) or "").strip()
+        for key in ("title", "summary", "fit_summary")
+        if str(candidate.get(key) or "").strip()
+    ).lower()
+    return not any(
+        marker in summary_text
+        for marker in (
+            "search candidate",
+            "search-results page",
+            "search results page",
+            "extracting a concrete listing",
+        )
+    )
+
+
 def _property_progress_primary_candidate(run_summary: dict[str, object]) -> tuple[dict[str, object], bool]:
     ranked_candidates = [
         dict(row)
         for row in list(run_summary.get("ranked_candidates") or [])
         if isinstance(row, dict) and _property_candidate_is_rankable(row)
     ]
+    concrete_ranked_candidates = [
+        candidate
+        for candidate in ranked_candidates
+        if _property_progress_candidate_is_concrete(candidate)
+    ]
+    if concrete_ranked_candidates:
+        return concrete_ranked_candidates[0], True
     if ranked_candidates:
-        return ranked_candidates[0], True
+        return ranked_candidates[0], False
 
     collected: list[dict[str, object]] = []
     for source in [dict(row) for row in list(run_summary.get("sources") or []) if isinstance(row, dict)]:

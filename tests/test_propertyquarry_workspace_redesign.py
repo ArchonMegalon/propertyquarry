@@ -1663,6 +1663,39 @@ def test_propertyquarry_progress_current_property_falls_back_to_source_top_candi
     assert card["orientation_preview"]["image_url"] == "/app/api/property/map-previews/current-source.png"
 
 
+def test_propertyquarry_progress_best_so_far_skips_unconfirmed_search_candidate() -> None:
+    card = landing_property_workspace_helpers._property_progress_current_property_card(
+        run_summary={
+            "ranked_candidates": [
+                {
+                    "candidate_ref": "provider-placeholder",
+                    "title": "Willhaben · search candidate",
+                    "summary": "Willhaben returned a search-results page. PropertyQuarry is still extracting a concrete listing before this becomes a confirmed property.",
+                    "fit_score": 52,
+                    "property_facts": {"postal_name": "1020 Leopoldstadt"},
+                },
+                {
+                    "candidate_ref": "confirmed-flat",
+                    "title": "2-Zimmer Altbauflair mit modernem Wohnkomfort",
+                    "summary": "Concrete apartment listing.",
+                    "fit_score": 51,
+                    "property_facts": {
+                        "postal_name": "1020 Wien",
+                        "rooms": 2,
+                        "area_m2": 57,
+                        "price_eur": 319000,
+                    },
+                },
+            ]
+        },
+        run_id="run-best-so-far",
+    )
+
+    assert card["status_label"] == "Best so far"
+    assert card["title"] == "2-Zimmer Altbauflair mit modernem Wohnkomfort"
+    assert card["detail_url"] == "/app/research/confirmed-flat?run_id=run-best-so-far"
+
+
 def test_propertyquarry_browser_route_preview_uses_confirmed_distance_fallback_copy() -> None:
     body = _read_workbench_bundle()
 
