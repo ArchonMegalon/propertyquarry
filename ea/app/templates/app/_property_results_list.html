@@ -88,10 +88,11 @@
     </div>
   </div>
   {% include "app/_property_recent_run_strip.html" %}
-  {% if current_property_image or route_previews %}
+  {% if current_property or route_previews %}
   <div class="pqx-route-preview-strip">
-    {% if current_property and current_property_image %}
+    {% if current_property %}
     <article class="pqx-current-property-card">
+      {% if current_property_image %}
       <button
         class="pqx-current-property-diorama-button"
         type="button"
@@ -106,6 +107,9 @@
       >
         <img class="pqx-current-property-thumb" src="{{ current_property_image }}" alt="{{ current_property.get('diorama_alt') or current_property_diorama.get('alt') or current_property.get('title') or 'Illustrative property diorama' }}">
       </button>
+      {% else %}
+      <div class="pqx-current-property-diorama-button pqx-current-property-diorama-placeholder" role="img" aria-label="Diorama preview in progress"></div>
+      {% endif %}
       {% if current_property_detail_url %}<a class="pqx-current-property-link" href="{{ current_property_detail_url }}">{% else %}<div class="pqx-current-property-link">{% endif %}
         <div class="pqx-current-property-copy">
           <span class="pqx-small">{{ current_property_status_label or 'Current property' }}</span>

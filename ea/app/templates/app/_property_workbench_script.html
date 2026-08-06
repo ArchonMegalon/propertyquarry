@@ -3748,21 +3748,12 @@
       if (!property || typeof property !== 'object') return '';
       const href = routePreviewHref(property?.detail_url);
       const imageUrl = currentPropertyImageUrl(property);
-      if (!imageUrl) return '';
       const meta = currentPropertyMeta(property);
       const title = String(property?.title || 'Property under review').trim() || 'Property under review';
       const imageAlt = currentPropertyImageAlt(property);
       const caption = String(property?.location_label || property?.source_label || property?.status_label || 'Best so far').trim() || 'Best so far';
-      const detail = `
-        <div class="pqx-current-property-copy">
-          <span class="pqx-small">${escapeHtml(String(property?.status_label || 'Current property').trim() || 'Current property')}</span>
-          <strong>${escapeHtml(title)}</strong>
-          ${meta ? `<div class="pqx-current-property-meta"><span>${escapeHtml(meta)}</span></div>` : ''}
-          ${property?.status_detail ? `<p class="pqx-note">${escapeHtml(String(property.status_detail).trim())}</p>` : ''}
-        </div>
-      `;
-      return `
-        <article class="pqx-current-property-card">
+      const visual = imageUrl
+        ? `
           <button
             class="pqx-current-property-diorama-button"
             type="button"
@@ -3777,6 +3768,19 @@
           >
             <img class="pqx-current-property-thumb" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageAlt)}">
           </button>
+        `
+        : `<div class="pqx-current-property-diorama-button pqx-current-property-diorama-placeholder" role="img" aria-label="${escapeHtml(localizeLiveCopy('Diorama preview in progress'))}"></div>`;
+      const detail = `
+        <div class="pqx-current-property-copy">
+          <span class="pqx-small">${escapeHtml(String(property?.status_label || 'Current property').trim() || 'Current property')}</span>
+          <strong>${escapeHtml(title)}</strong>
+          ${meta ? `<div class="pqx-current-property-meta"><span>${escapeHtml(meta)}</span></div>` : ''}
+          ${property?.status_detail ? `<p class="pqx-note">${escapeHtml(String(property.status_detail).trim())}</p>` : ''}
+        </div>
+      `;
+      return `
+        <article class="pqx-current-property-card">
+          ${visual}
           ${href ? `<a class="pqx-current-property-link" href="${escapeHtml(href)}">${detail}</a>` : `<div class="pqx-current-property-link">${detail}</div>`}
         </article>
       `;
