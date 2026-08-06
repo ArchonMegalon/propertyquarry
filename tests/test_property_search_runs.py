@@ -2224,6 +2224,11 @@ def test_private_brigittenau_showcase_injects_verified_first_party_tour(monkeypa
     )
     monkeypatch.setenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS", "property-showcase-owner@example.test")
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        product_service,
+        "property_search_candidate_is_suppressed",
+        lambda _candidate: False,
+    )
 
     snapshot = product_service._property_search_snapshot_with_private_showcase(  # type: ignore[attr-defined]
         {
@@ -2265,6 +2270,60 @@ def test_private_brigittenau_showcase_injects_verified_first_party_tour(monkeypa
     assert facts["has_floorplan"] is False
     assert facts["floorplan_urls_json"] == []
     assert ranked[1]["candidate_ref"] == "public-hit"
+
+
+def test_suppressed_private_showcase_cannot_replace_compact_live_ranking(monkeypatch) -> None:
+    ranked_candidates = [
+        {
+            "candidate_ref": "visible-best-so-far",
+            "source_ref": "property-scout:visible-best-so-far",
+            "title": "Visible best so far",
+            "fit_score": 81,
+            "ranking_score": 81,
+        }
+    ]
+    snapshot = {
+        "run_id": "run-private-suppressed",
+        "property_search_preferences": {
+            "country_code": "AT",
+            "location_query": "1200 Vienna",
+        },
+        "summary": {
+            # Compact live source rows intentionally omit top_candidates.
+            "sources": [{"source_label": "Willhaben", "status": "completed"}],
+            "ranked_candidates": ranked_candidates,
+            "ranked_candidate_total": 1,
+        },
+    }
+    monkeypatch.setattr(
+        product_service,
+        "_property_private_showcase_allowed",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_property_private_showcase_candidate",
+        lambda **_kwargs: {
+            "candidate_ref": product_service._PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF,
+            "title": "Suppressed Karl showcase",
+        },
+    )
+    monkeypatch.setattr(
+        product_service,
+        "property_search_candidate_is_suppressed",
+        lambda candidate: candidate.get("candidate_ref")
+        == product_service._PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF,
+    )
+
+    result = product_service._property_search_snapshot_with_private_showcase(
+        snapshot,
+        principal_id="cf-email:tibor.girschele@gmail.com",
+    )
+
+    summary = dict(result["summary"])
+    assert summary["ranked_candidates"] == ranked_candidates
+    assert summary["ranked_candidate_total"] == 1
+    assert summary.get("private_showcase_candidate_ref") is None
 
 
 def test_private_brigittenau_showcase_does_not_inject_for_other_users() -> None:

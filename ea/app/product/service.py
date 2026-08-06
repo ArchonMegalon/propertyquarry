@@ -90,6 +90,9 @@ from app.services.property_media_factory import (
     route_property_media_task,
 )
 from app.services.property_customer_copy import normalize_property_fit_note
+from app.services.property_search_visibility import (
+    property_search_candidate_is_suppressed,
+)
 from app.product import property_search_storage as _property_search_storage
 from app.product.property_diorama_preview import (
     DIORAMA_PREVIEW_RENDERER_VERSION,
@@ -13936,6 +13939,13 @@ def _property_search_snapshot_with_private_showcase(
         principal_id=principal_id,
     )
     if not candidate:
+        return snapshot
+    # An owner suppression must stop the synthetic candidate before it can
+    # rebuild the source-derived ranking.  Filtering it only after injection
+    # is too late for compact in-progress runs: their source rows may no longer
+    # carry candidates, so the synthetic row would temporarily replace the
+    # real ranked candidates before being filtered itself.
+    if property_search_candidate_is_suppressed(candidate):
         return snapshot
     sources = [dict(row) for row in list(summary.get("sources") or []) if isinstance(row, dict)]
     for source in sources:
