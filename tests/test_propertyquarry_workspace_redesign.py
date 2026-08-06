@@ -1724,6 +1724,7 @@ def test_propertyquarry_browser_route_preview_uses_confirmed_distance_fallback_c
     assert "lowered.includes('google.com/maps')" in body
     assert "const href = routePreviewHref(route?.map_url);" in body
     assert "const currentPropertyCardPayload = (runPayload) => {" in body
+    assert ".replace(/\\b(\\d+)(?:[.,]0+)\\s+m2\\b/gi, '$1 m²')" in body
     assert "const href = routePreviewHref(property?.detail_url);" in body
     assert "routePreviewHref(property?.map_url)" not in body
     assert "pqx-current-property-card" in body

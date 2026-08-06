@@ -253,7 +253,10 @@
         const unit = clientLocale.startsWith('de')
           ? 'Zimmer'
           : (roomsLabel[1] === '1' ? 'habitación' : 'habitaciones');
-        return `${roomsLabel[1]} ${unit}${roomsLabel[2] || ''}`;
+        const layoutSuffix = String(roomsLabel[2] || '')
+          .replace(/\b(\d+)(?:[.,]0+)\s+m2\b/gi, '$1 m²')
+          .replace(/\bm2\b/gi, 'm²');
+        return `${roomsLabel[1]} ${unit}${layoutSuffix}`;
       }
       const fitScore = text.match(/^Fit (\d+)$/i);
       if (fitScore) {
