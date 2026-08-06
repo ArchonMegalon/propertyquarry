@@ -84,6 +84,81 @@ _DE_AT = {
     "How it works": "So funktioniert es",
     "Pricing": "Preise",
     "Sign in": "Anmelden",
+    "Sign in to PropertyQuarry": "Bei PropertyQuarry anmelden",
+    "Continue your property search.": "Setzen Sie Ihre Immobiliensuche fort.",
+    "Use a secure email link if your address already has access. You can also continue with an available provider.": (
+        "Verwenden Sie einen sicheren E-Mail-Link, wenn Ihre Adresse bereits Zugriff hat. "
+        "Sie können auch mit einem verfügbaren Anbieter fortfahren."
+    ),
+    "Use a secure email link if your address already has access. You can also continue with an available provider. Google only verifies your identity for a PropertyQuarry-local session.": (
+        "Verwenden Sie einen sicheren E-Mail-Link, wenn Ihre Adresse bereits Zugriff hat. "
+        "Sie können auch mit einem verfügbaren Anbieter fortfahren. Google bestätigt nur "
+        "Ihre Identität für eine lokale PropertyQuarry-Sitzung."
+    ),
+    "Sign-in options": "Anmeldeoptionen",
+    "Send secure sign-in link": "Sicheren Anmeldelink senden",
+    "New here?": "Neu hier?",
+    "Create an account with email.": "Konto mit E-Mail erstellen.",
+    "Email sign-in is not available right now.": "Die E-Mail-Anmeldung ist derzeit nicht verfügbar.",
+    "Use a provider below instead.": "Verwenden Sie stattdessen einen der folgenden Anbieter.",
+    "Try again later or ask the account owner for a fresh access link.": (
+        "Versuchen Sie es später erneut oder bitten Sie den Kontoinhaber um einen neuen Zugriffslink."
+    ),
+    "Sign-in providers verify who you are, then open the same local account or create it if needed.": (
+        "Anmeldeanbieter bestätigen Ihre Identität und öffnen anschließend dasselbe lokale "
+        "Konto oder erstellen es bei Bedarf."
+    ),
+    "Sign-in providers": "Anmeldeanbieter",
+    "Identity only": "Nur Identitätsprüfung",
+    "Continue": "Weiter",
+    "Continue with Google": "Mit Google fortfahren",
+    "Continue with Facebook": "Mit Facebook fortfahren",
+    "Continue with ID Austria": "Mit ID Austria fortfahren",
+    "Opening Google...": "Google wird geöffnet…",
+    "Opening Facebook...": "Facebook wird geöffnet…",
+    "Opening ID Austria...": "ID Austria wird geöffnet…",
+    "Opening...": "Wird geöffnet…",
+    "Sign-in provider": "Anmeldeanbieter",
+    "If nothing opens, use email instead.": "Falls sich nichts öffnet, verwenden Sie stattdessen E-Mail.",
+    "If nothing opens, choose another available sign-in option.": (
+        "Falls sich nichts öffnet, wählen Sie eine andere verfügbare Anmeldeoption."
+    ),
+    "If nothing opens, try again or contact support.": (
+        "Falls sich nichts öffnet, versuchen Sie es erneut oder wenden Sie sich an den Support."
+    ),
+    "Still here. Try again or use email instead.": (
+        "Noch auf dieser Seite? Versuchen Sie es erneut oder verwenden Sie stattdessen E-Mail."
+    ),
+    "Still here. Try again or choose another available sign-in option.": (
+        "Noch auf dieser Seite? Versuchen Sie es erneut oder wählen Sie eine andere Anmeldeoption."
+    ),
+    "Still here. Try again or contact support.": (
+        "Noch auf dieser Seite? Versuchen Sie es erneut oder wenden Sie sich an den Support."
+    ),
+    "Google sign-in is temporarily unavailable.": "Die Google-Anmeldung ist vorübergehend nicht verfügbar.",
+    "Use the secure email form above, or check Google again.": (
+        "Verwenden Sie das sichere E-Mail-Formular oben oder prüfen Sie Google erneut."
+    ),
+    "Check Google again in a moment. Your saved property search is not affected.": (
+        "Prüfen Sie Google gleich noch einmal. Ihre gespeicherte Immobiliensuche bleibt unverändert."
+    ),
+    "Check Google again": "Google erneut prüfen",
+    "Your session ended.": "Ihre Sitzung wurde beendet.",
+    "Your search is still saved. Choose a sign-in option to continue where you left off.": (
+        "Ihre Suche ist weiterhin gespeichert. Wählen Sie eine Anmeldeoption, um dort fortzufahren, wo Sie aufgehört haben."
+    ),
+    "Show sign-in options": "Anmeldeoptionen anzeigen",
+    "Your search is still saved. Sign-in is temporarily unavailable; try again later.": (
+        "Ihre Suche ist weiterhin gespeichert. Die Anmeldung ist vorübergehend nicht verfügbar; versuchen Sie es später erneut."
+    ),
+    "You are signed out.": "Sie sind abgemeldet.",
+    "Sign in below.": "Melden Sie sich unten an.",
+    "Check your inbox.": "Prüfen Sie Ihren Posteingang.",
+    "Enter a valid email address.": "Geben Sie eine gültige E-Mail-Adresse ein.",
+    "Use the inbox that already has access or an invite.": (
+        "Verwenden Sie das Postfach, das bereits Zugriff oder eine Einladung hat."
+    ),
+    "We could not send a sign-in link.": "Der Anmeldelink konnte nicht gesendet werden.",
     "Open search": "Suche öffnen",
     "Email sign-in": "Mit E-Mail anmelden",
     "Your privacy choice": "Ihre Datenschutzauswahl",
@@ -422,6 +497,80 @@ _ES_CR = {
     "How it works": "Cómo funciona",
     "Pricing": "Precios",
     "Sign in": "Iniciar sesión",
+    "Sign in to PropertyQuarry": "Iniciar sesión en PropertyQuarry",
+    "Continue your property search.": "Continúe su búsqueda de propiedades.",
+    "Use a secure email link if your address already has access. You can also continue with an available provider.": (
+        "Use un enlace seguro por correo si su dirección ya tiene acceso. También puede "
+        "continuar con un proveedor disponible."
+    ),
+    "Use a secure email link if your address already has access. You can also continue with an available provider. Google only verifies your identity for a PropertyQuarry-local session.": (
+        "Use un enlace seguro por correo si su dirección ya tiene acceso. También puede "
+        "continuar con un proveedor disponible. Google solo verifica su identidad para una "
+        "sesión local de PropertyQuarry."
+    ),
+    "Sign-in options": "Opciones para iniciar sesión",
+    "Send secure sign-in link": "Enviar enlace seguro para iniciar sesión",
+    "New here?": "¿Es nuevo aquí?",
+    "Create an account with email.": "Cree una cuenta con correo electrónico.",
+    "Email sign-in is not available right now.": "El inicio de sesión por correo no está disponible en este momento.",
+    "Use a provider below instead.": "Use uno de los proveedores disponibles a continuación.",
+    "Try again later or ask the account owner for a fresh access link.": (
+        "Inténtelo de nuevo más tarde o pida al propietario de la cuenta un enlace de acceso nuevo."
+    ),
+    "Sign-in providers verify who you are, then open the same local account or create it if needed.": (
+        "Los proveedores verifican su identidad y luego abren la misma cuenta local o la crean si es necesario."
+    ),
+    "Sign-in providers": "Proveedores de inicio de sesión",
+    "Identity only": "Solo identidad",
+    "Continue": "Continuar",
+    "Continue with Google": "Continuar con Google",
+    "Continue with Facebook": "Continuar con Facebook",
+    "Continue with ID Austria": "Continuar con ID Austria",
+    "Opening Google...": "Abriendo Google…",
+    "Opening Facebook...": "Abriendo Facebook…",
+    "Opening ID Austria...": "Abriendo ID Austria…",
+    "Opening...": "Abriendo…",
+    "Sign-in provider": "Proveedor de inicio de sesión",
+    "If nothing opens, use email instead.": "Si no se abre nada, use el correo electrónico.",
+    "If nothing opens, choose another available sign-in option.": (
+        "Si no se abre nada, elija otra opción disponible para iniciar sesión."
+    ),
+    "If nothing opens, try again or contact support.": (
+        "Si no se abre nada, inténtelo de nuevo o contacte con soporte."
+    ),
+    "Still here. Try again or use email instead.": (
+        "¿Sigue aquí? Inténtelo de nuevo o use el correo electrónico."
+    ),
+    "Still here. Try again or choose another available sign-in option.": (
+        "¿Sigue aquí? Inténtelo de nuevo o elija otra opción disponible."
+    ),
+    "Still here. Try again or contact support.": (
+        "¿Sigue aquí? Inténtelo de nuevo o contacte con soporte."
+    ),
+    "Google sign-in is temporarily unavailable.": "El inicio de sesión con Google no está disponible temporalmente.",
+    "Use the secure email form above, or check Google again.": (
+        "Use el formulario seguro de correo anterior o vuelva a comprobar Google."
+    ),
+    "Check Google again in a moment. Your saved property search is not affected.": (
+        "Vuelva a comprobar Google en un momento. Su búsqueda guardada no se verá afectada."
+    ),
+    "Check Google again": "Comprobar Google de nuevo",
+    "Your session ended.": "Su sesión terminó.",
+    "Your search is still saved. Choose a sign-in option to continue where you left off.": (
+        "Su búsqueda sigue guardada. Elija una opción para iniciar sesión y continuar donde la dejó."
+    ),
+    "Show sign-in options": "Mostrar opciones para iniciar sesión",
+    "Your search is still saved. Sign-in is temporarily unavailable; try again later.": (
+        "Su búsqueda sigue guardada. El inicio de sesión no está disponible temporalmente; inténtelo más tarde."
+    ),
+    "You are signed out.": "Su sesión está cerrada.",
+    "Sign in below.": "Inicie sesión a continuación.",
+    "Check your inbox.": "Revise su bandeja de entrada.",
+    "Enter a valid email address.": "Ingrese una dirección de correo válida.",
+    "Use the inbox that already has access or an invite.": (
+        "Use la bandeja de entrada que ya tiene acceso o una invitación."
+    ),
+    "We could not send a sign-in link.": "No se pudo enviar el enlace para iniciar sesión.",
     "Open search": "Abrir búsqueda",
     "Email sign-in": "Iniciar sesión por correo",
     "Your privacy choice": "Su elección de privacidad",
@@ -934,7 +1083,7 @@ _PROTECTED_BLOCK_RE = re.compile(
 )
 _TEXT_NODE_RE = re.compile(r">(?P<text>[^<>]+)<")
 _TRANSLATABLE_ATTRIBUTE_RE = re.compile(
-    r"(?P<prefix>\b(?P<name>href|action|aria-label|title|placeholder)\s*=\s*)"
+    r"(?P<prefix>\b(?P<name>href|action|aria-label|title|placeholder|data-submitting-label|data-auth-copy-[a-z0-9-]+)\s*=\s*)"
     r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
     re.IGNORECASE | re.DOTALL,
 )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+import pytest
 from starlette.requests import Request
 
 from app.api.routes import landing as landing_routes
@@ -78,6 +79,62 @@ def test_propertyquarry_anonymous_home_uses_supported_browser_language_coherentl
     assert ">Skip to content</a>" not in response.text
     assert "<span>Match</span>" not in response.text
     assert ">Open property</a>" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("locale", "expected", "unexpected"),
+    [
+        (
+            "de-AT",
+            (
+                "Setzen Sie Ihre Immobiliensuche fort.",
+                "Verwenden Sie einen sicheren E-Mail-Link",
+                'aria-label="Anmeldeoptionen"',
+                'data-auth-copy-still-here-email="Noch auf dieser Seite?',
+            ),
+            (
+                "Continue your property search.",
+                ">Send secure sign-in link</button>",
+                ">New here?",
+                ">Create an account with email.</a>",
+            ),
+        ),
+        (
+            "es-CR",
+            (
+                "Continúe su búsqueda de propiedades.",
+                "Use un enlace seguro por correo",
+                'aria-label="Opciones para iniciar sesión"',
+                'data-auth-copy-still-here-email="¿Sigue aquí?',
+            ),
+            (
+                "Continue your property search.",
+                ">Send secure sign-in link</button>",
+                ">New here?",
+                ">Create an account with email.</a>",
+            ),
+        ),
+    ],
+)
+def test_propertyquarry_anonymous_sign_in_uses_supported_language_coherently(
+    locale: str,
+    expected: tuple[str, ...],
+    unexpected: tuple[str, ...],
+) -> None:
+    client = build_property_client(principal_id=f"pq-sign-in-locale-{locale}")
+    client.headers.pop("X-EA-Principal-ID", None)
+
+    response = client.get(
+        f"/sign-in?lang={locale}",
+        headers={"host": "propertyquarry.com"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-language"] == locale
+    for text in expected:
+        assert text in response.text
+    for text in unexpected:
+        assert text not in response.text
 
 
 def test_propertyquarry_locale_resolver_uses_only_governed_complete_ui_locales() -> None:
