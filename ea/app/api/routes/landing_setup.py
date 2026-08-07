@@ -767,18 +767,104 @@ async def redeem_propertyquarry_mobile_identity(
     return response
 
 
-def _propertyquarry_mobile_bridge_document(*, mode: str) -> HTMLResponse:
-    label = "Finishing secure sign-in" if mode == "auth" else "Adding property"
+_PROPERTYQUARRY_MOBILE_BRIDGE_COPY = {
+    "en": {
+        "secure_app": "Secure app",
+        "progress": "Progress",
+        "auth": {
+            "label": "Finishing secure sign-in",
+            "initial": "Securing your app handoff…",
+            "hint": "Keep PropertyQuarry open. This usually takes only a moment.",
+            "retry": "Try sign-in again",
+            "steps": ("Secure handoff", "Confirm session", "Open search"),
+            "privacy": "Your Google password never enters PropertyQuarry.",
+        },
+        "share": {
+            "label": "Adding property",
+            "initial": "Preparing the shared listing…",
+            "hint": "Keep PropertyQuarry open while the listing is checked.",
+            "retry": "Try adding again",
+            "steps": ("Receive listing", "Evaluate property", "Open shortlist"),
+            "privacy": "Only the listing link you approved is imported.",
+        },
+    },
+    "de": {
+        "secure_app": "Sichere App",
+        "progress": "Fortschritt",
+        "auth": {
+            "label": "Sichere Anmeldung abschließen",
+            "initial": "Sichere App-Übergabe wird geprüft…",
+            "hint": "Lassen Sie PropertyQuarry geöffnet. Dies dauert meist nur einen Moment.",
+            "retry": "Anmeldung erneut versuchen",
+            "steps": ("Sichere Übergabe", "Sitzung bestätigen", "Suche öffnen"),
+            "privacy": "Ihr Google-Passwort wird niemals an PropertyQuarry übertragen.",
+        },
+        "share": {
+            "label": "Immobilie hinzufügen",
+            "initial": "Geteiltes Inserat wird vorbereitet…",
+            "hint": "Lassen Sie PropertyQuarry geöffnet, während das Inserat geprüft wird.",
+            "retry": "Erneut hinzufügen",
+            "steps": ("Inserat empfangen", "Immobilie prüfen", "Merkliste öffnen"),
+            "privacy": "Nur der von Ihnen bestätigte Inseratslink wird importiert.",
+        },
+    },
+    "es": {
+        "secure_app": "App segura",
+        "progress": "Progreso",
+        "auth": {
+            "label": "Finalizando el acceso seguro",
+            "initial": "Verificando la entrega segura de la app…",
+            "hint": "Mantenga PropertyQuarry abierta. Esto suele tomar solo un momento.",
+            "retry": "Reintentar el acceso",
+            "steps": ("Entrega segura", "Confirmar sesión", "Abrir búsqueda"),
+            "privacy": "Su contraseña de Google nunca entra en PropertyQuarry.",
+        },
+        "share": {
+            "label": "Agregando propiedad",
+            "initial": "Preparando el anuncio compartido…",
+            "hint": "Mantenga PropertyQuarry abierta mientras revisamos el anuncio.",
+            "retry": "Intentar agregar de nuevo",
+            "steps": ("Recibir anuncio", "Evaluar propiedad", "Abrir favoritos"),
+            "privacy": "Solo se importa el enlace del anuncio que usted aprobó.",
+        },
+    },
+}
+
+
+def _propertyquarry_mobile_bridge_locale(request: Request) -> str:
+    preferred = str(request.headers.get("accept-language") or "").strip().lower()
+    primary = preferred.split(",", 1)[0].split(";", 1)[0].strip()
+    if primary.startswith("de"):
+        return "de"
+    if primary.startswith("es"):
+        return "es"
+    return "en"
+
+
+def _propertyquarry_mobile_bridge_document(*, request: Request, mode: str) -> HTMLResponse:
+    locale = _propertyquarry_mobile_bridge_locale(request)
+    locale_copy = _PROPERTYQUARRY_MOBILE_BRIDGE_COPY[locale]
+    copy = locale_copy[mode]
+    steps = "".join(
+        f'<li data-step data-state="{"current" if index == 0 else "pending"}">'
+        f'<span class="step-dot" aria-hidden="true"></span><span>{label}</span></li>'
+        for index, label in enumerate(copy["steps"])
+    )
     response = HTMLResponse(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        f"<!doctype html><html lang=\"{locale}\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
         "<meta name=\"theme-color\" content=\"#101814\">"
-        "<link rel=\"stylesheet\" href=\"/mobile/bridge.css\">"
-        f"<title>{label} · PropertyQuarry</title></head>"
-        f"<body data-mobile-bridge=\"{mode}\"><main><div class=\"mark\" aria-hidden=\"true\"></div>"
-        f"<p class=\"eyebrow\">PropertyQuarry</p><h1>{label}</h1>"
-        "<p id=\"status\" role=\"status\">Checking the secure app handoff…</p>"
-        "<button id=\"retry\" type=\"button\" hidden>Try again</button>"
+        "<link rel=\"stylesheet\" href=\"/mobile/bridge.css?v=2\">"
+        f"<title>{copy['label']} · PropertyQuarry</title></head>"
+        f"<body data-mobile-bridge=\"{mode}\" data-state=\"working\"><main id=\"bridge-card\" aria-busy=\"true\">"
+        "<div id=\"mark\" class=\"mark\" data-state=\"working\" aria-hidden=\"true\"></div>"
+        f"<p class=\"eyebrow\">PropertyQuarry <span>· {locale_copy['secure_app']}</span></p>"
+        f"<h1>{copy['label']}</h1>"
+        f"<p id=\"status\" role=\"status\" aria-live=\"polite\" aria-atomic=\"true\">{copy['initial']}</p>"
+        f"<ol id=\"steps\" class=\"steps\" aria-label=\"{locale_copy['progress']}\">{steps}</ol>"
+        f"<p id=\"hint\" class=\"hint\">{copy['hint']}</p>"
+        f"<button id=\"retry\" type=\"button\" aria-describedby=\"status hint\" hidden>{copy['retry']}</button>"
+        f"<p class=\"privacy-note\"><span aria-hidden=\"true\">✓</span>{copy['privacy']}</p>"
         "</main><script src=\"/mobile/bridge.js\" defer></script></body></html>"
     )
     response.headers["Cache-Control"] = "no-store"
@@ -792,27 +878,52 @@ def _propertyquarry_mobile_bridge_document(*, mode: str) -> HTMLResponse:
 
 
 @router.get("/mobile/auth/bridge", include_in_schema=False)
-def propertyquarry_mobile_auth_bridge() -> HTMLResponse:
-    return _propertyquarry_mobile_bridge_document(mode="auth")
+def propertyquarry_mobile_auth_bridge(request: Request) -> HTMLResponse:
+    return _propertyquarry_mobile_bridge_document(request=request, mode="auth")
 
 
 @router.get("/mobile/share/bridge", include_in_schema=False)
-def propertyquarry_mobile_share_bridge() -> HTMLResponse:
-    return _propertyquarry_mobile_bridge_document(mode="share")
+def propertyquarry_mobile_share_bridge(request: Request) -> HTMLResponse:
+    return _propertyquarry_mobile_bridge_document(request=request, mode="share")
 
 
 @router.get("/mobile/bridge.css", include_in_schema=False)
 def propertyquarry_mobile_bridge_css() -> PlainTextResponse:
     return PlainTextResponse(
         """
-:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;background:#101814;color:#f5f1e8}
-*{box-sizing:border-box}body{min-height:100vh;min-height:100dvh;margin:0;background:radial-gradient(circle at 82% 18%,rgba(198,163,93,.24),transparent 32rem),linear-gradient(155deg,#17231d,#0d1511 66%,#080c0a)}
-main{width:min(31rem,calc(100% - 3rem));margin:0 auto;padding:max(5rem,18vh) 0 env(safe-area-inset-bottom)}
-.mark{width:2.2rem;height:2.2rem;margin:0 0 2rem;border:2px solid #d8bd80;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite}.eyebrow{margin:0 0 .7rem;color:#d8bd80;font-size:.72rem;font-weight:750;letter-spacing:.2em;text-transform:uppercase}
-h1{max-width:12ch;margin:0;font:400 clamp(2.5rem,10vw,4.2rem)/.96 Georgia,serif;letter-spacing:-.04em}#status{max-width:30ch;margin:1.4rem 0 0;color:#b7c1b9;line-height:1.55}button{margin-top:1.3rem;padding:.85rem 1.15rem;border:1px solid #d8bd80;border-radius:999px;background:#d8bd80;color:#111914;font:inherit;font-weight:700}@media(prefers-reduced-motion:reduce){.mark{animation:none}}@keyframes spin{to{transform:rotate(360deg)}}
+:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;background:#0b120f;color:#f7f3ea}
+*{box-sizing:border-box}
+body{min-height:100vh;min-height:100dvh;margin:0;display:grid;place-items:center;padding:max(1.25rem,env(safe-area-inset-top)) 1rem max(1.25rem,env(safe-area-inset-bottom));background:radial-gradient(circle at 82% 15%,rgba(205,170,96,.2),transparent 30rem),radial-gradient(circle at 8% 88%,rgba(61,115,87,.17),transparent 26rem),linear-gradient(155deg,#17231d,#0d1511 62%,#080c0a)}
+main{position:relative;width:min(30rem,100%);padding:clamp(1.5rem,6vw,2.4rem);overflow:hidden;border:1px solid rgba(216,189,128,.22);border-radius:1.6rem;background:linear-gradient(160deg,rgba(26,39,32,.94),rgba(12,20,16,.97));box-shadow:0 1.5rem 5rem rgba(0,0,0,.38),inset 0 1px rgba(255,255,255,.035)}
+main::after{position:absolute;inset:auto -5rem -6rem auto;width:13rem;height:13rem;border-radius:50%;background:rgba(216,189,128,.055);content:"";pointer-events:none}
+main>*{position:relative;z-index:1}
+.mark{position:relative;width:2.8rem;height:2.8rem;margin:0 0 1.8rem;border:2px solid rgba(216,189,128,.3);border-top-color:#e2c887;border-radius:50%;animation:spin .9s linear infinite}
+.mark::after{position:absolute;inset:0;display:grid;place-items:center;color:#101814;font-weight:900;content:""}
+.mark[data-state="failed"]{border-color:#e39a86;background:#e39a86;animation:none}.mark[data-state="failed"]::after{content:"!"}
+.mark[data-state="complete"]{border-color:#d8bd80;background:#d8bd80;animation:none}.mark[data-state="complete"]::after{content:"✓"}
+.eyebrow{margin:0 0 .75rem;color:#d8bd80;font-size:.69rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase}.eyebrow span{color:#87978c;letter-spacing:.08em}
+h1{max-width:12ch;margin:0;font:400 clamp(2.35rem,10vw,3.75rem)/.98 Georgia,serif;letter-spacing:-.04em;text-wrap:balance}
+#status{max-width:34ch;min-height:3rem;margin:1.25rem 0 0;color:#d2d9d3;line-height:1.55}
+.steps{display:grid;gap:.75rem;margin:1.6rem 0 0;padding:1.15rem 1.1rem;list-style:none;border:1px solid rgba(255,255,255,.07);border-radius:1rem;background:rgba(5,10,8,.26)}
+.steps li{display:flex;align-items:center;gap:.7rem;color:#718078;font-size:.83rem;font-weight:650;transition:color .2s ease}.step-dot{width:.6rem;height:.6rem;flex:0 0 auto;border:1px solid #5e6d64;border-radius:50%;background:transparent}
+.steps li[data-state="current"]{color:#f7f3ea}.steps li[data-state="current"] .step-dot{border-color:#d8bd80;background:#d8bd80;box-shadow:0 0 0 .25rem rgba(216,189,128,.12)}
+.steps li[data-state="complete"]{color:#a7b5ac}.steps li[data-state="complete"] .step-dot{border-color:#739a7e;background:#739a7e}
+.hint{margin:.95rem 0 0;color:#87978c;font-size:.82rem;line-height:1.45}
+button{width:100%;margin-top:1.1rem;padding:.92rem 1.15rem;border:1px solid #d8bd80;border-radius:999px;background:#d8bd80;color:#111914;font:inherit;font-weight:800;cursor:pointer;box-shadow:0 .6rem 1.6rem rgba(0,0,0,.22)}button:hover{background:#ead397}button:focus-visible{outline:3px solid #f7f3ea;outline-offset:3px}
+.privacy-note{display:flex;align-items:flex-start;gap:.55rem;margin:1.3rem 0 0;padding-top:1.05rem;border-top:1px solid rgba(255,255,255,.07);color:#75857b;font-size:.74rem;line-height:1.45}.privacy-note span{color:#8eb096;font-weight:900}
+body[data-state="failed"] #status{color:#f0c0b2}body[data-state="failed"] .hint{color:#b7c1b9}
+body[data-state="failed"] .steps li[data-state="current"] .step-dot{border-color:#e39a86;background:#e39a86;box-shadow:0 0 0 .25rem rgba(227,154,134,.12)}
+@media(max-width:25rem){body{padding-inline:.65rem}main{padding:1.35rem;border-radius:1.25rem}h1{font-size:2.35rem}}
+@media(prefers-reduced-motion:reduce){.mark{animation:none}.steps li{transition:none}}
+@media(forced-colors:active){main,.steps{border:1px solid CanvasText}.mark,.step-dot{forced-color-adjust:none}button{border:2px solid ButtonText}}
+@keyframes spin{to{transform:rotate(360deg)}}
 """.strip(),
         media_type="text/css",
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "Content-Type": "text/css; charset=utf-8",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -823,13 +934,58 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
 (() => {
   'use strict';
   const mode = document.body.dataset.mobileBridge;
+  const locale = document.documentElement.lang.startsWith('de') ? 'de' : document.documentElement.lang.startsWith('es') ? 'es' : 'en';
+  const catalogs = {
+    en: {
+      common: {serviceTimeout: 'The secure app service took too long. Check your connection and try again.', requestFailed: 'The secure app request could not be completed.', failureHint: 'Nothing was changed. Check your connection, then try again.'},
+      auth: {hint: 'Keep PropertyQuarry open. This usually takes only a moment.', outside: 'Return to the PropertyQuarry app to finish sign-in.', outsideHint: 'This secure handoff can only finish inside the app.', reading: 'Reading the secure app handoff…', waking: 'The app is still waking up. Try again to finish sign-in.', expired: 'The secure sign-in handoff expired. Start sign-in again.', confirming: 'Confirming your secure sign-in…', opening: 'Opening your property search…', cleanup: 'Sign-in succeeded, but the app could not finish local cleanup. Try again.'},
+      share: {hint: 'Keep PropertyQuarry open while the listing is checked.', outside: 'Return to the PropertyQuarry app to add this property.', outsideHint: 'The approved listing can only be imported inside the app.', reading: 'Reading the shared property…', waking: 'The app is still waking up. Try again to add the property.', evaluating: 'Evaluating the listing and preparing its shortlist card…', signingIn: 'Opening secure sign-in…', browser: 'The secure browser did not open. Check your browser settings and try again.', opening: 'Opening your shortlist…', cleanup: 'The property was added, but the app could not finish local cleanup. Try again.'}
+    },
+    de: {
+      common: {serviceTimeout: 'Der sichere App-Dienst braucht zu lange. Prüfen Sie die Verbindung und versuchen Sie es erneut.', requestFailed: 'Die sichere App-Anfrage konnte nicht abgeschlossen werden.', failureHint: 'Es wurde nichts geändert. Prüfen Sie die Verbindung und versuchen Sie es erneut.'},
+      auth: {hint: 'Lassen Sie PropertyQuarry geöffnet. Dies dauert meist nur einen Moment.', outside: 'Kehren Sie zur PropertyQuarry-App zurück, um die Anmeldung abzuschließen.', outsideHint: 'Diese sichere Übergabe kann nur in der App abgeschlossen werden.', reading: 'Sichere App-Übergabe wird gelesen…', waking: 'Die App wird noch aktiviert. Versuchen Sie erneut, die Anmeldung abzuschließen.', expired: 'Die sichere Anmeldeübergabe ist abgelaufen. Starten Sie die Anmeldung erneut.', confirming: 'Sichere Anmeldung wird bestätigt…', opening: 'Ihre Immobiliensuche wird geöffnet…', cleanup: 'Die Anmeldung war erfolgreich, aber die lokale Bereinigung konnte nicht abgeschlossen werden. Versuchen Sie es erneut.'},
+      share: {hint: 'Lassen Sie PropertyQuarry geöffnet, während das Inserat geprüft wird.', outside: 'Kehren Sie zur PropertyQuarry-App zurück, um diese Immobilie hinzuzufügen.', outsideHint: 'Das bestätigte Inserat kann nur in der App importiert werden.', reading: 'Geteilte Immobilie wird gelesen…', waking: 'Die App wird noch aktiviert. Versuchen Sie erneut, die Immobilie hinzuzufügen.', evaluating: 'Das Inserat wird geprüft und für Ihre Merkliste vorbereitet…', signingIn: 'Sichere Anmeldung wird geöffnet…', browser: 'Der sichere Browser wurde nicht geöffnet. Prüfen Sie die Browsereinstellungen und versuchen Sie es erneut.', opening: 'Ihre Merkliste wird geöffnet…', cleanup: 'Die Immobilie wurde hinzugefügt, aber die lokale Bereinigung konnte nicht abgeschlossen werden. Versuchen Sie es erneut.'}
+    },
+    es: {
+      common: {serviceTimeout: 'El servicio seguro tardó demasiado. Revise su conexión e inténtelo de nuevo.', requestFailed: 'No se pudo completar la solicitud segura de la app.', failureHint: 'No se realizó ningún cambio. Revise su conexión e inténtelo de nuevo.'},
+      auth: {hint: 'Mantenga PropertyQuarry abierta. Esto suele tomar solo un momento.', outside: 'Regrese a la app PropertyQuarry para finalizar el acceso.', outsideHint: 'Esta entrega segura solo puede finalizar dentro de la app.', reading: 'Leyendo la entrega segura de la app…', waking: 'La app todavía se está activando. Intente finalizar el acceso de nuevo.', expired: 'La entrega de acceso seguro venció. Inicie el acceso nuevamente.', confirming: 'Confirmando su acceso seguro…', opening: 'Abriendo su búsqueda de propiedades…', cleanup: 'El acceso fue exitoso, pero la app no pudo finalizar la limpieza local. Inténtelo de nuevo.'},
+      share: {hint: 'Mantenga PropertyQuarry abierta mientras revisamos el anuncio.', outside: 'Regrese a la app PropertyQuarry para agregar esta propiedad.', outsideHint: 'El anuncio aprobado solo puede importarse dentro de la app.', reading: 'Leyendo la propiedad compartida…', waking: 'La app todavía se está activando. Intente agregar la propiedad de nuevo.', evaluating: 'Evaluando el anuncio y preparando su tarjeta de favoritos…', signingIn: 'Abriendo el acceso seguro…', browser: 'El navegador seguro no se abrió. Revise la configuración e inténtelo de nuevo.', opening: 'Abriendo sus favoritos…', cleanup: 'La propiedad se agregó, pero la app no pudo finalizar la limpieza local. Inténtelo de nuevo.'}
+    }
+  };
+  const copy = catalogs[locale];
   const status = document.querySelector('#status');
+  const hint = document.querySelector('#hint');
   const retry = document.querySelector('#retry');
-  const native = window.Capacitor?.Plugins?.PropertyQuarryNative;
+  const mark = document.querySelector('#mark');
+  const card = document.querySelector('#bridge-card');
+  const steps = [...document.querySelectorAll('[data-step]')];
+  const getNative = () => window.Capacitor?.Plugins?.PropertyQuarryNative;
+  const isAppShell = () => navigator.userAgent.includes('PropertyQuarryAndroid/');
   let running = false;
-  const setStatus = (message, failed = false) => {
+  const setProgress = (index, message) => {
+    document.body.dataset.state = 'working';
+    mark.dataset.state = 'working';
+    card.setAttribute('aria-busy', 'true');
     status.textContent = message;
-    retry.hidden = !failed;
+    hint.textContent = copy[mode].hint;
+    retry.hidden = true;
+    steps.forEach((step, stepIndex) => {
+      step.dataset.state = stepIndex < index ? 'complete' : stepIndex === index ? 'current' : 'pending';
+    });
+  };
+  const setComplete = () => {
+    mark.dataset.state = 'complete';
+    card.setAttribute('aria-busy', 'false');
+    steps.forEach((step) => { step.dataset.state = 'complete'; });
+  };
+  const setFailure = (error) => {
+    const insideApp = isAppShell();
+    document.body.dataset.state = 'failed';
+    mark.dataset.state = 'failed';
+    card.setAttribute('aria-busy', 'false');
+    status.textContent = error?.message || copy.common.requestFailed;
+    hint.textContent = insideApp ? copy.common.failureHint : copy[mode].outsideHint;
+    retry.hidden = !insideApp;
   };
   const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -845,7 +1001,7 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
       return await fetch(url, {...options, signal: controller.signal});
     } catch (error) {
       if (error?.name === 'AbortError') {
-        throw new Error('The secure app service took too long. Check your connection and try again.');
+        throw new Error(copy.common.serviceTimeout);
       }
       throw error;
     } finally {
@@ -854,22 +1010,23 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
   };
   const parseFailure = async (response) => {
     try {
-      const payload = await response.json();
-      return payload?.detail || payload?.error?.message || `Request failed (${response.status})`;
+      await response.json();
+      return response.status === 400 && mode === 'auth' ? copy.auth.expired : `${copy.common.requestFailed} (${response.status})`;
     } catch (_) {
-      return `Request failed (${response.status})`;
+      return `${copy.common.requestFailed} (${response.status})`;
     }
   };
   const auth = async () => {
-    if (!native) throw new Error('Open this page in the PropertyQuarry app.');
-    setStatus('Reading the secure app handoff…');
+    const native = getNative();
+    if (!native) throw new Error(copy.auth.outside);
+    setProgress(0, copy.auth.reading);
     const pending = await withTimeout(
       native.getPendingAuth(),
       8000,
-      'The app is still waking up. Try again to finish sign-in.',
+      copy.auth.waking,
     );
-    if (!pending?.code || !pending?.pkceVerifier) throw new Error('The secure sign-in handoff expired. Start sign-in again.');
-    setStatus('Confirming your secure sign-in…');
+    if (!pending?.code || !pending?.pkceVerifier) throw new Error(copy.auth.expired);
+    setProgress(1, copy.auth.confirming);
     const response = await fetchWithTimeout('/mobile/auth/redeem', {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
@@ -877,50 +1034,53 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
     }, 15000);
     if (!response.ok) throw new Error(await parseFailure(response));
     const payload = await response.json();
-    setStatus('Opening your property search…');
+    setProgress(2, copy.auth.opening);
     await withTimeout(
       native.clearPendingAuth(),
       3000,
-      'Sign-in succeeded, but the app could not finish local cleanup. Try again.',
+      copy.auth.cleanup,
     );
     const shared = await withTimeout(native.getPendingShare(), 3000, '').catch(() => null);
+    setComplete();
     location.replace(shared?.propertyUrl ? '/mobile/share/bridge' : (payload.return_to || '/app/search'));
   };
   const share = async () => {
-    if (!native) throw new Error('Open this page in the PropertyQuarry app.');
-    setStatus('Reading the shared property…');
+    const native = getNative();
+    if (!native) throw new Error(copy.share.outside);
+    setProgress(0, copy.share.reading);
     const pending = await withTimeout(
       native.getPendingShare(),
       8000,
-      'The app is still waking up. Try again to add the property.',
+      copy.share.waking,
     );
     if (!pending?.propertyUrl || !pending?.idempotencyKey) {
       location.replace('/app/shortlist');
       return;
     }
-    setStatus('Evaluating the listing and preparing its shortlist card…');
+    setProgress(1, copy.share.evaluating);
     const response = await fetchWithTimeout('/app/api/mobile/property-links', {
       method: 'POST', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({property_url: pending.propertyUrl, confirmed: true, idempotency_key: pending.idempotencyKey})
     }, 20000);
     if (response.status === 401) {
-      setStatus('Sign in securely to add this property…');
+      setProgress(1, copy.share.signingIn);
       await withTimeout(
         native.startExternalLogin(),
         8000,
-        'The secure browser did not open. Check your browser settings and try again.',
+        copy.share.browser,
       );
       return;
     }
     if (!response.ok) throw new Error(await parseFailure(response));
     const payload = await response.json();
-    setStatus('Opening your shortlist…');
+    setProgress(2, copy.share.opening);
     await withTimeout(
       native.clearPendingShare(),
       3000,
-      'The property was added, but the app could not finish local cleanup. Try again.',
+      copy.share.cleanup,
     );
+    setComplete();
     location.replace(payload.shortlist_url || '/app/shortlist');
   };
   const run = () => {
@@ -928,7 +1088,7 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
     running = true;
     retry.hidden = true;
     (mode === 'auth' ? auth() : share())
-      .catch((error) => setStatus(error?.message || 'The app handoff could not be completed.', true))
+      .catch(setFailure)
       .finally(() => { running = false; });
   };
   retry.addEventListener('click', run);

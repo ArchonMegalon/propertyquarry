@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-06 20:21 UTC
+Updated: 2026-08-07 07:18 UTC
 
 ## Mission
 
@@ -58,6 +58,27 @@ The running API hotpatch was refreshed with these web changes at 2026-08-06
 20:20 UTC. Container health, local readiness, the public UTF-8/no-store headers,
 and BrowserAct-rendered bridge content all passed. It remains a writable-layer
 hotfix until the immutable web image is rebuilt from this published commit.
+
+The 2026-08-07 polish pass upgraded the mobile handoff without changing its
+security boundary:
+
+- the auth and share bridges now use a compact three-stage progress card with
+  honest working, completed, and failed visual states;
+- retry actions appear only inside the PropertyQuarry app, so an external
+  browser receives a clear return-to-app instruction instead of a useless
+  button;
+- bridge UI and runtime messages are coherent in English, German, and Spanish
+  using the device `Accept-Language` preference;
+- status updates are polite live regions, progress exposes `aria-busy`, focus
+  treatment is explicit, and reduced-motion/forced-colors modes are covered;
+  and
+- the privacy note explains the narrow Google identity boundary and the share
+  bridge confirms that only the user-approved listing link is imported.
+
+The polished web bridge was visually checked in BrowserAct in German, including
+the external-browser failure state, and hot-patched into the healthy live API.
+As above, the immutable web image must still be rebuilt from the published
+handoff commit.
 
 ## Release state
 
@@ -238,6 +259,8 @@ and visually rechecked.
   mobile web contracts.
 - Android preview build with durable cleanup and bounded share/auth operations:
   `242` Gradle tasks, passed.
+- Polished localized bridge contracts: `30 passed`; JavaScript syntax and
+  `11/11` mobile web contracts passed.
 - Signed Android release build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.

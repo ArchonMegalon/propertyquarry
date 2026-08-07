@@ -101,11 +101,30 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     auth = client.get("/mobile/auth/bridge")
     share = client.get("/mobile/share/bridge")
     script = client.get("/mobile/bridge.js")
+    styles = client.get("/mobile/bridge.css")
+    auth_de = client.get(
+        "/mobile/auth/bridge",
+        headers={"accept-language": "de-AT,de;q=0.9,en;q=0.7"},
+    )
+    share_es = client.get(
+        "/mobile/share/bridge",
+        headers={"accept-language": "es-CR,es;q=0.9,en;q=0.7"},
+    )
 
-    assert auth.status_code == share.status_code == script.status_code == 200
+    assert auth.status_code == share.status_code == script.status_code == styles.status_code == 200
     assert "default-src 'none'" in auth.headers["content-security-policy"]
     assert "data-mobile-bridge=\"auth\"" in auth.text
     assert "data-mobile-bridge=\"share\"" in share.text
+    assert 'aria-live="polite"' in auth.text
+    assert 'aria-busy="true"' in auth.text
+    assert 'class="steps"' in auth.text
+    assert "Your Google password never enters PropertyQuarry." in auth.text
+    assert '<html lang="de">' in auth_de.text
+    assert "Sichere Anmeldung abschließen" in auth_de.text
+    assert "Ihr Google-Passwort wird niemals an PropertyQuarry übertragen." in auth_de.text
+    assert '<html lang="es">' in share_es.text
+    assert "Agregando propiedad" in share_es.text
+    assert "Solo se importa el enlace del anuncio que usted aprobó." in share_es.text
     assert "fetchWithTimeout('/mobile/auth/redeem'" in script.text
     assert "fetchWithTimeout('/app/api/mobile/property-links'" in script.text
     assert "method: 'POST'" in script.text
@@ -116,7 +135,17 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert "The app is still waking up. Try again to add the property." in script.text
     assert "await withTimeout(\n      native.clearPendingAuth()" in script.text
     assert "await withTimeout(\n      native.clearPendingShare()" in script.text
+    assert "const getNative" in script.text
+    assert "const isAppShell" in script.text
+    assert "retry.hidden = !insideApp" in script.text
+    assert "const setProgress" in script.text
+    assert "const setComplete" in script.text
+    assert "const setFailure" in script.text
     assert script.headers["content-type"] == "application/javascript; charset=utf-8"
+    assert "prefers-reduced-motion:reduce" in styles.text
+    assert "forced-colors:active" in styles.text
+    assert 'body[data-state="failed"]' in styles.text
+    assert styles.headers["content-type"] == "text/css; charset=utf-8"
 
 
 def test_mobile_share_import_requires_auth_and_explicit_confirmation(
