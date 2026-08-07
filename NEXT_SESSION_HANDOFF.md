@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-07 11:25 UTC
+Updated: 2026-08-07 17:25 UTC
 
 ## Mission
 
@@ -87,6 +87,17 @@ The labels remain in the semantic ordered list for assistive technology. The
 localized failure state was rendered again in BrowserAct, and the cache-busted
 stylesheet was hot-patched into the healthy live API. No sign-in behavior,
 native contract, or Android binary content changed in this refinement.
+
+The 2026-08-07 public-product polish aligned the landing and sample shortlist
+with the same minimal premium language: editorial serif headings, quieter
+translucent navigation, restrained depth, pill actions, circular result tabs,
+and a narrow brass rail for the selected home. The skip-to-content control now
+appears only for visible keyboard focus, fixing the automated-screenshot
+artifact without weakening keyboard access. The landing still fits its
+single-desktop-viewport contract. Landing and selected-result states were
+visually checked in BrowserAct and the three public templates were hot-patched
+into the healthy live API. This remains a writable-container hotfix until the
+immutable web image is rebuilt from this handoff commit.
 
 ## Release state
 
@@ -271,6 +282,10 @@ and visually rechecked.
   `11/11` mobile web contracts passed.
 - Minimal bridge refinement: `30 passed`; JavaScript syntax and `11/11` mobile
   web contracts passed; live German failure state visually verified.
+- Public-product premium polish: `884` workspace contracts passed; affected
+  browser gate `3 passed, 1 expected skip`; identity/mobile routes `30 passed`;
+  `11/11` mobile web contracts passed; live landing and shortlist visually
+  verified.
 - Signed Android release build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.

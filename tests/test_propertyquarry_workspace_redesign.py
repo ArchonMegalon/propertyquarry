@@ -71,6 +71,21 @@ def _read_workbench_bundle() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in paths if path.exists())
 
 
+def test_propertyquarry_public_surfaces_keep_minimal_premium_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    public_shell = (repo_root / "ea/app/templates/base_public.html").read_text(encoding="utf-8")
+    home = (repo_root / "ea/app/templates/propertyquarry_home.html").read_text(encoding="utf-8")
+    example = (repo_root / "ea/app/templates/propertyquarry_example_shortlist.html").read_text(encoding="utf-8")
+
+    assert ".skip-link:focus-visible" in public_shell
+    assert ".skip-link:focus {" not in public_shell
+    assert "backdrop-filter: blur(16px) saturate(120%);" in public_shell
+    assert 'font-family: Georgia, "Times New Roman", serif;' in home
+    assert "box-shadow: var(--shadow);" in home
+    assert 'font-family: Georgia, "Times New Roman", serif;' in example
+    assert "box-shadow: inset 3px 0 0 var(--accent);" in example
+
+
 def _assert_billing_fail_closed(response, *, marker: str = "The billing portal is still being connected.") -> None:
     if response.status_code in {303, 307}:
         assert response.headers["location"] == "/app/account?billing=1#delivery"
