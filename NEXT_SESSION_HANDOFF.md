@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-07 07:18 UTC
+Updated: 2026-08-07 11:25 UTC
 
 ## Mission
 
@@ -79,6 +79,14 @@ The polished web bridge was visually checked in BrowserAct in German, including
 the external-browser failure state, and hot-patched into the healthy live API.
 As above, the immutable web image must still be rebuilt from the published
 handoff commit.
+
+The 2026-08-07 minimal refinement then removed the framed checklist and purely
+decorative card ornament, narrowed the surface, reduced type and shadow weight,
+and replaced the visible step labels with a compact three-point progress rail.
+The labels remain in the semantic ordered list for assistive technology. The
+localized failure state was rendered again in BrowserAct, and the cache-busted
+stylesheet was hot-patched into the healthy live API. No sign-in behavior,
+native contract, or Android binary content changed in this refinement.
 
 ## Release state
 
@@ -261,6 +269,8 @@ and visually rechecked.
   `242` Gradle tasks, passed.
 - Polished localized bridge contracts: `30 passed`; JavaScript syntax and
   `11/11` mobile web contracts passed.
+- Minimal bridge refinement: `30 passed`; JavaScript syntax and `11/11` mobile
+  web contracts passed; live German failure state visually verified.
 - Signed Android release build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.

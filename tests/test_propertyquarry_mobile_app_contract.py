@@ -118,6 +118,7 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert 'aria-live="polite"' in auth.text
     assert 'aria-busy="true"' in auth.text
     assert 'class="steps"' in auth.text
+    assert '/mobile/bridge.css?v=3' in auth.text
     assert "Your Google password never enters PropertyQuarry." in auth.text
     assert '<html lang="de">' in auth_de.text
     assert "Sichere Anmeldung abschließen" in auth_de.text
@@ -144,6 +145,9 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert script.headers["content-type"] == "application/javascript; charset=utf-8"
     assert "prefers-reduced-motion:reduce" in styles.text
     assert "forced-colors:active" in styles.text
+    assert ".steps li:not(:last-child)::after" in styles.text
+    assert "clip:rect(0,0,0,0)" in styles.text
+    assert "main::after" not in styles.text
     assert 'body[data-state="failed"]' in styles.text
     assert styles.headers["content-type"] == "text/css; charset=utf-8"
 
