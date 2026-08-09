@@ -1,12 +1,14 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-09 12:05 UTC
+Updated: 2026-08-09 12:18 UTC
 
 ## Mission
 
-Complete the prepared PropertyQuarry `1.1.0` (`versionCode 2`) release on the
-Google Play **internal testing** track after the upload-key security cooldown
-ends. Do not create, edit, promote, or roll out a production release.
+The prepared PropertyQuarry `1.1.0` (`versionCode 2`) release is now active on
+the Google Play **internal testing** track. The next task is to update the
+invited physical device from version 1 to version 2 and repeat the Google
+secure-sign-in flow. Do not create, edit, promote, or roll out a production
+release.
 
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
@@ -38,10 +40,11 @@ Cloudflare response contained the new wake-up retry text with `Cache-Control:
 no-store`. That writable-container phase is historical and was superseded by
 the immutable deployment recorded below.
 
-The Android lifecycle half cannot reach testers until version 2 is accepted on
-the internal track after the upload-key cooldown. Until then, the deployed web
-bridge gives the installed version 1.0 app a bounded retry path rather than an
-endless spinner.
+The Android lifecycle half now reaches testers through internal release 2,
+published on 2026-08-09. The deployed web bridge continues to give the older
+installed version 1.0 app a bounded retry path, but the decisive remaining
+proof is an on-device update to version 2 followed by a fresh secure-sign-in
+attempt.
 
 A follow-up audit closed three remaining bridge gaps in the handoff commit:
 
@@ -167,11 +170,13 @@ published UI bytes found no horizontal overflow.
 - Google Play developer account: `9007890349240845326`
 - Google Play app ID: `4976153363318887490`
 - Package: `com.myexternalbrain.propertyquarry`
-- Target release: `1.1.0` / `versionCode 2`
+- Active release: `1.1.0` / `versionCode 2`
 - Track: internal testing only
-- Internal release draft: `2`
-- Active internal release remains `1.0` until draft 2 is accepted and rolled
-  out.
+- Internal release ID: `2`
+- Track state: **Active**
+- Play state: **Available to internal testers**
+- Released: `2026-08-09 12:12 UTC` (`14:12 Europe/Vienna`)
+- Previous active version `1.0` was superseded on the internal track.
 - Production rollout changed: **no**
 
 The replacement PropertyQuarry upload certificate is now active in Play:
@@ -180,8 +185,8 @@ The replacement PropertyQuarry upload certificate is now active in Play:
 A8:88:7D:66:41:BF:71:35:E3:74:B0:D8:50:4C:84:1A:F5:D7:26:09:0F:B8:1E:AE:59:67:07:5B:60:81:16:CF
 ```
 
-Play enforces a post-reset security cooldown. The prepared bundle cannot be
-uploaded before:
+Play's post-reset security cooldown ended before the successful upload. The
+historical eligibility boundary was:
 
 ```text
 2026-08-08 12:09:53 UTC
@@ -194,8 +199,7 @@ The exact Play message was:
 You uploaded an app bundle that is signed with an upload certificate that is not yet valid because it has been recently reset. You will be able to upload app bundles again from 8 Aug 2026, 12:09:53 UTC.
 ```
 
-Do not cancel the reset, request another reset, or repeatedly retry before the
-eligible time.
+No further upload-key reset action is required.
 
 ## Signed bundle
 
@@ -232,27 +236,27 @@ cd /docker/property/mobile
 npm run android:release:container
 ```
 
-## Play Console continuation
+## Play Console release result
 
-Prepared internal-release draft:
+Published internal release:
 
 ```text
-https://play.google.com/console/u/0/developers/9007890349240845326/app/4976153363318887490/tracks/4701487190338825843/releases/2/prepare
+https://play.google.com/console/u/0/developers/9007890349240845326/app/4976153363318887490/tracks/4701487190338825843?tab=releases
 ```
 
-Authenticated BrowserAct session created in this conversation:
+BrowserAct release browser:
 
 ```text
-Session: pq-play-stealth-auth
 Browser ID: 111111582245966456
 Browser name: google-play-propertyquarry-release-stealth
 Browser type: stealth
+Release session: pq-play-v2-20260809 (closed after verification)
 ```
 
-Use the `browser-act` and `ea-browser-ooda-operator` skills before operating the
-session. Do not operate sessions created by another conversation. If the login
-has expired, use remote assist for the user to authenticate; never ask for or
-enter the user's Google password.
+Use the `browser-act` and `ea-browser-ooda-operator` skills before any later
+Console review. Open a new session; do not reuse the closed session name as if
+it were a durable handle. If login has expired, use remote assist for the user
+to authenticate; never ask for or enter the user's Google password.
 
 BrowserAct local-storage broken symlinks were moved to:
 
@@ -266,23 +270,16 @@ and `ffmpeg`. Do not restore the broken links unless their targets exist.
 ## Exact resume sequence
 
 1. Follow `AGENTS.md` and call vexp `run_pipeline` first for repository work.
-2. Wait until after `2026-08-08T12:09:53Z`.
-3. Read the `browser-act` and `ea-browser-ooda-operator` skills.
-4. Reopen BrowserAct session `pq-play-stealth-auth` and internal release draft
-   `2`; obtain a fresh remote-assist login only if necessary.
-5. Upload
-   `mobile/android/app/build/outputs/bundle/release/app-release.aab`.
-6. Require Play to recognize package
-   `com.myexternalbrain.propertyquarry`, `versionCode 2`, version `1.1.0`, and
-   the active upload signer above.
-7. Resolve only internal-track validation issues. Save and roll out draft 2 to
-   internal testers only. Do not touch production.
-8. Capture the accepted release state and update
-   `mobile/build/propertyquarry-google-play-evidence.json` to the accepted
-   version-2 artifact.
-9. Run `npm run android:release:readiness`; require zero failures or blockers.
-10. Run vexp `verify_done`, check Git status, and publish any truthful evidence
-    or handoff updates.
+2. On the invited Android device, confirm the Play Store is signed in as
+   `tibor.girschele@gmail.com` and update PropertyQuarry to `1.1.0`.
+3. Launch the updated app and repeat Google secure sign-in.
+4. Require the flow to leave `Finishing secure sign-in`, redeem the handoff,
+   and open the authenticated app surface. Record the device time and visible
+   error if it does not.
+5. If server diagnosis is needed, correlate that attempt with
+   `POST /mobile/auth/redeem`; do not weaken PKCE, session, or origin checks.
+6. Do not create another Play release, change the tester list, promote the
+   release, or touch production during this device-validation step.
 
 ## Tester access
 
@@ -355,8 +352,16 @@ and public rendering probes.
 - Signed Android release build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.
-- Release readiness: `0` failures and exactly `1` external blocker,
-  `upload_key_cooldown_until_2026-08-08T12:09:53.000Z`.
+- Google Play accepted bundle version `2 (1.1.0)` and reports it available to
+  internal testers; no form factor lost supported devices.
+- The selected `PropertyQuarry internal` tester list contains one user,
+  `tibor.girschele@gmail.com`.
+- Release readiness at artifact source commit
+  `120a343e5c6ed98e8131240b8507ad32e5ee9def`: `0` failures, `0` blockers;
+  production rollout authorization remains false.
+- Running the pre-publication gate at the later repository HEAD intentionally
+  reports `source_commit_mismatch`; the published bundle is tied to the clean
+  artifact commit above, not to later web and handoff commits.
 
 The full repository-wide pytest run was stopped after it exposed the stale
 walkthrough assertion; the complete affected greenfield file and all targeted
@@ -371,6 +376,7 @@ mobile/build/propertyquarry-upload-key-activation-receipt.json
 mobile/build/propertyquarry-upload-key-cooldown.png
 mobile/build/propertyquarry-android-release-evidence.json
 mobile/build/propertyquarry-google-play-evidence.json
+mobile/build/propertyquarry-google-play-internal-v2-20260809.png
 ```
 
 Cooldown screenshot SHA-256:
@@ -379,9 +385,17 @@ Cooldown screenshot SHA-256:
 700fb5c4d9c2be6953e7acf28ce50af2541df9f370967c9de928fcbddc096794
 ```
 
-`propertyquarry-google-play-evidence.json` intentionally continues to describe
-the accepted `1.0` artifact until Play accepts version 2. Do not falsify it in
-advance of the successful upload.
+Internal-v2 release screenshot SHA-256:
+
+```text
+45c00bb26f65f54eea0d2e5be2766ccb06d9e0aee16c4772f5473db9f03c3665
+```
+
+`propertyquarry-google-play-evidence.json` now describes the accepted version-2
+artifact with SHA-256
+`d01c419ccd2b3efd186b89f1709cb44cca213c72aab2dc849c1eddbdf79b0ff7`.
+The Play surface still labels the temporary app name as unreviewed; this is not
+an internal-track blocker and no production review was requested.
 
 The old historical `propertyquarry-android-test-phase-receipt.json` records the
 pre-reset missing-key state. Treat it as history, not current release truth.
