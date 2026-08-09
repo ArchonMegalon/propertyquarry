@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-09 11:44 UTC
+Updated: 2026-08-09 12:05 UTC
 
 ## Mission
 
@@ -31,13 +31,12 @@ This handoff commit repairs both sides of that boundary:
   and redemption fetches with timeouts, exposes honest progress states, and
   offers an actionable retry instead of spinning forever.
 
-The server-side bridge repair was hot-patched into the running
+The server-side bridge repair was initially hot-patched into the running
 `propertyquarry-api` container at 2026-08-06 16:52 UTC. The container returned
 healthy, local readiness and bridge probes returned HTTP 200, and the public
 Cloudflare response contained the new wake-up retry text with `Cache-Control:
-no-store`. This is a writable-container hotfix, not an immutable image release;
-the next production web deployment must build from this handoff commit or the
-hotfix will be lost on container recreation.
+no-store`. That writable-container phase is historical and was superseded by
+the immutable deployment recorded below.
 
 The Android lifecycle half cannot reach testers until version 2 is accepted on
 the internal track after the upload-key cooldown. Until then, the deployed web
@@ -56,8 +55,8 @@ A follow-up audit closed three remaining bridge gaps in the handoff commit:
 
 The running API hotpatch was refreshed with these web changes at 2026-08-06
 20:20 UTC. Container health, local readiness, the public UTF-8/no-store headers,
-and BrowserAct-rendered bridge content all passed. It remains a writable-layer
-hotfix until the immutable web image is rebuilt from this published commit.
+and BrowserAct-rendered bridge content all passed. It remained a writable-layer
+hotfix until the immutable deployment recorded below.
 
 The 2026-08-07 polish pass upgraded the mobile handoff without changing its
 security boundary:
@@ -77,8 +76,7 @@ security boundary:
 
 The polished web bridge was visually checked in BrowserAct in German, including
 the external-browser failure state, and hot-patched into the healthy live API.
-As above, the immutable web image must still be rebuilt from the published
-handoff commit.
+That intermediate hotpatch was superseded by the immutable deployment below.
 
 The 2026-08-07 minimal refinement then removed the framed checklist and purely
 decorative card ornament, narrowed the surface, reduced type and shadow weight,
@@ -96,8 +94,8 @@ appears only for visible keyboard focus, fixing the automated-screenshot
 artifact without weakening keyboard access. The landing still fits its
 single-desktop-viewport contract. Landing and selected-result states were
 visually checked in BrowserAct and the three public templates were hot-patched
-into the healthy live API. This remains a writable-container hotfix until the
-immutable web image is rebuilt from this handoff commit.
+into the healthy live API. That intermediate hotpatch was superseded by the
+immutable deployment below.
 
 The 2026-08-09 demo-conversation pass is published in source commit
 `55bd54d7724bace15bd91be9f13d74806fc5a9c6` and is live on the public example
@@ -119,9 +117,48 @@ the conversation controls without horizontal overflow, and a synthetic public
 question returned the selected title plus the real open parking issue. A
 recoverable pre-patch copy remains under
 `/tmp/propertyquarry-conversation-live-backup.5OfVx1` until host cleanup or
-reboot. This is still a writable-container hotfix: the immutable image reports
-its older baked release SHA and must eventually be rebuilt from the published
-source commit.
+reboot.
+
+## Immutable web deployment completed
+
+All writable-container caveats above are now closed. At 2026-08-09 12:01 UTC,
+`propertyquarry-api` was recreated from the clean, published repository HEAD
+`e0ea2376173151be4432930d7da01a0c7463a19e` using the pinned
+`ea/Dockerfile.property-web` runtime contract.
+
+```text
+Image tag: propertyquarry-standalone-web-runtime:local-e0ea23761731
+Image ID: sha256:92974baf94cc172fc9c1b038b634fed50850451ab2ca37cbf78e4a249f25cf9e
+OCI revision: e0ea2376173151be4432930d7da01a0c7463a19e
+Deployment ID: propertyquarry-conversation-e0ea2376-20260809
+Container: propertyquarry-api
+State after replacement: running healthy, restart count 0
+Bound port: 127.0.0.1:8097 -> 8090/tcp
+```
+
+Only the API service was force-recreated with `--no-deps --no-build`. Its
+configuration binds, reviewer trust store, named data volumes, network
+membership, `on-failure:3` restart policy, and public port were preserved.
+Database, migration data, worker, scheduler, render tools, backup, and
+Cloudflare tunnel were not recreated.
+
+The pre-replacement, working conversation hotpatch is retained as a local
+rollback image:
+
+```text
+Tag: propertyquarry-standalone-web-runtime:conversation-hotpatch-rollback-20260809
+Image ID: sha256:896e1ff54155fa2ee9097830d213bf9615e175cdc08ebd42f6f38a8a6cc03e06
+```
+
+Post-deployment checks verified that the runtime files are baked into the new
+image at mode `0644`, the runtime release SHA and image ID match the values
+above, `/health/ready` reports the PostgreSQL schema-v20 ready reason, and the
+public example shortlist contains the selected conversation controls. English
+and German synthetic questions returned grounded answers; the English answer
+named the real parking gap and did not invent a missing lift. BrowserAct's
+JavaScript-rendered extraction also exposed the complete conversation surface
+and selected candidate. The prior full BrowserAct layout check against the same
+published UI bytes found no horizontal overflow.
 
 ## Release state
 
@@ -281,10 +318,11 @@ sending it through Telegram.
 - Preserved the preview-build guard that restores signed release bundles after
   Gradle `clean`.
 
-The live site seen during the audit still showed German navigation around
-English sign-in content because this repository fix had not yet been deployed.
-Do not claim the live surface is corrected until the handoff commit is deployed
-and visually rechecked.
+The earlier live-site deployment caveat is closed by the immutable runtime
+deployment above. The localized sign-in and bridge bytes are now baked into the
+active image; their German failure state was visually verified in BrowserAct
+before the immutable rebuild, and the rebuilt image passed current readiness
+and public rendering probes.
 
 ## Verification completed
 
