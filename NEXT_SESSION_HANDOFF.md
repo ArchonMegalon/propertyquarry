@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-07 17:25 UTC
+Updated: 2026-08-09 11:44 UTC
 
 ## Mission
 
@@ -98,6 +98,30 @@ single-desktop-viewport contract. Landing and selected-result states were
 visually checked in BrowserAct and the three public templates were hot-patched
 into the healthy live API. This remains a writable-container hotfix until the
 immutable web image is rebuilt from this handoff commit.
+
+The 2026-08-09 demo-conversation pass is published in source commit
+`55bd54d7724bace15bd91be9f13d74806fc5a9c6` and is live on the public example
+shortlist. It adds a visible, reusable question-and-answer transcript for the
+selected demo home, a public read-only decision-answer endpoint, prompt chips,
+and responsive desktop/mobile presentation. Answers are grounded in canonical
+facts for the selected sample, German viewing questions are recognized, and
+unknown facts no longer become fabricated negative signals such as `no_lift`.
+The full PropertyQuarry browser gate passed with `129 passed, 1 skipped`; the
+focused conversation/decision browser gate passed `3`, and the affected API,
+feedback, and shortlist contracts passed `9`.
+
+The three changed runtime files were hot-patched into `propertyquarry-api` at
+2026-08-09 11:43 UTC. The first restart exposed copied Python modes of `0600`
+and stopped at import with `PermissionError`; the files were immediately
+re-copied as `0644`, after which the container returned `running healthy` with
+restart count `0`. Public readiness returned HTTP 200, the live page exposed
+the conversation controls without horizontal overflow, and a synthetic public
+question returned the selected title plus the real open parking issue. A
+recoverable pre-patch copy remains under
+`/tmp/propertyquarry-conversation-live-backup.5OfVx1` until host cleanup or
+reboot. This is still a writable-container hotfix: the immutable image reports
+its older baked release SHA and must eventually be rebuilt from the published
+source commit.
 
 ## Release state
 
@@ -286,6 +310,10 @@ and visually rechecked.
   browser gate `3 passed, 1 expected skip`; identity/mobile routes `30 passed`;
   `11/11` mobile web contracts passed; live landing and shortlist visually
   verified.
+- Public demo conversation: full PropertyQuarry browser gate `129 passed, 1
+  skipped`; focused desktop, mobile, and decision follow-up browser gate `3
+  passed`; affected API/feedback/shortlist contracts `9 passed`; live readiness,
+  rendered controls, overflow, and selected-property answer smoke verified.
 - Signed Android release build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.
