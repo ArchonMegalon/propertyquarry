@@ -17990,17 +17990,43 @@ def _property_feedback_decision_consequences() -> list[str]:
 
 def _property_decision_copilot_mode(question: str) -> str:
     normalized = str(question or "").strip().lower()
-    if any(token in normalized for token in ("what changed", "changed", "last time", "new since", "update")):
+    if any(
+        token in normalized
+        for token in ("what changed", "changed", "last time", "new since", "update", "was hat sich", "geändert", "neu seit")
+    ):
         return "change_log"
-    if any(token in normalized for token in ("ask agent", "agent", "follow up", "follow-up", "question")):
+    if any(
+        token in normalized
+        for token in (
+            "ask agent",
+            "agent",
+            "follow up",
+            "follow-up",
+            "question",
+            "what should i ask",
+            "before the viewing",
+            "makler",
+            "fragen",
+            "klären",
+            "klaeren",
+            "besichtigung",
+            "sollte ich",
+        )
+    ):
         return "ask_agent"
-    if any(token in normalized for token in ("investment", "yield", "underwriting", "capex", "risk", "return")):
+    if any(token in normalized for token in ("investment", "yield", "underwriting", "capex", "return", "rendite", "anlage")):
         return "investment"
-    if any(token in normalized for token in ("reject", "rejected", "why no", "why did", "jonas", "anna", "household", "family")):
+    if any(
+        token in normalized
+        for token in ("reject", "rejected", "why no", "why did", "jonas", "anna", "household", "family", "familie", "haushalt", "abgelehnt")
+    ):
         return "household"
-    if any(token in normalized for token in ("pass the brief", "unlock", "make this pass", "what would help", "counterfactual")):
+    if any(
+        token in normalized
+        for token in ("pass the brief", "unlock", "make this pass", "what would help", "counterfactual", "was würde helfen", "was wuerde helfen")
+    ):
         return "unlock"
-    if any(token in normalized for token in ("why", "maybe", "only maybe", "not yes", "not shortlisted")):
+    if any(token in normalized for token in ("why", "maybe", "only maybe", "not yes", "not shortlisted", "warum", "vielleicht", "nicht ja")):
         return "decision"
     return "decision"
 
@@ -18035,6 +18061,11 @@ def _property_decision_copilot_answer(
     mismatch_reasons = [compact_text(item, fallback="", limit=220) for item in list(assessment_json.get("mismatch_reasons_json") or [])]
     mismatch_reasons = [item for item in mismatch_reasons if item]
     property_label = compact_text(property_title, fallback="", limit=120) or compact_text(facts.get("headline") or facts.get("title"), fallback="this property", limit=120)
+    normalized_question = str(question or "").strip().lower()
+    answer_in_german = any(
+        token in normalized_question
+        for token in (" was ", "was ", "warum", "welche", "sollte", "klären", "klaeren", "besichtigung", "makler", "rendite", "risiko")
+    )
 
     if mode == "change_log":
         answer = "The latest visible change is the packet and feedback state, not a fresh ranking shift yet."
@@ -18059,7 +18090,11 @@ def _property_decision_copilot_answer(
         actions.append({"label": "Open property", "action": "open_packet", "href": compact_text(property_url, fallback="", limit=2000)})
     elif mode == "ask_agent":
         primary = agent_questions[:3]
-        answer = "The next strongest agent brief is driven by your blockers and the missing facts still open on this property."
+        answer = (
+            f"Für {property_label} sollten die nächsten Fragen den wichtigsten offenen Punkt und die noch fehlenden Fakten klären."
+            if answer_in_german
+            else f"For {property_label}, the next agent brief should verify the main blocker and the missing facts that are still open."
+        )
         if mismatch_reasons:
             evidence.append(
                 {
@@ -18175,10 +18210,16 @@ def _property_decision_copilot_answer(
     else:
         best_positive = positive[0] if positive else {}
         main_negative = negative[0] if negative else {}
+        strongest_fit = (
+            fit_reasons[0] if fit_reasons else compact_text(best_positive.get("label"), fallback="the available fit evidence", limit=160)
+        ).rstrip(" .;")
+        main_issue = (
+            mismatch_reasons[0] if mismatch_reasons else compact_text(main_negative.get("label"), fallback="an unresolved fact", limit=160)
+        ).rstrip(" .;")
         answer = (
-            f"{property_label} is still closer to Maybe than Yes because the best fit signal is "
-            f"{compact_text(best_positive.get('label'), fallback='still generic', limit=80).lower()}, "
-            f"while the main issue is {compact_text(main_negative.get('label'), fallback='still unresolved evidence', limit=80).lower()}."
+            f"{property_label} bleibt eher Vielleicht als Ja. Dafür spricht: {strongest_fit}. Offen bleibt: {main_issue}."
+            if answer_in_german
+            else f"{property_label} is still closer to Maybe than Yes. The strongest fit is {strongest_fit.lower()}; the main open issue is {main_issue.lower()}."
         )
         if fit_reasons:
             evidence.append({"title": "Why it survived", "detail": fit_reasons[0], "confidence": "High", "source": "ranking"})
@@ -18237,12 +18278,28 @@ def _property_feedback_suggestion_groups(
     suggestions: list[str] = []
     positives: list[str] = []
 
+    def _known_fact_is_truthy(value: object) -> bool:
+        if isinstance(value, (list, tuple, dict, set)):
+            return bool(value)
+        return _property_truthy_flag(value)
+
     total_rent = _float_or_none(facts.get("total_rent_eur"))
     area_sqm = _float_or_none(facts.get("area_sqm"))
     heating = str(facts.get("heating") or facts.get("heating_type") or "").strip().lower()
-    has_lift = bool(facts.get("lift"))
-    has_floorplan = bool(facts.get("has_floorplan") or facts.get("floorplan_count") or facts.get("floorplan_urls_json"))
-    has_balcony = bool(facts.get("balcony") or facts.get("terrace") or facts.get("terrace_area_sqm"))
+    lift_is_known = "lift" in facts or "has_lift" in facts
+    has_lift = _known_fact_is_truthy(facts.get("lift") if "lift" in facts else facts.get("has_lift"))
+    floorplan_is_known = any(key in facts for key in ("has_floorplan", "floorplan_count", "floorplan_urls_json"))
+    has_floorplan = any(
+        _known_fact_is_truthy(facts.get(key))
+        for key in ("has_floorplan", "floorplan_count", "floorplan_urls_json")
+        if key in facts
+    )
+    outdoor_space_is_known = any(key in facts for key in ("balcony", "terrace", "terrace_area_sqm"))
+    has_balcony = any(
+        _known_fact_is_truthy(facts.get(key))
+        for key in ("balcony", "terrace", "terrace_area_sqm")
+        if key in facts
+    )
     nearest_subway = _float_or_none(facts.get("nearest_subway_m"))
     nearest_supermarket = _float_or_none(facts.get("nearest_supermarket_m"))
     nearest_pharmacy = _float_or_none(facts.get("nearest_pharmacy_m"))
@@ -18262,21 +18319,24 @@ def _property_feedback_suggestion_groups(
     nearest_running = _float_or_none(facts.get("nearest_running_m"))
     lease_years = _float_or_none(facts.get("lease_term_years_max"))
 
-    if isinstance(total_rent, float) and total_rent >= 2000.0:
-        suggestions.append("price_too_high")
-    else:
-        positives.append("price_good_value")
+    if isinstance(total_rent, float):
+        if total_rent >= 2000.0:
+            suggestions.append("price_too_high")
+        else:
+            positives.append("price_good_value")
     if "gas" in heating:
         suggestions.append("gas_heating")
-    if not has_lift:
-        suggestions.append("no_lift")
-    else:
-        positives.append("lift_good")
-    if not has_floorplan:
-        suggestions.append("weak_floorplan")
-    else:
-        positives.append("floorplan_good")
-        positives.append("layout_strong")
+    if lift_is_known:
+        if not has_lift:
+            suggestions.append("no_lift")
+        else:
+            positives.append("lift_good")
+    if floorplan_is_known:
+        if not has_floorplan:
+            suggestions.append("weak_floorplan")
+        else:
+            positives.append("floorplan_good")
+            positives.append("layout_strong")
     if isinstance(area_sqm, float) and area_sqm < 70.0:
         suggestions.append("too_small")
     if isinstance(nearest_subway, float) and nearest_subway > 900.0:
@@ -18321,10 +18381,11 @@ def _property_feedback_suggestion_groups(
         suggestions.append("green_access_weak")
     if isinstance(lease_years, float) and lease_years > 0.0 and lease_years <= 5.0:
         suggestions.append("lease_too_short")
-    if not has_balcony:
-        suggestions.append("outdoor_space_weak")
-    else:
-        positives.append("outdoor_space_strong")
+    if outdoor_space_is_known:
+        if not has_balcony:
+            suggestions.append("outdoor_space_weak")
+        else:
+            positives.append("outdoor_space_strong")
     if bool(facts.get("has_360")) or bool(facts.get("source_virtual_tour_url")):
         positives.append("tour_helpful")
     if bool(facts.get("air_quality_risk")) or bool(facts.get("prefer_good_air_quality")):

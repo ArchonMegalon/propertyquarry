@@ -7272,6 +7272,57 @@ def test_propertyquarry_example_shortlist_page_opens_sample_without_internal_lan
     assert "queued" not in response.text.lower()
 
 
+def test_propertyquarry_example_shortlist_conversation_uses_selected_candidate_context() -> None:
+    public_client = build_property_client(principal_id="pq-example-conversation-public")
+    public_client.headers.pop("X-EA-Principal-ID", None)
+
+    page = public_client.get(
+        "/app/example/shortlist?candidate=quiet-layout-near-transit",
+        headers={"host": "propertyquarry.com"},
+    )
+    assert page.status_code == 200
+    assert "Decision conversation" in page.text
+    assert "Ask about this home." in page.text
+    assert 'data-candidate-key="quiet-layout-near-transit"' in page.text
+    assert "/app/api/property/example-conversation" in page.text
+
+    response = public_client.post(
+        "/app/api/property/example-conversation",
+        headers={"host": "propertyquarry.com"},
+        json={
+            "candidate_key": "quiet-layout-near-transit",
+            "question": "Why is this only a maybe?",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["candidate_key"] == "quiet-layout-near-transit"
+    assert "Quiet layout near transit" in body["answer"]
+    assert "parking availability is still unclear" in body["answer"].lower()
+    assert "no lift" not in body["answer"].lower()
+    assert any("parking" in str(item.get("detail") or "").lower() for item in body["evidence"])
+
+    german = public_client.post(
+        "/app/api/property/example-conversation",
+        headers={"host": "propertyquarry.com"},
+        json={
+            "candidate_key": "quiet-layout-near-transit",
+            "question": "Was sollte ich vor einer Besichtigung noch klären?",
+        },
+    )
+    assert german.status_code == 200, german.text
+    german_body = german.json()
+    assert german_body["answer"].startswith("Für Quiet layout near transit")
+    assert any(item["action"] == "ask_agent" for item in german_body["actions"])
+
+    missing_candidate = public_client.post(
+        "/app/api/property/example-conversation",
+        headers={"host": "propertyquarry.com"},
+        json={"candidate_key": "not-a-demo-home", "question": "Why?"},
+    )
+    assert missing_candidate.status_code == 404
+
+
 @pytest.mark.parametrize(
     "public_base_url",
     (

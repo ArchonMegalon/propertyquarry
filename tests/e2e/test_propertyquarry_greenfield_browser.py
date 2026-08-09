@@ -5904,7 +5904,98 @@ def test_propertyquarry_packet_tracks_followup_state_in_browser(
         context.close()
 
 
-def test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser(
+def test_propertyquarry_public_example_conversation_answers_and_keeps_multiple_turns(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False)
+    page: Page = context.new_page()
+    console_errors: list[str] = []
+    page_errors: list[str] = []
+    page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: page_errors.append(str(err)))
+    try:
+        response = page.goto(
+            f"{base_url}/app/example/shortlist?candidate=quiet-layout-near-transit",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        conversation = page.locator("[data-pq-example-conversation]")
+        assert conversation.is_visible()
+        assert conversation.get_attribute("data-candidate-key") == "quiet-layout-near-transit"
+
+        page.locator('[data-pq-example-prompt="Why is this only a maybe?"]').click()
+        with page.expect_response("**/app/api/property/example-conversation") as first_response_info:
+            page.locator("[data-pq-example-ask]").click()
+        first_response = first_response_info.value
+        assert first_response.ok, first_response.text()
+        page.wait_for_function("document.querySelectorAll('[data-pq-example-turn]').length === 2")
+        first_answer = page.locator('[data-pq-example-turn="assistant"]').first
+        assert first_answer.is_visible()
+        assert "Quiet layout near transit" in first_answer.inner_text()
+        assert "parking availability is still unclear" in first_answer.inner_text().lower()
+        assert "no lift" not in first_answer.inner_text().lower()
+
+        page.locator("[data-pq-example-question]").fill("What should I ask before the viewing?")
+        with page.expect_response("**/app/api/property/example-conversation") as second_response_info:
+            page.locator("[data-pq-example-ask]").click()
+        second_response = second_response_info.value
+        assert second_response.ok, second_response.text()
+        page.wait_for_function("document.querySelectorAll('[data-pq-example-turn]').length === 4")
+        answers = page.locator('[data-pq-example-turn="assistant"]')
+        assert answers.count() == 2
+        assert "Quiet layout near transit" in answers.nth(1).inner_text()
+        assert "agent" in answers.nth(1).inner_text().lower()
+
+        page.locator('[data-pq-example-prompt="What is the main risk?"]').click()
+        with page.expect_response("**/app/api/property/example-conversation") as third_response_info:
+            page.locator("[data-pq-example-ask]").click()
+        third_response = third_response_info.value
+        assert third_response.ok, third_response.text()
+        page.wait_for_function("document.querySelectorAll('[data-pq-example-turn]').length === 6")
+        answers = page.locator('[data-pq-example-turn="assistant"]')
+        assert answers.count() == 3
+        assert "parking availability is still unclear" in answers.nth(2).inner_text().lower()
+        assert page.locator("[data-pq-example-conversation-status]").inner_text() == "Answered from the selected demo property."
+        assert console_errors == []
+        assert page_errors == []
+    finally:
+        context.close()
+
+
+def test_propertyquarry_public_example_conversation_is_mobile_usable(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=True)
+    page: Page = context.new_page()
+    try:
+        response = page.goto(
+            f"{base_url}/app/example/shortlist?candidate=quiet-layout-near-transit",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        conversation = page.locator("[data-pq-example-conversation]")
+        conversation_box = conversation.bounding_box()
+        assert conversation_box is not None and conversation_box["width"] <= 430
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
+
+        page.locator("[data-pq-example-question]").fill("Was sollte ich vor einer Besichtigung noch klären?")
+        with page.expect_response("**/app/api/property/example-conversation") as response_info:
+            page.locator("[data-pq-example-ask]").click()
+        answer_response = response_info.value
+        assert answer_response.ok, answer_response.text()
+        page.wait_for_function("document.querySelectorAll('[data-pq-example-turn]').length === 2")
+        answer = page.locator('[data-pq-example-turn="assistant"]')
+        assert answer.is_visible()
+        assert "Für Quiet layout near transit" in answer.inner_text()
+    finally:
+        context.close()
+
+
+def test_propertyquarry_decision_to_packet_followup_flow_in_browser(
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
 ) -> None:

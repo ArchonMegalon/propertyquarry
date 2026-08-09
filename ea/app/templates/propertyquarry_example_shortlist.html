@@ -119,6 +119,124 @@
     gap: 0;
     overflow: hidden;
   }
+  .pq-example-conversation {
+    display: grid;
+    grid-template-columns: minmax(230px, 0.58fr) minmax(0, 1fr);
+    gap: clamp(20px, 3vw, 38px);
+    align-items: start;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: clamp(20px, 3vw, 34px);
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .pq-example-conversation-copy {
+    display: grid;
+    gap: 9px;
+  }
+  .pq-example-conversation-copy h2 {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(1.7rem, 3vw, 2.45rem);
+    font-weight: 400;
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+  }
+  .pq-example-conversation-copy p,
+  .pq-example-conversation-empty,
+  .pq-example-conversation-status {
+    margin: 0;
+    color: var(--text-soft);
+    line-height: 1.5;
+  }
+  .pq-example-conversation-shell,
+  .pq-example-conversation-form,
+  .pq-example-conversation-log {
+    display: grid;
+    gap: 12px;
+  }
+  .pq-example-conversation-prompts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .pq-example-prompt {
+    min-height: 34px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 7px 11px;
+    background: var(--panel-2);
+    color: var(--text-soft);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .pq-example-prompt:hover,
+  .pq-example-prompt:focus-visible {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .pq-example-conversation-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: end;
+  }
+  .pq-example-conversation-field textarea {
+    width: 100%;
+    min-height: 70px;
+    resize: vertical;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px 14px;
+    background: var(--panel-2);
+    color: var(--text);
+    font: inherit;
+    line-height: 1.4;
+  }
+  .pq-example-conversation-field textarea:focus {
+    border-color: var(--accent);
+    outline: 2px solid color-mix(in srgb, var(--accent) 20%, transparent);
+    outline-offset: 1px;
+  }
+  .pq-example-conversation-field .btn {
+    min-width: 92px;
+  }
+  .pq-example-conversation-log:not(:empty) {
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+  }
+  .pq-example-turn {
+    max-width: min(92%, 680px);
+    display: grid;
+    gap: 5px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 11px 13px;
+    background: var(--panel-2);
+  }
+  .pq-example-turn.user {
+    justify-self: end;
+    background: color-mix(in srgb, var(--accent-soft) 55%, var(--panel));
+  }
+  .pq-example-turn strong {
+    color: var(--text-soft);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .pq-example-turn p,
+  .pq-example-turn ul {
+    margin: 0;
+  }
+  .pq-example-turn ul {
+    display: grid;
+    gap: 4px;
+    padding-left: 18px;
+    color: var(--text-soft);
+    font-size: 13px;
+  }
   .pq-example-card {
     display: grid;
     grid-template-columns: 124px minmax(0, 1fr) auto;
@@ -198,6 +316,10 @@
       grid-template-columns: 1fr;
       padding: 16px;
     }
+    .pq-example-conversation {
+      grid-template-columns: 1fr;
+      padding: 16px;
+    }
     .pq-example-copy h1 {
       max-width: none;
       font-size: clamp(2.55rem, 13vw, 3.65rem);
@@ -219,6 +341,9 @@
     .pq-example-actions,
     .pq-example-row-actions {
       display: grid;
+      grid-template-columns: 1fr;
+    }
+    .pq-example-conversation-field {
       grid-template-columns: 1fr;
     }
     .pq-example-actions .btn,
@@ -267,6 +392,36 @@
     </aside>
   </div>
 
+  <section
+    class="pq-example-conversation"
+    aria-labelledby="pq-example-conversation-title"
+    data-pq-example-conversation
+    data-candidate-key="{{ selected_example.get('candidate_key') }}"
+  >
+    <div class="pq-example-conversation-copy">
+      <p class="pq-example-kicker">Decision conversation</p>
+      <h2 id="pq-example-conversation-title">Ask about this home.</h2>
+      <p>Try the decision assistant with <strong>{{ selected_example.get('title') or 'this example' }}</strong>. It answers from this sample’s facts and open questions.</p>
+    </div>
+    <div class="pq-example-conversation-shell">
+      <div class="pq-example-conversation-prompts" aria-label="Suggested questions">
+        <button class="pq-example-prompt" type="button" data-pq-example-prompt="Why is this only a maybe?">Why only a maybe?</button>
+        <button class="pq-example-prompt" type="button" data-pq-example-prompt="What should I ask before the viewing?">What should I ask?</button>
+        <button class="pq-example-prompt" type="button" data-pq-example-prompt="What is the main risk?">Main risk?</button>
+      </div>
+      <div class="pq-example-conversation-log" role="log" aria-live="polite" data-pq-example-conversation-log></div>
+      <p class="pq-example-conversation-empty" data-pq-example-conversation-empty>Choose a prompt or ask your own question. You can continue with another question afterwards.</p>
+      <form class="pq-example-conversation-form" data-pq-example-conversation-form>
+        <label class="sr-only" for="pq-example-question">Question about {{ selected_example.get('title') or 'this example home' }}</label>
+        <div class="pq-example-conversation-field">
+          <textarea id="pq-example-question" name="question" maxlength="500" required placeholder="Ask about fit, risks, or what to clarify next…" data-pq-example-question></textarea>
+          <button class="btn primary" type="submit" data-pq-example-ask>Ask</button>
+        </div>
+        <p class="pq-example-conversation-status" role="status" data-pq-example-conversation-status>Answers use this illustrative demo property only.</p>
+      </form>
+    </div>
+  </section>
+
   <div class="pq-example-grid" aria-label="Sample matching homes">
     {% for row in example_rows %}
     {% set scope_preview = row.get('scope_preview') or {} %}
@@ -299,4 +454,79 @@
     {% endfor %}
   </div>
 </section>
+<script>
+  (() => {
+    const root = document.querySelector('[data-pq-example-conversation]');
+    if (!root) return;
+    const form = root.querySelector('[data-pq-example-conversation-form]');
+    const question = root.querySelector('[data-pq-example-question]');
+    const askButton = root.querySelector('[data-pq-example-ask]');
+    const status = root.querySelector('[data-pq-example-conversation-status]');
+    const log = root.querySelector('[data-pq-example-conversation-log]');
+    const empty = root.querySelector('[data-pq-example-conversation-empty]');
+    const candidateKey = String(root.getAttribute('data-candidate-key') || '').trim();
+
+    const appendTurn = (role, text, evidence = []) => {
+      const turn = document.createElement('article');
+      turn.className = `pq-example-turn ${role}`;
+      turn.setAttribute('data-pq-example-turn', role);
+      const label = document.createElement('strong');
+      label.textContent = role === 'user' ? 'You' : 'PropertyQuarry';
+      const copy = document.createElement('p');
+      copy.textContent = String(text || '').trim();
+      turn.append(label, copy);
+      const rows = Array.isArray(evidence) ? evidence.filter((row) => row && row.detail).slice(0, 3) : [];
+      if (rows.length) {
+        const list = document.createElement('ul');
+        rows.forEach((row) => {
+          const item = document.createElement('li');
+          item.textContent = `${String(row.title || 'Evidence')}: ${String(row.detail || '')}`;
+          list.appendChild(item);
+        });
+        turn.appendChild(list);
+      }
+      log.appendChild(turn);
+      empty.hidden = true;
+      turn.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+
+    root.querySelectorAll('[data-pq-example-prompt]').forEach((prompt) => {
+      prompt.addEventListener('click', () => {
+        question.value = String(prompt.getAttribute('data-pq-example-prompt') || '').trim();
+        question.focus();
+      });
+    });
+
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const text = String(question?.value || '').trim();
+      if (!text || !candidateKey || askButton?.disabled) return;
+      appendTurn('user', text);
+      question.value = '';
+      askButton.disabled = true;
+      root.setAttribute('aria-busy', 'true');
+      status.textContent = 'Reviewing this property…';
+      try {
+        const response = await fetch('/app/api/property/example-conversation', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ candidate_key: candidateKey, question: text }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(String(body.detail || 'The answer is unavailable right now.'));
+        appendTurn('assistant', body.answer, body.evidence);
+        status.textContent = 'Answered from the selected demo property.';
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'The answer is unavailable right now.';
+        appendTurn('assistant', detail);
+        status.textContent = 'Could not answer. Please try again.';
+      } finally {
+        askButton.disabled = false;
+        root.removeAttribute('aria-busy');
+        question.focus();
+      }
+    });
+  })();
+</script>
 {% endblock %}

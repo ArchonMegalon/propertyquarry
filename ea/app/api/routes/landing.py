@@ -1937,6 +1937,21 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "walkthrough_label": (
                 example_media_targets.get("walkthrough_label", "") if example_media_targets.get("walkthrough_href", "") else ""
             ),
+            "conversation_facts": {
+                "price_eur": 895000,
+                "area_sqm": 118,
+                "rooms": 4,
+                "has_lift": True,
+                "has_floorplan": True,
+                "balcony": True,
+                "garage": True,
+                "has_360": True,
+                "nearest_subway_m": 260,
+            },
+            "conversation_assessment": {
+                "match_reasons_json": ["Bright layout, private outdoor space, and nearby transit fit the brief."],
+                "mismatch_reasons_json": ["The premium asking price still needs a careful value check."],
+            },
             "scope_preview": _propertyquarry_example_scope_preview(
                 "danube-flats-demo",
                 title="Danube Flats demo",
@@ -1956,6 +1971,20 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "detail_href": quiet_href,
             "action_href": quiet_href,
             "action_label": "Open property",
+            "conversation_facts": {
+                "total_rent_eur": 1950,
+                "area_sqm": 82,
+                "rooms": 3,
+                "has_lift": True,
+                "has_floorplan": True,
+                "balcony": True,
+                "nearest_subway_m": 320,
+                "require_parking_pressure_check": True,
+            },
+            "conversation_assessment": {
+                "match_reasons_json": ["The quiet street and nearby transit match the brief."],
+                "mismatch_reasons_json": ["Parking availability is still unclear."],
+            },
             "scope_preview": _propertyquarry_example_scope_preview(
                 "quiet-layout-near-transit",
                 title="Quiet layout near transit",
@@ -1974,6 +2003,17 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "detail_href": value_href,
             "action_href": value_href,
             "action_label": "Open property",
+            "conversation_facts": {
+                "price_eur": 329000,
+                "area_sqm": 76,
+                "rooms": 3,
+                "has_floorplan": False,
+                "nearest_subway_m": 610,
+            },
+            "conversation_assessment": {
+                "match_reasons_json": ["The asking price is strong for the sample search area."],
+                "mismatch_reasons_json": ["The energy certificate and renovation reserve are still unverified."],
+            },
             "scope_preview": _propertyquarry_example_scope_preview(
                 "strong-price-open-risk",
                 title="Strong price, open questions",
@@ -9887,6 +9927,51 @@ def propertyquarry_example_shortlist_page(
                 "robots_directive": "noindex, follow",
             },
         ),
+    )
+
+
+@router.post("/app/api/property/example-conversation", include_in_schema=False)
+async def propertyquarry_example_conversation(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+) -> JSONResponse:
+    brand = request_brand(request)
+    if str(brand.get("key") or "").strip() != "propertyquarry":
+        raise HTTPException(status_code=404, detail="example_conversation_not_found")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid_json") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="invalid_payload")
+    candidate_key = compact_text(payload.get("candidate_key"), fallback="", limit=80)
+    question = compact_text(payload.get("question"), fallback="", limit=500)
+    if not question:
+        raise HTTPException(status_code=422, detail="question_required")
+    selected = next(
+        (
+            dict(row)
+            for row in _propertyquarry_example_shortlist_rows()
+            if str(row.get("candidate_key") or "").strip() == candidate_key
+        ),
+        None,
+    )
+    if selected is None:
+        raise HTTPException(status_code=404, detail="example_candidate_not_found")
+    answer = build_product_service(container).property_decision_copilot(
+        question=question,
+        property_title=str(selected.get("title") or "Example home").strip(),
+        property_url=str(selected.get("href") or "").strip(),
+        property_facts=dict(selected.get("conversation_facts") or {}),
+        assessment=dict(selected.get("conversation_assessment") or {}),
+    )
+    return JSONResponse(
+        {
+            **dict(answer),
+            "candidate_key": candidate_key,
+            "question": question,
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 
