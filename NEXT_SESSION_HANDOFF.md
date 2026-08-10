@@ -1,17 +1,19 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-10 13:36 UTC
+Updated: 2026-08-10 13:46 UTC
 
 ## Mission
 
 The PropertyQuarry `1.1.0` (`versionCode 2`) release is active on the Google
 Play **internal testing** track and is installed on the invited physical
 device. A second on-device sign-in attempt exposed a Capacitor plugin
-materialization gap in the live web bridge. Source commit
-`b7da3047814e4a8eecead95a8199eccc71637c56` fixes that gap and is now live in
-an immutable API image. The next task is to fully close and reopen the installed
-app, repeat Google secure sign-in, and confirm that Search opens. Do not create,
-edit, promote, or roll out a production release.
+materialization gap in the live web bridge. The registration-only repair did
+not expose the plugin header on-device, so source commit
+`d37761920eec3035dd5d3cacd364caefece2bae1` now falls back to Capacitor's raw
+native promise transport and is live in an immutable API image. The next task
+is to fully close and reopen the installed app, repeat Google secure sign-in,
+and confirm that Search opens. Do not create, edit, promote, or roll out a
+production release.
 
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
@@ -125,7 +127,7 @@ recoverable pre-patch copy remains under
 `/tmp/propertyquarry-conversation-live-backup.5OfVx1` until host cleanup or
 reboot.
 
-## 2026-08-10 Capacitor bridge registration repair
+## 2026-08-10 Capacitor bridge registration and transport repair
 
 After installing internal version 2, the invited device still showed
 `Return to the PropertyQuarry app to finish sign-in` inside the app shell. Live
@@ -186,6 +188,44 @@ Image ID: sha256:92974baf94cc172fc9c1b038b634fed50850451ab2ca37cbf78e4a249f25cf9
 A factual retry instruction was accepted by Telegram through EA's live
 connector binding after deployment. Do not send a duplicate unless the user
 asks.
+
+The invited device then reproduced the same screen after the registration-only
+deployment. The new attempt again produced two successful runtime-contract and
+bridge loads but no `POST /mobile/auth/redeem`, proving that Capacitor's plugin
+header remained unavailable rather than exposing an OAuth or network failure.
+
+Commit `d37761920eec3035dd5d3cacd364caefece2bae1` adds a second fail-closed
+transport path. When neither `Capacitor.Plugins` nor the guarded
+`registerPlugin` call can materialize a proxy, the bridge now calls
+`Capacitor.nativePromise` for exactly five existing methods:
+`getPendingAuth`, `clearPendingAuth`, `getPendingShare`, `clearPendingShare`,
+and `startExternalLogin`. The Java plugin still independently enforces the
+trusted PropertyQuarry origin and exact page allowlists, so this bypasses only
+the missing JavaScript header—not any security check.
+
+The focused contract passed `6`, JavaScript syntax passed, and the mobile web
+suite passed `11/11`. A runtime simulation reproduced the device capability
+state (`Plugins` empty, `isPluginAvailable=false`, `nativePromise` available)
+and proved the complete sequence: pending auth read, redemption POST, durable
+native cleanup, pending-share check, and redirect to `/app/search`.
+
+The raw transport fix was deployed immutably at `2026-08-10 13:43:53 UTC`:
+
+```text
+Image tag: propertyquarry-standalone-web-runtime:local-d37761920eec
+Image ID: sha256:108349c3676d7c7b6ada576f4bda9ce167b3bea07498eee74f7147f740a971d8
+OCI revision: d37761920eec3035dd5d3cacd364caefece2bae1
+Deployment ID: propertyquarry-native-promise-d3776192-20260810
+Container: propertyquarry-api
+State after replacement: running healthy, restart count 0
+```
+
+The same environment/mount parity gate passed, public Cloudflare served the
+raw fallback with HTTP 200 and `Cache-Control: no-store`, and all non-API
+services and Play tracks remained untouched. The immediately preceding healthy
+image is retained as
+`propertyquarry-standalone-web-runtime:pre-native-promise-rollback-20260810`.
+EA sent the fresh device retry instruction to Telegram as message `5165`.
 
 ## Immutable web deployment completed
 
