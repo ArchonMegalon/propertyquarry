@@ -10,9 +10,15 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.JSExport;
+import com.getcapacitor.PluginHandle;
+
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
 
 import org.json.JSONObject;
 
+import java.util.Collections;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -78,6 +84,29 @@ public final class MainActivity extends BridgeActivity {
         settings.setUserAgentString(settings.getUserAgentString() + " PropertyQuarryAndroid/" + BuildConfig.VERSION_NAME);
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+        installTrustedRemoteBridge(webView);
+    }
+
+    private void installTrustedRemoteBridge(WebView webView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return;
+        PluginHandle nativePlugin = bridge.getPlugin("PropertyQuarryNative");
+        if (nativePlugin == null) {
+            throw new IllegalStateException("propertyquarry_native_plugin_missing");
+        }
+        try {
+            String localOrigin = bridge.getScheme() + "://" + bridge.getHost();
+            String script = JSExport.getGlobalJS(this, bridge.getConfig().isLoggingEnabled(), bridge.isDevMode())
+                + "\nwindow.WEBVIEW_SERVER_URL = " + JSONObject.quote(localOrigin) + ";\n"
+                + JSExport.getBridgeJS(this) + "\n"
+                + JSExport.getPluginJS(Collections.singletonList(nativePlugin));
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                script,
+                Collections.singleton(BuildConfig.PROPERTYQUARRY_ORIGIN)
+            );
+        } catch (Exception exception) {
+            throw new IllegalStateException("trusted_remote_bridge_install_failed", exception);
+        }
     }
 
     private void verifyRuntimeAndContinue() {

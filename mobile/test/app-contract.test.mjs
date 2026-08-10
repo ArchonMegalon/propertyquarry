@@ -56,10 +56,10 @@ test('native runtime and signing contracts fail closed', () => {
 
   assert.match(appGradle, /verifyPropertyQuarryReleaseSigning/);
   assert.match(appGradle, /PROPERTYQUARRY_ANDROID_KEYSTORE_PATH/);
-  assert.match(appGradle, /versionCode 2/);
-  assert.match(appGradle, /versionName "1\.1\.0"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_code="2"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.0"/);
+  assert.match(appGradle, /versionCode 3/);
+  assert.match(appGradle, /versionName "1\.1\.1"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_code="3"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.1"/);
   assert.match(lintConfig, /src\/main\/res\/xml\/config\.xml/);
   assert.match(previewBuilder, /propertyquarry_release_bundle_backup="\$\(mktemp -d\)"/);
   assert.match(previewBuilder, /trap propertyquarry_restore_release_bundle EXIT/);
@@ -76,6 +76,9 @@ test('native runtime and signing contracts fail closed', () => {
   assert.match(mainActivity, /activityResumed = true;/);
   assert.match(mainActivity, /pendingIntent = intent;/);
   assert.match(mainActivity, /if \(!runtimeReady \|\| !activityResumed\) return;/);
+  assert.match(mainActivity, /WebViewFeature\.DOCUMENT_START_SCRIPT/);
+  assert.match(mainActivity, /JSExport\.getBridgeJS\(this\)/);
+  assert.match(mainActivity, /Collections\.singleton\(BuildConfig\.PROPERTYQUARRY_ORIGIN\)/);
   assert.doesNotMatch(mainActivity, /onNewIntent[\s\S]{0,240}handleIntent\(intent\)/);
   assert.match(nativePlugin, /remove\(PKCE_VERIFIER\)[\s\S]{0,80}\.commit\(\)/);
   assert.match(nativePlugin, /remove\(SHARED_IDEMPOTENCY\)[\s\S]{0,80}\.commit\(\)/);

@@ -299,6 +299,10 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
     assert "pendingIntent = intent;" in main_activity
     assert "private void continueWhenReady()" in main_activity
     assert "if (!runtimeReady || !activityResumed) return;" in main_activity
+    assert "WebViewFeature.DOCUMENT_START_SCRIPT" in main_activity
+    assert "JSExport.getBridgeJS(this)" in main_activity
+    assert "JSExport.getPluginJS(Collections.singletonList(nativePlugin))" in main_activity
+    assert "Collections.singleton(BuildConfig.PROPERTYQUARRY_ORIGIN)" in main_activity
     assert '.remove(PKCE_VERIFIER)\n            .commit();' in native_plugin
     assert '.remove(SHARED_IDEMPOTENCY)\n            .commit();' in native_plugin
     assert 'call.reject("native_auth_cleanup_failed")' in native_plugin
