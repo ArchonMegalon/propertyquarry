@@ -137,6 +137,9 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert "await withTimeout(\n      native.clearPendingAuth()" in script.text
     assert "await withTimeout(\n      native.clearPendingShare()" in script.text
     assert "const getNative" in script.text
+    assert "const existing = capacitor.Plugins?.PropertyQuarryNative" in script.text
+    assert "capacitor.isPluginAvailable('PropertyQuarryNative')" in script.text
+    assert "capacitor.registerPlugin('PropertyQuarryNative')" in script.text
     assert "const isAppShell" in script.text
     assert "retry.hidden = !insideApp" in script.text
     assert "const setProgress" in script.text

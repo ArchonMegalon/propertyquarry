@@ -958,7 +958,26 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
   const mark = document.querySelector('#mark');
   const card = document.querySelector('#bridge-card');
   const steps = [...document.querySelectorAll('[data-step]')];
-  const getNative = () => window.Capacitor?.Plugins?.PropertyQuarryNative;
+  let nativePlugin = null;
+  const getNative = () => {
+    if (nativePlugin) return nativePlugin;
+    const capacitor = window.Capacitor;
+    if (!capacitor) return null;
+    const existing = capacitor.Plugins?.PropertyQuarryNative;
+    if (existing) {
+      nativePlugin = existing;
+      return nativePlugin;
+    }
+    if (typeof capacitor.registerPlugin !== 'function') return null;
+    if (typeof capacitor.isPluginAvailable === 'function'
+      && !capacitor.isPluginAvailable('PropertyQuarryNative')) return null;
+    try {
+      nativePlugin = capacitor.registerPlugin('PropertyQuarryNative');
+      return nativePlugin;
+    } catch (_) {
+      return null;
+    }
+  };
   const isAppShell = () => navigator.userAgent.includes('PropertyQuarryAndroid/');
   let running = false;
   const setProgress = (index, message) => {
