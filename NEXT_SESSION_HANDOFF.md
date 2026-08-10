@@ -1,14 +1,17 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-09 12:18 UTC
+Updated: 2026-08-10 13:36 UTC
 
 ## Mission
 
-The prepared PropertyQuarry `1.1.0` (`versionCode 2`) release is now active on
-the Google Play **internal testing** track. The next task is to update the
-invited physical device from version 1 to version 2 and repeat the Google
-secure-sign-in flow. Do not create, edit, promote, or roll out a production
-release.
+The PropertyQuarry `1.1.0` (`versionCode 2`) release is active on the Google
+Play **internal testing** track and is installed on the invited physical
+device. A second on-device sign-in attempt exposed a Capacitor plugin
+materialization gap in the live web bridge. Source commit
+`b7da3047814e4a8eecead95a8199eccc71637c56` fixes that gap and is now live in
+an immutable API image. The next task is to fully close and reopen the installed
+app, repeat Google secure sign-in, and confirm that Search opens. Do not create,
+edit, promote, or roll out a production release.
 
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
@@ -121,6 +124,68 @@ question returned the selected title plus the real open parking issue. A
 recoverable pre-patch copy remains under
 `/tmp/propertyquarry-conversation-live-backup.5OfVx1` until host cleanup or
 reboot.
+
+## 2026-08-10 Capacitor bridge registration repair
+
+After installing internal version 2, the invited device still showed
+`Return to the PropertyQuarry app to finish sign-in` inside the app shell. Live
+access logs for the attempt contained `GET /mobile/runtime-contract`,
+`GET /mobile/auth/bridge`, and `GET /mobile/bridge.js`, but no
+`POST /mobile/auth/redeem`. The exact UI combination proved that the Android
+user agent was present while `window.Capacitor.Plugins.PropertyQuarryNative`
+was absent.
+
+The published version-2 artifact source commit already registers
+`PropertyQuarryNativePlugin` before `BridgeActivity.onCreate`, so no new Android
+bundle is required. Capacitor 8.5's runtime only materializes a JavaScript proxy
+after `Capacitor.registerPlugin(name)` is called; the remote bridge page had
+only inspected the legacy-populated `Capacitor.Plugins` object. Commit
+`b7da3047814e4a8eecead95a8199eccc71637c56` now:
+
+- reuses an existing native proxy when present;
+- verifies the native plugin header with `isPluginAvailable` before creating a
+  proxy; and
+- calls `registerPlugin('PropertyQuarryNative')` when the registered Android
+  plugin has not yet been materialized for the remote page.
+
+All existing native origin/path allowlists, PKCE verifier handling, durable
+cleanup, same-origin redemption, and bounded timeouts remain unchanged. The
+focused mobile contract passed `6`; the mobile web suite passed `11/11`; the
+wider PropertyQuarry identity/mobile selection passed `263`; JavaScript syntax
+and `git diff --check` passed.
+
+The fix was deployed immutably at `2026-08-10 13:32:18 UTC` by recreating only
+`propertyquarry-api` with no dependencies or builds:
+
+```text
+Image tag: propertyquarry-standalone-web-runtime:local-b7da3047814e
+Image ID: sha256:5f2091497df3490e8ef029dd332767d712ca58c411e7b488738b37026aa9e5e6
+OCI revision: b7da3047814e4a8eecead95a8199eccc71637c56
+Deployment ID: propertyquarry-native-bridge-b7da3047-20260810
+Container: propertyquarry-api
+State after replacement: running healthy, restart count 0
+Bound port: 127.0.0.1:8097 -> 8090/tcp
+```
+
+The deployment preflight compared the resolved API environment and all nine
+mount targets against the healthy live container. Post-deployment probes
+verified PostgreSQL schema-v20 readiness, the baked source mode `0644`, and the
+new registration/availability guards through the public Cloudflare path with
+HTTP 200, UTF-8, `Cache-Control: no-store`, and cache bypass. The API kept both
+networks, all mounts, and its existing runtime environment; no database,
+migration, worker, scheduler, render, backup, tunnel, Android, or Play resource
+was recreated.
+
+The previous healthy image is retained for local rollback:
+
+```text
+Tag: propertyquarry-standalone-web-runtime:pre-native-bridge-rollback-20260810
+Image ID: sha256:92974baf94cc172fc9c1b038b634fed50850451ab2ca37cbf78e4a249f25cf9e
+```
+
+A factual retry instruction was accepted by Telegram through EA's live
+connector binding after deployment. Do not send a duplicate unless the user
+asks.
 
 ## Immutable web deployment completed
 
@@ -270,16 +335,17 @@ and `ffmpeg`. Do not restore the broken links unless their targets exist.
 ## Exact resume sequence
 
 1. Follow `AGENTS.md` and call vexp `run_pipeline` first for repository work.
-2. On the invited Android device, confirm the Play Store is signed in as
-   `tibor.girschele@gmail.com` and update PropertyQuarry to `1.1.0`.
-3. Launch the updated app and repeat Google secure sign-in.
+2. On the invited Android device, fully close the installed PropertyQuarry
+   `1.1.0` app and reopen it so `/mobile/bridge.js` is fetched fresh.
+3. Tap `Try sign-in again` and repeat Google secure sign-in.
 4. Require the flow to leave `Finishing secure sign-in`, redeem the handoff,
    and open the authenticated app surface. Record the device time and visible
    error if it does not.
 5. If server diagnosis is needed, correlate that attempt with
    `POST /mobile/auth/redeem`; do not weaken PKCE, session, or origin checks.
-6. Do not create another Play release, change the tester list, promote the
-   release, or touch production during this device-validation step.
+6. Do not create another Play release, change the tester list, or promote the
+   internal release during this device-validation step. The web bridge fix is
+   already live; only on-device validation remains.
 
 ## Tester access
 
