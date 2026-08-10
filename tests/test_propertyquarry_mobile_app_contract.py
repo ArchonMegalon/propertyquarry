@@ -137,6 +137,11 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert "await withTimeout(\n      native.clearPendingAuth()" in script.text
     assert "await withTimeout(\n      native.clearPendingShare()" in script.text
     assert "const getNative" in script.text
+    assert "const nativePromiseProxy" in script.text
+    assert "capacitor.nativePromise(" in script.text
+    assert "'PropertyQuarryNative',\n      method," in script.text
+    assert "getPendingAuth: () => invoke('getPendingAuth')" in script.text
+    assert "startExternalLogin: () => invoke('startExternalLogin')" in script.text
     assert "const existing = capacitor.Plugins?.PropertyQuarryNative" in script.text
     assert "capacitor.isPluginAvailable('PropertyQuarryNative')" in script.text
     assert "capacitor.registerPlugin('PropertyQuarryNative')" in script.text

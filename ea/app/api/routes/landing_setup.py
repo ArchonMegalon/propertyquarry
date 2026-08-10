@@ -959,6 +959,21 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
   const card = document.querySelector('#bridge-card');
   const steps = [...document.querySelectorAll('[data-step]')];
   let nativePlugin = null;
+  const nativePromiseProxy = (capacitor) => {
+    if (typeof capacitor.nativePromise !== 'function') return null;
+    const invoke = (method) => capacitor.nativePromise(
+      'PropertyQuarryNative',
+      method,
+      {},
+    );
+    return Object.freeze({
+      getPendingAuth: () => invoke('getPendingAuth'),
+      clearPendingAuth: () => invoke('clearPendingAuth'),
+      getPendingShare: () => invoke('getPendingShare'),
+      clearPendingShare: () => invoke('clearPendingShare'),
+      startExternalLogin: () => invoke('startExternalLogin'),
+    });
+  };
   const getNative = () => {
     if (nativePlugin) return nativePlugin;
     const capacitor = window.Capacitor;
@@ -968,15 +983,18 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
       nativePlugin = existing;
       return nativePlugin;
     }
-    if (typeof capacitor.registerPlugin !== 'function') return null;
-    if (typeof capacitor.isPluginAvailable === 'function'
-      && !capacitor.isPluginAvailable('PropertyQuarryNative')) return null;
-    try {
-      nativePlugin = capacitor.registerPlugin('PropertyQuarryNative');
-      return nativePlugin;
-    } catch (_) {
-      return null;
+    const pluginAvailable = typeof capacitor.isPluginAvailable !== 'function'
+      || capacitor.isPluginAvailable('PropertyQuarryNative');
+    if (pluginAvailable && typeof capacitor.registerPlugin === 'function') {
+      try {
+        nativePlugin = capacitor.registerPlugin('PropertyQuarryNative');
+        return nativePlugin;
+      } catch (_) {
+        nativePlugin = null;
+      }
     }
+    nativePlugin = nativePromiseProxy(capacitor);
+    return nativePlugin;
   };
   const isAppShell = () => navigator.userAgent.includes('PropertyQuarryAndroid/');
   let running = false;
