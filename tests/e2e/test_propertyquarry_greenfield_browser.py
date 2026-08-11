@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 
 uvicorn = pytest.importorskip("uvicorn")
 pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Locator, Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
 Config = uvicorn.Config
 Server = uvicorn.Server
@@ -1083,6 +1083,17 @@ def _new_context(
     )
 
 
+def _propertyquarry_final_launch(page: Page) -> Locator:
+    page.locator('[data-property-step-trigger="providers"]').click()
+    form = page.locator('[data-console-form-variant="property_search"]').first
+    expect(form).to_have_attribute("data-property-active-step", "providers")
+    launch = page.locator("[data-property-start-top]")
+    expect(page.locator("[data-property-step-next]")).to_be_hidden()
+    expect(launch).to_be_visible()
+    expect(launch).to_be_enabled()
+    return launch
+
+
 def _issue_browser_workspace_session(
     *,
     client: TestClient,
@@ -2025,7 +2036,7 @@ def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_br
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
 ) -> None:
-    """The prominent Launch search CTA must survive lazy hydration and navigate."""
+    """The final-step Launch search CTA must survive hydration and navigate."""
     base_url = str(propertyquarry_browser_server["base_url"])
     context = _new_context(browser, mobile=False, width=1440, height=900)
     page = context.new_page()
@@ -2050,8 +2061,17 @@ def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_br
         response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
         launch = page.locator("[data-property-start-top]")
+        next_button = page.locator("[data-property-step-next]")
+        expect(next_button).to_be_visible()
+        expect(launch).to_be_hidden()
+        for _ in range(10):
+            if launch.is_visible():
+                break
+            expect(next_button).to_be_visible()
+            next_button.click()
         expect(launch).to_be_visible()
         expect(launch).to_be_enabled()
+        expect(next_button).to_be_hidden()
         launch.click()
         page.wait_for_url(re.compile(r"/app/properties\?run_id=[^&]+$"), timeout=10000)
         assert launch_requests and all(row["method"] == "POST" for row in launch_requests)
@@ -7006,7 +7026,10 @@ def test_propertyquarry_search_wizard_steps_replace_visible_controls_without_acc
         response = page.goto(f"{base_url}/app/search", wait_until="domcontentloaded")
         assert response is not None and response.ok
         page.locator('[data-console-form-variant="property_search"]').wait_for(state="visible")
-        expect(page.locator('[data-property-start-top]')).to_be_visible()
+        launch = page.locator('[data-property-start-top]')
+        next_button = page.locator('[data-property-step-next]')
+        expect(launch).to_be_hidden()
+        expect(next_button).to_be_visible()
         expect(page.locator('[data-property-step-nav]')).to_be_visible()
         expected_fields = {
             "search": "country_code",
@@ -7034,6 +7057,12 @@ def test_propertyquarry_search_wizard_steps_replace_visible_controls_without_acc
             assert set(visible_steps) == {step}, {"clicked": step, "visible_steps": visible_steps}
             if field_name:
                 expect(page.locator(f'[data-property-field-name="{field_name}"]')).to_be_visible()
+            if step == "providers":
+                expect(next_button).to_be_hidden()
+                expect(launch).to_be_visible()
+            else:
+                expect(next_button).to_be_visible()
+                expect(launch).to_be_hidden()
             assert page.locator(".pqx-workflow-step.active").count() == 1
             nav_box = page.locator('[data-property-step-nav]').bounding_box()
             assert nav_box is not None
@@ -11297,7 +11326,7 @@ def test_propertyquarry_search_launch_strips_cross_country_provider_selection(
             }
             """
         )
-        page.locator("[data-property-start-top]").click()
+        _propertyquarry_final_launch(page).click()
         expect(page).to_have_url(re.compile("run-cross-country-provider"), timeout=10000)
 
         preferences = observed.get("preferences")
@@ -11365,7 +11394,7 @@ def test_propertyquarry_search_launch_preserves_checked_provider_set(
         assert len(eligible_checked_before_launch) > 1
         assert isinstance(plan_cap, (int, float))
 
-        page.locator("[data-property-start-top]").click()
+        _propertyquarry_final_launch(page).click()
         expect(page).to_have_url(re.compile("run-provider-preserve"), timeout=10000)
 
         preferences = observed.get("preferences")
@@ -11412,7 +11441,7 @@ def test_propertyquarry_search_launch_reuses_idempotency_key_after_lost_response
         response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
 
-        launch = page.locator("[data-property-start-top]")
+        launch = _propertyquarry_final_launch(page)
         launch.click()
         expect(page.locator("[data-property-inline-error]").first).to_contain_text(
             "connection dropped",
@@ -11477,7 +11506,7 @@ def test_propertyquarry_search_launch_turns_quota_rejection_into_retryable_calm_
         response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
 
-        page.locator("[data-property-start-top]").click()
+        _propertyquarry_final_launch(page).click()
         marker = page.locator('[data-pq-failure-state="quota_blocked"]:visible').first
         expect(marker).to_contain_text("temporary request limit", timeout=10000)
         expect(marker).to_contain_text("saved search is unchanged")
@@ -11611,17 +11640,10 @@ def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_brows
             assert mobile_layout["railScrollWidth"] <= mobile_layout["railClientWidth"] + 1
             assert mobile_layout["labelsFit"] is True
             assert mobile_layout["nextWidth"] >= mobile_layout["actionsWidth"] - 2
-            page.locator('[data-property-step-trigger="providers"]').click()
-            page.wait_for_function(
-                """() => document.querySelector(
-                  '[data-console-form-variant="property_search"]'
-                )?.dataset.propertyActiveStep === 'providers'"""
-            )
-            launch = page.locator("[data-property-step-next]:visible")
-            expect(launch).to_have_text("Suche" if locale == "de-AT" else "Buscar")
-        else:
-            launch = page.locator("[data-property-start-top]")
-            expect(launch).to_have_attribute("aria-label", "Suche starten")
+        launch = _propertyquarry_final_launch(page)
+        expected_launch_label = "Suche starten" if locale == "de-AT" else "Iniciar búsqueda"
+        expect(launch).to_have_attribute("aria-label", expected_launch_label)
+        expect(launch).to_have_text(expected_launch_label)
         expect(launch).to_be_visible()
         launch_box = launch.evaluate(
             """(button) => ({
@@ -11728,7 +11750,7 @@ def test_propertyquarry_search_launch_continues_when_preference_save_times_out(
             )?.dataset.pqWorkbenchController === 'loaded'"""
         )
 
-        launch = page.locator("[data-property-start-top]")
+        launch = _propertyquarry_final_launch(page)
         expect(launch).to_be_enabled()
         launch.click()
         expect(page).to_have_url(
@@ -11783,7 +11805,7 @@ def test_propertyquarry_app_search_launch_uses_any_property_type_when_all_boxes_
         )
         expect(page.locator('input[name="property_type"]:checked')).to_have_count(0)
 
-        page.locator("[data-property-start-top]").click()
+        _propertyquarry_final_launch(page).click()
         expect(page).to_have_url(re.compile("run-any-property-type"), timeout=10000)
 
         preferences = observed.get("preferences")
@@ -12720,8 +12742,7 @@ def test_propertyquarry_start_failure_explains_backend_reason(
         expect(inline_error).to_contain_text("plus plan")
         launch_button = page.locator("[data-property-start-top]")
         expect(launch_button).to_have_attribute("aria-busy", "false")
-        expect(launch_button.locator(".pqx-top-start-label-full")).to_have_text("Launch search")
-        expect(launch_button.locator(".pqx-top-start-label-short")).to_have_text("Search")
+        expect(launch_button).to_have_text("Launch search")
     finally:
         context.close()
 
@@ -12788,7 +12809,7 @@ def test_propertyquarry_agent_can_launch_all_austria_providers_from_real_browser
         )
 
         with page.expect_response("**/app/api/property/search-runs") as start_response:
-            page.locator("[data-property-start-top]").click()
+            _propertyquarry_final_launch(page).click()
 
         assert start_response.value.status == 202
         page.wait_for_url(
@@ -12986,7 +13007,7 @@ def test_propertyquarry_launch_posts_real_start_payload_and_shows_run_status(
         with bottom_launch_page.expect_response(
             "**/app/api/property/search-runs"
         ) as bottom_start_response:
-            bottom_launch_page.locator("[data-property-step-next]:visible").click()
+            _propertyquarry_final_launch(bottom_launch_page).click()
         assert bottom_start_response.value.ok
         bottom_launch_page.wait_for_url(
             re.compile(r".*/app/(properties|shortlist)\?run_id=.*"),

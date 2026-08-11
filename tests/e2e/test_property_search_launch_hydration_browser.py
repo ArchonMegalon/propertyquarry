@@ -11,6 +11,7 @@ sync_playwright = playwright_api.sync_playwright
 ROOT = Path(__file__).resolve().parents[2]
 LOADER_PATH = ROOT / "ea/app/templates/app/_property_search_loader_script.html"
 WORKBENCH_PATH = ROOT / "ea/app/templates/app/property_decision_workbench.html"
+WORKBENCH_CONTROLLER_PATH = ROOT / "ea/app/templates/app/_property_workbench_script.html"
 APP_URL = "https://property.test/app/search"
 WORKBENCH_URL = "https://property.test/app/assets/property-workbench.js?v=browser-test"
 
@@ -26,6 +27,27 @@ def _launch_guard_source() -> str:
 
 def _loader_source() -> str:
     return LOADER_PATH.read_text(encoding="utf-8")
+
+
+def test_wizard_keeps_next_copy_and_replaces_it_with_launch_in_the_same_slot() -> None:
+    template = WORKBENCH_PATH.read_text(encoding="utf-8")
+    controller = WORKBENCH_CONTROLLER_PATH.read_text(encoding="utf-8")
+
+    step_actions = template.index('<div class="pqx-step-head-actions">')
+    launch_markup = (
+        '<button class="pqx-button primary" type="button" '
+        "data-property-start-top"
+    )
+    launch_action = template.index(launch_markup)
+    localized_copy = template.index("data-property-localized-copy", step_actions)
+
+    assert template.count(launch_markup) == 1
+    assert step_actions < launch_action < localized_copy
+    assert 'data-property-copy="step-review"' not in template
+    assert "localizedWorkbenchCopy('step-review'" not in controller
+    assert "next.hidden = isFinalStep;" in controller
+    assert "next.textContent = localizedWorkbenchCopy('step-next', 'Next');" in controller
+    assert "launch.hidden = !isFinalStep;" in controller
 
 
 def _workbench_fixture_script() -> str:

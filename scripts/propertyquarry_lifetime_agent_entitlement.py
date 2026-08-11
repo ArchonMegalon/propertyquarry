@@ -134,23 +134,44 @@ def _connect(database_url: str):  # type: ignore[no-untyped-def]
         raise EntitlementGrantError("database_connection_failed") from exc
 
 
+def _google_identity_table_available(conn: Any) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT to_regclass(%s)",
+            ("public.propertyquarry_google_identity_accounts",),
+        )
+        rows = list(cur.fetchall())
+    return bool(rows and rows[0] and rows[0][0])
+
+
 def _email_for_md5(conn: Any, email_md5: str) -> str:
     normalized_digest = str(email_md5 or "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{32}", normalized_digest):
         raise EntitlementGrantError("target_email_md5_invalid")
+    google_identity_available = _google_identity_table_available(conn)
+    known_email_query = (
+        """
+        WITH known_emails AS (
+            SELECT lower(email) AS email FROM principals WHERE email <> ''
+            UNION
+            SELECT lower(email) FROM propertyquarry_google_identity_accounts WHERE email <> ''
+        )
+        SELECT email
+        FROM known_emails
+        WHERE md5(email) = %s
+        ORDER BY email
+        """
+        if google_identity_available
+        else """
+        SELECT lower(email) AS email
+        FROM principals
+        WHERE email <> '' AND md5(lower(email)) = %s
+        ORDER BY lower(email)
+        """
+    )
     with conn.cursor() as cur:
         cur.execute(
-            """
-            WITH known_emails AS (
-                SELECT lower(email) AS email FROM principals WHERE email <> ''
-                UNION
-                SELECT lower(email) FROM propertyquarry_google_identity_accounts WHERE email <> ''
-            )
-            SELECT email
-            FROM known_emails
-            WHERE md5(email) = %s
-            ORDER BY email
-            """,
+            known_email_query,
             (normalized_digest,),
         )
         emails = [str(row[0] or "").strip().lower() for row in cur.fetchall()]
@@ -164,13 +185,24 @@ def _email_for_md5(conn: Any, email_md5: str) -> str:
 def _resolved_accounts(conn: Any, email: str, *, lock: bool) -> list[tuple[str, dict[str, object]]]:
     registration_principal = _registration_principal_id(email)
     cloudflare_principal = f"cf-email:{email}"
+    google_identity_available = _google_identity_table_available(conn)
+    identity_evidence_query = (
+        """
+        SELECT principal_id FROM principals WHERE lower(email) = %s
+        UNION
+        SELECT principal_id FROM propertyquarry_google_identity_accounts WHERE lower(email) = %s
+        """
+        if google_identity_available
+        else "SELECT principal_id FROM principals WHERE lower(email) = %s"
+    )
+    identity_evidence_params: tuple[str, ...] = (
+        (email, email) if google_identity_available else (email,)
+    )
     with conn.cursor() as cur:
         cur.execute(
             f"""
             WITH evidence AS (
-                SELECT principal_id FROM principals WHERE lower(email) = %s
-                UNION
-                SELECT principal_id FROM propertyquarry_google_identity_accounts WHERE lower(email) = %s
+                {identity_evidence_query}
             ),
             candidates AS (
                 SELECT principal_id FROM evidence
@@ -184,8 +216,7 @@ def _resolved_accounts(conn: Any, email: str, *, lock: bool) -> list[tuple[str, 
             {"FOR UPDATE" if lock else ""}
             """,
             (
-                email,
-                email,
+                *identity_evidence_params,
                 registration_principal,
                 cloudflare_principal,
             ),
@@ -196,7 +227,7 @@ def _resolved_accounts(conn: Any, email: str, *, lock: bool) -> list[tuple[str, 
             if str(row[0] or "").strip()
         ]
         for principal_id, _ in rows:
-            cur.execute(
+            linked_email_query = (
                 """
                 WITH linked_emails AS (
                     SELECT lower(email) AS email FROM principals WHERE principal_id = %s AND email <> ''
@@ -205,8 +236,22 @@ def _resolved_accounts(conn: Any, email: str, *, lock: bool) -> list[tuple[str, 
                     WHERE principal_id = %s AND email <> ''
                 )
                 SELECT count(*) FROM linked_emails WHERE email <> %s
-                """,
-                (principal_id, principal_id, email),
+                """
+                if google_identity_available
+                else """
+                SELECT count(*)
+                FROM principals
+                WHERE principal_id = %s AND email <> '' AND lower(email) <> %s
+                """
+            )
+            linked_email_params: tuple[str, ...] = (
+                (principal_id, principal_id, email)
+                if google_identity_available
+                else (principal_id, email)
+            )
+            cur.execute(
+                linked_email_query,
+                linked_email_params,
             )
             conflicting_email_count = int(cur.fetchone()[0] or 0)
             deterministic_alias = principal_id in {

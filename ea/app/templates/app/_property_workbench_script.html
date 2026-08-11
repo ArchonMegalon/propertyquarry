@@ -5059,6 +5059,7 @@
       const summary = root.querySelector('[data-property-step-summary]');
       const back = root.querySelector('[data-property-step-back]');
       const next = root.querySelector('[data-property-step-next]');
+      const launch = root.querySelector('[data-property-start-top]');
       const saveTop = root.querySelector('[data-property-save-top]');
       const actions = root.querySelector('[data-property-actions]');
       const stepNav = form.querySelector('[data-property-step-nav]');
@@ -5136,15 +5137,16 @@
           saveTop.hidden = saveHidden;
           saveTop.setAttribute('aria-hidden', saveHidden ? 'true' : 'false');
         }
+        const isFinalStep = current >= visibleSteps.length - 1;
         if (next) {
-          const isFinalStep = current >= visibleSteps.length - 1;
-          next.hidden = false;
-          next.dataset.pqxStepMode = isFinalStep ? 'launch' : 'advance';
-          next.textContent = isFinalStep
-            ? localizedWorkbenchCopy('step-search', 'Search')
-            : current === visibleSteps.length - 2
-              ? localizedWorkbenchCopy('step-review', 'Review')
-              : localizedWorkbenchCopy('step-next', 'Next');
+          next.hidden = isFinalStep;
+          next.dataset.pqxStepMode = 'advance';
+          next.textContent = localizedWorkbenchCopy('step-next', 'Next');
+        }
+        if (launch) {
+          launch.hidden = !isFinalStep;
+          launch.setAttribute('aria-hidden', isFinalStep ? 'false' : 'true');
+          launch.dataset.pqxStepMode = 'launch';
         }
         if (actions) actions.hidden = current !== visibleSteps.length - 1;
         if (!silent && stepNav && typeof stepNav.scrollIntoView === 'function') {
