@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-11 10:23 UTC
+Updated: 2026-08-11 12:30 UTC
 
 ## Mission
 
@@ -16,6 +16,39 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-11 post-success closure audit
+
+A verification-only closure pass after the physical sign-in success found no
+regression or remaining auth blocker:
+
+- `propertyquarry-api-live` remained `running healthy` with failing streak `0`,
+  no restart, no OOM, and the immutable release image/digest recorded below;
+- local and public Android-profile readiness both returned HTTP 200 with
+  `postgres_ready:property_search_schema_v20`;
+- every auth route since the successful device run occurred exactly once with
+  the expected 200/303 result, and no auth route produced a 4xx or 5xx;
+- the handoff table contained one consumed physical-device handoff, zero active
+  unconsumed handoffs, and only two expired synthetic handoffs awaiting normal
+  retention;
+- the focused server/native-source suite passed `6/6`, and the mobile web bridge
+  suite passed `11/11`;
+- the digest-pinned Android preview gate passed all `242` Gradle tasks, including
+  native compilation, unit tests, lint, preview APK packaging, and
+  instrumentation-test APK packaging;
+- public `assetlinks.json` returned HTTP 200 and contained the Play app-signing
+  certificate for `com.myexternalbrain.propertyquarry`;
+- `/mobile/bridge.js` returned HTTP 200 with UTF-8 and `no-store`, and still
+  contained the immutable readiness marker, native auth listener, and exact
+  redeem route; and
+- the signed AAB still hashes to
+  `cb3a90e4c9c337680dfe1e826374ef99df2c7661d56c7d33940d15eb649aa569`,
+  matching both release and Play receipts. Release commit `ab0871985` remains an
+  ancestor of the current handoff commit, and the only later repository path is
+  this handoff document.
+
+No application code, live runtime, Google OAuth client, Play track, signed
+artifact, database row, or user session was changed during this closure audit.
 
 ## 2026-08-11 physical-device sign-in success
 
