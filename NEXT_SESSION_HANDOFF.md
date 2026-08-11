@@ -1,26 +1,44 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-11 07:21 UTC
+Updated: 2026-08-11 10:23 UTC
 
 ## Mission
 
 The PropertyQuarry `1.1.3` (`versionCode 5`) release is active and available on
-the Google Play **internal testing** track. Live Android telemetry now proves
-that build 5 loads the ready bridge and sends `POST /mobile/auth/redeem`; its
-first request correctly rejected a stale handoff left from 2026-08-06. The
-remaining live failure was external configuration: Google rejected
-`https://propertyquarry.com/google/callback` with `redirect_uri_mismatch` because
-the production callback was absent from the OAuth client. That URI has now been
-added without removing the existing MyExternalBrain callback, and a controlled
-live OAuth flow reached `/google/callback`, received HTTP 303, and issued a new
-mobile handoff. The next task is one fresh Google sign-in from the physical app
-and confirmation that `/mobile/auth/redeem` and authenticated `/app/search`
-both return HTTP 200. Do not create, edit, promote, or roll out a production
-release.
+the Google Play **internal testing** track. Physical-device telemetry now proves
+the repaired flow end to end: Android loaded the runtime contract, started a
+fresh Google flow, returned through the registered production callback, opened
+the ready native bridge, redeemed the device-bound PKCE handoff exactly once,
+and loaded authenticated Search. All expected routes returned HTTP 200 or 303.
+The live sign-in incident is closed. Preserve the internal release and its
+signed evidence; do not create, edit, promote, or roll out a production release.
 
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-11 physical-device sign-in success
+
+At `2026-08-11 10:20:47 UTC` (`12:20:47 Europe/Vienna`), the installed Android
+app began a fresh production run. The complete live sequence was:
+
+```text
+2026-08-11 10:20:47 UTC  GET  /mobile/runtime-contract  200
+2026-08-11 10:20:48 UTC  GET  /app/search               303
+2026-08-11 10:20:56 UTC  GET  /sign-in/google           303
+2026-08-11 10:21:00 UTC  GET  /google/callback          303
+2026-08-11 10:21:01 UTC  GET  /mobile/auth/bridge       200
+2026-08-11 10:21:02 UTC  POST /mobile/auth/redeem       200
+2026-08-11 10:21:07 UTC  GET  /app/search               200
+```
+
+The database confirms that the handoff issued at `10:21:00.670913 UTC` for the
+expected principal was consumed at `10:21:02.466062 UTC`, comfortably before
+its three-minute expiry. No code, verifier, challenge, OAuth token, or session
+secret was printed or retained in this handoff. The final Search 200 proves the
+local authenticated session cookie was installed and accepted after redemption.
+This closes the real-device Google sign-in incident; it is no longer merely a
+synthetic or server-side result.
 
 ## 2026-08-11 live OAuth client repair
 
@@ -47,10 +65,10 @@ immediately. A subsequent controlled OAuth flow passed account selection and
 2-step verification. Production received `GET /google/callback` with HTTP 303
 at `2026-08-11 07:18:48 UTC` and created a new, unconsumed three-minute mobile
 handoff for the expected principal. That controlled run deliberately used a
-dummy PKCE challenge, so it proves callback and handoff issuance but cannot sign
-in the physical app. Do not try to redeem it; allow it to expire. Final closure
-still requires a fresh in-app attempt with the device-generated challenge and
-these live route results:
+dummy PKCE challenge, so it proved callback and handoff issuance but could not
+sign in the physical app. It was allowed to expire. The later physical run
+recorded above supplied the device-generated challenge and produced these live
+route results:
 
 ```text
 GET  /sign-in/google      303
@@ -116,10 +134,10 @@ Google Play internal release ID `5` was published at `2026-08-11 06:47 UTC`
 testers**, zero newly unsupported devices, and the selected `PropertyQuarry
 internal` list still contains `tibor.girschele@gmail.com`. The tester opt-in
 page recognizes Tibor Girschele and confirms tester status. Production was not
-changed. Real end-to-end sign-in still requires one fresh on-device attempt
-after the Play update; do not claim physical success before the live logs show
-the redeem and authenticated search requests. EA delivered the build-5 update
-instruction and both clean Play links through Telegram as message `5183`.
+changed. The later physical-device attempt recorded above supplied the missing
+end-to-end proof: redeem and authenticated Search both returned HTTP 200. EA
+delivered the build-5 update instruction and both clean Play links through
+Telegram as message `5183`.
 
 ## 2026-08-11 direct native auth handoff and internal release 4
 
