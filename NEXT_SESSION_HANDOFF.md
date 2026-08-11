@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-11 12:30 UTC
+Updated: 2026-08-11 16:20 UTC
 
 ## Mission
 
@@ -16,6 +16,36 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-11 search-flow polish and lifetime entitlement boundary
+
+Commit `78deb91a` is published on
+`integration/property-origin-main-20260728`. The Search setup now uses `Next`
+for every intermediate step and replaces that control with the real localized
+`Launch search` action in the same slot on the final Providers step. The old
+top-bar duplicate is gone; the hydration guard moved with the real launch
+button. German and Spanish mobile labels wrap cleanly without overflow.
+
+The complete browser run recorded `121` passes before its `13` stale
+pre-change interactions were identified. Those `13` affected cases were
+updated and rerun successfully; one intentional skip remains. The focused
+hydration and lifetime-entitlement suite passed `23/23`, rendered JavaScript
+syntax passed, `git diff --check` passed, and the repository completion check
+reported no parse errors or broken imports.
+
+The lifetime Agent operator path now supports the deployed database generation
+where `propertyquarry_google_identity_accounts` is not present. A live dry-run
+for Elisabeth still returned `target_account_not_found`; no database mutation
+occurred. Do not synthesize a principal or treat a tester-list email as account
+identity. Elisabeth must first sign in to PropertyQuarry with the exact Google
+account; only then rerun the dry-run and apply the idempotent lifetime Agent
+grant with its private rollback snapshot.
+
+The code is pushed but is not deployed to the live web runtime. The production
+runbook requires the independently installed release-control executable at
+`/usr/libexec/propertyquarry-release-control/propertyquarry-deploy-controller`;
+it is absent on this host. Do not bypass that boundary with the checkout-local
+Compose helper. Preserve Play internal release 5 unchanged.
 
 ## 2026-08-11 post-success closure audit
 
