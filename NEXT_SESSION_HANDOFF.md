@@ -1,26 +1,83 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-10 14:10 UTC
+Updated: 2026-08-11 04:43 UTC
 
 ## Mission
 
-The PropertyQuarry `1.1.1` (`versionCode 3`) release is active and available on
-the Google Play **internal testing** track. It fixes the native bridge boundary
-that kept the installed version-2 app on `Finishing secure sign-in`. Capacitor
-8.5 registered its document-start bridge only for the local shell origin, then
-disabled response-time injection on modern WebView; consequently the verified
-remote PropertyQuarry page had neither `window.Capacitor` nor
-`nativePromise`. Source commit
-`4b76b8f6b4c62442b1a61241765f948fc4477669` now installs Capacitor's existing
-bridge at document start for exactly `https://propertyquarry.com` while
-preserving local fail-closed runtime verification. The next task is to update
-the physical device from Play to `1.1.1`, fully close and reopen the app,
+The PropertyQuarry `1.1.2` (`versionCode 4`) release is active and available on
+the Google Play **internal testing** track. The physical device proved that the
+version-3 document-start Capacitor bridge still never sent `POST
+/mobile/auth/redeem`. Source commit
+`fe4f3345d1c48e31f46ce3c210258093cc85a162` therefore removes Capacitor from
+the critical sign-in transport: after the exact trusted bridge page finishes,
+Android validates and consumes the private one-time code and PKCE verifier,
+then dispatches them through `WebView.evaluateJavascript` to a same-origin page
+event. The page performs the existing guarded redeem POST and keeps all server
+OAuth, PKCE, session, origin, and cookie checks unchanged. The next task is to
+update the physical device from Play to `1.1.2`, fully close and reopen the app,
 repeat Google secure sign-in, and confirm that Search opens. Do not create,
 edit, promote, or roll out a production release.
 
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-11 direct native auth handoff and internal release 4
+
+The latest device attempt at `2026-08-11 04:23:17 UTC` again loaded
+`/mobile/runtime-contract`, `/mobile/auth/bridge`, and `/mobile/bridge.js` with
+HTTP 200 but never called `POST /mobile/auth/redeem`. This disproved the
+version-3 document-start injection as a reliable sign-in transport on the real
+device.
+
+Commit `fe4f3345d1c48e31f46ce3c210258093cc85a162` advances the app to `1.1.2` /
+`versionCode 4` and adds a Capacitor-independent, fail-closed handoff:
+
+- Android dispatches auth data only after an exact
+  `https://propertyquarry.com/mobile/auth/bridge` load with matching scheme,
+  host, port, path, and no userinfo, query, or fragment.
+- The code and PKCE verifier are format-validated and synchronously removed
+  from private preferences before their single delivery. Invalid or uncleared
+  state is never exposed.
+- The bridge accepts the native custom event and performs the existing
+  same-origin JSON POST to `/mobile/auth/redeem`; no secret is placed in a URL.
+- A failed consumed handoff makes `Try sign-in again` start a fresh external
+  Google flow instead of retrying stale state.
+- The same exact-origin event lane closes the equivalent pending-share gap.
+
+Focused server/mobile contracts passed `6`; mobile web contracts passed
+`11/11`; the pinned preview pipeline passed `242` Gradle tasks, including Java
+compilation, unit tests, lint, and instrumentation APK compilation. Added
+instrumentation contracts prove valid auth/share payloads are consumed exactly
+once. The signed release pipeline passed `232` Gradle tasks, bundletool, JAR
+signature validation, and embedded-signer/upload-certificate verification.
+
+The matching web bridge was deployed immutably before the Play upload:
+
+```text
+Image tag: propertyquarry-standalone-web-runtime:local-fe4f3345d1c4
+Image ID: sha256:4fdbfafa5aef16e0f2f9fb0769b0a7497c47b38339eca84082c7b7fb9deaba0e
+OCI revision: fe4f3345d1c48e31f46ce3c210258093cc85a162
+Deployment ID: propertyquarry-direct-auth-fe4f3345-20260811
+Container: propertyquarry-api-live
+State after replacement: running healthy, restart count 0
+Readiness: postgres_ready:property_search_schema_v20
+```
+
+Only the API service was force-recreated with `--no-deps --no-build`; all
+database, worker, scheduler, render, backup, tunnel, network, and volume state
+was preserved. The previous healthy image is retained as
+`propertyquarry-standalone-web-runtime:pre-direct-auth-rollback-20260811`.
+A public headless Chromium check loaded the bridge with HTTP 200, dispatched a
+synthetic valid-format native event, and observed exactly one redeem POST whose
+JSON contained both `code` and `pkce_verifier`. The synthetic code was not a
+real OAuth code and was never expected to authenticate.
+
+Google Play internal release ID `4` was published at `2026-08-11 04:41 UTC`.
+Play reports `4 (1.1.2)` **Available to internal testers**, zero newly
+unsupported devices, and the selected `PropertyQuarry internal` list still
+contains `tibor.girschele@gmail.com`. The tester opt-in page recognized Tibor
+Girschele and confirmed tester status. Production was not changed.
 
 ## Secure sign-in incident and repair
 
@@ -317,13 +374,13 @@ published UI bytes found no horizontal overflow.
 - Google Play developer account: `9007890349240845326`
 - Google Play app ID: `4976153363318887490`
 - Package: `com.myexternalbrain.propertyquarry`
-- Active release: `1.1.1` / `versionCode 3`
+- Active release: `1.1.2` / `versionCode 4`
 - Track: internal testing only
-- Internal release ID: `3`
+- Internal release ID: `4`
 - Track state: **Active**
 - Play state: **Available to internal testers**
-- Released: `2026-08-10 14:04 UTC` (`16:04 Europe/Vienna`)
-- Previous active version `1.1.0` was superseded on the internal track.
+- Released: `2026-08-11 04:41 UTC` (`06:41 Europe/Vienna`)
+- Previous active version `1.1.1` was superseded on the internal track.
 - Production rollout changed: **no**
 
 The replacement PropertyQuarry upload certificate is now active in Play:
@@ -352,9 +409,9 @@ No further upload-key reset action is required.
 
 ```text
 Path: mobile/android/app/build/outputs/bundle/release/app-release.aab
-Version name: 1.1.1
-Version code: 3
-SHA-256: df91f2ac2bca02670b84782a5a91ec556820c6ddb5c9c93c4f95bae525c810f0
+Version name: 1.1.2
+Version code: 4
+SHA-256: fa0c6c4a686e77677bd4eb17a49d0143649a6fa219d5a9af232530e8e2fa54ff
 Min SDK: 24
 Target SDK: 36
 ```
@@ -397,8 +454,8 @@ BrowserAct release browser:
 Browser ID: 111111582245966456
 Browser name: google-play-propertyquarry-release-stealth
 Browser type: stealth
-Release sessions: pq-release-build3-20260810 and pq-tester-check-build3
-(closed after verification)
+Release session: pq-release-build4-20260811 (closed after publication and
+tester verification)
 ```
 
 Use the `browser-act` and `ea-browser-ooda-operator` skills before any later
@@ -419,7 +476,7 @@ and `ffmpeg`. Do not restore the broken links unless their targets exist.
 
 1. Follow `AGENTS.md` and call vexp `run_pipeline` first for repository work.
 2. On the invited Android device, open Play Store and update PropertyQuarry to
-   `1.1.1` (`versionCode 3`). Wait a few minutes if the update is not yet shown.
+   `1.1.2` (`versionCode 4`). Wait a few minutes if the update is not yet shown.
 3. Fully close and reopen the updated app, then tap `Try sign-in again` and
    repeat Google secure sign-in.
 4. Require the flow to leave `Finishing secure sign-in`, redeem the handoff,
@@ -428,7 +485,7 @@ and `ffmpeg`. Do not restore the broken links unless their targets exist.
 5. If server diagnosis is needed, correlate that attempt with
    `POST /mobile/auth/redeem`; do not weaken PKCE, session, or origin checks.
 6. Do not create another Play release, change the tester list, or promote the
-   internal release during this device-validation step. Release 3 is already
+   internal release during this device-validation step. Release 4 is already
    live; only on-device validation remains.
 
 ## Tester access
@@ -499,15 +556,15 @@ and public rendering probes.
   skipped`; focused desktop, mobile, and decision follow-up browser gate `3
   passed`; affected API/feedback/shortlist contracts `9 passed`; live readiness,
   rendered controls, overflow, and selected-property answer smoke verified.
-- Signed Android release-3 build: `232` Gradle tasks, passed.
+- Signed Android release-4 build: `232` Gradle tasks, passed.
 - Bundletool: valid.
 - Embedded signer: matches the active Play upload certificate.
-- Google Play accepted bundle version `3 (1.1.1)` and reports it available to
+- Google Play accepted bundle version `4 (1.1.2)` and reports it available to
   internal testers; no form factor lost supported devices.
 - The selected `PropertyQuarry internal` tester list contains one user,
   `tibor.girschele@gmail.com`.
 - Release readiness at artifact source commit
-  `4b76b8f6b4c62442b1a61241765f948fc4477669`: `0` failures, `0` blockers;
+  `fe4f3345d1c48e31f46ce3c210258093cc85a162`: `0` failures, `0` blockers;
   production rollout authorization remains false.
 - Running the pre-publication gate at the later repository HEAD intentionally
   reports `source_commit_mismatch`; the published bundle is tied to the clean
@@ -528,6 +585,7 @@ mobile/build/propertyquarry-android-release-evidence.json
 mobile/build/propertyquarry-google-play-evidence.json
 mobile/build/propertyquarry-google-play-internal-v2-20260809.png
 mobile/build/propertyquarry-google-play-internal-v3-20260810.png
+mobile/build/propertyquarry-google-play-internal-v4-20260811.png
 ```
 
 Cooldown screenshot SHA-256:
@@ -548,9 +606,15 @@ Internal-v3 release/tester screenshot SHA-256:
 846215866118c79fc7cdc8dab7b977ff5ab27cdb8bf9b5aa21a7dcec2a546fcb
 ```
 
-`propertyquarry-google-play-evidence.json` now describes the accepted version-3
+Internal-v4 release/tester screenshot SHA-256:
+
+```text
+05c1ff63287afce16ec95034a99ae363e429beba619a23cd35146a3f37f9cf35
+```
+
+`propertyquarry-google-play-evidence.json` now describes the accepted version-4
 artifact with SHA-256
-`df91f2ac2bca02670b84782a5a91ec556820c6ddb5c9c93c4f95bae525c810f0`.
+`fa0c6c4a686e77677bd4eb17a49d0143649a6fa219d5a9af232530e8e2fa54ff`.
 The Play surface still labels the temporary app name as unreviewed; this is not
 an internal-track blocker and no production review was requested.
 
