@@ -26,6 +26,8 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends BridgeActivity {
     private static final String AUTH_BRIDGE_PATH = "/mobile/auth/bridge";
     private static final String SHARE_BRIDGE_PATH = "/mobile/share/bridge";
+    private static final int BRIDGE_READY_MAX_ATTEMPTS = 100;
+    private static final long BRIDGE_READY_RETRY_MILLIS = 100L;
 
     private final ExecutorService runtimeExecutor = Executors.newSingleThreadExecutor();
     private volatile boolean runtimeReady = false;
@@ -33,6 +35,10 @@ public final class MainActivity extends BridgeActivity {
     private boolean navigationStarted = false;
     private boolean nativeAuthPayloadDelivered = false;
     private boolean nativeSharePayloadDelivered = false;
+    private boolean nativeAuthPayloadDeliveryScheduled = false;
+    private boolean nativeSharePayloadDeliveryScheduled = false;
+    private int nativeAuthPayloadGeneration = 0;
+    private int nativeSharePayloadGeneration = 0;
     private Intent pendingIntent;
     private PropertyQuarryRuntimeContract.Verified verifiedRuntime;
 
@@ -68,6 +74,10 @@ public final class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        nativeAuthPayloadGeneration++;
+        nativeSharePayloadGeneration++;
+        nativeAuthPayloadDeliveryScheduled = false;
+        nativeSharePayloadDeliveryScheduled = false;
         runtimeExecutor.shutdownNow();
         super.onDestroy();
     }
@@ -164,6 +174,8 @@ public final class MainActivity extends BridgeActivity {
                 }
                 PropertyQuarryNativePlugin.acceptAuthCode(this, code);
                 nativeAuthPayloadDelivered = false;
+                nativeAuthPayloadDeliveryScheduled = false;
+                nativeAuthPayloadGeneration++;
                 loadTrustedPath(AUTH_BRIDGE_PATH);
                 return true;
             }
@@ -204,6 +216,8 @@ public final class MainActivity extends BridgeActivity {
                     property.idempotencyKey()
                 );
                 nativeSharePayloadDelivered = false;
+                nativeSharePayloadDeliveryScheduled = false;
+                nativeSharePayloadGeneration++;
                 loadTrustedPath(SHARE_BRIDGE_PATH);
             })
             .setCancelable(true)
@@ -244,12 +258,101 @@ public final class MainActivity extends BridgeActivity {
         bridge.getWebView().loadUrl(verifiedRuntime.origin() + pathAndQuery);
     }
 
-    void deliverPendingBridgePayload(WebView webView, String url) {
-        if (isExactTrustedBridgeUrl(url, AUTH_BRIDGE_PATH) && !nativeAuthPayloadDelivered) {
+    void schedulePendingBridgePayloadDelivery(WebView webView, String url) {
+        if (isExactTrustedBridgeUrl(url, AUTH_BRIDGE_PATH)
+            && !nativeAuthPayloadDelivered
+            && !nativeAuthPayloadDeliveryScheduled) {
+            nativeAuthPayloadDeliveryScheduled = true;
+            probeBridgeReadiness(
+                webView,
+                AUTH_BRIDGE_PATH,
+                nativeAuthPayloadGeneration,
+                0
+            );
+            return;
+        }
+        if (isExactTrustedBridgeUrl(url, SHARE_BRIDGE_PATH)
+            && !nativeSharePayloadDelivered
+            && !nativeSharePayloadDeliveryScheduled) {
+            nativeSharePayloadDeliveryScheduled = true;
+            probeBridgeReadiness(
+                webView,
+                SHARE_BRIDGE_PATH,
+                nativeSharePayloadGeneration,
+                0
+            );
+        }
+    }
+
+    private void probeBridgeReadiness(
+        WebView webView,
+        String path,
+        int generation,
+        int attempt
+    ) {
+        boolean authMode = AUTH_BRIDGE_PATH.equals(path);
+        boolean obsolete = authMode
+            ? generation != nativeAuthPayloadGeneration || nativeAuthPayloadDelivered
+            : generation != nativeSharePayloadGeneration || nativeSharePayloadDelivered;
+        if (obsolete) return;
+        if (!isExactTrustedBridgeUrl(webView.getUrl(), path)) {
+            if (authMode) {
+                nativeAuthPayloadDeliveryScheduled = false;
+            } else {
+                nativeSharePayloadDeliveryScheduled = false;
+            }
+            return;
+        }
+        webView.evaluateJavascript(
+            "window.__propertyQuarryNativeBridgeReady === true",
+            result -> {
+                boolean callbackObsolete = authMode
+                    ? generation != nativeAuthPayloadGeneration || nativeAuthPayloadDelivered
+                    : generation != nativeSharePayloadGeneration || nativeSharePayloadDelivered;
+                if (callbackObsolete) return;
+                if (!isExactTrustedBridgeUrl(webView.getUrl(), path)) {
+                    if (authMode) {
+                        nativeAuthPayloadDeliveryScheduled = false;
+                    } else {
+                        nativeSharePayloadDeliveryScheduled = false;
+                    }
+                    return;
+                }
+                if ("true".equals(result)) {
+                    deliverPendingBridgePayload(webView, path);
+                    return;
+                }
+                if (attempt + 1 < BRIDGE_READY_MAX_ATTEMPTS) {
+                    webView.postDelayed(
+                        () -> probeBridgeReadiness(webView, path, generation, attempt + 1),
+                        BRIDGE_READY_RETRY_MILLIS
+                    );
+                    return;
+                }
+                if (authMode) {
+                    nativeAuthPayloadDeliveryScheduled = false;
+                    showMessage(
+                        "Sign-in could not be completed",
+                        "The secure page did not become ready. Start sign-in again."
+                    );
+                } else {
+                    nativeSharePayloadDeliveryScheduled = false;
+                    showMessage(
+                        "Property could not be added",
+                        "The secure page did not become ready. Share the listing again."
+                    );
+                }
+            }
+        );
+    }
+
+    private void deliverPendingBridgePayload(WebView webView, String path) {
+        if (AUTH_BRIDGE_PATH.equals(path) && !nativeAuthPayloadDelivered) {
             Optional<PropertyQuarryNativePlugin.PendingAuth> pending;
             try {
                 pending = PropertyQuarryNativePlugin.consumePendingAuth(this);
             } catch (Exception exception) {
+                nativeAuthPayloadDeliveryScheduled = false;
                 showMessage("Sign-in could not be completed", "The secure handoff could not be cleared. Start sign-in again.");
                 return;
             }
@@ -265,11 +368,12 @@ public final class MainActivity extends BridgeActivity {
             webView.evaluateJavascript(script, null);
             return;
         }
-        if (isExactTrustedBridgeUrl(url, SHARE_BRIDGE_PATH) && !nativeSharePayloadDelivered) {
+        if (SHARE_BRIDGE_PATH.equals(path) && !nativeSharePayloadDelivered) {
             Optional<PropertyQuarryNativePlugin.PendingShare> pending;
             try {
                 pending = PropertyQuarryNativePlugin.consumePendingShare(this);
             } catch (Exception exception) {
+                nativeSharePayloadDeliveryScheduled = false;
                 showMessage("Property could not be added", "The approved listing handoff could not be cleared. Share it again.");
                 return;
             }

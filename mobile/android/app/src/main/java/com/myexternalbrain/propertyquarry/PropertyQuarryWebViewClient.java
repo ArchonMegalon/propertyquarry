@@ -35,7 +35,7 @@ final class PropertyQuarryWebViewClient extends BridgeWebViewClient {
     @Override
     public void onPageFinished(WebView view, String url) {
         super.onPageFinished(view, url);
-        activity.deliverPendingBridgePayload(view, url);
+        activity.schedulePendingBridgePayloadDelivery(view, url);
     }
 
     static boolean isTrustedGoogleSignIn(Uri uri) {

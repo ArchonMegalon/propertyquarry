@@ -145,6 +145,13 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert "startExternalLogin: () => invoke('startExternalLogin')" in script.text
     assert "propertyquarry:native-auth-payload" in script.text
     assert "propertyquarry:native-share-payload" in script.text
+    assert "__propertyQuarryNativeBridgeReady" in script.text
+    assert script.text.index("propertyquarry:native-auth-payload") < script.text.index(
+        "Object.defineProperty(window, '__propertyQuarryNativeBridgeReady'"
+    )
+    assert script.text.index("propertyquarry:native-share-payload") < script.text.index(
+        "Object.defineProperty(window, '__propertyQuarryNativeBridgeReady'"
+    )
     assert "const auth = async (nativePending = null)" in script.text
     assert "const share = async (nativePending = null)" in script.text
     assert "location.assign('/sign-in/google')" in script.text
@@ -314,7 +321,7 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
     assert "PropertyQuarryNativePlugin.consumePendingShare(this)" in main_activity
     assert "propertyquarry:native-auth-payload" in main_activity
     assert "propertyquarry:native-share-payload" in main_activity
-    assert "deliverPendingBridgePayload(view, url)" in (
+    assert "schedulePendingBridgePayloadDelivery(view, url)" in (
         ROOT
         / "mobile"
         / "android"
@@ -327,6 +334,8 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
         / "propertyquarry"
         / "PropertyQuarryWebViewClient.java"
     ).read_text(encoding="utf-8")
+    assert "window.__propertyQuarryNativeBridgeReady === true" in main_activity
+    assert "BRIDGE_READY_MAX_ATTEMPTS = 100" in main_activity
     assert '.remove(PKCE_VERIFIER)\n            .commit();' in native_plugin
     assert '.remove(SHARED_IDEMPOTENCY)\n            .commit();' in native_plugin
     assert 'call.reject("native_auth_cleanup_failed")' in native_plugin

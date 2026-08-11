@@ -1163,6 +1163,12 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
     }
     run(pending);
   }, {once: true});
+  Object.defineProperty(window, '__propertyQuarryNativeBridgeReady', {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
   retry.addEventListener('click', () => {
     if (mode === 'auth' && window.__propertyQuarryNativeAuthOwned === true) {
       location.assign('/sign-in/google');

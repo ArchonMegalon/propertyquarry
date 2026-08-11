@@ -56,10 +56,10 @@ test('native runtime and signing contracts fail closed', () => {
 
   assert.match(appGradle, /verifyPropertyQuarryReleaseSigning/);
   assert.match(appGradle, /PROPERTYQUARRY_ANDROID_KEYSTORE_PATH/);
-  assert.match(appGradle, /versionCode 4/);
-  assert.match(appGradle, /versionName "1\.1\.2"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_code="4"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.2"/);
+  assert.match(appGradle, /versionCode 5/);
+  assert.match(appGradle, /versionName "1\.1\.3"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_code="5"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.3"/);
   assert.match(lintConfig, /src\/main\/res\/xml\/config\.xml/);
   assert.match(previewBuilder, /propertyquarry_release_bundle_backup="\$\(mktemp -d\)"/);
   assert.match(previewBuilder, /trap propertyquarry_restore_release_bundle EXIT/);
@@ -82,7 +82,9 @@ test('native runtime and signing contracts fail closed', () => {
   assert.match(mainActivity, /propertyquarry:native-auth-payload/);
   assert.match(mainActivity, /PropertyQuarryNativePlugin\.consumePendingAuth\(this\)/);
   assert.match(mainActivity, /PropertyQuarryNativePlugin\.consumePendingShare\(this\)/);
-  assert.match(webViewClient, /deliverPendingBridgePayload\(view, url\)/);
+  assert.match(webViewClient, /schedulePendingBridgePayloadDelivery\(view, url\)/);
+  assert.match(mainActivity, /window\.__propertyQuarryNativeBridgeReady === true/);
+  assert.match(mainActivity, /BRIDGE_READY_MAX_ATTEMPTS = 100/);
   assert.doesNotMatch(mainActivity, /onNewIntent[\s\S]{0,240}handleIntent\(intent\)/);
   assert.match(nativePlugin, /remove\(PKCE_VERIFIER\)[\s\S]{0,80}\.commit\(\)/);
   assert.match(nativePlugin, /remove\(SHARED_IDEMPOTENCY\)[\s\S]{0,80}\.commit\(\)/);
