@@ -79,7 +79,8 @@ internal` list still contains `tibor.girschele@gmail.com`. The tester opt-in
 page recognizes Tibor Girschele and confirms tester status. Production was not
 changed. Real end-to-end sign-in still requires one fresh on-device attempt
 after the Play update; do not claim physical success before the live logs show
-the redeem and authenticated search requests.
+the redeem and authenticated search requests. EA delivered the build-5 update
+instruction and both clean Play links through Telegram as message `5183`.
 
 ## 2026-08-11 direct native auth handoff and internal release 4
 
