@@ -38,7 +38,8 @@ its three-minute expiry. No code, verifier, challenge, OAuth token, or session
 secret was printed or retained in this handoff. The final Search 200 proves the
 local authenticated session cookie was installed and accepted after redemption.
 This closes the real-device Google sign-in incident; it is no longer merely a
-synthetic or server-side result.
+synthetic or server-side result. EA delivered the concise success receipt to
+the operator through Telegram as message `5186`.
 
 ## 2026-08-11 live OAuth client repair
 
