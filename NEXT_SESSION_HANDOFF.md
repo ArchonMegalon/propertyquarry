@@ -1,25 +1,64 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-11 06:50 UTC
+Updated: 2026-08-11 07:21 UTC
 
 ## Mission
 
 The PropertyQuarry `1.1.3` (`versionCode 5`) release is active and available on
-the Google Play **internal testing** track. A physical-device attempt on build 4
-proved that the exact bridge page and deferred `/mobile/bridge.js` loaded, but
-the page still never sent `POST /mobile/auth/redeem`. Source commit
-`ab0871985f8cdfac085370cd7079b5306ba9489e` closes the remaining race: Android
-now waits for an immutable page-readiness marker before it validates, consumes,
-and dispatches the private one-time code and PKCE verifier. The page sets that
-marker only after registering both native event listeners. The existing OAuth,
-PKCE, session, exact-origin, cookie, and one-time-consumption checks remain
-unchanged. The next task is to update the physical device from Play to `1.1.3`,
-fully close and reopen the app, repeat Google secure sign-in, and confirm that
-Search opens. Do not create, edit, promote, or roll out a production release.
+the Google Play **internal testing** track. Live Android telemetry now proves
+that build 5 loads the ready bridge and sends `POST /mobile/auth/redeem`; its
+first request correctly rejected a stale handoff left from 2026-08-06. The
+remaining live failure was external configuration: Google rejected
+`https://propertyquarry.com/google/callback` with `redirect_uri_mismatch` because
+the production callback was absent from the OAuth client. That URI has now been
+added without removing the existing MyExternalBrain callback, and a controlled
+live OAuth flow reached `/google/callback`, received HTTP 303, and issued a new
+mobile handoff. The next task is one fresh Google sign-in from the physical app
+and confirmation that `/mobile/auth/redeem` and authenticated `/app/search`
+both return HTTP 200. Do not create, edit, promote, or roll out a production
+release.
 
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-11 live OAuth client repair
+
+At `2026-08-11 07:05:14 UTC`, the installed Android 16 build loaded
+`/mobile/auth/bridge` and sent `POST /mobile/auth/redeem`. The 400 response came
+from a stale, expired local code: the database contained only a handoff issued
+on 2026-08-06, already beyond its expiry, and no handoff from the current Google
+attempt. This is decisive evidence that release 5 repaired the native-to-web
+transport and cleared the stale local payload after its bounded failed redeem.
+
+The app had initiated multiple fresh `/sign-in/google` requests, but production
+received no `/google/callback`. A controlled rendered-browser reproduction then
+showed Google's `redirect_uri_mismatch` response for the server-configured live
+callback. In Google Cloud project `propertyquarry-498318`, OAuth client
+`Propertyquarry.com` retained its existing authorized redirect URI
+`https://myexternalbrain.com/google/callback` and gained the missing URI:
+
+```text
+https://propertyquarry.com/google/callback
+```
+
+The change persisted in a fresh Google Cloud Console view and propagated
+immediately. A subsequent controlled OAuth flow passed account selection and
+2-step verification. Production received `GET /google/callback` with HTTP 303
+at `2026-08-11 07:18:48 UTC` and created a new, unconsumed three-minute mobile
+handoff for the expected principal. That controlled run deliberately used a
+dummy PKCE challenge, so it proves callback and handoff issuance but cannot sign
+in the physical app. Do not try to redeem it; allow it to expire. Final closure
+still requires a fresh in-app attempt with the device-generated challenge and
+these live route results:
+
+```text
+GET  /sign-in/google      303
+GET  /google/callback     303
+GET  /mobile/auth/bridge  200
+POST /mobile/auth/redeem  200
+GET  /app/search          200
+```
 
 ## 2026-08-11 bridge-readiness repair and internal release 5
 
