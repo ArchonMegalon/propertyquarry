@@ -31,6 +31,8 @@ public final class MainActivity extends BridgeActivity {
     private volatile boolean runtimeReady = false;
     private boolean activityResumed = false;
     private boolean navigationStarted = false;
+    private boolean nativeAuthPayloadDelivered = false;
+    private boolean nativeSharePayloadDelivered = false;
     private Intent pendingIntent;
     private PropertyQuarryRuntimeContract.Verified verifiedRuntime;
 
@@ -161,6 +163,7 @@ public final class MainActivity extends BridgeActivity {
                     return true;
                 }
                 PropertyQuarryNativePlugin.acceptAuthCode(this, code);
+                nativeAuthPayloadDelivered = false;
                 loadTrustedPath(AUTH_BRIDGE_PATH);
                 return true;
             }
@@ -200,6 +203,7 @@ public final class MainActivity extends BridgeActivity {
                     property.url(),
                     property.idempotencyKey()
                 );
+                nativeSharePayloadDelivered = false;
                 loadTrustedPath(SHARE_BRIDGE_PATH);
             })
             .setCancelable(true)
@@ -238,6 +242,59 @@ public final class MainActivity extends BridgeActivity {
             return;
         }
         bridge.getWebView().loadUrl(verifiedRuntime.origin() + pathAndQuery);
+    }
+
+    void deliverPendingBridgePayload(WebView webView, String url) {
+        if (isExactTrustedBridgeUrl(url, AUTH_BRIDGE_PATH) && !nativeAuthPayloadDelivered) {
+            Optional<PropertyQuarryNativePlugin.PendingAuth> pending;
+            try {
+                pending = PropertyQuarryNativePlugin.consumePendingAuth(this);
+            } catch (Exception exception) {
+                showMessage("Sign-in could not be completed", "The secure handoff could not be cleared. Start sign-in again.");
+                return;
+            }
+            if (pending.isEmpty()) return;
+            nativeAuthPayloadDelivered = true;
+            PropertyQuarryNativePlugin.PendingAuth auth = pending.get();
+            String script = "window.__propertyQuarryNativeAuthOwned=true;"
+                + "window.dispatchEvent(new CustomEvent('propertyquarry:native-auth-payload',{detail:{code:"
+                + JSONObject.quote(auth.code())
+                + ",pkceVerifier:" + JSONObject.quote(auth.pkceVerifier())
+                + ",hasPendingShare:" + PropertyQuarryNativePlugin.hasPendingShare(this)
+                + "}}));";
+            webView.evaluateJavascript(script, null);
+            return;
+        }
+        if (isExactTrustedBridgeUrl(url, SHARE_BRIDGE_PATH) && !nativeSharePayloadDelivered) {
+            Optional<PropertyQuarryNativePlugin.PendingShare> pending;
+            try {
+                pending = PropertyQuarryNativePlugin.consumePendingShare(this);
+            } catch (Exception exception) {
+                showMessage("Property could not be added", "The approved listing handoff could not be cleared. Share it again.");
+                return;
+            }
+            if (pending.isEmpty()) return;
+            nativeSharePayloadDelivered = true;
+            PropertyQuarryNativePlugin.PendingShare share = pending.get();
+            String script = "window.__propertyQuarryNativeShareOwned=true;"
+                + "window.dispatchEvent(new CustomEvent('propertyquarry:native-share-payload',{detail:{propertyUrl:"
+                + JSONObject.quote(share.propertyUrl())
+                + ",idempotencyKey:" + JSONObject.quote(share.idempotencyKey())
+                + "}}));";
+            webView.evaluateJavascript(script, null);
+        }
+    }
+
+    private boolean isExactTrustedBridgeUrl(String url, String path) {
+        Uri current = Uri.parse(String.valueOf(url == null ? "" : url));
+        Uri expected = Uri.parse(BuildConfig.PROPERTYQUARRY_ORIGIN);
+        return String.valueOf(expected.getScheme()).equals(current.getScheme())
+            && String.valueOf(expected.getHost()).equals(current.getHost())
+            && current.getUserInfo() == null
+            && current.getPort() == expected.getPort()
+            && current.getQuery() == null
+            && current.getFragment() == null
+            && path.equals(current.getPath());
     }
 
     private void showRuntimeFailure(String reason) {

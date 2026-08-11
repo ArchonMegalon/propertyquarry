@@ -16,6 +16,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Optional;
 import java.util.Set;
 
 @CapacitorPlugin(name = "PropertyQuarryNative")
@@ -25,6 +26,9 @@ public final class PropertyQuarryNativePlugin extends Plugin {
     private static final String PKCE_VERIFIER = "pending_pkce_verifier";
     private static final String SHARED_URL = "pending_shared_property_url";
     private static final String SHARED_IDEMPOTENCY = "pending_shared_idempotency_key";
+
+    record PendingAuth(String code, String pkceVerifier) {}
+    record PendingShare(String propertyUrl, String idempotencyKey) {}
 
     private SharedPreferences preferences() {
         return getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -63,15 +67,39 @@ public final class PropertyQuarryNativePlugin extends Plugin {
     }
 
     static boolean hasPendingAuth(Context context) {
-        return !context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(AUTH_CODE, "")
-            .isBlank();
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return prefs.getString(AUTH_CODE, "").matches("[A-Za-z0-9_-]{32,160}")
+            && prefs.getString(PKCE_VERIFIER, "").matches("[A-Za-z0-9_-]{43,128}");
     }
 
     static boolean hasPendingShare(Context context) {
         return !context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(SHARED_URL, "")
             .isBlank();
+    }
+
+    static Optional<PendingAuth> consumePendingAuth(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String code = prefs.getString(AUTH_CODE, "");
+        String verifier = prefs.getString(PKCE_VERIFIER, "");
+        boolean valid = code.matches("[A-Za-z0-9_-]{32,160}")
+            && verifier.matches("[A-Za-z0-9_-]{43,128}");
+        boolean cleared = prefs.edit().remove(AUTH_CODE).remove(PKCE_VERIFIER).commit();
+        if (!cleared) throw new IllegalStateException("native_auth_cleanup_failed");
+        return valid ? Optional.of(new PendingAuth(code, verifier)) : Optional.empty();
+    }
+
+    static Optional<PendingShare> consumePendingShare(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String propertyUrl = prefs.getString(SHARED_URL, "");
+        String idempotencyKey = prefs.getString(SHARED_IDEMPOTENCY, "");
+        Optional<SharedPropertyUrl.Value> parsed = SharedPropertyUrl.parse(propertyUrl);
+        boolean valid = parsed.isPresent()
+            && parsed.get().url().equals(propertyUrl)
+            && parsed.get().idempotencyKey().equals(idempotencyKey);
+        boolean cleared = prefs.edit().remove(SHARED_URL).remove(SHARED_IDEMPOTENCY).commit();
+        if (!cleared) throw new IllegalStateException("native_share_cleanup_failed");
+        return valid ? Optional.of(new PendingShare(propertyUrl, idempotencyKey)) : Optional.empty();
     }
 
     @PluginMethod

@@ -54,4 +54,44 @@ public final class AppContractInstrumentedTest {
             Uri.parse("https://attacker@propertyquarry.com/sign-in/google")
         ));
     }
+
+    @Test
+    public void nativeAuthPayloadIsValidatedAndConsumedExactlyOnce() {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        context.getSharedPreferences(PropertyQuarryNativePlugin.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .putString("pending_auth_code", "a".repeat(32))
+            .putString("pending_pkce_verifier", "b".repeat(43))
+            .commit();
+
+        PropertyQuarryNativePlugin.PendingAuth pending =
+            PropertyQuarryNativePlugin.consumePendingAuth(context).orElseThrow();
+
+        assertEquals("a".repeat(32), pending.code());
+        assertEquals("b".repeat(43), pending.pkceVerifier());
+        assertFalse(PropertyQuarryNativePlugin.hasPendingAuth(context));
+        assertTrue(PropertyQuarryNativePlugin.consumePendingAuth(context).isEmpty());
+    }
+
+    @Test
+    public void nativeSharePayloadIsValidatedAndConsumedExactlyOnce() {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        SharedPropertyUrl.Value shared = SharedPropertyUrl.parse(
+            "https://example.com/listing/secure-handoff"
+        ).orElseThrow();
+        PropertyQuarryNativePlugin.acceptSharedProperty(
+            context,
+            shared.url(),
+            shared.idempotencyKey()
+        );
+
+        PropertyQuarryNativePlugin.PendingShare pending =
+            PropertyQuarryNativePlugin.consumePendingShare(context).orElseThrow();
+
+        assertEquals(shared.url(), pending.propertyUrl());
+        assertEquals(shared.idempotencyKey(), pending.idempotencyKey());
+        assertFalse(PropertyQuarryNativePlugin.hasPendingShare(context));
+        assertTrue(PropertyQuarryNativePlugin.consumePendingShare(context).isEmpty());
+    }
 }

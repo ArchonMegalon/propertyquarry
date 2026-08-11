@@ -1052,15 +1052,15 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
       return `${copy.common.requestFailed} (${response.status})`;
     }
   };
-  const auth = async () => {
-    const native = getNative();
-    if (!native) throw new Error(copy.auth.outside);
+  const auth = async (nativePending = null) => {
+    const native = nativePending ? null : getNative();
+    if (!nativePending && !native) throw new Error(copy.auth.outside);
     setProgress(0, copy.auth.reading);
-    const pending = await withTimeout(
-      native.getPendingAuth(),
-      8000,
-      copy.auth.waking,
-    );
+    const pending = nativePending || await withTimeout(
+        native.getPendingAuth(),
+        8000,
+        copy.auth.waking,
+      );
     if (!pending?.code || !pending?.pkceVerifier) throw new Error(copy.auth.expired);
     setProgress(1, copy.auth.confirming);
     const response = await fetchWithTimeout('/mobile/auth/redeem', {
@@ -1071,24 +1071,31 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
     if (!response.ok) throw new Error(await parseFailure(response));
     const payload = await response.json();
     setProgress(2, copy.auth.opening);
-    await withTimeout(
-      native.clearPendingAuth(),
-      3000,
-      copy.auth.cleanup,
-    );
-    const shared = await withTimeout(native.getPendingShare(), 3000, '').catch(() => null);
+    if (native) {
+      await withTimeout(
+        native.clearPendingAuth(),
+        3000,
+        copy.auth.cleanup,
+      );
+    }
+    const hasPendingShare = nativePending?.hasPendingShare === true;
+    const shared = native
+      ? await withTimeout(native.getPendingShare(), 3000, '').catch(() => null)
+      : null;
     setComplete();
-    location.replace(shared?.propertyUrl ? '/mobile/share/bridge' : (payload.return_to || '/app/search'));
+    location.replace(hasPendingShare || shared?.propertyUrl
+      ? '/mobile/share/bridge'
+      : (payload.return_to || '/app/search'));
   };
-  const share = async () => {
-    const native = getNative();
-    if (!native) throw new Error(copy.share.outside);
+  const share = async (nativePending = null) => {
+    const native = nativePending ? null : getNative();
+    if (!nativePending && !native) throw new Error(copy.share.outside);
     setProgress(0, copy.share.reading);
-    const pending = await withTimeout(
-      native.getPendingShare(),
-      8000,
-      copy.share.waking,
-    );
+    const pending = nativePending || await withTimeout(
+        native.getPendingShare(),
+        8000,
+        copy.share.waking,
+      );
     if (!pending?.propertyUrl || !pending?.idempotencyKey) {
       location.replace('/app/shortlist');
       return;
@@ -1101,34 +1108,73 @@ def propertyquarry_mobile_bridge_script() -> PlainTextResponse:
     }, 20000);
     if (response.status === 401) {
       setProgress(1, copy.share.signingIn);
-      await withTimeout(
-        native.startExternalLogin(),
-        8000,
-        copy.share.browser,
-      );
+      if (native) {
+        await withTimeout(
+          native.startExternalLogin(),
+          8000,
+          copy.share.browser,
+        );
+      } else {
+        location.assign('/sign-in/google');
+      }
       return;
     }
     if (!response.ok) throw new Error(await parseFailure(response));
     const payload = await response.json();
     setProgress(2, copy.share.opening);
-    await withTimeout(
-      native.clearPendingShare(),
-      3000,
-      copy.share.cleanup,
-    );
+    if (native) {
+      await withTimeout(
+        native.clearPendingShare(),
+        3000,
+        copy.share.cleanup,
+      );
+    }
     setComplete();
     location.replace(payload.shortlist_url || '/app/shortlist');
   };
-  const run = () => {
+  const run = (nativePending = null) => {
+    if (!nativePending && mode === 'auth' && window.__propertyQuarryNativeAuthOwned === true) return;
+    if (!nativePending && mode === 'share' && window.__propertyQuarryNativeShareOwned === true) return;
     if (running) return;
     running = true;
     retry.hidden = true;
-    (mode === 'auth' ? auth() : share())
+    (mode === 'auth' ? auth(nativePending) : share(nativePending))
       .catch(setFailure)
       .finally(() => { running = false; });
   };
-  retry.addEventListener('click', run);
-  window.setTimeout(run, 350);
+  window.addEventListener('propertyquarry:native-auth-payload', (event) => {
+    const pending = event.detail;
+    if (mode !== 'auth'
+      || !pending?.code?.match(/^[A-Za-z0-9_-]{32,160}$/)
+      || !pending?.pkceVerifier?.match(/^[A-Za-z0-9_-]{43,128}$/)) {
+      setFailure(new Error(copy.auth.expired));
+      return;
+    }
+    run(pending);
+  }, {once: true});
+  window.addEventListener('propertyquarry:native-share-payload', (event) => {
+    const pending = event.detail;
+    if (mode !== 'share'
+      || typeof pending?.propertyUrl !== 'string'
+      || !pending.propertyUrl.startsWith('https://')
+      || !pending?.idempotencyKey?.match(/^android-[0-9a-f]{40}$/)) {
+      setFailure(new Error(copy.common.requestFailed));
+      return;
+    }
+    run(pending);
+  }, {once: true});
+  retry.addEventListener('click', () => {
+    if (mode === 'auth' && window.__propertyQuarryNativeAuthOwned === true) {
+      location.assign('/sign-in/google');
+      return;
+    }
+    if (mode === 'share' && window.__propertyQuarryNativeShareOwned === true) {
+      location.replace('/app/shortlist');
+      return;
+    }
+    run();
+  });
+  window.setTimeout(() => run(), 350);
 })();
 """.strip(),
         media_type="application/javascript",

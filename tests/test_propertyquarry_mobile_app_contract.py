@@ -131,17 +131,24 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert "method: 'POST'" in script.text
     assert "location.search" not in script.text
     assert "const withTimeout" in script.text
-    assert "window.setTimeout(run, 350)" in script.text
+    assert "window.setTimeout(() => run(), 350)" in script.text
     assert "The app is still waking up. Try again to finish sign-in." in script.text
     assert "The app is still waking up. Try again to add the property." in script.text
-    assert "await withTimeout(\n      native.clearPendingAuth()" in script.text
-    assert "await withTimeout(\n      native.clearPendingShare()" in script.text
+    assert "native.clearPendingAuth()" in script.text
+    assert "if (native)" in script.text
+    assert "native.clearPendingShare()" in script.text
     assert "const getNative" in script.text
     assert "const nativePromiseProxy" in script.text
     assert "capacitor.nativePromise(" in script.text
     assert "'PropertyQuarryNative',\n      method," in script.text
     assert "getPendingAuth: () => invoke('getPendingAuth')" in script.text
     assert "startExternalLogin: () => invoke('startExternalLogin')" in script.text
+    assert "propertyquarry:native-auth-payload" in script.text
+    assert "propertyquarry:native-share-payload" in script.text
+    assert "const auth = async (nativePending = null)" in script.text
+    assert "const share = async (nativePending = null)" in script.text
+    assert "location.assign('/sign-in/google')" in script.text
+    assert "mode === 'auth' && window.__propertyQuarryNativeAuthOwned === true" in script.text
     assert "const existing = capacitor.Plugins?.PropertyQuarryNative" in script.text
     assert "capacitor.isPluginAvailable('PropertyQuarryNative')" in script.text
     assert "capacitor.registerPlugin('PropertyQuarryNative')" in script.text
@@ -303,6 +310,23 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
     assert "JSExport.getBridgeJS(this)" in main_activity
     assert "JSExport.getPluginJS(Collections.singletonList(nativePlugin))" in main_activity
     assert "Collections.singleton(BuildConfig.PROPERTYQUARRY_ORIGIN)" in main_activity
+    assert "PropertyQuarryNativePlugin.consumePendingAuth(this)" in main_activity
+    assert "PropertyQuarryNativePlugin.consumePendingShare(this)" in main_activity
+    assert "propertyquarry:native-auth-payload" in main_activity
+    assert "propertyquarry:native-share-payload" in main_activity
+    assert "deliverPendingBridgePayload(view, url)" in (
+        ROOT
+        / "mobile"
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "myexternalbrain"
+        / "propertyquarry"
+        / "PropertyQuarryWebViewClient.java"
+    ).read_text(encoding="utf-8")
     assert '.remove(PKCE_VERIFIER)\n            .commit();' in native_plugin
     assert '.remove(SHARED_IDEMPOTENCY)\n            .commit();' in native_plugin
     assert 'call.reject("native_auth_cleanup_failed")' in native_plugin

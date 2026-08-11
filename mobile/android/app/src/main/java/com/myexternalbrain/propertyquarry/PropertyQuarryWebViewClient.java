@@ -32,6 +32,12 @@ final class PropertyQuarryWebViewClient extends BridgeWebViewClient {
         return super.shouldOverrideUrlLoading(view, request);
     }
 
+    @Override
+    public void onPageFinished(WebView view, String url) {
+        super.onPageFinished(view, url);
+        activity.deliverPendingBridgePayload(view, url);
+    }
+
     static boolean isTrustedGoogleSignIn(Uri uri) {
         Uri expectedOrigin = Uri.parse(BuildConfig.PROPERTYQUARRY_ORIGIN);
         return String.valueOf(expectedOrigin.getScheme()).equals(uri.getScheme())
