@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 17:58 UTC
+Updated: 2026-08-12 19:01 UTC
 
 ## Mission
 
@@ -16,6 +16,67 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 Austria opportunity and verified LTD cover proof
+
+The previously missing live opportunity proof now exists. Signed-in reviewer
+principal `play-review-e514dab38606fbb72dbe` ran Austrian search
+`0d39c56749b04ec795302ad5e1ab6023`; all 10 returned candidates received
+persisted opportunity assessments with no failures. Opportunity
+`property_opportunity:e7e5c646e205b13c872546bd25799cec3e4a981bbeda9dd3dd4eb60934c96f05`
+on candidate `property-scout:1355793819` has useful brief artifact
+`sum_f07010e1bf9443d68817e1316ce801c6`. The brief repair is in `61b6c3`, and
+the customer-visible, receipt-backed cover lane is in commits `1fd3e2cc`,
+`679118da`, `f7db9500`, `af5f636a`, and `ba53911e`.
+
+One real 1min.AI worker call completed as generation
+`b77bb8dbc8cb4c94952fe2fdd1775fe1`, using action `image_generate`, backend
+`1min`, and model `gpt-image-1-mini`. The durable job remained at exactly one
+attempt. Its principal-bound provider receipt is `verified` with proof scope
+`provider_call`; publication remains honestly `not_published`, with
+`external_publication_verified: false`. No listing address, listing title,
+customer identifier, or opportunity identifier was sent in the provider
+prompt.
+
+The provider output is no longer exposed as an expiring presigned URL. The
+worker now validates and privately materializes bounded PNG/JPEG/WebP bytes in
+the API/worker shared artifact volume, while the browser receives only the
+principal-scoped first-party asset route. Legacy completed generation rows are
+lazily migrated with a principal-authorized compare-and-swap; the asset route
+fails closed unless that sanitized receipt is durable. The real legacy row was
+successfully upgraded without another provider call. Postgres now records:
+
+- first-party asset
+  `/app/api/property/opportunities/generations/b77bb8dbc8cb4c94952fe2fdd1775fe1/asset`;
+- `image/png`, 1024×1024, 1,231,003 bytes;
+- SHA-256
+  `635440acd09188c91b7b08ead3dc2a59fcd97281f7693565415ee1da8d3a8515`;
+- `asset_materialized: true`, matching receipt digest, `attempt_count: 1`;
+- no external HTTPS URL, presigned query, provider-private response,
+  `account_id`, or `slot_id` anywhere in the persisted job payload.
+
+An authenticated live read returned HTTP 200, `image/png`,
+`Cache-Control: private, no-store`, and an ETag containing that exact digest;
+the downloaded 1,231,003 bytes independently hashed to the same value. The
+compact customer UI is captured at
+`state/qa/propertyquarry-ltd-cover-live-20260812.png`, SHA-256
+`117b8542bb12820ecda27b23046e09da5dfcc79232833b17ea2c3ea915f0b18d`.
+Its copy explicitly says `AI concept cover` and
+`Synthetic mood illustration · not listing photography`.
+
+The final focused cover/queue/opportunity/polling suite passes 55 tests, exact
+compilation and `git diff --check` pass, and `vexp verify_done` reports no parse
+errors or broken imports. The canonical deployment receipt is
+`state/release/propertyquarry-local-deployment.v1.json`; after committing this
+handoff, redeploy once so its envelope binds the exact pushed handoff head.
+
+Do not mistake this proof for closure of the whole launch goal. Still required:
+a fresh physical-Android pass after the latest web work, a fresh cross-browser
+live pass that includes this asset endpoint, safe billing admission before any
+activation, the Play closed-test/production-access prerequisites, either real
+external FlipLink publication or continued `local_only` labelling, and an
+off-host encrypted restore proof or precisely evidenced external-authority
+blocker.
 
 ## 2026-08-12 Play reviewer access and declarations
 
@@ -88,18 +149,14 @@ action, or provider mismatches. The 1min generation lanes bind code, review,
 image, and media receipts to the requesting principal. This is real local
 integration, not proof that every owned provider is live.
 
-What remains intentionally incomplete is provider-side proof and app-facing
-opportunity orchestration. The PropertyQuarry search/opportunity context does
-not silently call arbitrary LTD providers; provider-backed generation must
-remain receipt-gated and should be invoked only through an eligible projected
-task contract. FlipLink publication is still unavailable until live account,
-capability, privacy/export, and first-publication receipts exist. Other Tier 2-4
-inventory entries remain partial or inventory-only exactly as recorded in
-`LTDs.md`. Do not label a catalog entry, BrowserAct template, or local dry-run as
-an executed provider call. The next safe live proof is one Austrian
-same-principal search/opportunity packet plus one eligible LTD generation call
-whose provider/backend, action, output asset, and receipt all agree; otherwise
-surface the action as unavailable or unproven.
+The Austrian same-principal opportunity and 1min.AI generation proof is now
+recorded in the newer section above. The PropertyQuarry search context still
+does not silently call arbitrary LTD providers; generation remains an explicit
+customer action and must stay receipt-gated. FlipLink publication is still
+unavailable until live account, capability, privacy/export, and first-
+publication receipts exist. Other Tier 2-4 inventory entries remain partial or
+inventory-only exactly as recorded in `LTDs.md`. Do not label a catalog entry,
+BrowserAct template, or local dry-run as an executed provider call.
 
 ## 2026-08-12 live thumbnail polish and Play listing completion
 
