@@ -2418,7 +2418,7 @@ def test_fact_claim_rebinds_projected_facts_but_not_authority_inputs() -> None:
         "request_digest": "request-after-projection",
     }
 
-    assert product_service._property_fact_rebind_queued_job_inputs(
+    assert product_service._property_fact_rebind_job_inputs(
         job=job,
         binding=binding,
     ) is True
@@ -2426,7 +2426,21 @@ def test_fact_claim_rebinds_projected_facts_but_not_authority_inputs() -> None:
     assert job["request_digest"] == "request-after-projection"
     assert job["input_binding_rebased"] is True
     assert (
-        job["input_binding_previous_request_digest"]
+        job["input_binding_original_request_digest"]
+        == "request-before-projection"
+    )
+    assert product_service._property_fact_rebind_job_inputs(
+        job=job,
+        binding={
+            **binding,
+            "facts_digest": "facts-after-second-projection",
+            "request_digest": "request-after-second-projection",
+        },
+    ) is True
+    assert job["facts_digest"] == "facts-after-second-projection"
+    assert job["request_digest"] == "request-after-second-projection"
+    assert (
+        job["input_binding_original_request_digest"]
         == "request-before-projection"
     )
 
@@ -2438,7 +2452,7 @@ def test_fact_claim_rebinds_projected_facts_but_not_authority_inputs() -> None:
         protected_job = dict(job)
         protected_job[protected_key] = "different-authority-input"
         before = dict(protected_job)
-        assert product_service._property_fact_rebind_queued_job_inputs(
+        assert product_service._property_fact_rebind_job_inputs(
             job=protected_job,
             binding=binding,
         ) is False

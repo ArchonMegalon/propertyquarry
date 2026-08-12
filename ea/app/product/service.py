@@ -5089,7 +5089,7 @@ def _property_fact_request_binding(
     }
 
 
-def _property_fact_rebind_queued_job_inputs(
+def _property_fact_rebind_job_inputs(
     *,
     job: dict[str, object],
     binding: Mapping[str, object],
@@ -5100,7 +5100,7 @@ def _property_fact_rebind_queued_job_inputs(
     That projection may replace the candidate packet with an equivalent bounded
     representation before the worker claims the job. The source, preferences,
     and requirement contract remain the authority boundary; facts and the
-    derived request digest are safely rebound inside the same atomic claim.
+    derived request digest are safely rebound inside the same atomic mutation.
     """
 
     for job_key, binding_key in (
@@ -5125,7 +5125,10 @@ def _property_fact_rebind_queued_job_inputs(
         request_digest,
     ):
         job["input_binding_rebased"] = True
-        job["input_binding_previous_request_digest"] = previous_request_digest
+        job.setdefault(
+            "input_binding_original_request_digest",
+            previous_request_digest,
+        )
     return True
 
 
@@ -30742,7 +30745,7 @@ class ProductService:
                     source_fingerprint=current_source_fingerprint,
                     required_only=bool(job.get("required_only")),
                 )
-                if not _property_fact_rebind_queued_job_inputs(
+                if not _property_fact_rebind_job_inputs(
                     job=job,
                     binding=binding,
                 ):
@@ -31124,15 +31127,9 @@ class ProductService:
                     source_fingerprint=latest_source_fingerprint,
                     required_only=bool(job.get("required_only")),
                 )
-                input_binding_matches = all(
-                    hmac.compare_digest(str(job.get(job_key) or ""), latest_binding[binding_key])
-                    for job_key, binding_key in (
-                        ("source_fingerprint", "source_fingerprint"),
-                        ("facts_digest", "facts_digest"),
-                        ("preference_digest", "preference_digest"),
-                        ("requirement_digest", "requirement_digest"),
-                        ("request_digest", "request_digest"),
-                    )
+                input_binding_matches = _property_fact_rebind_job_inputs(
+                    job=job,
+                    binding=latest_binding,
                 )
                 if not input_binding_matches:
                     retryable = claimed_attempt < _PROPERTY_FACT_ENRICHMENT_MAX_ATTEMPTS
