@@ -8911,7 +8911,13 @@
       event.preventDefault();
       event.stopPropagation();
       if (button.disabled) return;
-      const candidateRef = String(button.getAttribute('data-candidate-ref') || '').trim();
+      const rawCandidateRef = String(button.getAttribute('data-candidate-ref') || '').trim();
+      let candidateRef = rawCandidateRef;
+      try {
+        candidateRef = decodeURIComponent(rawCandidateRef);
+      } catch (_error) {
+        candidateRef = rawCandidateRef;
+      }
       const runId = String(button.getAttribute('data-run-id') || '').trim();
       const card = button.closest('[data-workbench-row]');
       const statusNode = card?.querySelector('[data-pqx-opportunity-generation-status]');

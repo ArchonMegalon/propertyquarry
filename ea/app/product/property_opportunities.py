@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import unquote
 
 
 OpportunityAssessor = Callable[..., dict[str, object] | None]
@@ -278,11 +279,15 @@ def find_property_search_candidate(
     *,
     candidate_ref: str,
 ) -> dict[str, object] | None:
-    """Return one exact candidate from a principal-scoped search snapshot."""
+    """Return one candidate, tolerating one legacy URL-encoded transport layer."""
 
     target = str(candidate_ref or "").strip()
-    if not target or len(target) > 500:
+    if not target or len(target) > 1500:
         return None
+    targets = [target]
+    decoded_target = unquote(target)
+    if decoded_target != target and len(decoded_target) <= 500:
+        targets.append(decoded_target)
     summary = dict(run.get("summary") or {}) if isinstance(run.get("summary"), dict) else {}
     collections: list[object] = [
         run.get("ranked_candidates"),
@@ -300,18 +305,19 @@ def find_property_search_candidate(
                 source.get("top_candidates"),
             )
         )
-    for collection in collections:
-        if not isinstance(collection, list):
-            continue
-        for candidate in collection:
-            if not isinstance(candidate, dict):
+    for lookup_target in targets:
+        for collection in collections:
+            if not isinstance(collection, list):
                 continue
-            resolved = str(
-                candidate.get("candidate_ref")
-                or candidate.get("source_ref")
-                or candidate.get("listing_id")
-                or ""
-            ).strip()
-            if resolved == target:
-                return dict(candidate)
+            for candidate in collection:
+                if not isinstance(candidate, dict):
+                    continue
+                resolved = str(
+                    candidate.get("candidate_ref")
+                    or candidate.get("source_ref")
+                    or candidate.get("listing_id")
+                    or ""
+                ).strip()
+                if resolved == lookup_target:
+                    return dict(candidate)
     return None

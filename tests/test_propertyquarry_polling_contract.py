@@ -93,6 +93,14 @@ def test_workbench_network_mutations_and_pollers_are_bounded_and_cancellable() -
     assert source.count("document.hidden || navigator.onLine === false") >= 3
 
 
+def test_opportunity_brief_request_normalizes_template_encoded_candidate_ref() -> None:
+    source = WORKBENCH_SCRIPT.read_text(encoding="utf-8")
+
+    assert "const rawCandidateRef = String(button.getAttribute('data-candidate-ref')" in source
+    assert "candidateRef = decodeURIComponent(rawCandidateRef);" in source
+    assert "encodeURIComponent(candidateRef)" in source
+
+
 def test_listing_thumbnails_keep_safe_https_and_fail_to_honest_placeholder() -> None:
     source = WORKBENCH_SCRIPT.read_text(encoding="utf-8")
     results_template = RESULTS_TEMPLATE.read_text(encoding="utf-8")

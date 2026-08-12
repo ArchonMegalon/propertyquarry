@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.product.property_opportunities import (
+    find_property_search_candidate,
     materialize_property_search_opportunities,
     property_opportunity_public_projection,
 )
@@ -117,6 +118,47 @@ def test_public_opportunity_projection_allowlists_customer_safe_fields() -> None
     assert projection["fit_score"] == 88.0
     assert projection["unknowns"] == ["heating_type"]
     assert "private_prompt" not in projection
+
+
+def test_candidate_lookup_accepts_one_legacy_url_encoded_layer() -> None:
+    candidate = {
+        "candidate_ref": "property-scout:1355793819",
+        "title": "Vienna opportunity",
+    }
+    run = {"summary": {"sources": [{"top_candidates": [candidate]}]}}
+
+    resolved = find_property_search_candidate(
+        run,
+        candidate_ref="property-scout%3A1355793819",
+    )
+
+    assert resolved == candidate
+
+
+def test_candidate_lookup_prefers_exact_ref_before_decoded_fallback() -> None:
+    encoded_candidate = {
+        "candidate_ref": "property-scout%3Aencoded",
+        "title": "Literal encoded reference",
+    }
+    decoded_candidate = {
+        "candidate_ref": "property-scout:encoded",
+        "title": "Decoded reference",
+    }
+    run = {
+        "summary": {
+            "sources": [
+                {"top_candidates": [decoded_candidate]},
+                {"top_candidates": [encoded_candidate]},
+            ]
+        }
+    }
+
+    resolved = find_property_search_candidate(
+        run,
+        candidate_ref="property-scout%3Aencoded",
+    )
+
+    assert resolved == encoded_candidate
 
 
 def test_repeated_search_poll_upserts_one_run_scoped_opportunity() -> None:
