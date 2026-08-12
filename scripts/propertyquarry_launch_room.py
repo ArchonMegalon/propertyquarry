@@ -89,6 +89,43 @@ ADVANCED_VISUAL_SOURCE_RECEIPTS = {
 }
 DEPLOYMENT_SCHEMA = "propertyquarry.local_docker_deployment.v1"
 DEFAULT_PUBLIC_LAUNCH_AUTHORITY_RECEIPT = PUBLIC_LAUNCH_RECEIPT_PATH
+PUBLIC_LAUNCH_EVIDENCE_HANDOFF: dict[str, dict[str, object]] = {
+    "google_play_public_launch": {
+        "evidence_origin": "external_google_play_console",
+        "evidence_contract": "google_play_public_launch_external_receipt",
+        "repository_verifier": None,
+        "required_proofs": [
+            "production_access_granted",
+            "production_release_active_for_austria",
+            "app_content_and_store_listing_complete",
+            "install_available_without_internal_tester_invitation",
+        ],
+    },
+    "paid_billing_safe_handoff": {
+        "evidence_origin": "external_paid_checkout_canary",
+        "evidence_contract": "paid_billing_safe_handoff_external_receipt",
+        "repository_verifier": None,
+        "required_proofs": [
+            "paid_plan_checkout_configured",
+            "authenticated_principal_preserved_without_second_login",
+            "signed_webhook_verified_and_idempotent",
+            "entitlement_grant_and_cancellation_verified",
+        ],
+    },
+    "encrypted_off_host_disaster_recovery": {
+        "evidence_origin": "propertyquarry_release_gate",
+        "evidence_contract": "propertyquarry.postgres_dr_receipt.v3:release_gate",
+        "repository_verifier": (
+            "scripts/propertyquarry_postgres_dr.py release-gate"
+        ),
+        "required_proofs": [
+            "encrypted_backup_bound_to_exact_release",
+            "immutable_off_host_object_verified",
+            "provider_retrieval_attested",
+            "disposable_restore_rpo_rto_and_critical_data_verified",
+        ],
+    },
+}
 
 
 class LaunchRoomError(RuntimeError):
@@ -374,6 +411,7 @@ def _public_launch_authority_handoff(
         },
         "required_evidence": {
             requirement: {
+                **PUBLIC_LAUNCH_EVIDENCE_HANDOFF[requirement],
                 "status_required": "pass",
                 "evidence_ref_contract": "nonempty_bounded_nonsecret_reference",
                 "evidence_sha256_contract": "sha256:<64_lowercase_hex>",

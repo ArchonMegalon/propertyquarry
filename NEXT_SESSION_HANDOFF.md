@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 14:21 UTC
+Updated: 2026-08-12 14:24 UTC
 
 ## Mission
 
@@ -67,6 +67,18 @@ well-formed candidate values from an exact deployment: `bindings_complete`
 cannot become true until the local deployment receipt proves this exact
 envelope. Local tests or locally created JSON can never substitute for the
 external signature.
+
+Each requirement now names what must actually be proven. Google Play requires
+production access, an Austria-active production release, completed app/store
+content, and installation without an internal-tester invitation. Billing
+requires configured paid-plan checkout, same-principal handoff without a
+second login, signed idempotent webhooks, and entitlement grant/cancellation.
+Those two receipts remain explicitly external and have no repository verifier.
+DR points to the existing
+`propertyquarry.postgres_dr_receipt.v3:release_gate` contract and
+`scripts/propertyquarry_postgres_dr.py release-gate`, which already verifies an
+exact-release encrypted backup, immutable off-host object, provider-attested
+retrieval, disposable restore, RPO/RTO, schema, and critical-data survival.
 
 The handoff also observes—but does not trust—whether the fixed receipt, trust
 store, and trust-store environment binding are present. The read-only host

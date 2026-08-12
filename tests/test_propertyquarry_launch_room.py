@@ -188,6 +188,42 @@ def test_public_launch_authority_handoff_is_exact_and_non_substitutable() -> Non
         row["authority_state"] == "unverified"
         for row in handoff["required_evidence"].values()
     )
+    assert handoff["required_evidence"]["google_play_public_launch"] == {
+        "evidence_origin": "external_google_play_console",
+        "evidence_contract": "google_play_public_launch_external_receipt",
+        "repository_verifier": None,
+        "required_proofs": [
+            "production_access_granted",
+            "production_release_active_for_austria",
+            "app_content_and_store_listing_complete",
+            "install_available_without_internal_tester_invitation",
+        ],
+        "status_required": "pass",
+        "evidence_ref_contract": "nonempty_bounded_nonsecret_reference",
+        "evidence_sha256_contract": "sha256:<64_lowercase_hex>",
+        "authority_state": "unverified",
+    }
+    assert handoff["required_evidence"][
+        "encrypted_off_host_disaster_recovery"
+    ] == {
+        "evidence_origin": "propertyquarry_release_gate",
+        "evidence_contract": (
+            "propertyquarry.postgres_dr_receipt.v3:release_gate"
+        ),
+        "repository_verifier": (
+            "scripts/propertyquarry_postgres_dr.py release-gate"
+        ),
+        "required_proofs": [
+            "encrypted_backup_bound_to_exact_release",
+            "immutable_off_host_object_verified",
+            "provider_retrieval_attested",
+            "disposable_restore_rpo_rto_and_critical_data_verified",
+        ],
+        "status_required": "pass",
+        "evidence_ref_contract": "nonempty_bounded_nonsecret_reference",
+        "evidence_sha256_contract": "sha256:<64_lowercase_hex>",
+        "authority_state": "unverified",
+    }
 
     stale = _public_launch_authority_handoff(
         envelope_head_sha="b" * 40,
