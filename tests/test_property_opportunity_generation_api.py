@@ -47,11 +47,12 @@ def test_property_opportunity_generation_is_principal_scoped_and_truthfully_prov
         "artifact_status": "ready",
     }
     assert body["publication"] == {
-        "provider": "FlipLink.me",
-        "runtime_state": "runtime_managed",
-        "action_key": "publish_property_flipbook",
-        "status": "not_configured",
-        "executable": False,
+        "mode": "local_only",
+        "scope": "private_artifact",
+        "status": "not_published",
+        "external_provider": "",
+        "external_publication_verified": False,
+        "external_receipt_ref": "",
     }
 
 

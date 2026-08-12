@@ -128,7 +128,6 @@ from app.services.heyy_whatsapp_service import heyy_daily_template_budget, redac
 from app.services.dossier_writer import write_verified_dossier_from_research
 from app.services.dossier_writer.neuronwriter_adapter import create_neuronwriter_query
 from app.services.registration_email import property_notification_preview
-from app.services.ltd_runtime_catalog import LtdRuntimeCatalogService
 
 router = APIRouter(prefix="/app/api", tags=["product"])
 public_router = APIRouter(prefix="/app/api", tags=["product-public-assets"])
@@ -2271,22 +2270,6 @@ def generate_property_opportunity_artifact(
     ):
         raise HTTPException(status_code=503, detail="property_opportunity_persistence_unavailable")
 
-    ltd_profile = LtdRuntimeCatalogService(
-        provider_registry=container.provider_registry,
-    ).get_profile("FlipLink.me")
-    if ltd_profile is None:
-        raise HTTPException(status_code=503, detail="property_opportunity_ltd_lane_unavailable")
-    ltd_action = next(
-        (
-            action
-            for action in ltd_profile.actions
-            if action.action_key == "publish_property_flipbook"
-        ),
-        None,
-    )
-    if ltd_action is None:
-        raise HTTPException(status_code=503, detail="property_opportunity_ltd_lane_unavailable")
-
     actor = str(
         context.operator_id
         or context.access_email
@@ -2322,11 +2305,12 @@ def generate_property_opportunity_artifact(
             "artifact_status": "ready",
         },
         "publication": {
-            "provider": ltd_profile.service_name,
-            "runtime_state": ltd_profile.runtime_state,
-            "action_key": ltd_action.action_key,
-            "status": "not_requested" if ltd_action.executable else "not_configured",
-            "executable": bool(ltd_action.executable),
+            "mode": "local_only",
+            "scope": "private_artifact",
+            "status": "not_published",
+            "external_provider": "",
+            "external_publication_verified": False,
+            "external_receipt_ref": "",
         },
     }
 

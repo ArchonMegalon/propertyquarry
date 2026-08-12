@@ -82,6 +82,9 @@ def test_opportunity_brief_is_local_and_carries_decision_evidence(tmp_path: Path
     assert artifact["generation_provider"] == "PropertyQuarry"
     assert artifact["generation_mode"] == "local_opportunity_brief"
     assert artifact["generation_basis"] == "durable_preference_assessment"
+    assert artifact["publication_mode"] == "local_only"
+    assert artifact["external_publication_status"] == "not_published"
+    assert artifact["external_publication_verified"] is False
     body = str(artifact["body_markdown"])
     assert "The layout matches the three-room preference" in body
     assert "Preference fit: 88/100" in body

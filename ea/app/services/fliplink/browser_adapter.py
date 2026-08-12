@@ -32,6 +32,8 @@ def browseract_fliplink_publish_requested(request: dict[str, object]) -> dict[st
     settings = fliplink_settings_from_env()
     if not settings.browseract_enabled:
         raise RuntimeError("fliplink_browseract_disabled")
+    if not settings.login_email or not settings.login_password_present:
+        raise RuntimeError("fliplink_credentials_unconfigured")
     if not _text(request, "publication_id"):
         raise ValueError("publication_id_required")
     if not _text(request, "pdf_artifact_ref"):

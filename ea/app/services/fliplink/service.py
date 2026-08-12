@@ -137,6 +137,12 @@ class FlipLinkPacketService:
 
     def capacity_status(self, *, principal_id: str) -> dict[str, object]:
         settings = fliplink_settings_from_env()
+        external_account_configured = bool(
+            settings.login_email and settings.login_password_present
+        )
+        external_publish_request_ready = bool(
+            external_account_configured and settings.browseract_enabled
+        )
         principal_active = self._repo.count_publications(principal_id=principal_id, statuses=ACTIVE_PACKET_STATUSES)
         global_active = self._repo.count_publications(statuses=ACTIVE_PACKET_STATUSES)
         cap = max(1, int(settings.active_publication_cap or 1))
@@ -155,8 +161,16 @@ class FlipLinkPacketService:
             "state": global_state,
             "principal_state": principal_state,
             "global_state": global_state,
-            "account_tier": int(settings.account_tier or 0),
-            "custom_domain": settings.custom_domain,
+            "capacity_scope": "local_packet_repository",
+            "external_provider": "FlipLink.me",
+            "external_account_configured": external_account_configured,
+            "external_account_verified": False,
+            "external_publish_request_ready": external_publish_request_ready,
+            "browseract_publish_enabled": bool(settings.browseract_enabled),
+            "account_tier": 0,
+            "account_tier_verified": False,
+            "custom_domain": "",
+            "custom_domain_verified": False,
         }
 
     def _require_capacity(self, *, principal_id: str) -> None:
@@ -1784,6 +1798,9 @@ class FlipLinkPacketService:
             artifact["generation_provider"] = "PropertyQuarry"
             artifact["generation_mode"] = "local_opportunity_brief"
             artifact["generation_basis"] = "durable_preference_assessment"
+            artifact["publication_mode"] = "local_only"
+            artifact["external_publication_status"] = "not_published"
+            artifact["external_publication_verified"] = False
         self._repo.record_event(
             {
                 "publication_id": "",
