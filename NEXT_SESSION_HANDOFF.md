@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 17:54 UTC
+Updated: 2026-08-12 17:58 UTC
 
 ## Mission
 
@@ -138,7 +138,14 @@ assets. A production-DOM-only fault injection then exhausted the first card's
 fallback chain: the broken image became hidden, the thumbnail entered
 `is-unavailable`, and `Medienvorschau noch nicht verfügbar.` became visible.
 Reloading restored the untouched server-backed result. The browser session was
-closed after verification.
+closed after verification. After the shared first-paint resolver was deployed,
+a cache-busted reload of that same run rendered all 10 cards with nonzero image
+widths, removed every Willhaben upsell and ImmoScout locked-content asset from
+the DOM, and replaced them with first-party area previews or genuine gallery
+photos. A second DOM-only failure on the first card advanced automatically to
+its declared first-party map-preview fallback (640 px wide) without hiding the
+image or showing the unavailable state. The original page was restored before
+the final browser session was closed.
 
 The intermittent-thumbnail repair is live and the shortlist now has a truthful
 first-paint fallback. Commit `e75bf00812bfe21815c1b6da131b66a964590504`
