@@ -116,6 +116,10 @@ _PROPERTY_WORKBENCH_CLIENT_TRACKING_MARKERS = (
     "virtual-tour-click",
     "virtual_tour_click",
 )
+_PROPERTY_WORKBENCH_CLIENT_NON_LISTING_IMAGE_MARKERS = (
+    "/img/upselling/",
+    "/plus-insider-locked.",
+)
 _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES = {
     "available",
     "complete",
@@ -272,6 +276,14 @@ def _property_workbench_client_asset_url(value: object, *, kind: str) -> str:
     except ValueError:
         return ""
     normalized_kind = str(kind or "").strip().lower()
+    if normalized_kind == "image" and any(
+        marker in path_and_query
+        for marker in _PROPERTY_WORKBENCH_CLIENT_NON_LISTING_IMAGE_MARKERS
+    ):
+        # Provider chrome is not listing evidence. Present the next real media
+        # candidate (or the honest unavailable state) instead of rendering an
+        # upsell/locked-content badge as though it were a property photo.
+        return ""
     extensions = (
         _PROPERTY_WORKBENCH_CLIENT_VIDEO_EXTENSIONS
         if normalized_kind == "video"

@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 17:36 UTC
+Updated: 2026-08-12 17:48 UTC
 
 ## Mission
 
@@ -66,10 +66,9 @@ The canonical deployment receipt is
 `state/release/propertyquarry-local-deployment.v1.json`; use its
 `envelope_head_sha` rather than copying a self-referential handoff commit hash
 into this file. The final deployment after this handoff commit must retain
-runtime manifest `e73c938906ef44f2c474cda22a8d17104c741bb7`, web image
-`sha256:2d36a1f388be1a06c5c4ee2354bac6a1bf32a3c1dd1bdbc6c81f0e4de60b7b9b`,
-`passed: true`, and an empty `failures` list while updating the envelope to the
-exact pushed head.
+runtime manifest `e73c938906ef44f2c474cda22a8d17104c741bb7`, `passed: true`,
+and an empty `failures` list while binding the envelope and web-image digest to
+the exact pushed head.
 
 ## 2026-08-12 LTD integration audit
 
@@ -114,13 +113,30 @@ refresh, no-referrer, and failure-placeholder controller instead of bypassing
 it. A failed primary and all failed fallbacks therefore end in the visible
 `Preview not available` state rather than a blank or broken image.
 
-Focused verification for this follow-up passes 23 projection/extractor/template
-tests, the complete 10-test polling contract including a real Chromium broken
-image, six thumbnail workspace contracts, and the isolated Chromium lazy-atlas
-E2E. `git diff --check` is clean. The broad `pytest -k thumbnail` collection
+The final live audit also found two provider UI assets being projected as
+property photos: Willhaben's `/img/upselling/` badge and ImmoScout24's
+`plus-insider-locked` badge. The customer projection now excludes only those
+known non-listing assets. It promotes the next valid listing image when one is
+available and otherwise uses the honest unavailable placeholder; real provider
+photos, first-party map previews, and transformed CDN images remain admitted.
+
+Focused verification for this follow-up passes 33 projection/extractor/polling
+tests including a real Chromium broken image, six thumbnail workspace
+contracts, and the isolated Chromium lazy-atlas E2E. `git diff --check` is
+clean. The broad `pytest -k thumbnail` collection
 cannot be treated as one-process evidence because unrelated synchronous
 Playwright fixtures collide with the suite's already-running asyncio loop; the
 same affected Chromium tests pass in their isolated canonical invocations.
+
+The deployed signed-in reviewer-principal search run
+`0d39c56749b04ec795302ad5e1ab6023` returned 10 Austrian listings. Before the
+provider-chrome filter, all 10 projected images loaded with nonzero natural
+widths, which proved the fixed customer projection no longer drops valid remote
+assets. A production-DOM-only fault injection then exhausted the first card's
+fallback chain: the broken image became hidden, the thumbnail entered
+`is-unavailable`, and `Medienvorschau noch nicht verfügbar.` became visible.
+Reloading restored the untouched server-backed result. The browser session was
+closed after verification.
 
 The intermittent-thumbnail repair is live and the shortlist now has a truthful
 first-paint fallback. Commit `e75bf00812bfe21815c1b6da131b66a964590504`

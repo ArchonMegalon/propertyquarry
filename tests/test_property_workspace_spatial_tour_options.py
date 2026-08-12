@@ -246,6 +246,41 @@ def test_client_payload_keeps_query_formatted_cdn_listing_thumbnail() -> None:
     assert result["preview_image_url"] == thumbnail_url
 
 
+def test_client_payload_rejects_provider_chrome_and_promotes_real_media() -> None:
+    real_media_url = "https://cache.willhaben.at/mmo/8/1234567899.jpg"
+
+    for provider_chrome_url in (
+        "https://cache.willhaben.at/img/upselling/icon-bump.png",
+        "https://www.immobilienscout24.at/expose/assets/plus-insider-locked.77b21addeee8c430a19b.webp",
+    ):
+        result = workspace_payload._property_workbench_client_candidate_payload(
+            {
+                "thumbnail_url": provider_chrome_url,
+                "property_facts": {
+                    "media_urls_json": [provider_chrome_url, real_media_url],
+                },
+            }
+        )
+
+        assert result["preview_image_url"] == real_media_url
+        assert provider_chrome_url not in result.get(
+            "preview_image_fallback_urls", []
+        )
+
+
+def test_client_payload_uses_honest_empty_state_for_provider_chrome_only() -> None:
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {
+            "thumbnail_url": (
+                "https://www.immobilienscout24.at/expose/assets/"
+                "plus-insider-locked.77b21addeee8c430a19b.webp"
+            )
+        }
+    )
+
+    assert "preview_image_url" not in result
+
+
 def test_client_payload_keeps_a_bounded_safe_thumbnail_fallback() -> None:
     primary_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
     tracking_url = "https://api.willhaben.at/restapi/v2/listings/123.jpg"
