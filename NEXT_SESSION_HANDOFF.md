@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 11:40 UTC
+Updated: 2026-08-12 12:01 UTC
 
 ## Mission
 
@@ -16,6 +16,35 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 resilient result thumbnails
+
+The source commit containing this handoff repairs intermittent missing result
+thumbnails without weakening the existing image-URL safety boundary. Result
+cards previously projected only one remote listing image; a transient CDN,
+hotlink, or Android WebView load failure immediately hid it even when another
+safe listing image or a first-party preview was available.
+
+Candidate payloads now retain one bounded, deduplicated, validated fallback and
+prefer a first-party preview when one exists. The browser retries that fallback
+exactly once, sends no referrer to hotlink-sensitive image hosts, restores the
+normal thumbnail state after a successful retry, and exposes the existing
+`Media preview not available` placeholder only after the fallback also fails.
+Remote fallbacks remain HTTPS-only; same-origin HTTP is accepted only for local
+development and test hosts.
+
+Verification on the candidate bytes passed:
+
+- payload and template contracts: `11 passed`;
+- the real retry/exhaustion journey in Chromium, Firefox, and WebKit:
+  `3 passed`;
+- exact changed-module compilation and `git diff --check`: passed.
+
+The canonical `property-release-gates` target still fails closed before running
+its broader suite because `PROPERTYQUARRY_DR_BACKUP_RECEIPT` and
+`PROPERTYQUARRY_DR_RESTORE_RECEIPT` are unset. This is the already documented
+off-host disaster-recovery launch boundary, not a thumbnail regression; do not
+bypass it or report the full release gate as passed.
 
 ## 2026-08-12 live opportunity, browser, and launch-boundary closure
 

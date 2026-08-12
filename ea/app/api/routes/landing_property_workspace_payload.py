@@ -1039,6 +1039,46 @@ def _property_workbench_client_candidate_payload(
     diorama_preview_url = _property_workbench_candidate_diorama_preview_url(raw)
     if diorama_preview_url:
         compact["diorama_preview_url"] = diorama_preview_url
+    preview_fallback_candidates: list[str] = []
+    for value in (
+        orientation_preview.get("thumb_image_url"),
+        orientation_preview.get("image_url"),
+        diorama_preview_url,
+        raw.get("preview_image_url"),
+        raw.get("thumbnail_url"),
+        raw.get("image_url"),
+        raw.get("hero_image_url"),
+    ):
+        fallback_url = _property_workbench_client_image_url(value)
+        if (
+            fallback_url
+            and fallback_url != preview_image_url
+            and fallback_url not in preview_fallback_candidates
+        ):
+            preview_fallback_candidates.append(fallback_url)
+    for key in ("media_urls_json", "photo_urls_json", "image_urls_json"):
+        raw_values = raw_facts.get(key)
+        if raw_values in (None, "", [], {}):
+            raw_values = raw.get(key)
+        if not isinstance(raw_values, (list, tuple)):
+            continue
+        for value in raw_values[:12]:
+            fallback_url = _property_workbench_client_image_url(value)
+            if (
+                fallback_url
+                and fallback_url != preview_image_url
+                and fallback_url not in preview_fallback_candidates
+            ):
+                preview_fallback_candidates.append(fallback_url)
+    if preview_fallback_candidates:
+        compact["preview_image_fallback_url"] = next(
+            (
+                fallback_url
+                for fallback_url in preview_fallback_candidates
+                if fallback_url.startswith("/") and not fallback_url.startswith("//")
+            ),
+            preview_fallback_candidates[0],
+        )
     tour_payload = _property_workbench_client_tour_payload(
         raw.get("tour") if isinstance(raw.get("tour"), dict) else {},
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),

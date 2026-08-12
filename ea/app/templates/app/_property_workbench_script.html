@@ -14,10 +14,46 @@
     const metaNode = root.querySelector('[data-property-workspace-meta]');
     const data = JSON.parse(payloadNode?.textContent || '{}');
     const meta = JSON.parse(metaNode?.getAttribute('data-property-workspace-meta') || '{}');
+    const thumbnailFallbackUrl = (image) => {
+      if (!(image instanceof HTMLImageElement)) return '';
+      const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
+      const rawFallback = String(
+        image.getAttribute('data-pqx-thumbnail-fallback')
+        || thumbnail?.getAttribute('data-pqx-thumbnail-fallback')
+        || ''
+      ).trim();
+      if (
+        !rawFallback
+        || image.dataset.pqxThumbnailFallbackAttempted === '1'
+      ) return '';
+      try {
+        const fallback = new URL(rawFallback, window.location.origin);
+        const sameOrigin = fallback.origin === window.location.origin;
+        if (
+          (!sameOrigin && fallback.protocol !== 'https:')
+          || fallback.username
+          || fallback.password
+        ) return '';
+        if (fallback.href === image.currentSrc || fallback.href === image.src) return '';
+        return fallback.href;
+      } catch (_error) {
+        return '';
+      }
+    };
     const markThumbnailUnavailable = (image) => {
       if (!(image instanceof HTMLImageElement)) return;
       const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
       if (!thumbnail) return;
+      const fallbackUrl = thumbnailFallbackUrl(image);
+      if (fallbackUrl) {
+        image.dataset.pqxThumbnailFallbackAttempted = '1';
+        image.hidden = false;
+        thumbnail.classList.remove('is-unavailable');
+        thumbnail.classList.add('is-recovering');
+        image.src = fallbackUrl;
+        return;
+      }
+      thumbnail.classList.remove('is-recovering');
       thumbnail.classList.add('is-unavailable');
       image.hidden = true;
     };
@@ -25,6 +61,14 @@
       const image = event.target;
       if (!(image instanceof HTMLImageElement) || !image.matches('[data-pqx-thumbnail-image]')) return;
       markThumbnailUnavailable(image);
+    }, true);
+    root.addEventListener('load', (event) => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement) || !image.matches('[data-pqx-thumbnail-image]')) return;
+      const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
+      if (!thumbnail || image.naturalWidth <= 0) return;
+      image.hidden = false;
+      thumbnail.classList.remove('is-recovering', 'is-unavailable');
     }, true);
     root.querySelectorAll('[data-pqx-thumbnail-image]').forEach((image) => {
       if (image.complete && image.naturalWidth === 0) markThumbnailUnavailable(image);

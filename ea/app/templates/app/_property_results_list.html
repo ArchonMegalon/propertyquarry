@@ -242,7 +242,11 @@
             </span>
           </button>
           {% elif primary_preview_url %}
-	          <span class="pqx-thumb" data-pqx-thumbnail>
+	          <span
+              class="pqx-thumb"
+              data-pqx-thumbnail
+              data-pqx-thumbnail-fallback="{{ candidate.get('preview_image_fallback_url') or '' }}"
+            >
 	            <button
               class="pqx-thumb-link pqx-thumb-atlas-button"
               type="button"
@@ -250,7 +254,15 @@
               data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
               aria-label="Open area map for {{ candidate.get('title') or 'property' }}"
             >
-	              <img src="{{ primary_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low" data-pqx-thumbnail-image>
+	              <img
+                src="{{ primary_preview_url }}"
+                alt=""
+                loading="lazy"
+                decoding="async"
+                fetchpriority="low"
+                referrerpolicy="no-referrer"
+                data-pqx-thumbnail-image
+              >
 	            </button>
 	            <span class="pqx-thumb-placeholder" aria-hidden="true">Media preview not available.</span>
 	          </span>

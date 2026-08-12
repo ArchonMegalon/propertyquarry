@@ -221,6 +221,24 @@ def test_client_payload_promotes_safe_remote_listing_thumbnail() -> None:
     assert result["preview_image_url"] == thumbnail_url
 
 
+def test_client_payload_keeps_a_bounded_safe_thumbnail_fallback() -> None:
+    primary_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
+    tracking_url = "https://api.willhaben.at/restapi/v2/listings/123.jpg"
+    fallback_url = "https://cache.willhaben.at/mmo/8/1234567899.jpg"
+
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {
+            "thumbnail_url": primary_url,
+            "property_facts": {
+                "media_urls_json": [primary_url, tracking_url, fallback_url],
+            },
+        }
+    )
+
+    assert result["preview_image_url"] == primary_url
+    assert result["preview_image_fallback_url"] == fallback_url
+
+
 def test_client_payload_rejects_tracking_thumbnail_fallback() -> None:
     result = workspace_payload._property_workbench_client_candidate_payload(
         {"thumbnail_url": "https://api.willhaben.at/restapi/v2/listings/123.jpg"}
@@ -302,6 +320,11 @@ def test_results_template_presents_camera_walkthrough_before_optional_3d_tour() 
         "Open 3D tour"
     )
     assert "return 'Camera walkthrough';" in workbench_script
+    assert 'data-pqx-thumbnail-fallback=' in template
+    assert 'referrerpolicy="no-referrer"' in template
+    assert "pqxThumbnailFallbackAttempted" in workbench_script
+    assert "thumbnail.classList.add('is-recovering')" in workbench_script
+    assert "thumbnail.classList.add('is-unavailable')" in workbench_script
     assert "eyebrow': 'AI layout preview'" in research_detail
     assert "visual_rail_label_display = 'AI-generated 3D tour'" not in research_detail
     assert research_detail.index("{% if visual_ready_walkthrough %}") < research_detail.index(
