@@ -33,7 +33,7 @@ BROWSER_PROOF_PATH = Path(
 )
 MANIFEST_START = "<!-- propertyquarry-release-manifest-json:start -->"
 MANIFEST_END = "<!-- propertyquarry-release-manifest-json:end -->"
-SCHEMA = "propertyquarry.launch_room.v1"
+SCHEMA = "propertyquarry.launch_room.v2"
 DEFAULT_DEPLOYMENT_RECEIPT = Path(
     "state/release/propertyquarry-local-deployment.v1.json"
 )
@@ -67,6 +67,15 @@ ADVANCED_VISUAL_SOURCE_RECEIPTS = {
     ),
 }
 DEPLOYMENT_SCHEMA = "propertyquarry.local_docker_deployment.v1"
+PUBLIC_LAUNCH_AUTHORITY_SCHEMA = "propertyquarry.public_launch_authority.v1"
+DEFAULT_PUBLIC_LAUNCH_AUTHORITY_RECEIPT = Path(
+    "state/release/propertyquarry-public-launch-authority.v1.json"
+)
+PUBLIC_LAUNCH_REQUIREMENTS = (
+    "google_play_public_launch",
+    "paid_billing_safe_handoff",
+    "encrypted_off_host_disaster_recovery",
+)
 
 
 class LaunchRoomError(RuntimeError):
@@ -160,11 +169,16 @@ def _proof_counts(proof: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _deployment_status(path: Path, runtime_sha: str) -> dict[str, object]:
+def _deployment_status(
+    path: Path,
+    runtime_sha: str,
+    *,
+    envelope_head_sha: str,
+) -> dict[str, object]:
     if not path.is_file():
         return {
             "status": "missing_local_docker_deployment_receipt",
-            "production_launch": False,
+            "local_runtime_ready": False,
             "receipt_path": str(path),
         }
     receipt = _object(path)
@@ -192,6 +206,7 @@ def _deployment_status(path: Path, runtime_sha: str) -> dict[str, object]:
         and receipt.get("passed") is True
         and receipt.get("secret_values_recorded") is False
         and receipt.get("runtime_commit_sha") == runtime_sha
+        and receipt.get("envelope_head_sha") == envelope_head_sha
         and authority.get("scope") == "local_docker"
         and authority.get("proof_plane") == "local_docker_operator_receipts"
         and authority.get("github_actions_used") is False
@@ -206,9 +221,10 @@ def _deployment_status(path: Path, runtime_sha: str) -> dict[str, object]:
             if passed
             else "blocked_local_docker_receipt_invalid_or_stale"
         ),
-        "production_launch": passed,
+        "local_runtime_ready": passed,
         "receipt_path": str(path),
         "runtime_candidate_bound": receipt.get("runtime_commit_sha") == runtime_sha,
+        "envelope_head_bound": receipt.get("envelope_head_sha") == envelope_head_sha,
         "compose_project": dict(receipt.get("compose") or {}).get("project"),
         "service_count": len(services),
         "observed_at": receipt.get("observed_at"),
@@ -217,6 +233,88 @@ def _deployment_status(path: Path, runtime_sha: str) -> dict[str, object]:
             .get("release_identity", {})
             .get("release_image_digest", "")
         ),
+    }
+
+
+def _public_launch_status(
+    path: Path,
+    *,
+    envelope_head_sha: str,
+    runtime_sha: str,
+    image_digest: str,
+) -> dict[str, object]:
+    missing_blockers = [
+        f"{requirement}_authority_unverified"
+        for requirement in PUBLIC_LAUNCH_REQUIREMENTS
+    ]
+    if not path.is_file():
+        return {
+            "status": "blocked_external_authority_receipt_missing",
+            "authority_passed": False,
+            "receipt_path": str(path),
+            "blockers": missing_blockers,
+        }
+    try:
+        receipt = _object(path)
+    except LaunchRoomError as exc:
+        return {
+            "status": "blocked_external_authority_receipt_invalid",
+            "authority_passed": False,
+            "receipt_path": str(path),
+            "blockers": [str(exc)],
+        }
+    authority = (
+        dict(receipt.get("authority") or {})
+        if isinstance(receipt.get("authority"), dict)
+        else {}
+    )
+    requirements = (
+        dict(receipt.get("requirements") or {})
+        if isinstance(receipt.get("requirements"), dict)
+        else {}
+    )
+    blockers: list[str] = []
+    if receipt.get("schema") != PUBLIC_LAUNCH_AUTHORITY_SCHEMA:
+        blockers.append("public_launch_authority_schema_invalid")
+    if receipt.get("passed") is not True:
+        blockers.append("public_launch_authority_not_passed")
+    if receipt.get("secret_values_recorded") is not False:
+        blockers.append("public_launch_authority_secret_boundary_invalid")
+    if receipt.get("canonical_repository") != "ArchonMegalon/propertyquarry":
+        blockers.append("public_launch_authority_repository_mismatch")
+    if receipt.get("envelope_head_sha") != envelope_head_sha:
+        blockers.append("public_launch_authority_envelope_mismatch")
+    if receipt.get("runtime_commit_sha") != runtime_sha:
+        blockers.append("public_launch_authority_runtime_mismatch")
+    if receipt.get("release_image_digest") != image_digest or not re.fullmatch(
+        r"sha256:[0-9a-f]{64}", image_digest
+    ):
+        blockers.append("public_launch_authority_image_mismatch")
+    if authority != {
+        "scope": "public_launch",
+        "proof_plane": "external_authority_receipts",
+    }:
+        blockers.append("public_launch_authority_scope_invalid")
+    if set(requirements) != set(PUBLIC_LAUNCH_REQUIREMENTS):
+        blockers.append("public_launch_authority_requirements_incomplete")
+    for requirement in PUBLIC_LAUNCH_REQUIREMENTS:
+        row = (
+            dict(requirements.get(requirement) or {})
+            if isinstance(requirements.get(requirement), dict)
+            else {}
+        )
+        evidence_ref = str(row.get("evidence_ref") or "").strip()
+        if row.get("status") != "pass" or not evidence_ref or len(evidence_ref) > 1024:
+            blockers.append(f"{requirement}_authority_unverified")
+    return {
+        "status": (
+            "verified_external_public_launch_authority"
+            if not blockers
+            else "blocked_external_authority_receipt_invalid"
+        ),
+        "authority_passed": not blockers,
+        "receipt_path": str(path),
+        "blockers": blockers,
     }
 
 
@@ -258,6 +356,7 @@ def build_launch_room(
     *,
     deployment_receipt_path: Path | None = None,
     advanced_visual_binding_receipt_path: Path | None = None,
+    public_launch_authority_receipt_path: Path | None = None,
 ) -> dict[str, object]:
     root = root.resolve(strict=True)
     policy = _object(root / ROLE_POLICY_PATH)
@@ -318,9 +417,13 @@ def build_launch_room(
         )
     elif not deployment_receipt_path.is_absolute():
         deployment_receipt_path = root / deployment_receipt_path
-    deployment = _deployment_status(deployment_receipt_path, runtime_sha)
-    deployment_green = deployment["production_launch"] is True
-    production_ready = candidate_proof_green and deployment_green and not dirty
+    deployment = _deployment_status(
+        deployment_receipt_path,
+        runtime_sha,
+        envelope_head_sha=head_sha,
+    )
+    deployment_green = deployment["local_runtime_ready"] is True
+    local_runtime_ready = candidate_proof_green and deployment_green and not dirty
     if advanced_visual_binding_receipt_path is None:
         advanced_visual_binding_receipt_path = (
             root / DEFAULT_ADVANCED_VISUAL_BINDING_RECEIPT
@@ -335,8 +438,36 @@ def build_launch_room(
         runtime_sha=runtime_sha,
         image_digest=str(deployment.get("release_image_digest") or ""),
     )
+    advanced_visual_bound = advanced_visual.get("production_claim") is True
+    if public_launch_authority_receipt_path is None:
+        configured_public_launch = os.environ.get(
+            "PROPERTYQUARRY_PUBLIC_LAUNCH_AUTHORITY_RECEIPT", ""
+        )
+        public_launch_authority_receipt_path = (
+            Path(configured_public_launch)
+            if configured_public_launch
+            else root / DEFAULT_PUBLIC_LAUNCH_AUTHORITY_RECEIPT
+        )
+    elif not public_launch_authority_receipt_path.is_absolute():
+        public_launch_authority_receipt_path = (
+            root / public_launch_authority_receipt_path
+        )
+    public_launch = _public_launch_status(
+        public_launch_authority_receipt_path,
+        envelope_head_sha=head_sha,
+        runtime_sha=runtime_sha,
+        image_digest=str(deployment.get("release_image_digest") or ""),
+    )
+    public_launch_ready = bool(
+        local_runtime_ready and public_launch.get("authority_passed") is True
+    )
+    public_launch["ready"] = public_launch_ready
+    public_launch["local_runtime_ready"] = local_runtime_ready
+    advanced_visual["local_runtime_claim"] = bool(
+        local_runtime_ready and advanced_visual_bound
+    )
     advanced_visual["production_claim"] = bool(
-        production_ready and advanced_visual.get("production_claim") is True
+        public_launch_ready and advanced_visual_bound
     )
     return {
         "schema": SCHEMA,
@@ -372,7 +503,8 @@ def build_launch_room(
                 if candidate_proof_green
                 else "blocked_candidate_proof"
             ),
-            "production_claim": production_ready,
+            "local_runtime_claim": local_runtime_ready,
+            "production_claim": public_launch_ready,
         },
         "advanced_visual_gold": advanced_visual,
         "live_deployment": deployment,
@@ -384,17 +516,16 @@ def build_launch_room(
             ),
             "network_freshness_proven": False,
         },
+        "public_launch": public_launch,
         "next_action": (
             "Commit, rebuild, and redeploy the local Docker stack."
             if dirty
             else "Run scripts/deploy_propertyquarry.sh on the local Docker host."
             if not deployment_green
-            else (
-                "Monitor the local Compose services and refresh the deployment "
-                "receipt after any image, configuration, or container change."
-            )
+            else "Verify Google Play public launch, paid billing handoff, and encrypted off-host backup/restore through the external public-launch authority receipt."
         ),
-        "production_launch_ready": production_ready,
+        "local_runtime_ready": local_runtime_ready,
+        "production_launch_ready": public_launch_ready,
     }
 
 
@@ -424,7 +555,11 @@ def render_markdown(report: dict[str, object]) -> str:
         ("Live deployment", dict(report["live_deployment"])["status"]),
         ("Public edge", dict(report["public_edge"])["status"]),
         (
-            "Production launch",
+            "Local runtime",
+            "READY" if report["local_runtime_ready"] else "BLOCKED",
+        ),
+        (
+            "Public launch",
             "READY" if report["production_launch_ready"] else "BLOCKED",
         ),
     )
@@ -480,14 +615,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             "_completion/property_gold_status/advanced-visual-candidate-binding.json"
         ),
     )
+    parser.add_argument(
+        "--public-launch-authority-receipt",
+        type=Path,
+        help=(
+            "Externally authorized public-launch receipt; defaults to "
+            "state/release/propertyquarry-public-launch-authority.v1.json"
+        ),
+    )
     parser.add_argument("--format", choices=("json", "markdown"), default="markdown")
     parser.add_argument("--write", type=Path)
+    parser.add_argument(
+        "--require-local-runtime-ready",
+        action="store_true",
+        help=(
+            "Exit non-zero unless exact candidate proof, the exact-envelope "
+            "local Docker deployment receipt, and the clean worktree pass."
+        ),
+    )
     parser.add_argument(
         "--require-production-ready",
         action="store_true",
         help=(
             "Exit non-zero unless exact candidate proof, the local Docker "
-            "deployment receipt, and the clean worktree all pass."
+            "deployment receipt, the clean worktree, and all externally "
+            "authorized public-launch prerequisites pass."
         ),
     )
     args = parser.parse_args(argv)
@@ -497,6 +649,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             deployment_receipt_path=args.deployment_receipt,
             advanced_visual_binding_receipt_path=(
                 args.advanced_visual_binding_receipt
+            ),
+            public_launch_authority_receipt_path=(
+                args.public_launch_authority_receipt
             ),
         )
     except (OSError, LaunchRoomError) as exc:
@@ -511,6 +666,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write(args.write, rendered)
     else:
         sys.stdout.write(rendered)
+    if (
+        args.require_local_runtime_ready
+        and report.get("local_runtime_ready") is not True
+    ):
+        print(
+            "launch-room local runtime readiness is blocked",
+            file=sys.stderr,
+        )
+        return 1
     if (
         args.require_production_ready
         and report.get("production_launch_ready") is not True

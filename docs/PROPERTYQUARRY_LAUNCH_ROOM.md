@@ -15,11 +15,12 @@ scripts/deploy_propertyquarry.sh
 ```
 
 The authenticated local-deployment verifier invokes the launch room with
-`--require-production-ready`. It fails closed unless the exact candidate
-proof, mode-`0600` local Docker receipt, and clean worktree all pass. The
-source-only `release-preflight` is hermetic and never sends mutation smoke
-requests to an ambient EA or PropertyQuarry runtime; live API mutation smokes
-remain explicit runtime-operations commands.
+`--require-local-runtime-ready`. It fails closed unless the exact candidate
+proof, exact-envelope mode-`0600` local Docker receipt, and clean worktree all
+pass. This proves the local production runtime only. It does not grant public
+launch authority. The source-only `release-preflight` is hermetic and never
+sends mutation smoke requests to an ambient EA or PropertyQuarry runtime; live
+API mutation smokes remain explicit runtime-operations commands.
 
 Deployment builds immutable local web and render images, runs the migration,
 starts the complete Compose topology, waits for health, probes localhost, and
@@ -79,8 +80,23 @@ proof, and local Git state. It reports separate source, journey, and browser
 counts, Core versus Advanced Visual posture, local deployment state, and the
 next local operator action.
 
-Core Gold may be production-ready when the exact candidate proof and local
+Core Gold may be local-runtime-ready when the exact candidate proof and local
 Docker receipt both pass. Advanced Visual Gold remains additive and
 `unavailable_unbound_producer_receipts` until its provider evidence is bound.
 The running local Cloudflare container proves local tunnel process health; it
 does not by itself claim fresh public-network reachability.
+
+Public launch is a separate fail-closed authority boundary. The launch room
+accepts a private receipt at
+`state/release/propertyquarry-public-launch-authority.v1.json`, or the absolute
+path named by `PROPERTYQUARRY_PUBLIC_LAUNCH_AUTHORITY_RECEIPT`. The receipt must
+bind the canonical repository, current envelope, runtime commit, and exact
+image digest to three independently evidenced requirements:
+
+- Google Play public launch and store-policy completion;
+- safely configured paid billing with a proven no-second-login handoff; and
+- encrypted off-host backup plus a successful restore drill.
+
+`--require-production-ready` remains blocked until that external-authority
+receipt passes. Local deployment health, catalog entries, or release-gate
+acceptance cannot satisfy it.
