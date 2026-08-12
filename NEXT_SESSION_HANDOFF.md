@@ -1052,9 +1052,24 @@ release image sha256:ddbf0fe802a74e2e463525c8f9ae77290e0c9323ba805e31968f58c9c11
 Launch-room truth was split correctly in `a7256c32`: local runtime readiness no
 longer implies public-launch authority. Follow-up commit `8e3937d7` closes a
 forgery gap: an unsigned or checkout-local JSON file can never grant public
-launch. `propertyquarry.launch_room.v3` remains fail-closed with
-`external_public_launch_authority_verifier_unconfigured` until a pinned
-external signature verifier/keyring is implemented outside the checkout.
+launch. Commit `0bf55763` implements the missing verifier by reusing the
+existing external global-governance Ed25519 trust boundary. Launch remains
+fail-closed until release control provisions both of these fixed, root-owned
+paths outside the checkout:
+
+```text
+/etc/propertyquarry/release-control/global-governance-trust-store.v1.json
+/run/propertyquarry/release-control/propertyquarry-public-launch-authority.v2.json
+```
+
+The v2 receipt must be canonical strict JSON, short-lived, and signed by a key
+authorized for the `global_market_envelope` gate. Its signature binds the
+canonical repository, exact envelope HEAD, manifest runtime commit, deployed
+image digest, nonce, and exact evidence digests for Play public launch, safe
+paid-billing handoff, and encrypted off-host disaster recovery. Missing,
+unsigned, stale, forged, checkout-local, caller-selected, partially populated,
+or differently bound receipts remain blocked. The launch room only projects
+non-secret verification identities and evidence references.
 
 Commit `a88ce53c` closes the customer-visible part of the proven LTD lane.
 PropertyQuarry already executed and persisted 1minAI `property.evaluate` calls,
@@ -1064,10 +1079,10 @@ input-digest-bound assessment and render a concise `1minAI evidence review`.
 The customer payload deliberately omits provider account names and key slots.
 A detached or incomplete receipt produces no AI claim.
 
-Verification for these two commits:
+Verification through the signed launch-authority commit:
 
 ```text
-39 passed
+60 passed
 rendered property-workbench JavaScript: node --check passed
 Python compile and git diff checks: passed
 ```
