@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 00:08 CEST
+Updated: 2026-08-13 00:24 CEST
 
 ## Mission
 
@@ -16,6 +16,71 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 LTD truth separation and exact-image browser proof
+
+Commit `8ae3bb9a` is published on
+`integration/property-origin-main-20260728`. It closes the audit defect where
+catalog presence, a callable local contract, a BrowserAct template, or a manual
+seed could be mistaken for a live provider integration. The deployed LTD
+profile now reports `evidence_status`, `verification_source`, `last_verified`,
+`live_evidence_verified`, and
+`propertyquarry_customer_integration_verified` separately from whether a local
+action contract is executable.
+
+The exact deployed profile truth is:
+
+- 1min.AI is Tier 1 `live_provider_evidence`; its worker health probe and
+  principal-bound provider receipt prove both live evidence and a real
+  PropertyQuarry customer integration.
+- AI Magicx is Tier 2 `provider_contract_available`; Crezlo is Tier 2
+  `account_discovery_contract_available`; neither has live evidence or a
+  PropertyQuarry customer integration.
+- FlipLink is Tier 2 `runtime_contract_available`, with
+  `reported_owned_unconfigured`; it is not a managed/live provider and all
+  customer publication remains honestly `local_only` / `not_published`.
+- Internxt is Tier 2 `live_account_evidence` because its authenticated rclone
+  principal is verified. That is storage-account evidence only, not a
+  PropertyQuarry customer integration or compliant DR.
+- PayPal is Tier 2 `account_discovery_contract_available` with
+  `sandbox_identity_isolated`; it has no dedicated PropertyQuarry Live
+  identity, no live integration, and no customer billing authority.
+- PayFunnels remains exactly `unconfigured_external_authority`; contract tests
+  do not convert it into a live service.
+
+`LTDs.md` now records those same boundaries. AI Magicx and Crezlo were demoted
+from unsupported Tier 1 claims, PayPal's generic Sandbox identity is recorded
+as isolated rather than as a PropertyQuarry credential, and Internxt's real
+authenticated account is recorded without inflating it into DR or customer
+integration. The critical verifier passes with an explicit
+`not_live_integration_gate`. The flagship verifier passes all nine exact
+posture rows while counting only five as live service/account/provider evidence
+and four as contract-only, auxiliary, or unconfigured. Of those five, only the
+1min receipt is admitted as a verified PropertyQuarry customer integration.
+The focused catalog/API/verifier/runtime/tool suite passes `203/203`; exact
+Python compilation and `git diff --check` pass.
+
+The repair is live in web image
+`sha256:83a9d4ab984cbdeedb22e5080fe3e1af6e98ed7ebe58bb2104029d752bd2761b`.
+Fresh exact-image receipt
+`state/qa/propertyquarry-live-browser-all-20260813-ltd-truth-exact.json`,
+SHA-256 `3eacf3c9753998e2542f64516867642b6b7bae692d93a73e7bdd4ca78316b76c`,
+records `96/96` real Playwright samples and zero failures at
+`2026-08-12T22:22:39.231371Z`: all 16 configured customer routes in Chromium,
+Firefox, and WebKit at 390x844 and 412x915. There are no missing engines,
+samples, or static fallbacks. Ordinary surfaces returned HTTP 200; all six
+billing samples returned the expected fail-closed HTTP 503 and passed the Free
+plan compatibility contract.
+
+The remaining blockers are external and unchanged: eleven more distinct real
+Play testers plus Play's fourteen-day continuous enrollment requirement; a
+fresh physical Android sign-in pass for this exact web head; dedicated Live
+billing-provider credentials plus the complete same-principal canary and
+admission; and an approved external encryption recipient, scoped AWS identity,
+COMPLIANCE-locked S3 target, exact-version read-back, and disposable restore
+proof. FlipLink may remain closed as an honest `local_only` generator unless
+external publication authority is supplied. Do not mark the long-running goal
+complete while any of these gates remains.
 
 ## 2026-08-12 current-head opportunity and DR revalidation
 
@@ -290,9 +355,10 @@ cloned-voice credits, and `22` cloned profiles. This is current EA/Chummer
 provider-pool evidence only. Unmixr remains `catalog_only` for PropertyQuarry
 and must not be represented as a PropertyQuarry customer integration.
 
-`LTDs.md` now records these present-tense boundaries instead of the stale March
-refresh and manual-seed claims. No application code or live provider state was
-changed during this audit.
+The newer 2026-08-13 truth-separation section supersedes this inventory note.
+`LTDs.md` and the runtime catalog now distinguish provider receipts, live
+account/service evidence, contract availability, and customer integration.
+No provider account or provider-side state was changed during either audit.
 
 ## 2026-08-12 fast-result thumbnail repair
 
