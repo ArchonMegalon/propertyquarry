@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 20:59 UTC
+Updated: 2026-08-12 21:08 UTC
 
 ## Mission
 
@@ -16,6 +16,38 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 Elisabeth lifetime Agent entitlement applied
+
+The previously requested top-tier lifetime grant for
+`elisabeth.girschele@gmail.com` had not actually been applied. The repository's
+governed `scripts/propertyquarry_lifetime_agent_entitlement.py` plan resolved
+exactly one live principal and reported a real change. The apply path then
+created the required private rollback snapshot before its compare-and-swap
+update and verified both durable commercial projections before commit.
+
+Receipt `state/qa/propertyquarry-elisabeth-lifetime-agent-applied-20260812.json`,
+SHA-256 `0199d24fc4e746a0ae9eedb3e9354703ebf39421eb190e2280fc5ca163a0fb07`,
+records `status=applied`, one resolved principal, `plan_key=agent`,
+`kind=lifetime`, and `active_until=2999-01-01T00:00:00+00:00`. The change is
+marked `verified=true` and made zero provider calls. The receipt contains only
+email/principal digests, not the target email or raw principal identifier.
+
+The rollback snapshot is
+`state/runtime/propertyquarry-elisabeth-lifetime-agent-20260812.rollback.private.json`,
+mode `0600`, SHA-256
+`b6ced20d359e97fb5d0cd739e8aee38cc54308c6e3d7d88db802c0d924075798`.
+Keep it private. An independent post-commit plan resolved the same principal,
+produced identical before/after digests, and reported `changed=false`; the
+grant is therefore live and idempotent. The focused entitlement suite passes
+`18/18`.
+
+The authenticated Play Console read at `2026-08-12T21:06Z` still reports
+Closed testing active, Production and Open testing inactive, and exactly
+`1 tester currently opted in` of the required 12. No Play setting was changed.
+The isolated BrowserAct session was closed after the read. Fresh Android
+telemetry remained absent and this host still had no `adb`; the physical-device
+boundary below is unchanged.
 
 ## 2026-08-12 exact-image browser and blocker refresh
 
