@@ -38,10 +38,11 @@
 {% set current_property_status_detail = current_property.get('status_detail') or current_property.get('fit_summary') or current_property.get('summary') or '' %}
 {% set current_property_detail_url = current_property.get('detail_url') or current_property.get('packet_url') or current_property.get('review_url') or '' %}
 <style>
-  .pqx-opportunity-cover{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;align-items:center;margin-top:8px;padding:8px;border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:12px;background:color-mix(in srgb,var(--pqx-surface,#fff) 94%,#b76545 6%)}
-  .pqx-opportunity-cover img{width:64px;height:64px;object-fit:cover;border-radius:9px}
-  .pqx-opportunity-cover strong,.pqx-opportunity-cover span{display:block}
-  .pqx-opportunity-cover span{font-size:.78rem;opacity:.72}
+  .pqx-opportunity-cover{display:grid;grid-template-columns:44px minmax(0,1fr);gap:7px;align-items:center;width:100%;max-width:100%;margin-top:8px;padding:7px;border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:11px;background:color-mix(in srgb,var(--pqx-surface,#fff) 94%,#b76545 6%)}
+  .pqx-opportunity-cover img{width:44px;height:44px;object-fit:cover;border-radius:8px}
+  .pqx-opportunity-cover>span{display:block;min-width:0}
+  .pqx-opportunity-cover strong{display:block;font-size:.68rem;line-height:1.18;font-weight:750}
+  .pqx-opportunity-cover>span>span{display:block;margin-top:2px;font-size:.62rem;line-height:1.22;opacity:.72}
 </style>
 <section class="pqx-result-panel active{% if is_research_surface and not results %} is-empty-research{% endif %}" data-pqx-mobile-panel="results">
   <div class="pqx-result-panel-head">

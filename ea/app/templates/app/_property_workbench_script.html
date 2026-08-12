@@ -9073,6 +9073,7 @@
         const provider = String(result?.generation?.provider || '1min.AI').trim();
         if (statusNode) statusNode.textContent = `Private concept cover · ${provider} · verified`;
         button.textContent = 'Cover ready';
+        button.hidden = true;
         trackRybbitEvent('property_opportunity_cover_generated', {
           surface: initialSurface || 'results',
           provider,

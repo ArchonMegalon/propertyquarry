@@ -51,6 +51,9 @@ def test_property_result_card_exposes_honest_receipt_backed_concept_cover() -> N
     assert "receipt?.proof_scope !== 'provider_call'" in workbench_script
     assert "Synthetic illustration · not listing photography" in workbench_script
     assert "Private concept cover · ${provider} · verified" in workbench_script
+    assert "button.hidden = true" in workbench_script
+    assert "grid-template-columns:44px minmax(0,1fr)" in results_template
+    assert "font-size:.62rem;line-height:1.22" in results_template
     helper_index = workbench_script.index("const boundedCoverFetch = async")
     brief_handler_index = workbench_script.index("[data-pqx-opportunity-generate]")
     cover_handler_index = workbench_script.index("[data-pqx-opportunity-cover-generate]")
