@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 21:46 UTC
+Updated: 2026-08-12 22:00 UTC
 
 ## Mission
 
@@ -79,14 +79,16 @@ produced identical before/after digests, and reported `changed=false`; the
 grant is therefore live and idempotent. The focused entitlement suite passes
 `18/18`.
 
-The authenticated Play Console read at `2026-08-12T21:06Z` still reports
+The authenticated Play Console read at `2026-08-12T21:49Z` still reports
 Closed testing active, Production and Open testing inactive, and exactly
 `1 tester currently opted in` of the required 12. No Play setting was changed.
-The isolated BrowserAct session was closed after the read. Fresh Android
-telemetry remained absent and this host still had no `adb`; the physical-device
-boundary below is unchanged.
+The Open testing page was also read directly: it is explicitly locked until
+this personal developer account has Production access, so an Austria open link
+cannot bypass the closed-test requirement. The isolated BrowserAct session was
+closed after the read. Fresh Android telemetry remained absent and this host
+still had no `adb`; the physical-device boundary below is unchanged.
 
-## 2026-08-12 PayPal principal isolation and environment binding
+## 2026-08-12 billing-principal isolation and environment binding
 
 A secret-safe inventory of every running Docker container found only one
 PayPal client/secret pair: the same generic EA/other-product identity had been
@@ -109,6 +111,17 @@ PropertyQuarry. The current live container therefore reports both credential
 fields absent, environment `live`, `paypal_configured=false`, and
 `paid_billing_safe_handoff_configured(provider="paypal")=false`.
 
+Commit `5ffed42cca8f1a8e298c4415c8ce7e80272da77e` applies the same boundary
+to PayFunnels. The runtime inventory found no PayFunnels principal binding,
+API key, or paid-plan URL, but PropertyQuarry was still receiving EA's generic
+webhook secret. Compose now accepts the API key, webhook secret, and Plus/Agent
+checkout URLs only through dedicated `PROPERTYQUARRY_PAYFUNNELS_LIVE_*`
+inputs, while `PAYFUNNELS_API_BASE` is hard-pinned to
+`https://api.payfunnels.com`. Generic EA `PAYFUNNELS_*` values cannot flow into
+PropertyQuarry. The deployed API now reports its API key, webhook secret, and
+both checkout URLs absent; both paid plans and the PayFunnels safe handoff
+report false.
+
 The admission boundary now prevents this mismatch from becoming a customer
 incident. `property_billing.py` accepts only the two exact official PayPal API
 origins, identifies them as `live` or `sandbox`, and permits customer checkout
@@ -119,7 +132,7 @@ non-secret binding. The missing/invalid admission still fails closed before any
 provider call, and the deployed customer billing surface must remain HTTP 503
 until valid Live credentials and the complete same-principal canary exist.
 
-The dedicated post-isolation Compose and billing regression set passes `16/16`;
+The final post-isolation Compose and billing regression set passes `17/17`;
 the earlier broader checkout, entitlement, and Compose set passes `33/33`.
 Exact Python compilation and `git diff --check` pass. The live credential
 probes are provider-health evidence only, not the required checkout/webhook/
@@ -127,11 +140,11 @@ entitlement/cancellation canary.
 
 ## 2026-08-12 exact-image browser and blocker refresh
 
-The post-isolation exact-image customer matrix is complete. Receipt
-`state/qa/propertyquarry-live-browser-all-20260812-paypal-isolated-exact.json`,
-SHA-256 `52677440477e98970933c6dc0d90587f8b0daaa41a07ac36ec931ed3773833ba`,
+The final billing-principal-isolated exact-image matrix is complete. Receipt
+`state/qa/propertyquarry-live-browser-all-20260812-billing-principals-isolated-exact.json`,
+SHA-256 `8201f6472a06ec5d3b90afd9092c71629eaaaa772637db6a8f74030663551f33`,
 records `96/96` real Playwright samples and zero failures at
-`2026-08-12T21:44:25.889091Z`: all 16 configured customer routes in Chromium,
+`2026-08-12T21:59:49.667732Z`: all 16 configured customer routes in Chromium,
 Firefox, and WebKit at 390x844 and 412x915. The receipt has no missing engine,
 sample, customer surface, or static fallback and includes the concrete saved
 research-detail route in redacted form. Every ordinary customer page returned
@@ -147,11 +160,11 @@ a self-referential commit into this file. The matrix used the principal-bound
 release-probe credential through bounded stdin; neither that credential nor an
 API token is present in the receipt.
 
-Paid billing remains deliberately unavailable. The deployed API no longer
-receives the generic Sandbox PayPal credential material; its dedicated Live
-credential inputs are empty. It reports `paypal_configured=false` and the
-customer-safe handoff also reports false. PayFunnels still has no API key or
-paid-plan checkout URLs. Every field in the exact-release
+Paid billing remains deliberately unavailable. The deployed API receives
+neither the generic Sandbox PayPal credential material nor EA's generic
+PayFunnels webhook secret; all dedicated Live credential inputs are empty.
+PayPal and both PayFunnels paid plans report unconfigured, and both provider
+safe handoffs report false. Every field in the exact-release
 `propertyquarry.paid_billing_safe_handoff.v1` admission is empty, including the
 provider, plan set, receipt/principal digests, release bindings, and verified
 timestamp. Do not activate checkout until the same-principal checkout,
@@ -159,9 +172,9 @@ signed-idempotent webhook, entitlement grant, and cancellation canary has been
 proved for the exact release and the external authority installs the bounded
 admission.
 
-Fresh physical-Android coverage is still an external device boundary. At
-`2026-08-12T20:57Z`, this host still had no `adb` executable. Production API
-telemetry since the exact deployment contained zero requests to
+Fresh physical-Android coverage is still an external device boundary. The
+live audit at `2026-08-12T21:47Z` again found no native handoff sequence in the
+preceding two hours. Production API telemetry contained zero requests to
 `/mobile/runtime-contract`, `/sign-in/google`, `/google/callback`,
 `/mobile/auth/bridge`, or `/mobile/auth/redeem`. The previously proven physical
 flow is not a fresh pass for this exact web image; do not claim otherwise.
