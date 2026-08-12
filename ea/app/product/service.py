@@ -5089,6 +5089,46 @@ def _property_fact_request_binding(
     }
 
 
+def _property_fact_rebind_queued_job_inputs(
+    *,
+    job: dict[str, object],
+    binding: Mapping[str, object],
+) -> bool:
+    """Adopt current candidate facts after durable run canonicalization.
+
+    Terminal search runs are projected again when a nested fact job is stored.
+    That projection may replace the candidate packet with an equivalent bounded
+    representation before the worker claims the job. The source, preferences,
+    and requirement contract remain the authority boundary; facts and the
+    derived request digest are safely rebound inside the same atomic claim.
+    """
+
+    for job_key, binding_key in (
+        ("source_fingerprint", "source_fingerprint"),
+        ("preference_digest", "preference_digest"),
+        ("requirement_digest", "requirement_digest"),
+    ):
+        if not hmac.compare_digest(
+            str(job.get(job_key) or ""),
+            str(binding.get(binding_key) or ""),
+        ):
+            return False
+    facts_digest = str(binding.get("facts_digest") or "").strip()
+    request_digest = str(binding.get("request_digest") or "").strip()
+    if not facts_digest or not request_digest:
+        return False
+    previous_request_digest = str(job.get("request_digest") or "").strip()
+    job["facts_digest"] = facts_digest
+    job["request_digest"] = request_digest
+    if previous_request_digest and not hmac.compare_digest(
+        previous_request_digest,
+        request_digest,
+    ):
+        job["input_binding_rebased"] = True
+        job["input_binding_previous_request_digest"] = previous_request_digest
+    return True
+
+
 def _property_fact_execution_plan(
     plan: Iterable[Mapping[str, object]],
     *,
@@ -30702,15 +30742,9 @@ class ProductService:
                     source_fingerprint=current_source_fingerprint,
                     required_only=bool(job.get("required_only")),
                 )
-                if any(
-                    not hmac.compare_digest(str(job.get(key) or ""), binding[binding_key])
-                    for key, binding_key in (
-                        ("source_fingerprint", "source_fingerprint"),
-                        ("facts_digest", "facts_digest"),
-                        ("preference_digest", "preference_digest"),
-                        ("requirement_digest", "requirement_digest"),
-                        ("request_digest", "request_digest"),
-                    )
+                if not _property_fact_rebind_queued_job_inputs(
+                    job=job,
+                    binding=binding,
                 ):
                     return {"claimed": False}
                 status = str(job.get("status") or "").strip().lower()

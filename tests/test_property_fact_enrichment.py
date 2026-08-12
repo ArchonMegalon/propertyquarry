@@ -2402,6 +2402,49 @@ def test_required_fact_scheduler_survives_restart_and_unblocks_ranking(
         _clear_run(run_id)
 
 
+def test_fact_claim_rebinds_projected_facts_but_not_authority_inputs() -> None:
+    job: dict[str, object] = {
+        "source_fingerprint": "source-a",
+        "facts_digest": "facts-before-projection",
+        "preference_digest": "preferences-a",
+        "requirement_digest": "requirements-a",
+        "request_digest": "request-before-projection",
+    }
+    binding = {
+        "source_fingerprint": "source-a",
+        "facts_digest": "facts-after-projection",
+        "preference_digest": "preferences-a",
+        "requirement_digest": "requirements-a",
+        "request_digest": "request-after-projection",
+    }
+
+    assert product_service._property_fact_rebind_queued_job_inputs(
+        job=job,
+        binding=binding,
+    ) is True
+    assert job["facts_digest"] == "facts-after-projection"
+    assert job["request_digest"] == "request-after-projection"
+    assert job["input_binding_rebased"] is True
+    assert (
+        job["input_binding_previous_request_digest"]
+        == "request-before-projection"
+    )
+
+    for protected_key in (
+        "source_fingerprint",
+        "preference_digest",
+        "requirement_digest",
+    ):
+        protected_job = dict(job)
+        protected_job[protected_key] = "different-authority-input"
+        before = dict(protected_job)
+        assert product_service._property_fact_rebind_queued_job_inputs(
+            job=protected_job,
+            binding=binding,
+        ) is False
+        assert protected_job == before
+
+
 def test_required_fact_exhaustion_is_terminal_partial_and_never_notifies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
