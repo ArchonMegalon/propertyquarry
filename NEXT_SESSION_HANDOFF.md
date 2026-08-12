@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 18:05 UTC
+Updated: 2026-08-12 17:24 UTC
 
 ## Mission
 
@@ -62,13 +62,14 @@ Production is inactive, and the dashboard requires a closed test with at least
 requested. No review submission, production release, promotion, or rollout was
 performed.
 
-The canonical deployment receipt at
-`state/release/propertyquarry-local-deployment.v1.json` currently binds source
-envelope `43e8397dfbe1c5624272f36f0042a386e791f813`, runtime manifest
-`e73c938906ef44f2c474cda22a8d17104c741bb7`, and web image
-`sha256:2d36a1f388be1a06c5c4ee2354bac6a1bf32a3c1dd1bdbc6c81f0e4de60b7b9b`.
-The receipt is healthy with no failures and was observed at
-`2026-08-12T17:01:13Z`.
+The canonical deployment receipt is
+`state/release/propertyquarry-local-deployment.v1.json`; use its
+`envelope_head_sha` rather than copying a self-referential handoff commit hash
+into this file. The final deployment after this handoff commit must retain
+runtime manifest `e73c938906ef44f2c474cda22a8d17104c741bb7`, web image
+`sha256:2d36a1f388be1a06c5c4ee2354bac6a1bf32a3c1dd1bdbc6c81f0e4de60b7b9b`,
+`passed: true`, and an empty `failures` list while updating the envelope to the
+exact pushed head.
 
 ## 2026-08-12 LTD integration audit
 
