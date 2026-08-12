@@ -64,6 +64,16 @@ def _patch_catalog(monkeypatch: pytest.MonkeyPatch, client: TestClient, tmp_path
     )
 
 
+def _verified_tool_receipt(request, **extra: object) -> dict[str, object]:  # noqa: ANN001
+    return {
+        "principal_id": request.context_json["principal_id"],
+        "handler_key": request.tool_name,
+        "invocation_contract": "tool.v1",
+        "tool_version": "test-v1",
+        **extra,
+    }
+
+
 def test_ltd_runtime_catalog_route_lists_profiles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client = _client()
     _patch_catalog(monkeypatch, client, tmp_path)
@@ -103,9 +113,9 @@ def test_ltd_runtime_discover_account_executes_browseract_extract(
         return ToolInvocationResult(
             tool_name=request.tool_name,
             action_kind=request.action_kind,
-            target_ref="browseract://markupgo",
+            target_ref="browseract:binding-browseract-1:markupgo",
             output_json={"service_name": request.payload_json["service_name"]},
-            receipt_json={"principal_id": request.context_json["principal_id"]},
+            receipt_json=_verified_tool_receipt(request),
         )
 
     monkeypatch.setattr(client.app.state.container.tool_execution, "execute_invocation", _fake_execute)
@@ -122,6 +132,12 @@ def test_ltd_runtime_discover_account_executes_browseract_extract(
     body = response.json()
     assert body["tool_name"] == "browseract.extract_account_facts"
     assert body["output_json"]["service_name"] == "MarkupGo"
+    assert body["receipt_json"]["status"] == "verified"
+    assert body["receipt_json"]["principal_bound"] is True
+    assert body["receipt_json"]["proof_scope"] == "principal_bound_tool_invocation"
+    assert "principal_id" not in body["receipt_json"]
+    assert body["target_ref"] == "browseract:discover_account"
+    assert "binding-browseract-1" not in body["target_ref"]
     request = captured[0]
     assert request.tool_name == "browseract.extract_account_facts"
     assert request.payload_json["binding_id"] == "binding-browseract-1"
@@ -144,9 +160,13 @@ def test_ltd_runtime_inspect_workspace_executes_browseract_ui_reader(
         return ToolInvocationResult(
             tool_name=request.tool_name,
             action_kind=request.action_kind,
-            target_ref="browseract://documentation-ai",
+            target_ref="browseract:binding-browseract-2:documentation-ai",
             output_json={"requested_url": request.payload_json["page_url"]},
-            receipt_json={"principal_id": request.context_json["principal_id"]},
+            receipt_json=_verified_tool_receipt(
+                request,
+                requested_url=request.payload_json["page_url"],
+                workflow_id="internal-workflow-1",
+            ),
         )
 
     monkeypatch.setattr(client.app.state.container.tool_execution, "execute_invocation", _fake_execute)
@@ -163,6 +183,10 @@ def test_ltd_runtime_inspect_workspace_executes_browseract_ui_reader(
     body = response.json()
     assert body["tool_name"] == "browseract.documentation_ai_workspace_reader"
     assert body["action_key"] == "inspect_workspace"
+    assert body["receipt_json"]["proof_scope"] == "browser_session_call"
+    assert "requested_url" not in body["output_json"]
+    assert "workflow_id" not in body["receipt_json"]
+    assert body["target_ref"] == "browseract:inspect_workspace"
     request = captured[0]
     assert request.tool_name == "browseract.documentation_ai_workspace_reader"
     assert request.payload_json["page_url"] == "https://docs.example/workspace"
@@ -196,8 +220,23 @@ def test_ltd_runtime_executes_direct_provider_action(monkeypatch: pytest.MonkeyP
             tool_name=request.tool_name,
             action_kind=request.action_kind,
             target_ref="provider://onemin/code",
-            output_json={"language": request.payload_json["language"]},
-            receipt_json={"principal_id": request.context_json["principal_id"]},
+            output_json={
+                "language": request.payload_json["language"],
+                "provider_account_name": "internal-account-label",
+                "provider_key_slot": "ONEMIN_AI_API_KEY",
+                "structured_output_json": {
+                    "raw_response": {"internal": True},
+                    "result": "generated code",
+                },
+            },
+            receipt_json=_verified_tool_receipt(
+                request,
+                provider_key="onemin",
+                provider_backend="1min",
+                provider_account_name="internal-account-label",
+                provider_key_slot="ONEMIN_AI_API_KEY",
+                model="code-model",
+            ),
         )
 
     monkeypatch.setattr(client.app.state.container.tool_execution, "execute_invocation", _fake_execute)
@@ -212,6 +251,13 @@ def test_ltd_runtime_executes_direct_provider_action(monkeypatch: pytest.MonkeyP
     assert response.status_code == 200
     body = response.json()
     assert body["tool_name"] == "provider.onemin.code_generate"
+    assert body["receipt_json"]["proof_scope"] == "provider_call"
+    assert body["receipt_json"]["provider_key"] == "onemin"
+    assert "provider_account_name" not in body["receipt_json"]
+    assert "provider_key_slot" not in body["receipt_json"]
+    assert "provider_account_name" not in body["output_json"]
+    assert "provider_key_slot" not in body["output_json"]
+    assert "raw_response" not in body["output_json"]["structured_output_json"]
     request = captured[0]
     assert request.tool_name == "provider.onemin.code_generate"
     assert request.payload_json["prompt"] == "Create a small CLI"
@@ -235,7 +281,13 @@ def test_ltd_runtime_executes_specialized_onemin_background_remove_action(
             action_kind=request.action_kind,
             target_ref="provider://onemin/background-remove",
             output_json={"feature_type": request.payload_json["feature_type"]},
-            receipt_json={"principal_id": request.context_json["principal_id"]},
+            receipt_json=_verified_tool_receipt(
+                request,
+                provider_key="onemin",
+                provider_backend="1min",
+                feature_type=request.payload_json["feature_type"],
+                model="image-model",
+            ),
         )
 
     monkeypatch.setattr(client.app.state.container.tool_execution, "execute_invocation", _fake_execute)
@@ -256,3 +308,35 @@ def test_ltd_runtime_executes_specialized_onemin_background_remove_action(
     assert request.payload_json["image_url"] == "https://example.invalid/notebook.png"
     assert request.payload_json["action_key"] == "background_remove"
     assert request.context_json["principal_id"] == "ops-onemin-media"
+
+
+def test_ltd_runtime_rejects_receipt_bound_to_another_principal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client = _client(principal_id="ops-onemin-unbound")
+    _patch_catalog(monkeypatch, client, tmp_path)
+
+    def _fake_execute(request):  # noqa: ANN001
+        receipt = _verified_tool_receipt(
+            request,
+            provider_key="onemin",
+            provider_backend="1min",
+        )
+        receipt["principal_id"] = "different-principal"
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="provider://onemin/unbound-code",
+            output_json={"normalized_text": "untrusted"},
+            receipt_json=receipt,
+        )
+
+    monkeypatch.setattr(client.app.state.container.tool_execution, "execute_invocation", _fake_execute)
+    response = client.post(
+        "/v1/ltds/runtime-catalog/1min.AI/actions/code_generate",
+        json={"prompt": "Create a small CLI"},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "ltd_runtime_execution_receipt_unverified"

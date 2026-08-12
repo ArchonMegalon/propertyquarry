@@ -43,6 +43,132 @@ def _tool_execution_service(*args, **kwargs) -> ToolExecutionService:
     return ToolExecutionService(*args, **kwargs)
 
 
+def test_onemin_media_transform_receipt_is_bound_to_request_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.services.tool_execution_onemin_adapter import OneminToolAdapter
+
+    adapter = OneminToolAdapter()
+    captured: dict[str, object] = {}
+
+    def _fake_call_feature(**kwargs):  # noqa: ANN003, ANN202
+        captured.update(kwargs)
+        return (
+            {"url": "https://media.example.invalid/transformed.png"},
+            "account-1",
+            "ONEMIN_AI_API_KEY",
+            "image-model",
+            3,
+            5,
+        )
+
+    monkeypatch.setattr(adapter, "_call_feature", _fake_call_feature)
+    result = adapter.execute_media_transform(
+        ToolInvocationRequest(
+            session_id="session-onemin-principal-receipt",
+            step_id="step-onemin-principal-receipt",
+            tool_name="provider.onemin.media_transform",
+            action_kind="media_transform",
+            payload_json={
+                "feature_type": "BACKGROUND_REMOVER",
+                "image_url": "https://media.example.invalid/source.png",
+            },
+            context_json={"principal_id": "principal-onemin-receipt"},
+        ),
+        SimpleNamespace(
+            tool_name="provider.onemin.media_transform",
+            version="tool-v1",
+        ),
+    )
+
+    assert captured["principal_id"] == "principal-onemin-receipt"
+    assert result.receipt_json["principal_id"] == "principal-onemin-receipt"
+    assert result.receipt_json["provider_backend"] == "1min"
+    assert result.receipt_json["feature_type"] == "BACKGROUND_REMOVER"
+
+
+def test_onemin_text_and_image_receipts_are_bound_to_request_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.services.tool_execution_onemin_adapter import OneminToolAdapter
+
+    adapter = OneminToolAdapter()
+    captured_text_principals: list[str] = []
+    captured_image_principals: list[str] = []
+
+    def _fake_call_text(**kwargs):  # noqa: ANN003, ANN202
+        captured_text_principals.append(str(kwargs["principal_id"]))
+        return SimpleNamespace(
+            text="completed",
+            model="text-model",
+            provider_backend="1min",
+            provider_account_name="account-1",
+            provider_key_slot="ONEMIN_AI_API_KEY",
+            tokens_in=2,
+            tokens_out=4,
+        )
+
+    def _fake_call_feature(**kwargs):  # noqa: ANN003, ANN202
+        captured_image_principals.append(str(kwargs["principal_id"]))
+        return (
+            {"url": "https://media.example.invalid/generated.png"},
+            "account-1",
+            "ONEMIN_AI_API_KEY",
+            "image-model",
+            3,
+            5,
+        )
+
+    monkeypatch.setattr(adapter, "_call_text", _fake_call_text)
+    monkeypatch.setattr(adapter, "_call_feature", _fake_call_feature)
+    principal_id = "principal-onemin-all-receipts"
+    context_json = {"principal_id": principal_id}
+
+    code_result = adapter.execute_code_generate(
+        ToolInvocationRequest(
+            session_id="session-onemin-code-receipt",
+            step_id="step-onemin-code-receipt",
+            tool_name="provider.onemin.code_generate",
+            action_kind="code_generate",
+            payload_json={"prompt": "Create a small CLI"},
+            context_json=context_json,
+        ),
+        SimpleNamespace(tool_name="provider.onemin.code_generate", version="tool-v1"),
+    )
+    review_result = adapter.execute_reasoned_patch_review(
+        ToolInvocationRequest(
+            session_id="session-onemin-review-receipt",
+            step_id="step-onemin-review-receipt",
+            tool_name="provider.onemin.reasoned_patch_review",
+            action_kind="reasoned_patch_review",
+            payload_json={"diff_text": "+ safe change"},
+            context_json=context_json,
+        ),
+        SimpleNamespace(tool_name="provider.onemin.reasoned_patch_review", version="tool-v1"),
+    )
+    image_result = adapter.execute_image_generate(
+        ToolInvocationRequest(
+            session_id="session-onemin-image-receipt",
+            step_id="step-onemin-image-receipt",
+            tool_name="provider.onemin.image_generate",
+            action_kind="image_generate",
+            payload_json={"prompt": "Render an apartment"},
+            context_json=context_json,
+        ),
+        SimpleNamespace(tool_name="provider.onemin.image_generate", version="tool-v1"),
+    )
+
+    assert captured_text_principals == [principal_id, principal_id]
+    assert captured_image_principals == [principal_id]
+    assert code_result.receipt_json["principal_id"] == principal_id
+    assert review_result.receipt_json["principal_id"] == principal_id
+    assert image_result.receipt_json["principal_id"] == principal_id
+
+
 def _stub_mootion_public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     import socket
 

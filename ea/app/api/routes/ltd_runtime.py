@@ -38,6 +38,111 @@ class LtdActionExecutionOut(BaseModel):
     receipt_json: dict[str, object]
 
 
+_PRIVATE_LTD_OUTPUT_KEYS = {
+    "api_key",
+    "binding_id",
+    "connector_name",
+    "credential_id",
+    "external_account_ref",
+    "provider_account_name",
+    "provider_key_slot",
+    "raw_response",
+    "requested_url",
+    "run_url",
+    "secret_env_name",
+    "task_id",
+    "workflow_id",
+}
+_CUSTOMER_LTD_RECEIPT_KEYS = (
+    "handler_key",
+    "invocation_contract",
+    "provider_key",
+    "provider_backend",
+    "model",
+    "feature_type",
+    "tool_version",
+    "tool_name",
+    "action_kind",
+    "service_key",
+    "render_status",
+)
+
+
+def _customer_ltd_output(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): _customer_ltd_output(nested)
+            for key, nested in value.items()
+            if str(key).strip().lower() not in _PRIVATE_LTD_OUTPUT_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_customer_ltd_output(nested) for nested in value]
+    return value
+
+
+def _customer_ltd_target_ref(*, target_ref: object, action: LtdRuntimeAction) -> str:
+    normalized = str(target_ref or "").strip()
+    if normalized.startswith(("https://", "http://", "onemin:", "provider://")):
+        return normalized
+    if normalized.startswith("browseract:"):
+        return f"browseract:{action.action_key}"
+    return f"tool:{action.action_key}"
+
+
+def _verified_customer_ltd_receipt(
+    *,
+    result: object,
+    action: LtdRuntimeAction,
+    principal_id: str,
+) -> dict[str, object]:
+    receipt = dict(getattr(result, "receipt_json", {}) or {})
+    result_tool_name = str(getattr(result, "tool_name", "") or "").strip()
+    result_action_kind = str(getattr(result, "action_kind", "") or "").strip()
+    target_ref = str(getattr(result, "target_ref", "") or "").strip()
+    receipt_verified = bool(
+        principal_id
+        and receipt.get("principal_id") == principal_id
+        and receipt.get("handler_key") == action.tool_name
+        and receipt.get("invocation_contract") == "tool.v1"
+        and result_tool_name == action.tool_name
+        and result_action_kind == action.action_kind
+        and target_ref
+    )
+    if action.tool_name.startswith("provider."):
+        receipt_verified = bool(
+            receipt_verified
+            and str(receipt.get("provider_key") or "").strip()
+            and str(receipt.get("provider_backend") or "").strip()
+        )
+    if not receipt_verified:
+        log.error(
+            "ltd_runtime_receipt_unverified action=%s principal=%s tool=%s",
+            action.action_key,
+            principal_id,
+            result_tool_name,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="ltd_runtime_execution_receipt_unverified",
+        )
+    if str(receipt.get("provider_key") or "").strip():
+        proof_scope = "provider_call"
+    elif any(str(receipt.get(key) or "").strip() for key in ("task_id", "workflow_id", "requested_url")):
+        proof_scope = "browser_session_call"
+    else:
+        proof_scope = "principal_bound_tool_invocation"
+    projected: dict[str, object] = {
+        "status": "verified",
+        "principal_bound": True,
+        "proof_scope": proof_scope,
+    }
+    for key in _CUSTOMER_LTD_RECEIPT_KEYS:
+        value = receipt.get(key)
+        if value not in (None, "", [], {}):
+            projected[key] = value
+    return projected
+
+
 def _catalog(container: AppContainer) -> LtdRuntimeCatalogService:
     return LtdRuntimeCatalogService(provider_registry=container.provider_registry)
 
@@ -111,14 +216,25 @@ def _execute_catalog_action(
             detail,
         )
         raise HTTPException(status_code=_http_status_for_tool_error(detail), detail=detail) from exc
+    receipt_json = _verified_customer_ltd_receipt(
+        result=result,
+        action=action,
+        principal_id=context.principal_id,
+    )
+    output_json = _customer_ltd_output(dict(result.output_json or {}))
+    if not isinstance(output_json, dict):
+        output_json = {}
     return LtdActionExecutionOut(
         service_name=service_name,
         action_key=action.action_key,
         tool_name=result.tool_name,
         action_kind=result.action_kind,
-        target_ref=result.target_ref,
-        output_json=dict(result.output_json or {}),
-        receipt_json=dict(result.receipt_json or {}),
+        target_ref=_customer_ltd_target_ref(
+            target_ref=result.target_ref,
+            action=action,
+        ),
+        output_json=output_json,
+        receipt_json=receipt_json,
     )
 
 

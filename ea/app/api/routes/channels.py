@@ -2122,8 +2122,32 @@ def _telegram_try_execute_ltd_action(
         result = container.tool_execution.execute_invocation(request)
     except Exception as exc:
         return f"I would use {service_name} {action_key}, but execution failed: {str(exc or '').strip() or 'tool_execution_failed'}."
+    receipt = dict(getattr(result, "receipt_json", {}) or {})
+    output = dict(getattr(result, "output_json", {}) or {})
     target_ref = str(getattr(result, "target_ref", "") or "").strip()
-    answer = f"Executed {service_name} {action_key}."
+    asset_urls = [
+        str(value or "").strip()
+        for value in list(output.get("asset_urls") or [])
+        if str(value or "").strip()
+    ]
+    receipt_verified = bool(
+        receipt.get("principal_id") == principal_id
+        and receipt.get("handler_key") == tool_name
+        and receipt.get("invocation_contract") == "tool.v1"
+        and receipt.get("provider_key") == "onemin"
+        and receipt.get("provider_backend") == "1min"
+        and receipt.get("feature_type") == feature_type
+        and str(receipt.get("model") or "").strip()
+        and target_ref.startswith("onemin:")
+        and output.get("provider_backend") == "1min"
+        and asset_urls
+    )
+    if not receipt_verified:
+        return (
+            f"{service_name} returned without a principal-bound provider "
+            "receipt and output asset, so execution is not proven."
+        )
+    answer = f"Executed {service_name} {action_key} with a principal-bound provider receipt."
     if target_ref:
         answer += f" Target: {target_ref}."
     if route_path:
@@ -2214,14 +2238,16 @@ def _telegram_ltd_reply_text(
                     if executed_reply:
                         return executed_reply
                     route_path = str(getattr(action, "route_path", "") or "").strip()
-                    executable = bool(getattr(action, "executable", False))
                     description = str(getattr(action, "description", "") or "").strip()
-                    answer = f"For {service_name}, I would use {action_key}."
+                    answer = f"For {service_name}, the catalog route is {action_key}."
                     if description:
                         answer += f" {description}"
                     if route_path:
                         answer += f" Route: {route_path}."
-                    answer += " Executable now." if executable else " Not executable yet."
+                    answer += (
+                        " Live execution is unverified until this principal "
+                        "receives a provider-call receipt."
+                    )
                     return answer
         action_labels = [
             str(getattr(action, "action_key", "") or "").strip()
@@ -2229,7 +2255,11 @@ def _telegram_ltd_reply_text(
             if str(getattr(action, "action_key", "") or "").strip()
         ]
         action_text = ", ".join(action_labels[:4]) if action_labels else "no runtime actions"
-        return f"{service_name} is available in PropertyQuarry as {runtime_state} ({tier}). Actions: {action_text}."
+        return (
+            f"{service_name} is cataloged in PropertyQuarry as "
+            f"{runtime_state} ({tier}). Actions: {action_text}. Catalog state "
+            "does not prove credentials, provider health, or a live call."
+        )
     if not wants_catalog:
         return ""
     actionable = []
@@ -2263,7 +2293,12 @@ def _telegram_ltd_reply_text(
             summary.append(chunk)
     if not summary:
         return ""
-    return "PropertyQuarry can use these LTD/runtime lanes right now: " + " | ".join(summary[:5]) + "."
+    return (
+        "PropertyQuarry catalogs these LTD/runtime lanes: "
+        + " | ".join(summary[:5])
+        + ". This inventory does not prove principal credentials, provider "
+        "health, or a live call."
+    )
 
 
 def _telegram_google_photos_context_reply(
