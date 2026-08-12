@@ -322,6 +322,20 @@ def test_lightweight_status_payload_keeps_first_party_dynamic_thumbnail() -> Non
     assert result["preview_image_url"] == primary_url
 
 
+def test_shortlist_uses_area_preview_when_spatial_diorama_is_unavailable() -> None:
+    workbench_script = (
+        Path(__file__).resolve().parents[1]
+        / "ea/app/templates/app/_property_workbench_script.html"
+    ).read_text(encoding="utf-8")
+
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" in workbench_script
+    assert "const shortlistPreviewIsDiorama = Boolean(dioramaPreviewUrl);" in workbench_script
+    assert "? 'Spatial diorama'" in workbench_script
+    assert ": 'Area preview';" in workbench_script
+    assert "Preview not available" in workbench_script
+    assert "Diorama not ready" not in workbench_script
+
+
 def test_generated_reconstruction_is_not_projected_as_provider_3d_tour(
     monkeypatch,
 ) -> None:

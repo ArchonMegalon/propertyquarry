@@ -271,6 +271,7 @@
           'Best so far': 'Bisher am besten',
           'Current property': 'Aktuelle Immobilie',
           'Diorama preview in progress': 'Diorama-Vorschau wird erstellt',
+          'Area preview': 'Umgebungsvorschau',
           'Provider': 'Anbieter',
           'all found homes are checked': 'alle gefundenen Immobilien sind geprüft',
           'home details are still loading': 'Immobiliendetails werden noch geladen',
@@ -374,6 +375,7 @@
                 'Best so far': 'La mejor hasta ahora',
                 'Current property': 'Propiedad actual',
                 'Diorama preview in progress': 'Creando vista previa del diorama',
+                'Area preview': 'Vista previa de la zona',
                 'Provider': 'Proveedor',
                 'all found homes are checked': 'todas las propiedades encontradas están revisadas',
                 'home details are still loading': 'los detalles de las propiedades aún se están cargando',
@@ -4318,7 +4320,14 @@
 	          candidate?.diorama_preview_url,
 	          candidate?.diorama_scene?.image_url,
 	        ].map(clientRenderableImageUrl).find(Boolean) || '';
-	        const shortlistPreviewUrl = dioramaPreviewUrl;
+	        const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;
+	        const shortlistPreviewIsDiorama = Boolean(dioramaPreviewUrl);
+	        const shortlistPreviewLabel = shortlistPreviewIsDiorama
+	          ? 'Spatial diorama'
+	          : 'Area preview';
+	        const shortlistPreviewAriaLabel = shortlistPreviewIsDiorama
+	          ? 'Explore diorama and area map for'
+	          : 'Open area map for';
         const candidateRef = String(
           candidate?.candidate_ref
           || candidate?.listing_id
@@ -4399,7 +4408,7 @@
           || 'Open the property page for more context.'
         );
 	        const thumb = shortlistSurface
-	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Explore diorama and area map for'))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span><span class="pqx-result-diorama-empty-label" aria-hidden="true">Diorama not ready</span>'}<span class="pqx-shortlist-visual-chrome" aria-hidden="true"><span class="pqx-shortlist-visual-label">${escapeHtml(localizeLiveCopy('Spatial diorama'))}</span><span class="pqx-shortlist-visual-action">${escapeHtml(localizeLiveCopy('Explore'))} <b>&#8599;</b></span></span></button>`
+	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy(shortlistPreviewAriaLabel))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span><span class="pqx-result-diorama-empty-label" aria-hidden="true">Preview not available</span>'}<span class="pqx-shortlist-visual-chrome" aria-hidden="true"><span class="pqx-shortlist-visual-label">${escapeHtml(localizeLiveCopy(shortlistPreviewLabel))}</span><span class="pqx-shortlist-visual-action">${escapeHtml(localizeLiveCopy('Explore'))} <b>&#8599;</b></span></span></button>`
 	          : (previewUrl
 	            ? `<span class="pqx-thumb" data-pqx-thumbnail data-candidate-ref="${escapeHtml(candidateRef)}" data-pqx-thumbnail-fallback="${escapeHtml(previewFallbackUrls[0] || '')}" data-pqx-thumbnail-fallbacks="${escapeHtml(JSON.stringify(previewFallbackUrls))}"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" data-pqx-thumbnail-image></button><span class="pqx-thumb-placeholder" aria-hidden="true">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`
 	            : `<span class="pqx-thumb is-placeholder" data-pqx-thumbnail role="img" aria-label="${escapeHtml(localizeLiveCopy('Media preview not available.'))}"><span class="pqx-thumb-placeholder">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`);
