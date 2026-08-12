@@ -32,10 +32,10 @@ def test_launch_room_reports_one_canonical_authority_and_no_false_launch(
     assert report["repositories_are_exact_mirrors"] is False
     assert report["production_launch_ready"] is False
     assert report["public_launch"]["status"] == (
-        "blocked_external_authority_verifier_unconfigured"
+        "blocked_external_authority_receipt_missing"
     )
     assert report["public_launch"]["blockers"] == [
-        "external_public_launch_authority_verifier_unconfigured",
+        "external_public_launch_authority_receipt_missing",
         "google_play_public_launch_authority_unverified",
         "paid_billing_safe_handoff_authority_unverified",
         "encrypted_off_host_disaster_recovery_authority_unverified",
@@ -121,7 +121,7 @@ def test_healthy_local_runtime_never_substitutes_for_public_launch_authority(
     assert report["core_gold"]["local_runtime_claim"] is True
     assert report["core_gold"]["production_claim"] is False
     assert report["public_launch"]["status"] == (
-        "blocked_external_authority_verifier_unconfigured"
+        "blocked_external_authority_receipt_missing"
     )
 
 
@@ -250,16 +250,61 @@ def test_unsigned_public_launch_receipt_cannot_mint_external_authority(
         image_digest=image_digest,
     )
 
-    assert status["status"] == (
-        "blocked_external_authority_verifier_unconfigured"
-    )
+    assert status["status"] == "blocked_external_authority_receipt_invalid"
     assert status["authority_passed"] is False
-    assert status["receipt_present_unverified"] is True
+    assert status["verifier_error"] == (
+        "public_launch_authority_receipt_path_untrusted"
+    )
     assert status["blockers"] == [
-        "external_public_launch_authority_verifier_unconfigured",
+        "external_public_launch_authority:"
+        "public_launch_authority_receipt_path_untrusted",
         "google_play_public_launch_authority_unverified",
         "paid_billing_safe_handoff_authority_unverified",
         "encrypted_off_host_disaster_recovery_authority_unverified",
+    ]
+
+
+def test_verified_public_launch_receipt_is_projected_without_local_substitution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    receipt = tmp_path / "public-launch.json"
+    receipt.write_text("{}", encoding="utf-8")
+    calls: list[dict[str, object]] = []
+
+    class Verified:
+        def as_dict(self) -> dict[str, object]:
+            return {
+                "receipt_contract": (
+                    "propertyquarry.public_launch_authority.v2"
+                ),
+                "receipt_id": "1" * 64,
+            }
+
+    def verify(path: Path, **bindings: object) -> Verified:
+        calls.append({"path": path, **bindings})
+        return Verified()
+
+    monkeypatch.setattr(launch_room, "verify_public_launch_authority", verify)
+
+    status = _public_launch_status(
+        receipt,
+        envelope_head_sha="b" * 40,
+        runtime_sha="a" * 40,
+        image_digest="sha256:" + ("c" * 64),
+    )
+
+    assert status["status"] == "verified_external_public_launch_authority"
+    assert status["authority_passed"] is True
+    assert status["blockers"] == []
+    assert status["verification"]["receipt_id"] == "1" * 64
+    assert calls == [
+        {
+            "path": receipt,
+            "expected_envelope_head_sha": "b" * 40,
+            "expected_runtime_commit_sha": "a" * 40,
+            "expected_release_image_digest": "sha256:" + ("c" * 64),
+        }
     ]
 
 

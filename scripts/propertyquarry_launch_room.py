@@ -23,6 +23,21 @@ except ModuleNotFoundError:
         verify_advanced_visual_binding_receipt,
     )
 
+try:
+    from propertyquarry_public_launch_authority import (
+        PUBLIC_LAUNCH_RECEIPT_PATH,
+        PUBLIC_LAUNCH_REQUIREMENTS,
+        PublicLaunchAuthorityError,
+        verify_public_launch_authority,
+    )
+except ModuleNotFoundError:
+    from scripts.propertyquarry_public_launch_authority import (
+        PUBLIC_LAUNCH_RECEIPT_PATH,
+        PUBLIC_LAUNCH_REQUIREMENTS,
+        PublicLaunchAuthorityError,
+        verify_public_launch_authority,
+    )
+
 ROOT = Path(__file__).resolve().parents[1]
 ROLE_POLICY_PATH = Path(
     "config/release/propertyquarry_repository_role.v1.json"
@@ -67,15 +82,7 @@ ADVANCED_VISUAL_SOURCE_RECEIPTS = {
     ),
 }
 DEPLOYMENT_SCHEMA = "propertyquarry.local_docker_deployment.v1"
-DEFAULT_PUBLIC_LAUNCH_AUTHORITY_RECEIPT = Path(
-    "/run/propertyquarry/release-control/"
-    "propertyquarry-public-launch-authority.v1.json"
-)
-PUBLIC_LAUNCH_REQUIREMENTS = (
-    "google_play_public_launch",
-    "paid_billing_safe_handoff",
-    "encrypted_off_host_disaster_recovery",
-)
+DEFAULT_PUBLIC_LAUNCH_AUTHORITY_RECEIPT = PUBLIC_LAUNCH_RECEIPT_PATH
 
 
 class LaunchRoomError(RuntimeError):
@@ -243,25 +250,44 @@ def _public_launch_status(
     runtime_sha: str,
     image_digest: str,
 ) -> dict[str, object]:
-    # Public-launch authority must be authenticated by an independently
-    # configured verifier and pinned keyring outside this checkout. Merely
-    # parsing a caller-selected JSON file would let a repository writer mint
-    # their own authority. Until that verifier exists, fail closed even when a
-    # perfectly shaped receipt is present.
-    del envelope_head_sha, runtime_sha, image_digest
-    missing_blockers = [
-        "external_public_launch_authority_verifier_unconfigured",
-        *(
-            f"{requirement}_authority_unverified"
-            for requirement in PUBLIC_LAUNCH_REQUIREMENTS
-        ),
+    requirement_blockers = [
+        f"{requirement}_authority_unverified"
+        for requirement in PUBLIC_LAUNCH_REQUIREMENTS
     ]
+    if not path.is_file():
+        return {
+            "status": "blocked_external_authority_receipt_missing",
+            "authority_passed": False,
+            "receipt_path": str(path),
+            "blockers": [
+                "external_public_launch_authority_receipt_missing",
+                *requirement_blockers,
+            ],
+        }
+    try:
+        verified = verify_public_launch_authority(
+            path,
+            expected_envelope_head_sha=envelope_head_sha,
+            expected_runtime_commit_sha=runtime_sha,
+            expected_release_image_digest=image_digest,
+        )
+    except PublicLaunchAuthorityError as exc:
+        return {
+            "status": "blocked_external_authority_receipt_invalid",
+            "authority_passed": False,
+            "receipt_path": str(path),
+            "verifier_error": exc.reason,
+            "blockers": [
+                f"external_public_launch_authority:{exc.reason}",
+                *requirement_blockers,
+            ],
+        }
     return {
-        "status": "blocked_external_authority_verifier_unconfigured",
-        "authority_passed": False,
+        "status": "verified_external_public_launch_authority",
+        "authority_passed": True,
         "receipt_path": str(path),
-        "receipt_present_unverified": path.is_file(),
-        "blockers": missing_blockers,
+        "verification": verified.as_dict(),
+        "blockers": [],
     }
 
 
@@ -567,8 +593,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         help=(
             "Reserved external public-launch receipt path; defaults to the "
-            "release-control path outside the checkout. It cannot pass until "
-            "the independent signature verifier and pinned keyring exist."
+            "fixed release-control path outside the checkout. Overrides are "
+            "diagnostic only and cannot authorize public launch."
         ),
     )
     parser.add_argument("--format", choices=("json", "markdown"), default="markdown")
