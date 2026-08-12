@@ -28,6 +28,10 @@ _PAID_BILLING_SAFE_HANDOFF_CONTRACT = (
 )
 _PAID_BILLING_SAFE_HANDOFF_MAX_AGE = timedelta(hours=24)
 _PAID_BILLING_SAFE_HANDOFF_FUTURE_SKEW = timedelta(minutes=5)
+_PAYPAL_API_BASES = {
+    "https://api-m.paypal.com": "live",
+    "https://api-m.sandbox.paypal.com": "sandbox",
+}
 
 _PROPERTY_FURNITURE_STYLE_LIMIT_BY_PLAN = {
     "free": 5,
@@ -839,6 +843,16 @@ def paid_billing_safe_handoff_configured(
     ).strip().lower()
     if not hmac.compare_digest(admitted_provider, expected_provider):
         return False
+    admitted_environment = str(
+        os.getenv(
+            "PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PROVIDER_ENVIRONMENT"
+        )
+        or ""
+    ).strip().lower()
+    # A sandbox canary is useful evidence, but it must never unlock a
+    # customer-facing production checkout lane.
+    if not hmac.compare_digest(admitted_environment, "live"):
+        return False
     admitted_plans = {
         normalize_property_plan_key(value)
         for value in str(
@@ -912,6 +926,7 @@ def paypal_configured() -> bool:
     return bool(
         str(os.getenv("PAYPAL_CLIENT_ID") or "").strip()
         and str(os.getenv("PAYPAL_SECRET") or "").strip()
+        and paypal_api_environment() == "live"
         and paid_billing_safe_handoff_configured(provider="paypal")
     )
 
@@ -1109,7 +1124,19 @@ def verify_payfunnels_webhook_signature(*, body_bytes: bytes, signature: str) ->
 
 
 def _paypal_api_base() -> str:
-    return str(os.getenv("PAYPAL_API_BASE") or "https://api-m.paypal.com").strip().rstrip("/")
+    normalized = str(
+        os.getenv("PAYPAL_API_BASE") or "https://api-m.paypal.com"
+    ).strip().rstrip("/")
+    if normalized not in _PAYPAL_API_BASES:
+        raise RuntimeError("paypal_api_base_invalid")
+    return normalized
+
+
+def paypal_api_environment() -> str:
+    try:
+        return _PAYPAL_API_BASES[_paypal_api_base()]
+    except (KeyError, RuntimeError):
+        return ""
 
 
 def _paypal_auth_header() -> str:

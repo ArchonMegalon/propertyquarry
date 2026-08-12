@@ -31,6 +31,10 @@ def _install_safe_handoff(
         provider,
     )
     monkeypatch.setenv(
+        "PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PROVIDER_ENVIRONMENT",
+        "live",
+    )
+    monkeypatch.setenv(
         "PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PLAN_KEYS",
         "agent,plus",
     )
@@ -92,9 +96,58 @@ def test_exact_release_handoff_activates_paypal_after_credentials(
     monkeypatch.setenv("PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT", "true")
     monkeypatch.setenv("PAYPAL_CLIENT_ID", "configured-client")
     monkeypatch.setenv("PAYPAL_SECRET", "configured-secret")
+    monkeypatch.setenv("PAYPAL_API_BASE", "https://api-m.paypal.com")
     _install_safe_handoff(monkeypatch, provider="paypal")
 
     assert property_billing.paypal_configured() is True
+
+
+def test_sandbox_paypal_canary_cannot_activate_customer_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT", "true")
+    monkeypatch.setenv("PAYPAL_CLIENT_ID", "sandbox-client")
+    monkeypatch.setenv("PAYPAL_SECRET", "sandbox-secret")
+    monkeypatch.setenv(
+        "PAYPAL_API_BASE",
+        "https://api-m.sandbox.paypal.com",
+    )
+    _install_safe_handoff(monkeypatch, provider="paypal")
+
+    assert property_billing.paypal_api_environment() == "sandbox"
+    assert property_billing.paypal_configured() is False
+
+
+def test_paid_handoff_requires_live_provider_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_safe_handoff(monkeypatch, provider="paypal")
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PROVIDER_ENVIRONMENT",
+        "sandbox",
+    )
+
+    assert (
+        property_billing.paid_billing_safe_handoff_configured(
+            provider="paypal"
+        )
+        is False
+    )
+
+
+def test_paypal_rejects_non_official_api_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT", "true")
+    monkeypatch.setenv("PAYPAL_CLIENT_ID", "configured-client")
+    monkeypatch.setenv("PAYPAL_SECRET", "configured-secret")
+    monkeypatch.setenv("PAYPAL_API_BASE", "https://payments.example.test")
+    _install_safe_handoff(monkeypatch, provider="paypal")
+
+    assert property_billing.paypal_api_environment() == ""
+    assert property_billing.paypal_configured() is False
+    with pytest.raises(RuntimeError, match="paypal_api_base_invalid"):
+        property_billing._paypal_api_base()
 
 
 def test_stale_or_cross_release_handoff_fails_closed(

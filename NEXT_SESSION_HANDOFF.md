@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 21:08 UTC
+Updated: 2026-08-12 21:12 UTC
 
 ## Mission
 
@@ -48,6 +48,30 @@ Closed testing active, Production and Open testing inactive, and exactly
 The isolated BrowserAct session was closed after the read. Fresh Android
 telemetry remained absent and this host still had no `adb`; the physical-device
 boundary below is unchanged.
+
+## 2026-08-12 PayPal environment binding
+
+A non-transactional credential probe found that the configured PayPal client
+identity is for **Sandbox**, while the deployed `PAYPAL_API_BASE` points to the
+Live endpoint. The official Live OAuth endpoint returned HTTP 401 and no token.
+The same credentials returned HTTP 200 from the official Sandbox endpoint with
+a bearer token valid for 32,400 seconds and 31 scopes. No order, capture,
+payment, webhook mutation, or checkout activation occurred in either probe.
+
+The admission boundary now prevents this mismatch from becoming a customer
+incident. `property_billing.py` accepts only the two exact official PayPal API
+origins, identifies them as `live` or `sandbox`, and permits customer checkout
+only on the Live origin. The external safe-handoff admission must additionally
+set `PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PROVIDER_ENVIRONMENT=live`;
+Sandbox evidence can never satisfy that field. Compose forwards the new
+non-secret binding. The missing/invalid admission still fails closed before any
+provider call, and the deployed customer billing surface must remain HTTP 503
+until valid Live credentials and the complete same-principal canary exist.
+
+Focused checkout, entitlement, and Compose verification passes `33/33`; exact
+Python compilation and `git diff --check` pass. The live credential probes are
+provider-health evidence only, not the required checkout/webhook/entitlement/
+cancellation canary.
 
 ## 2026-08-12 exact-image browser and blocker refresh
 
