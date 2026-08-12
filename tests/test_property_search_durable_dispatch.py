@@ -602,12 +602,17 @@ def test_opportunity_cover_asset_is_authorized_before_private_file_resolution(
         def get(self, _job_id):  # type: ignore[no-untyped-def]
             return job
 
+        def replace_completed_result(self, **kwargs):  # type: ignore[no-untyped-def]
+            persisted.append(dict(kwargs))
+            return job
+
     monkeypatch.setattr(
         product_service,
         "_property_search_work_queue_repository",
         lambda: _Repository(),
     )
     resolved: list[dict[str, object]] = []
+    persisted: list[dict[str, object]] = []
 
     def _descriptor(value, **kwargs):  # type: ignore[no-untyped-def]
         resolved.append({"value": value, **kwargs})
@@ -615,12 +620,32 @@ def test_opportunity_cover_asset_is_authorized_before_private_file_resolution(
             "path": "/data/artifacts/private.image",
             "media_type": "image/png",
             "sha256": "a" * 64,
+            "byte_length": 128,
+            "width": 8,
+            "height": 8,
         }
 
     monkeypatch.setattr(
         product_service,
         "property_opportunity_concept_cover_asset_descriptor",
         _descriptor,
+    )
+    monkeypatch.setattr(
+        product_service,
+        "property_opportunity_concept_cover_public_projection",
+        lambda *_args, **_kwargs: {"receipt": {"asset_materialized": False}},
+    )
+    migrated = {
+        "status": "ready",
+        "artifact": {
+            "asset_url": "/app/api/property/opportunities/generations/job-1/asset"
+        },
+        "receipt": {"asset_materialized": True},
+    }
+    monkeypatch.setattr(
+        product_service,
+        "property_opportunity_concept_cover_materialized_result",
+        lambda *_args, **_kwargs: migrated,
     )
 
     assert service.get_property_opportunity_concept_cover_asset(
@@ -636,6 +661,114 @@ def test_opportunity_cover_asset_is_authorized_before_private_file_resolution(
     assert descriptor["media_type"] == "image/png"
     assert resolved[0]["generation_id"] == "job-1"
     assert resolved[0]["opportunity_id"] == "property_opportunity:abc"
+    assert persisted == [
+        {
+            "job_id": "job-1",
+            "principal_id": "principal-cover",
+            "expected_result_json": {"status": "ready"},
+            "result_json": migrated,
+        }
+    ]
+
+
+def test_postgres_completed_result_replacement_is_authorized_and_compare_and_swap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 8, 12, 18, 0, tzinfo=timezone.utc)
+    replacement = {"status": "ready", "receipt": {"asset_materialized": True}}
+    expected = {
+        "status": "ready",
+        "artifact": {"asset_url": "https://provider.example.test/legacy.png"},
+    }
+    row = (
+        "job-db-1",
+        "principal-cover",
+        "run-cover",
+        "cover-key",
+        {
+            "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+            "opportunity_id": "property_opportunity:abc",
+            "result_json": replacement,
+        },
+        "completed",
+        1,
+        2,
+        now,
+        None,
+        None,
+        now,
+        "",
+        now,
+        now,
+        now,
+    )
+    executed: list[tuple[str, tuple[object, ...]]] = []
+
+    class _Cursor:
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return None
+
+        def execute(self, sql, params=None):  # type: ignore[no-untyped-def]
+            executed.append((" ".join(sql.split()), tuple(params or ())))
+
+        def fetchone(self):  # type: ignore[no-untyped-def]
+            return row
+
+    class _Connection:
+        committed = False
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return None
+
+        def cursor(self):  # type: ignore[no-untyped-def]
+            return _Cursor()
+
+        def commit(self):  # type: ignore[no-untyped-def]
+            self.committed = True
+
+    connection = _Connection()
+    repository = object.__new__(PostgresPropertySearchWorkQueue)
+    repository._connect = lambda: connection  # type: ignore[method-assign]
+    monkeypatch.setattr(repository, "_set_writer_contract", lambda _cur: None)
+    monkeypatch.setattr(
+        repository,
+        "_nonlocking_job_identity",
+        lambda _cur, **_kwargs: ("principal-cover", "run-cover"),
+    )
+    authority: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        repository,
+        "_acquire_principal_write_authority",
+        lambda _cur, **kwargs: authority.append(dict(kwargs)),
+    )
+
+    updated = repository.replace_completed_result(
+        job_id="job-db-1",
+        principal_id="principal-cover",
+        expected_result_json=expected,
+        result_json=replacement,
+    )
+
+    assert updated is not None
+    assert updated.payload_json["result_json"] == replacement
+    assert connection.committed is True
+    assert authority == [
+        {"principal_id": "principal-cover", "run_id": "run-cover"}
+    ]
+    update_sql, update_params = executed[-1]
+    assert "status = 'completed'" in update_sql
+    assert "payload_json->'result_json' = %s::jsonb" in update_sql
+    assert update_params[1:4] == (
+        "job-db-1",
+        "principal-cover",
+        "run-cover",
+    )
 
 
 def test_prod_stale_recovery_requeues_instead_of_starting_a_daemon(

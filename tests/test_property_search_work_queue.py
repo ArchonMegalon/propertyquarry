@@ -325,3 +325,61 @@ def test_opportunity_ltd_result_is_idempotent_principal_bound_and_sanitized() ->
         candidate_ref="property-scout:123",
         opportunity_id="property_opportunity:abc",
     )
+
+
+def test_completed_ltd_result_compare_and_swap_is_principal_scoped() -> None:
+    clock = _Clock()
+    repository = InMemoryPropertySearchWorkQueue(now=clock)
+    queued = repository.enqueue_opportunity_ltd_image(
+        principal_id="principal-a",
+        run_id="run-a",
+        payload_json={
+            "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+            "candidate_ref": "property-scout:123",
+            "opportunity_id": "property_opportunity:abc",
+        },
+        idempotency_key="cover-key",
+    ).job
+    claimed = repository.claim(lease_owner="worker-a", lease_seconds=30)
+    assert claimed is not None
+    legacy = {
+        "status": "ready",
+        "artifact": {"asset_url": "https://provider.example.test/legacy.png"},
+    }
+    completed = repository.complete(
+        job_id=queued.job_id,
+        lease_owner="worker-a",
+        result_json=legacy,
+    )
+    assert completed is not None
+    replacement = {
+        "status": "ready",
+        "artifact": {"asset_url": "/app/api/property/opportunities/asset"},
+    }
+
+    assert repository.replace_completed_result(
+        job_id=queued.job_id,
+        principal_id="principal-other",
+        expected_result_json=legacy,
+        result_json=replacement,
+    ) is None
+    assert repository.replace_completed_result(
+        job_id=queued.job_id,
+        principal_id="principal-a",
+        expected_result_json={"status": "stale"},
+        result_json=replacement,
+    ) is None
+
+    clock.advance(1)
+    updated = repository.replace_completed_result(
+        job_id=queued.job_id,
+        principal_id="principal-a",
+        expected_result_json=legacy,
+        result_json=replacement,
+    )
+    assert updated is not None
+    assert updated.status == "completed"
+    assert updated.completed_at == completed.completed_at
+    assert updated.updated_at == clock.value
+    assert updated.payload_json["result_json"] == replacement
+    assert "provider.example.test" not in repr(updated.payload_json)

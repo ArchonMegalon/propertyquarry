@@ -10,6 +10,7 @@ from app.product.property_opportunity_ltd_generation import (
     execute_property_opportunity_concept_cover,
     materialize_property_opportunity_concept_cover_asset,
     property_opportunity_concept_cover_asset_descriptor,
+    property_opportunity_concept_cover_materialized_result,
     property_opportunity_concept_cover_public_projection,
 )
 
@@ -238,6 +239,25 @@ def test_legacy_provider_url_is_hidden_and_materialized_on_asset_read(
         asset_fetcher=_asset_fetcher,
     )
     assert descriptor["media_type"] == "image/png"
+
+    migrated = property_opportunity_concept_cover_materialized_result(
+        result,
+        generation_id="job-a",
+        opportunity_id="property_opportunity:abc123",
+        descriptor=descriptor,
+    )
+    assert migrated["artifact"]["asset_url"] == (  # type: ignore[index]
+        "/app/api/property/opportunities/generations/job-a/asset"
+    )
+    assert migrated["artifact"]["sha256"] == descriptor["sha256"]  # type: ignore[index]
+    assert migrated["receipt"]["asset_materialized"] is True  # type: ignore[index]
+    assert "legacy-presigned" not in repr(migrated)
+    persisted_projection = property_opportunity_concept_cover_public_projection(
+        migrated,
+        generation_id="job-a",
+        opportunity_id="property_opportunity:abc123",
+    )
+    assert persisted_projection["receipt"]["asset_materialized"] is True  # type: ignore[index]
 
 
 def test_materialization_rejects_non_image_and_oversized_provider_bytes(

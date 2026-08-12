@@ -464,6 +464,40 @@ class InMemoryPropertySearchWorkQueue:
             self._jobs[completed.job_id] = completed
             return completed
 
+    def replace_completed_result(
+        self,
+        *,
+        job_id: str,
+        principal_id: str,
+        expected_result_json: dict[str, object],
+        result_json: dict[str, object],
+    ) -> PropertySearchWorkJob | None:
+        """Atomically sanitize one completed result without reopening its work."""
+
+        normalized_job_id = str(job_id or "").strip()
+        normalized_principal = str(principal_id or "").strip()
+        expected = validated_property_search_work_result(expected_result_json)
+        result = validated_property_search_work_result(result_json)
+        if not normalized_job_id or not normalized_principal or not expected or not result:
+            raise ValueError("property_search_completed_result_identity_required")
+        now = self._now()
+        with self._lock:
+            found = self._jobs.get(normalized_job_id)
+            if (
+                found is None
+                or found.principal_id != normalized_principal
+                or found.status != "completed"
+                or found.payload_json.get("result_json") != expected
+            ):
+                return None
+            updated = replace(
+                found,
+                payload_json={**found.payload_json, "result_json": result},
+                updated_at=now,
+            )
+            self._jobs[updated.job_id] = updated
+            return updated
+
     def fail(self, *, job_id: str, lease_owner: str, error: str) -> PropertySearchWorkJob | None:
         now = self._now()
         with self._lock:
@@ -1222,6 +1256,65 @@ class PostgresPropertySearchWorkQueue:
                         principal_id,
                         run_id,
                         owner,
+                    ),
+                )
+                row = cur.fetchone()
+                conn.commit()
+        return self._from_row(row) if row is not None else None
+
+    def replace_completed_result(
+        self,
+        *,
+        job_id: str,
+        principal_id: str,
+        expected_result_json: dict[str, object],
+        result_json: dict[str, object],
+    ) -> PropertySearchWorkJob | None:
+        """Compare-and-swap a completed result under its principal authority."""
+
+        from psycopg.types.json import Json
+
+        normalized_job_id = str(job_id or "").strip()
+        normalized_principal = str(principal_id or "").strip()
+        expected = validated_property_search_work_result(expected_result_json)
+        result = validated_property_search_work_result(result_json)
+        if not normalized_job_id or not normalized_principal or not expected or not result:
+            raise ValueError("property_search_completed_result_identity_required")
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_writer_contract(cur)
+                identity = self._nonlocking_job_identity(
+                    cur,
+                    job_id=normalized_job_id,
+                )
+                if identity is None or identity[0] != normalized_principal:
+                    conn.commit()
+                    return None
+                principal, run_id = identity
+                self._acquire_principal_write_authority(
+                    cur,
+                    principal_id=principal,
+                    run_id=run_id,
+                )
+                cur.execute(
+                    f"""
+                    UPDATE property_search_work_jobs
+                    SET payload_json = payload_json ||
+                            jsonb_build_object('result_json', %s::jsonb),
+                        updated_at = NOW()
+                    WHERE job_id = %s
+                      AND principal_id = %s
+                      AND run_id = %s
+                      AND status = 'completed'
+                      AND payload_json->'result_json' = %s::jsonb
+                    RETURNING {self._RETURNING_COLUMNS}
+                    """,
+                    (
+                        Json(result),
+                        normalized_job_id,
+                        principal,
+                        run_id,
+                        Json(expected),
                     ),
                 )
                 row = cur.fetchone()

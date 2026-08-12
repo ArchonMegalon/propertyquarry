@@ -184,6 +184,7 @@ from app.product.property_opportunities import (
 from app.product.property_opportunity_ltd_generation import (
     execute_property_opportunity_concept_cover,
     property_opportunity_concept_cover_asset_descriptor,
+    property_opportunity_concept_cover_materialized_result,
     property_opportunity_concept_cover_public_projection,
 )
 from app.product.property_onemin_evaluation import (
@@ -53085,7 +53086,8 @@ class ProductService:
         principal_id: str,
         generation_id: str,
     ) -> dict[str, object] | None:
-        job = _property_search_work_queue_repository().get(
+        repository = _property_search_work_queue_repository()
+        job = repository.get(
             str(generation_id or "").strip()
         )
         if job is None or job.principal_id != str(principal_id or "").strip():
@@ -53099,11 +53101,67 @@ class ProductService:
         result = job.payload_json.get("result_json")
         if not isinstance(result, dict):
             return None
-        return property_opportunity_concept_cover_asset_descriptor(
+        opportunity_id = str(job.payload_json.get("opportunity_id") or "").strip()
+        descriptor = property_opportunity_concept_cover_asset_descriptor(
             result,
             generation_id=job.job_id,
-            opportunity_id=str(job.payload_json.get("opportunity_id") or "").strip(),
+            opportunity_id=opportunity_id,
         )
+        projection = property_opportunity_concept_cover_public_projection(
+            result,
+            generation_id=job.job_id,
+            opportunity_id=opportunity_id,
+        )
+        receipt = (
+            dict(projection.get("receipt"))
+            if isinstance(projection.get("receipt"), dict)
+            else {}
+        )
+        if receipt.get("asset_materialized") is not True:
+            migrated = property_opportunity_concept_cover_materialized_result(
+                result,
+                generation_id=job.job_id,
+                opportunity_id=opportunity_id,
+                descriptor=descriptor,
+            )
+            replaced = repository.replace_completed_result(
+                job_id=job.job_id,
+                principal_id=job.principal_id,
+                expected_result_json=result,
+                result_json=migrated,
+            )
+            if replaced is None:
+                current = repository.get(job.job_id)
+                current_result = (
+                    dict(current.payload_json.get("result_json") or {})
+                    if current is not None
+                    and current.principal_id == job.principal_id
+                    and isinstance(current.payload_json.get("result_json"), dict)
+                    else {}
+                )
+                current_projection = property_opportunity_concept_cover_public_projection(
+                    current_result,
+                    generation_id=job.job_id,
+                    opportunity_id=opportunity_id,
+                )
+                current_artifact = (
+                    dict(current_projection.get("artifact"))
+                    if isinstance(current_projection.get("artifact"), dict)
+                    else {}
+                )
+                if (
+                    current_artifact.get("sha256") != descriptor.get("sha256")
+                    or current_artifact.get("byte_length")
+                    != descriptor.get("byte_length")
+                    or dict(current_projection.get("receipt") or {}).get(
+                        "asset_materialized"
+                    )
+                    is not True
+                ):
+                    raise RuntimeError(
+                        "property_opportunity_ltd_asset_receipt_persistence_failed"
+                    )
+        return descriptor
 
     def execute_property_search_work_job(self, job: PropertySearchWorkJob) -> dict[str, object]:
         principal_id = str(job.principal_id or "").strip()

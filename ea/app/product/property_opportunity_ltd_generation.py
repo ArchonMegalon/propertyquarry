@@ -448,6 +448,62 @@ def property_opportunity_concept_cover_asset_descriptor(
     )
 
 
+def property_opportunity_concept_cover_materialized_result(
+    value: object,
+    *,
+    generation_id: str,
+    opportunity_id: str,
+    descriptor: dict[str, object],
+) -> dict[str, object]:
+    """Replace a verified legacy URL with a bounded first-party receipt."""
+
+    projection = property_opportunity_concept_cover_public_projection(
+        value,
+        generation_id=generation_id,
+        opportunity_id=opportunity_id,
+    )
+    if not projection:
+        raise RuntimeError("property_opportunity_ltd_asset_receipt_invalid")
+    try:
+        byte_length = int(descriptor.get("byte_length") or 0)
+        width = int(descriptor.get("width") or 0)
+        height = int(descriptor.get("height") or 0)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("property_opportunity_ltd_asset_metadata_invalid") from exc
+    media_type = str(descriptor.get("media_type") or "").strip().lower()
+    sha256 = str(descriptor.get("sha256") or "").strip().lower()
+    if (
+        media_type not in set(_ALLOWED_IMAGE_MEDIA_TYPES.values())
+        or len(sha256) != 64
+        or any(character not in "0123456789abcdef" for character in sha256)
+        or not 0 < byte_length <= _MAX_ASSET_BYTES
+        or width < 1
+        or height < 1
+        or width * height > _MAX_IMAGE_PIXELS
+    ):
+        raise RuntimeError("property_opportunity_ltd_asset_metadata_invalid")
+    artifact = dict(projection["artifact"])
+    artifact.update(
+        {
+            "asset_url": property_opportunity_concept_cover_asset_url(generation_id),
+            "media_type": media_type,
+            "sha256": sha256,
+            "byte_length": byte_length,
+            "width": width,
+            "height": height,
+        }
+    )
+    receipt = dict(projection["receipt"])
+    receipt.update(
+        {
+            "asset_materialized": True,
+            "asset_sha256": sha256,
+            "asset_byte_length": byte_length,
+        }
+    )
+    return {**projection, "artifact": artifact, "receipt": receipt}
+
+
 def execute_property_opportunity_concept_cover(
     *,
     tool_execution: object,
