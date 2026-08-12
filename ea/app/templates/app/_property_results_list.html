@@ -247,6 +247,7 @@
 	          <span
               class="pqx-thumb"
               data-pqx-thumbnail
+              data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
               data-pqx-thumbnail-fallback="{{ candidate.get('preview_image_fallback_url') or '' }}"
               data-pqx-thumbnail-fallbacks='{{ (candidate.get("preview_image_fallback_urls") or [])|tojson|safe }}'
             >
@@ -270,7 +271,7 @@
 	            <span class="pqx-thumb-placeholder" aria-hidden="true">Media preview not available.</span>
 	          </span>
 	          {% else %}
-	          <span class="pqx-thumb is-placeholder" data-pqx-thumbnail role="img" aria-label="Media preview not available.">
+	          <span class="pqx-thumb is-placeholder" data-pqx-thumbnail data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}" role="img" aria-label="Media preview not available.">
 	            <span class="pqx-thumb-placeholder">Media preview not available.</span>
 	          </span>
 	          {% endif %}

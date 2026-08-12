@@ -14,6 +14,36 @@
     const metaNode = root.querySelector('[data-property-workspace-meta]');
     const data = JSON.parse(payloadNode?.textContent || '{}');
     const meta = JSON.parse(metaNode?.getAttribute('data-property-workspace-meta') || '{}');
+    const thumbnailRenderableUrl = (value) => {
+      const rawUrl = String(value || '').trim();
+      if (!rawUrl) return '';
+      try {
+        const candidateUrl = new URL(rawUrl, window.location.origin);
+        const sameOrigin = candidateUrl.origin === window.location.origin;
+        if (
+          (!sameOrigin && candidateUrl.protocol !== 'https:')
+          || candidateUrl.username
+          || candidateUrl.password
+        ) return '';
+        return candidateUrl.href;
+      } catch (_error) {
+        return '';
+      }
+    };
+    const thumbnailUrlsFromCandidate = (candidate) => {
+      if (!candidate || typeof candidate !== 'object') return [];
+      const values = [
+        candidate.preview_image_url,
+        candidate.orientation_preview?.thumb_image_url,
+        candidate.orientation_preview?.image_url,
+        ...(Array.isArray(candidate.preview_image_fallback_urls) ? candidate.preview_image_fallback_urls : []),
+        candidate.preview_image_fallback_url,
+      ];
+      return values
+        .map(thumbnailRenderableUrl)
+        .filter((value, index, rows) => value && rows.indexOf(value) === index)
+        .slice(0, 5);
+    };
     const thumbnailFallbackUrls = (image) => {
       if (!(image instanceof HTMLImageElement)) return [];
       const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
@@ -60,14 +90,29 @@
       if (!(image instanceof HTMLImageElement)) return;
       const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
       if (!thumbnail) return;
+      const failedUrls = (() => {
+        try {
+          const parsed = JSON.parse(image.dataset.pqxThumbnailFailedUrls || '[]');
+          return Array.isArray(parsed) ? parsed.map(thumbnailRenderableUrl).filter(Boolean) : [];
+        } catch (_error) {
+          return [];
+        }
+      })();
+      const failedUrl = thumbnailRenderableUrl(image.currentSrc || image.src || '');
+      if (failedUrl && !failedUrls.includes(failedUrl)) failedUrls.push(failedUrl);
+      image.dataset.pqxThumbnailFailedUrls = JSON.stringify(failedUrls.slice(-8));
       const fallbackUrls = thumbnailFallbackUrls(image);
       let fallbackIndex = Math.max(0, Number(image.dataset.pqxThumbnailFallbackIndex || 0) || 0);
-      const currentUrl = String(image.currentSrc || image.src || '');
+      const currentUrl = thumbnailRenderableUrl(image.currentSrc || image.src || '');
       let fallbackUrl = '';
       while (fallbackIndex < fallbackUrls.length && !fallbackUrl) {
         const candidateUrl = fallbackUrls[fallbackIndex];
         fallbackIndex += 1;
-        if (candidateUrl && candidateUrl !== currentUrl) fallbackUrl = candidateUrl;
+        if (
+          candidateUrl
+          && candidateUrl !== currentUrl
+          && !failedUrls.includes(candidateUrl)
+        ) fallbackUrl = candidateUrl;
       }
       image.dataset.pqxThumbnailFallbackIndex = String(fallbackIndex);
       if (fallbackUrl) {
@@ -81,6 +126,39 @@
       thumbnail.classList.remove('is-recovering');
       thumbnail.classList.add('is-unavailable');
       image.hidden = true;
+      if (image.dataset.pqxThumbnailDetailRefreshAttempted === '1') return;
+      const candidateRef = String(
+        thumbnail.getAttribute('data-candidate-ref')
+        || thumbnail.closest('[data-candidate-ref]')?.getAttribute('data-candidate-ref')
+        || ''
+      ).trim();
+      const runId = String(data.run?.run_id || meta.run_id || '').trim();
+      if (!candidateRef || !runId) return;
+      image.dataset.pqxThumbnailDetailRefreshAttempted = '1';
+      void (async () => {
+        try {
+          const response = await fetch(
+            `/app/api/property/candidates/${encodeURIComponent(candidateRef)}/preview-refresh?run_id=${encodeURIComponent(runId)}&thumbnail_failed=true`,
+            { credentials: 'same-origin', cache: 'no-store' },
+          );
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload || typeof payload !== 'object') return;
+          const refreshedUrls = thumbnailUrlsFromCandidate(payload.candidate)
+            .filter((value) => !failedUrls.includes(value));
+          const refreshedUrl = refreshedUrls[0] || '';
+          if (!refreshedUrl) return;
+          const refreshedFallbacks = refreshedUrls.slice(1, 5);
+          thumbnail.setAttribute('data-pqx-thumbnail-fallback', refreshedFallbacks[0] || '');
+          thumbnail.setAttribute('data-pqx-thumbnail-fallbacks', JSON.stringify(refreshedFallbacks));
+          image.dataset.pqxThumbnailFallbackIndex = '0';
+          image.hidden = false;
+          thumbnail.classList.remove('is-unavailable');
+          thumbnail.classList.add('is-recovering');
+          image.src = refreshedUrl;
+        } catch (_error) {
+          // The placeholder remains honest; a later page load can use the refreshed cache.
+        }
+      })();
     };
     root.addEventListener('error', (event) => {
       const image = event.target;
@@ -4323,7 +4401,7 @@
 	        const thumb = shortlistSurface
 	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Explore diorama and area map for'))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span><span class="pqx-result-diorama-empty-label" aria-hidden="true">Diorama not ready</span>'}<span class="pqx-shortlist-visual-chrome" aria-hidden="true"><span class="pqx-shortlist-visual-label">${escapeHtml(localizeLiveCopy('Spatial diorama'))}</span><span class="pqx-shortlist-visual-action">${escapeHtml(localizeLiveCopy('Explore'))} <b>&#8599;</b></span></span></button>`
 	          : (previewUrl
-	            ? `<span class="pqx-thumb" data-pqx-thumbnail data-pqx-thumbnail-fallback="${escapeHtml(previewFallbackUrls[0] || '')}" data-pqx-thumbnail-fallbacks="${escapeHtml(JSON.stringify(previewFallbackUrls))}"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" data-pqx-thumbnail-image></button><span class="pqx-thumb-placeholder" aria-hidden="true">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`
+	            ? `<span class="pqx-thumb" data-pqx-thumbnail data-candidate-ref="${escapeHtml(candidateRef)}" data-pqx-thumbnail-fallback="${escapeHtml(previewFallbackUrls[0] || '')}" data-pqx-thumbnail-fallbacks="${escapeHtml(JSON.stringify(previewFallbackUrls))}"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" data-pqx-thumbnail-image></button><span class="pqx-thumb-placeholder" aria-hidden="true">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`
 	            : `<span class="pqx-thumb is-placeholder" data-pqx-thumbnail role="img" aria-label="${escapeHtml(localizeLiveCopy('Media preview not available.'))}"><span class="pqx-thumb-placeholder">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`);
         const tour = (candidate?.tour && typeof candidate.tour === 'object') ? candidate.tour : {};
         const tourUrl = directHostedTourUrl(tour.url, candidate?.tour_url, tour.embed_url, tour.provider_url, candidate?.vendor_tour_url, candidate?.source_virtual_tour_url);

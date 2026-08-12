@@ -707,8 +707,12 @@ def _property_search_lightweight_candidate_payload(
             if fallback_url not in ordered_preview_fallbacks
         )
         ordered_preview_fallbacks = ordered_preview_fallbacks[:4]
-        compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
-        compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
+        if not preview_image_url:
+            preview_image_url = ordered_preview_fallbacks.pop(0)
+            compact["preview_image_url"] = preview_image_url
+        if ordered_preview_fallbacks:
+            compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
+            compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
     orientation_preview = _property_search_lightweight_image_payload(raw.get("orientation_preview"))
     if orientation_preview:
         compact["orientation_preview"] = orientation_preview

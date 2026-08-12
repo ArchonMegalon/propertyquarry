@@ -252,6 +252,34 @@ def test_client_payload_rejects_tracking_thumbnail_fallback() -> None:
     assert "preview_image_url" not in result
 
 
+def test_client_payload_promotes_safe_media_when_primary_thumbnail_is_tracking() -> None:
+    tracking_url = "https://api.willhaben.at/restapi/v2/listings/123.jpg"
+    safe_media_url = "https://cache.willhaben.at/mmo/8/1234567899.jpg"
+
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {
+            "preview_image_url": tracking_url,
+            "property_facts": {
+                "media_urls_json": [tracking_url, safe_media_url],
+            },
+        }
+    )
+
+    assert result["preview_image_url"] == safe_media_url
+    assert "preview_image_fallback_url" not in result
+    assert "preview_image_fallback_urls" not in result
+
+
+def test_client_payload_keeps_first_party_dynamic_thumbnail() -> None:
+    primary_url = "/app/api/property/map-preview/candidate-thumbnail"
+
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {"preview_image_url": primary_url}
+    )
+
+    assert result["preview_image_url"] == primary_url
+
+
 def test_lightweight_status_payload_keeps_safe_thumbnail_fallback_chain() -> None:
     primary_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
     fallback_urls = [

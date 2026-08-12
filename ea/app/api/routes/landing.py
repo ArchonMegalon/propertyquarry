@@ -1580,6 +1580,7 @@ def _propertyquarry_refresh_candidate_preview_if_needed(
     product: object,
     candidate: object,
     allow_network: bool = True,
+    force_network: bool = False,
 ) -> dict[str, object] | object:
     if not isinstance(candidate, dict):
         return candidate
@@ -1605,10 +1606,10 @@ def _propertyquarry_refresh_candidate_preview_if_needed(
             preview_cache_index=preview_cache_index,
             preview_lookup=preview_lookup_fn,
         )
-        if not _propertyquarry_candidate_needs_detailed_preview(candidate_row):
+        if not force_network and not _propertyquarry_candidate_needs_detailed_preview(candidate_row):
             return candidate_row
 
-    if not _propertyquarry_candidate_needs_detailed_preview(candidate_row):
+    if not force_network and not _propertyquarry_candidate_needs_detailed_preview(candidate_row):
         return candidate_row
 
     if not allow_network:
@@ -1632,6 +1633,7 @@ def _propertyquarry_refresh_run_candidate_preview_if_needed(
     run_payload: dict[str, object],
     candidate_ref: str,
     allow_network: bool = True,
+    force_network: bool = False,
     principal_id: str = "",
 ) -> dict[str, object]:
     normalized_candidate_ref = str(candidate_ref or "").strip()
@@ -1644,6 +1646,7 @@ def _propertyquarry_refresh_run_candidate_preview_if_needed(
         product=product,
         candidate=candidate,
         allow_network=allow_network,
+        force_network=force_network,
     )
     if refreshed_candidate == candidate or not isinstance(refreshed_candidate, dict):
         return run_payload
@@ -6390,6 +6393,7 @@ def propertyquarry_candidate_preview_refresh(
     context: RequestContext = Depends(get_request_context_if_available),
     access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
     run_id: str = Query(default=""),
+    thumbnail_failed: bool = Query(default=False),
 ) -> JSONResponse:
     brand = request_brand(request)
     if str(brand.get("key") or "").strip() != "propertyquarry":
@@ -6454,6 +6458,7 @@ def propertyquarry_candidate_preview_refresh(
         run_payload=run_payload,
         candidate_ref=normalized_candidate_ref,
         allow_network=True,
+        force_network=thumbnail_failed,
         principal_id=authenticated_principal,
     )
     candidate = _propertyquarry_find_run_candidate(

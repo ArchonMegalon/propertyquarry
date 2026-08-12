@@ -37,7 +37,7 @@ def test_thumbnail_controller_retries_bounded_chain_then_falls_back_to_placehold
       <html>
         <body>
           <main data-property-decision-workbench>
-            <script type="application/json" data-property-workbench-json>{{}}</script>
+            <script type="application/json" data-property-workbench-json>{{"run":{{"run_id":"run-thumbnail"}}}}</script>
             <span data-property-workspace-meta="{{}}"></span>
             <span id="recovers" class="pqx-thumb" data-pqx-thumbnail
                   data-pqx-thumbnail-fallbacks='["/missing-first.png", "/fallback.png"]'>
@@ -47,6 +47,12 @@ def test_thumbnail_controller_retries_bounded_chain_then_falls_back_to_placehold
                   data-pqx-thumbnail-fallbacks='["/missing-first.png", "/missing.png"]'>
               <img src="{_ONE_PIXEL_GIF}" data-pqx-thumbnail-image>
             </span>
+            <article data-candidate-ref="candidate-refresh">
+              <span id="refreshes" class="pqx-thumb" data-pqx-thumbnail
+                    data-candidate-ref="candidate-refresh">
+                <img src="{_ONE_PIXEL_GIF}" data-pqx-thumbnail-image>
+              </span>
+            </article>
           </main>
         </body>
       </html>
@@ -54,6 +60,16 @@ def test_thumbnail_controller_retries_bounded_chain_then_falls_back_to_placehold
 
     def serve(route: Route) -> None:
         if route.request.url.endswith("/fallback.png"):
+            route.fulfill(status=200, content_type="image/png", body=_ONE_PIXEL_PNG)
+            return
+        if "/app/api/property/candidates/candidate-refresh/preview-refresh?" in route.request.url:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"candidate":{"preview_image_url":"/refreshed.png"}}',
+            )
+            return
+        if route.request.url.endswith("/refreshed.png"):
             route.fulfill(status=200, content_type="image/png", body=_ONE_PIXEL_PNG)
             return
         if route.request.url.endswith(("/missing-first.png", "/missing.png")):
@@ -95,6 +111,20 @@ def test_thumbnail_controller_retries_bounded_chain_then_falls_back_to_placehold
                 && image.hidden
                 && host.classList.contains('is-unavailable')
                 && !host.classList.contains('is-recovering');
+            }"""
+        )
+
+        page.locator("#refreshes img").dispatch_event("error")
+        page.wait_for_function(
+            """() => {
+              const host = document.querySelector('#refreshes');
+              const image = host.querySelector('img');
+              return image.dataset.pqxThumbnailDetailRefreshAttempted === '1'
+                && image.src.endsWith('/refreshed.png')
+                && image.naturalWidth > 0
+                && !image.hidden
+                && !host.classList.contains('is-recovering')
+                && !host.classList.contains('is-unavailable');
             }"""
         )
     finally:

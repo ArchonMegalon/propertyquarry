@@ -98,6 +98,10 @@ _PROPERTY_WORKBENCH_CLIENT_IMAGE_EXTENSIONS = (
     ".tiff",
     ".webp",
 )
+_PROPERTY_WORKBENCH_CLIENT_DYNAMIC_IMAGE_PATH_PREFIXES = (
+    "/app/api/property/map-preview/",
+    "/app/api/property/map-previews/",
+)
 _PROPERTY_WORKBENCH_CLIENT_VIDEO_EXTENSIONS = (".m4v", ".mov", ".mp4", ".ogv", ".webm")
 _PROPERTY_WORKBENCH_CLIENT_TRACKING_MARKERS = (
     "/analytics/",
@@ -268,7 +272,16 @@ def _property_workbench_client_asset_url(value: object, *, kind: str) -> str:
         if str(kind or "").strip().lower() == "video"
         else _PROPERTY_WORKBENCH_CLIENT_IMAGE_EXTENSIONS
     )
-    return url if path.endswith(extensions) else ""
+    if path.endswith(extensions):
+        return url
+    if (
+        str(kind or "").strip().lower() == "image"
+        and url.startswith("/")
+        and not url.startswith("//")
+        and path.startswith(_PROPERTY_WORKBENCH_CLIENT_DYNAMIC_IMAGE_PATH_PREFIXES)
+    ):
+        return url
+    return ""
 
 
 def _property_workbench_client_image_url(value: object) -> str:
@@ -1085,8 +1098,12 @@ def _property_workbench_client_candidate_payload(
             if fallback_url not in ordered_preview_fallbacks
         )
         ordered_preview_fallbacks = ordered_preview_fallbacks[:4]
-        compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
-        compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
+        if not preview_image_url:
+            preview_image_url = ordered_preview_fallbacks.pop(0)
+            compact["preview_image_url"] = preview_image_url
+        if ordered_preview_fallbacks:
+            compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
+            compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
     tour_payload = _property_workbench_client_tour_payload(
         raw.get("tour") if isinstance(raw.get("tour"), dict) else {},
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),
