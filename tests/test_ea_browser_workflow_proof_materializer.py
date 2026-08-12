@@ -177,7 +177,7 @@ def _journey_evidence_matrix() -> dict[str, object]:
                     {
                         "file": browser_file,
                         "cases": [
-                            "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+                            "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
                             "test_propertyquarry_packet_tracks_followup_state_in_browser",
                         ],
                     }
@@ -337,7 +337,7 @@ def test_release_proof_baseline_fingerprint_is_literal_and_detects_payload_drift
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert release_proof_baseline.APPROVED_BASELINE_SHA256 == (
-        "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
+        "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
     )
     weakened_payload = json.loads(
         json.dumps(release_proof_baseline._baseline_payload())
@@ -356,7 +356,7 @@ def test_release_proof_baseline_fingerprint_is_literal_and_detects_payload_drift
 
     assert any("payload fingerprint does not match the pinned baseline" in reason for reason in blockers)
     assert release_proof_baseline.approved_baseline_binding()["sha256"] == (
-        "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
+        "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
     )
 
 
