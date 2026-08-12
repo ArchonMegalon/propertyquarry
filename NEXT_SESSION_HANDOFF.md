@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 14:24 UTC
+Updated: 2026-08-12 14:35 UTC
 
 ## Mission
 
@@ -16,6 +16,54 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 fail-closed paid-billing admission
+
+Commit `046c49a4` is published on
+`integration/property-origin-main-20260728`. A secret-safe inspection of the
+deployed API found PayPal enabled with a client ID and secret, while PayFunnels
+had only a webhook secret and neither an API key nor plan checkout URLs. Before
+this commit, those PayPal settings alone made the generic authenticated paid
+checkout select PayPal even though no same-principal/webhook/entitlement canary
+had been externally proven.
+
+Provider credentials are now necessary but insufficient. PayPal and PayFunnels
+customer checkout remain unavailable unless the API also receives a fresh
+`propertyquarry.paid_billing_safe_handoff.v1` admission bound to:
+
+- the exact `PROPERTYQUARRY_RELEASE_COMMIT_SHA` and
+  `PROPERTYQUARRY_RELEASE_IMAGE_DIGEST`;
+- one exact provider (`paypal` or `payfunnels`) and both paid plans
+  (`agent,plus`);
+- non-secret SHA-256 identities for the external receipt and its canary
+  principal; and
+- a `VERIFIED_AT` timestamp no older than 24 hours (with at most five minutes
+  of future clock skew).
+
+Compose forwards only those non-secret admission fields to the API process.
+The external release authority must set them only after proving checkout keeps
+the authenticated principal without a second login, webhook processing is
+signed and idempotent, and entitlement grant plus cancellation both work. The
+environment admission is a kill-switch boundary, not a substitute for the
+external evidence or the signed public-launch authority receipt. A provider or
+release mismatch, a missing digest, an incomplete plan set, or stale evidence
+fails closed. PayPal capture also rechecks admission before contacting the
+provider; inbound signed reconciliation remains available for provider events
+already in flight.
+
+Verification passed `26/26` focused checkout and lifetime-entitlement tests,
+exact Python compilation, Compose parse without interpolation, and
+`git diff --check`. `vexp verify_done` again returned its known stale global-EA
+index projection rather than the PropertyQuarry working tree; it reported no
+broken imports or parse errors, and the PropertyQuarry tests above are the
+authoritative result.
+
+This fix is source-published but intentionally not deployed. The current live
+container still runs the earlier image until the explicit Google device
+challenge is completed; the browser-assist lock forbids deployment or restart.
+After that explicit user confirmation, deploy this candidate before exposing
+any paid checkout. Do not populate the handoff fields until the external canary
+has actually passed for the exact deployed commit and image.
 
 ## 2026-08-12 principal-bound LTD execution truth
 
