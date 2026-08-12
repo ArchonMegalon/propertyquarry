@@ -1035,3 +1035,71 @@ c3311cc8 fix(mobile): preserve release bundle during preview tests
 All are on `origin/integration/property-origin-main-20260728`. The audit commit
 containing this handoff must also be pushed before declaring repository
 publication complete.
+
+## 2026-08-12 continuation: thumbnails, LTD value, and launch truth
+
+The intermittent result-thumbnail gap is fixed and already deployed. Initial
+cards and live-polled cards now share the same bounded, no-referrer fallback
+chain with up to four safe images. Commit `328deb16` was deployed through the
+authoritative local-Docker lane; the live asset contains the fallback payload,
+fallback index, and live no-referrer behavior. Deployment receipt:
+
+```text
+state/release/propertyquarry-local-deployment.v1.json
+release image sha256:ddbf0fe802a74e2e463525c8f9ae77290e0c9323ba805e31968f58c9c11e664f
+```
+
+Launch-room truth was split correctly in `a7256c32`: local runtime readiness no
+longer implies public-launch authority. Follow-up commit `8e3937d7` closes a
+forgery gap: an unsigned or checkout-local JSON file can never grant public
+launch. `propertyquarry.launch_room.v3` remains fail-closed with
+`external_public_launch_authority_verifier_unconfigured` until a pinned
+external signature verifier/keyring is implemented outside the checkout.
+
+Commit `a88ce53c` closes the customer-visible part of the proven LTD lane.
+PropertyQuarry already executed and persisted 1minAI `property.evaluate` calls,
+but its sanitized public projection was not carried to result cards. Initial
+page loads and live polling now receive the same exact, manager-routed,
+input-digest-bound assessment and render a concise `1minAI evidence review`.
+The customer payload deliberately omits provider account names and key slots.
+A detached or incomplete receipt produces no AI claim.
+
+Verification for these two commits:
+
+```text
+39 passed
+rendered property-workbench JavaScript: node --check passed
+Python compile and git diff checks: passed
+```
+
+Existing deployed proof for the PropertyQuarry proof principal remains:
+
+```text
+principal: propertyquarry-live-search-proof
+run: c08b209d659047dc9d287ff372c43fd9
+candidate: property-scout:1217728088
+provider receipt: succeeded|true|1minAI|1min|deepseek-chat|fallback_35|ONEMIN_AI_API_KEY_FALLBACK_35|2026-08-12T10:59:07.873225+00:00|0|0
+```
+
+This proves a real persisted 1min call receipt. It does not substitute for a
+fresh signed-in Tibor search. Unmixr live inventory was healthy (7 usable, 0
+depleted, 0 unavailable), but it has no PropertyQuarry principal-bound binding
+or customer-visible call receipt; keep it labeled inventory-only, not
+integrated.
+
+### Active Google human handoff
+
+BrowserAct session `pq-live-thumbnail-20260812-root` on browser
+`111111582245966456` is paused under human remote-assist lockdown at Google's
+device challenge. The requested number is `61`. Do not issue any BrowserAct
+session command until the user explicitly replies that the challenge is done.
+
+Remote-assist link (it may need regeneration if expired):
+
+https://www.browseract.com/remote-cli/870cc3b32e5d4e898384ae96239c3d14
+
+After the user explicitly confirms completion: resume that exact session,
+finish the signed-in Austria search, prove a fresh opportunity assessment and
+summary artifact in deployed PostgreSQL, then deploy the current envelope so
+the launch-room and 1min customer projection commits are in the live image.
+Do not restart the app stack while the Google challenge may still be active.
