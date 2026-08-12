@@ -9044,7 +9044,7 @@
         const assetUrl = String(result?.artifact?.asset_url || '').trim();
         let parsedAssetUrl = null;
         try {
-          parsedAssetUrl = new URL(assetUrl);
+          parsedAssetUrl = new URL(assetUrl, window.location.origin);
         } catch (_error) {
           parsedAssetUrl = null;
         }
@@ -9052,7 +9052,9 @@
           receipt?.status !== 'verified'
           || receipt?.principal_bound !== true
           || receipt?.proof_scope !== 'provider_call'
-          || parsedAssetUrl?.protocol !== 'https:'
+          || parsedAssetUrl?.origin !== window.location.origin
+          || !parsedAssetUrl?.pathname.startsWith('/app/api/property/opportunities/generations/')
+          || !parsedAssetUrl?.pathname.endsWith('/asset')
         ) {
           throw new Error('Concept-cover provider receipt could not be verified.');
         }

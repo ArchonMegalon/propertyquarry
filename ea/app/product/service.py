@@ -183,6 +183,7 @@ from app.product.property_opportunities import (
 )
 from app.product.property_opportunity_ltd_generation import (
     execute_property_opportunity_concept_cover,
+    property_opportunity_concept_cover_asset_descriptor,
     property_opportunity_concept_cover_public_projection,
 )
 from app.product.property_onemin_evaluation import (
@@ -53077,6 +53078,32 @@ class ProductService:
         ):
             return None
         return self._property_opportunity_ltd_job_projection(job)
+
+    def get_property_opportunity_concept_cover_asset(
+        self,
+        *,
+        principal_id: str,
+        generation_id: str,
+    ) -> dict[str, object] | None:
+        job = _property_search_work_queue_repository().get(
+            str(generation_id or "").strip()
+        )
+        if job is None or job.principal_id != str(principal_id or "").strip():
+            return None
+        if (
+            job.status != "completed"
+            or str(job.payload_json.get("work_kind") or "")
+            != PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
+        ):
+            return None
+        result = job.payload_json.get("result_json")
+        if not isinstance(result, dict):
+            return None
+        return property_opportunity_concept_cover_asset_descriptor(
+            result,
+            generation_id=job.job_id,
+            opportunity_id=str(job.payload_json.get("opportunity_id") or "").strip(),
+        )
 
     def execute_property_search_work_job(self, job: PropertySearchWorkJob) -> dict[str, object]:
         principal_id = str(job.principal_id or "").strip()

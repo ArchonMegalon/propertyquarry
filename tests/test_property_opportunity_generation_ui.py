@@ -49,6 +49,9 @@ def test_property_result_card_exposes_honest_receipt_backed_concept_cover() -> N
     assert "/app/api/property/opportunities/generations/${encodeURIComponent(generationId)}" in workbench_script
     assert "receipt?.principal_bound !== true" in workbench_script
     assert "receipt?.proof_scope !== 'provider_call'" in workbench_script
+    assert "new URL(assetUrl, window.location.origin)" in workbench_script
+    assert "parsedAssetUrl?.origin !== window.location.origin" in workbench_script
+    assert "!parsedAssetUrl?.pathname.endsWith('/asset')" in workbench_script
     assert "Synthetic illustration · not listing photography" in workbench_script
     assert "Private concept cover · ${provider} · verified" in workbench_script
     assert "button.hidden = true" in workbench_script

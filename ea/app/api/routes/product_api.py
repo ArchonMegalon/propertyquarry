@@ -2393,6 +2393,41 @@ def get_property_opportunity_concept_cover(
     return generation
 
 
+@router.get("/property/opportunities/generations/{generation_id}/asset")
+def get_property_opportunity_concept_cover_asset(
+    generation_id: str,
+    container: AppContainer = Depends(get_container),
+    context: RequestContext = Depends(get_request_context),
+) -> FileResponse:
+    try:
+        descriptor = build_product_service(
+            container
+        ).get_property_opportunity_concept_cover_asset(
+            principal_id=context.principal_id,
+            generation_id=generation_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="property_opportunity_generation_asset_unavailable",
+        ) from exc
+    if descriptor is None:
+        raise HTTPException(
+            status_code=404,
+            detail="property_opportunity_generation_not_found",
+        )
+    return FileResponse(
+        path=str(descriptor["path"]),
+        media_type=str(descriptor["media_type"]),
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+            "ETag": f'"sha256:{descriptor["sha256"]}"',
+        },
+    )
+
+
 @router.get("/property-summaries/{artifact_id}")
 def get_property_summary_artifact(
     artifact_id: str,

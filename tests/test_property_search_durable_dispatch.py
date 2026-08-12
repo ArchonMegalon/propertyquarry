@@ -583,6 +583,61 @@ def test_opportunity_cover_enqueue_and_status_are_scoped_to_request_principal(
     ) is None
 
 
+def test_opportunity_cover_asset_is_authorized_before_private_file_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(ProductService)
+    job = _job(
+        run_id="run-cover",
+        principal_id="principal-cover",
+        status="completed",
+        payload_json={
+            "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+            "opportunity_id": "property_opportunity:abc",
+            "result_json": {"status": "ready"},
+        },
+    )
+
+    class _Repository:
+        def get(self, _job_id):  # type: ignore[no-untyped-def]
+            return job
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_work_queue_repository",
+        lambda: _Repository(),
+    )
+    resolved: list[dict[str, object]] = []
+
+    def _descriptor(value, **kwargs):  # type: ignore[no-untyped-def]
+        resolved.append({"value": value, **kwargs})
+        return {
+            "path": "/data/artifacts/private.image",
+            "media_type": "image/png",
+            "sha256": "a" * 64,
+        }
+
+    monkeypatch.setattr(
+        product_service,
+        "property_opportunity_concept_cover_asset_descriptor",
+        _descriptor,
+    )
+
+    assert service.get_property_opportunity_concept_cover_asset(
+        principal_id="principal-other",
+        generation_id="job-1",
+    ) is None
+    assert resolved == []
+    descriptor = service.get_property_opportunity_concept_cover_asset(
+        principal_id="principal-cover",
+        generation_id="job-1",
+    )
+    assert descriptor is not None
+    assert descriptor["media_type"] == "image/png"
+    assert resolved[0]["generation_id"] == "job-1"
+    assert resolved[0]["opportunity_id"] == "property_opportunity:abc"
+
+
 def test_prod_stale_recovery_requeues_instead_of_starting_a_daemon(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
