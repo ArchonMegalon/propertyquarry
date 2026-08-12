@@ -176,7 +176,15 @@ from app.product.property_fact_enrichment import (
     property_fact_source_fingerprint,
     property_fact_value,
 )
-from app.product.property_opportunities import materialize_property_search_opportunities
+from app.product.property_opportunities import (
+    find_property_search_candidate,
+    materialize_property_search_opportunities,
+    property_opportunity_public_projection,
+)
+from app.product.property_opportunity_ltd_generation import (
+    execute_property_opportunity_concept_cover,
+    property_opportunity_concept_cover_public_projection,
+)
 from app.product.property_onemin_evaluation import (
     property_onemin_evaluation_needs_refresh,
     property_onemin_safe_public_packet,
@@ -268,10 +276,12 @@ from app.product.property_search_storage import (
 )
 from app.product.property_search_work_queue import (
     PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+    PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
     PROPERTY_SEARCH_RUN_WORK_KIND,
     PostgresPropertySearchWorkQueue,
     PropertySearchWorkJob,
     property_fact_enrichment_work_idempotency_key,
+    property_opportunity_ltd_image_work_idempotency_key,
     property_search_work_idempotency_key,
     property_search_work_max_attempts,
 )
@@ -52955,6 +52965,119 @@ class ProductService:
             "parent_run_ids": list(parent_refs),
         }
 
+    @staticmethod
+    def _property_opportunity_ltd_job_projection(
+        job: PropertySearchWorkJob,
+    ) -> dict[str, object]:
+        persisted_result = (
+            dict(job.payload_json.get("result_json") or {})
+            if isinstance(job.payload_json.get("result_json"), dict)
+            else {}
+        )
+        result = property_opportunity_concept_cover_public_projection(
+            persisted_result,
+            generation_id=job.job_id,
+            opportunity_id=str(job.payload_json.get("opportunity_id") or "").strip(),
+        )
+        if job.status == "completed" and result:
+            status = "ready"
+        elif job.status in {"completed", "failed"}:
+            status = "unavailable"
+        else:
+            status = str(job.status or "queued")
+        projection: dict[str, object] = {
+            "generation_id": job.job_id,
+            "status": status,
+            "created": False,
+            "attempt_count": max(0, int(job.attempt_count or 0)),
+        }
+        if status == "ready":
+            projection["result"] = result
+        elif status == "unavailable":
+            projection["message"] = "Concept-cover generation is temporarily unavailable."
+        return projection
+
+    def enqueue_property_opportunity_concept_cover(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        candidate_ref: str,
+        opportunity_id: str,
+        actor: str,
+    ) -> dict[str, object]:
+        normalized_principal = str(principal_id or "").strip()
+        normalized_run = str(run_id or "").strip()
+        normalized_candidate = str(candidate_ref or "").strip()
+        normalized_opportunity = str(opportunity_id or "").strip()
+        if not all(
+            (
+                normalized_principal,
+                normalized_run,
+                normalized_candidate,
+                normalized_opportunity,
+            )
+        ):
+            raise ValueError("property_opportunity_ltd_generation_identity_invalid")
+        record = _load_property_search_run_record(
+            run_id=normalized_run,
+            principal_id=normalized_principal,
+        )
+        candidate = (
+            find_property_search_candidate(record, candidate_ref=normalized_candidate)
+            if isinstance(record, dict)
+            else None
+        )
+        opportunity = (
+            property_opportunity_public_projection(candidate.get("opportunity"))
+            if isinstance(candidate, dict)
+            else {}
+        )
+        if (
+            str(opportunity.get("status") or "") != "ready"
+            or str(opportunity.get("opportunity_id") or "") != normalized_opportunity
+        ):
+            raise ValueError("property_opportunity_ltd_generation_opportunity_invalid")
+        idempotency_key = property_opportunity_ltd_image_work_idempotency_key(
+            principal_id=normalized_principal,
+            run_id=normalized_run,
+            candidate_ref=normalized_candidate,
+            opportunity_id=normalized_opportunity,
+        )
+        enqueue = _property_search_work_queue_repository().enqueue_opportunity_ltd_image(
+            principal_id=normalized_principal,
+            run_id=normalized_run,
+            payload_json={
+                "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+                "candidate_ref": normalized_candidate,
+                "opportunity_id": normalized_opportunity,
+                "actor": str(actor or "browser").strip()[:200] or "browser",
+            },
+            idempotency_key=idempotency_key,
+            max_attempts=2,
+        )
+        projection = self._property_opportunity_ltd_job_projection(enqueue.job)
+        projection["created"] = bool(enqueue.created)
+        return projection
+
+    def get_property_opportunity_concept_cover(
+        self,
+        *,
+        principal_id: str,
+        generation_id: str,
+    ) -> dict[str, object] | None:
+        job = _property_search_work_queue_repository().get(
+            str(generation_id or "").strip()
+        )
+        if job is None or job.principal_id != str(principal_id or "").strip():
+            return None
+        if (
+            str(job.payload_json.get("work_kind") or "")
+            != PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
+        ):
+            return None
+        return self._property_opportunity_ltd_job_projection(job)
+
     def execute_property_search_work_job(self, job: PropertySearchWorkJob) -> dict[str, object]:
         principal_id = str(job.principal_id or "").strip()
         run_id = str(job.run_id or "").strip()
@@ -52964,6 +53087,31 @@ class ProductService:
         work_kind = str(
             job.payload_json.get("work_kind") or PROPERTY_SEARCH_RUN_WORK_KIND
         ).strip()
+        if work_kind == PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND:
+            candidate_ref = str(job.payload_json.get("candidate_ref") or "").strip()
+            opportunity_id = str(job.payload_json.get("opportunity_id") or "").strip()
+            candidate = find_property_search_candidate(
+                record,
+                candidate_ref=candidate_ref,
+            )
+            opportunity = (
+                property_opportunity_public_projection(candidate.get("opportunity"))
+                if isinstance(candidate, dict)
+                else {}
+            )
+            if (
+                not candidate_ref
+                or not opportunity_id
+                or str(opportunity.get("status") or "") != "ready"
+                or str(opportunity.get("opportunity_id") or "") != opportunity_id
+            ):
+                raise RuntimeError("property_opportunity_ltd_work_payload_invalid")
+            return execute_property_opportunity_concept_cover(
+                tool_execution=self._container.tool_execution,
+                principal_id=principal_id,
+                job_id=job.job_id,
+                opportunity=opportunity,
+            )
         if work_kind == PROPERTY_FACT_ENRICHMENT_WORK_KIND:
             candidate_ref = str(job.payload_json.get("candidate_ref") or "").strip()
             fact_job_id = str(job.payload_json.get("fact_job_id") or "").strip()

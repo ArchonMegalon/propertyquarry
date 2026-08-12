@@ -35,3 +35,19 @@ def test_property_result_cards_expose_receipt_backed_onemin_assessment() -> None
     assert "candidate?.ai_assessment" in workbench_script
     assert "aiAssessmentReceipt?.manager_routed === true" in workbench_script
     assert "data-pqx-ai-assessment" in workbench_script
+
+
+def test_property_result_card_exposes_honest_receipt_backed_concept_cover() -> None:
+    results_template = (REPO_ROOT / "ea/app/templates/app/_property_results_list.html").read_text()
+    workbench_script = (REPO_ROOT / "ea/app/templates/app/_property_workbench_script.html").read_text()
+
+    assert "data-pqx-opportunity-cover-generate" in results_template
+    assert "data-pqx-opportunity-cover" in results_template
+    assert ">Create cover</button>" in results_template
+    assert "[data-pqx-opportunity-cover-generate]" in workbench_script
+    assert "/app/api/property/opportunities/${encodeURIComponent(candidateRef)}/generate-cover" in workbench_script
+    assert "/app/api/property/opportunities/generations/${encodeURIComponent(generationId)}" in workbench_script
+    assert "receipt?.principal_bound !== true" in workbench_script
+    assert "receipt?.proof_scope !== 'provider_call'" in workbench_script
+    assert "Synthetic illustration · not listing photography" in workbench_script
+    assert "Private concept cover · ${provider} · verified" in workbench_script

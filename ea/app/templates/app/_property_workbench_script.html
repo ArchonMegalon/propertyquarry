@@ -8927,6 +8927,15 @@
         return;
       }
       const previousLabel = button.textContent;
+      const boundedCoverFetch = async (url, options = {}) => {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+        try {
+          return await fetch(url, { ...options, signal: controller.signal });
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+      };
       button.disabled = true;
       button.textContent = 'Creating brief…';
       if (statusNode) statusNode.textContent = '';
@@ -8963,6 +8972,116 @@
         button.disabled = false;
         button.textContent = previousLabel || 'Create brief';
         if (statusNode) statusNode.textContent = error instanceof Error ? error.message : 'Could not create the brief.';
+      }
+    });
+    root.addEventListener('click', async (event) => {
+      const button = event.target?.closest?.('[data-pqx-opportunity-cover-generate]');
+      if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.disabled) return;
+      const rawCandidateRef = String(button.getAttribute('data-candidate-ref') || '').trim();
+      let candidateRef = rawCandidateRef;
+      try {
+        candidateRef = decodeURIComponent(rawCandidateRef);
+      } catch (_error) {
+        candidateRef = rawCandidateRef;
+      }
+      const runId = String(button.getAttribute('data-run-id') || '').trim();
+      const card = button.closest('[data-workbench-row]');
+      const statusNode = card?.querySelector('[data-pqx-opportunity-generation-status]');
+      const coverNode = card?.querySelector('[data-pqx-opportunity-cover]');
+      if (!candidateRef || !runId || !(coverNode instanceof HTMLElement)) {
+        if (statusNode) statusNode.textContent = 'Concept cover unavailable for this result.';
+        return;
+      }
+      const previousLabel = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Creating cover…';
+      if (statusNode) statusNode.textContent = 'Private worker request queued.';
+      try {
+        const queuedResponse = await boundedCoverFetch(
+          `/app/api/property/opportunities/${encodeURIComponent(candidateRef)}/generate-cover`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ run_id: runId }),
+          },
+        );
+        if (recoverExpiredSession(queuedResponse)) return;
+        let payload = await queuedResponse.json().catch(() => ({}));
+        if (!queuedResponse.ok) {
+          const errorMessage = String(payload?.error?.message || payload?.detail || '').trim();
+          throw new Error(errorMessage || 'Could not queue the concept cover.');
+        }
+        const generationId = String(payload?.generation_id || '').trim();
+        if (!generationId) throw new Error('Concept-cover receipt is unavailable.');
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          if (String(payload?.status || '') === 'ready') break;
+          if (String(payload?.status || '') === 'unavailable') {
+            throw new Error(String(payload?.message || 'Concept-cover generation is temporarily unavailable.'));
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
+          if (!button.isConnected || !root.contains(button)) return;
+          const statusResponse = await boundedCoverFetch(
+            `/app/api/property/opportunities/generations/${encodeURIComponent(generationId)}`,
+            { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } },
+          );
+          if (recoverExpiredSession(statusResponse)) return;
+          payload = await statusResponse.json().catch(() => ({}));
+          if (!statusResponse.ok) {
+            const errorMessage = String(payload?.error?.message || payload?.detail || '').trim();
+            throw new Error(errorMessage || 'Could not read the concept-cover status.');
+          }
+        }
+        if (String(payload?.status || '') !== 'ready') {
+          throw new Error('Concept-cover generation is still running. Try again shortly.');
+        }
+        const result = payload?.result || {};
+        const receipt = result?.receipt || {};
+        const assetUrl = String(result?.artifact?.asset_url || '').trim();
+        let parsedAssetUrl = null;
+        try {
+          parsedAssetUrl = new URL(assetUrl);
+        } catch (_error) {
+          parsedAssetUrl = null;
+        }
+        if (
+          receipt?.status !== 'verified'
+          || receipt?.principal_bound !== true
+          || receipt?.proof_scope !== 'provider_call'
+          || parsedAssetUrl?.protocol !== 'https:'
+        ) {
+          throw new Error('Concept-cover provider receipt could not be verified.');
+        }
+        const image = document.createElement('img');
+        image.src = parsedAssetUrl.href;
+        image.alt = 'Synthetic concept cover for this opportunity';
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        image.referrerPolicy = 'no-referrer';
+        const copy = document.createElement('span');
+        const title = document.createElement('strong');
+        title.textContent = String(result?.artifact?.label || 'AI concept cover');
+        const disclaimer = document.createElement('span');
+        disclaimer.textContent = String(result?.artifact?.disclaimer || 'Synthetic illustration · not listing photography');
+        copy.append(title, disclaimer);
+        coverNode.replaceChildren(image, copy);
+        coverNode.hidden = false;
+        const provider = String(result?.generation?.provider || '1min.AI').trim();
+        if (statusNode) statusNode.textContent = `Private concept cover · ${provider} · verified`;
+        button.textContent = 'Cover ready';
+        trackRybbitEvent('property_opportunity_cover_generated', {
+          surface: initialSurface || 'results',
+          provider,
+          receipt: 'verified',
+        });
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previousLabel || 'Create cover';
+        if (statusNode) statusNode.textContent = error instanceof Error ? error.message : 'Could not create the concept cover.';
       }
     });
     root.querySelectorAll('[data-fliplink-packet]').forEach((button) => {

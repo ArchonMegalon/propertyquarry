@@ -2350,6 +2350,7 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
         return {"claimed": False, "reason": "database_url_missing"}
 
     from app.product.property_search_work_queue import (
+        PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
         PostgresPropertySearchWorkQueue,
         property_search_work_heartbeat_seconds,
         property_search_work_lease_seconds,
@@ -2520,7 +2521,22 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
         }
     stop_heartbeat.set()
     heartbeat_thread.join(timeout=max(1.0, float(property_search_work_heartbeat_seconds()) + 1.0))
-    completed = None if lease_lost.is_set() else repository.complete(job_id=job.job_id, lease_owner=lease_owner)
+    if lease_lost.is_set():
+        completed = None
+    elif (
+        str(job.payload_json.get("work_kind") or "").strip()
+        == PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
+    ):
+        completed = repository.complete(
+            job_id=job.job_id,
+            lease_owner=lease_owner,
+            result_json=result,
+        )
+    else:
+        completed = repository.complete(
+            job_id=job.job_id,
+            lease_owner=lease_owner,
+        )
     _refresh_property_search_queue_metrics(repository)
     _write_scheduler_heartbeat(role=role, status="loop")
     if completed is None:

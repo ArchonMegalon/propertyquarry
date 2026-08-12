@@ -255,6 +255,10 @@ class PropertyOpportunityGenerateIn(BaseModel):
     audience_type: str = Field(default="family", max_length=80)
 
 
+class PropertyOpportunityConceptCoverIn(BaseModel):
+    run_id: str = Field(min_length=1, max_length=200)
+
+
 class FollowupAssignIn(BaseModel):
     owner: str = Field(min_length=1, max_length=160)
 
@@ -2313,6 +2317,80 @@ def generate_property_opportunity_artifact(
             "external_receipt_ref": "",
         },
     }
+
+
+@router.post("/property/opportunities/{candidate_ref}/generate-cover")
+def generate_property_opportunity_concept_cover(
+    candidate_ref: str,
+    body: PropertyOpportunityConceptCoverIn,
+    container: AppContainer = Depends(get_container),
+    context: RequestContext = Depends(get_request_context),
+) -> dict[str, object]:
+    product = build_product_service(container)
+    run = product.get_property_search_run_status(
+        principal_id=context.principal_id,
+        run_id=body.run_id,
+    )
+    if not isinstance(run, dict) or not run:
+        raise HTTPException(status_code=404, detail="property_search_run_not_found")
+    candidate = find_property_search_candidate(run, candidate_ref=candidate_ref)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="property_opportunity_not_found")
+    opportunity = property_opportunity_public_projection(candidate.get("opportunity"))
+    opportunity_id = str(opportunity.get("opportunity_id") or "").strip()
+    if str(opportunity.get("status") or "") != "ready" or not opportunity_id:
+        raise HTTPException(
+            status_code=503,
+            detail="property_opportunity_persistence_unavailable",
+        )
+    actor = str(
+        context.operator_id
+        or context.access_email
+        or context.principal_id
+        or "browser"
+    ).strip()
+    try:
+        generation = product.enqueue_property_opportunity_concept_cover(
+            principal_id=context.principal_id,
+            run_id=body.run_id,
+            candidate_ref=str(candidate.get("candidate_ref") or candidate_ref).strip(),
+            opportunity_id=opportunity_id,
+            actor=actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        **generation,
+        "opportunity_id": opportunity_id,
+        "provider": "1min.AI",
+        "action": "image_generate",
+        "execution_mode": "durable_worker",
+        "publication": {
+            "scope": "private_generated_asset",
+            "status": "not_published",
+            "external_publication_verified": False,
+        },
+    }
+
+
+@router.get("/property/opportunities/generations/{generation_id}")
+def get_property_opportunity_concept_cover(
+    generation_id: str,
+    container: AppContainer = Depends(get_container),
+    context: RequestContext = Depends(get_request_context),
+) -> dict[str, object]:
+    generation = (
+        build_product_service(container).get_property_opportunity_concept_cover(
+            principal_id=context.principal_id,
+            generation_id=generation_id,
+        )
+    )
+    if generation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="property_opportunity_generation_not_found",
+        )
+    return generation
 
 
 @router.get("/property-summaries/{artifact_id}")
