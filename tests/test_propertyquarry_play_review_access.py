@@ -23,7 +23,12 @@ def _reset_attempt_limiter() -> None:
     play_review.PLAY_REVIEW_ATTEMPT_LIMITER.reset()
 
 
-def _client(monkeypatch: pytest.MonkeyPatch, *, configured: bool = True) -> TestClient:
+def _client(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    configured: bool = True,
+    base_url: str = "https://propertyquarry.com",
+) -> TestClient:
     monkeypatch.setenv("EA_STORAGE_BACKEND", "memory")
     monkeypatch.delenv("EA_LEDGER_BACKEND", raising=False)
     monkeypatch.setenv("EA_API_TOKEN", "")
@@ -38,7 +43,7 @@ def _client(monkeypatch: pytest.MonkeyPatch, *, configured: bool = True) -> Test
         monkeypatch.delenv(play_review.PLAY_REVIEW_PASSWORD_DIGEST_ENV, raising=False)
     from app.api.app import create_app
 
-    return TestClient(create_app(), base_url="https://propertyquarry.com")
+    return TestClient(create_app(), base_url=base_url)
 
 
 def _credentials(*, password: str = TEST_PASSWORD, return_to: str = "/app/search") -> dict[str, str]:
@@ -103,6 +108,39 @@ def test_play_review_post_requires_same_origin(
 
     assert response.status_code == 403
     assert "ea_workspace_session=" not in str(response.headers.get("set-cookie") or "")
+
+
+def test_play_review_rejects_explicit_cross_site_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(monkeypatch)
+
+    response = client.post(
+        "/sign-in/play-review",
+        data=_credentials(),
+        headers={"origin": "https://attacker.example"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 403
+    assert "ea_workspace_session=" not in str(response.headers.get("set-cookie") or "")
+
+
+def test_play_review_accepts_canonical_https_origin_behind_http_tunnel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(monkeypatch, base_url="http://propertyquarry.com")
+
+    response = client.post(
+        "/sign-in/play-review",
+        data=_credentials(),
+        headers={"origin": "https://propertyquarry.com"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/app/search"
+    assert "ea_workspace_session=" in str(response.headers.get("set-cookie") or "")
 
 
 def test_play_review_rejects_invalid_credentials_with_generic_error(

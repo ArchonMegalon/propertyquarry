@@ -7950,8 +7950,42 @@ def _require_same_origin_browser_post(
     *,
     detail: str = "sign_out_origin_invalid",
 ) -> None:
-    if _browser_request_origin(request) != _effective_request_origin(request):
-        raise HTTPException(status_code=403, detail=detail)
+    browser_origin = _browser_request_origin(request)
+    effective_origin = _effective_request_origin(request)
+    if browser_origin is not None and browser_origin == effective_origin:
+        return
+
+    # Cloudflare terminates public HTTPS before forwarding to the local HTTP
+    # service. Some tunnel configurations preserve Host but omit
+    # X-Forwarded-Proto, so comparing only to request.url incorrectly rejects a
+    # genuine browser POST from the configured public origin. The canonical
+    # origin is operator-controlled; require both it and the forwarded Host to
+    # agree so an arbitrary Host header cannot broaden the CSRF boundary.
+    public_base_url = str(request_brand(request).get("public_base_url") or "").strip()
+    parsed_public_base = urllib.parse.urlsplit(public_base_url)
+    public_scheme = str(parsed_public_base.scheme or "").strip().lower()
+    public_hostname = str(parsed_public_base.hostname or "").strip().lower().rstrip(".")
+    public_origin: tuple[str, str, int] | None = None
+    if (
+        public_scheme in {"http", "https"}
+        and public_hostname
+        and parsed_public_base.username is None
+        and parsed_public_base.password is None
+    ):
+        try:
+            public_port = parsed_public_base.port or (443 if public_scheme == "https" else 80)
+        except ValueError:
+            public_port = 0
+        if public_port:
+            public_origin = (public_scheme, public_hostname, int(public_port))
+    if (
+        public_origin is not None
+        and browser_origin == public_origin
+        and effective_origin is not None
+        and effective_origin[1] == public_origin[1]
+    ):
+        return
+    raise HTTPException(status_code=403, detail=detail)
 
 
 @router.post("/app/actions/sign-out", response_model=None, include_in_schema=False)
