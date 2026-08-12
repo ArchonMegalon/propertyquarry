@@ -8,6 +8,7 @@ from pathlib import Path
 from scripts import propertyquarry_launch_room as launch_room
 from scripts.propertyquarry_launch_room import (
     _deployment_status,
+    _public_launch_authority_handoff,
     _public_launch_status,
     build_launch_room,
     render_markdown,
@@ -48,6 +49,15 @@ def test_launch_room_reports_one_canonical_authority_and_no_false_launch(
         "missing_local_docker_deployment_receipt"
     )
     assert report["live_deployment"]["local_runtime_ready"] is False
+    handoff = report["public_launch"]["authority_handoff"]
+    assert handoff["status"] == "blocked_local_runtime_precondition"
+    assert handoff["ready_for_external_issuance"] is False
+    assert handoff["exact_candidate"]["bindings_complete"] is False
+    assert set(handoff["required_evidence"]) == {
+        "google_play_public_launch",
+        "paid_billing_safe_handoff",
+        "encrypted_off_host_disaster_recovery",
+    }
 
 
 def test_launch_room_keeps_source_journey_and_browser_counts_distinct(
@@ -123,6 +133,108 @@ def test_healthy_local_runtime_never_substitutes_for_public_launch_authority(
     assert report["public_launch"]["status"] == (
         "blocked_external_authority_receipt_missing"
     )
+    handoff = report["public_launch"]["authority_handoff"]
+    assert handoff["status"] == "ready_for_external_authority"
+    assert handoff["ready_for_external_issuance"] is True
+    assert handoff["exact_candidate"] == {
+        "bindings_complete": True,
+        "binding_values_well_formed": True,
+        "deployment_proven": True,
+        "envelope_head_sha": envelope_sha,
+        "runtime_commit_sha": report["runtime_candidate"],
+        "release_image_digest": image_digest,
+    }
+
+
+def test_public_launch_authority_handoff_is_exact_and_non_substitutable() -> None:
+    handoff = _public_launch_authority_handoff(
+        envelope_head_sha="b" * 40,
+        runtime_sha="a" * 40,
+        image_digest="sha256:" + ("c" * 64),
+        local_runtime_ready=True,
+        authority_passed=False,
+    )
+
+    assert handoff["status"] == "ready_for_external_authority"
+    assert handoff["ready_for_external_issuance"] is True
+    assert handoff["authority_scope"] == "external_global_governance"
+    assert handoff["local_substitution_allowed"] is False
+    assert handoff["receipt_contract"] == (
+        "propertyquarry.public_launch_authority.v2"
+    )
+    assert handoff["receipt_path"] == (
+        "/run/propertyquarry/release-control/"
+        "propertyquarry-public-launch-authority.v2.json"
+    )
+    assert handoff["trust_store"] == {
+        "environment_variable": "PROPERTYQUARRY_GLOBAL_GOVERNANCE_TRUST_STORE_FILE",
+        "path": (
+            "/etc/propertyquarry/release-control/"
+            "global-governance-trust-store.v1.json"
+        ),
+        "caller_selected_path_allowed": False,
+    }
+    assert handoff["receipt_constraints"] == {
+        "canonical_repository": "ArchonMegalon/propertyquarry",
+        "passed_required": True,
+        "secret_values_recorded_required": False,
+        "canonical_json_required": True,
+        "external_signature_required": True,
+        "fixed_receipt_path_required": True,
+        "fixed_trust_store_required": True,
+        "candidate_binding_required": True,
+    }
+    assert all(
+        row["authority_state"] == "unverified"
+        for row in handoff["required_evidence"].values()
+    )
+
+    stale = _public_launch_authority_handoff(
+        envelope_head_sha="b" * 40,
+        runtime_sha="a" * 40,
+        image_digest="sha256:" + ("c" * 64),
+        local_runtime_ready=False,
+        authority_passed=False,
+    )
+    assert stale["status"] == "blocked_local_runtime_precondition"
+    assert stale["ready_for_external_issuance"] is False
+    assert stale["exact_candidate"]["binding_values_well_formed"] is True
+    assert stale["exact_candidate"]["deployment_proven"] is False
+    assert stale["exact_candidate"]["bindings_complete"] is False
+
+
+def test_public_launch_handoff_observes_material_without_minting_authority(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    receipt = tmp_path / "public-launch-authority.v2.json"
+    trust_store = tmp_path / "global-governance-trust-store.v1.json"
+    receipt.write_text("{}", encoding="utf-8")
+    trust_store.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(launch_room, "PUBLIC_LAUNCH_RECEIPT_PATH", receipt)
+    monkeypatch.setattr(
+        launch_room,
+        "PUBLIC_LAUNCH_TRUST_STORE_PATH",
+        trust_store,
+    )
+    monkeypatch.setenv(launch_room.TRUST_STORE_ENV, str(trust_store))
+
+    handoff = _public_launch_authority_handoff(
+        envelope_head_sha="b" * 40,
+        runtime_sha="a" * 40,
+        image_digest="sha256:" + ("c" * 64),
+        local_runtime_ready=True,
+        authority_passed=False,
+    )
+
+    assert handoff["verification_material"] == {
+        "receipt_installed": True,
+        "trust_store_installed": True,
+        "trust_store_environment_configured": True,
+        "present": True,
+    }
+    assert handoff["status"] == "ready_for_external_authority"
+    assert handoff["local_substitution_allowed"] is False
 
 
 def test_launch_room_markdown_has_current_truth_and_next_action(

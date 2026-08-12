@@ -25,15 +25,21 @@ except ModuleNotFoundError:
 
 try:
     from propertyquarry_public_launch_authority import (
+        PUBLIC_LAUNCH_RECEIPT_CONTRACT,
         PUBLIC_LAUNCH_RECEIPT_PATH,
         PUBLIC_LAUNCH_REQUIREMENTS,
+        PUBLIC_LAUNCH_TRUST_STORE_PATH,
+        TRUST_STORE_ENV,
         PublicLaunchAuthorityError,
         verify_public_launch_authority,
     )
 except ModuleNotFoundError:
     from scripts.propertyquarry_public_launch_authority import (
+        PUBLIC_LAUNCH_RECEIPT_CONTRACT,
         PUBLIC_LAUNCH_RECEIPT_PATH,
         PUBLIC_LAUNCH_REQUIREMENTS,
+        PUBLIC_LAUNCH_TRUST_STORE_PATH,
+        TRUST_STORE_ENV,
         PublicLaunchAuthorityError,
         verify_public_launch_authority,
     )
@@ -291,6 +297,95 @@ def _public_launch_status(
     }
 
 
+def _public_launch_authority_handoff(
+    *,
+    envelope_head_sha: str,
+    runtime_sha: str,
+    image_digest: str,
+    local_runtime_ready: bool,
+    authority_passed: bool,
+) -> dict[str, object]:
+    receipt_installed = PUBLIC_LAUNCH_RECEIPT_PATH.is_file()
+    trust_store_installed = PUBLIC_LAUNCH_TRUST_STORE_PATH.is_file()
+    configured_trust_store = str(os.getenv(TRUST_STORE_ENV) or "").strip()
+    trust_store_environment_configured = (
+        configured_trust_store == str(PUBLIC_LAUNCH_TRUST_STORE_PATH)
+    )
+    verification_material_present = bool(
+        receipt_installed
+        and trust_store_installed
+        and trust_store_environment_configured
+    )
+    envelope_bound = re.fullmatch(r"[0-9a-f]{40}", envelope_head_sha) is not None
+    runtime_bound = re.fullmatch(r"[0-9a-f]{40}", runtime_sha) is not None
+    image_bound = re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest) is not None
+    binding_values_well_formed = envelope_bound and runtime_bound and image_bound
+    exact_candidate_bound = bool(
+        local_runtime_ready and binding_values_well_formed
+    )
+    ready_for_external_issuance = bool(
+        exact_candidate_bound and not authority_passed
+    )
+    if authority_passed:
+        status = "verified"
+    elif not local_runtime_ready:
+        status = "blocked_local_runtime_precondition"
+    elif not exact_candidate_bound:
+        status = "blocked_exact_candidate_binding_incomplete"
+    else:
+        status = "ready_for_external_authority"
+    return {
+        "status": status,
+        "ready_for_external_issuance": ready_for_external_issuance,
+        "authority_scope": "external_global_governance",
+        "local_substitution_allowed": False,
+        "receipt_contract": PUBLIC_LAUNCH_RECEIPT_CONTRACT,
+        "receipt_path": str(PUBLIC_LAUNCH_RECEIPT_PATH),
+        "verification_material": {
+            "receipt_installed": receipt_installed,
+            "trust_store_installed": trust_store_installed,
+            "trust_store_environment_configured": (
+                trust_store_environment_configured
+            ),
+            "present": verification_material_present,
+        },
+        "trust_store": {
+            "environment_variable": TRUST_STORE_ENV,
+            "path": str(PUBLIC_LAUNCH_TRUST_STORE_PATH),
+            "caller_selected_path_allowed": False,
+        },
+        "exact_candidate": {
+            "bindings_complete": exact_candidate_bound,
+            "binding_values_well_formed": binding_values_well_formed,
+            "deployment_proven": local_runtime_ready,
+            "envelope_head_sha": envelope_head_sha or "unavailable",
+            "runtime_commit_sha": runtime_sha or "unavailable",
+            "release_image_digest": image_digest or "unavailable",
+        },
+        "receipt_constraints": {
+            "canonical_repository": "ArchonMegalon/propertyquarry",
+            "passed_required": True,
+            "secret_values_recorded_required": False,
+            "canonical_json_required": True,
+            "external_signature_required": True,
+            "fixed_receipt_path_required": True,
+            "fixed_trust_store_required": True,
+            "candidate_binding_required": True,
+        },
+        "required_evidence": {
+            requirement: {
+                "status_required": "pass",
+                "evidence_ref_contract": "nonempty_bounded_nonsecret_reference",
+                "evidence_sha256_contract": "sha256:<64_lowercase_hex>",
+                "authority_state": (
+                    "verified" if authority_passed else "unverified"
+                ),
+            }
+            for requirement in PUBLIC_LAUNCH_REQUIREMENTS
+        },
+    }
+
+
 def _advanced_visual_status(
     *,
     root: Path,
@@ -436,6 +531,13 @@ def build_launch_room(
     )
     public_launch["ready"] = public_launch_ready
     public_launch["local_runtime_ready"] = local_runtime_ready
+    public_launch["authority_handoff"] = _public_launch_authority_handoff(
+        envelope_head_sha=head_sha,
+        runtime_sha=runtime_sha,
+        image_digest=str(deployment.get("release_image_digest") or ""),
+        local_runtime_ready=local_runtime_ready,
+        authority_passed=public_launch.get("authority_passed") is True,
+    )
     advanced_visual["local_runtime_claim"] = bool(
         local_runtime_ready and advanced_visual_bound
     )
@@ -495,7 +597,7 @@ def build_launch_room(
             if dirty
             else "Run scripts/deploy_propertyquarry.sh on the local Docker host."
             if not deployment_green
-            else "Configure the external public-launch signature verifier and pinned keyring, then verify Google Play public launch, paid billing handoff, and encrypted off-host backup/restore."
+            else "Provide passing Google Play, paid-billing handoff, and encrypted off-host restore evidence to the external governance authority, then install its signed receipt at the fixed release-control path."
         ),
         "local_runtime_ready": local_runtime_ready,
         "production_launch_ready": public_launch_ready,
@@ -534,6 +636,10 @@ def render_markdown(report: dict[str, object]) -> str:
         (
             "Public launch",
             "READY" if report["production_launch_ready"] else "BLOCKED",
+        ),
+        (
+            "External authority handoff",
+            dict(dict(report["public_launch"])["authority_handoff"])["status"],
         ),
     )
     table = "\n".join(f"| {key} | `{value}` |" for key, value in rows)

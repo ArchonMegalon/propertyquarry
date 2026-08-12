@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 14:15 UTC
+Updated: 2026-08-12 14:21 UTC
 
 ## Mission
 
@@ -54,6 +54,41 @@ until the user explicitly replies that the challenge is complete. Automatic
 goal continuation is not that reply. After explicit completion, deploy through
 the canonical authority and rerun signed-in Austrian search, opportunity,
 generation, and LTD receipt verification against the live PostgreSQL runtime.
+
+## 2026-08-12 exact public-launch authority handoff
+
+The source commit containing this handoff makes the remaining public-launch
+blocker directly actionable without weakening external authority. The launch
+room now emits an `authority_handoff` object with the fixed signed-receipt
+contract and path, fixed trust-store environment variable and path, exact
+envelope/runtime/image bindings, receipt constraints, and the three evidence
+requirements with their digest contracts. It distinguishes
+well-formed candidate values from an exact deployment: `bindings_complete`
+cannot become true until the local deployment receipt proves this exact
+envelope. Local tests or locally created JSON can never substitute for the
+external signature.
+
+The handoff also observes—but does not trust—whether the fixed receipt, trust
+store, and trust-store environment binding are present. The read-only host
+audit at `2026-08-12T14:20Z` found both fixed files absent:
+
+- `/run/propertyquarry/release-control/propertyquarry-public-launch-authority.v2.json`;
+- `/etc/propertyquarry/release-control/global-governance-trust-store.v1.json`.
+
+The current deployment receipt remains stale for the source envelope, so the
+authority handoff is correctly `blocked_local_runtime_precondition` even though
+the runtime commit and recorded image digest are syntactically well formed.
+The stale launch-room instruction to configure a verifier was removed; the
+verifier already exists. Once the explicit browser challenge is complete, the
+correct order is: deploy the exact candidate, collect passing Google Play,
+paid-billing handoff, and encrypted off-host restore evidence, then have the
+external governance authority install its signed canonical receipt and pinned
+trust store at the fixed paths.
+
+Verification on the candidate bytes passed `18/18` launch-room and signed
+public-authority tests, exact Python compilation, and `git diff --check`. No
+deployment, browser command, app restart, Play change, billing activation, or
+DR claim was made.
 
 ## 2026-08-12 resilient result thumbnails
 
