@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 00:24 CEST
+Updated: 2026-08-13 00:32 CEST
 
 ## Mission
 
@@ -81,6 +81,39 @@ COMPLIANCE-locked S3 target, exact-version read-back, and disposable restore
 proof. FlipLink may remain closed as an honest `local_only` generator unless
 external publication authority is supplied. Do not mark the long-running goal
 complete while any of these gates remains.
+
+## 2026-08-13 live external-authority refresh
+
+A secret-safe deployed-runtime audit at `2026-08-12T22:28:18Z` found no new
+authority after the exact-image deployment. The preceding six hours contained
+zero requests to `/mobile/runtime-contract`, `/sign-in/google`,
+`/google/callback`, `/mobile/auth/bridge`, or `/mobile/auth/redeem`. The 48
+authenticated `/app/search` reads in that window were the browser matrix, not a
+native-device flow. A fresh physical Android sign-in therefore remains
+unproven for this exact web head.
+
+The API still has the official PayPal Live origin but no client ID or secret.
+Its PayFunnels API key, webhook secret, and both paid checkout URLs remain
+absent. Every field of the exact-release paid-billing safe-handoff admission is
+empty. The API, worker, and scheduler also have no FlipLink login, password,
+BrowserAct enablement, or webhook secret. Billing must remain HTTP 503 and
+FlipLink must remain `local_only`; no provider-side state was changed.
+
+The host still has zero GPG public recipients, zero AWS credential/profile
+authority, and no S3 bucket, key prefix, Object Lock duration, or backup
+encryption recipient in the deployed services. This is current evidence that
+the encrypted immutable restore path cannot be executed safely; it is not a
+claim that the plain authenticated rclone remotes disappeared.
+
+Google Play was re-read through the dedicated authenticated PropertyQuarry
+browser without making a Console change. The tester invitation still says
+`You are a tester` for the enrolled operator account. Closed Alpha remains
+active with release `5 (1.1.3)`, one country/region, and the six-address
+`PropertyQuarry internal` list. The production-access dashboard still reports
+exactly `1 tester currently opted in`; it requires at least 12 opted-in testers
+and then at least 14 continuous days. The Open testing page still states that
+Open testing is available only after Production access. The isolated browser
+session was closed after the read.
 
 ## 2026-08-12 current-head opportunity and DR revalidation
 
