@@ -37,6 +37,19 @@ PROPERTYQUARRY_PAYPAL_INPUTS = {
     "PAYPAL_SECRET": "${PROPERTYQUARRY_PAYPAL_LIVE_SECRET:-}",
     "PAYPAL_API_BASE": "https://api-m.paypal.com",
 }
+PROPERTYQUARRY_PAYFUNNELS_INPUTS = {
+    "PAYFUNNELS_API_KEY": "${PROPERTYQUARRY_PAYFUNNELS_LIVE_API_KEY:-}",
+    "PAYFUNNELS_API_BASE": "https://api.payfunnels.com",
+    "PAYFUNNELS_WEBHOOK_SECRET": (
+        "${PROPERTYQUARRY_PAYFUNNELS_LIVE_WEBHOOK_SECRET:-}"
+    ),
+    "PAYFUNNELS_PLUS_CHECKOUT_URL": (
+        "${PROPERTYQUARRY_PAYFUNNELS_LIVE_PLUS_CHECKOUT_URL:-}"
+    ),
+    "PAYFUNNELS_AGENT_CHECKOUT_URL": (
+        "${PROPERTYQUARRY_PAYFUNNELS_LIVE_AGENT_CHECKOUT_URL:-}"
+    ),
+}
 
 
 def _compose_payload() -> dict[str, object]:
@@ -107,6 +120,42 @@ def test_propertyquarry_paypal_credentials_are_dedicated_and_live_pinned() -> No
         environment = dict(services[service_name].get("environment") or {})
         assert environment.get("PAYPAL_CLIENT_ID", "") == ""
         assert environment.get("PAYPAL_SECRET", "") == ""
+
+
+def test_propertyquarry_payfunnels_credentials_are_dedicated_and_live_pinned(
+) -> None:
+    source = COMPOSE_PATH.read_text(encoding="utf-8")
+    payload = _compose_payload()
+    services = dict(payload.get("services") or {})
+    api_environment = dict(
+        services["propertyquarry-api"].get("environment") or {}
+    )
+
+    assert {
+        key: api_environment.get(key)
+        for key in PROPERTYQUARRY_PAYFUNNELS_INPUTS
+    } == PROPERTYQUARRY_PAYFUNNELS_INPUTS
+    assert 'PAYFUNNELS_API_KEY: "${PAYFUNNELS_API_KEY' not in source
+    assert 'PAYFUNNELS_API_BASE: "${PAYFUNNELS_API_BASE' not in source
+    assert (
+        'PAYFUNNELS_WEBHOOK_SECRET: "${PAYFUNNELS_WEBHOOK_SECRET'
+        not in source
+    )
+    assert (
+        'PAYFUNNELS_PLUS_CHECKOUT_URL: "${PAYFUNNELS_PLUS_CHECKOUT_URL'
+        not in source
+    )
+    assert (
+        'PAYFUNNELS_AGENT_CHECKOUT_URL: "${PAYFUNNELS_AGENT_CHECKOUT_URL'
+        not in source
+    )
+
+    for service_name in LONG_LIVED_SERVICES:
+        if service_name == "propertyquarry-api":
+            continue
+        environment = dict(services[service_name].get("environment") or {})
+        for key in PROPERTYQUARRY_PAYFUNNELS_INPUTS:
+            assert environment.get(key, "") == ""
 
 
 def test_long_lived_services_do_not_load_the_broad_dotenv_or_migration_dsn() -> None:
@@ -202,6 +251,17 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
         "PAYPAL_CLIENT_ID": "generic-ea-paypal-client-must-not-flow",
         "PAYPAL_SECRET": "generic-ea-paypal-secret-must-not-flow",
         "PAYPAL_API_BASE": "https://api-m.sandbox.paypal.com",
+        "PAYFUNNELS_API_KEY": "generic-ea-payfunnels-key-must-not-flow",
+        "PAYFUNNELS_API_BASE": "https://sandbox.example.invalid",
+        "PAYFUNNELS_WEBHOOK_SECRET": (
+            "generic-ea-payfunnels-webhook-must-not-flow"
+        ),
+        "PAYFUNNELS_PLUS_CHECKOUT_URL": (
+            "https://generic-ea.example.invalid/plus"
+        ),
+        "PAYFUNNELS_AGENT_CHECKOUT_URL": (
+            "https://generic-ea.example.invalid/agent"
+        ),
         "PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN": (
             "review-only-bridge-placeholder"
         ),
@@ -255,3 +315,8 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
     assert api_environment["PAYPAL_CLIENT_ID"] == ""
     assert api_environment["PAYPAL_SECRET"] == ""
     assert api_environment["PAYPAL_API_BASE"] == "https://api-m.paypal.com"
+    assert api_environment["PAYFUNNELS_API_KEY"] == ""
+    assert api_environment["PAYFUNNELS_WEBHOOK_SECRET"] == ""
+    assert api_environment["PAYFUNNELS_PLUS_CHECKOUT_URL"] == ""
+    assert api_environment["PAYFUNNELS_AGENT_CHECKOUT_URL"] == ""
+    assert api_environment["PAYFUNNELS_API_BASE"] == "https://api.payfunnels.com"
