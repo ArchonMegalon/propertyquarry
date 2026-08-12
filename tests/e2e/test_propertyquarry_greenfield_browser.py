@@ -1204,11 +1204,13 @@ def test_propertyquarry_generates_private_opportunity_brief_in_real_browser(
         assert generated.value.ok, generated.value.text()
         expect(action).to_have_text("Brief ready")
         expect(card.locator("[data-pqx-opportunity-generation-status]")).to_have_text(
-            "Private brief · FlipLink.me"
+            "Private brief · PropertyQuarry"
         )
         artifact = card.locator("[data-pqx-opportunity-artifact]")
         expect(artifact).to_be_visible()
         expect(artifact).to_contain_text("Altbau near U6")
+        expect(artifact).to_contain_text("Preference fit:")
+        expect(artifact).to_contain_text("Verify next: heating_type")
     finally:
         context.close()
 

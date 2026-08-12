@@ -8714,7 +8714,7 @@
           throw new Error(errorMessage || 'Could not create the brief.');
         }
         const artifactBody = String(payload?.artifact?.body_markdown || payload?.artifact?.body || '').trim();
-        const provider = String(payload?.generation?.provider || 'FlipLink.me').trim();
+        const provider = String(payload?.generation?.provider || 'PropertyQuarry').trim();
         if (artifactNode && artifactBody) {
           artifactNode.textContent = artifactBody;
           artifactNode.hidden = false;

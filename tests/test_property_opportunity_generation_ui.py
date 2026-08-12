@@ -21,4 +21,5 @@ def test_property_result_card_exposes_guarded_opportunity_brief_action() -> None
     assert "/app/api/property/opportunities/${encodeURIComponent(candidateRef)}/generate" in workbench_script
     assert "artifact?.body_markdown" in workbench_script
     assert "Private brief · ${provider}" in workbench_script
+    assert "payload?.generation?.provider || 'PropertyQuarry'" in workbench_script
     assert "external_publication" not in workbench_script

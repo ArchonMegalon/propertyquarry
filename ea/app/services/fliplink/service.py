@@ -1728,11 +1728,24 @@ class FlipLinkPacketService:
             if str(value).strip()
         ]
         recommendation = str(opportunity.get("recommendation") or "").strip().replace("_", " ")
-        contextual_why = (
-            f"{opportunity_title} is worth a closer look because {'; '.join(match_reasons[:3])}."
+        opportunity_fit = opportunity.get("fit_score")
+        try:
+            fit_score = max(0, min(100, round(float(opportunity_fit))))
+        except (TypeError, ValueError):
+            fit_score = 0
+        why_parts = [
+            (
+                f"{opportunity_title} is worth a closer look because "
+                f"{'; '.join(match_reasons[:3])}."
+            )
             if match_reasons
-            else ""
-        )
+            else "",
+            f"Preference fit: {fit_score}/100." if fit_score else "",
+            f"Recommendation: {recommendation}." if recommendation else "",
+            f"Watch: {'; '.join(mismatch_reasons[:2])}." if mismatch_reasons else "",
+            f"Verify next: {'; '.join(unknowns[:2])}." if unknowns else "",
+        ]
+        contextual_why = " ".join(part for part in why_parts if part)
         contextual_tradeoffs = "; ".join((mismatch_reasons + unknowns)[:4])
         body = {
             "why_shortlisted": contextual_why or f"This home is worth sharing now. Feedback so far: {summary.get('dealbreaker_count', 0)} dealbreakers, {summary.get('open_questions_count', 0)} open questions.",
@@ -1767,8 +1780,9 @@ class FlipLinkPacketService:
         }
         if opportunity:
             artifact["opportunity_id"] = str(opportunity.get("opportunity_id") or "").strip()
-            artifact["generation_provider"] = "FlipLink.me"
-            artifact["generation_mode"] = "ltd_runtime_managed"
+            artifact["generation_provider"] = "PropertyQuarry"
+            artifact["generation_mode"] = "local_opportunity_brief"
+            artifact["generation_basis"] = "durable_preference_assessment"
         self._repo.record_event(
             {
                 "publication_id": "",

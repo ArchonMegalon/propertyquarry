@@ -2316,14 +2316,17 @@ def generate_property_opportunity_artifact(
         "opportunity_projection": projection,
         "artifact": artifact,
         "generation": {
+            "provider": "PropertyQuarry",
+            "mode": "local_opportunity_brief",
+            "basis": "durable_preference_assessment",
+            "artifact_status": "ready",
+        },
+        "publication": {
             "provider": ltd_profile.service_name,
             "runtime_state": ltd_profile.runtime_state,
             "action_key": ltd_action.action_key,
-            "artifact_status": "ready",
-            "external_publication_status": (
-                "available" if ltd_action.executable else "not_available"
-            ),
-            "external_publication_executable": bool(ltd_action.executable),
+            "status": "not_requested" if ltd_action.executable else "not_configured",
+            "executable": bool(ltd_action.executable),
         },
     }
 

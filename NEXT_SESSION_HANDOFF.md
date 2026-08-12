@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 05:49 UTC
+Updated: 2026-08-12 09:15 UTC
 
 ## Mission
 
@@ -16,6 +16,36 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 opportunity-generation truth correction
+
+The prior opportunity slice correctly reported that external FlipLink
+publication was unavailable, but it still attributed the locally composed
+private brief to `FlipLink.me`. That was too strong: the FlipLink catalog action
+is non-executable, and no external provider is called when the brief is built.
+
+The source candidate containing this handoff corrects the contract end to end:
+
+- the artifact records `generation_provider=PropertyQuarry`,
+  `generation_mode=local_opportunity_brief`, and
+  `generation_basis=durable_preference_assessment`;
+- the API separates local `generation` from the future `publication` contract;
+- the current FlipLink publication state is `not_configured`, not generated or
+  published;
+- the browser displays `Private brief · PropertyQuarry`; and
+- the brief now carries the match evidence, preference-fit score,
+  recommendation, first risks to watch, and next unknowns to verify.
+
+Focused API, source, summary, search-opportunity, and packet regressions pass
+`15/15`. The real Chromium opportunity journey passes `1/1` and proves the
+truthful label plus decision-evidence copy in the rendered result card.
+
+This remains source evidence until the candidate is published, rebound,
+deployed, and exercised against the live PostgreSQL database. At the start of
+this correction the live database contained zero
+`property_opportunity:%` assessments, so no live-integration claim is allowed
+until a new signed-in Austrian search persists an assessment and the generation
+route persists its corresponding private artifact.
 
 ## 2026-08-12 durable opportunities and LTD-generated private briefs
 

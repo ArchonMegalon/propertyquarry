@@ -4,7 +4,7 @@ from app.product.service import ProductService
 from tests.product_test_helpers import build_product_client
 
 
-def test_property_opportunity_generation_is_principal_scoped_and_ltd_provenanced(monkeypatch) -> None:
+def test_property_opportunity_generation_is_principal_scoped_and_truthfully_provenanced(monkeypatch) -> None:
     client = build_product_client(principal_id="opportunity-owner")
     candidate = {
         "candidate_ref": "candidate-1",
@@ -37,15 +37,21 @@ def test_property_opportunity_generation_is_principal_scoped_and_ltd_provenanced
     assert body["opportunity"]["opportunity_id"]
     assert body["opportunity"]["person_id"] == "elisabeth"
     assert body["artifact"]["opportunity_id"] == body["opportunity"]["opportunity_id"]
-    assert body["artifact"]["generation_provider"] == "FlipLink.me"
-    assert body["artifact"]["generation_mode"] == "ltd_runtime_managed"
+    assert body["artifact"]["generation_provider"] == "PropertyQuarry"
+    assert body["artifact"]["generation_mode"] == "local_opportunity_brief"
+    assert body["artifact"]["generation_basis"] == "durable_preference_assessment"
     assert body["generation"] == {
+        "provider": "PropertyQuarry",
+        "mode": "local_opportunity_brief",
+        "basis": "durable_preference_assessment",
+        "artifact_status": "ready",
+    }
+    assert body["publication"] == {
         "provider": "FlipLink.me",
         "runtime_state": "runtime_managed",
         "action_key": "publish_property_flipbook",
-        "artifact_status": "ready",
-        "external_publication_status": "not_available",
-        "external_publication_executable": False,
+        "status": "not_configured",
+        "executable": False,
     }
 
 
