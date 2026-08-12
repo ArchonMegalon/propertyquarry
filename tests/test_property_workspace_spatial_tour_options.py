@@ -222,6 +222,30 @@ def test_client_payload_promotes_safe_remote_listing_thumbnail() -> None:
     assert result["preview_image_url"] == thumbnail_url
 
 
+def test_client_payload_keeps_transformed_cdn_listing_thumbnail() -> None:
+    thumbnail_url = (
+        "https://i.prod.mp-dst.onyx60.com/plain/immoimporte/justimmo2/"
+        "storage.justimmo.at/thumb/abc123/fm_h1080_w1920/photo-1.jpg/~/token/"
+        "format:jpg/background:ffffff/rs:fill:920:613:1"
+    )
+
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {"thumbnail_url": thumbnail_url}
+    )
+
+    assert result["preview_image_url"] == thumbnail_url
+
+
+def test_client_payload_keeps_query_formatted_cdn_listing_thumbnail() -> None:
+    thumbnail_url = "https://images.example.test/render/asset?width=640&format=webp"
+
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {"thumbnail_url": thumbnail_url}
+    )
+
+    assert result["preview_image_url"] == thumbnail_url
+
+
 def test_client_payload_keeps_a_bounded_safe_thumbnail_fallback() -> None:
     primary_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
     tracking_url = "https://api.willhaben.at/restapi/v2/listings/123.jpg"
@@ -419,6 +443,9 @@ def test_results_template_presents_camera_walkthrough_before_optional_3d_tour() 
     assert "return 'Camera walkthrough';" in workbench_script
     assert 'data-pqx-thumbnail-fallback=' in template
     assert 'data-pqx-thumbnail-fallbacks=' in template
+    assert 'data-pqx-shortlist-diorama\n            data-pqx-thumbnail' in template
+    assert 'data-pqx-thumbnail-image' in template
+    assert 'pqx-result-diorama-empty-label" aria-hidden="true" hidden' in template
     assert 'referrerpolicy="no-referrer"' in template
     assert "pqxThumbnailFallbackAttempted" in workbench_script
     assert "pqxThumbnailFallbackIndex" in workbench_script
@@ -426,6 +453,7 @@ def test_results_template_presents_camera_walkthrough_before_optional_3d_tour() 
     assert 'referrerpolicy="no-referrer" data-pqx-thumbnail-image' in workbench_script
     assert "thumbnail.classList.add('is-recovering')" in workbench_script
     assert "thumbnail.classList.add('is-unavailable')" in workbench_script
+    assert "placeholder.hidden = false" in workbench_script
     assert "eyebrow': 'AI layout preview'" in research_detail
     assert "visual_rail_label_display = 'AI-generated 3D tour'" not in research_detail
     assert research_detail.index("{% if visual_ready_walkthrough %}") < research_detail.index(

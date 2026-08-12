@@ -213,8 +213,11 @@
             class="pqx-result-diorama pqx-result-diorama-button{% if not shortlist_preview_url %} is-placeholder{% endif %}"
             type="button"
             data-pqx-shortlist-diorama
+            data-pqx-thumbnail
             data-pqx-atlas-open
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
+            data-pqx-thumbnail-fallback="{{ candidate.get('preview_image_fallback_url') or '' }}"
+            data-pqx-thumbnail-fallbacks='{{ (candidate.get("preview_image_fallback_urls") or [])|tojson|safe }}'
             aria-label="{{ 'Explore diorama and area map for' if diorama_preview_url else 'Open area map for' }} {{ candidate.get('title') or 'property' }}"
             {% if loop.index > 3 %}data-pqx-deferred-preview-host{% endif %}
           >
@@ -232,7 +235,10 @@
               {% endif %}
               alt=""
               decoding="async"
+              referrerpolicy="no-referrer"
+              data-pqx-thumbnail-image
             >
+            <span class="pqx-result-diorama-empty-label" aria-hidden="true" hidden>Preview not available</span>
             {% else %}
             <span class="pqx-result-diorama-room room-main"></span>
             <span class="pqx-result-diorama-room room-side"></span>

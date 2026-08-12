@@ -264,18 +264,43 @@ def _property_workbench_client_asset_url(value: object, *, kind: str) -> str:
     if not url or _property_workbench_client_url_is_tracking(url):
         return ""
     try:
-        path = urllib.parse.unquote(urllib.parse.urlsplit(url).path or "").strip().lower()
+        parsed = urllib.parse.urlsplit(url)
+        path = urllib.parse.unquote(parsed.path or "").strip().lower()
+        path_and_query = urllib.parse.unquote(
+            f"{parsed.path or ''}?{parsed.query or ''}"
+        ).strip().lower()
     except ValueError:
         return ""
+    normalized_kind = str(kind or "").strip().lower()
     extensions = (
         _PROPERTY_WORKBENCH_CLIENT_VIDEO_EXTENSIONS
-        if str(kind or "").strip().lower() == "video"
+        if normalized_kind == "video"
         else _PROPERTY_WORKBENCH_CLIENT_IMAGE_EXTENSIONS
     )
     if path.endswith(extensions):
         return url
+    if normalized_kind == "image" and (
+        any(
+            segment.endswith(extensions)
+            for segment in path.split("/")
+            if segment
+        )
+        or any(
+            marker in path_and_query
+            for extension in extensions
+            for marker in (
+                f"format:{extension.lstrip('.')}",
+                f"format={extension.lstrip('.')}",
+            )
+        )
+    ):
+        # Image CDNs commonly place the source filename before signed resize or
+        # format path segments. The listing extractor already recognizes this
+        # shape; retaining it here prevents valid thumbnails from disappearing
+        # between extraction and the customer payload.
+        return url
     if (
-        str(kind or "").strip().lower() == "image"
+        normalized_kind == "image"
         and url.startswith("/")
         and not url.startswith("//")
         and path.startswith(_PROPERTY_WORKBENCH_CLIENT_DYNAMIC_IMAGE_PATH_PREFIXES)

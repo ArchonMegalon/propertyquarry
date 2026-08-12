@@ -158,7 +158,7 @@ def test_rendered_listing_results_keep_remote_thumbnail_and_missing_photo_slot()
 
     assert "Vienna home with photo" in html
     assert re.search(
-        rf'<img src="{re.escape(thumbnail_url)}"[^>]*data-pqx-thumbnail-image',
+        rf'<img\s+[^>]*src="{re.escape(thumbnail_url)}"[^>]*data-pqx-thumbnail-image',
         html,
     )
 

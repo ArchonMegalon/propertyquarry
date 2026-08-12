@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 17:24 UTC
+Updated: 2026-08-12 17:36 UTC
 
 ## Mission
 
@@ -103,6 +103,24 @@ whose provider/backend, action, output asset, and receipt all agree; otherwise
 surface the action as unavailable or unproven.
 
 ## 2026-08-12 live thumbnail polish and Play listing completion
+
+The later thumbnail-reliability follow-up closes two additional intermittent
+paths. Transformed CDN image URLs such as signed resize paths and
+`format=webp` query endpoints now survive the same customer-safe projection
+that already accepted ordinary `.jpg` URLs; previously the listing extractor
+kept these images and the workspace projection silently removed them.
+Shortlist/area-preview images now participate in the existing bounded fallback,
+refresh, no-referrer, and failure-placeholder controller instead of bypassing
+it. A failed primary and all failed fallbacks therefore end in the visible
+`Preview not available` state rather than a blank or broken image.
+
+Focused verification for this follow-up passes 23 projection/extractor/template
+tests, the complete 10-test polling contract including a real Chromium broken
+image, six thumbnail workspace contracts, and the isolated Chromium lazy-atlas
+E2E. `git diff --check` is clean. The broad `pytest -k thumbnail` collection
+cannot be treated as one-process evidence because unrelated synchronous
+Playwright fixtures collide with the suite's already-running asyncio loop; the
+same affected Chromium tests pass in their isolated canonical invocations.
 
 The intermittent-thumbnail repair is live and the shortlist now has a truthful
 first-paint fallback. Commit `e75bf00812bfe21815c1b6da131b66a964590504`

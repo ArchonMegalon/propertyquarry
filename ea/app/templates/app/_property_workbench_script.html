@@ -90,6 +90,9 @@
       if (!(image instanceof HTMLImageElement)) return;
       const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
       if (!thumbnail) return;
+      const placeholder = thumbnail.querySelector(
+        '.pqx-thumb-placeholder, .pqx-result-diorama-empty-label'
+      );
       const failedUrls = (() => {
         try {
           const parsed = JSON.parse(image.dataset.pqxThumbnailFailedUrls || '[]');
@@ -118,6 +121,7 @@
       if (fallbackUrl) {
         image.dataset.pqxThumbnailFallbackAttempted = '1';
         image.hidden = false;
+        if (placeholder instanceof HTMLElement) placeholder.hidden = true;
         thumbnail.classList.remove('is-unavailable');
         thumbnail.classList.add('is-recovering');
         image.src = fallbackUrl;
@@ -126,6 +130,7 @@
       thumbnail.classList.remove('is-recovering');
       thumbnail.classList.add('is-unavailable');
       image.hidden = true;
+      if (placeholder instanceof HTMLElement) placeholder.hidden = false;
       if (image.dataset.pqxThumbnailDetailRefreshAttempted === '1') return;
       const candidateRef = String(
         thumbnail.getAttribute('data-candidate-ref')
@@ -152,6 +157,7 @@
           thumbnail.setAttribute('data-pqx-thumbnail-fallbacks', JSON.stringify(refreshedFallbacks));
           image.dataset.pqxThumbnailFallbackIndex = '0';
           image.hidden = false;
+          if (placeholder instanceof HTMLElement) placeholder.hidden = true;
           thumbnail.classList.remove('is-unavailable');
           thumbnail.classList.add('is-recovering');
           image.src = refreshedUrl;
@@ -171,6 +177,10 @@
       const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
       if (!thumbnail || image.naturalWidth <= 0) return;
       image.hidden = false;
+      const placeholder = thumbnail.querySelector(
+        '.pqx-thumb-placeholder, .pqx-result-diorama-empty-label'
+      );
+      if (placeholder instanceof HTMLElement) placeholder.hidden = true;
       thumbnail.classList.remove('is-recovering', 'is-unavailable');
     }, true);
     root.querySelectorAll('[data-pqx-thumbnail-image]').forEach((image) => {

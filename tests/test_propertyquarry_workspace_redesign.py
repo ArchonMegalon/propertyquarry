@@ -6573,24 +6573,25 @@ def test_property_client_scripts_summarize_compact_candidate_copy_for_quiet_refr
     assert "fit_summary: cleanCandidateCopy(candidate?.fit_summary || candidate?.summary || candidate?.compare_reason || '')," not in workbench_script
 
 
-def test_property_results_do_not_hotlink_unverified_provider_thumbnails() -> None:
+def test_property_results_keep_remote_thumbnails_no_referrer_with_fallbacks() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     results_template = (repo_root / "ea/app/templates/app/_property_results_list.html").read_text(encoding="utf-8")
     workbench_template = (repo_root / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
     workbench_script = (repo_root / "ea/app/templates/app/_property_workbench_script.html").read_text(encoding="utf-8")
 
     assert "diorama_preview_url if diorama_preview_url.startswith('/') else ''" in results_template
-    assert "primary_preview_url if primary_preview_url.startswith('/') else ''" in results_template
-    assert "if not diorama_preview_url %} is-placeholder" in results_template
-    assert "{% if diorama_preview_url %}" in results_template
-    assert 'src="{{ diorama_preview_url }}"' in results_template
-    assert 'data-pqx-deferred-src="{{ diorama_preview_url }}"' in results_template
-    assert "diorama_preview_url or primary_preview_url" not in results_template
-    assert "if ranked_preview_url.startswith('/')" in workbench_template
-    assert "const clientRenderableImageUrl = (value) => {" in workbench_script
-    assert "parsed.origin === window.location.origin ? candidateUrl : ''" in workbench_script
-    assert "const shortlistPreviewUrl = dioramaPreviewUrl;" in workbench_script
-    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" not in workbench_script
+    assert "primary_preview_url.startswith('https://')" in results_template
+    assert "if not shortlist_preview_url %} is-placeholder" in results_template
+    assert "{% if shortlist_preview_url %}" in results_template
+    assert 'src="{{ shortlist_preview_url }}"' in results_template
+    assert 'data-pqx-deferred-src="{{ shortlist_preview_url }}"' in results_template
+    assert "diorama_preview_url or primary_preview_url" in results_template
+    assert 'referrerpolicy="no-referrer"' in results_template
+    assert "data-pqx-thumbnail-image" in results_template
+    assert "ranked_preview_url" in workbench_template
+    assert "const thumbnailRenderableUrl = (value) => {" in workbench_script
+    assert "(!sameOrigin && candidateUrl.protocol !== 'https:')" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" in workbench_script
 
 
 def test_property_shortlist_premium_surface_keeps_dioramas_at_the_visual_center() -> None:
