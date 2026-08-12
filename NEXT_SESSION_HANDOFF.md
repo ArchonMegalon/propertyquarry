@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-11 16:20 UTC
+Updated: 2026-08-12 05:49 UTC
 
 ## Mission
 
@@ -16,6 +16,57 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 durable opportunities and LTD-generated private briefs
+
+Source commit `cc8e95f6` completes the missing opportunity and LTD-generation
+slice without changing the live Android bundle or Play track. Every processed
+property search now evaluates discovered candidates against the selected
+person's preference profile and projects the result as a customer-safe
+opportunity. The durable assessment identity is deterministically bound to the
+principal-scoped search run, domain, and candidate. Repeated status polling
+upserts that exact row in both memory and PostgreSQL instead of creating
+duplicate assessments; a new run receives a distinct assessment identity.
+
+Opportunity judgment is additive. It no longer overwrites the search engine's
+established ranking recommendation or reasons. Result cards expose the
+opportunity recommendation, the first tradeoff to watch, and the first unknown
+to verify. The full results surface offers `Create brief`; the compact shortlist
+keeps its minimal `Review`, `Open property`, and remove controls.
+
+`POST /app/api/property/opportunities/{candidate_ref}/generate` resolves only an
+exact candidate from the caller's principal-scoped run, reuses the durable
+assessment when present, and fails closed if persistence or the LTD lane is
+unavailable. It creates a private contextual summary artifact through the
+runtime-managed `FlipLink.me` LTD profile. The response truthfully reports
+external publication as `not_available` while the catalog action is
+non-executable; it never claims a public flipbook or leaks private assessment
+fields into the browser.
+
+Final evidence on the committed bytes:
+
+- opportunity/preference/API/UI contracts: `20 passed`;
+- expanded property-search, Teable, summary, packet, and LTD regression slice:
+  `553 passed, 4 skipped`;
+- remaining indexed facade dependents, including dossier, provider, spatial,
+  and Telegram workflows: `291 passed, 1 skipped`;
+- focused real-browser opportunity generation plus selection: `2 passed`;
+- complete isolated PropertyQuarry browser gate: `130 passed, 1 skipped` in
+  `878.40s`;
+- Python compilation and `git diff --check`: passed.
+
+One earlier full-browser attempt passed all `121` cases it reached, then the
+shared pytest temp root was deleted externally and the final nine cases could
+not set up. Those nine passed independently under an isolated base, and the
+complete isolated rerun then passed with the count above. This was a harness
+filesystem failure, not an application failure.
+
+At the moment this section was written, the source candidate was committed but
+not yet bound into a refreshed release envelope or deployed. Preserve that
+truth boundary: publish and verify the candidate first, materialize its exact
+release evidence second, and deploy only through the reconciled independent
+release authority. Do not send replacement tester/app links through Telegram
+until the exact live provenance and tester eligibility are reverified.
 
 ## 2026-08-11 search-flow polish and lifetime entitlement boundary
 
