@@ -323,6 +323,10 @@ def test_lightweight_status_payload_keeps_first_party_dynamic_thumbnail() -> Non
 
 
 def test_shortlist_uses_area_preview_when_spatial_diorama_is_unavailable() -> None:
+    results_template = (
+        Path(__file__).resolve().parents[1]
+        / "ea/app/templates/app/_property_results_list.html"
+    ).read_text(encoding="utf-8")
     workbench_script = (
         Path(__file__).resolve().parents[1]
         / "ea/app/templates/app/_property_workbench_script.html"
@@ -334,6 +338,10 @@ def test_shortlist_uses_area_preview_when_spatial_diorama_is_unavailable() -> No
     assert ": 'Area preview';" in workbench_script
     assert "Preview not available" in workbench_script
     assert "Diorama not ready" not in workbench_script
+    assert "{% set shortlist_preview_url = diorama_preview_url or primary_preview_url %}" in results_template
+    assert "{{ 'Spatial diorama' if diorama_preview_url else 'Area preview' }}" in results_template
+    assert 'src="{{ shortlist_preview_url }}"' in results_template
+    assert "Diorama not ready" not in results_template
 
 
 def test_generated_reconstruction_is_not_projected_as_provider_3d_tour(

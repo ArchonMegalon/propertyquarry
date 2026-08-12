@@ -167,6 +167,7 @@
 		      {% set primary_preview_url = candidate.get('preview_image_url') or orientation_preview.get('thumb_image_url') or orientation_preview.get('image_url') or '' %}
 		      {% set diorama_preview_url = diorama_preview_url if diorama_preview_url.startswith('/') else '' %}
 		      {% set primary_preview_url = primary_preview_url if ((primary_preview_url.startswith('/') and not primary_preview_url.startswith('//')) or primary_preview_url.startswith('https://')) else '' %}
+		      {% set shortlist_preview_url = diorama_preview_url or primary_preview_url %}
 	      {% set candidate_facts = candidate.get('property_facts') or {} %}
 	      {% set provisional_facts = candidate.get('provisional_facts') or candidate.get('facts') or {} %}
 	      {% set candidate_price_text = candidate.get('price_display') if candidate.get('price_display') and candidate.get('price_display') != 'n/a' else (candidate.get('rent_display') or candidate_facts.get('price_display') or candidate_facts.get('rent_display') or candidate_facts.get('price') or candidate_facts.get('rent') or provisional_facts.get('price_display') or provisional_facts.get('rent_display') or provisional_facts.get('price') or provisional_facts.get('rent') or '') %}
@@ -209,23 +210,23 @@
 	        <span class="pqx-result-media{% if is_shortlist_surface %} has-diorama{% endif %}">
           {% if is_shortlist_surface %}
           <button
-            class="pqx-result-diorama pqx-result-diorama-button{% if not diorama_preview_url %} is-placeholder{% endif %}"
+            class="pqx-result-diorama pqx-result-diorama-button{% if not shortlist_preview_url %} is-placeholder{% endif %}"
             type="button"
             data-pqx-shortlist-diorama
             data-pqx-atlas-open
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
-            aria-label="Explore diorama and area map for {{ candidate.get('title') or 'property' }}"
+            aria-label="{{ 'Explore diorama and area map for' if diorama_preview_url else 'Open area map for' }} {{ candidate.get('title') or 'property' }}"
             {% if loop.index > 3 %}data-pqx-deferred-preview-host{% endif %}
           >
-            {% if diorama_preview_url %}
+            {% if shortlist_preview_url %}
             <img
               {% if loop.index <= 3 %}
-              src="{{ diorama_preview_url }}"
+              src="{{ shortlist_preview_url }}"
               loading="{{ 'eager' if loop.first else 'lazy' }}"
               fetchpriority="{{ 'high' if loop.first else 'low' }}"
               {% else %}
               src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
-              data-pqx-deferred-src="{{ diorama_preview_url }}"
+              data-pqx-deferred-src="{{ shortlist_preview_url }}"
               loading="lazy"
               fetchpriority="low"
               {% endif %}
@@ -236,10 +237,10 @@
             <span class="pqx-result-diorama-room room-main"></span>
             <span class="pqx-result-diorama-room room-side"></span>
             <span class="pqx-result-diorama-room room-terrace"></span>
-            <span class="pqx-result-diorama-empty-label" aria-hidden="true">Diorama not ready</span>
+            <span class="pqx-result-diorama-empty-label" aria-hidden="true">Preview not available</span>
             {% endif %}
             <span class="pqx-shortlist-visual-chrome" aria-hidden="true">
-              <span class="pqx-shortlist-visual-label">Spatial diorama</span>
+              <span class="pqx-shortlist-visual-label">{{ 'Spatial diorama' if diorama_preview_url else 'Area preview' }}</span>
               <span class="pqx-shortlist-visual-action">Explore <b>&#8599;</b></span>
             </span>
           </button>
