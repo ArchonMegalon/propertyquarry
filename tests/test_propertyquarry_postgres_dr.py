@@ -304,6 +304,9 @@ def _off_host_object(
         "off_host": True,
         "object_exists": True,
         "checksum_verified": True,
+        "immutability_verified": True,
+        "object_lock_mode": "COMPLIANCE",
+        "object_lock_retain_until": "2026-08-13T10:00:00Z",
         "provider_request_id": "verify-request-release-1",
         "verified_at": verified_at,
         "verification_method": dr.REMOTE_PROVIDER_CONTRACTS["s3"]["verification_method"],
@@ -328,6 +331,8 @@ def _off_host_retrieval(
                 "object_key",
                 "version_id",
                 "etag",
+                "object_lock_mode",
+                "object_lock_retain_until",
             )
         },
         "sha256": remote["sha256"],
@@ -347,13 +352,17 @@ def _aws_object_response(
     *,
     artifact: Path,
     version_id: str = "3LgX-release-object-version",
+    object_lock_mode: str = "COMPLIANCE",
+    server_side_encryption: str = "AES256",
 ) -> str:
     return json.dumps(
         {
             "VersionId": version_id,
             "ETag": '"d41d8cd98f00b204e9800998ecf8427e"',
             "ContentLength": artifact.stat().st_size,
-            "ServerSideEncryption": "AES256",
+            "ServerSideEncryption": server_side_encryption,
+            "ObjectLockMode": object_lock_mode,
+            "ObjectLockRetainUntilDate": "2026-08-13T10:00:00Z",
         }
     ) + "\n"
 
@@ -712,6 +721,9 @@ def test_backup_encrypts_validated_dump_and_emits_redacted_checksum_receipt(
                         "off_host": True,
                         "object_exists": True,
                         "checksum_verified": True,
+                        "immutability_verified": True,
+                        "object_lock_mode": "COMPLIANCE",
+                        "object_lock_retain_until": "1970-02-01T00:16:40Z",
                         "provider_request_id": "verify-request-release-1",
                         "verified_at": dr._utc_iso(1_000.0),
                         "verification_method": dr.REMOTE_PROVIDER_CONTRACTS["s3"][
@@ -1808,6 +1820,8 @@ def test_provider_retrieval_uses_minimal_environment_and_binds_cli_attestation(
         clock=_Clock(datetime(2026, 7, 13, 10, 0, 15, tzinfo=timezone.utc).timestamp()),
     ) as (retrieval, descriptor):
         assert retrieval["aws_cli"]["path"] == aws_pin["path"]
+        assert retrieval["object_lock_mode"] == "COMPLIANCE"
+        assert retrieval["object_lock_retain_until"] == "2026-08-13T10:00:00Z"
         assert os.pread(descriptor, len(remote_artifact.read_bytes()), 0) == remote_artifact.read_bytes()
     assert observed_envs[0] == {
         "PATH": dr.AWS_CLI_MINIMAL_PATH,
@@ -1821,6 +1835,178 @@ def test_provider_retrieval_uses_minimal_environment_and_binds_cli_attestation(
         assert "DATABASE_URL" not in provider_env
         assert "HOME" not in provider_env
         assert "UNRELATED_SECRET" not in provider_env
+
+
+def test_provider_retrieval_rejects_weakened_object_lock_retention(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    remote_artifact = tmp_path / "remote-backup.dump"
+    remote_artifact.write_bytes(b"verified-remote-bytes")
+    destination = tmp_path / "retrieved-backup.dump"
+    _install_fake_aws_cli(monkeypatch, tmp_path)
+
+    def runner(command, **_kwargs):
+        command = list(command)
+        if "--version" in command:
+            return _result(
+                stdout=(
+                    f"aws-cli/{AWS_CLI_APPROVED_VERSION} Python/3 test/Linux\n"
+                )
+            )
+        if "get-object" in command:
+            Path(command[-1]).write_bytes(remote_artifact.read_bytes())
+        return _result(
+            stdout=_aws_object_response(
+                artifact=remote_artifact,
+                object_lock_mode="GOVERNANCE",
+            ),
+            stderr=_aws_debug_stderr("provider-request-object-lock"),
+        )
+
+    artifact_receipt = dict(
+        _backup_receipt_payload(artifact=remote_artifact)["artifact"]
+    )
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        with dr._retrieve_off_host_object(
+            env={
+                "AWS_ACCESS_KEY_ID": "provider-access",
+                "AWS_SECRET_ACCESS_KEY": "provider-secret",
+            },
+            runner=runner,
+            commands=[],
+            off_host_object=_off_host_object(artifact=remote_artifact),
+            artifact=artifact_receipt,
+            destination=destination,
+            clock=_Clock(
+                datetime(
+                    2026,
+                    7,
+                    13,
+                    10,
+                    0,
+                    15,
+                    tzinfo=timezone.utc,
+                ).timestamp()
+            ),
+        ):
+            pytest.fail("weakened Object Lock must not reach restore")
+
+    assert exc.value.code == "off_host_immutability_unverified"
+
+
+def test_provider_retrieval_requires_aes256_on_each_provider_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    remote_artifact = tmp_path / "remote-backup.dump"
+    remote_artifact.write_bytes(b"verified-remote-bytes")
+    destination = tmp_path / "retrieved-backup.dump"
+    _install_fake_aws_cli(monkeypatch, tmp_path)
+
+    def runner(command, **_kwargs):
+        command = list(command)
+        if "--version" in command:
+            return _result(
+                stdout=(
+                    f"aws-cli/{AWS_CLI_APPROVED_VERSION} Python/3 test/Linux\n"
+                )
+            )
+        is_get = "get-object" in command
+        if is_get:
+            Path(command[-1]).write_bytes(remote_artifact.read_bytes())
+        return _result(
+            stdout=_aws_object_response(
+                artifact=remote_artifact,
+                server_side_encryption="aws:kms" if is_get else "AES256",
+            ),
+            stderr=_aws_debug_stderr("provider-request-encryption"),
+        )
+
+    artifact_receipt = dict(
+        _backup_receipt_payload(artifact=remote_artifact)["artifact"]
+    )
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        with dr._retrieve_off_host_object(
+            env={
+                "AWS_ACCESS_KEY_ID": "provider-access",
+                "AWS_SECRET_ACCESS_KEY": "provider-secret",
+            },
+            runner=runner,
+            commands=[],
+            off_host_object=_off_host_object(artifact=remote_artifact),
+            artifact=artifact_receipt,
+            destination=destination,
+            clock=_Clock(
+                datetime(
+                    2026,
+                    7,
+                    13,
+                    10,
+                    0,
+                    15,
+                    tzinfo=timezone.utc,
+                ).timestamp()
+            ),
+        ):
+            pytest.fail("changed server-side encryption must not reach restore")
+
+    assert exc.value.code == "off_host_encryption_unverified"
+
+
+def test_provider_retrieval_requires_distinct_head_and_get_request_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    remote_artifact = tmp_path / "remote-backup.dump"
+    remote_artifact.write_bytes(b"verified-remote-bytes")
+    destination = tmp_path / "retrieved-backup.dump"
+    _install_fake_aws_cli(monkeypatch, tmp_path)
+
+    def runner(command, **_kwargs):
+        command = list(command)
+        if "--version" in command:
+            return _result(
+                stdout=(
+                    f"aws-cli/{AWS_CLI_APPROVED_VERSION} Python/3 test/Linux\n"
+                )
+            )
+        if "get-object" in command:
+            Path(command[-1]).write_bytes(remote_artifact.read_bytes())
+        return _result(
+            stdout=_aws_object_response(artifact=remote_artifact),
+            stderr=_aws_debug_stderr("reused-provider-request"),
+        )
+
+    artifact_receipt = dict(
+        _backup_receipt_payload(artifact=remote_artifact)["artifact"]
+    )
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        with dr._retrieve_off_host_object(
+            env={
+                "AWS_ACCESS_KEY_ID": "provider-access",
+                "AWS_SECRET_ACCESS_KEY": "provider-secret",
+            },
+            runner=runner,
+            commands=[],
+            off_host_object=_off_host_object(artifact=remote_artifact),
+            artifact=artifact_receipt,
+            destination=destination,
+            clock=_Clock(
+                datetime(
+                    2026,
+                    7,
+                    13,
+                    10,
+                    0,
+                    15,
+                    tzinfo=timezone.utc,
+                ).timestamp()
+            ),
+        ):
+            pytest.fail("reused provider request identity must not reach restore")
+
+    assert exc.value.code == "off_host_retrieval_provenance_missing"
 
 
 def test_provider_retrieval_detects_destination_swap_during_cli(

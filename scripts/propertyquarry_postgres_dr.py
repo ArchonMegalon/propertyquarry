@@ -106,6 +106,7 @@ DEFAULT_RESTORE_MAX_DURATION_SECONDS = 1_800.0
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 3_600.0
 DEFAULT_RELEASE_EVIDENCE_MAX_AGE_SECONDS = 86_400.0
 DEFAULT_RECEIPT_FUTURE_TOLERANCE_SECONDS = 300.0
+DEFAULT_OFF_HOST_MINIMUM_RETENTION_SECONDS = 7 * 86_400.0
 MAX_RECEIPT_BYTES = 16 * 1024 * 1024
 RESTORE_RTO_SCOPE = (
     "off_host_retrieval",
@@ -2484,6 +2485,10 @@ def _validated_off_host_object(
     etag = _normalize_s3_etag(payload.get("etag"))
     verification_method = str(payload.get("verification_method") or "").strip()
     provider_request_id = str(payload.get("provider_request_id") or "").strip()
+    object_lock_mode = str(payload.get("object_lock_mode") or "").strip().upper()
+    object_lock_retain_until = str(
+        payload.get("object_lock_retain_until") or ""
+    ).strip()
     sha256 = str(payload.get("sha256") or "").strip().lower()
     try:
         size_bytes = int(payload.get("size_bytes") or 0)
@@ -2552,6 +2557,23 @@ def _validated_off_host_object(
             "off_host_checksum_unverified",
             "The remote verifier did not verify the off-host object checksum.",
         )
+    try:
+        retain_until_epoch = _parse_utc_iso(object_lock_retain_until)
+    except DisasterRecoveryError as exc:
+        raise DisasterRecoveryError(
+            "off_host_immutability_invalid",
+            "Off-host Object Lock retention is invalid.",
+        ) from exc
+    if (
+        payload.get("immutability_verified") is not True
+        or object_lock_mode != "COMPLIANCE"
+        or retain_until_epoch
+        < now_epoch + DEFAULT_OFF_HOST_MINIMUM_RETENTION_SECONDS
+    ):
+        raise DisasterRecoveryError(
+            "off_host_immutability_unverified",
+            "Off-host evidence must prove active S3 Object Lock COMPLIANCE retention.",
+        )
     if payload.get("encrypted") is not True:
         raise DisasterRecoveryError(
             "off_host_encryption_unverified",
@@ -2598,6 +2620,9 @@ def _validated_off_host_object(
         "off_host": True,
         "object_exists": True,
         "checksum_verified": True,
+        "immutability_verified": True,
+        "object_lock_mode": "COMPLIANCE",
+        "object_lock_retain_until": _utc_iso(retain_until_epoch),
         "verified_at": _utc_iso(verified_epoch),
         "verification_method": verification_method,
         "provider_request_id": provider_request_id,
@@ -3197,6 +3222,8 @@ def _validated_off_host_retrieval(
         "object_key",
         "version_id",
         "etag",
+        "object_lock_mode",
+        "object_lock_retain_until",
     )
     normalized_identity = {
         key: (
@@ -3342,6 +3369,13 @@ def _retrieve_off_host_object(
     object_key = str(off_host_object.get("object_key") or "")
     version_id = str(off_host_object.get("version_id") or "")
     etag = _normalize_s3_etag(off_host_object.get("etag"))
+    object_lock_mode = str(
+        off_host_object.get("object_lock_mode") or ""
+    ).strip().upper()
+    object_lock_retain_until = str(
+        off_host_object.get("object_lock_retain_until") or ""
+    ).strip()
+    object_lock_retain_epoch = _parse_utc_iso(object_lock_retain_until)
     provider_env = _minimal_hook_environment(env, declared_keys_env=None, provider_keys=True)
     provider_env.update(
         {
@@ -3466,11 +3500,34 @@ def _retrieve_off_host_object(
                     "off_host_retrieval_identity_mismatch",
                     f"Provider {label} response does not match the immutable receipt identity.",
                 )
-        if not str(head.get("ServerSideEncryption") or retrieved.get("ServerSideEncryption") or "").strip():
-            raise DisasterRecoveryError(
-                "off_host_encryption_unverified",
-                "Provider response does not prove server-side encryption.",
-            )
+            response_lock_mode = str(
+                response.get("ObjectLockMode") or ""
+            ).strip().upper()
+            response_encryption = str(
+                response.get("ServerSideEncryption") or ""
+            ).strip()
+            try:
+                response_retain_epoch = _parse_utc_iso(
+                    response.get("ObjectLockRetainUntilDate")
+                )
+            except DisasterRecoveryError as exc:
+                raise DisasterRecoveryError(
+                    "off_host_immutability_unverified",
+                    f"Provider {label} Object Lock retention is invalid.",
+                ) from exc
+            if response_encryption != "AES256":
+                raise DisasterRecoveryError(
+                    "off_host_encryption_unverified",
+                    f"Provider {label} response does not prove the required AES256 server-side encryption.",
+                )
+            if (
+                response_lock_mode != object_lock_mode
+                or response_retain_epoch < object_lock_retain_epoch
+            ):
+                raise DisasterRecoveryError(
+                    "off_host_immutability_unverified",
+                    f"Provider {label} response does not preserve the receipt-bound Object Lock retention.",
+                )
 
         def provider_request_id(response: Mapping[str, object], result: object) -> str:
             metadata = response.get("ResponseMetadata")
@@ -3483,10 +3540,14 @@ def _retrieve_off_host_object(
 
         head_request_id = provider_request_id(head, head_result)
         get_request_id = provider_request_id(retrieved, get_result)
-        if not head_request_id or not get_request_id:
+        if (
+            not head_request_id
+            or not get_request_id
+            or head_request_id == get_request_id
+        ):
             raise DisasterRecoveryError(
                 "off_host_retrieval_provenance_missing",
-                "Provider head/get request identities are required.",
+                "Distinct provider head/get request identities are required.",
             )
         opened = _validate_open_retrieval_file(
             destination=destination,
@@ -3501,6 +3562,8 @@ def _retrieve_off_host_object(
             "object_key": object_key,
             "version_id": version_id,
             "etag": etag,
+            "object_lock_mode": object_lock_mode,
+            "object_lock_retain_until": object_lock_retain_until,
             "sha256": _sha256_descriptor(destination_descriptor),
             "size_bytes": opened.st_size,
             "object_exists": True,

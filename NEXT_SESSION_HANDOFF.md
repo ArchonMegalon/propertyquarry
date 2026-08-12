@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 14:35 UTC
+Updated: 2026-08-12 15:07 UTC
 
 ## Mission
 
@@ -16,6 +16,52 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 encrypted off-host DR boundary
+
+The source commit containing this handoff adds the concrete, fail-closed AWS S3
+backup verifier at `scripts/propertyquarry_s3_backup_verify.py` and strengthens
+restore validation in `scripts/propertyquarry_postgres_dr.py`. The verifier
+accepts only an exact encrypted artifact descriptor, attests the tracked pinned
+AWS CLI, uploads to the official regional S3 endpoint with SHA-256, `AES256`,
+and Object Lock `COMPLIANCE`, then performs provider-native head and exact-version
+read-back. It independently streams the downloaded descriptor through SHA-256
+and requires both AWS responses to preserve the version, ETag, length, checksum,
+digest metadata, `AES256`, COMPLIANCE mode, and requested retention. Backup
+receipts now require active COMPLIANCE retention extending at least seven days;
+the concrete helper only accepts configured retention of 30-3,650 days.
+
+Focused verification passes `105/105` DR and locked-S3 tests, exact compilation,
+and `git diff --check`. The tests include plaintext refusal, noncanonical key
+prefix refusal, streaming read-back checksum enforcement, immutable version
+binding, weakened head/get Object Lock refusal, changed encryption refusal,
+distinct provider-request identities, and restore-side retention/encryption
+refusal. The DR runbook now documents the exact helper, release-tree
+installation, bucket prerequisites, required configuration, and critical-data
+contract/evidence version 4.
+
+This does **not** satisfy the live DR launch prerequisite. The read-only runtime
+audit at `2026-08-12T15:07Z` found:
+
+- `propertyquarry-backup-live` running healthy with only the legacy local
+  plaintext daemon and no encryption, S3, Object Lock, region, or AWS credential
+  configuration;
+- the newest observed local dump at
+  `/backups/propertyquarry-20260812T092158Z.dump`, 42,344,555 bytes;
+- the tracked AWS CLI pin resolving to the exact host AWS CLI 2.35.16, but STS
+  failing with `NoCredentials`;
+- zero GPG public keys and no configured backup encryption recipient; and
+- no host `pg_dump`, `pg_restore`, or `psql`, hence no authorized disposable
+  restore-drill environment.
+
+No encrypted artifact, immutable S3 version, provider receipt, disposable
+restore, RPO/RTO receipt, or DR release-gate receipt was fabricated or claimed.
+External authority must provide an approved AWS identity and bucket with
+Versioning/Object Lock, the recovery public key and recipient fingerprint, and
+an isolated disposable PostgreSQL restore target/toolchain. Then install the
+two DR scripts plus tracked pin manifest together in a trusted release tree,
+run a fresh encrypted backup through the locked-S3 helper, retrieve that exact
+version, complete the disposable restore drill, and run the exact-release gate.
 
 ## 2026-08-12 fail-closed paid-billing admission
 
@@ -58,12 +104,12 @@ index projection rather than the PropertyQuarry working tree; it reported no
 broken imports or parse errors, and the PropertyQuarry tests above are the
 authoritative result.
 
-This fix is source-published but intentionally not deployed. The current live
-container still runs the earlier image until the explicit Google device
-challenge is completed; the browser-assist lock forbids deployment or restart.
-After that explicit user confirmation, deploy this candidate before exposing
-any paid checkout. Do not populate the handoff fields until the external canary
-has actually passed for the exact deployed commit and image.
+This fix is included in the later live descendant deployment at commit
+`31dd6f789535979b3798cf2fb1a4428967c05b97`. Paid checkout nevertheless remains
+fail-closed because no exact-release external canary admission was installed.
+Do not populate the handoff fields until checkout, principal preservation,
+signed idempotent webhooks, entitlement grant, and cancellation have actually
+passed for the exact deployed commit and image.
 
 ## 2026-08-12 principal-bound LTD execution truth
 
@@ -95,13 +141,12 @@ Verification on the committed bytes passed:
 - every 1min tool-execution contract: `25 passed`;
 - exact module compilation and `git diff --check`: passed.
 
-This source commit is pushed but intentionally **not deployed**. BrowserAct is
-still in the explicit Google device-challenge handoff (challenge number `61`),
-so the human-assist lock forbids browser commands, app restarts, and deployment
-until the user explicitly replies that the challenge is complete. Automatic
-goal continuation is not that reply. After explicit completion, deploy through
-the canonical authority and rerun signed-in Austrian search, opportunity,
-generation, and LTD receipt verification against the live PostgreSQL runtime.
+This source commit is included in the later live descendant deployment at
+`31dd6f789535979b3798cf2fb1a4428967c05b97`; the old Google device-challenge
+handoff is no longer active. Deployment does not turn an inventory entry into
+provider proof. Rerun principal-bound Austrian search, opportunity, generation,
+and LTD calls whenever external credentials or provider state change, and keep
+every unproven action labeled honestly.
 
 ## 2026-08-12 exact public-launch authority handoff
 
@@ -152,7 +197,8 @@ DR claim was made.
 
 ## 2026-08-12 resilient result thumbnails
 
-The source commit containing this handoff repairs intermittent missing result
+Commit `31dd6f789535979b3798cf2fb1a4428967c05b97` is pushed and deployed through
+the canonical PropertyQuarry authority. It repairs intermittent missing result
 thumbnails without weakening the existing image-URL safety boundary. Result
 cards previously projected only one remote listing image; a transient CDN,
 hotlink, or Android WebView load failure immediately hid it even when another
@@ -167,12 +213,21 @@ is exhausted. Remote fallbacks remain HTTPS-only; same-origin HTTP is accepted
 only for local development and test hosts. Live polling cards carry the same
 fallback and referrer-policy contract as the initial server-rendered cards.
 
-Verification on the candidate bytes passed:
+Verification on the deployed bytes passed:
 
-- payload and template contracts: `13 passed`;
+- focused payload/backend contracts: `17 passed`;
+- the broader related suite: `36 passed`;
 - the real retry/exhaustion journey in Chromium, Firefox, and WebKit:
   `3 passed`;
 - exact changed-module compilation and `git diff --check`: passed.
+
+The live receipt binds envelope
+`31dd6f789535979b3798cf2fb1a4428967c05b97`, runtime-manifest SHA
+`e73c938906ef44f2c474cda22a8d17104c741bb7`, and web image
+`sha256:5d3bb782bd5de73da8e110d17e13e4d16a8505d7bf8cbe4361612857544970f5`,
+observed at `2026-08-12T14:59:58Z`. Public BrowserAct verification returned
+HTTP 200 from readiness and confirmed the deployed candidate/failure-ledger
+asset contract.
 
 The canonical `property-release-gates` target still fails closed before running
 its broader suite because `PROPERTYQUARRY_DR_BACKUP_RECEIPT` and
