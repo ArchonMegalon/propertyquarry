@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 22:00 UTC
+Updated: 2026-08-13 00:08 CEST
 
 ## Mission
 
@@ -42,17 +42,52 @@ Preserve this event repository as the authoritative summary-artifact store.
 
 The newest local database dump remains
 `propertyquarry-20260812T092158Z.dump`, 42,344,555 bytes. At
-`2026-08-12T21:29Z`, its recorded SHA-256 sidecar passed `sha256sum -c` and its
-custom-format catalog passed `pg_restore --list`. This proves local artifact
-integrity only. The healthy backup container still has no encryption recipient,
-S3 bucket/key prefix/Object Lock duration, AWS access identity, or AWS region;
-it contains PostgreSQL restore tools but no AWS CLI or GPG. The host has an
-installed GPG binary but zero public keys and has neither AWS CLI nor PostgreSQL
-client tools. The fixed public-launch authority and AWS CLI trust-store files
-also remain absent. Therefore no compliant encrypted artifact can be created,
-uploaded to immutable off-host storage, read back, or restored into a governed
-disposable target until those external authorities are supplied. Do not treat
-the validated local dump as off-host DR.
+`2026-08-12T22:06Z`, its recorded SHA-256 sidecar passed `sha256sum -c` from
+the correct `/backups` working directory and its custom-format catalog passed
+`pg_restore --list`. This proves local artifact integrity only. The newer
+off-host authority section below supersedes the earlier claim that this host
+has no off-host storage or trusted AWS CLI.
+
+## 2026-08-13 off-host DR authority correction
+
+This host does have authenticated off-host storage: rclone mounts exist for
+pCloud, OneDrive, and Internxt. pCloud reports about 18.69 TB total and 8.28 TB
+free. A bounded write/read/delete canary at
+`pcloud:PropertyQuarry/DR-authority-probes/2026-08-13T0005CEST-write-read-canary.txt`
+proved the pCloud principal writable at `2026-08-12T22:05:08Z`: the 66-byte
+provider object read back with the exact expected SHA-256
+`62fd87a38c7a2a58cf3c5776871b0667794894c6a4b2787b47843446cfb2abc8`.
+The exact canary was then deleted and its absence verified. No database bytes,
+credentials, customer data, or release artifact were uploaded.
+
+This does **not** satisfy the launch DR contract. All three configured rclone
+backends are plain provider remotes (`pcloud`, `onedrive`, and `internxt`), not
+an encrypted `crypt` remote. pCloud exposes SHA-256 and normal copy/move/delete
+operations, but no compliance retention tier, immutable provider version ID,
+Object Lock, or metadata contract matching
+`propertyquarry.off_host_retrieval.v2`. The host GPG keyring still contains zero
+public recipients, so creating an encrypted artifact now would either be
+unrecoverable after host loss or would invent an unapproved recovery secret.
+Do not upload the plaintext dump or count these sync mounts as launch DR.
+
+The tracked AWS CLI release pin is now genuinely `CONFIGURED`: executable
+`aws-cli/2.35.16` exists at the pinned path, its SHA-256 matches
+`d17130561271a8c117f517c03bcd867fd8525408c999558149dc8f2f8f9b1d3d`,
+and the minimal-environment version probe passes. The command is deliberately
+outside the ordinary host `PATH`, and the backup container still does not carry
+it. What remains external is the provider authority: the host has no AWS
+environment credentials or profile, the pinned CLI's read-only STS probe fails
+`NoCredentials`, and no PropertyQuarry S3 bucket, region, key prefix, or Object
+Lock duration is configured. The public-launch authority and runtime trust
+store files also remain absent. A compliant run still requires an externally
+held encryption recipient plus scoped AWS credentials for a versioned S3
+bucket with COMPLIANCE Object Lock, followed by exact-version provider
+read-back and a disposable restore receipt.
+
+Do not use `rclone config redacted` for future audits: the Internxt backend did
+not redact an embedded access-token field. The observed access token was
+already expired and is not recorded in this handoff; inspect remote types via
+`listremotes` and `backend features` instead.
 
 ## 2026-08-12 Elisabeth lifetime Agent entitlement applied
 
@@ -179,16 +214,17 @@ preceding two hours. Production API telemetry contained zero requests to
 `/mobile/auth/bridge`, or `/mobile/auth/redeem`. The previously proven physical
 flow is not a fresh pass for this exact web image; do not claim otherwise.
 
-Encrypted off-host DR is also still externally blocked. The backup container
-is running healthy on a 24-hour interval and its newest local artifact remains
+Encrypted off-host DR is also still externally blocked, but not for lack of
+generic cloud capacity or tooling. The backup container is healthy on a
+24-hour interval and its newest local artifact remains
 `propertyquarry-20260812T092158Z.dump`, 42,344,555 bytes, with a verified local
-SHA-256 sidecar. It has no AWS, locked-S3, or encryption-recipient configuration;
-the container has PostgreSQL client tools but no AWS CLI or GPG, the host has
-zero GPG public keys and no PostgreSQL client tools, and both fixed external
-launch-authority/trust-store files remain absent. The repository's locked-S3
-and restore-gate verifiers are present, but there is still no encrypted
+SHA-256 sidecar. The host has writable pCloud, OneDrive, and Internxt remotes
+and a verified pinned AWS CLI; the exact evidence and non-authoritative pCloud
+canary are in the newer DR section above. It still has zero GPG public
+recipients, no AWS principal, no locked-S3 configuration, no encrypted
 artifact, immutable S3 version, provider read-back, disposable restore receipt,
-or signed public-launch authority. Do not weaken this boundary.
+or signed public-launch authority. Do not weaken this boundary or substitute a
+plain sync mount for the required recovery proof.
 
 ## 2026-08-12 Austria closed test approved and first tester enrolled
 
