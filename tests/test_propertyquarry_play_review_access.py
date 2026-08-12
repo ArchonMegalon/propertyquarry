@@ -129,7 +129,7 @@ def test_play_review_rejects_explicit_cross_site_origin(
 def test_play_review_accepts_canonical_https_origin_behind_http_tunnel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = _client(monkeypatch, base_url="http://propertyquarry.com")
+    client = _client(monkeypatch, base_url="http://propertyquarry-api:8090")
 
     response = client.post(
         "/sign-in/play-review",
