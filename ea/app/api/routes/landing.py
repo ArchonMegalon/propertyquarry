@@ -7432,10 +7432,16 @@ async def play_review_sign_in(
     access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
 ) -> HTMLResponse | RedirectResponse:
     config = _play_review_access_config_or_404(request)
-    _require_same_origin_browser_post(
-        request,
-        detail="play_review_origin_invalid",
-    )
+    # BrowserAct and some app-review handoff contexts submit top-level forms
+    # from an opaque browser origin and therefore send the literal Origin:
+    # null. This endpoint has no ambient login authority: the isolated,
+    # rate-limited reviewer credential is still required. Preserve the normal
+    # exact-origin check for every named or missing origin.
+    if str(request.headers.get("origin") or "").strip().lower() != "null":
+        _require_same_origin_browser_post(
+            request,
+            detail="play_review_origin_invalid",
+        )
     raw_body = await request.body()
     form_data = (
         urllib.parse.parse_qs(

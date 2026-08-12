@@ -143,6 +143,23 @@ def test_play_review_accepts_canonical_https_origin_behind_http_tunnel(
     assert "ea_workspace_session=" in str(response.headers.get("set-cookie") or "")
 
 
+def test_play_review_accepts_explicit_opaque_browser_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(monkeypatch, base_url="http://propertyquarry-api:8090")
+
+    response = client.post(
+        "/sign-in/play-review",
+        data=_credentials(),
+        headers={"origin": "null"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/app/search"
+    assert "ea_workspace_session=" in str(response.headers.get("set-cookie") or "")
+
+
 def test_play_review_rejects_invalid_credentials_with_generic_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
