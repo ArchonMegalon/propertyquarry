@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 21:21 UTC
+Updated: 2026-08-12 21:30 UTC
 
 ## Mission
 
@@ -16,6 +16,43 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 current-head opportunity and DR revalidation
+
+The Austria opportunity claim was re-read directly from deployed PostgreSQL at
+`2026-08-12T21:29Z` against source head
+`60823de164644a74c6e0cebfcb349c57fcd3841b` and web image
+`sha256:c3641c97aed096adb9a2792c9a332273aaf5627c951ce5f412d0050808cd10fa`.
+Real reviewer-principal run `0d39c56749b04ec795302ad5e1ab6023` remains
+`processed`, has 10 ranked Austrian candidates, 10 persisted opportunity
+assessments, and zero persistence failures. The named assessment for
+`property-scout:1355793819` remains principal- and run-scoped in
+`preference_decision_assessments` with a numeric fit score and confidence,
+recommendation, predicted reaction, one match reason, and five explicit
+unknowns.
+
+The useful brief is also durable in the deployed database; it is not expected
+in the generic kernel `artifacts` table. Artifact
+`sum_f07010e1bf9443d68817e1316ce801c6` resolves in
+`property_packet_publication_events` as exactly one
+`property_summary_artifact_generated` event for the same principal. Its stored
+body is 220 characters, its generation mode is `local_opportunity_brief`, and
+its publication fields remain honestly `local_only` and `not_published`.
+Preserve this event repository as the authoritative summary-artifact store.
+
+The newest local database dump remains
+`propertyquarry-20260812T092158Z.dump`, 42,344,555 bytes. At
+`2026-08-12T21:29Z`, its recorded SHA-256 sidecar passed `sha256sum -c` and its
+custom-format catalog passed `pg_restore --list`. This proves local artifact
+integrity only. The healthy backup container still has no encryption recipient,
+S3 bucket/key prefix/Object Lock duration, AWS access identity, or AWS region;
+it contains PostgreSQL restore tools but no AWS CLI or GPG. The host has an
+installed GPG binary but zero public keys and has neither AWS CLI nor PostgreSQL
+client tools. The fixed public-launch authority and AWS CLI trust-store files
+also remain absent. Therefore no compliant encrypted artifact can be created,
+uploaded to immutable off-host storage, read back, or restored into a governed
+disposable target until those external authorities are supplied. Do not treat
+the validated local dump as off-host DR.
 
 ## 2026-08-12 Elisabeth lifetime Agent entitlement applied
 
