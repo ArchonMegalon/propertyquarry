@@ -1020,7 +1020,12 @@ def test_live_mobile_smoke_seeded_research_detail_payload_is_valid_detail_fixtur
     demo_image = Path(__file__).resolve().parents[1] / "ea" / "app" / "static" / "propertyquarry-demo-home.svg"
     assert demo_image.is_file()
     assert demo_image.read_text(encoding="utf-8").startswith("<svg ")
-    assert dict(candidate["property_facts"])["listing_fact_confirmation"]["status"] == "confirmed"
+    facts = dict(candidate["property_facts"])
+    assert facts["country_code"] == "AT"
+    assert facts["city"] == "Vienna"
+    assert facts["map_lat"] == 48.2167
+    assert facts["map_lng"] == 16.4
+    assert facts["listing_fact_confirmation"]["status"] == "confirmed"
 
 
 def test_live_mobile_smoke_seed_headers_include_public_edge_safe_metadata() -> None:
