@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 20:10 UTC
+Updated: 2026-08-12 20:23 UTC
 
 ## Mission
 
@@ -16,6 +16,49 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 current LTD provider and publication truth
+
+The apparent 1min.AI discrepancy is resolved. The deployed API process reports
+zero locally configured 1min slots because it is only the enqueue/read surface;
+the durable PostgreSQL queue is claimed by `propertyquarry-worker-live`, which
+owns the provider credentials and performs the actual call. No credential needs
+to be copied into the API process. A secret-safe worker probe at
+`2026-08-12T20:14:50Z` reported `70` configured slots, `25` successful probes,
+`45` depleted probes, `26` live-dispatchable slots, and `2` slots in the
+composite `ready` state.
+
+The existing real PropertyQuarry image generation was re-read from deployed
+PostgreSQL without another provider call. Generation
+`b77bb8dbc8cb4c94952fe2fdd1775fe1` remains `completed` after exactly one
+attempt, using backend `1min` and model `gpt-image-1-mini`. Its receipt remains
+`verified` with proof scope `provider_call`; the PNG is still materialized at
+the principal-scoped first-party asset route with SHA-256
+`635440acd09188c91b7b08ead3dc2a59fcd97281f7693565415ee1da8d3a8515`.
+Publication remains exactly `not_published` with
+`external_publication_verified=false`.
+
+FlipLink remains an honest external-authority boundary, not a runtime defect.
+The exact deployed API, worker, and scheduler were probed without exposing
+secrets: none has a FlipLink login email, password, BrowserAct enablement, or
+webhook secret. The API reports no verified account, tier, capability, or custom
+domain and the deployed publication repository contains zero rows. The guarded
+manual/BrowserAct contracts therefore remain disabled and the customer output
+must continue to say `local_only` / `not_published`. Do not set the feature flag
+alone or record a manual link as provider proof. A future live integration needs
+the real account credentials, a verified redacted-upload capability and privacy
+review, a principal-bound BrowserAct completion receipt, and the first external
+publication read-back.
+
+A separate Unmixr live-account probe at `2026-08-12T20:14:20Z` found six usable
+accounts and aggregate capacity of `3,000,000` prebuilt credits, `500,302`
+cloned-voice credits, and `22` cloned profiles. This is current EA/Chummer
+provider-pool evidence only. Unmixr remains `catalog_only` for PropertyQuarry
+and must not be represented as a PropertyQuarry customer integration.
+
+`LTDs.md` now records these present-tense boundaries instead of the stale March
+refresh and manual-seed claims. No application code or live provider state was
+changed during this audit.
 
 ## 2026-08-12 fast-result thumbnail repair
 
