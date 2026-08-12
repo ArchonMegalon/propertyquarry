@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 21:30 UTC
+Updated: 2026-08-12 21:46 UTC
 
 ## Mission
 
@@ -86,14 +86,28 @@ The isolated BrowserAct session was closed after the read. Fresh Android
 telemetry remained absent and this host still had no `adb`; the physical-device
 boundary below is unchanged.
 
-## 2026-08-12 PayPal environment binding
+## 2026-08-12 PayPal principal isolation and environment binding
 
-A non-transactional credential probe found that the configured PayPal client
-identity is for **Sandbox**, while the deployed `PAYPAL_API_BASE` points to the
-Live endpoint. The official Live OAuth endpoint returned HTTP 401 and no token.
-The same credentials returned HTTP 200 from the official Sandbox endpoint with
-a bearer token valid for 32,400 seconds and 31 scopes. No order, capture,
-payment, webhook mutation, or checkout activation occurred in either probe.
+A secret-safe inventory of every running Docker container found only one
+PayPal client/secret pair: the same generic EA/other-product identity had been
+projected into PropertyQuarry. PostgreSQL `provider_bindings` contains no
+PayPal principal binding and no alternative Live PayPal identity exists in the
+current runtime. A fresh non-transactional OAuth probe classified the shared
+identity as **Sandbox**: the official Live endpoint returned HTTP 401 and no
+token, while the official Sandbox endpoint returned HTTP 200, a token with 31
+scopes, and a 30,965-second lifetime. No order, capture, payment, webhook
+mutation, or checkout activation occurred in either probe.
+
+Commit `c503fa9f65b242695c6446d6aef2c36128dc0b40` removes that ambient
+credential inheritance. PropertyQuarry Compose now accepts PayPal material
+only through the dedicated external inputs
+`PROPERTYQUARRY_PAYPAL_LIVE_CLIENT_ID` and
+`PROPERTYQUARRY_PAYPAL_LIVE_SECRET`, maps them only into the API's conventional
+PayPal variables, and hard-pins `PAYPAL_API_BASE=https://api-m.paypal.com`.
+Generic `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`, or a Sandbox base cannot flow into
+PropertyQuarry. The current live container therefore reports both credential
+fields absent, environment `live`, `paypal_configured=false`, and
+`paid_billing_safe_handoff_configured(provider="paypal")=false`.
 
 The admission boundary now prevents this mismatch from becoming a customer
 incident. `property_billing.py` accepts only the two exact official PayPal API
@@ -105,18 +119,19 @@ non-secret binding. The missing/invalid admission still fails closed before any
 provider call, and the deployed customer billing surface must remain HTTP 503
 until valid Live credentials and the complete same-principal canary exist.
 
-Focused checkout, entitlement, and Compose verification passes `33/33`; exact
-Python compilation and `git diff --check` pass. The live credential probes are
-provider-health evidence only, not the required checkout/webhook/entitlement/
-cancellation canary.
+The dedicated post-isolation Compose and billing regression set passes `16/16`;
+the earlier broader checkout, entitlement, and Compose set passes `33/33`.
+Exact Python compilation and `git diff --check` pass. The live credential
+probes are provider-health evidence only, not the required checkout/webhook/
+entitlement/cancellation canary.
 
 ## 2026-08-12 exact-image browser and blocker refresh
 
-The post-billing-hardening exact-image customer matrix is complete. Receipt
-`state/qa/propertyquarry-live-browser-all-20260812-billing-exact.json`, SHA-256
-`17195be27e4d9f940b64896782645a54133f118ce737a4a5add2f8b85da9d042`,
+The post-isolation exact-image customer matrix is complete. Receipt
+`state/qa/propertyquarry-live-browser-all-20260812-paypal-isolated-exact.json`,
+SHA-256 `52677440477e98970933c6dc0d90587f8b0daaa41a07ac36ec931ed3773833ba`,
 records `96/96` real Playwright samples and zero failures at
-`2026-08-12T21:20:14.280100Z`: all 16 configured customer routes in Chromium,
+`2026-08-12T21:44:25.889091Z`: all 16 configured customer routes in Chromium,
 Firefox, and WebKit at 390x844 and 412x915. The receipt has no missing engine,
 sample, customer surface, or static fallback and includes the concrete saved
 research-detail route in redacted form. Every ordinary customer page returned
@@ -132,11 +147,11 @@ a self-referential commit into this file. The matrix used the principal-bound
 release-probe credential through bounded stdin; neither that credential nor an
 API token is present in the receipt.
 
-Paid billing remains deliberately unavailable. The deployed API retains the
-PayPal credential material, but the new Live-origin binding correctly reports
-`paypal_configured=false` because those credentials authenticate only against
-Sandbox; the customer-safe handoff also reports false. PayFunnels still has no
-API key or paid-plan checkout URLs. Every field in the exact-release
+Paid billing remains deliberately unavailable. The deployed API no longer
+receives the generic Sandbox PayPal credential material; its dedicated Live
+credential inputs are empty. It reports `paypal_configured=false` and the
+customer-safe handoff also reports false. PayFunnels still has no API key or
+paid-plan checkout URLs. Every field in the exact-release
 `propertyquarry.paid_billing_safe_handoff.v1` admission is empty, including the
 provider, plan set, receipt/principal digests, release bindings, and verified
 timestamp. Do not activate checkout until the same-principal checkout,
