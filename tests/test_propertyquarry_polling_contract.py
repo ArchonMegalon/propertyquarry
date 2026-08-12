@@ -163,6 +163,49 @@ def test_rendered_listing_results_keep_remote_thumbnail_and_missing_photo_slot()
     )
 
 
+def test_rendered_first_paint_rejects_provider_chrome_for_honest_placeholder() -> None:
+    provider_chrome_url = "https://cache.willhaben.at/img/upselling/icon-bump.png"
+    html, _script = _render_browser_workbench_fixture(
+        principal_id="exec-property-thumbnail-provider-chrome",
+        run_id="run-property-thumbnail-provider-chrome",
+        status="processed",
+        progress=100,
+        current_step="completed",
+        message="One home ready.",
+        summary={
+            "status": "processed",
+            "provider_total": 1,
+            "sources_total": 1,
+            "sources_completed": 1,
+            "listing_total": 1,
+            "ranked_total": 1,
+            "sources": [
+                {
+                    "source_key": "willhaben",
+                    "source_label": "Willhaben",
+                    "status": "processed",
+                    "listing_total": 1,
+                    "top_candidates": [
+                        {
+                            "candidate_ref": "property-scout:provider-chrome",
+                            "rank": 1,
+                            "title": "Vienna home with real media fallback",
+                            "property_url": "https://www.willhaben.at/iad/immobilien/d/4",
+                            "preview_image_url": provider_chrome_url,
+                            "property_facts": {
+                                "price_eur": 405000,
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert provider_chrome_url not in html
+    assert "Media preview not available." in html
+
+
 def test_real_chromium_broken_listing_thumbnail_uses_honest_placeholder() -> None:
     playwright_api = pytest.importorskip("playwright.sync_api")
     thumbnail_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"

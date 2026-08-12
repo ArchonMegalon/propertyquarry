@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 17:48 UTC
+Updated: 2026-08-12 17:54 UTC
 
 ## Mission
 
@@ -116,11 +116,13 @@ it. A failed primary and all failed fallbacks therefore end in the visible
 The final live audit also found two provider UI assets being projected as
 property photos: Willhaben's `/img/upselling/` badge and ImmoScout24's
 `plus-insider-locked` badge. The customer projection now excludes only those
-known non-listing assets. It promotes the next valid listing image when one is
-available and otherwise uses the honest unavailable placeholder; real provider
-photos, first-party map previews, and transformed CDN images remain admitted.
+known non-listing assets in both the JSON refresh projection and server-rendered
+first paint. The two paths now share one ordered preview/fallback resolver. It
+promotes the next valid listing image when one is available and otherwise uses
+the honest unavailable placeholder; real provider photos, first-party map
+previews, and transformed CDN images remain admitted.
 
-Focused verification for this follow-up passes 33 projection/extractor/polling
+Focused verification for this follow-up passes 34 projection/extractor/polling
 tests including a real Chromium broken image, six thumbnail workspace
 contracts, and the isolated Chromium lazy-atlas E2E. `git diff --check` is
 clean. The broad `pytest -k thumbnail` collection

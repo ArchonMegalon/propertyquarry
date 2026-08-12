@@ -347,6 +347,66 @@ def _property_workbench_client_image_payload(value: object) -> dict[str, object]
     return compact
 
 
+def _property_workbench_client_preview_urls(
+    candidate: dict[str, object],
+    *,
+    orientation_preview: dict[str, object] | None = None,
+    diorama_preview_url: object = "",
+) -> tuple[str, list[str]]:
+    raw = dict(candidate or {})
+    raw_facts = (
+        dict(raw.get("property_facts") or {})
+        if isinstance(raw.get("property_facts"), dict)
+        else {}
+    )
+    safe_orientation = dict(orientation_preview or {})
+    primary_url = _property_workbench_client_image_url(
+        raw.get("preview_image_url") or _property_candidate_preview_image(raw)
+    )
+    fallback_candidates: list[str] = []
+
+    def _append(value: object) -> None:
+        safe_url = _property_workbench_client_image_url(value)
+        if (
+            safe_url
+            and safe_url != primary_url
+            and safe_url not in fallback_candidates
+        ):
+            fallback_candidates.append(safe_url)
+
+    for value in (
+        safe_orientation.get("thumb_image_url"),
+        safe_orientation.get("image_url"),
+        diorama_preview_url,
+        raw.get("preview_image_url"),
+        raw.get("thumbnail_url"),
+        raw.get("image_url"),
+        raw.get("hero_image_url"),
+    ):
+        _append(value)
+    for key in ("media_urls_json", "photo_urls_json", "image_urls_json"):
+        raw_values = raw_facts.get(key)
+        if raw_values in (None, "", [], {}):
+            raw_values = raw.get(key)
+        if not isinstance(raw_values, (list, tuple)):
+            continue
+        for value in raw_values[:12]:
+            _append(value)
+
+    ordered_fallbacks = [
+        url
+        for url in fallback_candidates
+        if url.startswith("/") and not url.startswith("//")
+    ]
+    ordered_fallbacks.extend(
+        url for url in fallback_candidates if url not in ordered_fallbacks
+    )
+    ordered_fallbacks = ordered_fallbacks[:4]
+    if not primary_url and ordered_fallbacks:
+        primary_url = ordered_fallbacks.pop(0)
+    return primary_url, ordered_fallbacks
+
+
 def _property_workbench_client_provider_viewer_url(value: object) -> str:
     url = _property_workbench_client_safe_web_or_local_url(value)
     if not url or _property_workbench_client_url_is_tracking(url):
@@ -1078,11 +1138,6 @@ def _property_workbench_client_candidate_payload(
         compact["flythrough_url"] = flythrough_url
     elif str(compact.get("flythrough_status") or "").strip().lower() in _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES:
         compact["flythrough_status"] = "unavailable"
-    preview_image_url = _property_workbench_client_image_url(
-        raw.get("preview_image_url") or _property_candidate_preview_image(raw)
-    )
-    if preview_image_url:
-        compact["preview_image_url"] = preview_image_url
     orientation_preview = _property_workbench_client_image_payload(raw.get("orientation_preview"))
     if orientation_preview:
         compact["orientation_preview"] = orientation_preview
@@ -1092,55 +1147,18 @@ def _property_workbench_client_candidate_payload(
     diorama_preview_url = _property_workbench_candidate_diorama_preview_url(raw)
     if diorama_preview_url:
         compact["diorama_preview_url"] = diorama_preview_url
-    preview_fallback_candidates: list[str] = []
-    for value in (
-        orientation_preview.get("thumb_image_url"),
-        orientation_preview.get("image_url"),
-        diorama_preview_url,
-        raw.get("preview_image_url"),
-        raw.get("thumbnail_url"),
-        raw.get("image_url"),
-        raw.get("hero_image_url"),
-    ):
-        fallback_url = _property_workbench_client_image_url(value)
-        if (
-            fallback_url
-            and fallback_url != preview_image_url
-            and fallback_url not in preview_fallback_candidates
-        ):
-            preview_fallback_candidates.append(fallback_url)
-    for key in ("media_urls_json", "photo_urls_json", "image_urls_json"):
-        raw_values = raw_facts.get(key)
-        if raw_values in (None, "", [], {}):
-            raw_values = raw.get(key)
-        if not isinstance(raw_values, (list, tuple)):
-            continue
-        for value in raw_values[:12]:
-            fallback_url = _property_workbench_client_image_url(value)
-            if (
-                fallback_url
-                and fallback_url != preview_image_url
-                and fallback_url not in preview_fallback_candidates
-            ):
-                preview_fallback_candidates.append(fallback_url)
-    if preview_fallback_candidates:
-        ordered_preview_fallbacks = [
-            fallback_url
-            for fallback_url in preview_fallback_candidates
-            if fallback_url.startswith("/") and not fallback_url.startswith("//")
-        ]
-        ordered_preview_fallbacks.extend(
-            fallback_url
-            for fallback_url in preview_fallback_candidates
-            if fallback_url not in ordered_preview_fallbacks
+    preview_image_url, ordered_preview_fallbacks = (
+        _property_workbench_client_preview_urls(
+            raw,
+            orientation_preview=orientation_preview,
+            diorama_preview_url=diorama_preview_url,
         )
-        ordered_preview_fallbacks = ordered_preview_fallbacks[:4]
-        if not preview_image_url:
-            preview_image_url = ordered_preview_fallbacks.pop(0)
-            compact["preview_image_url"] = preview_image_url
-        if ordered_preview_fallbacks:
-            compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
-            compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
+    )
+    if preview_image_url:
+        compact["preview_image_url"] = preview_image_url
+    if ordered_preview_fallbacks:
+        compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
+        compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
     tour_payload = _property_workbench_client_tour_payload(
         raw.get("tour") if isinstance(raw.get("tour"), dict) else {},
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),
@@ -4600,7 +4618,7 @@ def property_workspace_payload(
             "reasons": [str(item).strip() for item in list(candidate_investment.get("reasons") or []) if str(item).strip()][:3],
             "blockers": [str(item).strip() for item in list(candidate_investment.get("blockers") or []) if str(item).strip()][:3],
         }
-        orientation_preview = _property_workbench_lightweight_orientation_preview(
+        orientation_preview = _property_workbench_client_image_payload(
             _property_candidate_orientation_preview(candidate)
         )
         repair_flag_label, repair_flag_detail = _candidate_repair_flag(
@@ -4614,6 +4632,13 @@ def property_workspace_payload(
         if not fit_summary:
             fit_summary = summarize_property_description_copy(_clean_property_candidate_copy(candidate.get("summary") or ""))
         diorama_preview_url = _property_workbench_candidate_diorama_preview_url(candidate)
+        preview_image_url, preview_image_fallback_urls = (
+            _property_workbench_client_preview_urls(
+                candidate,
+                orientation_preview=orientation_preview,
+                diorama_preview_url=diorama_preview_url,
+            )
+        )
         ready_tour_url = str(tour_payload.get("url") or "").strip()
         ready_tour_status = str(tour_payload.get("status") or "").strip().lower()
         workbench_candidate = build_property_workbench_candidate_snapshot(
@@ -4622,9 +4647,7 @@ def property_workspace_payload(
                 title=_property_result_title_display(candidate.get("title") or "Home"),
                 recovered_by_filter=bool(candidate.get("recovered_by_filter") or candidate.get("counterfactual_recovered")),
                 relaxed_filter_label=str(candidate.get("relaxed_filter_label") or candidate.get("counterfactual_label") or "").strip(),
-                preview_image_url=_property_workbench_lightweight_image_url(
-                    candidate.get("preview_image_url") or _property_candidate_preview_image(candidate)
-                ),
+                preview_image_url=preview_image_url,
                 diorama_preview_url=diorama_preview_url,
                 source_label=_compact_provider_label(candidate.get("source_label") or ""),
                 location_label=str(facts.get("district") or facts.get("postal_name") or facts.get("city") or facts.get("address") or "").strip(),
@@ -4712,6 +4735,13 @@ def property_workspace_payload(
                 household_alignment_label=str(dict(candidate.get("feedback_summary") or {}).get("family_alignment") or "waiting") if isinstance(candidate.get("feedback_summary"), dict) else "waiting",
                 repair_flag_label=repair_flag_label,
                 repair_flag_detail=repair_flag_detail,
+            )
+        if preview_image_fallback_urls:
+            workbench_candidate["preview_image_fallback_url"] = (
+                preview_image_fallback_urls[0]
+            )
+            workbench_candidate["preview_image_fallback_urls"] = (
+                preview_image_fallback_urls
             )
         opportunity = property_opportunity_public_projection(candidate.get("opportunity"))
         if opportunity:
