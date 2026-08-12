@@ -7026,6 +7026,35 @@
       object-position: center center;
       display: block;
     }
+	    .pqx-thumb-placeholder {
+	      position: absolute;
+	      inset: 0;
+	      display: none;
+	      place-items: center;
+	      padding: 12px;
+	      color: var(--pq-muted);
+	      background:
+	        radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.72), transparent 34%),
+	        linear-gradient(145deg, #f2eadc, #fffdf8 58%, #e4ece5);
+	      font-size: 10px;
+	      font-weight: 760;
+	      letter-spacing: 0.02em;
+	      text-align: center;
+	      pointer-events: none;
+	    }
+	    .pqx-thumb.is-placeholder .pqx-thumb-placeholder,
+	    .pqx-thumb.is-unavailable .pqx-thumb-placeholder {
+	      display: grid;
+	    }
+	    .pqx-thumb.is-unavailable img {
+	      display: none;
+	    }
+	    html[data-pq-theme="dark"] .pqx-thumb-placeholder {
+	      color: #c8d2cc;
+	      background:
+	        radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.08), transparent 34%),
+	        linear-gradient(145deg, #202723, #151a17 58%, #26312b);
+	    }
     .pqx-thumb-pin {
       position: absolute;
       left: 50%;
@@ -13718,12 +13747,13 @@
                   <td>{{ candidate.get('rank') or loop.index }}</td>
                   <td>
                     <div class="pqx-result-media">
-                      <span class="pqx-thumb">
                         {% set ranked_preview_url = candidate.get('preview_image_url') or '' %}
-                        {% if ranked_preview_url.startswith('/') %}
-                        <img src="{{ ranked_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low">
+                        {% set ranked_preview_usable = (ranked_preview_url.startswith('/') and not ranked_preview_url.startswith('//')) or ranked_preview_url.startswith('https://') %}
+                        <span class="pqx-thumb{% if not ranked_preview_usable %} is-placeholder{% endif %}" data-pqx-thumbnail{% if not ranked_preview_usable %} role="img" aria-label="Media preview not available."{% endif %}>
+                        {% if ranked_preview_usable %}
+                        <img src="{{ ranked_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low" data-pqx-thumbnail-image>
                         {% else %}
-                        HOME
+                        <span class="pqx-thumb-placeholder">Media preview not available.</span>
                         {% endif %}
                       </span>
                       <span>

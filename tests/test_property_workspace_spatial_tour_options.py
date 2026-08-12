@@ -211,6 +211,24 @@ def test_client_payload_separates_default_camera_video_from_optional_3d_tour(
     assert "source_virtual_tour_url" not in result
 
 
+def test_client_payload_promotes_safe_remote_listing_thumbnail() -> None:
+    thumbnail_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
+
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {"thumbnail_url": thumbnail_url}
+    )
+
+    assert result["preview_image_url"] == thumbnail_url
+
+
+def test_client_payload_rejects_tracking_thumbnail_fallback() -> None:
+    result = workspace_payload._property_workbench_client_candidate_payload(
+        {"thumbnail_url": "https://api.willhaben.at/restapi/v2/listings/123.jpg"}
+    )
+
+    assert "preview_image_url" not in result
+
+
 def test_generated_reconstruction_is_not_projected_as_provider_3d_tour(
     monkeypatch,
 ) -> None:

@@ -1025,7 +1025,9 @@ def _property_workbench_client_candidate_payload(
         compact["flythrough_url"] = flythrough_url
     elif str(compact.get("flythrough_status") or "").strip().lower() in _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES:
         compact["flythrough_status"] = "unavailable"
-    preview_image_url = _property_workbench_client_image_url(raw.get("preview_image_url"))
+    preview_image_url = _property_workbench_client_image_url(
+        raw.get("preview_image_url") or _property_candidate_preview_image(raw)
+    )
     if preview_image_url:
         compact["preview_image_url"] = preview_image_url
     orientation_preview = _property_workbench_client_image_payload(raw.get("orientation_preview"))

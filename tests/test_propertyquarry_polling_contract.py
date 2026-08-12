@@ -11,6 +11,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKBENCH_SCRIPT = REPO_ROOT / "ea/app/templates/app/_property_workbench_script.html"
 FEEDBACK_SCRIPT = REPO_ROOT / "ea/app/templates/app/_property_workbench_feedback_script.html"
+RESULTS_TEMPLATE = REPO_ROOT / "ea/app/templates/app/_property_results_list.html"
+WORKBENCH_TEMPLATE = REPO_ROOT / "ea/app/templates/app/property_decision_workbench.html"
 
 
 def _render_browser_workbench_fixture(
@@ -89,6 +91,162 @@ def test_workbench_network_mutations_and_pollers_are_bounded_and_cancellable() -
     assert "pauseVisualStatusPolling" in source
     assert "data-pw-visual-poll-paused" in source
     assert source.count("document.hidden || navigator.onLine === false") >= 3
+
+
+def test_listing_thumbnails_keep_safe_https_and_fail_to_honest_placeholder() -> None:
+    source = WORKBENCH_SCRIPT.read_text(encoding="utf-8")
+    results_template = RESULTS_TEMPLATE.read_text(encoding="utf-8")
+    workbench_template = WORKBENCH_TEMPLATE.read_text(encoding="utf-8")
+
+    assert "parsed.protocol === 'https:'" in source
+    assert "isSupportedImage" in source
+    assert "isWillhabenApiTracker" in source
+    assert "candidateUrl.startsWith('//')" in source
+    assert "data-pqx-thumbnail-image" in source
+    assert "markThumbnailUnavailable" in source
+    assert "Media preview not available." in source
+    assert "primary_preview_url.startswith('https://')" in results_template
+    assert "data-pqx-thumbnail-image" in results_template
+    assert "Media preview not available." in results_template
+    assert "ranked_preview_url.startswith('https://')" in workbench_template
+    assert ".pqx-thumb.is-unavailable .pqx-thumb-placeholder" in workbench_template
+
+
+def test_rendered_listing_results_keep_remote_thumbnail_and_missing_photo_slot() -> None:
+    thumbnail_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
+    html, _script = _render_browser_workbench_fixture(
+        principal_id="exec-property-thumbnail-render",
+        run_id="run-property-thumbnail-render",
+        status="processed",
+        progress=100,
+        current_step="completed",
+        message="Two homes ready.",
+        summary={
+            "status": "processed",
+            "provider_total": 1,
+            "sources_total": 1,
+            "sources_completed": 1,
+            "listing_total": 2,
+            "ranked_total": 2,
+            "sources": [
+                {
+                    "source_key": "willhaben",
+                    "source_label": "Willhaben",
+                    "status": "processed",
+                    "listing_total": 2,
+                    "top_candidates": [
+                        {
+                            "candidate_ref": "property-scout:photo",
+                            "rank": 1,
+                            "title": "Vienna home with photo",
+                            "property_url": "https://www.willhaben.at/iad/immobilien/d/1",
+                            "preview_image_url": thumbnail_url,
+                            "property_facts": {"price_eur": 420000},
+                        },
+                        {
+                            "candidate_ref": "property-scout:no-photo",
+                            "rank": 2,
+                            "title": "Vienna home without photo",
+                            "property_url": "https://www.willhaben.at/iad/immobilien/d/2",
+                            "property_facts": {"price_eur": 390000},
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert "Vienna home with photo" in html
+    assert re.search(
+        rf'<img src="{re.escape(thumbnail_url)}"[^>]*data-pqx-thumbnail-image',
+        html,
+    )
+
+
+def test_real_chromium_broken_listing_thumbnail_uses_honest_placeholder() -> None:
+    playwright_api = pytest.importorskip("playwright.sync_api")
+    thumbnail_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
+    html, workbench_javascript = _render_browser_workbench_fixture(
+        principal_id="exec-property-thumbnail-error",
+        run_id="run-property-thumbnail-error",
+        status="processed",
+        progress=100,
+        current_step="completed",
+        message="One home ready.",
+        summary={
+            "status": "processed",
+            "provider_total": 1,
+            "sources_total": 1,
+            "sources_completed": 1,
+            "listing_total": 1,
+            "ranked_total": 1,
+            "sources": [
+                {
+                    "source_key": "willhaben",
+                    "source_label": "Willhaben",
+                    "status": "processed",
+                    "listing_total": 1,
+                    "top_candidates": [
+                        {
+                            "candidate_ref": "property-scout:broken-photo",
+                            "rank": 1,
+                            "title": "Vienna home with unavailable photo",
+                            "property_url": "https://www.willhaben.at/iad/immobilien/d/3",
+                            "preview_image_url": thumbnail_url,
+                            "property_facts": {"price_eur": 410000},
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    with playwright_api.sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
+        except Exception as exc:  # pragma: no cover - developer machines may omit browsers
+            pytest.skip(
+                "chromium unavailable for listing-thumbnail fallback: "
+                f"{type(exc).__name__}"
+            )
+        try:
+            page = browser.new_page()
+
+            def _fulfill_fixture(route: object) -> None:
+                request = route.request
+                parsed = urlsplit(request.url)
+                if request.resource_type == "document":
+                    route.fulfill(status=200, content_type="text/html", body=html)
+                    return
+                if parsed.path.endswith("/property-workbench.js"):
+                    route.fulfill(
+                        status=200,
+                        content_type="application/javascript",
+                        body=workbench_javascript,
+                    )
+                    return
+                if request.url == thumbnail_url:
+                    route.fulfill(status=404, content_type="image/jpeg", body="")
+                    return
+                route.fulfill(status=200, content_type="text/plain", body="")
+
+            page.route("**/*", _fulfill_fixture)
+            page.goto(
+                "https://propertyquarry.test/app/properties?run_id=run-property-thumbnail-error",
+                wait_until="load",
+            )
+            page.wait_for_function(
+                """() => document.querySelector('[data-pqx-thumbnail]')
+                  ?.classList.contains('is-unavailable')"""
+            )
+            thumbnail = page.locator("[data-pqx-thumbnail]").first
+            assert "is-unavailable" in (thumbnail.get_attribute("class") or "")
+            assert thumbnail.locator(".pqx-thumb-placeholder").is_visible()
+            assert "Media preview not available." in thumbnail.inner_text()
+        finally:
+            browser.close()
 
 
 def test_workbench_persisted_lifecycle_restore_reconciles_without_duplicate_polling() -> None:

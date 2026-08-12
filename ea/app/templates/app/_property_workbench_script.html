@@ -14,6 +14,21 @@
     const metaNode = root.querySelector('[data-property-workspace-meta]');
     const data = JSON.parse(payloadNode?.textContent || '{}');
     const meta = JSON.parse(metaNode?.getAttribute('data-property-workspace-meta') || '{}');
+    const markThumbnailUnavailable = (image) => {
+      if (!(image instanceof HTMLImageElement)) return;
+      const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
+      if (!thumbnail) return;
+      thumbnail.classList.add('is-unavailable');
+      image.hidden = true;
+    };
+    root.addEventListener('error', (event) => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement) || !image.matches('[data-pqx-thumbnail-image]')) return;
+      markThumbnailUnavailable(image);
+    }, true);
+    root.querySelectorAll('[data-pqx-thumbnail-image]').forEach((image) => {
+      if (image.complete && image.naturalWidth === 0) markThumbnailUnavailable(image);
+    });
     const clientLocale = String(document.documentElement.lang || 'en').trim().toLowerCase();
     const liveCopyCatalog = clientLocale.startsWith('de')
       ? {
@@ -4102,19 +4117,47 @@
           </section>
         `;
       }
-      const body = rows.map((candidate, index) => {
-        const title = safeCandidateTitle(candidate?.title);
-        const location = String(candidate?.location_label || '').trim();
-        const clientRenderableImageUrl = (value) => {
-          const candidateUrl = String(value || '').trim();
-          if (!candidateUrl) return '';
-          try {
-            const parsed = new URL(candidateUrl, window.location.origin);
-            return parsed.origin === window.location.origin ? candidateUrl : '';
-          } catch (_err) {
-            return '';
-          }
-        };
+	      const clientRenderableImageUrl = (value) => {
+	        const candidateUrl = String(value || '').trim();
+	        if (!candidateUrl || candidateUrl.startsWith('//')) return '';
+	        try {
+	          const parsed = new URL(candidateUrl, window.location.origin);
+	          if (parsed.origin === window.location.origin && candidateUrl.startsWith('/')) {
+	            return candidateUrl;
+	          }
+	          const imagePath = decodeURIComponent(parsed.pathname || '');
+	          const decodedUrl = decodeURIComponent(candidateUrl).toLowerCase();
+	          const isSupportedImage = /\.(?:avif|bmp|gif|heic|jpe?g|png|svg|tiff?|webp)$/i.test(imagePath);
+	          const isTrackingImage = [
+	            '/analytics/',
+	            '/beacon/',
+	            '/collect/',
+	            '/events/',
+	            '/logevent/',
+	            '/tracking/',
+	            '360-click',
+	            'floorplan-click',
+	            'preview-click',
+	            'virtual-tour-click',
+	            'virtual_tour_click',
+	          ].some((marker) => decodedUrl.includes(marker));
+	          const isWillhabenApiTracker = parsed.hostname === 'api.willhaben.at'
+	            && imagePath.toLowerCase().startsWith('/restapi/');
+	          return parsed.protocol === 'https:'
+	            && !parsed.username
+	            && !parsed.password
+	            && isSupportedImage
+	            && !isTrackingImage
+	            && !isWillhabenApiTracker
+	              ? candidateUrl
+	              : '';
+	        } catch (_err) {
+	          return '';
+	        }
+	      };
+	      const body = rows.map((candidate, index) => {
+	        const title = safeCandidateTitle(candidate?.title);
+	        const location = String(candidate?.location_label || '').trim();
 	        const previewUrl = [
 	          candidate?.preview_image_url,
 	          candidate?.orientation_preview?.thumb_image_url,
@@ -4193,8 +4236,8 @@
 	        const thumb = shortlistSurface
 	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Explore diorama and area map for'))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span><span class="pqx-result-diorama-empty-label" aria-hidden="true">Diorama not ready</span>'}<span class="pqx-shortlist-visual-chrome" aria-hidden="true"><span class="pqx-shortlist-visual-label">${escapeHtml(localizeLiveCopy('Spatial diorama'))}</span><span class="pqx-shortlist-visual-action">${escapeHtml(localizeLiveCopy('Explore'))} <b>&#8599;</b></span></span></button>`
 	          : (previewUrl
-	            ? `<span class="pqx-thumb"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async"></button></span>`
-	            : '');
+	            ? `<span class="pqx-thumb" data-pqx-thumbnail><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async" data-pqx-thumbnail-image></button><span class="pqx-thumb-placeholder" aria-hidden="true">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`
+	            : `<span class="pqx-thumb is-placeholder" data-pqx-thumbnail role="img" aria-label="${escapeHtml(localizeLiveCopy('Media preview not available.'))}"><span class="pqx-thumb-placeholder">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`);
         const tour = (candidate?.tour && typeof candidate.tour === 'object') ? candidate.tour : {};
         const tourUrl = directHostedTourUrl(tour.url, candidate?.tour_url, tour.embed_url, tour.provider_url, candidate?.vendor_tour_url, candidate?.source_virtual_tour_url);
         const tourStatus = String(tour.status || candidate?.tour_status || '').trim().toLowerCase();
@@ -4259,7 +4302,7 @@
         return `
           <article class="pqx-result pqx-card${index === 0 ? ' is-top-ranked' : ''}" aria-current="${index === 0 ? 'true' : 'false'}" data-candidate-ref="${escapeHtml(candidateRef)}" data-candidate-packet-url="${escapeHtml(packetUrl)}" data-candidate-listing-url="${escapeHtml(propertyUrl)}"${shortlistSurface ? ' data-pqx-shortlist-card' : ''} data-workbench-row>
             <span class="pqx-result-main">
-	              <span class="pqx-result-media${shortlistSurface ? ' has-diorama' : (previewUrl ? '' : ' no-thumb')}">
+	              <span class="pqx-result-media${shortlistSurface ? ' has-diorama' : ''}">
                 ${thumb}
                 <span class="pqx-result-summary">
                   <span class="pqx-result-kicker">${shortlistSurface && index === 0 ? '<span class="pqx-shortlist-top-label">Top match</span>' : ''}<span class="pqx-rank">#${escapeHtml(candidate?.rank || index + 1)}</span>${location ? `<span>${escapeHtml(location)}</span>` : ''}</span>
