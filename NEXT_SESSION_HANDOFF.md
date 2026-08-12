@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 15:07 UTC
+Updated: 2026-08-12 16:20 UTC
 
 ## Mission
 
@@ -16,6 +16,78 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 live thumbnail polish and Play listing completion
+
+The intermittent-thumbnail repair is live and the shortlist now has a truthful
+first-paint fallback. Commit `e75bf00812bfe21815c1b6da131b66a964590504`
+renders a validated listing or orientation image when no governed spatial
+diorama exists. Real dioramas remain labelled `Spatial diorama`; the fallback
+is labelled `Area preview`; only a genuinely absent image shows `Preview not
+available`. It no longer discards a valid first-party map preview and then says
+`Diorama not ready`.
+
+The canonical healthy deployment receipt at
+`state/release/propertyquarry-local-deployment.v1.json` binds runtime manifest
+`e73c938906ef44f2c474cda22a8d17104c741bb7`, envelope `e75bf00812bfe21815c1b6da131b66a964590504`,
+and web image
+`sha256:5ac3900cf5584f09b5ceb4b4cc2ae07a2593f94a0378d4fea9cc01eec7b8da27`,
+observed at `2026-08-12T15:57:14Z`. Every deployed service is healthy and the
+migration exited successfully. The subsequent source-only demo-fixture commit
+`49ff2fdd` pins the synthetic 1020 Vienna card to explicit Leopoldstadt
+coordinates; that exact payload was then written to the release-probe principal
+through a signed in-container loopback request. It does not change customer
+data or claim that the demo is a real listing.
+
+The final live Play screenshots are tracked at:
+
+- `mobile/store/graphics/phone-search-1080x1920.png`, SHA-256
+  `18067d7189129ac3d739b7c6d031d20ad1a7425d6073fa56b27a78df1b4cb7ca`;
+- `mobile/store/graphics/phone-shortlist-1080x1920.png`, SHA-256
+  `52611db17f61355226499f5fdb7c897100ecd8397cb214f8c2d9ec9bc40a0711`.
+
+Both were captured from live HTTP 200 authenticated release-probe pages in
+Chromium at an exact 1080x1920 Play-compatible resolution. The private receipt
+is `state/qa/propertyquarry-play-store-screenshots-current.json`, generated at
+`2026-08-12T15:59:33.197181+00:00`. Visual inspection confirmed the final
+shortlist basemap is Leopoldstadt/Prater, not the earlier incorrect geocoder
+result. The current cross-browser live receipt is
+`state/qa/propertyquarry-live-browser-all-20260812-current.json`, SHA-256
+`dc6b8d3b0dda12cf65e8c682b2461f3c8817e5cdfba2c849bf4bd350facd005f`,
+with 48/48 real samples across Chromium, Firefox, and WebKit at 390x844 and
+430x932, generated after the deployed fallback at
+`2026-08-12T16:15:44.691224+00:00`. The expected paid-billing recovery samples
+returned 503 and passed the explicit free-plan compatibility contract; all
+other samples returned 200.
+
+Google Play Console app `4976153363318887490` now reports **7 of 11** app-info
+tasks complete, up from 5 of 11 at the start of this pass. The default German
+store listing is saved and marked `Ready to send for review` with the exact
+tracked German copy, one 512x512 icon, one 1024x500 feature graphic, and both
+1080x1920 phone screenshots. The icon and feature graphic are truthfully marked
+as created or edited with AI; the factual live screenshots are not. The change
+is waiting in Publishing overview. `Send for review` was deliberately not
+pressed, and no production release or rollout was created.
+
+The four incomplete Play app-info tasks are **Sign-in details**, **Content
+rating**, **Target audience**, and **Data safety**. Sign-in details requires an
+actual dedicated reviewer account; do not invent credentials or reuse a
+personal tester account. The remaining declarations require accountable policy
+answers. After those are complete, Play still requires its closed-testing and
+production-access process; Production remains inactive. Preserve the existing
+internal release and tester configuration unless explicitly asked to change
+them.
+
+Final focused verification for this slice passed 123 Python
+thumbnail/workbench/fixture/screenshot/accessibility tests, all 11 mobile Node
+contracts, exact compilation, and `git diff --check`. `vexp verify_done`
+reported no parse errors or broken imports; its pending-dependent list is the
+known stale global-EA index projection rather than the PropertyQuarry working
+tree. Continue to preserve the
+existing honest boundaries: paid billing lacks an exact-release provider
+canary admission, external FlipLink publication remains unavailable, physical
+Android coverage has not been rerun for these web-only thumbnail changes, and
+encrypted immutable off-host DR still lacks external AWS/key/restore authority.
 
 ## 2026-08-12 encrypted off-host DR boundary
 

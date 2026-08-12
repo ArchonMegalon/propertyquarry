@@ -102,9 +102,12 @@ test('Play listing copy and graphics satisfy exact size limits', () => {
   const dimensions = (filename) => {
     const png = readFileSync(join(root, 'store', 'graphics', filename));
     assert.equal(png.subarray(1, 4).toString('ascii'), 'PNG');
+    assert.ok(png.length > 0 && png.length <= 8 * 1024 * 1024);
     return [png.readUInt32BE(16), png.readUInt32BE(20)];
   };
 
   assert.deepEqual(dimensions('app-icon-512.png'), [512, 512]);
   assert.deepEqual(dimensions('feature-graphic.png'), [1024, 500]);
+  assert.deepEqual(dimensions('phone-search-1080x1920.png'), [1080, 1920]);
+  assert.deepEqual(dimensions('phone-shortlist-1080x1920.png'), [1080, 1920]);
 });
