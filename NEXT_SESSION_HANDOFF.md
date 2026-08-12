@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 09:15 UTC
+Updated: 2026-08-12 11:40 UTC
 
 ## Mission
 
@@ -16,6 +16,107 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 live opportunity, browser, and launch-boundary closure
+
+Commit `c8def9d7` is published on
+`integration/property-origin-main-20260728` and deployed through the canonical
+local authority. The healthy deployment binds runtime
+`e73c938906ef44f2c474cda22a8d17104c741bb7` to envelope
+`c8def9d782d084f64c5205985542d6e260aeeae3`. The deployment receipt is
+`state/release/propertyquarry-local-deployment.v1.json`.
+
+The signed Austrian search run `c08b209d659047dc9d287ff372c43fd9` now has
+useful durable opportunity evidence instead of a generic 50/100 placeholder.
+For `property-scout:849451262`, the deployed service refreshed and then read
+back the same PostgreSQL assessment in a fresh process:
+
+```text
+principal: propertyquarry-live-search-proof
+assessment: property_opportunity:a1ec5c2566941a17442f7088032beeedc4aa9e0a3a170cabd514b0cc67aa2336
+score: 74/100
+confidence: 0.68
+recommendation: shortlist
+match reasons: 5
+unknowns to verify: 6
+blocking constraints: 0
+repository: PostgresPreferenceProfileRepository
+```
+
+The reasons are grounded in the active search brief: EUR 2,680 is inside the
+EUR 3,500 ceiling, 89 m² clears the 45 m² minimum, 1020 Wien is selected,
+terrace/balcony evidence matches the request, and a floor plan is available.
+Lift access and five exact-location amenities remain explicitly unverified.
+The generated private artifact
+`sum_0b38d6ed33eb4dfabfc475f8d6853220` was also read back in a fresh process.
+It is stored as `PropertyQuarry / local_opportunity_brief /
+durable_preference_assessment`, contains the score, recommendation, fit reasons,
+and next checks, and has no doubled punctuation.
+
+Search execution now passes active search preferences into each assessment,
+compact PostgreSQL run storage retains the opportunity projection and counts,
+manual generation refreshes stale rows, and candidates in the research bucket
+remain resolvable. Verification on the committed bytes passed:
+
+- focused opportunity, preference, artifact, API, and UI contracts: `25 passed`;
+- broader storage, fact, queue, retention, and tour contracts: `156 passed, 1 skipped`;
+- upstream and tool-execution regressions: `278 passed`;
+- exact changed-module compilation and `git diff --check`: passed.
+
+The same run retains a real principal-bound 1minAI call for
+`property-scout:1217728088`: status `succeeded`, manager-routed, model
+`deepseek-chat`, backend `1min`, slot `fallback_35`, account
+`ONEMIN_AI_API_KEY_FALLBACK_35`, evaluated at
+`2026-08-12T10:59:07.873225+00:00`. The worker-managed credential pool keeps
+the secret outside the provider-binding row. Its current health is degraded
+because 69 of 70 declared slots are unavailable, but the selected slot is
+ready and the stored provider receipt proves a real call. Do not reinterpret
+the generic environment-only live-ops probe's zero-slot operator projection as
+absence of this principal-bound binding.
+
+External FlipLink publication remains honestly unavailable. The opportunity
+response reports `FlipLink.me`, action `publish_property_flipbook`,
+`executable=false`, and `status=not_configured`; no external flipbook was
+created. A separate live Unmixr account probe found seven usable accounts, but
+Unmixr remains `catalog_only` for this PropertyQuarry principal and is not a
+customer integration.
+
+Fresh signed cross-browser live E2E is complete for the free customer path.
+After installing the matching pinned Firefox and WebKit Playwright runtimes,
+the browser-all harness passed `48/48` real samples: eight canonical routes,
+all 18 registered customer-visible surface keys, Chromium/Firefox/WebKit, two
+mobile viewports (`390x844`, `430x932`), and the concrete persisted research
+detail. There were zero failed routes, missing engines, missing samples, or
+static fallbacks. The private mode-`0600` receipt is
+`state/qa/propertyquarry-live-browser-all-20260812.json`, SHA-256
+`fbb5878fefda213962911c487e34efa0cbbc6e5788a9c9c5aa5412d04146cdef`, generated
+at `2026-08-12T11:36:10.737681+00:00`. A separate rendered BrowserAct smoke
+also proved the public sign-in surface and the demo decision conversation live.
+
+The remaining launch boundaries are current and explicit:
+
+- **Billing:** the free path is compatible and fails closed, but the paid
+  persona is not launch-ready. `/app/billing` returns the intentional 503
+  recovery surface; `billing.propertyquarry.com` redirects to a separate login,
+  and the Plus/Agent PayFunnels checkout URLs are unset. Do not activate or
+  advertise paid checkout until a no-second-login handoff passes.
+- **Google Play:** a read-only Console audit found the app remains a Draft,
+  Production is inactive, and app setup is `0 of 11` completed. The pending
+  declarations are privacy policy, sign-in details, ads, content rating,
+  target audience, data safety, government-app status, financial features,
+  health, category/contact details, and Store Listing. Production access then
+  requires a closed release with at least 12 opted-in testers for at least 14
+  days; the closed track currently has 0 opted-in testers. Internal release 5
+  and its six-email tester list were not changed.
+- **Disaster recovery:** the live backup service has local rotation and
+  retention only. It has no encrypted off-host provider/bucket configuration,
+  and there is no current v2 backup, off-host retrieval, restore-drill, or
+  release-gate receipt bound to this release. Do not claim off-host DR.
+
+Physical Android Google sign-in remains closed by the successful device receipt
+below. The work still requiring external credentials, policy answers, tester
+participation/time, or infrastructure authority is not an application-code
+failure and must remain fail-closed.
 
 ## 2026-08-12 opportunity-generation truth correction
 
