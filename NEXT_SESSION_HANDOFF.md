@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 21:12 UTC
+Updated: 2026-08-12 21:21 UTC
 
 ## Mission
 
@@ -75,11 +75,11 @@ cancellation canary.
 
 ## 2026-08-12 exact-image browser and blocker refresh
 
-The post-approval exact-image customer matrix is complete. Receipt
-`state/qa/propertyquarry-live-browser-all-20260812-exact.json`, SHA-256
-`e58ca7a101dfeae29357314dd62df593abf45f8fad7da56748f9d6a08749bca1`,
+The post-billing-hardening exact-image customer matrix is complete. Receipt
+`state/qa/propertyquarry-live-browser-all-20260812-billing-exact.json`, SHA-256
+`17195be27e4d9f940b64896782645a54133f118ce737a4a5add2f8b85da9d042`,
 records `96/96` real Playwright samples and zero failures at
-`2026-08-12T20:56:06.985361Z`: all 16 configured customer routes in Chromium,
+`2026-08-12T21:20:14.280100Z`: all 16 configured customer routes in Chromium,
 Firefox, and WebKit at 390x844 and 412x915. The receipt has no missing engine,
 sample, customer surface, or static fallback and includes the concrete saved
 research-detail route in redacted form. Every ordinary customer page returned
@@ -87,7 +87,7 @@ HTTP 200. All six billing samples returned the expected fail-closed HTTP 503
 and passed the explicit Free-plan compatibility contract.
 
 This proof ran against web image
-`sha256:caeba00013606b8f9af15176a0f2937a30d94869f9e2b0e99c83515ed946c9de`.
+`sha256:c3641c97aed096adb9a2792c9a332273aaf5627c951ce5f412d0050808cd10fa`.
 The canonical deployment receipt must remain passed with no failures and its
 `envelope_head_sha` must equal the exact pushed handoff head; read those values
 from `state/release/propertyquarry-local-deployment.v1.json` rather than copying
@@ -95,9 +95,11 @@ a self-referential commit into this file. The matrix used the principal-bound
 release-probe credential through bounded stdin; neither that credential nor an
 API token is present in the receipt.
 
-Paid billing remains deliberately unavailable. The deployed API has PayPal
-enabled with credentials, while PayFunnels still has no API key or paid-plan
-checkout URLs. Every field in the exact-release
+Paid billing remains deliberately unavailable. The deployed API retains the
+PayPal credential material, but the new Live-origin binding correctly reports
+`paypal_configured=false` because those credentials authenticate only against
+Sandbox; the customer-safe handoff also reports false. PayFunnels still has no
+API key or paid-plan checkout URLs. Every field in the exact-release
 `propertyquarry.paid_billing_safe_handoff.v1` admission is empty, including the
 provider, plan set, receipt/principal digests, release bindings, and verified
 timestamp. Do not activate checkout until the same-principal checkout,
