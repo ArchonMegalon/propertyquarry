@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 19:01 UTC
+Updated: 2026-08-12 19:43 UTC
 
 ## Mission
 
@@ -16,6 +16,37 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 fast-result thumbnail repair
+
+A live authenticated comparison isolated the remaining intermittent thumbnail
+gap. The full workbench route for Austrian run
+`0d39c56749b04ec795302ad5e1ab6023` rendered all 10 thumbnails with nonzero
+natural widths; all 10 image requests returned HTTP 200. The fast result route
+`/app/shortlist/run/0d39c56749b04ec795302ad5e1ab6023`, however, rendered
+zero image elements even though the same customer-safe candidate payloads
+contained listing previews. Its JavaScript computed `previewHref` but then
+selected only `dioramaHref`, so every candidate without a governed diorama was
+silently reduced to a placeholder.
+
+`app/property_ranked_run_fast.html` now uses the validated diorama first and
+then the ordered listing/orientation preview chain on both server first paint
+and JavaScript refresh. External images must be HTTPS, protocol-relative and
+credential-bearing URLs are rejected, and image requests use
+`referrerpolicy=no-referrer`. A failed source advances through at most six
+deduplicated safe candidates; only an exhausted chain becomes the honest
+`Property` placeholder. Property-detail links remain first-party, while the
+separate listing link retains its existing external-link boundary.
+
+The dedicated real-Chromium regression proves both a failed primary recovering
+to a valid fallback and a fully exhausted chain ending without a broken image.
+The focused thumbnail/projection set passes 27/27. The complete workspace UI
+contract file passes 885/885 after aligning eight stale assertions with already
+shipped intentional behavior (separate final Launch Search, area-preview
+fallback, keyed compact research navigation, and honest local-only packet
+copy). `git diff --check` passes. Deploy the exact pushed handoff head and then
+repeat the live fast-route image-count proof before treating this repair as
+live.
 
 ## 2026-08-12 Austria opportunity and verified LTD cover proof
 
@@ -92,6 +123,18 @@ durable job still had `attempt_count: 1`; no second provider call occurred. The
 HttpOnly authenticated session was not copied across engines, so the receipt
 correctly treats the three-engine matrix as customer-page proof and the cover
 read as a separate principal-scoped asset proof.
+
+Fresh physical-Android coverage is not yet available for this exact web head.
+At `2026-08-12 19:12 UTC`, this host had neither an `adb` executable nor a
+configured Android SDK, and production telemetry since the final deployment
+contained no `/mobile/runtime-contract`, `/sign-in/google`, `/google/callback`,
+`/mobile/auth/bridge`, `/mobile/auth/redeem`, or `/app/search` request from a
+new device run. This is an external device-availability boundary, not evidence
+of a regression. Do not claim a fresh Android pass until the installed build 5
+is opened on the physical device and live telemetry again shows, in order,
+runtime contract 200, unauthenticated Search 303 if a new sign-in is needed,
+Google start/callback 303, bridge 200, redeem 200, and authenticated Search 200.
+No reinstall or Play-track change is needed for that check.
 
 ## 2026-08-12 Play reviewer access and declarations
 

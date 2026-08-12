@@ -29,6 +29,18 @@ def _thumbnail_controller_source() -> str:
     return f"{thumbnail_controller}  }})();"
 
 
+def _fast_ranked_controller_source() -> str:
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "ea/app/templates/app/property_ranked_run_fast.html"
+    ).read_text(encoding="utf-8")
+    _head, separator, remainder = source.partition("<script>\n")
+    assert separator
+    controller, separator, _tail = remainder.partition("</script>")
+    assert separator
+    return controller
+
+
 def test_thumbnail_controller_retries_bounded_chain_then_falls_back_to_placeholder(
     browser: Browser,
 ) -> None:
@@ -129,3 +141,100 @@ def test_thumbnail_controller_retries_bounded_chain_then_falls_back_to_placehold
         )
     finally:
         context.close()
+
+
+def test_fast_ranked_results_promote_listing_thumbnail_and_recover_with_fallback(
+    browser: Browser,
+) -> None:
+    html = """
+      <!doctype html>
+      <html>
+        <body>
+          <main data-pq-fast-ranked-run data-status-url="" data-search-href="/app/search">
+            <span data-pq-fast-subtitle></span>
+            <section data-pq-fast-status-card>
+              <strong data-pq-fast-status-title></strong>
+              <span data-pq-fast-status-detail></span>
+            </section>
+            <section data-pq-fast-list></section>
+            <script type="application/json" data-pq-fast-initial-payload>
+              {
+                "status": "completed",
+                "summary": {
+                  "status": "completed",
+                  "ranked_candidates": [
+                    {
+                      "candidate_ref": "fast-recovers",
+                      "title": "Recovered home",
+                      "packet_url": "/app/research/fast-recovers",
+                      "preview_image_url": "/missing-primary.png",
+                      "preview_image_fallback_urls": ["/fallback.png"]
+                    },
+                    {
+                      "candidate_ref": "fast-exhausts",
+                      "title": "Unavailable home",
+                      "packet_url": "/app/research/fast-exhausts",
+                      "preview_image_url": "/missing-primary.png",
+                      "preview_image_fallback_urls": ["/missing-fallback.png"]
+                    }
+                  ]
+                }
+              }
+            </script>
+          </main>
+        </body>
+      </html>
+    """
+
+    def serve(route: Route) -> None:
+        if route.request.url.endswith("/fallback.png"):
+            route.fulfill(status=200, content_type="image/png", body=_ONE_PIXEL_PNG)
+            return
+        if route.request.url.endswith(("/missing-primary.png", "/missing-fallback.png")):
+            route.fulfill(status=404, content_type="text/plain", body="missing")
+            return
+        route.fulfill(status=200, content_type="text/html", body=html)
+
+    context = browser.new_context()
+    page = context.new_page()
+    page.route("https://fast-thumbnail.test/**", serve)
+    try:
+        page.goto("https://fast-thumbnail.test/app/shortlist/run/run-thumbnail")
+        page.add_script_tag(content=_fast_ranked_controller_source())
+
+        page.wait_for_function(
+            """() => {
+              const rows = document.querySelectorAll('.pq-fast-row');
+              const image = rows[0]?.querySelector('[data-pq-fast-thumbnail-image]');
+              return rows.length === 2
+                && image?.src.endsWith('/fallback.png')
+                && image.naturalWidth > 0
+                && rows[0].querySelector('.pq-fast-thumb')?.dataset.visualKind === 'preview';
+            }"""
+        )
+        recovered_image = page.locator(".pq-fast-row").nth(0).locator("img")
+        assert recovered_image.get_attribute("referrerpolicy") == "no-referrer"
+
+        page.wait_for_function(
+            """() => {
+              const media = document.querySelectorAll('.pq-fast-row')[1]
+                ?.querySelector('.pq-fast-thumb');
+              return media?.classList.contains('no-thumb')
+                && media.dataset.visualKind === 'placeholder'
+                && !media.querySelector('img')
+                && media.textContent.includes('Property');
+            }"""
+        )
+    finally:
+        context.close()
+
+
+def test_fast_ranked_first_paint_uses_safe_listing_preview_without_diorama() -> None:
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "ea/app/templates/app/property_ranked_run_fast.html"
+    ).read_text(encoding="utf-8")
+
+    assert "{% set thumb_href = diorama_href or preview_href %}" in source
+    assert 'referrerpolicy="no-referrer" data-pq-fast-thumbnail-image' in source
+    assert "const thumbHref = thumbnailHrefs[0] || previewHref;" in source

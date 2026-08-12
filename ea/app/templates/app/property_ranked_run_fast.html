@@ -368,19 +368,22 @@
 	    {% if initial_candidates %}
 	    {% for candidate in initial_candidates %}
 	    {% set diorama = candidate.get('diorama_scene') if candidate.get('diorama_scene') is mapping else {} %}
+	    {% set orientation = candidate.get('orientation_preview') if candidate.get('orientation_preview') is mapping else {} %}
 	    {% set facts = candidate.get('property_facts') if candidate.get('property_facts') is mapping else {} %}
 	    {% set open_href = candidate.get('packet_url') or candidate.get('review_url') or candidate.get('detail_href') or '' %}
-	    {% set thumb_href = candidate.get('diorama_preview_url') or diorama.get('image_url') or diorama.get('preview_image_url') or '' %}
+	    {% set diorama_href = candidate.get('diorama_preview_url') or diorama.get('image_url') or diorama.get('preview_image_url') or '' %}
+	    {% set preview_href = candidate.get('preview_image_url') or orientation.get('thumb_image_url') or orientation.get('image_url') or candidate.get('preview_image_fallback_url') or '' %}
+	    {% set thumb_href = diorama_href or preview_href %}
 	    {% set title_text = candidate.get('title') or ('Home ' ~ loop.index) %}
 	    {% set diorama_alt = candidate.get('diorama_alt') or diorama.get('alt') or title_text %}
 	    {% set diorama_representation = candidate.get('diorama_representation') or diorama.get('representation') or '' %}
     <article class="pq-fast-row">
       {% if open_href %}
-      <a class="pq-fast-thumb pq-fast-diorama{% if not thumb_href %} no-thumb{% endif %}" href="{{ open_href }}" aria-label="Open property: {{ title_text }}" data-visual-kind="{{ 'diorama' if (candidate.get('diorama_preview_url') or diorama.get('image_url') or diorama.get('preview_image_url')) else ('preview' if thumb_href else 'placeholder') }}">
+      <a class="pq-fast-thumb pq-fast-diorama{% if not thumb_href %} no-thumb{% endif %}" href="{{ open_href }}" aria-label="Open property: {{ title_text }}" data-visual-kind="{{ 'diorama' if diorama_href else ('preview' if thumb_href else 'placeholder') }}">
       {% else %}
-      <div class="pq-fast-thumb pq-fast-diorama{% if not thumb_href %} no-thumb{% endif %}" data-visual-kind="{{ 'diorama' if (candidate.get('diorama_preview_url') or diorama.get('image_url') or diorama.get('preview_image_url')) else ('preview' if thumb_href else 'placeholder') }}">
+      <div class="pq-fast-thumb pq-fast-diorama{% if not thumb_href %} no-thumb{% endif %}" data-visual-kind="{{ 'diorama' if diorama_href else ('preview' if thumb_href else 'placeholder') }}">
       {% endif %}
-        {% if thumb_href %}<img src="{{ thumb_href }}" alt="{{ diorama_alt }}" loading="lazy" decoding="async">{% endif %}
+        {% if thumb_href %}<img src="{{ thumb_href }}" alt="{{ diorama_alt }}" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-pq-fast-thumbnail-image>{% endif %}
         <span class="pq-fast-diorama-room room-main" aria-hidden="true"></span>
         <span class="pq-fast-diorama-room room-side" aria-hidden="true"></span>
         <span class="pq-fast-diorama-room room-terrace" aria-hidden="true"></span>
@@ -640,6 +643,41 @@
     if (resolved.startsWith('/') || /^https?:\/\//i.test(resolved)) return resolved;
     return '';
   };
+  const safeImageUrl = (value) => {
+    const resolved = text(value);
+    if (!resolved || resolved.startsWith('//')) return '';
+    try {
+      const parsed = new URL(resolved, window.location.origin);
+      const sameOrigin = parsed.origin === window.location.origin;
+      if (
+        (!sameOrigin && parsed.protocol !== 'https:')
+        || parsed.username
+        || parsed.password
+      ) return '';
+      return sameOrigin
+        ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+        : parsed.href;
+    } catch (_error) {
+      return '';
+    }
+  };
+  const collectSafeImageUrls = (...values) => {
+    const urls = [];
+    const append = (value) => {
+      if (Array.isArray(value)) {
+        value.forEach(append);
+        return;
+      }
+      if (value && typeof value === 'object') {
+        append(value.url || value.image_url || value.href);
+        return;
+      }
+      const url = safeImageUrl(value);
+      if (url && !urls.includes(url) && urls.length < 6) urls.push(url);
+    };
+    values.forEach(append);
+    return urls;
+  };
   const candidateKey = (candidate) => {
     return text(candidate.candidate_ref)
       || text(candidate.property_ref)
@@ -717,36 +755,19 @@
       || safeUrl(candidate.listing_url)
       || '';
   };
-  const firstSafeUrl = (...values) => {
-    for (const value of values) {
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const nested = safeUrl(item && typeof item === 'object' ? (item.url || item.image_url || item.href) : item);
-          if (nested) return nested;
-        }
-        continue;
-      }
-      if (value && typeof value === 'object') {
-        const nested = safeUrl(value.url || value.image_url || value.href);
-        if (nested) return nested;
-        continue;
-      }
-      const direct = safeUrl(value);
-      if (direct) return direct;
-    }
-    return '';
-  };
-  const candidatePreviewHref = (candidate) => {
+  const candidatePreviewHrefs = (candidate) => {
     const facts = candidate && typeof candidate.property_facts === 'object' && candidate.property_facts ? candidate.property_facts : {};
     const orientation = candidate && typeof candidate.orientation_preview === 'object' && candidate.orientation_preview ? candidate.orientation_preview : {};
-    return firstSafeUrl(
+    return collectSafeImageUrls(
       candidate.preview_image_url,
+      orientation.thumb_image_url,
+      orientation.image_url,
+      candidate.preview_image_fallback_urls,
+      candidate.preview_image_fallback_url,
       candidate.thumbnail_url,
       candidate.image_url,
       candidate.hero_image_url,
       candidate.photo_url,
-      orientation.thumb_image_url,
-      orientation.image_url,
       facts.preview_image_url,
       facts.thumbnail_url,
       candidate.media_urls_json,
@@ -757,15 +778,21 @@
       facts.map_image_url,
     );
   };
-  const candidateDioramaHref = (candidate) => {
+  const candidatePreviewHref = (candidate) => candidatePreviewHrefs(candidate)[0] || '';
+  const candidateDioramaHrefs = (candidate) => {
     const diorama = candidate && typeof candidate.diorama_scene === 'object' && candidate.diorama_scene ? candidate.diorama_scene : {};
-    return firstSafeUrl(
+    return collectSafeImageUrls(
       candidate.diorama_preview_url,
       diorama.image_url,
       diorama.preview_image_url,
       diorama.thumbnail_url,
     );
   };
+  const candidateDioramaHref = (candidate) => candidateDioramaHrefs(candidate)[0] || '';
+  const candidateThumbnailHrefs = (candidate) => collectSafeImageUrls(
+    candidateDioramaHrefs(candidate),
+    candidatePreviewHrefs(candidate),
+  );
   const listingCounts = (payload, candidates = []) => {
     const summary = payload && typeof payload.summary === 'object' && payload.summary ? payload.summary : {};
     const reviewed = Math.max(
@@ -883,8 +910,11 @@
       const titleText = safeCandidateTitle(candidate.title || `Home ${index + 1}`);
       const previewHref = candidatePreviewHref(candidate);
       const dioramaHref = candidateDioramaHref(candidate);
-      const thumbHref = dioramaHref;
-      const thumbVisualKind = dioramaHref ? 'diorama' : 'placeholder';
+      const thumbnailHrefs = candidateThumbnailHrefs(candidate);
+      const thumbHref = thumbnailHrefs[0] || previewHref;
+      const thumbVisualKind = dioramaHref && thumbHref === dioramaHref
+        ? 'diorama'
+        : (thumbHref ? 'preview' : 'placeholder');
       const diorama = candidate && typeof candidate.diorama_scene === 'object' && candidate.diorama_scene ? candidate.diorama_scene : {};
       const dioramaAlt = text(candidate.diorama_alt || diorama.alt, titleText);
       const dioramaRepresentation = text(candidate.diorama_representation || diorama.representation).toLowerCase();
@@ -898,17 +928,32 @@
       }
       if (thumbHref) {
         const image = document.createElement('img');
-        image.src = thumbHref;
         image.alt = dioramaAlt;
         image.loading = 'lazy';
         image.decoding = 'async';
+        image.referrerPolicy = 'no-referrer';
+        image.setAttribute('data-pq-fast-thumbnail-image', '');
+        image.dataset.pqFastThumbnailIndex = '0';
         image.addEventListener('error', () => {
+          const nextIndex = Number(image.dataset.pqFastThumbnailIndex || 0) + 1;
+          if (nextIndex < thumbnailHrefs.length) {
+            const nextHref = thumbnailHrefs[nextIndex];
+            image.dataset.pqFastThumbnailIndex = String(nextIndex);
+            media.setAttribute(
+              'data-visual-kind',
+              dioramaHref && nextHref === dioramaHref ? 'diorama' : 'preview',
+            );
+            media.querySelectorAll('.pq-fast-diorama-badge').forEach((badge) => badge.remove());
+            image.src = nextHref;
+            return;
+          }
           image.remove();
           media.querySelectorAll('.pq-fast-diorama-badge').forEach((badge) => badge.remove());
           media.classList.add('no-thumb');
           media.setAttribute('data-visual-kind', 'placeholder');
           appendDioramaPlaceholderLabel(media);
-        }, { once: true });
+        });
+        image.src = thumbHref;
         media.appendChild(image);
       }
       ['room-main', 'room-side', 'room-terrace'].forEach((roomClass) => {

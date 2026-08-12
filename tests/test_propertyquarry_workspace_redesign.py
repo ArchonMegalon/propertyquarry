@@ -337,9 +337,9 @@ def test_property_mobile_search_header_and_district_picker_stay_compact() -> Non
     assert "const keywordPreferenceStateMapFromSaved = (preferences) => {" in workbench_script
     assert "progress.hidden = isMobileSearch;" in workbench_script
     assert "const saveHidden = isMobileSearch;" in workbench_script
-    assert "next.dataset.pqxStepMode = isFinalStep ? 'launch' : 'advance';" in workbench_script
-    assert "localizedWorkbenchCopy('step-search', 'Search')" in workbench_script
-    assert "localizedWorkbenchCopy('step-review', 'Review')" in workbench_script
+    assert "next.dataset.pqxStepMode = 'advance';" in workbench_script
+    assert "launch.hidden = !isFinalStep;" in workbench_script
+    assert "launch.dataset.pqxStepMode = 'launch';" in workbench_script
     assert "localizedWorkbenchCopy('step-next', 'Next')" in workbench_script
 
 
@@ -5768,8 +5768,9 @@ def test_propertyquarry_fast_ranked_run_open_property_stays_first_party_for_list
     assert 'href="https://www.immobilienscout24.de/expose/listing-only-loft">Open property</a>' not in response.text
     assert re.search(r'href="/app/research/[^"]+\?run_id=run-listing-only-fast">Open property</a>', response.text)
     assert f'href="{external_listing}" target="_blank" rel="noopener noreferrer">Open listing</a>' in response.text
-    assert 'data-visual-kind="placeholder"' in response.text
-    assert '<img src="https://img.example.test/listing-only-loft.jpg"' not in response.text
+    assert 'data-visual-kind="preview"' in response.text
+    assert '<img src="https://img.example.test/listing-only-loft.jpg"' in response.text
+    assert 'referrerpolicy="no-referrer" data-pq-fast-thumbnail-image' in response.text
 
 
 def test_propertyquarry_fast_ranked_run_stays_public_without_auth_headers_when_api_token_is_configured(
@@ -6606,7 +6607,7 @@ def test_property_shortlist_premium_surface_keeps_dioramas_at_the_visual_center(
     assert "Compare the spaces, fit, and trade-offs" in results_template
     assert "data-pqx-shortlist-card" in results_template
     assert "Spatial diorama" in results_template
-    assert "Diorama not ready" in results_template
+    assert "Preview not available" in results_template
     assert "Explore diorama and area map for" in results_template
     assert 'class="pqx-result-open pqx-result-open-button is-primary"' in results_template
     assert 'class="pqx-result-open pqx-result-open-button is-remove"' in results_template
@@ -6622,9 +6623,9 @@ def test_property_shortlist_premium_surface_keeps_dioramas_at_the_visual_center(
     assert "${shortlistHero(rows.length)}" in workbench_script
     assert "data-pqx-shortlist-card" in workbench_script
     assert "Spatial diorama" in workbench_script
-    assert "Diorama not ready" in workbench_script
-    assert "const shortlistPreviewUrl = dioramaPreviewUrl;" in workbench_script
-    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" not in workbench_script
+    assert "Area preview" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl;" not in workbench_script
 
 
 def test_propertyquarry_customer_copy_uses_sources_not_provider_coverage() -> None:
@@ -6694,20 +6695,25 @@ def test_propertyquarry_fast_ranked_run_rows_show_thumbnail_and_title_property_l
         Path(__file__).resolve().parents[1] / "ea/app/templates/app/property_ranked_run_fast.html"
     ).read_text(encoding="utf-8")
 
-    assert "const candidateDioramaHref = (candidate) => {" in template
+    assert "const candidateDioramaHrefs = (candidate) => {" in template
     assert "candidate.diorama_preview_url" in template
     assert "const dioramaHref = candidateDioramaHref(candidate);" in template
-    assert "const thumbHref = dioramaHref;" in template
-    assert "const thumbVisualKind = dioramaHref ? 'diorama' : 'placeholder';" in template
+    assert "const thumbnailHrefs = candidateThumbnailHrefs(candidate);" in template
+    assert "const thumbHref = thumbnailHrefs[0] || previewHref;" in template
+    assert "? 'diorama'" in template
+    assert ": (thumbHref ? 'preview' : 'placeholder');" in template
     assert "const openHref = propertyHref;" in template
     assert "const openHref = propertyHref || listingHref;" not in template
-    assert "const candidatePreviewHref = (candidate) => {" in template
+    assert "const candidatePreviewHrefs = (candidate) => {" in template
     assert "candidate.preview_image_url" in template
+    assert "candidate.preview_image_fallback_urls" in template
     assert "orientation.thumb_image_url" in template
     assert "facts.media_urls_json" in template
     assert "const media = document.createElement(openHref ? 'a' : 'div');" in template
     assert "media.className = `pq-fast-thumb pq-fast-diorama${thumbHref ? '' : ' no-thumb'}`;" in template
     assert "media.setAttribute('data-visual-kind', thumbVisualKind);" in template
+    assert "image.referrerPolicy = 'no-referrer';" in template
+    assert "image.dataset.pqFastThumbnailIndex = '0';" in template
     assert "room-main" in template
     assert "pq-fast-diorama-label" in template
     assert "titleLink.className = 'pq-fast-title-link';" in template
@@ -14257,7 +14263,7 @@ def test_property_workspace_payload_drops_oversized_inline_candidate_previews() 
     )
 
     result = payload["decision_workbench"]["results"][0]
-    assert result["preview_image_url"] == ""
+    assert result["preview_image_url"].startswith("/app/api/property/map-previews/")
     assert json.dumps(payload).find(oversized_preview) == -1
 
 
@@ -15463,7 +15469,7 @@ def test_property_research_detail_uses_minimal_top_navigation_layout() -> None:
     assert "{'href': '/app/agents' ~ research_query_suffix, 'label': 'Saved searches', 'key': 'agents'}" not in body
     assert "{'href': '/app/alerts' ~ research_query_suffix, 'label': 'Alerts', 'key': 'alerts'}" not in body
     assert "{% if item.key == current_nav or (item.key == 'account' and current_nav in ['agents', 'alerts', 'billing', 'settings']) %}" in body
-    assert '<span class="is-active" aria-current="page">{{ item.label }}</span>' in body
+    assert '<span class="is-active" aria-current="page" data-prd-nav-key="{{ item.key }}">{{ item.label }}</span>' in body
     assert "{'href': '/app/billing' ~ research_query_suffix, 'label': 'Billing', 'key': 'billing'}" not in body
     assert "{'href': '/app/account' ~ research_query_suffix, 'label': 'Account', 'key': 'account'}" in body
     assert 'aria-label="Account navigation"' in body
@@ -15523,7 +15529,7 @@ def test_property_research_detail_mobile_open_property_layout_is_compact() -> No
     assert ".prd-media-frame {\n      height: min(46vw, 176px);" in mobile_block
     assert ".prd-media-frame.prd-media-frame-live {\n      height: min(58vw, 224px);" in mobile_block
     assert ".prd-media-gradient,\n    .prd-media-caption {\n      display: none;" in mobile_block
-    assert '.prd-top-actions .account-menu summary::before {\n      content: "Me";' in mobile_block
+    assert '.prd-top-actions .account-menu summary::before {\n      content: "A";' in mobile_block
     assert ".prd-headline-panel h1" in mobile_block
     assert ".prd-headline-panel .prd-actions {\n      grid-template-columns: 1fr;" in mobile_block
     assert ".prd-headline-panel .prd-actions .prd-action-secondary {\n      display: none;" in mobile_block
@@ -19969,11 +19975,11 @@ def test_property_packets_dashboard_uses_customer_facing_language() -> None:
     assert "Packet sharing" not in body
     assert "PropertyQuarry Packets" not in body
     assert "Shared pages" in body
-    assert "Ready to share" in body
+    assert "Local PDF ready" in body
     assert "Ready to share · PDF ready · sharing active" not in body
     assert "Paste shared link" in body
     assert "Copy reply link" in body
-    assert "Pages that are ready to share" in body
+    assert "Private PDFs and manually linked pages" in body
     assert "Read replies here before they change the search" in body
     assert "Review replies before they change the search" not in body
     assert 'href="/app/account{{ packet_query_suffix or \'\' }}" data-pqx-nav-account>Account</a>' in body
