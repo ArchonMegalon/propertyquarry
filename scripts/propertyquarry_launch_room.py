@@ -33,7 +33,7 @@ BROWSER_PROOF_PATH = Path(
 )
 MANIFEST_START = "<!-- propertyquarry-release-manifest-json:start -->"
 MANIFEST_END = "<!-- propertyquarry-release-manifest-json:end -->"
-SCHEMA = "propertyquarry.launch_room.v2"
+SCHEMA = "propertyquarry.launch_room.v3"
 DEFAULT_DEPLOYMENT_RECEIPT = Path(
     "state/release/propertyquarry-local-deployment.v1.json"
 )
@@ -67,9 +67,9 @@ ADVANCED_VISUAL_SOURCE_RECEIPTS = {
     ),
 }
 DEPLOYMENT_SCHEMA = "propertyquarry.local_docker_deployment.v1"
-PUBLIC_LAUNCH_AUTHORITY_SCHEMA = "propertyquarry.public_launch_authority.v1"
 DEFAULT_PUBLIC_LAUNCH_AUTHORITY_RECEIPT = Path(
-    "state/release/propertyquarry-public-launch-authority.v1.json"
+    "/run/propertyquarry/release-control/"
+    "propertyquarry-public-launch-authority.v1.json"
 )
 PUBLIC_LAUNCH_REQUIREMENTS = (
     "google_play_public_launch",
@@ -243,78 +243,25 @@ def _public_launch_status(
     runtime_sha: str,
     image_digest: str,
 ) -> dict[str, object]:
+    # Public-launch authority must be authenticated by an independently
+    # configured verifier and pinned keyring outside this checkout. Merely
+    # parsing a caller-selected JSON file would let a repository writer mint
+    # their own authority. Until that verifier exists, fail closed even when a
+    # perfectly shaped receipt is present.
+    del envelope_head_sha, runtime_sha, image_digest
     missing_blockers = [
-        f"{requirement}_authority_unverified"
-        for requirement in PUBLIC_LAUNCH_REQUIREMENTS
-    ]
-    if not path.is_file():
-        return {
-            "status": "blocked_external_authority_receipt_missing",
-            "authority_passed": False,
-            "receipt_path": str(path),
-            "blockers": missing_blockers,
-        }
-    try:
-        receipt = _object(path)
-    except LaunchRoomError as exc:
-        return {
-            "status": "blocked_external_authority_receipt_invalid",
-            "authority_passed": False,
-            "receipt_path": str(path),
-            "blockers": [str(exc)],
-        }
-    authority = (
-        dict(receipt.get("authority") or {})
-        if isinstance(receipt.get("authority"), dict)
-        else {}
-    )
-    requirements = (
-        dict(receipt.get("requirements") or {})
-        if isinstance(receipt.get("requirements"), dict)
-        else {}
-    )
-    blockers: list[str] = []
-    if receipt.get("schema") != PUBLIC_LAUNCH_AUTHORITY_SCHEMA:
-        blockers.append("public_launch_authority_schema_invalid")
-    if receipt.get("passed") is not True:
-        blockers.append("public_launch_authority_not_passed")
-    if receipt.get("secret_values_recorded") is not False:
-        blockers.append("public_launch_authority_secret_boundary_invalid")
-    if receipt.get("canonical_repository") != "ArchonMegalon/propertyquarry":
-        blockers.append("public_launch_authority_repository_mismatch")
-    if receipt.get("envelope_head_sha") != envelope_head_sha:
-        blockers.append("public_launch_authority_envelope_mismatch")
-    if receipt.get("runtime_commit_sha") != runtime_sha:
-        blockers.append("public_launch_authority_runtime_mismatch")
-    if receipt.get("release_image_digest") != image_digest or not re.fullmatch(
-        r"sha256:[0-9a-f]{64}", image_digest
-    ):
-        blockers.append("public_launch_authority_image_mismatch")
-    if authority != {
-        "scope": "public_launch",
-        "proof_plane": "external_authority_receipts",
-    }:
-        blockers.append("public_launch_authority_scope_invalid")
-    if set(requirements) != set(PUBLIC_LAUNCH_REQUIREMENTS):
-        blockers.append("public_launch_authority_requirements_incomplete")
-    for requirement in PUBLIC_LAUNCH_REQUIREMENTS:
-        row = (
-            dict(requirements.get(requirement) or {})
-            if isinstance(requirements.get(requirement), dict)
-            else {}
-        )
-        evidence_ref = str(row.get("evidence_ref") or "").strip()
-        if row.get("status") != "pass" or not evidence_ref or len(evidence_ref) > 1024:
-            blockers.append(f"{requirement}_authority_unverified")
-    return {
-        "status": (
-            "verified_external_public_launch_authority"
-            if not blockers
-            else "blocked_external_authority_receipt_invalid"
+        "external_public_launch_authority_verifier_unconfigured",
+        *(
+            f"{requirement}_authority_unverified"
+            for requirement in PUBLIC_LAUNCH_REQUIREMENTS
         ),
-        "authority_passed": not blockers,
+    ]
+    return {
+        "status": "blocked_external_authority_verifier_unconfigured",
+        "authority_passed": False,
         "receipt_path": str(path),
-        "blockers": blockers,
+        "receipt_present_unverified": path.is_file(),
+        "blockers": missing_blockers,
     }
 
 
@@ -522,7 +469,7 @@ def build_launch_room(
             if dirty
             else "Run scripts/deploy_propertyquarry.sh on the local Docker host."
             if not deployment_green
-            else "Verify Google Play public launch, paid billing handoff, and encrypted off-host backup/restore through the external public-launch authority receipt."
+            else "Configure the external public-launch signature verifier and pinned keyring, then verify Google Play public launch, paid billing handoff, and encrypted off-host backup/restore."
         ),
         "local_runtime_ready": local_runtime_ready,
         "production_launch_ready": public_launch_ready,
@@ -619,8 +566,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--public-launch-authority-receipt",
         type=Path,
         help=(
-            "Externally authorized public-launch receipt; defaults to "
-            "state/release/propertyquarry-public-launch-authority.v1.json"
+            "Reserved external public-launch receipt path; defaults to the "
+            "release-control path outside the checkout. It cannot pass until "
+            "the independent signature verifier and pinned keyring exist."
         ),
     )
     parser.add_argument("--format", choices=("json", "markdown"), default="markdown")

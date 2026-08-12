@@ -32,9 +32,10 @@ def test_launch_room_reports_one_canonical_authority_and_no_false_launch(
     assert report["repositories_are_exact_mirrors"] is False
     assert report["production_launch_ready"] is False
     assert report["public_launch"]["status"] == (
-        "blocked_external_authority_receipt_missing"
+        "blocked_external_authority_verifier_unconfigured"
     )
     assert report["public_launch"]["blockers"] == [
+        "external_public_launch_authority_verifier_unconfigured",
         "google_play_public_launch_authority_unverified",
         "paid_billing_safe_handoff_authority_unverified",
         "encrypted_off_host_disaster_recovery_authority_unverified",
@@ -120,7 +121,7 @@ def test_healthy_local_runtime_never_substitutes_for_public_launch_authority(
     assert report["core_gold"]["local_runtime_claim"] is True
     assert report["core_gold"]["production_claim"] is False
     assert report["public_launch"]["status"] == (
-        "blocked_external_authority_receipt_missing"
+        "blocked_external_authority_verifier_unconfigured"
     )
 
 
@@ -202,7 +203,7 @@ def test_exact_local_docker_receipt_is_authoritative(tmp_path: Path) -> None:
     assert stale["envelope_head_bound"] is False
 
 
-def test_external_public_launch_receipt_requires_every_bound_authority(
+def test_unsigned_public_launch_receipt_cannot_mint_external_authority(
     tmp_path: Path,
 ) -> None:
     envelope_sha = "b" * 40
@@ -249,23 +250,17 @@ def test_external_public_launch_receipt_requires_every_bound_authority(
         image_digest=image_digest,
     )
 
-    assert status["status"] == "verified_external_public_launch_authority"
-    assert status["authority_passed"] is True
-    assert status["blockers"] == []
-
-    payload = json.loads(receipt.read_text(encoding="utf-8"))
-    payload["requirements"]["paid_billing_safe_handoff"]["status"] = "blocked"
-    receipt.write_text(json.dumps(payload), encoding="utf-8")
-
-    blocked = _public_launch_status(
-        receipt,
-        envelope_head_sha=envelope_sha,
-        runtime_sha=runtime_sha,
-        image_digest=image_digest,
+    assert status["status"] == (
+        "blocked_external_authority_verifier_unconfigured"
     )
-
-    assert blocked["authority_passed"] is False
-    assert "paid_billing_safe_handoff_authority_unverified" in blocked["blockers"]
+    assert status["authority_passed"] is False
+    assert status["receipt_present_unverified"] is True
+    assert status["blockers"] == [
+        "external_public_launch_authority_verifier_unconfigured",
+        "google_play_public_launch_authority_unverified",
+        "paid_billing_safe_handoff_authority_unverified",
+        "encrypted_off_host_disaster_recovery_authority_unverified",
+    ]
 
 
 def test_launch_room_cli_writes_json(tmp_path: Path) -> None:
@@ -289,7 +284,7 @@ def test_launch_room_cli_writes_json(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["schema"] == "propertyquarry.launch_room.v2"
+    assert payload["schema"] == "propertyquarry.launch_room.v3"
     assert payload["production_launch_ready"] is False
     assert payload["release_proof_plane"]["github_actions_used"] is False
 

@@ -86,17 +86,23 @@ Docker receipt both pass. Advanced Visual Gold remains additive and
 The running local Cloudflare container proves local tunnel process health; it
 does not by itself claim fresh public-network reachability.
 
-Public launch is a separate fail-closed authority boundary. The launch room
-accepts a private receipt at
-`state/release/propertyquarry-public-launch-authority.v1.json`, or the absolute
-path named by `PROPERTYQUARRY_PUBLIC_LAUNCH_AUTHORITY_RECEIPT`. The receipt must
-bind the canonical repository, current envelope, runtime commit, and exact
-image digest to three independently evidenced requirements:
+Public launch is a separate fail-closed authority boundary. An unsigned JSON
+file inside the checkout is not authority and can never make the launch room
+ready. The reserved external receipt location is
+`/run/propertyquarry/release-control/propertyquarry-public-launch-authority.v1.json`;
+`PROPERTYQUARRY_PUBLIC_LAUNCH_AUTHORITY_RECEIPT` may point at a future external
+receipt, but the launch room deliberately ignores its claims until an
+independently configured signature verifier and pinned keyring exist outside
+the checkout. That verifier must bind the canonical repository, current
+envelope, runtime commit, exact image digest, issuance/expiry, and replay-safe
+receipt identity to three independently evidenced requirements:
 
 - Google Play public launch and store-policy completion;
 - safely configured paid billing with a proven no-second-login handoff; and
 - encrypted off-host backup plus a successful restore drill.
 
-`--require-production-ready` remains blocked until that external-authority
-receipt passes. Local deployment health, catalog entries, or release-gate
-acceptance cannot satisfy it.
+`--require-production-ready` remains blocked with
+`external_public_launch_authority_verifier_unconfigured` until that verifier is
+implemented and its authenticated receipt passes. Local deployment health,
+catalog entries, caller-selected files, or release-gate acceptance cannot
+satisfy it.
