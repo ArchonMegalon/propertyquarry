@@ -29,6 +29,7 @@ def _client(monkeypatch: pytest.MonkeyPatch, *, configured: bool = True) -> Test
     monkeypatch.setenv("EA_API_TOKEN", "")
     monkeypatch.setenv("EA_RUNTIME_MODE", "dev")
     monkeypatch.setenv("EA_PUBLIC_APP_BASE_URL", "https://propertyquarry.com")
+    monkeypatch.setenv("PROPERTYQUARRY_RUNTIME_PROFILE", "propertyquarry")
     if configured:
         monkeypatch.setenv(play_review.PLAY_REVIEW_USERNAME_ENV, TEST_USERNAME)
         monkeypatch.setenv(play_review.PLAY_REVIEW_PASSWORD_DIGEST_ENV, TEST_DIGEST)

@@ -120,6 +120,7 @@ _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS = frozenset(
         "/sign-in/current-session",
         "/sign-in/email-link",
         "/sign-in/google",
+        "/sign-in/play-review",
         "/sitemap.xml",
         "/static",
         "/subprocessors",
