@@ -32,6 +32,11 @@ DATABASE_SECRET_INPUTS = frozenset(SERVICE_DSN_INPUTS.values()) | {
     "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL",
     "PROPERTYQUARRY_API_INGRESS_DATABASE_URL",
 }
+PROPERTYQUARRY_PAYPAL_INPUTS = {
+    "PAYPAL_CLIENT_ID": "${PROPERTYQUARRY_PAYPAL_LIVE_CLIENT_ID:-}",
+    "PAYPAL_SECRET": "${PROPERTYQUARRY_PAYPAL_LIVE_SECRET:-}",
+    "PAYPAL_API_BASE": "https://api-m.paypal.com",
+}
 
 
 def _compose_payload() -> dict[str, object]:
@@ -78,6 +83,30 @@ def test_compose_maps_each_database_secret_to_only_its_service_lane() -> None:
     )
     assert api_environment["PROPERTYQUARRY_ADMISSION_BACKEND"] == "postgres"
     assert services["propertyquarry-migrate"]["restart"] == "no"
+
+
+def test_propertyquarry_paypal_credentials_are_dedicated_and_live_pinned() -> None:
+    source = COMPOSE_PATH.read_text(encoding="utf-8")
+    payload = _compose_payload()
+    services = dict(payload.get("services") or {})
+    api_environment = dict(
+        services["propertyquarry-api"].get("environment") or {}
+    )
+
+    assert {
+        key: api_environment.get(key)
+        for key in PROPERTYQUARRY_PAYPAL_INPUTS
+    } == PROPERTYQUARRY_PAYPAL_INPUTS
+    assert 'PAYPAL_CLIENT_ID: "${PAYPAL_CLIENT_ID' not in source
+    assert 'PAYPAL_SECRET: "${PAYPAL_SECRET' not in source
+    assert 'PAYPAL_API_BASE: "${PAYPAL_API_BASE' not in source
+
+    for service_name in LONG_LIVED_SERVICES:
+        if service_name == "propertyquarry-api":
+            continue
+        environment = dict(services[service_name].get("environment") or {})
+        assert environment.get("PAYPAL_CLIENT_ID", "") == ""
+        assert environment.get("PAYPAL_SECRET", "") == ""
 
 
 def test_long_lived_services_do_not_load_the_broad_dotenv_or_migration_dsn() -> None:
@@ -170,6 +199,9 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
         "DATABASE_URL": "postgresql://generic-forbidden:review-only@db/property",
         "POSTGRES_PASSWORD": "review-only-bootstrap-placeholder",
         "EA_SIGNING_SECRET": "review-only-signing-placeholder",
+        "PAYPAL_CLIENT_ID": "generic-ea-paypal-client-must-not-flow",
+        "PAYPAL_SECRET": "generic-ea-paypal-secret-must-not-flow",
+        "PAYPAL_API_BASE": "https://api-m.sandbox.paypal.com",
         "PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN": (
             "review-only-bridge-placeholder"
         ),
@@ -220,3 +252,6 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
         command_env["EA_SIGNING_SECRET"],
         api_environment["PROPERTYQUARRY_IDENTITY_SESSION_SECRET"],
     }
+    assert api_environment["PAYPAL_CLIENT_ID"] == ""
+    assert api_environment["PAYPAL_SECRET"] == ""
+    assert api_environment["PAYPAL_API_BASE"] == "https://api-m.paypal.com"
