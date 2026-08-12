@@ -71,12 +71,27 @@ errors or broken imports. The canonical deployment receipt is
 handoff, redeploy once so its envelope binds the exact pushed handoff head.
 
 Do not mistake this proof for closure of the whole launch goal. Still required:
-a fresh physical-Android pass after the latest web work, a fresh cross-browser
-live pass that includes this asset endpoint, safe billing admission before any
-activation, the Play closed-test/production-access prerequisites, either real
-external FlipLink publication or continued `local_only` labelling, and an
-off-host encrypted restore proof or precisely evidenced external-authority
-blocker.
+a fresh physical-Android pass after the latest web work, safe billing admission
+before any activation, the Play closed-test/production-access prerequisites,
+either real external FlipLink publication or continued `local_only` labelling,
+and an off-host encrypted restore proof or precisely evidenced external-
+authority blocker.
+
+The fresh post-cover cross-browser live pass is complete. Receipt
+`state/qa/propertyquarry-live-browser-all-20260812-current.json`, SHA-256
+`b2ebbc6862292a92a52f91ecf531922a488f551480dc00f116c4a83dac016e24`,
+records 48/48 Playwright samples and zero failures at
+`2026-08-12T19:09:22.720710+00:00`: eight authenticated customer routes in
+Chromium, Firefox, and WebKit at 390×844 and 430×932. It has no missing engine,
+sample, or static fallback. All customer pages returned 200; the six billing
+samples returned the expected fail-closed 503 and passed the explicit free-plan
+compatibility contract. A separate authenticated retained-profile browser read
+the private cover endpoint after that matrix and independently reproduced the
+same status, media type, byte length, cache policy, ETag, and SHA-256. The
+durable job still had `attempt_count: 1`; no second provider call occurred. The
+HttpOnly authenticated session was not copied across engines, so the receipt
+correctly treats the three-engine matrix as customer-page proof and the cover
+read as a separate principal-scoped asset proof.
 
 ## 2026-08-12 Play reviewer access and declarations
 
@@ -236,14 +251,15 @@ Chromium at an exact 1080x1920 Play-compatible resolution. The private receipt
 is `state/qa/propertyquarry-play-store-screenshots-current.json`, generated at
 `2026-08-12T15:59:33.197181+00:00`. Visual inspection confirmed the final
 shortlist basemap is Leopoldstadt/Prater, not the earlier incorrect geocoder
-result. The current cross-browser live receipt is
+result. The earlier pre-cover cross-browser live receipt was
 `state/qa/propertyquarry-live-browser-all-20260812-current.json`, SHA-256
 `dc6b8d3b0dda12cf65e8c682b2461f3c8817e5cdfba2c849bf4bd350facd005f`,
 with 48/48 real samples across Chromium, Firefox, and WebKit at 390x844 and
 430x932, generated after the deployed fallback at
 `2026-08-12T16:15:44.691224+00:00`. The expected paid-billing recovery samples
 returned 503 and passed the explicit free-plan compatibility contract; all
-other samples returned 200.
+other samples returned 200. It has now been superseded by the post-cover
+receipt documented in the newer opportunity section above.
 
 At the time of the thumbnail/listing slice, Google Play Console app
 `4976153363318887490` reported **7 of 11** app-info tasks complete, up from 5
