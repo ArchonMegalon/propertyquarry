@@ -1102,6 +1102,35 @@ depleted, 0 unavailable), but it has no PropertyQuarry principal-bound binding
 or customer-visible call receipt; keep it labeled inventory-only, not
 integrated.
 
+### 2026-08-12 FlipLink live-truth closure
+
+Commit `ba99af68` removes the remaining static-catalog substitution from
+opportunity-brief generation. A private brief no longer depends on the
+FlipLink LTD catalog or reports catalog executability as publication
+readiness. The API and persisted artifact now say `local_only`,
+`private_artifact`, `not_published`, and
+`external_publication_verified=false`; no external provider or receipt is
+invented.
+
+The deployed API was checked read-only at `2026-08-12T14:02:22Z`. It has no
+FlipLink login email, login password, BrowserAct enablement, webhook secret, or
+custom-domain configuration. Deployed PostgreSQL has zero packet-publication
+rows, zero `published` rows, and zero external-URL rows. Therefore there is no
+live FlipLink integration to claim.
+
+The sharing dashboard now labels repository capacity as local packet storage,
+hides provider plan/tier/domain claims, distinguishes a manually recorded
+external link from a provider publication, and suppresses Publish assist while
+the external account is unconfigured. Enabling only the feature flag is no
+longer sufficient: the BrowserAct request boundary also requires configured
+FlipLink credentials. Configuration still does not become a verified account
+or provider-call claim without a future principal-bound probe and receipt.
+
+Focused opportunity, summary, packet, dashboard-rendering, and FlipLink truth
+regressions pass `16/16`; Python compilation and `git diff --check` pass. This
+commit is published source only until the protected Google handoff finishes
+and the current envelope can be deployed safely.
+
 ### Active Google human handoff
 
 BrowserAct session `pq-live-thumbnail-20260812-root` on browser
