@@ -294,6 +294,7 @@ def test_research_detail_mobile_topbar_keeps_primary_navigation_visible() -> Non
     ).read_text(encoding="utf-8")
 
     assert '.prd-top-actions [data-pq-localization-slot]' in source
+    assert '.prd-top-actions .pq-locale-panel' in source
     assert '.prd-primary-nav [data-prd-nav-key="account"]' in source
     assert source.count('data-prd-nav-key="{{ item.key }}"') == 2
     assert 'content: "A";' in source
