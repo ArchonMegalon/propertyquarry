@@ -2250,7 +2250,7 @@
       display: none;
     }
     .prd-top-actions .account-menu summary::before {
-      content: "Me";
+      content: "A";
       font-size: 0.72rem;
       font-weight: 780;
       letter-spacing: 0.02em;
@@ -3220,6 +3220,11 @@
     }
     .prd-top-actions {
       gap: 6px;
+      min-width: 44px;
+    }
+    .prd-top-actions [data-pq-localization-slot],
+    .prd-primary-nav [data-prd-nav-key="account"] {
+      display: none !important;
     }
     .prd-top-actions .prd-run-chip {
       display: none;
@@ -3306,9 +3311,9 @@
     <nav class="prd-primary-nav" aria-label="PropertyQuarry sections" data-property-console-topnav>
       {% for item in research_topnav_items %}
         {% if item.key == current_nav or (item.key == 'account' and current_nav in ['agents', 'alerts', 'billing', 'settings']) %}
-        <span class="is-active" aria-current="page">{{ item.label }}</span>
+        <span class="is-active" aria-current="page" data-prd-nav-key="{{ item.key }}">{{ item.label }}</span>
         {% else %}
-        <a href="{{ item.href }}">{{ item.label }}</a>
+        <a href="{{ item.href }}" data-prd-nav-key="{{ item.key }}">{{ item.label }}</a>
         {% endif %}
       {% endfor %}
     </nav>
