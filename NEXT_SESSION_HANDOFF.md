@@ -30,13 +30,14 @@ research-detail route in redacted form. Every ordinary customer page returned
 HTTP 200. All six billing samples returned the expected fail-closed HTTP 503
 and passed the explicit Free-plan compatibility contract.
 
-This proof ran against the currently deployed web image
+This proof ran against web image
 `sha256:caeba00013606b8f9af15176a0f2937a30d94869f9e2b0e99c83515ed946c9de`.
-The canonical deployment receipt remains passed with no failures, binds
-envelope `77b2ab2341609658f5d32cb210d5f5225e3b15ea`, and was observed at
-`2026-08-12T20:31:07Z`. The matrix used the principal-bound release-probe
-credential through bounded stdin; neither that credential nor an API token is
-present in the receipt.
+The canonical deployment receipt must remain passed with no failures and its
+`envelope_head_sha` must equal the exact pushed handoff head; read those values
+from `state/release/propertyquarry-local-deployment.v1.json` rather than copying
+a self-referential commit into this file. The matrix used the principal-bound
+release-probe credential through bounded stdin; neither that credential nor an
+API token is present in the receipt.
 
 Paid billing remains deliberately unavailable. The deployed API has PayPal
 enabled with credentials, while PayFunnels still has no API key or paid-plan
