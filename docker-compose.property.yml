@@ -20,6 +20,11 @@ services:
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
       EA_API_TOKEN: "${EA_API_TOKEN:-}"
       EA_SIGNING_SECRET: "${EA_SIGNING_SECRET:?Set EA_SIGNING_SECRET for the PropertyQuarry API}"
+      # Principal assertions are accepted only from trusted ingress peers.
+      # They bind local operational mutations to one explicit principal and
+      # never turn the shared API token into an identity override.
+      EA_EDGE_PRINCIPAL_ASSERTION_SECRET: "${EA_EDGE_PRINCIPAL_ASSERTION_SECRET:-}"
+      EA_EDGE_PRINCIPAL_ASSERTION_AUDIENCE: "${EA_EDGE_PRINCIPAL_ASSERTION_AUDIENCE:-}"
       # Registration delivery and Google identity are API-only authorities.
       # Compose receives values by reference; no provider secret is baked into
       # the image or forwarded to background/runtime-only services.

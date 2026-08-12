@@ -164,6 +164,24 @@ def test_provisioner_replay_preserves_dedicated_secrets(tmp_path: Path) -> None:
     )
 
 
+def test_deployment_requires_and_forwards_edge_assertion_authority_to_api_only() -> None:
+    compose = (ROOT / "docker-compose.property.yml").read_text(encoding="utf-8")
+    deploy = (ROOT / "scripts" / "deploy_propertyquarry.sh").read_text(
+        encoding="utf-8"
+    )
+    api_block, remaining_services = compose.split(
+        "  propertyquarry-migrate:", maxsplit=1
+    )
+
+    for key in (
+        "EA_EDGE_PRINCIPAL_ASSERTION_SECRET",
+        "EA_EDGE_PRINCIPAL_ASSERTION_AUDIENCE",
+    ):
+        assert f'{key}: "${{{key}:-}}"' in api_block
+        assert key not in remaining_services
+        assert f"  {key} \\\n" in deploy
+
+
 def test_provisioner_validates_release_probe_overrides(tmp_path: Path) -> None:
     module = _load_module()
     source = tmp_path / "source.env"
