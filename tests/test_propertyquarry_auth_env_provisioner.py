@@ -36,6 +36,7 @@ def _write_source(path: Path, *, sender: str = "access@propertyquarry.com") -> N
                 "EA_GOOGLE_OAUTH_CLIENT_SECRET=google-client-secret",
                 "EA_GOOGLE_OAUTH_STATE_SECRET=shared-state-secret-that-must-not-be-copied",
                 "EA_PROVIDER_SECRET_KEY=shared-provider-secret-that-must-not-be-copied",
+                "EA_EDGE_PRINCIPAL_ASSERTION_SECRET=shared-edge-secret-that-must-not-be-copied",
                 "PROPERTYQUARRY_RELEASE_PROBE_SECRET=shared-release-probe-secret-that-must-not-be-copied",
                 "UNRELATED_ROOT_TOKEN=must-not-cross-boundary",
             )
@@ -76,6 +77,14 @@ def test_provisioner_writes_narrow_mode_0600_environment(tmp_path: Path) -> None
         != "shared-provider-secret-that-must-not-be-copied"
     )
     assert (
+        values["EA_EDGE_PRINCIPAL_ASSERTION_SECRET"]
+        != "shared-edge-secret-that-must-not-be-copied"
+    )
+    assert (
+        values["EA_EDGE_PRINCIPAL_ASSERTION_AUDIENCE"]
+        == "propertyquarry-local-ops-v1"
+    )
+    assert (
         values["PROPERTYQUARRY_RELEASE_PROBE_SECRET"]
         != "shared-release-probe-secret-that-must-not-be-copied"
     )
@@ -97,6 +106,9 @@ def test_provisioner_writes_narrow_mode_0600_environment(tmp_path: Path) -> None
     )
     assert "UNRELATED_ROOT_TOKEN" not in values
     assert receipt["status"] == "ready"
+    assert receipt["edge_assertion_configured"] is True
+    assert receipt["edge_assertion_audience"] == "propertyquarry-local-ops-v1"
+    assert receipt["dedicated_edge_assertion_secret"] is True
     assert receipt["release_probe_configured"] is True
     assert receipt["release_probe_route_values_redacted"] is True
     assert receipt["release_probe_research_detail_route_sha256"] == hashlib.sha256(
@@ -113,6 +125,7 @@ def test_provisioner_writes_narrow_mode_0600_environment(tmp_path: Path) -> None
     receipt_text = receipt_path.read_text(encoding="utf-8")
     assert "emailit-private-key" not in receipt_text
     assert "google-client-secret" not in receipt_text
+    assert values["EA_EDGE_PRINCIPAL_ASSERTION_SECRET"] not in receipt_text
     assert values["PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE"] not in receipt_text
     assert values["PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH"] not in receipt_text
     persisted_receipt = json.loads(receipt_text)
@@ -141,6 +154,10 @@ def test_provisioner_replay_preserves_dedicated_secrets(tmp_path: Path) -> None:
         second["EA_GOOGLE_OAUTH_STATE_SECRET"] == first["EA_GOOGLE_OAUTH_STATE_SECRET"]
     )
     assert second["EA_PROVIDER_SECRET_KEY"] == first["EA_PROVIDER_SECRET_KEY"]
+    assert (
+        second["EA_EDGE_PRINCIPAL_ASSERTION_SECRET"]
+        == first["EA_EDGE_PRINCIPAL_ASSERTION_SECRET"]
+    )
     assert (
         second["PROPERTYQUARRY_RELEASE_PROBE_SECRET"]
         == first["PROPERTYQUARRY_RELEASE_PROBE_SECRET"]

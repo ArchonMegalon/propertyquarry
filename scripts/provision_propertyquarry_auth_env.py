@@ -4,9 +4,10 @@
 The source EA environment contains credentials for several unrelated services.
 This provisioner copies only the Emailit and Google OAuth values required by
 PropertyQuarry's existing sign-in routes, generates PropertyQuarry-specific
-state/encryption and release-probe secrets, and writes an atomic mode-0600 env
-file. The release probe is constrained to one origin, one principal, and the
-reviewed read-only customer routes enforced by the application middleware.
+state/encryption, edge-assertion, and release-probe secrets, and writes an
+atomic mode-0600 env file. The edge assertion is accepted only from trusted
+proxy peers (loopback by default); the release probe is constrained to one
+origin, one principal, and reviewed read-only customer routes.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from app.propertyquarry_release_probe import (  # noqa: E402
 
 
 PROPERTYQUARRY_GOOGLE_REDIRECT_URI = "https://propertyquarry.com/google/callback"
+PROPERTYQUARRY_EDGE_ASSERTION_AUDIENCE = "propertyquarry-local-ops-v1"
 PROPERTYQUARRY_RELEASE_PROBE_DEFAULTS = {
     "PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID": "propertyquarry-release-probe",
     "PROPERTYQUARRY_RELEASE_PROBE_ORIGIN": "https://propertyquarry.com",
@@ -67,6 +69,7 @@ _REQUIRED_KEYS = (
 _GENERATED_SECRET_KEYS = (
     "EA_GOOGLE_OAUTH_STATE_SECRET",
     "EA_PROVIDER_SECRET_KEY",
+    "EA_EDGE_PRINCIPAL_ASSERTION_SECRET",
     "PROPERTYQUARRY_RELEASE_PROBE_SECRET",
 )
 _RELEASE_PROBE_CONFIG_KEYS = tuple(PROPERTYQUARRY_RELEASE_PROBE_DEFAULTS)
@@ -214,6 +217,9 @@ def build_auth_environment(
         if str(source_values.get(key) or "").strip()
     }
     result["EA_GOOGLE_OAUTH_REDIRECT_URI"] = PROPERTYQUARRY_GOOGLE_REDIRECT_URI
+    result["EA_EDGE_PRINCIPAL_ASSERTION_AUDIENCE"] = (
+        PROPERTYQUARRY_EDGE_ASSERTION_AUDIENCE
+    )
     result.update(_release_probe_configuration(source_values))
     existing = dict(existing_values or {})
     prohibited_secrets = {
@@ -278,6 +284,7 @@ def provision_auth_environment(
         for key in (
             *_COPIED_KEYS,
             "EA_GOOGLE_OAUTH_REDIRECT_URI",
+            "EA_EDGE_PRINCIPAL_ASSERTION_AUDIENCE",
             *_RELEASE_PROBE_CONFIG_KEYS,
             *_GENERATED_SECRET_KEYS,
         )
@@ -294,6 +301,8 @@ def provision_auth_environment(
         "configured_keys": list(ordered_keys),
         "sender_domain": _sender_domain(values),
         "google_redirect_uri": PROPERTYQUARRY_GOOGLE_REDIRECT_URI,
+        "edge_assertion_configured": True,
+        "edge_assertion_audience": PROPERTYQUARRY_EDGE_ASSERTION_AUDIENCE,
         "release_probe_configured": True,
         "release_probe_origin": values["PROPERTYQUARRY_RELEASE_PROBE_ORIGIN"],
         "release_probe_principal_id": values[
@@ -320,6 +329,12 @@ def provision_auth_environment(
         != str(source_values.get("EA_GOOGLE_OAUTH_STATE_SECRET") or "").strip(),
         "dedicated_provider_secret": values["EA_PROVIDER_SECRET_KEY"]
         != str(source_values.get("EA_PROVIDER_SECRET_KEY") or "").strip(),
+        "dedicated_edge_assertion_secret": values[
+            "EA_EDGE_PRINCIPAL_ASSERTION_SECRET"
+        ]
+        != str(
+            source_values.get("EA_EDGE_PRINCIPAL_ASSERTION_SECRET") or ""
+        ).strip(),
         "dedicated_release_probe_secret": values[
             "PROPERTYQUARRY_RELEASE_PROBE_SECRET"
         ]

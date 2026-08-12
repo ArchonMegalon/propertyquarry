@@ -5,8 +5,10 @@ import argparse
 import contextlib
 import json
 import os
+import secrets
 import signal
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,10 +31,19 @@ from app.services.property_market_catalog import (
     provider_options,
     selectable_property_platform_keys,
 )
+from app.api.principal_identity import (
+    PRINCIPAL_ASSERTION_AUDIENCE_HEADER,
+    PRINCIPAL_ASSERTION_NONCE_HEADER,
+    PRINCIPAL_ASSERTION_SIGNATURE_HEADER,
+    PRINCIPAL_ASSERTION_TIMESTAMP_HEADER,
+    principal_assertion_signature,
+)
 from scripts.propertyquarry_live_http_security import validated_live_base_origin
 from scripts.propertyquarry_live_probe_auth import live_probe_request_headers
 from scripts.propertyquarry_live_probe_secret_scope import (
+    read_edge_assertion_secret_from_stdin,
     read_release_probe_secret_from_stdin,
+    scrub_edge_assertion_secret_environment,
     scrub_release_probe_secret_environment,
 )
 
@@ -151,6 +162,10 @@ def _request_headers(
     api_token: str,
     host_header: str = "propertyquarry.com",
     content_type: str = "",
+    method: str = "GET",
+    url: str = "",
+    edge_assertion_secret: str = "",
+    edge_assertion_audience: str = "",
 ) -> dict[str, str]:
     headers = {
         "User-Agent": user_agent,
@@ -165,6 +180,30 @@ def _request_headers(
         headers["Authorization"] = f"Bearer {normalized_token}"
         headers["X-EA-API-Token"] = normalized_token
         headers["X-API-Token"] = normalized_token
+    normalized_assertion_secret = str(edge_assertion_secret or "").strip()
+    normalized_assertion_audience = str(edge_assertion_audience or "").strip()
+    if bool(normalized_assertion_secret) != bool(normalized_assertion_audience):
+        raise ValueError("edge_assertion_configuration_incomplete")
+    if normalized_assertion_secret:
+        parsed = urllib.parse.urlsplit(str(url or "").strip())
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("edge_assertion_url_required")
+        timestamp = int(time.time())
+        nonce = secrets.token_urlsafe(24)
+        normalized_method = str(method or "GET").strip().upper()
+        headers[PRINCIPAL_ASSERTION_TIMESTAMP_HEADER] = str(timestamp)
+        headers[PRINCIPAL_ASSERTION_NONCE_HEADER] = nonce
+        headers[PRINCIPAL_ASSERTION_AUDIENCE_HEADER] = normalized_assertion_audience
+        headers[PRINCIPAL_ASSERTION_SIGNATURE_HEADER] = principal_assertion_signature(
+            secret=normalized_assertion_secret,
+            method=normalized_method,
+            path=str(parsed.path or "/"),
+            query_string=str(parsed.query or ""),
+            principal_id=str(principal_id or "").strip(),
+            timestamp=timestamp,
+            nonce=nonce,
+            audience=normalized_assertion_audience,
+        )
     return headers
 
 
@@ -439,6 +478,8 @@ def _post_search_run_payload(
     timeout_seconds: float,
     api_token: str = "",
     principal_id: str = "",
+    edge_assertion_secret: str = "",
+    edge_assertion_audience: str = "",
 ) -> dict[str, object]:
     url = urllib.parse.urljoin(base_url.rstrip("/") + "/", "app/api/property/search-runs")
     normalized_api_token = str(api_token or "").strip() or _default_api_token()
@@ -453,6 +494,10 @@ def _post_search_run_payload(
                 principal_id=normalized_principal_id,
                 api_token=normalized_api_token,
                 content_type="application/json",
+                method="POST",
+                url=url,
+                edge_assertion_secret=edge_assertion_secret,
+                edge_assertion_audience=edge_assertion_audience,
             ),
             "X-PropertyQuarry-Dispatch-Probe": "1",
         },
@@ -595,6 +640,8 @@ def _fetch_search_run_status_payload(
     timeout_seconds: float,
     api_token: str = "",
     principal_id: str = "",
+    edge_assertion_secret: str = "",
+    edge_assertion_audience: str = "",
 ) -> dict[str, object]:
     raw_status_url = str(status_url or "").strip()
     if raw_status_url:
@@ -610,6 +657,10 @@ def _fetch_search_run_status_payload(
             user_agent="PropertyQuarry-live-provider-search-status/1.0",
             principal_id=normalized_principal_id,
             api_token=normalized_api_token,
+            method="GET",
+            url=url,
+            edge_assertion_secret=edge_assertion_secret,
+            edge_assertion_audience=edge_assertion_audience,
         ),
     )
     with _wall_clock_timeout(timeout_seconds):
@@ -966,6 +1017,8 @@ def _fetch_provider_payload(
     api_token: str = "",
     principal_id: str = "",
     release_probe_secret: str = "",
+    edge_assertion_secret: str = "",
+    edge_assertion_audience: str = "",
 ) -> dict[str, object]:
     params = urllib.parse.urlencode({"country": country_code})
     url = urllib.parse.urljoin(base_url.rstrip("/") + "/", f"app/api/property/providers?{params}")
@@ -980,6 +1033,10 @@ def _fetch_provider_payload(
         user_agent="PropertyQuarry-live-provider-smoke/1.0",
         principal_id=normalized_principal_id,
         api_token=normalized_api_token,
+        method="GET",
+        url=url,
+        edge_assertion_secret=edge_assertion_secret,
+        edge_assertion_audience=edge_assertion_audience,
     )
     if normalized_release_probe_secret:
         headers = live_probe_request_headers(
@@ -1030,6 +1087,8 @@ def build_live_provider_smoke_receipt(
     api_token: str = "",
     principal_id: str = "",
     release_probe_secret: str = "",
+    edge_assertion_secret: str = "",
+    edge_assertion_audience: str = "",
 ) -> dict[str, object]:
     requested_countries = tuple(dict.fromkeys(str(country or "").strip().upper() for country in countries if str(country or "").strip()))
     all_search_ready_scope = _all_search_ready_countries_enabled() if all_search_ready_countries is None else bool(all_search_ready_countries)
@@ -1045,6 +1104,12 @@ def build_live_provider_smoke_receipt(
         else str(api_token or "").strip() or _default_api_token()
     )
     normalized_principal_id = str(principal_id or "").strip() or _default_principal_id()
+    normalized_edge_assertion_secret = str(edge_assertion_secret or "").strip()
+    normalized_edge_assertion_audience = str(edge_assertion_audience or "").strip()
+    if bool(normalized_edge_assertion_secret) != bool(normalized_edge_assertion_audience):
+        raise ValueError("edge_assertion_configuration_incomplete")
+    if normalized_release_probe_secret and normalized_edge_assertion_secret:
+        raise ValueError("release_probe_and_edge_assertion_modes_conflict")
     should_execute_search_matrix = _execute_search_matrix_enabled() if execute_search_matrix is None else bool(execute_search_matrix)
     if normalized_release_probe_secret and (
         should_execute_search_matrix or execute_cross_country_sanitization
@@ -1067,6 +1132,8 @@ def build_live_provider_smoke_receipt(
             api_token=normalized_api_token,
             principal_id=normalized_principal_id,
             release_probe_secret=normalized_release_probe_secret,
+            edge_assertion_secret=normalized_edge_assertion_secret,
+            edge_assertion_audience=normalized_edge_assertion_audience,
         )
     )
     for country in normalized_countries:
@@ -1233,6 +1300,8 @@ def build_live_provider_smoke_receipt(
                 timeout_seconds=timeout,
                 api_token=normalized_api_token,
                 principal_id=normalized_principal_id,
+                edge_assertion_secret=normalized_edge_assertion_secret,
+                edge_assertion_audience=normalized_edge_assertion_audience,
             )
         ),
         status_fetcher=status_fetcher
@@ -1244,6 +1313,8 @@ def build_live_provider_smoke_receipt(
                 timeout_seconds=timeout,
                 api_token=normalized_api_token,
                 principal_id=normalized_principal_id,
+                edge_assertion_secret=normalized_edge_assertion_secret,
+                edge_assertion_audience=normalized_edge_assertion_audience,
             )
         ),
         checkpoint_writer=_write_checkpoint if should_execute_search_matrix and enabled and not dry_run else None,
@@ -1263,6 +1334,8 @@ def build_live_provider_smoke_receipt(
                 timeout_seconds=timeout,
                 api_token=normalized_api_token,
                 principal_id=normalized_principal_id,
+                edge_assertion_secret=normalized_edge_assertion_secret,
+                edge_assertion_audience=normalized_edge_assertion_audience,
             )
         ),
     )
@@ -1300,6 +1373,7 @@ def build_live_provider_smoke_receipt(
         "provider_catalog_timeout_seconds": timeout_seconds,
         "search_run_timeout_seconds": effective_search_run_timeout_seconds,
         "api_token_configured": bool(normalized_api_token),
+        "edge_assertion_configured": bool(normalized_edge_assertion_secret),
         "resume_source": resume_source,
         "country_scope": "all_search_ready" if all_search_ready_scope else "explicit",
         "checks": checks,
@@ -1373,6 +1447,16 @@ def main() -> int:
         action="store_true",
         help="Read the protected read-only release-probe credential once from bounded stdin.",
     )
+    parser.add_argument(
+        "--edge-assertion-secret-stdin",
+        action="store_true",
+        help="Read the protected principal-assertion HMAC secret once from bounded stdin.",
+    )
+    parser.add_argument(
+        "--edge-assertion-audience",
+        default="",
+        help="Trusted edge principal-assertion audience (non-secret).",
+    )
     parser.add_argument("--principal-id", default=_default_principal_id(), help="Optional principal id for authenticated live probes.")
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
     parser.add_argument(
@@ -1400,11 +1484,22 @@ def main() -> int:
         help="Probe runtime provider catalogs without submitting cross-country search-run sanitization cases.",
     )
     args = parser.parse_args()
+    if args.release_probe_secret_stdin and args.edge_assertion_secret_stdin:
+        parser.error("release-probe and edge-assertion stdin modes are mutually exclusive")
     release_probe_secret = read_release_probe_secret_from_stdin(
         parser,
         enabled=bool(args.release_probe_secret_stdin),
     )
+    edge_assertion_secret = read_edge_assertion_secret_from_stdin(
+        parser,
+        enabled=bool(args.edge_assertion_secret_stdin),
+    )
     scrub_release_probe_secret_environment()
+    scrub_edge_assertion_secret_environment()
+    if bool(edge_assertion_secret) != bool(str(args.edge_assertion_audience or "").strip()):
+        parser.error(
+            "--edge-assertion-secret-stdin and --edge-assertion-audience must be supplied together"
+        )
     if release_probe_secret and not (
         args.no_execute_search_matrix and args.no_cross_country_sanitization
     ):
@@ -1437,6 +1532,8 @@ def main() -> int:
             api_token=str(args.api_token or "").strip(),
             principal_id=str(args.principal_id or "").strip(),
             release_probe_secret=release_probe_secret,
+            edge_assertion_secret=edge_assertion_secret,
+            edge_assertion_audience=str(args.edge_assertion_audience or "").strip(),
         )
     except KeyboardInterrupt:
         if args.write and Path(args.write).exists():

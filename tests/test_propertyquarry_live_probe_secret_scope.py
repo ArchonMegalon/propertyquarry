@@ -19,6 +19,7 @@ from scripts import propertyquarry_live_mobile_surface_smoke as mobile_smoke
 ROOT = Path(__file__).resolve().parents[1]
 LIVE_SECRET_ENV = "PROPERTYQUARRY_LIVE_PROBE_SECRET"
 PERFORMANCE_SECRET_ENV = "PROPERTYQUARRY_PERFORMANCE_RELEASE_PROBE_SECRET"
+EDGE_SECRET_ENV = "EA_EDGE_PRINCIPAL_ASSERTION_SECRET"
 
 
 def _hostile_bash_env(tmp_path: Path) -> tuple[Path, Path]:
@@ -259,6 +260,30 @@ def test_release_probe_stdin_is_exactly_bounded_and_malformed_input_is_not_echoe
     captured = capsys.readouterr()
     assert reflected_marker not in captured.out
     assert reflected_marker not in captured.err
+
+
+def test_edge_assertion_secret_is_bounded_and_rejects_environment(monkeypatch, capsys) -> None:
+    parser = argparse.ArgumentParser(prog="edge-secret-test")
+    monkeypatch.delenv(EDGE_SECRET_ENV, raising=False)
+    secret = "e" * secret_scope.MAX_EDGE_ASSERTION_SECRET_BYTES
+    monkeypatch.setattr(
+        secret_scope.sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO((secret + "\n").encode("utf-8"))),
+    )
+    assert secret_scope.read_edge_assertion_secret_from_stdin(
+        parser,
+        enabled=True,
+    ) == secret
+
+    marker = "edge-secret-must-not-echo"
+    monkeypatch.setenv(EDGE_SECRET_ENV, marker)
+    with pytest.raises(SystemExit) as exc_info:
+        secret_scope.read_edge_assertion_secret_from_stdin(parser, enabled=True)
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert marker not in captured.out
+    assert marker not in captured.err
 
 
 def _live_release_environment(

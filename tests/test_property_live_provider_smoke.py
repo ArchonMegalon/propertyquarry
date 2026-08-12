@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from app.api.principal_identity import principal_assertion_signature
+
 from app.propertyquarry_release_probe import (
     PROPERTYQUARRY_RELEASE_PROBE_NONCE_HEADER,
     PROPERTYQUARRY_RELEASE_PROBE_SIGNATURE_HEADER,
@@ -345,6 +347,54 @@ def test_live_provider_smoke_request_headers_include_all_supported_api_token_hea
     assert headers["X-API-Token"] == "live-token"
     assert headers["X-EA-Principal-ID"] == "cf-email:test@example.com"
     assert headers["Content-Type"] == "application/json"
+
+
+def test_live_provider_smoke_request_headers_can_sign_prod_edge_assertion(monkeypatch) -> None:
+    secret = "edge-assertion-test-secret-that-is-long-enough-0001"
+    audience = "propertyquarry-edge"
+    monkeypatch.setattr(provider_smoke.time, "time", lambda: 1_777_777_777)
+    monkeypatch.setattr(provider_smoke.secrets, "token_urlsafe", lambda _size: "nonce-for-live-provider-smoke")
+
+    headers = provider_smoke._request_headers(
+        user_agent="test-agent",
+        principal_id="cf-email:test@example.com",
+        api_token="live-token",
+        content_type="application/json",
+        method="POST",
+        url="https://propertyquarry.com/app/api/property/search-runs?dispatch=1",
+        edge_assertion_secret=secret,
+        edge_assertion_audience=audience,
+    )
+
+    assert headers["x-ea-principal-assertion-timestamp"] == "1777777777"
+    assert headers["x-ea-principal-assertion-nonce"] == "nonce-for-live-provider-smoke"
+    assert headers["x-ea-principal-assertion-audience"] == audience
+    assert headers["x-ea-principal-assertion-signature"] == principal_assertion_signature(
+        secret=secret,
+        method="POST",
+        path="/app/api/property/search-runs",
+        query_string="dispatch=1",
+        principal_id="cf-email:test@example.com",
+        timestamp=1_777_777_777,
+        nonce="nonce-for-live-provider-smoke",
+        audience=audience,
+    )
+    assert secret not in json.dumps(headers)
+
+
+def test_live_provider_smoke_rejects_incomplete_or_conflicting_signed_auth() -> None:
+    with pytest.raises(ValueError, match="edge_assertion_configuration_incomplete"):
+        build_live_provider_smoke_receipt(
+            countries=("AT",),
+            edge_assertion_secret="edge-secret",
+        )
+    with pytest.raises(ValueError, match="release_probe_and_edge_assertion_modes_conflict"):
+        build_live_provider_smoke_receipt(
+            countries=("AT",),
+            release_probe_secret="release-secret",
+            edge_assertion_secret="edge-secret",
+            edge_assertion_audience="propertyquarry-edge",
+        )
 
 
 def test_live_provider_catalog_release_probe_is_signed_and_drops_legacy_auth(
