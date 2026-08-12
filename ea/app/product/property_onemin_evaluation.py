@@ -1551,3 +1551,66 @@ def property_onemin_safe_public_packet(value: object) -> dict[str, object]:
             "code": _safe_failure_code(error.get("code")) if error else "",
         },
     }
+
+
+def property_onemin_customer_assessment(value: object) -> dict[str, object]:
+    """Project only an exact, manager-routed 1min assessment for app cards.
+
+    The durable packet retains operational account and slot details for audit.
+    Customer surfaces need the useful judgment and a bounded call receipt, not
+    provider topology. A detached or incomplete receipt therefore disappears
+    instead of degrading into an unproved AI claim.
+    """
+
+    packet = property_onemin_safe_public_packet(value)
+    judgment = (
+        dict(packet.get("judgment") or {})
+        if isinstance(packet.get("judgment"), Mapping)
+        else {}
+    )
+    receipt = (
+        dict(packet.get("receipt") or {})
+        if isinstance(packet.get("receipt"), Mapping)
+        else {}
+    )
+    input_digest = str(packet.get("input_digest") or "").strip()
+    evaluated_at = str(packet.get("evaluated_at") or "").strip()
+    recommendation = str(judgment.get("recommendation") or "").strip().lower()
+    summary = _bounded_text(judgment.get("summary"), limit=600)
+    provider_backend = _bounded_text(receipt.get("provider_backend"), limit=80)
+    model = _bounded_text(receipt.get("model"), limit=120)
+    if not (
+        packet.get("status") == "succeeded"
+        and packet.get("manager_routed") is True
+        and receipt.get("manager_routed") is True
+        and recommendation in _RECOMMENDATIONS
+        and summary
+        and provider_backend
+        and model
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", input_digest)
+        and receipt.get("input_digest") == input_digest
+        and evaluated_at
+        and receipt.get("evaluated_at") == evaluated_at
+    ):
+        return {}
+    return {
+        "schema_version": "propertyquarry.customer-ai-assessment.v1",
+        "status": "succeeded",
+        "provider": "1minAI",
+        "recommendation": recommendation,
+        "confidence": judgment.get("confidence"),
+        "summary": summary,
+        "strengths": _bounded_string_list(judgment.get("strengths")),
+        "risks": _bounded_string_list(judgment.get("risks")),
+        "evidence_keys": list(judgment.get("evidence_keys") or [])[:12],
+        "missing_fact_keys": list(judgment.get("missing_fact_keys") or [])[:12],
+        "evaluated_at": evaluated_at,
+        "receipt": {
+            "provider": "1minAI",
+            "provider_backend": provider_backend,
+            "model": model,
+            "manager_routed": True,
+            "input_digest": input_digest,
+            "evaluated_at": evaluated_at,
+        },
+    }

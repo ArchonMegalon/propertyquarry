@@ -182,6 +182,8 @@
       {% endif %}
       {% set blocker_line = (candidate.get('mismatch_reasons') or [candidate.get('investment', {}).get('underwriting_summary') or ''])|first %}
       {% set opportunity = candidate.get('opportunity') or {} %}
+      {% set ai_assessment = candidate.get('ai_assessment') or {} %}
+      {% set ai_assessment_receipt = ai_assessment.get('receipt') or {} %}
       {% set opportunity_unknown = (opportunity.get('unknowns') or candidate.get('unknowns') or [])|first %}
       {% set visual_property_url = candidate.get('property_url') or candidate.get('source_url') or candidate.get('listing_url') %}
       {% set visual_media_ready = candidate.get('floorplan_url') or candidate.get('source_virtual_tour_url') or candidate.get('vendor_tour_url') %}
@@ -320,6 +322,12 @@
               {% if opportunity_unknown %}<span>Verify: {{ opportunity_unknown }}</span>{% endif %}
             </span>
             <span class="pqx-note" data-pqx-opportunity-artifact hidden></span>
+            {% endif %}
+            {% if ai_assessment.get('status') == 'succeeded' and ai_assessment_receipt.get('manager_routed') and ai_assessment.get('summary') %}
+            <span class="pqx-note pqx-ai-assessment" data-pqx-ai-assessment title="Receipt-backed {{ ai_assessment.get('provider') or '1minAI' }} assessment">
+              <strong>{{ ai_assessment.get('provider') or '1minAI' }} evidence review · {{ (ai_assessment.get('recommendation') or 'Review')|replace('_', ' ')|title }}</strong>
+              <span>{{ ai_assessment.get('summary') }}</span>
+            </span>
             {% endif %}
           </span>
         </span>

@@ -16,6 +16,7 @@ from app.product.property_fact_enrichment import (
 from app.product.property_onemin_evaluation import (
     _google_maps_url_identity,
     _reconcile_property_budget_claims,
+    property_onemin_customer_assessment,
     property_onemin_safe_public_packet,
     run_property_google_maps_ooda,
     run_property_onemin_evaluation,
@@ -196,6 +197,47 @@ def test_safe_public_packet_rejects_stale_budget_schema() -> None:
     assert public["judgment"]["summary"] == ""
     assert public["judgment"]["risks"] == []
     assert public["error"]["code"] == "onemin_evaluation_schema_stale"
+
+
+def test_customer_assessment_requires_bound_receipt_and_omits_provider_topology(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.onemin_manager.active_onemin_manager",
+        lambda: object(),
+    )
+    facts, plan, _spec = _fixtures()
+    evaluation = run_property_onemin_evaluation(
+        tool_execution=_FakeToolExecution(),
+        principal_id="principal-test",
+        run_id="run-test",
+        candidate_ref="candidate-test",
+        candidate={"candidate_ref": "candidate-test", "title": "Vienna home"},
+        facts=facts,
+        preferences={"max_distance_to_supermarket_m": 900},
+        plan=plan,
+        score={"state": "final", "current": 87.0, "ranking_eligible": True},
+    )
+
+    customer = property_onemin_customer_assessment(evaluation)
+
+    assert customer["schema_version"] == "propertyquarry.customer-ai-assessment.v1"
+    assert customer["provider"] == "1minAI"
+    assert customer["summary"].startswith("Strong daily-life fit")
+    assert customer["receipt"] == {
+        "provider": "1minAI",
+        "provider_backend": "1min",
+        "model": "deepseek-chat",
+        "manager_routed": True,
+        "input_digest": evaluation["input_digest"],
+        "evaluated_at": evaluation["evaluated_at"],
+    }
+    assert "provider_account_name" not in str(customer)
+    assert "provider_key_slot" not in str(customer)
+
+    detached = copy.deepcopy(evaluation)
+    detached["receipt"]["input_digest"] = "sha256:" + ("f" * 64)
+    assert property_onemin_customer_assessment(detached) == {}
 
 
 def test_google_maps_url_identity_uses_only_exact_google_url_material() -> None:

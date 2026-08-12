@@ -81,6 +81,9 @@ from app.product.property_surface_state import (
     property_run_public_eta_label,
 )
 from app.product.property_search_storage import _property_search_compact_candidate_preview_url
+from app.product.property_onemin_evaluation import (
+    property_onemin_customer_assessment,
+)
 from app.product.service import (
     _hosted_property_tour_telegram_preview_image_url_for_style,
     _property_visual_ready_tour_url,
@@ -732,6 +735,11 @@ def _property_search_lightweight_candidate_payload(
     match_reasons = [str(item).strip() for item in list(raw.get("match_reasons") or []) if str(item).strip()]
     if match_reasons:
         compact["match_reasons"] = match_reasons[:3]
+    ai_assessment = property_onemin_customer_assessment(
+        raw.get("onemin_evaluation")
+    )
+    if ai_assessment:
+        compact["ai_assessment"] = ai_assessment
     return compact
 
 

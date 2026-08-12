@@ -61,6 +61,9 @@ from app.product.property_surface_state import (
 )
 from app.product.property_score_methodology import build_property_score_methodology
 from app.product.property_opportunities import property_opportunity_public_projection
+from app.product.property_onemin_evaluation import (
+    property_onemin_customer_assessment,
+)
 from app.product.property_delivery_governance import property_delivery_governance_rows
 from app.product import property_tour_hosting
 from app.product.service import (
@@ -1113,6 +1116,11 @@ def _property_workbench_client_candidate_payload(
     match_reasons = [str(item).strip() for item in list(raw.get("match_reasons") or []) if str(item).strip()]
     if match_reasons:
         compact["match_reasons"] = match_reasons[:3]
+    ai_assessment = property_onemin_customer_assessment(
+        raw.get("onemin_evaluation")
+    )
+    if ai_assessment:
+        compact["ai_assessment"] = ai_assessment
     route_rows = _property_workbench_client_route_rows(raw.get("route_evidence"))
     if route_rows:
         compact["route_evidence"] = route_rows

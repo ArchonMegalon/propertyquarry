@@ -4264,6 +4264,20 @@
         const opportunityRecommendation = String(opportunity.recommendation || candidate?.recommendation || '')
           .trim()
           .replaceAll('_', ' ');
+        const aiAssessment = candidate?.ai_assessment && typeof candidate.ai_assessment === 'object'
+          ? candidate.ai_assessment
+          : {};
+        const aiAssessmentReceipt = aiAssessment?.receipt && typeof aiAssessment.receipt === 'object'
+          ? aiAssessment.receipt
+          : {};
+        const aiAssessmentSummary = summarizeCandidateCopy(aiAssessment?.summary || '');
+        const aiAssessmentProvider = String(aiAssessment?.provider || '1minAI').trim() || '1minAI';
+        const aiAssessmentRecommendation = String(aiAssessment?.recommendation || 'review')
+          .trim()
+          .replaceAll('_', ' ');
+        const aiAssessmentReady = aiAssessment?.status === 'succeeded'
+          && aiAssessmentReceipt?.manager_routed === true
+          && Boolean(aiAssessmentSummary);
         const packetUrl = String(candidate?.packet_url || candidate?.review_url || '').trim();
         const propertyUrl = String(candidate?.property_url || candidate?.source_url || candidate?.listing_url || '').trim();
         const facts = (candidate?.property_facts && typeof candidate.property_facts === 'object') ? candidate.property_facts : {};
@@ -4383,6 +4397,7 @@
                   <span class="pqx-result-facts">${factChips}</span>
                   <span class="pqx-note${shortlistSurface ? ' pqx-shortlist-thesis' : ''}">${escapeHtml(localizedLiveMessage(fitSummary, 'Open the property page for more context.'))}</span>
                   ${opportunityReady ? `<span class="pqx-note pqx-opportunity-summary" data-pqx-opportunity-summary><strong>${escapeHtml(opportunityRecommendation || 'Review')}</strong>${opportunityBlocker ? `<span>Watch: ${escapeHtml(opportunityBlocker)}</span>` : ''}${opportunityUnknown ? `<span>Verify: ${escapeHtml(opportunityUnknown)}</span>` : ''}</span><span class="pqx-note" data-pqx-opportunity-artifact hidden></span>` : ''}
+                  ${aiAssessmentReady ? `<span class="pqx-note pqx-ai-assessment" data-pqx-ai-assessment title="${escapeHtml(`Receipt-backed ${aiAssessmentProvider} assessment`)}"><strong>${escapeHtml(`${aiAssessmentProvider} evidence review · ${aiAssessmentRecommendation}`)}</strong><span>${escapeHtml(aiAssessmentSummary)}</span></span>` : ''}
                 </span>
               </span>
             </span>
