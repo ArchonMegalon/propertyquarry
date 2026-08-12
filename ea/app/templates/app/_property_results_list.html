@@ -181,6 +181,8 @@
       {% set thesis_line = (candidate.get('match_reasons') or [candidate.get('fit_summary') or ''])|first %}
       {% endif %}
       {% set blocker_line = (candidate.get('mismatch_reasons') or [candidate.get('investment', {}).get('underwriting_summary') or ''])|first %}
+      {% set opportunity = candidate.get('opportunity') or {} %}
+      {% set opportunity_unknown = (opportunity.get('unknowns') or candidate.get('unknowns') or [])|first %}
       {% set visual_property_url = candidate.get('property_url') or candidate.get('source_url') or candidate.get('listing_url') %}
       {% set visual_media_ready = candidate.get('floorplan_url') or candidate.get('source_virtual_tour_url') or candidate.get('vendor_tour_url') %}
       {% set tour = candidate.get('tour', {}) %}
@@ -293,6 +295,14 @@
             {% if is_shortlist_surface and (candidate.get('fit_summary') or thesis_line) %}
             <span class="pqx-note pqx-shortlist-thesis">{{ candidate.get('fit_summary') or thesis_line }}</span>
             {% endif %}
+            {% if opportunity.get('status') in ['ready', 'preview'] %}
+            <span class="pqx-note pqx-opportunity-summary" data-pqx-opportunity-summary>
+              <strong>{{ (opportunity.get('recommendation') or candidate.get('recommendation') or 'Review')|replace('_', ' ')|title }}</strong>
+              {% if blocker_line %}<span>Watch: {{ blocker_line }}</span>{% endif %}
+              {% if opportunity_unknown %}<span>Verify: {{ opportunity_unknown }}</span>{% endif %}
+            </span>
+            <span class="pqx-note" data-pqx-opportunity-artifact hidden></span>
+            {% endif %}
           </span>
         </span>
       </span>
@@ -323,6 +333,16 @@
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
             aria-label="Review {{ candidate.get('title') or 'property' }}"
           >Review</button>
+          {% if not is_shortlist_surface and opportunity.get('status') in ['ready', 'preview'] and run.get('run_id') and candidate.get('candidate_ref') %}
+          <button
+            class="pqx-result-open pqx-result-open-button is-secondary"
+            type="button"
+            data-pqx-opportunity-generate
+            data-candidate-ref="{{ candidate.get('candidate_ref') }}"
+            data-run-id="{{ run.get('run_id') }}"
+          >Create brief</button>
+          <span class="pqx-note" data-pqx-opportunity-generation-status aria-live="polite"></span>
+          {% endif %}
           {% if candidate.get('packet_url') %}
           <a class="pqx-result-open is-secondary" href="{{ candidate.get('packet_url') }}">Open property</a>
           {% endif %}

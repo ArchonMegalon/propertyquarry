@@ -1696,6 +1696,7 @@ class FlipLinkPacketService:
         artifact_type: str,
         audience_type: str = "family",
         actor: str = "browser",
+        context_json: dict[str, object] | None = None,
     ) -> dict[str, object]:
         subject = str(subject_id or "").strip()
         artifact_kind = str(artifact_type or "").strip()
@@ -1704,11 +1705,52 @@ class FlipLinkPacketService:
         title = artifact_kind.replace("_", " ").title()
         property_ref = subject if subject_type == "property" else ""
         summary = self.feedback_summary(principal_id=principal_id, property_ref=property_ref) if property_ref else {}
+        context = dict(context_json or {})
+        opportunity = (
+            dict(context.get("opportunity") or {})
+            if isinstance(context.get("opportunity"), dict)
+            else {}
+        )
+        opportunity_title = str(context.get("title") or "this home").strip() or "this home"
+        match_reasons = [
+            str(value).strip()
+            for value in list(opportunity.get("match_reasons") or [])
+            if str(value).strip()
+        ]
+        mismatch_reasons = [
+            str(value).strip()
+            for value in list(opportunity.get("mismatch_reasons") or [])
+            if str(value).strip()
+        ]
+        unknowns = [
+            str(value).strip()
+            for value in list(opportunity.get("unknowns") or [])
+            if str(value).strip()
+        ]
+        recommendation = str(opportunity.get("recommendation") or "").strip().replace("_", " ")
+        contextual_why = (
+            f"{opportunity_title} is worth a closer look because {'; '.join(match_reasons[:3])}."
+            if match_reasons
+            else ""
+        )
+        contextual_tradeoffs = "; ".join((mismatch_reasons + unknowns)[:4])
         body = {
-            "why_shortlisted": f"This home is worth sharing now. Feedback so far: {summary.get('dealbreaker_count', 0)} dealbreakers, {summary.get('open_questions_count', 0)} open questions.",
-            "tradeoff_summary": f"Main tradeoffs: {', '.join(cluster.get('theme') for cluster in list(summary.get('clusters') or [])[:3]) or 'No major tradeoffs captured yet.'}",
+            "why_shortlisted": contextual_why or f"This home is worth sharing now. Feedback so far: {summary.get('dealbreaker_count', 0)} dealbreakers, {summary.get('open_questions_count', 0)} open questions.",
+            "tradeoff_summary": (
+                f"Main tradeoffs: {contextual_tradeoffs}."
+                if contextual_tradeoffs
+                else f"Main tradeoffs: {', '.join(cluster.get('theme') for cluster in list(summary.get('clusters') or [])[:3]) or 'No major tradeoffs captured yet.'}"
+            ),
             "what_changed": "; ".join(item.get("summary") or item.get("detail") or "Page and reply status updated." for item in self.property_change_log(principal_id=principal_id, property_ref=property_ref)[:3]) or "No major change recorded yet.",
-            "recommended_next_step": "Check the replies here and send the next focused follow-up.",
+            "recommended_next_step": (
+                f"Recommended next step: {recommendation}. Verify {unknowns[0]} before deciding."
+                if recommendation and unknowns
+                else (
+                    f"Recommended next step: {recommendation}."
+                    if recommendation
+                    else "Check the replies here and send the next focused follow-up."
+                )
+            ),
             "family_review_digest": "Family digest: keep the current reason, tradeoffs, and open questions in one shared note.",
         }[artifact_kind]
         artifact = {
@@ -1723,6 +1765,10 @@ class FlipLinkPacketService:
             "created_by": actor,
             "created_at": now_utc_iso(),
         }
+        if opportunity:
+            artifact["opportunity_id"] = str(opportunity.get("opportunity_id") or "").strip()
+            artifact["generation_provider"] = "FlipLink.me"
+            artifact["generation_mode"] = "ltd_runtime_managed"
         self._repo.record_event(
             {
                 "publication_id": "",

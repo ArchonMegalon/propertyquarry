@@ -60,6 +60,7 @@ from app.product.property_surface_state import (
     property_run_public_eta_label,
 )
 from app.product.property_score_methodology import build_property_score_methodology
+from app.product.property_opportunities import property_opportunity_public_projection
 from app.product.property_delivery_governance import property_delivery_governance_rows
 from app.product import property_tour_hosting
 from app.product.service import (
@@ -4603,6 +4604,11 @@ def property_workspace_payload(
                 repair_flag_label=repair_flag_label,
                 repair_flag_detail=repair_flag_detail,
             )
+        opportunity = property_opportunity_public_projection(candidate.get("opportunity"))
+        if opportunity:
+            workbench_candidate["opportunity"] = opportunity
+            workbench_candidate["opportunity_id"] = str(opportunity.get("opportunity_id") or "")
+            workbench_candidate["opportunity_status"] = str(opportunity.get("status") or "")
         if bool(candidate.get("_explicitly_selected_source_candidate")):
             workbench_candidate["selected_via_link"] = True
         workbench_results.append(workbench_candidate)

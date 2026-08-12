@@ -869,10 +869,26 @@ def propertyquarry_browser_server(
                         "notified_total": 1,
                         "top_candidates": [
                             {
+                                "candidate_ref": "altbau-u6",
                                 "title": "Altbau near U6",
                                 "property_url": "https://www.immobilienscout24.de/expose/altbau-u6",
                                 "fit_summary": "Personal fit 92/100 · shortlist · Lift and transit fit.",
                                 "recommendation": "shortlist",
+                                "opportunity": {
+                                    "opportunity_id": "assessment:altbau-u6",
+                                    "status": "ready",
+                                    "domain": "property",
+                                    "object_type": "listing",
+                                    "object_id": "altbau-u6",
+                                    "person_id": "elisabeth",
+                                    "run_id": run_id,
+                                    "fit_score": 92.0,
+                                    "confidence": 0.91,
+                                    "recommendation": "shortlist",
+                                    "match_reasons": ["Lift and transit fit."],
+                                    "mismatch_reasons": [],
+                                    "unknowns": ["heating_type"],
+                                },
                                 "review_url": "/app/handoffs/human_task:review-1",
                                 "tour_url": "/tours/altbau-u6/control/3dvista",
                                 "match_reasons": ["Lift and transit fit."],
@@ -1163,6 +1179,38 @@ def _assert_no_horizontal_overflow(page: Page) -> None:
     )
     assert overflow["scrollWidth"] <= overflow["innerWidth"] + 1, overflow
     assert overflow["bodyScrollWidth"] <= overflow["innerWidth"] + 1, overflow
+
+
+def test_propertyquarry_generates_private_opportunity_brief_in_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False)
+    page: Page = context.new_page()
+    try:
+        response = page.goto(f"{base_url}/app/properties?run_id=run-42", wait_until="networkidle")
+        assert response is not None and response.ok
+        card = page.locator('[data-workbench-row][data-candidate-ref="altbau-u6"]')
+        expect(card.locator("[data-pqx-opportunity-summary]")).to_contain_text("Verify: heating_type")
+        action = card.locator("[data-pqx-opportunity-generate]")
+        expect(action).to_be_visible()
+
+        with page.expect_response(
+            lambda item: "/app/api/property/opportunities/altbau-u6/generate" in item.url
+        ) as generated:
+            action.click()
+
+        assert generated.value.ok, generated.value.text()
+        expect(action).to_have_text("Brief ready")
+        expect(card.locator("[data-pqx-opportunity-generation-status]")).to_have_text(
+            "Private brief · FlipLink.me"
+        )
+        artifact = card.locator("[data-pqx-opportunity-artifact]")
+        expect(artifact).to_be_visible()
+        expect(artifact).to_contain_text("Altbau near U6")
+    finally:
+        context.close()
 
 
 def test_propertyquarry_ai_panorama_mobile_hotspot_labels_stay_inside_viewport(
@@ -4759,7 +4807,7 @@ def test_propertyquarry_greenfield_workspace_in_real_browser(
         family_row = page.locator("[data-workbench-row]", has_text="Family flat near Tiergarten").first
         selected_candidate_ref = str(family_row.get_attribute("data-candidate-ref") or "").strip()
         assert selected_candidate_ref
-        family_row.click()
+        family_row.get_by_role("button", name=re.compile(r"^Review\b", re.I)).click()
         selected_panel = page.get_by_role("region", name="Selected property")
         expect(selected_panel.locator("[data-pw-title]")).to_contain_text("Family flat near Tiergarten")
         before_parts = urllib.parse.urlsplit(before_url)

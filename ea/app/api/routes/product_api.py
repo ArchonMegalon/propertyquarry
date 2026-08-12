@@ -114,6 +114,10 @@ from app.api.routes.product_api_contracts import (
 )
 from app.container import AppContainer
 from app.product.service import _property_feedback_reason_map, build_product_service
+from app.product.property_opportunities import (
+    find_property_search_candidate,
+    property_opportunity_public_projection,
+)
 from app.services.fliplink import build_fliplink_packet_service
 from app.services import poppy_ai as poppy_ai_service
 from app.services import brilliant_directories as brilliant_directories_service
@@ -124,6 +128,7 @@ from app.services.heyy_whatsapp_service import heyy_daily_template_budget, redac
 from app.services.dossier_writer import write_verified_dossier_from_research
 from app.services.dossier_writer.neuronwriter_adapter import create_neuronwriter_query
 from app.services.registration_email import property_notification_preview
+from app.services.ltd_runtime_catalog import LtdRuntimeCatalogService
 
 router = APIRouter(prefix="/app/api", tags=["product"])
 public_router = APIRouter(prefix="/app/api", tags=["product-public-assets"])
@@ -242,6 +247,12 @@ class PropertySummaryGenerateIn(BaseModel):
     subject_type: str = Field(default="property", max_length=80)
     subject_id: str = Field(min_length=1, max_length=500)
     artifact_type: str = Field(min_length=1, max_length=80)
+    audience_type: str = Field(default="family", max_length=80)
+
+
+class PropertyOpportunityGenerateIn(BaseModel):
+    run_id: str = Field(min_length=1, max_length=200)
+    artifact_type: str = Field(default="why_shortlisted", max_length=80)
     audience_type: str = Field(default="family", max_length=80)
 
 
@@ -2196,6 +2207,125 @@ def generate_property_summary_artifact(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"artifact": artifact}
+
+
+@router.post("/property/opportunities/{candidate_ref}/generate")
+def generate_property_opportunity_artifact(
+    candidate_ref: str,
+    body: PropertyOpportunityGenerateIn,
+    container: AppContainer = Depends(get_container),
+    context: RequestContext = Depends(get_request_context),
+) -> dict[str, object]:
+    product = build_product_service(container)
+    run = product.get_property_search_run_status(
+        principal_id=context.principal_id,
+        run_id=body.run_id,
+    )
+    if not isinstance(run, dict) or not run:
+        raise HTTPException(status_code=404, detail="property_search_run_not_found")
+    candidate = find_property_search_candidate(run, candidate_ref=candidate_ref)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="property_opportunity_not_found")
+
+    summary = dict(run.get("summary") or {}) if isinstance(run.get("summary"), dict) else {}
+    existing_opportunity = (
+        dict(candidate.get("opportunity") or {})
+        if isinstance(candidate.get("opportunity"), dict)
+        else {}
+    )
+    person_id = str(
+        existing_opportunity.get("person_id")
+        or run.get("opportunity_person_id")
+        or summary.get("opportunity_person_id")
+        or run.get("preference_person_id")
+        or summary.get("preference_person_id")
+        or "self"
+    ).strip() or "self"
+    if (
+        str(existing_opportunity.get("status") or "").strip() == "ready"
+        and str(existing_opportunity.get("opportunity_id") or "").strip()
+    ):
+        opportunity = existing_opportunity
+        projection = {
+            "opportunity_total": 1,
+            "opportunity_persistence_failed_total": 0,
+            "opportunity_person_id": person_id,
+            "opportunity_generation_status": "ready",
+        }
+    else:
+        projection = product._materialize_property_search_opportunities(
+            principal_id=context.principal_id,
+            person_id=person_id,
+            run_id=body.run_id,
+            sources=[{"top_candidates": [candidate]}],
+        )
+        opportunity = (
+            dict(candidate.get("opportunity") or {})
+            if isinstance(candidate.get("opportunity"), dict)
+            else {}
+        )
+    opportunity = property_opportunity_public_projection(opportunity)
+    if (
+        str(opportunity.get("status") or "").strip() != "ready"
+        or not str(opportunity.get("opportunity_id") or "").strip()
+    ):
+        raise HTTPException(status_code=503, detail="property_opportunity_persistence_unavailable")
+
+    ltd_profile = LtdRuntimeCatalogService(
+        provider_registry=container.provider_registry,
+    ).get_profile("FlipLink.me")
+    if ltd_profile is None:
+        raise HTTPException(status_code=503, detail="property_opportunity_ltd_lane_unavailable")
+    ltd_action = next(
+        (
+            action
+            for action in ltd_profile.actions
+            if action.action_key == "publish_property_flipbook"
+        ),
+        None,
+    )
+    if ltd_action is None:
+        raise HTTPException(status_code=503, detail="property_opportunity_ltd_lane_unavailable")
+
+    actor = str(
+        context.operator_id
+        or context.access_email
+        or context.principal_id
+        or "browser"
+    ).strip()
+    summary_service = build_fliplink_packet_service(container)
+    try:
+        artifact = summary_service.generate_summary_artifact(
+            principal_id=context.principal_id,
+            subject_type="property",
+            subject_id=str(candidate.get("candidate_ref") or candidate_ref).strip(),
+            artifact_type=body.artifact_type,
+            audience_type=body.audience_type,
+            actor=actor,
+            context_json={
+                "title": str(candidate.get("title") or "Property opportunity").strip(),
+                "opportunity": opportunity,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {
+        "status": "ready",
+        "opportunity": opportunity,
+        "opportunity_projection": projection,
+        "artifact": artifact,
+        "generation": {
+            "provider": ltd_profile.service_name,
+            "runtime_state": ltd_profile.runtime_state,
+            "action_key": ltd_action.action_key,
+            "artifact_status": "ready",
+            "external_publication_status": (
+                "available" if ltd_action.executable else "not_available"
+            ),
+            "external_publication_executable": bool(ltd_action.executable),
+        },
+    }
 
 
 @router.get("/property-summaries/{artifact_id}")

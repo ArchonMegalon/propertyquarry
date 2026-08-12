@@ -390,6 +390,7 @@ class PreferenceProfileService:
         object_type: str,
         object_id: str,
         object_payload: dict[str, object],
+        assessment_id: str | None = None,
         persist: bool = True,
         require_existing_profile: bool = False,
     ) -> dict[str, object] | None:
@@ -429,6 +430,7 @@ class PreferenceProfileService:
                 unknowns_json=list(assessment.get("unknowns_json") or []),
                 blocking_constraints_json=list(assessment.get("blocking_constraints_json") or []),
                 assessment_json=assessment,
+                assessment_id=assessment_id,
             )
             return stored
         return assessment

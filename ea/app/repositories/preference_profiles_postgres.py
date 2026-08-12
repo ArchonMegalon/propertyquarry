@@ -530,6 +530,20 @@ class PostgresPreferenceProfileRepository:
                      predicted_reaction, recommendation, match_reasons_json, mismatch_reasons_json, unknowns_json,
                      blocking_constraints_json, assessment_json, generated_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (principal_id, person_id, assessment_id) DO UPDATE SET
+                        domain = EXCLUDED.domain,
+                        object_type = EXCLUDED.object_type,
+                        object_id = EXCLUDED.object_id,
+                        fit_score = EXCLUDED.fit_score,
+                        confidence = EXCLUDED.confidence,
+                        predicted_reaction = EXCLUDED.predicted_reaction,
+                        recommendation = EXCLUDED.recommendation,
+                        match_reasons_json = EXCLUDED.match_reasons_json,
+                        mismatch_reasons_json = EXCLUDED.mismatch_reasons_json,
+                        unknowns_json = EXCLUDED.unknowns_json,
+                        blocking_constraints_json = EXCLUDED.blocking_constraints_json,
+                        assessment_json = EXCLUDED.assessment_json,
+                        generated_at = EXCLUDED.generated_at
                     RETURNING principal_id, person_id, assessment_id, domain, object_type, object_id, fit_score, confidence,
                               predicted_reaction, recommendation, match_reasons_json, mismatch_reasons_json, unknowns_json,
                               blocking_constraints_json, assessment_json, generated_at

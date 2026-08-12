@@ -433,7 +433,8 @@ class InMemoryPreferenceProfileRepository:
             "generated_at": now,
         }
         self._assessments[key] = row
-        self._assessment_order.append(key)
+        if key not in self._assessment_order:
+            self._assessment_order.append(key)
         return copy.deepcopy(row)
 
     def list_decision_assessments(

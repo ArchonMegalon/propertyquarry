@@ -4134,6 +4134,20 @@
           || candidate?.source_url
           || title
         ).trim();
+        const opportunity = candidate?.opportunity && typeof candidate.opportunity === 'object'
+          ? candidate.opportunity
+          : {};
+        const opportunityReady = ['ready', 'preview'].includes(String(opportunity.status || '').trim().toLowerCase());
+        const opportunityRunId = String(opportunity.run_id || runPayload?.run_id || data.run?.run_id || '').trim();
+        const opportunityUnknown = Array.isArray(opportunity.unknowns)
+          ? String(opportunity.unknowns[0] || '').trim()
+          : '';
+        const opportunityBlocker = Array.isArray(opportunity.mismatch_reasons)
+          ? String(opportunity.mismatch_reasons[0] || '').trim()
+          : '';
+        const opportunityRecommendation = String(opportunity.recommendation || candidate?.recommendation || '')
+          .trim()
+          .replaceAll('_', ' ');
         const packetUrl = String(candidate?.packet_url || candidate?.review_url || '').trim();
         const propertyUrl = String(candidate?.property_url || candidate?.source_url || candidate?.listing_url || '').trim();
         const facts = (candidate?.property_facts && typeof candidate.property_facts === 'object') ? candidate.property_facts : {};
@@ -4234,6 +4248,7 @@
         ].filter(Boolean).join('');
         const actions = [
           `<button class="pqx-result-open pqx-result-open-button is-primary" type="button" data-workbench-select-candidate data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Review'))} ${escapeHtml(title)}">${escapeHtml(localizeLiveCopy('Review'))}</button>`,
+          !shortlistSurface && opportunityReady && opportunityRunId && candidateRef ? `<button class="pqx-result-open pqx-result-open-button is-secondary" type="button" data-pqx-opportunity-generate data-candidate-ref="${escapeHtml(candidateRef)}" data-run-id="${escapeHtml(opportunityRunId)}">Create brief</button><span class="pqx-note" data-pqx-opportunity-generation-status aria-live="polite"></span>` : '',
           packetUrl ? `<a class="pqx-result-open is-secondary" href="${escapeHtml(packetUrl)}">${escapeHtml(localizeLiveCopy('Open property'))}</a>` : '',
           propertyUrl && !shortlistSurface ? `<a class="pqx-result-open" href="${escapeHtml(propertyUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(localizeLiveCopy('Open listing'))}</a>` : '',
           tourPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(tourProgress)}%;" title="${escapeHtml(localizeLiveCopy(tourTooltip))}" aria-label="${escapeHtml(localizeLiveCopy(tourTooltip))}">${escapeHtml(localizeLiveCopy(tourLabel))}</button>` : '',
@@ -4251,6 +4266,7 @@
                   <span class="pqx-result-title">${escapeHtml(title)}</span>
                   <span class="pqx-result-facts">${factChips}</span>
                   <span class="pqx-note${shortlistSurface ? ' pqx-shortlist-thesis' : ''}">${escapeHtml(localizedLiveMessage(fitSummary, 'Open the property page for more context.'))}</span>
+                  ${opportunityReady ? `<span class="pqx-note pqx-opportunity-summary" data-pqx-opportunity-summary><strong>${escapeHtml(opportunityRecommendation || 'Review')}</strong>${opportunityBlocker ? `<span>Watch: ${escapeHtml(opportunityBlocker)}</span>` : ''}${opportunityUnknown ? `<span>Verify: ${escapeHtml(opportunityUnknown)}</span>` : ''}</span><span class="pqx-note" data-pqx-opportunity-artifact hidden></span>` : ''}
                 </span>
               </span>
             </span>
@@ -8660,6 +8676,60 @@
           if (localStatusNode) localStatusNode.textContent = error instanceof Error ? error.message : counterfactualSaveErrorLabel(adjustments);
         }
       });
+    });
+    root.addEventListener('click', async (event) => {
+      const button = event.target?.closest?.('[data-pqx-opportunity-generate]');
+      if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.disabled) return;
+      const candidateRef = String(button.getAttribute('data-candidate-ref') || '').trim();
+      const runId = String(button.getAttribute('data-run-id') || '').trim();
+      const card = button.closest('[data-workbench-row]');
+      const statusNode = card?.querySelector('[data-pqx-opportunity-generation-status]');
+      const artifactNode = card?.querySelector('[data-pqx-opportunity-artifact]');
+      if (!candidateRef || !runId) {
+        if (statusNode) statusNode.textContent = 'Brief unavailable for this result.';
+        return;
+      }
+      const previousLabel = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Creating brief…';
+      if (statusNode) statusNode.textContent = '';
+      try {
+        const response = await fetch(
+          `/app/api/property/opportunities/${encodeURIComponent(candidateRef)}/generate`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ run_id: runId, artifact_type: 'why_shortlisted', audience_type: 'family' }),
+          },
+        );
+        if (recoverExpiredSession(response)) return;
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const errorMessage = String(payload?.error?.message || payload?.detail || '').trim();
+          throw new Error(errorMessage || 'Could not create the brief.');
+        }
+        const artifactBody = String(payload?.artifact?.body_markdown || payload?.artifact?.body || '').trim();
+        const provider = String(payload?.generation?.provider || 'FlipLink.me').trim();
+        if (artifactNode && artifactBody) {
+          artifactNode.textContent = artifactBody;
+          artifactNode.hidden = false;
+        }
+        if (statusNode) statusNode.textContent = `Private brief · ${provider}`;
+        button.textContent = 'Brief ready';
+        trackRybbitEvent('property_opportunity_brief_generated', {
+          surface: initialSurface || 'results',
+          provider,
+        });
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previousLabel || 'Create brief';
+        if (statusNode) statusNode.textContent = error instanceof Error ? error.message : 'Could not create the brief.';
+      }
     });
     root.querySelectorAll('[data-fliplink-packet]').forEach((button) => {
       bindFlipLinkPacketButton(button);

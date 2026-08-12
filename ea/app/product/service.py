@@ -176,6 +176,7 @@ from app.product.property_fact_enrichment import (
     property_fact_source_fingerprint,
     property_fact_value,
 )
+from app.product.property_opportunities import materialize_property_search_opportunities
 from app.product.property_onemin_evaluation import (
     property_onemin_evaluation_needs_refresh,
     property_onemin_safe_public_packet,
@@ -29711,6 +29712,7 @@ class ProductService:
         object_type: str,
         object_id: str,
         object_payload: dict[str, object],
+        assessment_id: str | None = None,
     ) -> dict[str, object] | None:
         normalized_person_id = str(person_id or "").strip() or "self"
         return self._preference_profiles.assess_candidate(
@@ -29720,6 +29722,7 @@ class ProductService:
             object_type=object_type,
             object_id=object_id,
             object_payload=object_payload,
+            assessment_id=assessment_id,
             persist=True,
             require_existing_profile=False,
         )
@@ -29745,6 +29748,22 @@ class ProductService:
             object_payload=object_payload,
             persist=False,
             require_existing_profile=require_existing_profile,
+        )
+
+    def _materialize_property_search_opportunities(
+        self,
+        *,
+        principal_id: str,
+        person_id: str,
+        run_id: str,
+        sources: list[dict[str, object]],
+    ) -> dict[str, object]:
+        return materialize_property_search_opportunities(
+            sources,
+            principal_id=principal_id,
+            person_id=person_id,
+            run_id=run_id,
+            assess=self.assess_preference_candidate,
         )
 
     def get_property_candidate_fact_enrichment(
@@ -57211,6 +57230,12 @@ class ProductService:
             for source in source_summaries
             if isinstance(source, dict)
         )
+        opportunity_projection = self._materialize_property_search_opportunities(
+            principal_id=principal_id,
+            person_id=preference_person_id,
+            run_id=property_search_run_id,
+            sources=source_summaries,
+        )
         payload = {
             "generated_at": _now_iso(),
             "status": "processed",
@@ -57306,6 +57331,7 @@ class ProductService:
             "watch_notified_total": watch_notified_total,
             "filter_near_miss_notified_total": filter_near_miss_notified_total,
             "failed_total": failed_total,
+            **opportunity_projection,
             "sources": source_summaries,
             "timing_ms": {
                 **timing_ms,
