@@ -15,6 +15,7 @@ from app.product.property_fact_enrichment import (
 )
 from app.product.property_onemin_evaluation import (
     _google_maps_url_identity,
+    _reconcile_property_budget_claims,
     property_onemin_safe_public_packet,
     run_property_google_maps_ooda,
     run_property_onemin_evaluation,
@@ -137,6 +138,64 @@ def _fixtures() -> tuple[dict[str, object], list[dict[str, object]], dict[str, o
         },
     ]
     return facts, plan, spec
+
+
+def test_budget_reconciliation_overrides_provider_arithmetic_claims() -> None:
+    summary, strengths, risks, budget = _reconcile_property_budget_claims(
+        recommendation="consider",
+        summary=(
+            "Premium rental slightly above the €3,500 preference; "
+            "selected facts remain unresolved."
+        ),
+        strengths=["Large living area."],
+        risks=[
+            "Total monthly cost €3,499.01 exceeds the €3,500 budget.",
+            "Energy efficiency needs review.",
+        ],
+        missing_fact_keys=["nearest_supermarket_m"],
+        facts={"total_rent_eur": 3_499.01},
+        preferences={"listing_mode": "rent", "max_price_eur": 3_500},
+    )
+
+    assert summary == (
+        "Consider based on the current evidence. 1 selected fact remains "
+        "unresolved, so the assessment is provisional."
+    )
+    assert budget == {
+        "status": "within_limit",
+        "listing_mode": "rent",
+        "actual_eur": 3_499.01,
+        "limit_eur": 3_500.0,
+        "difference_eur": -0.99,
+        "statement": (
+            "Total monthly rent €3,499.01 is within the €3,500.00 limit "
+            "(€0.99 buffer)."
+        ),
+    }
+    assert strengths == [
+        "Total monthly rent €3,499.01 is within the €3,500.00 limit "
+        "(€0.99 buffer).",
+        "Large living area.",
+    ]
+    assert risks == ["Energy efficiency needs review."]
+
+
+def test_safe_public_packet_rejects_stale_budget_schema() -> None:
+    public = property_onemin_safe_public_packet(
+        {
+            "schema_version": "propertyquarry.onemin-evaluation.v1",
+            "status": "succeeded",
+            "judgment": {
+                "summary": "€3,499 exceeds the €3,500 budget.",
+                "risks": ["False arithmetic."],
+            },
+        }
+    )
+
+    assert public["status"] == "unavailable"
+    assert public["judgment"]["summary"] == ""
+    assert public["judgment"]["risks"] == []
+    assert public["error"]["code"] == "onemin_evaluation_schema_stale"
 
 
 def test_google_maps_url_identity_uses_only_exact_google_url_material() -> None:

@@ -2267,6 +2267,21 @@ class PropertyFactProviderReceiptOut(BaseModel):
     reason_code: str = Field(default="", pattern=r"^[a-z0-9_]{0,96}$")
 
 
+class PropertyOneminBudgetOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["within_limit", "at_limit", "over_limit"]
+    listing_mode: Literal["rent", "buy"]
+    actual_eur: float = Field(ge=0.01, le=1_000_000_000, allow_inf_nan=False)
+    limit_eur: float = Field(ge=0.01, le=1_000_000_000, allow_inf_nan=False)
+    difference_eur: float = Field(
+        ge=-1_000_000_000,
+        le=1_000_000_000,
+        allow_inf_nan=False,
+    )
+    statement: str = Field(max_length=240)
+
+
 class PropertyOneminJudgmentOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2277,6 +2292,7 @@ class PropertyOneminJudgmentOut(BaseModel):
     risks: list[str] = Field(default_factory=list, max_length=6)
     evidence_keys: list[str] = Field(default_factory=list, max_length=12)
     missing_fact_keys: list[str] = Field(default_factory=list, max_length=12)
+    budget: PropertyOneminBudgetOut | None = None
 
 
 class PropertyOneminProviderReceiptOut(BaseModel):
@@ -2367,7 +2383,7 @@ class PropertyOneminErrorOut(BaseModel):
 class PropertyOneminEvaluationOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["propertyquarry.onemin-evaluation.v1"]
+    schema_version: Literal["propertyquarry.onemin-evaluation.v2"]
     status: Literal["disabled", "unavailable", "succeeded"]
     input_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     manager_routed: StrictBool = False

@@ -18,7 +18,7 @@ from app.product.property_fact_enrichment import (
 )
 
 
-PROPERTY_ONEMIN_EVALUATION_SCHEMA_VERSION = "propertyquarry.onemin-evaluation.v1"
+PROPERTY_ONEMIN_EVALUATION_SCHEMA_VERSION = "propertyquarry.onemin-evaluation.v2"
 PROPERTY_ONEMIN_OODA_SCHEMA_VERSION = "propertyquarry.onemin-ooda.v1"
 PROPERTY_GOOGLE_MAPS_RESEARCH_SCHEMA_VERSION = (
     "propertyquarry.google-maps-browseract-distance.v1"
@@ -127,6 +127,143 @@ def _safe_json_value(value: object, *, depth: int = 0) -> object:
     return _bounded_text(value, limit=300)
 
 
+def _first_positive_money(
+    value: Mapping[str, object],
+    keys: Sequence[str],
+) -> float | None:
+    for key in keys:
+        parsed = _finite_float(value.get(key), minimum=0.01, maximum=1_000_000_000.0)
+        if parsed is not None:
+            return round(parsed, 2)
+    return None
+
+
+def _property_budget_reconciliation(
+    *,
+    facts: Mapping[str, object],
+    preferences: Mapping[str, object],
+) -> dict[str, object]:
+    listing_mode = str(
+        preferences.get("listing_mode") or facts.get("listing_mode") or ""
+    ).strip().lower()
+    if listing_mode in {"rent", "rental", "miete"}:
+        actual_keys = (
+            "total_rent_eur",
+            "monthly_rent_eur",
+            "price_eur",
+        )
+        limit_keys = (
+            "max_price_eur",
+            "max_monthly_rent_eur",
+        )
+        label = "Total monthly rent"
+        normalized_mode = "rent"
+    else:
+        actual_keys = (
+            "purchase_price_eur",
+            "price_eur",
+        )
+        limit_keys = (
+            "max_price_eur",
+            "max_purchase_price_eur",
+        )
+        label = "Purchase price"
+        normalized_mode = "buy"
+    actual = _first_positive_money(facts, actual_keys)
+    limit = _first_positive_money(preferences, limit_keys)
+    if actual is None or limit is None:
+        return {}
+    difference = round(actual - limit, 2)
+    if difference > 0:
+        status = "over_limit"
+        statement = (
+            f"{label} €{actual:,.2f} exceeds the €{limit:,.2f} limit "
+            f"by €{difference:,.2f}."
+        )
+    elif difference < 0:
+        status = "within_limit"
+        statement = (
+            f"{label} €{actual:,.2f} is within the €{limit:,.2f} limit "
+            f"(€{abs(difference):,.2f} buffer)."
+        )
+    else:
+        status = "at_limit"
+        statement = f"{label} €{actual:,.2f} matches the limit exactly."
+    return {
+        "status": status,
+        "listing_mode": normalized_mode,
+        "actual_eur": actual,
+        "limit_eur": limit,
+        "difference_eur": difference,
+        "statement": statement,
+    }
+
+
+def _text_contains_budget_claim(value: object) -> bool:
+    normalized = _bounded_text(value, limit=600).casefold()
+    return bool(
+        normalized
+        and (
+            "€" in normalized
+            or " eur" in f" {normalized}"
+            or any(
+                marker in normalized
+                for marker in (
+                    "budget",
+                    "price",
+                    "monthly cost",
+                    "per month",
+                    "rent of",
+                    "rent is",
+                    "rent:",
+                )
+            )
+        )
+    )
+
+
+def _reconcile_property_budget_claims(
+    *,
+    recommendation: str,
+    summary: object,
+    strengths: object,
+    risks: object,
+    missing_fact_keys: Sequence[str],
+    facts: Mapping[str, object],
+    preferences: Mapping[str, object],
+) -> tuple[str, list[str], list[str], dict[str, object]]:
+    normalized_summary = _bounded_text(summary, limit=600)
+    normalized_strengths = _bounded_string_list(strengths)
+    normalized_risks = _bounded_string_list(risks)
+    budget = _property_budget_reconciliation(
+        facts=facts,
+        preferences=preferences,
+    )
+    if not budget:
+        return normalized_summary, normalized_strengths, normalized_risks, {}
+    if _text_contains_budget_claim(normalized_summary):
+        unresolved_total = len(list(missing_fact_keys))
+        normalized_summary = f"{recommendation.capitalize()} based on the current evidence."
+        if unresolved_total:
+            normalized_summary += (
+                f" {unresolved_total} selected fact"
+                f"{'s remain' if unresolved_total != 1 else ' remains'} unresolved, "
+                "so the assessment is provisional."
+            )
+    normalized_strengths = [
+        value for value in normalized_strengths if not _text_contains_budget_claim(value)
+    ]
+    normalized_risks = [
+        value for value in normalized_risks if not _text_contains_budget_claim(value)
+    ]
+    statement = str(budget["statement"])
+    if budget["status"] == "over_limit":
+        normalized_risks = [statement, *normalized_risks][:6]
+    else:
+        normalized_strengths = [statement, *normalized_strengths][:6]
+    return normalized_summary, normalized_strengths, normalized_risks, budget
+
+
 def _evidence_rows(plan: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for raw_row in list(plan)[:32]:
@@ -202,10 +339,14 @@ def property_onemin_evaluation_input(
                 "map_lng",
                 "map_location_precision",
                 "monthly_rent",
+                "monthly_rent_eur",
                 "postal_code",
                 "price",
+                "price_eur",
                 "purchase_price",
+                "purchase_price_eur",
                 "rooms",
+                "total_rent_eur",
             }
         )
         and _safe_json_value(value) not in (None, "", [], {})
@@ -236,6 +377,10 @@ def property_onemin_evaluation_input(
         "fact_evidence": fact_rows,
         "unresolved_fact_keys": unresolved,
         "preferences": compact_preferences,
+        "budget_comparison": _property_budget_reconciliation(
+            facts=facts,
+            preferences=preferences,
+        ),
         "deterministic_score": {
             "state": _bounded_text(score.get("state"), limit=32),
             "current": score.get("current"),
@@ -310,7 +455,8 @@ provider receipts as evidence. Never invent a value, distance, address, amenity,
 price, room, or source. Do not produce or revise a numeric fit score. If evidence is
 missing, say so and propose at most two bounded Google Maps research actions for
 unresolved lazy distance keys. Required facts and the deterministic score remain
-authoritative.
+authoritative. The supplied budget comparison is deterministic: copy it faithfully
+and never calculate or reinterpret price-versus-limit arithmetic yourself.
 """.strip()
 
 
@@ -516,6 +662,15 @@ def run_property_onemin_evaluation(
     actions = _normalize_research_actions(
         structured.get("research_actions"), plan=plan
     )
+    summary, strengths, risks, budget = _reconcile_property_budget_claims(
+        recommendation=recommendation,
+        summary=structured.get("summary"),
+        strengths=structured.get("strengths"),
+        risks=structured.get("risks"),
+        missing_fact_keys=missing_fact_keys,
+        facts=facts,
+        preferences=preferences,
+    )
     evaluated_at = datetime.now(timezone.utc).isoformat()
     raw_receipt = dict(result.receipt_json or {})
     provider_account = _bounded_text(
@@ -537,9 +692,10 @@ def run_property_onemin_evaluation(
         "judgment": {
             "recommendation": recommendation,
             "confidence": confidence,
-            "summary": _bounded_text(structured.get("summary"), limit=600),
-            "strengths": _bounded_string_list(structured.get("strengths")),
-            "risks": _bounded_string_list(structured.get("risks")),
+            "summary": summary,
+            "strengths": strengths,
+            "risks": risks,
+            "budget": budget or None,
             "evidence_keys": evidence_keys,
             "missing_fact_keys": missing_fact_keys,
         },
@@ -1119,6 +1275,11 @@ def run_property_google_maps_ooda(
 
 def property_onemin_safe_public_packet(value: object) -> dict[str, object]:
     packet = dict(value or {}) if isinstance(value, Mapping) else {}
+    if str(packet.get("schema_version") or "") != PROPERTY_ONEMIN_EVALUATION_SCHEMA_VERSION:
+        packet = {
+            "status": "unavailable",
+            "error": {"code": "onemin_evaluation_schema_stale"},
+        }
     status = str(packet.get("status") or "unavailable").strip().lower()
     if status not in {"disabled", "unavailable", "succeeded"}:
         status = "unavailable"
@@ -1132,6 +1293,36 @@ def property_onemin_safe_public_packet(value: object) -> dict[str, object]:
         recommendation = ""
     confidence = _finite_float(
         judgment.get("confidence"), minimum=0.0, maximum=1.0
+    )
+    raw_budget = (
+        dict(judgment.get("budget") or {})
+        if isinstance(judgment.get("budget"), Mapping)
+        else {}
+    )
+    budget_status = str(raw_budget.get("status") or "").strip().lower()
+    safe_budget = (
+        {
+            "status": budget_status,
+            "listing_mode": (
+                "rent"
+                if str(raw_budget.get("listing_mode") or "").strip().lower() == "rent"
+                else "buy"
+            ),
+            "actual_eur": _finite_float(
+                raw_budget.get("actual_eur"), minimum=0.01, maximum=1_000_000_000.0
+            ),
+            "limit_eur": _finite_float(
+                raw_budget.get("limit_eur"), minimum=0.01, maximum=1_000_000_000.0
+            ),
+            "difference_eur": _finite_float(
+                raw_budget.get("difference_eur"),
+                minimum=-1_000_000_000.0,
+                maximum=1_000_000_000.0,
+            ),
+            "statement": _bounded_text(raw_budget.get("statement"), limit=240),
+        }
+        if budget_status in {"within_limit", "at_limit", "over_limit"}
+        else {}
     )
     ooda = (
         dict(packet.get("ooda") or {})
@@ -1300,6 +1491,7 @@ def property_onemin_safe_public_packet(value: object) -> dict[str, object]:
             "summary": _bounded_text(judgment.get("summary"), limit=600),
             "strengths": _bounded_string_list(judgment.get("strengths")),
             "risks": _bounded_string_list(judgment.get("risks")),
+            "budget": safe_budget or None,
             "evidence_keys": [
                 re.sub(r"[^a-z0-9_]", "_", key.lower())[:80]
                 for key in _bounded_string_list(judgment.get("evidence_keys"), limit=12)
