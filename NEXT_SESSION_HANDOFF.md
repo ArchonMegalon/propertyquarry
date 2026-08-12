@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 16:20 UTC
+Updated: 2026-08-12 18:05 UTC
 
 ## Mission
 
@@ -16,6 +16,90 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 Play reviewer access and declarations
+
+The dedicated Google Play reviewer lane is now live and independently verified.
+`/sign-in/play-review` accepts only the isolated reviewer principal, applies
+rate limiting, creates a 24-hour workspace session, and opens authenticated
+Search without Google, inbox/OTP access, payment, or a trial. Commits
+`b42ada08`, `e2f76e1a`, and `43e8397d` make the form safe behind the production
+tunnel: named origins still require the canonical same-origin check, missing
+origins are rejected, cross-site named origins are rejected, and the literal
+opaque browser origin `Origin: null` is accepted only at this exact
+credential-gated reviewer endpoint. The final live browser proof reached
+`https://propertyquarry.com/app/search` with the reviewer session.
+
+The current reviewer digest is retained in the ignored runtime environment;
+the plaintext credential was entered directly into Play Console and its two
+validated mode-0600 temporary files were deleted afterward. Do not attempt to
+recover or copy the plaintext from logs. Rotate the digest and update Play
+Console together if reviewer access ever needs to change.
+
+Google Play Console now has the following saved changes waiting in Publishing
+overview:
+
+- dedicated reviewer sign-in instructions and credential;
+- target audience **18 and over** only;
+- completed content-rating questionnaire (Brazil all ages, PEGI 3, USK all
+  ages, generic 3+);
+- completed Data Safety questionnaire with the public deletion URL
+  `https://propertyquarry.com/data-deletion`;
+- collected data limited to name, email, user IDs, diagnostics, app
+  interactions, in-app search history, and other user-generated content;
+- no device location, payment/purchase data, personal financial data,
+  user-uploaded files/media, browsing history, installed-app inventory, crash
+  logs, device IDs, advertising data, or data sale declared for this release;
+  and
+- no data declared as shared with third parties; contracted processor and
+  user-directed transfers remain within the applicable Play exemptions.
+
+The Play app-setup checklist is no longer shown on the dashboard after these
+answers were saved. Publishing overview nevertheless remains locked with
+`To send changes for review, complete the required steps in the app dashboard`.
+Production is inactive, and the dashboard requires a closed test with at least
+12 opted-in testers for at least 14 days before production access can be
+requested. No review submission, production release, promotion, or rollout was
+performed.
+
+The canonical deployment receipt at
+`state/release/propertyquarry-local-deployment.v1.json` currently binds source
+envelope `43e8397dfbe1c5624272f36f0042a386e791f813`, runtime manifest
+`e73c938906ef44f2c474cda22a8d17104c741bb7`, and web image
+`sha256:2d36a1f388be1a06c5c4ee2354bac6a1bf32a3c1dd1bdbc6c81f0e4de60b7b9b`.
+The receipt is healthy with no failures and was observed at
+`2026-08-12T17:01:13Z`.
+
+## 2026-08-12 LTD integration audit
+
+There are two distinct LTD concepts and they must not be conflated.
+PropertyQuarry customer lifetime entitlements remain in the existing billing
+and entitlement boundary; external lifetime-deal services are the operator
+tool inventory in `LTDs.md`.
+
+The external LTD runtime is already integrated through
+`ea/app/services/ltd_runtime_catalog.py`,
+`ea/app/services/ltd_runtime_skill_projection.py`, and the authenticated
+`ea/app/api/routes/ltd_runtime.py` endpoints. It converts the inventory into
+bounded executable actions, projects those actions into tool-and-artifact task
+contracts, and exposes principal-bound proof scopes. Telegram can resolve and
+execute eligible actions, and direct API execution rejects principal, handler,
+action, or provider mismatches. The 1min generation lanes bind code, review,
+image, and media receipts to the requesting principal. This is real local
+integration, not proof that every owned provider is live.
+
+What remains intentionally incomplete is provider-side proof and app-facing
+opportunity orchestration. The PropertyQuarry search/opportunity context does
+not silently call arbitrary LTD providers; provider-backed generation must
+remain receipt-gated and should be invoked only through an eligible projected
+task contract. FlipLink publication is still unavailable until live account,
+capability, privacy/export, and first-publication receipts exist. Other Tier 2-4
+inventory entries remain partial or inventory-only exactly as recorded in
+`LTDs.md`. Do not label a catalog entry, BrowserAct template, or local dry-run as
+an executed provider call. The next safe live proof is one Austrian
+same-principal search/opportunity packet plus one eligible LTD generation call
+whose provider/backend, action, output asset, and receipt all agree; otherwise
+surface the action as unavailable or unproven.
 
 ## 2026-08-12 live thumbnail polish and Play listing completion
 
@@ -60,8 +144,9 @@ with 48/48 real samples across Chromium, Firefox, and WebKit at 390x844 and
 returned 503 and passed the explicit free-plan compatibility contract; all
 other samples returned 200.
 
-Google Play Console app `4976153363318887490` now reports **7 of 11** app-info
-tasks complete, up from 5 of 11 at the start of this pass. The default German
+At the time of the thumbnail/listing slice, Google Play Console app
+`4976153363318887490` reported **7 of 11** app-info tasks complete, up from 5
+of 11 at the start of that slice. The default German
 store listing is saved and marked `Ready to send for review` with the exact
 tracked German copy, one 512x512 icon, one 1024x500 feature graphic, and both
 1080x1920 phone screenshots. The icon and feature graphic are truthfully marked
@@ -69,14 +154,12 @@ as created or edited with AI; the factual live screenshots are not. The change
 is waiting in Publishing overview. `Send for review` was deliberately not
 pressed, and no production release or rollout was created.
 
-The four incomplete Play app-info tasks are **Sign-in details**, **Content
-rating**, **Target audience**, and **Data safety**. Sign-in details requires an
-actual dedicated reviewer account; do not invent credentials or reuse a
-personal tester account. The remaining declarations require accountable policy
-answers. After those are complete, Play still requires its closed-testing and
-production-access process; Production remains inactive. Preserve the existing
-internal release and tester configuration unless explicitly asked to change
-them.
+Those four then-incomplete Play app-info tasks were **Sign-in details**,
+**Content rating**, **Target audience**, and **Data safety**. They are now saved
+as described in the newer section above. Play still requires its
+closed-testing and production-access process; Production remains inactive.
+Preserve the existing internal release and tester configuration unless
+explicitly asked to change them.
 
 Final focused verification for this slice passed 123 Python
 thumbnail/workbench/fixture/screenshot/accessibility tests, all 11 mobile Node
