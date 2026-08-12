@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 12:01 UTC
+Updated: 2026-08-12 14:15 UTC
 
 ## Mission
 
@@ -16,6 +16,44 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 principal-bound LTD execution truth
+
+Commit `4ef0fc5e` is published on
+`integration/property-origin-main-20260728`. Telegram no longer describes an
+LTD catalog entry or action route as live execution. Catalog replies now state
+that inventory does not prove credentials, provider health, or a live call.
+The bounded 1min media path says `Executed` only when the exact Telegram
+principal, handler, invocation contract, provider/backend, feature, model,
+target, and output asset all agree; an incomplete or foreign receipt is
+reported as unproven.
+
+The authenticated LTD action API now applies the same fail-closed boundary.
+It rejects a result not bound to the requesting principal, requires exact
+handler and action identity, and requires provider identity for direct provider
+tools. Successful responses contain a small customer-safe proof projection
+whose `proof_scope` distinguishes `provider_call`, `browser_session_call`, and
+`principal_bound_tool_invocation`. Raw provider account labels, key-slot names,
+binding/workflow/task identifiers, requested runner URLs, and upstream raw
+responses are removed from the response. Internal BrowserAct target references
+are reduced to the action identity. All 1min code, review, image, and media
+adapter receipts now contain the exact request principal; generated summary
+text no longer embeds the internal provider-account label.
+
+Verification on the committed bytes passed:
+
+- full authenticated LTD runtime API: `7 passed`;
+- every Telegram local-assistant contract: `14 passed`;
+- every 1min tool-execution contract: `25 passed`;
+- exact module compilation and `git diff --check`: passed.
+
+This source commit is pushed but intentionally **not deployed**. BrowserAct is
+still in the explicit Google device-challenge handoff (challenge number `61`),
+so the human-assist lock forbids browser commands, app restarts, and deployment
+until the user explicitly replies that the challenge is complete. Automatic
+goal continuation is not that reply. After explicit completion, deploy through
+the canonical authority and rerun signed-in Austrian search, opportunity,
+generation, and LTD receipt verification against the live PostgreSQL runtime.
 
 ## 2026-08-12 resilient result thumbnails
 
