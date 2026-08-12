@@ -20,6 +20,11 @@ EDGE_ASSERTION_SECRET_ENV_NAMES = (
     "EA_EDGE_PRINCIPAL_ASSERTION_SECRET",
     "PROPERTYQUARRY_LIVE_EDGE_PRINCIPAL_ASSERTION_SECRET",
 )
+MAX_LIVE_API_TOKEN_BYTES = 4_096
+LIVE_API_TOKEN_ENV_NAMES = (
+    "PROPERTYQUARRY_LIVE_API_TOKEN",
+    "EA_API_TOKEN",
+)
 
 
 def release_probe_secret_environment_configured() -> bool:
@@ -28,6 +33,10 @@ def release_probe_secret_environment_configured() -> bool:
 
 def edge_assertion_secret_environment_configured() -> bool:
     return any(os.environ.get(name) for name in EDGE_ASSERTION_SECRET_ENV_NAMES)
+
+
+def live_api_token_environment_configured() -> bool:
+    return any(os.environ.get(name) for name in LIVE_API_TOKEN_ENV_NAMES)
 
 
 def _read_bounded_secret_from_stdin(
@@ -102,6 +111,27 @@ def read_edge_assertion_secret_from_stdin(
     )
 
 
+def read_live_api_token_from_stdin(
+    parser: argparse.ArgumentParser,
+    *,
+    enabled: bool,
+) -> str:
+    """Read one live API token without accepting it in argv or the environment."""
+
+    if not enabled:
+        return ""
+    if live_api_token_environment_configured():
+        parser.error(
+            "live API credentials must not be supplied in the process environment; "
+            "use --api-token-stdin"
+        )
+    return _read_bounded_secret_from_stdin(
+        parser,
+        label="live API",
+        max_bytes=MAX_LIVE_API_TOKEN_BYTES,
+    )
+
+
 @contextlib.contextmanager
 def release_probe_secret_environment_scrubbed() -> Iterator[None]:
     """Temporarily prevent probe credentials from reaching a child process."""
@@ -130,4 +160,11 @@ def scrub_edge_assertion_secret_environment() -> None:
     """Permanently remove edge assertion credentials before child processes."""
 
     for name in EDGE_ASSERTION_SECRET_ENV_NAMES:
+        os.environ.pop(name, None)
+
+
+def scrub_live_api_token_environment() -> None:
+    """Permanently remove live API tokens before any child process starts."""
+
+    for name in LIVE_API_TOKEN_ENV_NAMES:
         os.environ.pop(name, None)

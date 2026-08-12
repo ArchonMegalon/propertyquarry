@@ -23,7 +23,6 @@ from scripts.propertyquarry_live_http_security import (
     validated_live_base_origin,
 )
 from scripts.propertyquarry_live_mobile_surface_smoke import (
-    SEEDED_RESEARCH_DETAIL_ROUTE,
     _continue_playwright_route_with_origin_scoped_headers,
     _release_probe_browser_navigation_url,
 )
@@ -50,10 +49,10 @@ SCREENSHOTS = (
         "receipt_route": "/app/search",
     },
     {
-        "id": "research",
-        "route": SEEDED_RESEARCH_DETAIL_ROUTE,
-        "filename": "phone-research-1080x1920.png",
-        "receipt_route": "/app/research/[synthetic-release-probe]",
+        "id": "shortlist",
+        "route": "/app/shortlist",
+        "filename": "phone-shortlist-1080x1920.png",
+        "receipt_route": "/app/shortlist",
     },
 )
 ERROR_PAGE_MARKERS = (
@@ -132,7 +131,6 @@ def _publish_screenshots(
 def _capture_live_screenshots(
     *,
     base_origin: str,
-    detail_route: str,
     release_probe_secret: str,
     output_dir: Path,
     timeout_ms: int,
@@ -142,9 +140,8 @@ def _capture_live_screenshots(
     except ImportError as exc:  # pragma: no cover - environment failure.
         raise RuntimeError("playwright_not_installed") from exc
 
-    configured_routes = (detail_route,)
+    configured_routes: tuple[str, ...] = ()
     definitions = [dict(item) for item in SCREENSHOTS]
-    definitions[1]["route"] = detail_route
     request_headers = {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     }
@@ -168,7 +165,7 @@ def _capture_live_screenshots(
                     device_scale_factor=DEVICE_SCALE_FACTOR,
                     has_touch=True,
                     is_mobile=True,
-                    locale="de-AT",
+                    locale="en-US",
                     color_scheme="light",
                     reduced_motion="reduce",
                     service_workers="block",
@@ -279,7 +276,6 @@ def _capture_live_screenshots(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-origin", default="https://propertyquarry.com")
-    parser.add_argument("--detail-route", default=SEEDED_RESEARCH_DETAIL_ROUTE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--receipt-path", type=Path, default=DEFAULT_RECEIPT_PATH)
     parser.add_argument("--timeout-ms", type=int, default=45_000)
@@ -300,7 +296,6 @@ def main(argv: list[str] | None = None) -> int:
     base_origin = validated_live_base_origin(str(args.base_origin))
     records = _capture_live_screenshots(
         base_origin=base_origin,
-        detail_route=str(args.detail_route),
         release_probe_secret=release_probe_secret,
         output_dir=Path(args.output_dir).resolve(),
         timeout_ms=int(args.timeout_ms),

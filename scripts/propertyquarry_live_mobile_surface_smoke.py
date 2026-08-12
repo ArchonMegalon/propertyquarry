@@ -45,8 +45,10 @@ from scripts.propertyquarry_live_http_security import (
 )
 from scripts.propertyquarry_live_probe_auth import live_probe_request_headers
 from scripts.propertyquarry_live_probe_secret_scope import (
+    read_live_api_token_from_stdin,
     read_release_probe_secret_from_stdin,
     release_probe_secret_environment_scrubbed,
+    scrub_live_api_token_environment,
     scrub_release_probe_secret_environment,
 )
 
@@ -774,15 +776,17 @@ def seeded_research_detail_payload() -> dict[str, Any]:
     candidate = {
         "candidate_ref": "perf-candidate-1020",
         "rank": 1,
-        "title": "Performance smoke apartment in 1020 Vienna",
-        "source_label": "Willhaben | Austria | Rent | 1020 Vienna",
+        "title": "Bright three-room apartment in 1020 Vienna · Demo",
+        "source_label": "PropertyQuarry demo | Austria | Rent | 1020 Vienna",
         "source_platform": "willhaben",
         "property_url": "https://example.invalid/propertyquarry/performance-smoke",
         "packet_url": "/app/research/perf-candidate-1020",
         "review_url": "/app/research/perf-candidate-1020",
+        "preview_image_url": "/static/propertyquarry-demo-home.svg",
+        "diorama_preview_url": "/static/propertyquarry-demo-home.svg",
         "fit_score": 91,
         "score": 91,
-        "fit_summary": "Transit, area, layout and budget fit the seeded brief.",
+        "fit_summary": "Transit, area, layout and budget fit this synthetic demo brief.",
         "match_reasons": ["1020 Vienna matches the seeded search area.", "The synthetic listing keeps route and layout data compact."],
         "mismatch_reasons": ["Operating costs are still missing from the listing."],
         "saved_from_run_id": "run-gold-mobile",
@@ -2293,6 +2297,11 @@ def main() -> int:
     parser.add_argument("--host-header", default=_env("PROPERTYQUARRY_LIVE_HOST_HEADER"))
     parser.add_argument("--api-token", default=_env("PROPERTYQUARRY_LIVE_API_TOKEN") or _env("EA_API_TOKEN"))
     parser.add_argument(
+        "--api-token-stdin",
+        action="store_true",
+        help="Read the protected live API token once from bounded stdin.",
+    )
+    parser.add_argument(
         "--release-probe-secret-stdin",
         action="store_true",
         help="Read the protected release-probe credential once from bounded stdin.",
@@ -2350,10 +2359,21 @@ def main() -> int:
     parser.add_argument("--timeout-ms", type=int, default=int(_env("PROPERTYQUARRY_LIVE_MOBILE_TIMEOUT_MS", "60000") or 60000))
     parser.add_argument("--write", default="_completion/smoke/property-live-mobile-surface-latest.json")
     args = parser.parse_args()
+    if args.api_token_stdin and args.release_probe_secret_stdin:
+        parser.error("--api-token-stdin and --release-probe-secret-stdin are mutually exclusive")
+    if args.api_token_stdin and str(args.api_token or "").strip():
+        parser.error("--api-token-stdin cannot be combined with --api-token or API-token environment variables")
+    stdin_api_token = read_live_api_token_from_stdin(
+        parser,
+        enabled=bool(args.api_token_stdin),
+    )
     release_probe_secret = read_release_probe_secret_from_stdin(
         parser,
         enabled=bool(args.release_probe_secret_stdin),
     )
+    if stdin_api_token:
+        args.api_token = stdin_api_token
+    scrub_live_api_token_environment()
     scrub_release_probe_secret_environment()
 
     width_text, _, height_text = str(args.viewport).lower().partition("x")

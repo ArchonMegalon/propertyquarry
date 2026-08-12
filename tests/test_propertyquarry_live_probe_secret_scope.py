@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LIVE_SECRET_ENV = "PROPERTYQUARRY_LIVE_PROBE_SECRET"
 PERFORMANCE_SECRET_ENV = "PROPERTYQUARRY_PERFORMANCE_RELEASE_PROBE_SECRET"
 EDGE_SECRET_ENV = "EA_EDGE_PRINCIPAL_ASSERTION_SECRET"
+LIVE_API_TOKEN_ENV = "EA_API_TOKEN"
 
 
 def _hostile_bash_env(tmp_path: Path) -> tuple[Path, Path]:
@@ -284,6 +285,38 @@ def test_edge_assertion_secret_is_bounded_and_rejects_environment(monkeypatch, c
     captured = capsys.readouterr()
     assert marker not in captured.out
     assert marker not in captured.err
+
+
+def test_live_api_token_is_bounded_and_rejects_environment(monkeypatch, capsys) -> None:
+    parser = argparse.ArgumentParser(prog="live-api-token-test")
+    for name in secret_scope.LIVE_API_TOKEN_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    token = "a" * secret_scope.MAX_LIVE_API_TOKEN_BYTES
+    monkeypatch.setattr(
+        secret_scope.sys,
+        "stdin",
+        SimpleNamespace(buffer=io.BytesIO((token + "\n").encode("utf-8"))),
+    )
+    assert secret_scope.read_live_api_token_from_stdin(parser, enabled=True) == token
+
+    marker = "live-api-token-must-not-echo"
+    monkeypatch.setenv(LIVE_API_TOKEN_ENV, marker)
+    with pytest.raises(SystemExit) as exc_info:
+        secret_scope.read_live_api_token_from_stdin(parser, enabled=True)
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert marker not in captured.out
+    assert marker not in captured.err
+
+
+def test_mobile_smoke_api_token_stdin_contract_is_mutually_exclusive() -> None:
+    source = (ROOT / "scripts" / "propertyquarry_live_mobile_surface_smoke.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"--api-token-stdin"' in source
+    assert "args.api_token_stdin and args.release_probe_secret_stdin" in source
+    assert "scrub_live_api_token_environment()" in source
 
 
 def _live_release_environment(

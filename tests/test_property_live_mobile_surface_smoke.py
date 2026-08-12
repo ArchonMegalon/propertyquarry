@@ -1013,6 +1013,13 @@ def test_live_mobile_smoke_seeded_research_detail_payload_is_valid_detail_fixtur
     assert candidate["candidate_ref"] == "perf-candidate-1020"
     assert candidate["saved_from_run_id"] == "run-gold-mobile"
     assert candidate["packet_url"] == "/app/research/perf-candidate-1020"
+    assert candidate["title"] == "Bright three-room apartment in 1020 Vienna · Demo"
+    assert candidate["source_label"].startswith("PropertyQuarry demo")
+    assert candidate["preview_image_url"] == "/static/propertyquarry-demo-home.svg"
+    assert candidate["diorama_preview_url"] == "/static/propertyquarry-demo-home.svg"
+    demo_image = Path(__file__).resolve().parents[1] / "ea" / "app" / "static" / "propertyquarry-demo-home.svg"
+    assert demo_image.is_file()
+    assert demo_image.read_text(encoding="utf-8").startswith("<svg ")
     assert dict(candidate["property_facts"])["listing_fact_confirmation"]["status"] == "confirmed"
 
 
