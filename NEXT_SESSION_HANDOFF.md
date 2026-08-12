@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 19:43 UTC
+Updated: 2026-08-12 20:00 UTC
 
 ## Mission
 
@@ -38,15 +38,29 @@ deduplicated safe candidates; only an exhausted chain becomes the honest
 `Property` placeholder. Property-detail links remain first-party, while the
 separate listing link retains its existing external-link boundary.
 
-The dedicated real-Chromium regression proves both a failed primary recovering
-to a valid fallback and a fully exhausted chain ending without a broken image.
-The focused thumbnail/projection set passes 27/27. The complete workspace UI
-contract file passes 885/885 after aligning eight stale assertions with already
-shipped intentional behavior (separate final Launch Search, area-preview
-fallback, keyed compact research navigation, and honest local-only packet
-copy). `git diff --check` passes. Deploy the exact pushed handoff head and then
-repeat the live fast-route image-count proof before treating this repair as
-live.
+The dedicated real-Chromium regression proves a failed primary recovering to a
+valid fallback, a fully exhausted chain ending without a broken image, and a
+provider-chrome primary being skipped before any request. The server first-
+paint projection now uses the same allowlist and rejects the two exact
+production patterns: Willhaben `/img/upselling/` and ImmoScout
+`plus-insider-locked`. Genuine listing media remains in the bounded fallback
+chain.
+
+The final fix is commit `984f16a22e664b37348bb4b5fe4457dc34c4fdf6` on
+`integration/property-origin-main-20260728`. The focused thumbnail/projection
+set passes 27/27 and the complete workspace UI contract passes 885/885. Exact
+Python compilation and `git diff --check` pass. The canonical deployment
+receipt observed at `2026-08-12T19:58:59Z` is passed with no failures, runtime
+manifest `e73c938906ef44f2c474cda22a8d17104c741bb7`, and web image
+`sha256:8ba79aeff2352db3116a61f8579bb9339be3656a50f817a694884871db781adf`.
+
+Authenticated production proof on the same Austrian run rendered 10 rows, 10
+image elements, 10 images with nonzero natural widths, zero broken images, and
+zero placeholders. No provider-chrome URL appeared in the rendered DOM or the
+browser resource requests. A reversible DOM-only failure on the first listing
+advanced to its 640 px first-party map preview, remained loaded, and did not
+show the placeholder. Reloading restored the untouched server-backed view.
+Treat the intermittent fast-result thumbnail incident as closed.
 
 ## 2026-08-12 Austria opportunity and verified LTD cover proof
 
