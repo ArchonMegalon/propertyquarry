@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 20:30 UTC
+Updated: 2026-08-12 20:59 UTC
 
 ## Mission
 
@@ -16,6 +16,55 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 exact-image browser and blocker refresh
+
+The post-approval exact-image customer matrix is complete. Receipt
+`state/qa/propertyquarry-live-browser-all-20260812-exact.json`, SHA-256
+`e58ca7a101dfeae29357314dd62df593abf45f8fad7da56748f9d6a08749bca1`,
+records `96/96` real Playwright samples and zero failures at
+`2026-08-12T20:56:06.985361Z`: all 16 configured customer routes in Chromium,
+Firefox, and WebKit at 390x844 and 412x915. The receipt has no missing engine,
+sample, customer surface, or static fallback and includes the concrete saved
+research-detail route in redacted form. Every ordinary customer page returned
+HTTP 200. All six billing samples returned the expected fail-closed HTTP 503
+and passed the explicit Free-plan compatibility contract.
+
+This proof ran against the currently deployed web image
+`sha256:caeba00013606b8f9af15176a0f2937a30d94869f9e2b0e99c83515ed946c9de`.
+The canonical deployment receipt remains passed with no failures, binds
+envelope `77b2ab2341609658f5d32cb210d5f5225e3b15ea`, and was observed at
+`2026-08-12T20:31:07Z`. The matrix used the principal-bound release-probe
+credential through bounded stdin; neither that credential nor an API token is
+present in the receipt.
+
+Paid billing remains deliberately unavailable. The deployed API has PayPal
+enabled with credentials, while PayFunnels still has no API key or paid-plan
+checkout URLs. Every field in the exact-release
+`propertyquarry.paid_billing_safe_handoff.v1` admission is empty, including the
+provider, plan set, receipt/principal digests, release bindings, and verified
+timestamp. Do not activate checkout until the same-principal checkout,
+signed-idempotent webhook, entitlement grant, and cancellation canary has been
+proved for the exact release and the external authority installs the bounded
+admission.
+
+Fresh physical-Android coverage is still an external device boundary. At
+`2026-08-12T20:57Z`, this host still had no `adb` executable. Production API
+telemetry since the exact deployment contained zero requests to
+`/mobile/runtime-contract`, `/sign-in/google`, `/google/callback`,
+`/mobile/auth/bridge`, or `/mobile/auth/redeem`. The previously proven physical
+flow is not a fresh pass for this exact web image; do not claim otherwise.
+
+Encrypted off-host DR is also still externally blocked. The backup container
+is running healthy on a 24-hour interval and its newest local artifact remains
+`propertyquarry-20260812T092158Z.dump`, 42,344,555 bytes, with a verified local
+SHA-256 sidecar. It has no AWS, locked-S3, or encryption-recipient configuration;
+the container has PostgreSQL client tools but no AWS CLI or GPG, the host has
+zero GPG public keys and no PostgreSQL client tools, and both fixed external
+launch-authority/trust-store files remain absent. The repository's locked-S3
+and restore-gate verifiers are present, but there is still no encrypted
+artifact, immutable S3 version, provider read-back, disposable restore receipt,
+or signed public-launch authority. Do not weaken this boundary.
 
 ## 2026-08-12 Austria closed test approved and first tester enrolled
 
