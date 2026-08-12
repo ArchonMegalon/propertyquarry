@@ -76,7 +76,7 @@ def test_property_opportunity_generation_rejects_unknown_candidate(monkeypatch) 
     assert response.json()["error"]["code"] == "property_opportunity_not_found"
 
 
-def test_property_opportunity_generation_reuses_durable_run_assessment(monkeypatch) -> None:
+def test_property_opportunity_generation_refreshes_durable_assessment_from_run_brief(monkeypatch) -> None:
     client = build_product_client(principal_id="opportunity-owner")
     candidate = {
         "candidate_ref": "candidate-existing",
@@ -96,13 +96,34 @@ def test_property_opportunity_generation_reuses_durable_run_assessment(monkeypat
         lambda self, *, principal_id, run_id: {
             "run_id": run_id,
             "principal_id": principal_id,
+            "property_search_preferences": {"max_price_eur": 3500},
             "summary": {"ranked_candidates": [candidate]},
         },
     )
+    captured: dict[str, object] = {}
+
+    def refresh(self, **kwargs):  # noqa: ANN001, ANN003
+        del self
+        captured.update(kwargs)
+        refreshed = kwargs["sources"][0]["top_candidates"][0]
+        refreshed["opportunity"] = {
+            **candidate["opportunity"],
+            "fit_score": 74.0,
+            "confidence": 0.68,
+            "recommendation": "shortlist",
+            "match_reasons": ["The rent is within the active search ceiling."],
+        }
+        return {
+            "opportunity_total": 1,
+            "opportunity_persistence_failed_total": 0,
+            "opportunity_person_id": "elisabeth",
+            "opportunity_generation_status": "ready",
+        }
+
     monkeypatch.setattr(
         ProductService,
         "_materialize_property_search_opportunities",
-        lambda self, **kwargs: (_ for _ in ()).throw(AssertionError("must reuse durable assessment")),
+        refresh,
     )
 
     response = client.post(
@@ -112,4 +133,6 @@ def test_property_opportunity_generation_reuses_durable_run_assessment(monkeypat
 
     assert response.status_code == 200, response.text
     assert response.json()["opportunity"]["opportunity_id"] == "assessment:existing"
+    assert response.json()["opportunity"]["fit_score"] == 74.0
+    assert captured["search_preferences"] == {"max_price_eur": 3500}
     assert "private_prompt" not in response.json()["opportunity"]

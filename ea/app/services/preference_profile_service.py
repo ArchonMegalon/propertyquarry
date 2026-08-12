@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import math
 from typing import Any
 
 from app.repositories.preference_profiles import InMemoryPreferenceProfileRepository, PreferenceProfileRepository
@@ -103,6 +104,18 @@ def _money_label(value: float, *, currency_code: str) -> str:
     else:
         amount = f"{value:g}"
     return f"{currency_code} {amount}"
+
+
+def _positive_number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        return None
+    return parsed
 
 
 def _first_fact_text(facts: dict[str, object], *keys: str) -> str:
@@ -668,12 +681,47 @@ class PreferenceProfileService:
         nodes: list[dict[str, object]],
     ) -> dict[str, object]:
         facts = dict(object_payload or {})
+        search_preferences = (
+            dict(facts.get("search_preferences") or {})
+            if isinstance(facts.get("search_preferences"), dict)
+            else {}
+        )
         attributes = dict(facts.get("attribute_map") or {})
         currency_code = _candidate_currency_code(facts)
-        district = str(facts.get("postal_name") or facts.get("district") or facts.get("location") or "").strip()
-        total_rent = facts.get("total_rent_eur")
-        rooms = facts.get("rooms")
-        area_sqm = facts.get("area_sqm")
+        district = str(
+            facts.get("postal_name")
+            or facts.get("district")
+            or facts.get("location")
+            or facts.get("source_scope_location")
+            or facts.get("address")
+            or ""
+        ).strip()
+        total_rent = _positive_number(
+            facts.get("total_rent_eur")
+            or facts.get("monthly_rent_eur")
+            or facts.get("price_eur")
+        )
+        rooms = _positive_number(facts.get("rooms"))
+        area_sqm = _positive_number(facts.get("area_sqm") or facts.get("area_m2"))
+        listing_mode = str(
+            search_preferences.get("listing_mode")
+            or facts.get("listing_mode")
+            or "rent"
+        ).strip().lower()
+        active_price = (
+            _positive_number(
+                facts.get("purchase_price_eur")
+                or facts.get("price_eur")
+                or facts.get("purchase_price")
+            )
+            if listing_mode in {"buy", "sale", "purchase", "kauf"}
+            else total_rent
+        )
+        active_price_label = (
+            "Purchase price"
+            if listing_mode in {"buy", "sale", "purchase", "kauf"}
+            else "Total monthly rent"
+        )
         heating = str(
             facts.get("heating")
             or facts.get("heating_type")
@@ -687,7 +735,12 @@ class PreferenceProfileService:
             or str(facts.get("tour_media_mode") or "").strip().lower() == "panorama_360"
             or bool(facts.get("source_virtual_tour_url"))
         )
-        has_balcony = "balkon" in _normalize_key(facts.get("headline_hook")) or "balkon" in _normalize_key(attributes.get("GENERAL_TEXT_ADVERT/Ausstattung"))
+        has_balcony = bool(
+            facts.get("balcony")
+            or facts.get("has_balcony")
+            or facts.get("terrace")
+            or facts.get("has_terrace")
+        )
         has_lift = (
             bool(facts.get("lift"))
             or "lift" in _normalize_key(facts.get("headline_hook"))
@@ -707,6 +760,14 @@ class PreferenceProfileService:
             )
             if str(part or "").strip()
         ).lower()
+        has_balcony = has_balcony or any(
+            marker in feature_text
+            for marker in ("balkon", "terrasse", "balcony", "terrace", "loggia")
+        )
+        has_lift = has_lift or any(
+            marker in feature_text
+            for marker in ("aufzug", "fahrstuhl", "elevator", "lift")
+        )
         cooling_negated = any(
             marker in feature_text
             for marker in ("ohne klimaanlage", "keine klimaanlage", "no air conditioning", "without air conditioning")
@@ -743,6 +804,167 @@ class PreferenceProfileService:
         mismatch_reasons: list[str] = []
         unknowns: list[str] = list(dict(facts.get("decision_summary") or {}).get("unknowns") or [])
         blocking_constraints: list[str] = []
+        search_evidence_total = 0
+
+        max_price = _positive_number(
+            search_preferences.get("max_price_eur")
+            or search_preferences.get("max_monthly_rent_eur")
+        )
+        if max_price is not None:
+            max_price_label = _money_label(max_price, currency_code=currency_code)
+            if active_price is None:
+                unknowns.append(
+                    f"Confirm the {active_price_label.lower()} against the {max_price_label} search ceiling."
+                )
+            elif active_price <= max_price:
+                search_evidence_total += 1
+                score += 8.0
+                match_reasons.append(
+                    f"{active_price_label} {_money_label(active_price, currency_code=currency_code)} "
+                    f"is within the {max_price_label} search ceiling."
+                )
+            else:
+                search_evidence_total += 1
+                score -= 20.0
+                blocking_constraints.append(
+                    f"{active_price_label} exceeds the active search ceiling of {max_price_label}."
+                )
+
+        minimum_area = _positive_number(
+            search_preferences.get("min_area_m2")
+            or search_preferences.get("min_area_sqm")
+        )
+        if minimum_area is not None:
+            if area_sqm is None:
+                unknowns.append(
+                    f"Confirm the living area against the {minimum_area:g} m² search minimum."
+                )
+            elif area_sqm >= minimum_area:
+                search_evidence_total += 1
+                score += 6.0
+                match_reasons.append(
+                    f"The verified {area_sqm:g} m² living area clears the {minimum_area:g} m² search minimum."
+                )
+            else:
+                search_evidence_total += 1
+                score -= 20.0
+                blocking_constraints.append(
+                    f"The living area is below the active {minimum_area:g} m² search minimum."
+                )
+
+        minimum_rooms = _positive_number(search_preferences.get("min_rooms"))
+        if minimum_rooms is not None:
+            if rooms is None:
+                unknowns.append(
+                    f"Confirm the room count against the {minimum_rooms:g}-room search minimum."
+                )
+            elif rooms >= minimum_rooms:
+                search_evidence_total += 1
+                score += 5.0
+                match_reasons.append(
+                    f"The verified {rooms:g}-room layout clears the {minimum_rooms:g}-room search minimum."
+                )
+            else:
+                search_evidence_total += 1
+                score -= 20.0
+                blocking_constraints.append(
+                    f"The room count is below the active {minimum_rooms:g}-room search minimum."
+                )
+
+        location_query = str(search_preferences.get("location_query") or "").strip()
+        postal_code = str(
+            facts.get("source_postal_code")
+            or facts.get("postal_code")
+            or ""
+        ).strip()
+        if location_query and district and (
+            (postal_code and postal_code in location_query)
+            or _normalize_key(district) in _normalize_key(location_query)
+        ):
+            search_evidence_total += 1
+            score += 5.0
+            match_reasons.append(
+                f"{district} is inside the selected search area."
+            )
+
+        keyword_preferences = (
+            dict(search_preferences.get("keyword_preferences") or {})
+            if isinstance(search_preferences.get("keyword_preferences"), dict)
+            else {}
+        )
+        def _active_keyword_preference(value: object) -> bool:
+            return value is True or str(value or "").strip().lower() in {
+                "nice_to_have",
+                "must_have",
+                "hard",
+                "required",
+                "strict",
+                "important",
+                "strong_wish",
+                "preferred",
+                "yes",
+                "on",
+            }
+
+        balcony_preference = (
+            keyword_preferences.get("balcony")
+            or keyword_preferences.get("balkon")
+            or keyword_preferences.get("terrace")
+            or keyword_preferences.get("terrasse")
+        )
+        if _active_keyword_preference(balcony_preference):
+            if has_balcony:
+                search_evidence_total += 1
+                score += 3.0
+                match_reasons.append(
+                    "Balcony, terrace, or loggia space is indicated, matching the active search brief."
+                )
+            else:
+                unknowns.append("Balcony or terrace space is not confirmed.")
+        lift_preference = (
+            keyword_preferences.get("lift")
+            or keyword_preferences.get("aufzug")
+            or keyword_preferences.get("elevator")
+        )
+        if _active_keyword_preference(lift_preference):
+            if has_lift:
+                search_evidence_total += 1
+                score += 3.0
+                match_reasons.append("Lift access is indicated, matching the active search brief.")
+            else:
+                unknowns.append("Lift access is not confirmed.")
+
+        if bool(search_preferences.get("require_floorplan")):
+            if has_floorplan:
+                search_evidence_total += 1
+                score += 4.0
+                match_reasons.append("A floor plan satisfies the active remote-review requirement.")
+            else:
+                score -= 12.0
+                blocking_constraints.append(
+                    "The active search requires a floor plan, but none is available."
+                )
+        elif has_floorplan:
+            score += 2.0
+            match_reasons.append("A floor plan is available for first-pass review.")
+
+        if bool(search_preferences.get("require_360")):
+            if has_360:
+                search_evidence_total += 1
+                score += 4.0
+                match_reasons.append("A live 360 source satisfies the active remote-review requirement.")
+            else:
+                score -= 18.0
+                blocking_constraints.append(
+                    "The active search requires a live 360 source, but none is available."
+                )
+
+        if bool(search_preferences.get("avoid_attic_apartment")) and has_attic_apartment:
+            search_evidence_total += 1
+            score -= 7.0
+            mismatch_reasons.append(
+                "The home appears to be top-floor or attic, which conflicts with the active search brief."
+            )
 
         for node in nodes:
             category = _normalize_key(node.get("category"))
@@ -1059,15 +1281,35 @@ class PreferenceProfileService:
 
         if has_360:
             score += 4.0
-        elif not any("360" in entry.lower() for entry in mismatch_reasons):
-            mismatch_reasons.append("The listing does not provide a live 360 source, so remote screening has higher uncertainty.")
 
         if heating and not any(heating.lower() in entry.lower() for entry in mismatch_reasons):
             unknowns.append(f"Check the operating cost and efficiency implications of {heating}.")
         if not district:
             unknowns.append("The micro-location still needs manual review.")
 
-        confidence = 0.25 if not nodes else min(0.9, 0.35 + min(len(nodes), 8) * 0.07)
+        for row in list(facts.get("fact_requirement_plan") or []):
+            if not isinstance(row, dict):
+                continue
+            state = str(row.get("state") or "").strip().lower()
+            label = str(row.get("label") or row.get("key") or "").strip()
+            if label and state in {"unknown", "retryable_error", "unavailable", "planned"}:
+                unknowns.append(f"{label} is not verified yet.")
+
+        match_reasons = list(dict.fromkeys(match_reasons))
+        mismatch_reasons = list(dict.fromkeys(mismatch_reasons))
+        unknowns = list(dict.fromkeys(unknowns))
+        blocking_constraints = list(dict.fromkeys(blocking_constraints))
+
+        confidence = (
+            0.25
+            if not nodes and search_evidence_total <= 0
+            else min(
+                0.92,
+                0.4
+                + min(len(nodes), 8) * 0.05
+                + min(search_evidence_total, 6) * 0.07,
+            )
+        )
         if blocking_constraints:
             recommendation = "reject"
             predicted_reaction = "reject"

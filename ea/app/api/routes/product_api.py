@@ -2241,29 +2241,29 @@ def generate_property_opportunity_artifact(
         or summary.get("preference_person_id")
         or "self"
     ).strip() or "self"
-    if (
-        str(existing_opportunity.get("status") or "").strip() == "ready"
-        and str(existing_opportunity.get("opportunity_id") or "").strip()
-    ):
-        opportunity = existing_opportunity
-        projection = {
-            "opportunity_total": 1,
-            "opportunity_persistence_failed_total": 0,
-            "opportunity_person_id": person_id,
-            "opportunity_generation_status": "ready",
-        }
-    else:
-        projection = product._materialize_property_search_opportunities(
-            principal_id=context.principal_id,
-            person_id=person_id,
-            run_id=body.run_id,
-            sources=[{"top_candidates": [candidate]}],
-        )
-        opportunity = (
-            dict(candidate.get("opportunity") or {})
-            if isinstance(candidate.get("opportunity"), dict)
-            else {}
-        )
+    search_preferences = next(
+        (
+            dict(value)
+            for value in (
+                run.get("property_search_preferences"),
+                run.get("preferences"),
+            )
+            if isinstance(value, dict) and value
+        ),
+        {},
+    )
+    projection = product._materialize_property_search_opportunities(
+        principal_id=context.principal_id,
+        person_id=person_id,
+        run_id=body.run_id,
+        sources=[{"top_candidates": [candidate]}],
+        search_preferences=search_preferences,
+    )
+    opportunity = (
+        dict(candidate.get("opportunity") or {})
+        if isinstance(candidate.get("opportunity"), dict)
+        else {}
+    )
     opportunity = property_opportunity_public_projection(opportunity)
     if (
         str(opportunity.get("status") or "").strip() != "ready"

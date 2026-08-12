@@ -4,6 +4,7 @@ from app.product.property_opportunities import (
     materialize_property_search_opportunities,
     property_opportunity_public_projection,
 )
+from app.product.property_search_storage import _compact_property_search_run_record
 from app.repositories.preference_profiles import InMemoryPreferenceProfileRepository
 from app.services.preference_profile_service import PreferenceProfileService
 
@@ -46,11 +47,16 @@ def test_search_candidates_materialize_one_durable_opportunity_across_card_copie
         person_id="self",
         run_id="run-1",
         assess=assess,
+        search_preferences={"max_price_eur": 3500, "min_area_m2": 45},
     )
 
     assert len(calls) == 1
     assert calls[0]["domain"] == "willhaben"
     assert calls[0]["object_payload"]["has_floorplan"] is True
+    assert calls[0]["object_payload"]["search_preferences"] == {
+        "max_price_eur": 3500,
+        "min_area_m2": 45,
+    }
     assert summary == {
         "opportunity_total": 1,
         "opportunity_persistence_failed_total": 0,
@@ -180,3 +186,59 @@ def test_new_search_run_gets_a_distinct_opportunity_assessment() -> None:
         )
 
     assert len(set(captured_ids)) == 2
+
+
+def test_compact_search_storage_preserves_customer_opportunity_projection() -> None:
+    opportunity = {
+        "opportunity_id": "property_opportunity:stored",
+        "status": "ready",
+        "person_id": "self",
+        "run_id": "run-compact-opportunity",
+        "fit_score": 74.0,
+        "confidence": 0.68,
+        "recommendation": "shortlist",
+        "match_reasons": ["The rent is within the active search ceiling."],
+        "mismatch_reasons": [],
+        "unknowns": ["Lift access is not confirmed."],
+        "blocking_constraints": [],
+    }
+    compact = _compact_property_search_run_record(
+        {
+            "run_id": "run-compact-opportunity",
+            "principal_id": "principal-compact-opportunity",
+            "status": "processed",
+            "summary": {
+                "status": "processed",
+                "fact_enrichment_jobs": {"listing-1": {"status": "queued"}},
+                "opportunity_total": 1,
+                "opportunity_persistence_failed_total": 0,
+                "opportunity_person_id": "self",
+                "opportunity_generation_status": "ready",
+                "sources": [
+                    {
+                        "source_label": "Willhaben",
+                        "top_candidates": [
+                            {
+                                "candidate_ref": "listing-1",
+                                "title": "Compact opportunity",
+                                "opportunity": opportunity,
+                                "opportunity_id": opportunity["opportunity_id"],
+                                "opportunity_status": "ready",
+                                "preference_fit_score": 74.0,
+                                "preference_confidence": 0.68,
+                                "opportunity_recommendation": "shortlist",
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    summary = compact["summary"]
+    assert summary["opportunity_total"] == 1
+    assert summary["opportunity_generation_status"] == "ready"
+    candidate = summary["sources"][0]["top_candidates"][0]
+    assert candidate["opportunity"] == opportunity
+    assert candidate["opportunity_id"] == "property_opportunity:stored"
+    assert candidate["opportunity_recommendation"] == "shortlist"

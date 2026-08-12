@@ -29800,6 +29800,7 @@ class ProductService:
         person_id: str,
         run_id: str,
         sources: list[dict[str, object]],
+        search_preferences: dict[str, object] | None = None,
     ) -> dict[str, object]:
         return materialize_property_search_opportunities(
             sources,
@@ -29807,6 +29808,7 @@ class ProductService:
             person_id=person_id,
             run_id=run_id,
             assess=self.assess_preference_candidate,
+            search_preferences=search_preferences,
         )
 
     def get_property_candidate_fact_enrichment(
@@ -57266,6 +57268,7 @@ class ProductService:
             person_id=preference_person_id,
             run_id=property_search_run_id,
             sources=source_summaries,
+            search_preferences=request_preferences,
         )
         payload = {
             "generated_at": _now_iso(),

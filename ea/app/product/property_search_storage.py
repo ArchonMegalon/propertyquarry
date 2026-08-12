@@ -381,6 +381,10 @@ _PROPERTY_SEARCH_RUN_COMPACT_SUMMARY_KEYS = (
     "hosted_tour_total",
     "timing_ms",
     "timing_receipts",
+    "opportunity_total",
+    "opportunity_persistence_failed_total",
+    "opportunity_person_id",
+    "opportunity_generation_status",
 )
 
 _PROPERTY_SEARCH_RUN_COMPACT_SOURCE_KEYS = (
@@ -548,6 +552,13 @@ _PROPERTY_SEARCH_RUN_COMPACT_UI_CANDIDATE_KEYS = (
     "search_score_context",
     "score_provenance",
     "onemin_evaluation",
+    "opportunity",
+    "opportunity_id",
+    "opportunity_status",
+    "preference_fit_score",
+    "preference_confidence",
+    "opportunity_predicted_reaction",
+    "opportunity_recommendation",
 )
 
 _PROPERTY_SEARCH_RUN_COMPACT_FACT_JOB_KEYS = (

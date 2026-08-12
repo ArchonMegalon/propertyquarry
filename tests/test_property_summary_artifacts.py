@@ -72,9 +72,9 @@ def test_opportunity_brief_is_local_and_carries_decision_evidence(tmp_path: Path
                 "opportunity_id": "property_opportunity:test",
                 "fit_score": 88,
                 "recommendation": "shortlist",
-                "match_reasons": ["The layout matches the three-room preference"],
-                "mismatch_reasons": ["The heating type is not confirmed"],
-                "unknowns": ["monthly operating costs"],
+                "match_reasons": ["The layout matches the three-room preference."],
+                "mismatch_reasons": ["The heating type is not confirmed."],
+                "unknowns": ["monthly operating costs."],
             },
         },
     )
@@ -87,4 +87,5 @@ def test_opportunity_brief_is_local_and_carries_decision_evidence(tmp_path: Path
     assert "Preference fit: 88/100" in body
     assert "Recommendation: shortlist" in body
     assert "Watch: The heating type is not confirmed" in body
+    assert ".." not in body
     assert "Verify next: monthly operating costs" in body

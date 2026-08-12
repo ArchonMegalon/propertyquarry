@@ -1711,21 +1711,23 @@ class FlipLinkPacketService:
             if isinstance(context.get("opportunity"), dict)
             else {}
         )
-        opportunity_title = str(context.get("title") or "this home").strip() or "this home"
+        def _brief_fragment(value: object) -> str:
+            return str(value or "").strip().rstrip(" .;:")
+
         match_reasons = [
-            str(value).strip()
+            _brief_fragment(value)
             for value in list(opportunity.get("match_reasons") or [])
-            if str(value).strip()
+            if _brief_fragment(value)
         ]
         mismatch_reasons = [
-            str(value).strip()
+            _brief_fragment(value)
             for value in list(opportunity.get("mismatch_reasons") or [])
-            if str(value).strip()
+            if _brief_fragment(value)
         ]
         unknowns = [
-            str(value).strip()
+            _brief_fragment(value)
             for value in list(opportunity.get("unknowns") or [])
-            if str(value).strip()
+            if _brief_fragment(value)
         ]
         recommendation = str(opportunity.get("recommendation") or "").strip().replace("_", " ")
         opportunity_fit = opportunity.get("fit_score")
@@ -1735,8 +1737,7 @@ class FlipLinkPacketService:
             fit_score = 0
         why_parts = [
             (
-                f"{opportunity_title} is worth a closer look because "
-                f"{'; '.join(match_reasons[:3])}."
+                f"Why it fits: {'; '.join(match_reasons[:3])}."
             )
             if match_reasons
             else "",

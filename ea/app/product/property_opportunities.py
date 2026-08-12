@@ -87,7 +87,11 @@ def _opportunity_assessment_id(*, domain: str, object_id: str, run_id: str) -> s
     return f"property_opportunity:{hashlib.sha256(framed.encode('utf-8')).hexdigest()}"
 
 
-def _assessment_input(candidate: dict[str, object]) -> dict[str, object]:
+def _assessment_input(
+    candidate: dict[str, object],
+    *,
+    search_preferences: dict[str, object] | None = None,
+) -> dict[str, object]:
     facts = (
         dict(candidate.get("property_facts") or {})
         if isinstance(candidate.get("property_facts"), dict)
@@ -98,6 +102,8 @@ def _assessment_input(candidate: dict[str, object]) -> dict[str, object]:
         if key in {"assessment", "preference_assessment", "opportunity"}:
             continue
         payload[key] = value
+    if search_preferences:
+        payload["search_preferences"] = dict(search_preferences)
     return payload
 
 
@@ -166,6 +172,7 @@ def materialize_property_search_opportunities(
     person_id: str,
     run_id: str,
     assess: OpportunityAssessor,
+    search_preferences: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Persist one preference assessment per discovered candidate and project it onto every card copy.
 
@@ -205,7 +212,10 @@ def materialize_property_search_opportunities(
                             domain=domain,
                             object_type="listing",
                             object_id=object_id,
-                            object_payload=_assessment_input(candidate),
+                            object_payload=_assessment_input(
+                                candidate,
+                                search_preferences=search_preferences,
+                            ),
                             assessment_id=_opportunity_assessment_id(
                                 domain=domain,
                                 object_id=object_id,
@@ -277,6 +287,9 @@ def find_property_search_candidate(
     collections: list[object] = [
         run.get("ranked_candidates"),
         summary.get("ranked_candidates"),
+        run.get("research_candidates"),
+        summary.get("research_candidates"),
+        summary.get("_delivery_candidates"),
     ]
     for source in list(summary.get("sources") or run.get("sources") or []):
         if not isinstance(source, dict):
