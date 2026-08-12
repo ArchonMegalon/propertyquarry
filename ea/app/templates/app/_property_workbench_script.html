@@ -8905,6 +8905,15 @@
         }
       });
     });
+    const boundedCoverFetch = async (url, options = {}) => {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    };
     root.addEventListener('click', async (event) => {
       const button = event.target?.closest?.('[data-pqx-opportunity-generate]');
       if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
@@ -8927,15 +8936,6 @@
         return;
       }
       const previousLabel = button.textContent;
-      const boundedCoverFetch = async (url, options = {}) => {
-        const controller = new AbortController();
-        const timeoutId = window.setTimeout(() => controller.abort(), 15000);
-        try {
-          return await fetch(url, { ...options, signal: controller.signal });
-        } finally {
-          window.clearTimeout(timeoutId);
-        }
-      };
       button.disabled = true;
       button.textContent = 'Creating brief…';
       if (statusNode) statusNode.textContent = '';
