@@ -85,14 +85,19 @@ def test_ltd_runtime_catalog_route_lists_profiles(monkeypatch: pytest.MonkeyPatc
     assert {"1min.AI", "Documentation.AI", "Emailit", "FlipLink.me", "MarkupGo"} <= service_names
 
     documentation = next(row for row in body if row["service_name"] == "Documentation.AI")
-    assert documentation["runtime_state"] == "browseract_ui_ready"
+    assert documentation["runtime_state"] == "browseract_template_available"
+    assert documentation["evidence_status"] == "missing"
+    assert documentation["live_evidence_verified"] is False
+    assert documentation["propertyquarry_customer_integration_verified"] is False
     assert {action["action_key"] for action in documentation["actions"]} == {
         "discover_account",
         "inspect_workspace",
     }
 
     fliplink = next(row for row in body if row["service_name"] == "FlipLink.me")
-    assert fliplink["runtime_state"] == "runtime_managed"
+    assert fliplink["runtime_state"] == "runtime_contract_available"
+    assert fliplink["live_evidence_verified"] is False
+    assert fliplink["propertyquarry_customer_integration_verified"] is False
     assert {action["action_key"] for action in fliplink["actions"]} == {
         "discover_account",
         "publish_property_flipbook",

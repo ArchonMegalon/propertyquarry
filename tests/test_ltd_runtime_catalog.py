@@ -29,6 +29,13 @@ Updated: 2026-05-02
 | `FlipLink.me` | `Tier 10` | `1 account` | `Owned` |  | `Tier 2` | Local `.env` credentials plus bounded PropertyQuarry review-packet flipbook lane | Use only for shareable redacted review packets downstream of PropertyQuarry. |
 | `MarkupGo` | `7x code-based` | `7 codes` | `Activated` |  | `Tier 3` | None | BrowserAct workspace reader exists even though the direct provider lane is not executable. |
 | `Poppy AI` | `Tier 6` | `1 account / 5 seats` | `Owned` |  | `Tier 3` | BrowserAct workspace-reader candidate plus local API-key placeholders only | Candidate research-board and content-intelligence lane after provider verification. |
+
+## Discovery Tracking
+
+| Service | Account / Email | Discovery Status | Verification Source | Last Verified | Notes |
+|---|---|---|---|---|---|
+| `1min.AI` |  | `live_provider_call_verified` | `worker_health_probe + principal_bound_provider_receipt` | 2026-08-12T20:14:50Z | Real provider call. |
+| `Emailit` |  | `manual_seeded` | `emailit_api_live` | 2026-05-01T05:00:00Z | Live sender-domain delivery. |
 """.strip()
 
 
@@ -71,12 +78,17 @@ def test_browseract_ui_service_aliases_resolve_inventory_service_names() -> None
     assert browseract_ui_service_by_alias("BrowserAct") is None
 
 
-def test_ltd_runtime_catalog_derives_provider_ui_and_runtime_managed_profiles(tmp_path: Path) -> None:
+def test_ltd_runtime_catalog_separates_contracts_from_live_evidence(
+    tmp_path: Path,
+) -> None:
     catalog = _catalog(tmp_path)
 
     onemin = catalog.get_profile("1min AI")
     assert onemin is not None
-    assert onemin.runtime_state == "provider_executable"
+    assert onemin.runtime_state == "live_provider_evidence"
+    assert onemin.evidence_status == "live_provider_call_verified"
+    assert onemin.live_evidence_verified is True
+    assert onemin.propertyquarry_customer_integration_verified is True
     assert onemin.matched_provider_key == "onemin"
     assert {action.action_key for action in onemin.actions} >= {
         "discover_account",
@@ -90,7 +102,9 @@ def test_ltd_runtime_catalog_derives_provider_ui_and_runtime_managed_profiles(tm
 
     documentation = catalog.get_profile("Documentation.AI")
     assert documentation is not None
-    assert documentation.runtime_state == "browseract_ui_ready"
+    assert documentation.runtime_state == "browseract_template_available"
+    assert documentation.live_evidence_verified is False
+    assert documentation.propertyquarry_customer_integration_verified is False
     assert documentation.browseract_ui_service_key == "documentation_ai_workspace_reader"
     assert {action.action_key for action in documentation.actions} == {
         "discover_account",
@@ -99,7 +113,7 @@ def test_ltd_runtime_catalog_derives_provider_ui_and_runtime_managed_profiles(tm
 
     markupgo = catalog.get_profile("markupgo")
     assert markupgo is not None
-    assert markupgo.runtime_state == "browseract_ui_ready"
+    assert markupgo.runtime_state == "browseract_template_available"
     assert markupgo.matched_provider_key == "markupgo"
     assert {action.action_key for action in markupgo.actions} == {
         "discover_account",
@@ -108,7 +122,7 @@ def test_ltd_runtime_catalog_derives_provider_ui_and_runtime_managed_profiles(tm
 
     poppy = catalog.get_profile("Poppy AI")
     assert poppy is not None
-    assert poppy.runtime_state == "browseract_ui_ready"
+    assert poppy.runtime_state == "browseract_template_available"
     assert poppy.browseract_ui_service_key == "poppy_workspace_reader"
     assert poppy.matched_provider_key == "poppy_ai"
     assert {action.action_key for action in poppy.actions} == {
@@ -118,7 +132,9 @@ def test_ltd_runtime_catalog_derives_provider_ui_and_runtime_managed_profiles(tm
 
     emailit = catalog.get_profile("Emailit")
     assert emailit is not None
-    assert emailit.runtime_state == "runtime_managed"
+    assert emailit.runtime_state == "live_runtime_evidence"
+    assert emailit.live_evidence_verified is True
+    assert emailit.propertyquarry_customer_integration_verified is False
     assert {action.action_key for action in emailit.actions} == {
         "delivery_outbox",
         "discover_account",
@@ -126,7 +142,9 @@ def test_ltd_runtime_catalog_derives_provider_ui_and_runtime_managed_profiles(tm
 
     fliplink = catalog.get_profile("FlipLink")
     assert fliplink is not None
-    assert fliplink.runtime_state == "runtime_managed"
+    assert fliplink.runtime_state == "runtime_contract_available"
+    assert fliplink.live_evidence_verified is False
+    assert fliplink.propertyquarry_customer_integration_verified is False
     assert {action.action_key for action in fliplink.actions} == {
         "discover_account",
         "publish_property_flipbook",
@@ -138,5 +156,5 @@ def test_ltd_runtime_catalog_derives_provider_ui_and_runtime_managed_profiles(tm
 
     hedy = catalog.get_profile("hedy.ai")
     assert hedy is not None
-    assert hedy.runtime_state == "browseract_discoverable"
+    assert hedy.runtime_state == "account_discovery_contract_available"
     assert [action.action_key for action in hedy.actions] == ["discover_account"]

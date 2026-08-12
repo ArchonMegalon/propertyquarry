@@ -9,9 +9,9 @@ def test_ltd_flagship_subset_gate_passes_for_expected_verified_subset() -> None:
 
 | Service | Account / Email | Discovery Status | Verification Source | Last Verified | Notes |
 |---|---|---|---|---|---|
-| `1min.AI` |  | `manual_seeded` | `local_env_browseract_refresh` | 2026-06-02T18:17:17Z | ok |
+| `1min.AI` |  | `live_provider_call_verified` | `worker_health_probe + principal_bound_provider_receipt` | 2026-08-12T20:14:50Z | ok |
 | `Prompt Architects` |  | `manual_seeded` | `local_env + prompt_foundry_receipts` | 2026-06-01T20:54:48Z | ok |
-| `PayFunnels` |  | `manual_seeded` | `payfunnels_plan_billing_receipts` | 2026-06-21T00:00:00Z | ok |
+| `PayFunnels` |  | `unconfigured_external_authority` | `deployed_runtime_probe + contract_tests` | 2026-08-12T21:51:56Z | ok |
 | `BrowserAct` | ops@example.com | `complete` | `browseract_live` | 2026-03-07T00:00:00Z | ok |
 | `Teable` | ops@teable.example | `complete` | `browseract_live` | 2026-03-07T00:01:00Z | ok |
 | `ClickRank.ai` | ops@example.com | `complete` | `clickrank_live` | 2026-05-04T07:44:00Z | ok |
@@ -24,6 +24,18 @@ def test_ltd_flagship_subset_gate_passes_for_expected_verified_subset() -> None:
 
     assert receipt["status"] == "pass"
     assert receipt["accepted_total"] == 9
+    assert receipt["live_verified_total"] == 5
+    assert receipt["contract_or_unconfigured_total"] == 4
+    assert receipt["not_live_integration_gate"] is True
+    assert receipt["services"]["PayFunnels"]["accepted"] is True
+    assert (
+        receipt["services"]["PayFunnels"]["live_integration_verified"]
+        is False
+    )
+    assert (
+        receipt["services"]["1min.AI"]["live_integration_verified"]
+        is True
+    )
     assert receipt["failures"] == []
 
 
