@@ -1940,6 +1940,8 @@ def capture_property_billing_order(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if spec.plan_key == "free":
         raise HTTPException(status_code=400, detail="property_plan_free_does_not_require_checkout")
+    if not paypal_configured():
+        raise HTTPException(status_code=409, detail="paypal_not_configured")
     try:
         captured = capture_paypal_property_order(order_id=body.order_id)
     except RuntimeError as exc:
