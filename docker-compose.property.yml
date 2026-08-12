@@ -55,6 +55,11 @@ services:
       PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI: "${PROPERTYQUARRY_GOOGLE_OAUTH_REDIRECT_URI:-https://propertyquarry.com/google/callback}"
       PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET: "${PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET:?Set an independent PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET}"
       PROPERTYQUARRY_IDENTITY_SESSION_SECRET: "${PROPERTYQUARRY_IDENTITY_SESSION_SECRET:?Set an independent PROPERTYQUARRY_IDENTITY_SESSION_SECRET}"
+      # API-only, revocable Google Play reviewer access. The runtime receives
+      # a PBKDF2 digest, never the reviewer password. Empty or malformed pairs
+      # keep the unlinked review route unavailable.
+      PROPERTYQUARRY_PLAY_REVIEW_USERNAME: "${PROPERTYQUARRY_PLAY_REVIEW_USERNAME:-}"
+      PROPERTYQUARRY_PLAY_REVIEW_PASSWORD_DIGEST: "${PROPERTYQUARRY_PLAY_REVIEW_PASSWORD_DIGEST:-}"
       # App Links are API-owned public verification metadata. Preview uses a
       # stable non-production debug certificate; release stays false until the
       # Google Play app-signing certificate is explicitly supplied.

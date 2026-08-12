@@ -157,6 +157,7 @@ from app.product.service import (
 from app.services.cloudflare_access import CloudflareAccessIdentity
 from app.services import google_oauth as google_oauth_service
 from app.services import propertyquarry_google_identity
+from app.services import propertyquarry_play_review_access
 from app.services.propertyquarry_android_app_links import (
     propertyquarry_android_app_link_statements,
 )
@@ -7340,6 +7341,206 @@ def sign_in_page(
     )
 
 
+def _play_review_access_config_or_404(
+    request: Request,
+) -> propertyquarry_play_review_access.PlayReviewAccessConfig:
+    if request_brand(request).get("key") != "propertyquarry":
+        raise HTTPException(status_code=404, detail="not_found")
+    config = propertyquarry_play_review_access.load_play_review_access_config()
+    if config is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    return config
+
+
+def _render_play_review_sign_in(
+    request: Request,
+    *,
+    container: AppContainer,
+    access_identity: CloudflareAccessIdentity | None,
+    return_to: str,
+    error: str = "",
+    status_code: int = 200,
+) -> HTMLResponse:
+    principal_id, status = _load_status(
+        container=container,
+        access_identity=access_identity,
+        request=request,
+        compact=True,
+    )
+    response = _render_public_template(
+        request,
+        "play_review_sign_in.html",
+        **_public_context(
+            request=request,
+            current_nav="sign-in",
+            page_title="Secure review access · PropertyQuarry",
+            principal_id=principal_id,
+            status=status,
+            access_identity=access_identity,
+            extra={
+                "play_review_error": error,
+                "play_review_return_to": return_to,
+                "robots_directive": "noindex, nofollow, noarchive, nosnippet",
+            },
+        ),
+    )
+    response.status_code = int(status_code)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    return response
+
+
+@router.api_route(
+    "/sign-in/play-review",
+    methods=["GET", "HEAD"],
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def play_review_sign_in_page(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+    access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
+) -> HTMLResponse:
+    _play_review_access_config_or_404(request)
+    return_to = _normalize_browser_return_to(
+        request.query_params.get("return_to"),
+        default="/app/search",
+    )
+    return _render_play_review_sign_in(
+        request,
+        container=container,
+        access_identity=access_identity,
+        return_to=return_to,
+    )
+
+
+@router.post(
+    "/sign-in/play-review",
+    response_model=None,
+    include_in_schema=False,
+)
+async def play_review_sign_in(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+    access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
+) -> HTMLResponse | RedirectResponse:
+    config = _play_review_access_config_or_404(request)
+    _require_same_origin_browser_post(
+        request,
+        detail="play_review_origin_invalid",
+    )
+    raw_body = await request.body()
+    form_data = (
+        urllib.parse.parse_qs(
+            raw_body.decode("utf-8", errors="ignore"),
+            keep_blank_values=True,
+        )
+        if len(raw_body) <= 8_192
+        else {}
+    )
+    username = _form_value(form_data, "username", "")
+    password = _form_value(form_data, "password", "")
+    return_to = _normalize_browser_return_to(
+        _form_value(form_data, "return_to", ""),
+        default="/app/search",
+    )
+    client_host = request.client.host if request.client is not None else ""
+    attempt_key = propertyquarry_play_review_access.attempt_key(
+        client_host=client_host,
+        username=username,
+    )
+    limiter = propertyquarry_play_review_access.PLAY_REVIEW_ATTEMPT_LIMITER
+    generic_error = "Those reviewer credentials could not be confirmed. Try again."
+    if limiter.blocked(attempt_key):
+        return _render_play_review_sign_in(
+            request,
+            container=container,
+            access_identity=access_identity,
+            return_to=return_to,
+            error=generic_error,
+            status_code=429,
+        )
+    if not propertyquarry_play_review_access.credentials_match(
+        config,
+        username=username,
+        password=password,
+    ):
+        limiter.record_failure(attempt_key)
+        return _render_play_review_sign_in(
+            request,
+            container=container,
+            access_identity=access_identity,
+            return_to=return_to,
+            error=generic_error,
+            status_code=401,
+        )
+
+    product = build_product_service(container)
+    try:
+        container.onboarding.start_workspace(
+            principal_id=config.principal_id,
+            workspace_name="PropertyQuarry Play review",
+            workspace_mode="personal",
+            region="AT",
+            language="en",
+            timezone="Europe/Vienna",
+            selected_channels=(),
+        )
+        issued = product.issue_workspace_access_session(
+            principal_id=config.principal_id,
+            email=config.username,
+            role="principal",
+            display_name="Google Play reviewer",
+            operator_id="google-play-review",
+            source_kind="google_play_review",
+            default_target="/app/search",
+            expires_in_hours=24,
+        )
+        opened = product.open_workspace_access_session(
+            token=str(issued.get("access_token") or "").strip(),
+            actor="google-play-review",
+        )
+        if opened is None or not str(opened.get("access_token") or "").strip():
+            raise RuntimeError("play_review_session_open_failed")
+        product.record_surface_event(
+            principal_id=config.principal_id,
+            event_type="play_review_session_opened",
+            surface="google_play_review",
+            actor="google-play-review",
+            metadata={
+                "session_id": str(opened.get("session_id") or "").strip(),
+                "source_kind": "google_play_review",
+            },
+        )
+    except Exception:
+        return _render_play_review_sign_in(
+            request,
+            container=container,
+            access_identity=access_identity,
+            return_to=return_to,
+            error="Secure review access is temporarily unavailable. Try again.",
+            status_code=503,
+        )
+
+    limiter.clear(attempt_key)
+    response = RedirectResponse(return_to, status_code=303)
+    response.set_cookie(
+        "ea_workspace_session",
+        str(opened.get("access_token") or "").strip(),
+        **_workspace_session_cookie_kwargs(
+            request,
+            expires_at=str(opened.get("expires_at") or "").strip(),
+        ),
+    )
+    _clear_signed_out_marker_cookie(response, request)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    return response
+
+
 @router.api_route("/sign-in/current-session", methods=["GET", "HEAD"], response_model=None, include_in_schema=False)
 def sign_in_current_session(
     request: Request,
@@ -7739,9 +7940,13 @@ def _effective_request_origin(request: Request) -> tuple[str, str, int] | None:
     return scheme, hostname, int(port)
 
 
-def _require_same_origin_browser_post(request: Request) -> None:
+def _require_same_origin_browser_post(
+    request: Request,
+    *,
+    detail: str = "sign_out_origin_invalid",
+) -> None:
     if _browser_request_origin(request) != _effective_request_origin(request):
-        raise HTTPException(status_code=403, detail="sign_out_origin_invalid")
+        raise HTTPException(status_code=403, detail=detail)
 
 
 @router.post("/app/actions/sign-out", response_model=None, include_in_schema=False)

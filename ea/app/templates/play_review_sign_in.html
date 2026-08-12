@@ -1,0 +1,87 @@
+{% extends "base_public.html" %}
+{% block content %}
+<style>
+  .review-access {
+    width: min(100%, 520px);
+    margin: clamp(28px, 8vh, 84px) auto;
+  }
+  .review-card {
+    display: grid;
+    gap: 22px;
+    padding: clamp(22px, 5vw, 38px);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--panel) 94%, transparent);
+    box-shadow: var(--shadow);
+  }
+  .review-heading {
+    display: grid;
+    gap: 9px;
+  }
+  .review-heading h1 {
+    margin: 0;
+    max-width: 12ch;
+    font-size: clamp(2rem, 7vw, 3.15rem);
+    line-height: .96;
+    letter-spacing: -.04em;
+  }
+  .review-heading p,
+  .review-note {
+    margin: 0;
+    color: var(--text-soft);
+    line-height: 1.55;
+  }
+  .review-form {
+    display: grid;
+    gap: 14px;
+  }
+  .review-field {
+    display: grid;
+    gap: 7px;
+  }
+  .review-field input {
+    width: 100%;
+    min-height: 48px;
+  }
+  .review-form .btn {
+    width: 100%;
+    min-height: 48px;
+  }
+  .review-error {
+    padding: 12px 14px;
+    border: 1px solid color-mix(in srgb, var(--danger) 42%, var(--line));
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+  }
+  .review-error p {
+    margin: 0;
+  }
+</style>
+<section class="review-access" aria-labelledby="review-access-title">
+  <div class="review-card">
+    <div class="review-heading">
+      <div class="kicker">Secure review access</div>
+      <h1 id="review-access-title">Open PropertyQuarry.</h1>
+      <p>Use the reviewer credentials supplied in Google Play Console. This access is isolated, revocable, and opens the live search workspace.</p>
+    </div>
+    {% if play_review_error %}
+    <div class="review-error" role="alert" data-play-review-error>
+      <p>{{ play_review_error }}</p>
+    </div>
+    {% endif %}
+    <form class="review-form" method="post" action="/sign-in/play-review" autocomplete="on">
+      <input type="hidden" name="return_to" value="{{ play_review_return_to }}">
+      <div class="review-field">
+        <label for="play_review_username">Reviewer username</label>
+        <input id="play_review_username" name="username" type="email" inputmode="email" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+      </div>
+      <div class="review-field">
+        <label for="play_review_password">Password</label>
+        <input id="play_review_password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn primary" type="submit">Open search</button>
+    </form>
+    <p class="review-note">This reviewer credential does not connect a personal Google account or mailbox.</p>
+  </div>
+</section>
+{% endblock %}
