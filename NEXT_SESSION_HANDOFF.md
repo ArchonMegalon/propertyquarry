@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 20:23 UTC
+Updated: 2026-08-12 20:30 UTC
 
 ## Mission
 
@@ -16,6 +16,31 @@ signed evidence; do not create, edit, promote, or roll out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-12 Austria closed test approved and first tester enrolled
+
+Google has completed review of the Austria closed Alpha. The clean tester URL
+now renders the PropertyQuarry invitation for `tibor.girschele@gmail.com` and
+offered `Become a tester`; that already-authorized account was enrolled and the
+read-back says `You are a tester.` The clean store URL now renders the complete
+PropertyQuarry listing and offers installation for the account. Use these links
+without adding a literal `/n` or `\\n` prefix:
+
+https://play.google.com/apps/testing/com.myexternalbrain.propertyquarry
+
+https://play.google.com/store/apps/details?id=com.myexternalbrain.propertyquarry
+
+Play Console now reports Closed testing `Active`, `1 track`, the closed-release
+prerequisite complete, and exactly `1 tester currently opted in`. Production is
+still inactive and was not opened, promoted, edited, or submitted. Production
+access still needs eleven additional distinct real testers to opt in and then
+at least twelve testers to remain continuously enrolled for fourteen days.
+
+EA delivered the approved tester and app links to the operator on Telegram as
+message `5203`, using two clean URL buttons. The earlier instruction not to send
+an unavailable invite is superseded: the invite is now live. Do not fabricate
+the remaining testers or claim the fourteen-day clock is satisfied before Play
+does.
 
 ## 2026-08-12 current LTD provider and publication truth
 
