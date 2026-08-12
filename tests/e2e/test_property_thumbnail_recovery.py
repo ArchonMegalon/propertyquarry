@@ -8,6 +8,8 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import Browser, Route
 
+from app.api.routes import landing as landing_routes
+
 
 _ONE_PIXEL_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -176,6 +178,13 @@ def test_fast_ranked_results_promote_listing_thumbnail_and_recover_with_fallback
                       "packet_url": "/app/research/fast-exhausts",
                       "preview_image_url": "/missing-primary.png",
                       "preview_image_fallback_urls": ["/missing-fallback.png"]
+                    },
+                    {
+                      "candidate_ref": "fast-rejects-provider-chrome",
+                      "title": "Real listing image",
+                      "packet_url": "/app/research/fast-rejects-provider-chrome",
+                      "preview_image_url": "/img/upselling/icon-bump.png",
+                      "preview_image_fallback_urls": ["/fallback.png"]
                     }
                   ]
                 }
@@ -206,7 +215,7 @@ def test_fast_ranked_results_promote_listing_thumbnail_and_recover_with_fallback
             """() => {
               const rows = document.querySelectorAll('.pq-fast-row');
               const image = rows[0]?.querySelector('[data-pq-fast-thumbnail-image]');
-              return rows.length === 2
+              return rows.length === 3
                 && image?.src.endsWith('/fallback.png')
                 && image.naturalWidth > 0
                 && rows[0].querySelector('.pq-fast-thumb')?.dataset.visualKind === 'preview';
@@ -225,6 +234,16 @@ def test_fast_ranked_results_promote_listing_thumbnail_and_recover_with_fallback
                 && media.textContent.includes('Property');
             }"""
         )
+
+        page.wait_for_function(
+            """() => {
+              const image = document.querySelectorAll('.pq-fast-row')[2]
+                ?.querySelector('[data-pq-fast-thumbnail-image]');
+              return image?.src.endsWith('/fallback.png')
+                && image.naturalWidth > 0
+                && !image.src.includes('/img/upselling/');
+            }"""
+        )
     finally:
         context.close()
 
@@ -238,3 +257,51 @@ def test_fast_ranked_first_paint_uses_safe_listing_preview_without_diorama() -> 
     assert "{% set thumb_href = diorama_href or preview_href %}" in source
     assert 'referrerpolicy="no-referrer" data-pq-fast-thumbnail-image' in source
     assert "const thumbHref = thumbnailHrefs[0] || previewHref;" in source
+    assert "'/img/upselling/'" in source
+    assert "'/plus-insider-locked.'" in source
+
+
+@pytest.mark.parametrize(
+    "provider_chrome_url",
+    [
+        "https://cache.willhaben.at/img/upselling/icon-bump.png",
+        "https://www.immobilienscout24.at/expose/assets/plus-insider-locked.webp",
+    ],
+)
+def test_fast_ranked_first_paint_rejects_provider_chrome_and_promotes_real_media(
+    provider_chrome_url: str,
+) -> None:
+    listing_image_url = "https://images.example.test/listing-home.webp"
+    prepared = landing_routes._propertyquarry_prepare_run_payload(
+        product=object(),
+        backfill_cached_previews=False,
+        run_payload={
+            "run_id": "run-provider-chrome",
+            "status": "completed",
+            "summary": {
+                "status": "completed",
+                "ranked_candidates": [
+                    {
+                        "candidate_ref": "provider-chrome-home",
+                        "title": "Real home",
+                        "property_url": "https://listing.example.test/home/1",
+                        "preview_image_url": provider_chrome_url,
+                        "property_facts": {
+                            "media_urls_json": [provider_chrome_url, listing_image_url],
+                        },
+                    }
+                ],
+            },
+        },
+    )
+
+    candidate = prepared["summary"]["ranked_candidates"][0]
+    safe_thumbnail_urls = [
+        candidate["preview_image_url"],
+        *candidate.get("preview_image_fallback_urls", []),
+    ]
+    assert candidate["preview_image_url"].startswith(
+        ("/app/api/property/map-preview/", "/app/api/property/map-previews/", "https://")
+    )
+    assert listing_image_url in safe_thumbnail_urls
+    assert provider_chrome_url not in safe_thumbnail_urls

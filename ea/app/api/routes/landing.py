@@ -58,6 +58,8 @@ from app.api.routes.landing_property_surface_contracts import PropertySurfaceSco
 from app.api.routes.landing_property_search_health import build_property_search_health_snapshot
 from app.api.routes.landing_property_workspace_payload import (
     _property_workbench_client_candidate_payload,
+    _property_workbench_client_image_url,
+    _property_workbench_client_preview_urls,
 )
 from app.api.routes.landing_property_workspace_helpers import (
     _compact_provider_label,
@@ -1500,6 +1502,36 @@ def _propertyquarry_prepare_run_payload(
                     derived_diorama_preview_url = _property_candidate_diorama_preview_image(normalized_candidate)
                     if derived_diorama_preview_url:
                         normalized_candidate["diorama_preview_url"] = derived_diorama_preview_url
+                safe_diorama_preview_url = _property_workbench_client_image_url(
+                    normalized_candidate.get("diorama_preview_url")
+                )
+                if safe_diorama_preview_url:
+                    normalized_candidate["diorama_preview_url"] = safe_diorama_preview_url
+                else:
+                    normalized_candidate.pop("diorama_preview_url", None)
+                safe_preview_url, safe_preview_fallback_urls = (
+                    _property_workbench_client_preview_urls(
+                        normalized_candidate,
+                        orientation_preview=_property_candidate_orientation_preview(
+                            normalized_candidate
+                        ),
+                        diorama_preview_url=safe_diorama_preview_url,
+                    )
+                )
+                if safe_preview_url:
+                    normalized_candidate["preview_image_url"] = safe_preview_url
+                else:
+                    normalized_candidate.pop("preview_image_url", None)
+                if safe_preview_fallback_urls:
+                    normalized_candidate["preview_image_fallback_url"] = (
+                        safe_preview_fallback_urls[0]
+                    )
+                    normalized_candidate["preview_image_fallback_urls"] = (
+                        safe_preview_fallback_urls
+                    )
+                else:
+                    normalized_candidate.pop("preview_image_fallback_url", None)
+                    normalized_candidate.pop("preview_image_fallback_urls", None)
             rows.append(normalized_candidate)
         return rows
 

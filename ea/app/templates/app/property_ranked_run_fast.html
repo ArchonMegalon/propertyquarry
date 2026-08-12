@@ -648,11 +648,17 @@
     if (!resolved || resolved.startsWith('//')) return '';
     try {
       const parsed = new URL(resolved, window.location.origin);
+      const decodedPathAndQuery = decodeURIComponent(
+        `${parsed.pathname || ''}?${parsed.search || ''}`,
+      ).toLowerCase();
       const sameOrigin = parsed.origin === window.location.origin;
       if (
         (!sameOrigin && parsed.protocol !== 'https:')
         || parsed.username
         || parsed.password
+        || ['/img/upselling/', '/plus-insider-locked.'].some(
+          (marker) => decodedPathAndQuery.includes(marker),
+        )
       ) return '';
       return sameOrigin
         ? `${parsed.pathname}${parsed.search}${parsed.hash}`
