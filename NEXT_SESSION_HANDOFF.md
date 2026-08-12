@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-12 20:00 UTC
+Updated: 2026-08-12 20:10 UTC
 
 ## Mission
 
@@ -169,8 +169,7 @@ validated mode-0600 temporary files were deleted afterward. Do not attempt to
 recover or copy the plaintext from logs. Rotate the digest and update Play
 Console together if reviewer access ever needs to change.
 
-Google Play Console now has the following saved changes waiting in Publishing
-overview:
+Google Play Console has now accepted the following changes into review:
 
 - dedicated reviewer sign-in instructions and credential;
 - target audience **18 and over** only;
@@ -187,13 +186,42 @@ overview:
 - no data declared as shared with third parties; contracted processor and
   user-directed transfers remain within the applicable Play exemptions.
 
-The Play app-setup checklist is no longer shown on the dashboard after these
-answers were saved. Publishing overview nevertheless remains locked with
-`To send changes for review, complete the required steps in the app dashboard`.
-Production is inactive, and the dashboard requires a closed test with at least
-12 opted-in testers for at least 14 days before production access can be
-requested. No review submission, production release, promotion, or rollout was
-performed.
+The Austria closed Alpha release is no longer a draft. Existing app bundle
+version code 5 / version name 1.1.3 was selected from Play's artifact library,
+given German closed-test notes, reviewed as `Ready to release`, and saved to
+Publishing overview. The selected track remains Alpha, its only country/region
+is Austria, and its tester source is the six-address `PropertyQuarry internal`
+email list. The list read-back includes all six known PropertyQuarry accounts,
+including `elisabeth.girschele@gmail.com` and `tibor.girschele@gmail.com`.
+
+Publishing overview was audited before submission. Its 13 changes consist of
+the closed Alpha full rollout, Austria targeting, track resumption, the selected
+tester list, German store listing, content rating, 18+ target audience, privacy
+policy, ads declaration, Data Safety, Health apps declaration, House & home
+category, and the already-entered reviewer/declaration details. It contains no
+Production release, open-test rollout, billing change, or account-security
+change. The bundle was sent to Google for review at approximately
+`2026-08-12T20:08Z`; Play's quick checks completed, and Publishing overview now
+states `Your changes are now in review. We may find additional issues when
+reviewing your app.` Managed publishing remains off.
+
+The closed track summary now reads `Active`, `Release 5 (1.1.3) in review`, and
+`1 country/region`. Play exposes the closed-test web invite as
+`https://play.google.com/apps/testing/com.myexternalbrain.propertyquarry` and
+the Android store link as
+`https://play.google.com/store/apps/details?id=com.myexternalbrain.propertyquarry`.
+A signed-in read with `tibor.girschele@gmail.com`, which is on the selected
+list, still returns `App not available` while the release is in review. Do not
+send the invite to Telegram or claim the test clock has started until Google
+approves it and that same URL shows the opt-in action.
+
+The dashboard currently reports closed testing `Active · 1 track`, update
+status `In review`, Production inactive, and exactly `0 testers currently
+opted in`. Production access still requires at least 12 distinct opted-in
+testers for at least 14 continuous days. The selected list has only six
+addresses, so approval alone cannot satisfy the tester-count requirement;
+additional real tester accounts and their actual opt-ins are external human
+inputs. No Production release, promotion, application, or rollout was created.
 
 The canonical deployment receipt is
 `state/release/propertyquarry-local-deployment.v1.json`; use its
