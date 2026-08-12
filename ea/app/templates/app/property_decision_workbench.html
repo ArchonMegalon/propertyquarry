@@ -13749,9 +13749,9 @@
                     <div class="pqx-result-media">
                         {% set ranked_preview_url = candidate.get('preview_image_url') or '' %}
                         {% set ranked_preview_usable = (ranked_preview_url.startswith('/') and not ranked_preview_url.startswith('//')) or ranked_preview_url.startswith('https://') %}
-                        <span class="pqx-thumb{% if not ranked_preview_usable %} is-placeholder{% endif %}" data-pqx-thumbnail{% if not ranked_preview_usable %} role="img" aria-label="Media preview not available."{% endif %}>
+                        <span class="pqx-thumb{% if not ranked_preview_usable %} is-placeholder{% endif %}" data-pqx-thumbnail data-pqx-thumbnail-fallback="{{ candidate.get('preview_image_fallback_url') or '' }}" data-pqx-thumbnail-fallbacks='{{ (candidate.get("preview_image_fallback_urls") or [])|tojson|safe }}'{% if not ranked_preview_usable %} role="img" aria-label="Media preview not available."{% endif %}>
                         {% if ranked_preview_usable %}
-                        <img src="{{ ranked_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low" data-pqx-thumbnail-image>
+                        <img src="{{ ranked_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" data-pqx-thumbnail-image>
                         {% else %}
                         <span class="pqx-thumb-placeholder">Media preview not available.</span>
                         {% endif %}

@@ -68,6 +68,9 @@ from app.api.routes.product_api_contracts import (
     now_iso,
 )
 from app.api.routes.landing_property_research import _property_candidate_ref
+from app.api.routes.landing_property_workspace_payload import (
+    _property_workbench_client_image_url,
+)
 from app.api.routes.landing_view_models import _property_customer_candidate_summary
 from app.container import AppContainer
 from app.observability import runtime_trace_context_from_mapping
@@ -659,6 +662,50 @@ def _property_search_lightweight_candidate_payload(
         preview_image_url = _property_search_lightweight_image_url(_property_search_compact_candidate_preview_url(raw))
     if preview_image_url:
         compact["preview_image_url"] = preview_image_url
+    preview_fallback_values: list[object] = []
+    raw_fallbacks = raw.get("preview_image_fallback_urls")
+    if isinstance(raw_fallbacks, (list, tuple)):
+        preview_fallback_values.extend(raw_fallbacks[:8])
+    preview_fallback_values.extend(
+        (
+            raw.get("preview_image_fallback_url"),
+            raw.get("thumbnail_url"),
+            raw.get("image_url"),
+            raw.get("hero_image_url"),
+        )
+    )
+    raw_facts = (
+        dict(raw.get("property_facts") or {})
+        if isinstance(raw.get("property_facts"), dict)
+        else {}
+    )
+    for key in ("media_urls_json", "photo_urls_json", "image_urls_json"):
+        values = raw_facts.get(key) or raw.get(key)
+        if isinstance(values, (list, tuple)):
+            preview_fallback_values.extend(values[:8])
+    preview_fallback_urls: list[str] = []
+    for value in preview_fallback_values:
+        fallback_url = _property_workbench_client_image_url(value)
+        if (
+            fallback_url
+            and fallback_url != preview_image_url
+            and fallback_url not in preview_fallback_urls
+        ):
+            preview_fallback_urls.append(fallback_url)
+    if preview_fallback_urls:
+        ordered_preview_fallbacks = [
+            fallback_url
+            for fallback_url in preview_fallback_urls
+            if fallback_url.startswith("/") and not fallback_url.startswith("//")
+        ]
+        ordered_preview_fallbacks.extend(
+            fallback_url
+            for fallback_url in preview_fallback_urls
+            if fallback_url not in ordered_preview_fallbacks
+        )
+        ordered_preview_fallbacks = ordered_preview_fallbacks[:4]
+        compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
+        compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
     orientation_preview = _property_search_lightweight_image_payload(raw.get("orientation_preview"))
     if orientation_preview:
         compact["orientation_preview"] = orientation_preview

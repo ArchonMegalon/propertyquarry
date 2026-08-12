@@ -14,37 +14,62 @@
     const metaNode = root.querySelector('[data-property-workspace-meta]');
     const data = JSON.parse(payloadNode?.textContent || '{}');
     const meta = JSON.parse(metaNode?.getAttribute('data-property-workspace-meta') || '{}');
-    const thumbnailFallbackUrl = (image) => {
-      if (!(image instanceof HTMLImageElement)) return '';
+    const thumbnailFallbackUrls = (image) => {
+      if (!(image instanceof HTMLImageElement)) return [];
       const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
-      const rawFallback = String(
+      const rawFallbacks = [];
+      const rawList = String(
+        image.getAttribute('data-pqx-thumbnail-fallbacks')
+        || thumbnail?.getAttribute('data-pqx-thumbnail-fallbacks')
+        || ''
+      ).trim();
+      if (rawList) {
+        try {
+          const parsed = JSON.parse(rawList);
+          if (Array.isArray(parsed)) rawFallbacks.push(...parsed.slice(0, 4));
+        } catch (_error) {
+          // A malformed optional fallback list must not break the result card.
+        }
+      }
+      rawFallbacks.push(
         image.getAttribute('data-pqx-thumbnail-fallback')
         || thumbnail?.getAttribute('data-pqx-thumbnail-fallback')
         || ''
-      ).trim();
-      if (
-        !rawFallback
-        || image.dataset.pqxThumbnailFallbackAttempted === '1'
-      ) return '';
-      try {
-        const fallback = new URL(rawFallback, window.location.origin);
-        const sameOrigin = fallback.origin === window.location.origin;
-        if (
-          (!sameOrigin && fallback.protocol !== 'https:')
-          || fallback.username
-          || fallback.password
-        ) return '';
-        if (fallback.href === image.currentSrc || fallback.href === image.src) return '';
-        return fallback.href;
-      } catch (_error) {
-        return '';
-      }
+      );
+      const fallbacks = [];
+      rawFallbacks.forEach((value) => {
+        const rawFallback = String(value || '').trim();
+        if (!rawFallback) return;
+        try {
+          const fallback = new URL(rawFallback, window.location.origin);
+          const sameOrigin = fallback.origin === window.location.origin;
+          if (
+            (!sameOrigin && fallback.protocol !== 'https:')
+            || fallback.username
+            || fallback.password
+            || fallbacks.includes(fallback.href)
+          ) return;
+          fallbacks.push(fallback.href);
+        } catch (_error) {
+          // Ignore an invalid candidate and keep trying the bounded chain.
+        }
+      });
+      return fallbacks.slice(0, 4);
     };
     const markThumbnailUnavailable = (image) => {
       if (!(image instanceof HTMLImageElement)) return;
       const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
       if (!thumbnail) return;
-      const fallbackUrl = thumbnailFallbackUrl(image);
+      const fallbackUrls = thumbnailFallbackUrls(image);
+      let fallbackIndex = Math.max(0, Number(image.dataset.pqxThumbnailFallbackIndex || 0) || 0);
+      const currentUrl = String(image.currentSrc || image.src || '');
+      let fallbackUrl = '';
+      while (fallbackIndex < fallbackUrls.length && !fallbackUrl) {
+        const candidateUrl = fallbackUrls[fallbackIndex];
+        fallbackIndex += 1;
+        if (candidateUrl && candidateUrl !== currentUrl) fallbackUrl = candidateUrl;
+      }
+      image.dataset.pqxThumbnailFallbackIndex = String(fallbackIndex);
       if (fallbackUrl) {
         image.dataset.pqxThumbnailFallbackAttempted = '1';
         image.hidden = false;
@@ -4202,11 +4227,15 @@
 	      const body = rows.map((candidate, index) => {
 	        const title = safeCandidateTitle(candidate?.title);
 	        const location = String(candidate?.location_label || '').trim();
-	        const previewUrl = [
+	        const previewUrls = [
 	          candidate?.preview_image_url,
 	          candidate?.orientation_preview?.thumb_image_url,
 	          candidate?.orientation_preview?.image_url,
-	        ].map(clientRenderableImageUrl).find(Boolean) || '';
+	          ...(Array.isArray(candidate?.preview_image_fallback_urls) ? candidate.preview_image_fallback_urls : []),
+	          candidate?.preview_image_fallback_url,
+	        ].map(clientRenderableImageUrl).filter((value, valueIndex, values) => value && values.indexOf(value) === valueIndex);
+	        const previewUrl = previewUrls[0] || '';
+	        const previewFallbackUrls = previewUrls.slice(1, 5);
 	        const dioramaPreviewUrl = [
 	          candidate?.diorama_preview_url,
 	          candidate?.diorama_scene?.image_url,
@@ -4280,7 +4309,7 @@
 	        const thumb = shortlistSurface
 	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Explore diorama and area map for'))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span><span class="pqx-result-diorama-empty-label" aria-hidden="true">Diorama not ready</span>'}<span class="pqx-shortlist-visual-chrome" aria-hidden="true"><span class="pqx-shortlist-visual-label">${escapeHtml(localizeLiveCopy('Spatial diorama'))}</span><span class="pqx-shortlist-visual-action">${escapeHtml(localizeLiveCopy('Explore'))} <b>&#8599;</b></span></span></button>`
 	          : (previewUrl
-	            ? `<span class="pqx-thumb" data-pqx-thumbnail><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async" data-pqx-thumbnail-image></button><span class="pqx-thumb-placeholder" aria-hidden="true">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`
+	            ? `<span class="pqx-thumb" data-pqx-thumbnail data-pqx-thumbnail-fallback="${escapeHtml(previewFallbackUrls[0] || '')}" data-pqx-thumbnail-fallbacks="${escapeHtml(JSON.stringify(previewFallbackUrls))}"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" data-pqx-thumbnail-image></button><span class="pqx-thumb-placeholder" aria-hidden="true">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`
 	            : `<span class="pqx-thumb is-placeholder" data-pqx-thumbnail role="img" aria-label="${escapeHtml(localizeLiveCopy('Media preview not available.'))}"><span class="pqx-thumb-placeholder">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`);
         const tour = (candidate?.tour && typeof candidate.tour === 'object') ? candidate.tour : {};
         const tourUrl = directHostedTourUrl(tour.url, candidate?.tour_url, tour.embed_url, tour.provider_url, candidate?.vendor_tour_url, candidate?.source_virtual_tour_url);

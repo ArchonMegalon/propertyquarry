@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.api.routes import landing_property_workspace_payload as workspace_payload
+from app.api.routes import product_api_delivery
 from app.product import property_tour_hosting
 
 
@@ -224,19 +225,23 @@ def test_client_payload_promotes_safe_remote_listing_thumbnail() -> None:
 def test_client_payload_keeps_a_bounded_safe_thumbnail_fallback() -> None:
     primary_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
     tracking_url = "https://api.willhaben.at/restapi/v2/listings/123.jpg"
-    fallback_url = "https://cache.willhaben.at/mmo/8/1234567899.jpg"
+    fallback_urls = [
+        f"https://cache.willhaben.at/mmo/8/123456789{index}.jpg"
+        for index in range(9, 14)
+    ]
 
     result = workspace_payload._property_workbench_client_candidate_payload(
         {
             "thumbnail_url": primary_url,
             "property_facts": {
-                "media_urls_json": [primary_url, tracking_url, fallback_url],
+                "media_urls_json": [primary_url, tracking_url, *fallback_urls],
             },
         }
     )
 
     assert result["preview_image_url"] == primary_url
-    assert result["preview_image_fallback_url"] == fallback_url
+    assert result["preview_image_fallback_url"] == fallback_urls[0]
+    assert result["preview_image_fallback_urls"] == fallback_urls[:4]
 
 
 def test_client_payload_rejects_tracking_thumbnail_fallback() -> None:
@@ -245,6 +250,48 @@ def test_client_payload_rejects_tracking_thumbnail_fallback() -> None:
     )
 
     assert "preview_image_url" not in result
+
+
+def test_lightweight_status_payload_keeps_safe_thumbnail_fallback_chain() -> None:
+    primary_url = "https://cache.willhaben.at/mmo/8/1234567898.jpg"
+    fallback_urls = [
+        "/app/api/property/map-previews/local.png",
+        "https://cache.willhaben.at/mmo/8/1234567899.jpg",
+        "https://cache.willhaben.at/mmo/8/1234567900.webp",
+    ]
+
+    result = product_api_delivery._property_search_lightweight_candidate_payload(
+        {
+            "candidate_ref": "candidate-thumbnail-chain",
+            "preview_image_url": primary_url,
+            "preview_image_fallback_urls": [
+                primary_url,
+                *fallback_urls,
+                "https://api.willhaben.at/restapi/v2/listings/123.jpg",
+            ],
+        },
+        run_id="run-thumbnail-chain",
+        index=1,
+    )
+
+    assert result["preview_image_url"] == primary_url
+    assert result["preview_image_fallback_url"] == fallback_urls[0]
+    assert result["preview_image_fallback_urls"] == fallback_urls
+
+
+def test_lightweight_status_payload_keeps_first_party_dynamic_thumbnail() -> None:
+    primary_url = "/app/api/property/map-preview/candidate-thumbnail"
+
+    result = product_api_delivery._property_search_lightweight_candidate_payload(
+        {
+            "candidate_ref": "candidate-dynamic-thumbnail",
+            "preview_image_url": primary_url,
+        },
+        run_id="run-dynamic-thumbnail",
+        index=1,
+    )
+
+    assert result["preview_image_url"] == primary_url
 
 
 def test_generated_reconstruction_is_not_projected_as_provider_3d_tour(
@@ -321,8 +368,12 @@ def test_results_template_presents_camera_walkthrough_before_optional_3d_tour() 
     )
     assert "return 'Camera walkthrough';" in workbench_script
     assert 'data-pqx-thumbnail-fallback=' in template
+    assert 'data-pqx-thumbnail-fallbacks=' in template
     assert 'referrerpolicy="no-referrer"' in template
     assert "pqxThumbnailFallbackAttempted" in workbench_script
+    assert "pqxThumbnailFallbackIndex" in workbench_script
+    assert "preview_image_fallback_urls" in workbench_script
+    assert 'referrerpolicy="no-referrer" data-pqx-thumbnail-image' in workbench_script
     assert "thumbnail.classList.add('is-recovering')" in workbench_script
     assert "thumbnail.classList.add('is-unavailable')" in workbench_script
     assert "eyebrow': 'AI layout preview'" in research_detail

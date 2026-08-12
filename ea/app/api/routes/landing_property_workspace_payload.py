@@ -1071,14 +1071,19 @@ def _property_workbench_client_candidate_payload(
             ):
                 preview_fallback_candidates.append(fallback_url)
     if preview_fallback_candidates:
-        compact["preview_image_fallback_url"] = next(
-            (
-                fallback_url
-                for fallback_url in preview_fallback_candidates
-                if fallback_url.startswith("/") and not fallback_url.startswith("//")
-            ),
-            preview_fallback_candidates[0],
+        ordered_preview_fallbacks = [
+            fallback_url
+            for fallback_url in preview_fallback_candidates
+            if fallback_url.startswith("/") and not fallback_url.startswith("//")
+        ]
+        ordered_preview_fallbacks.extend(
+            fallback_url
+            for fallback_url in preview_fallback_candidates
+            if fallback_url not in ordered_preview_fallbacks
         )
+        ordered_preview_fallbacks = ordered_preview_fallbacks[:4]
+        compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
+        compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
     tour_payload = _property_workbench_client_tour_payload(
         raw.get("tour") if isinstance(raw.get("tour"), dict) else {},
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),

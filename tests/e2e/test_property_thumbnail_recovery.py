@@ -29,7 +29,7 @@ def _thumbnail_controller_source() -> str:
     return f"{thumbnail_controller}  }})();"
 
 
-def test_thumbnail_controller_retries_once_then_falls_back_to_placeholder(
+def test_thumbnail_controller_retries_bounded_chain_then_falls_back_to_placeholder(
     browser: Browser,
 ) -> None:
     html = f"""
@@ -40,11 +40,11 @@ def test_thumbnail_controller_retries_once_then_falls_back_to_placeholder(
             <script type="application/json" data-property-workbench-json>{{}}</script>
             <span data-property-workspace-meta="{{}}"></span>
             <span id="recovers" class="pqx-thumb" data-pqx-thumbnail
-                  data-pqx-thumbnail-fallback="/fallback.png">
+                  data-pqx-thumbnail-fallbacks='["/missing-first.png", "/fallback.png"]'>
               <img src="{_ONE_PIXEL_GIF}" data-pqx-thumbnail-image>
             </span>
             <span id="exhausts" class="pqx-thumb" data-pqx-thumbnail
-                  data-pqx-thumbnail-fallback="/missing.png">
+                  data-pqx-thumbnail-fallbacks='["/missing-first.png", "/missing.png"]'>
               <img src="{_ONE_PIXEL_GIF}" data-pqx-thumbnail-image>
             </span>
           </main>
@@ -56,7 +56,7 @@ def test_thumbnail_controller_retries_once_then_falls_back_to_placeholder(
         if route.request.url.endswith("/fallback.png"):
             route.fulfill(status=200, content_type="image/png", body=_ONE_PIXEL_PNG)
             return
-        if route.request.url.endswith("/missing.png"):
+        if route.request.url.endswith(("/missing-first.png", "/missing.png")):
             route.fulfill(status=404, content_type="text/plain", body="missing")
             return
         route.fulfill(status=200, content_type="text/html", body=html)
@@ -77,6 +77,7 @@ def test_thumbnail_controller_retries_once_then_falls_back_to_placeholder(
               const host = document.querySelector('#recovers');
               const image = host.querySelector('img');
               return image.dataset.pqxThumbnailFallbackAttempted === '1'
+                && image.dataset.pqxThumbnailFallbackIndex === '2'
                 && image.naturalWidth > 0
                 && !image.hidden
                 && !host.classList.contains('is-recovering')
@@ -90,6 +91,7 @@ def test_thumbnail_controller_retries_once_then_falls_back_to_placeholder(
               const host = document.querySelector('#exhausts');
               const image = host.querySelector('img');
               return image.dataset.pqxThumbnailFallbackAttempted === '1'
+                && image.dataset.pqxThumbnailFallbackIndex === '2'
                 && image.hidden
                 && host.classList.contains('is-unavailable')
                 && !host.classList.contains('is-recovering');

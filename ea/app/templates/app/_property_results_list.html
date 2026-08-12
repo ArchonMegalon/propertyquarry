@@ -246,6 +246,7 @@
               class="pqx-thumb"
               data-pqx-thumbnail
               data-pqx-thumbnail-fallback="{{ candidate.get('preview_image_fallback_url') or '' }}"
+              data-pqx-thumbnail-fallbacks='{{ (candidate.get("preview_image_fallback_urls") or [])|tojson|safe }}'
             >
 	            <button
               class="pqx-thumb-link pqx-thumb-atlas-button"
