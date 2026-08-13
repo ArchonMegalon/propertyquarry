@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 09:18 CEST
+Updated: 2026-08-13 09:34 CEST
 
 ## Mission
 
@@ -17,6 +17,48 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 attested PostgreSQL client and live archive proof
+
+The local PostgreSQL restore-toolchain gap is closed without weakening the
+off-host DR gate. Ubuntu package `postgresql-client-16` version
+`16.14-0ubuntu0.24.04.1` was fetched from the signed Noble Updates repository;
+the downloaded package matched repository SHA-256
+`8d25751b2b7ff568da1aee1c77880e56559e1f3710dea9f87ae00ec5afea9f39`.
+The extracted tools are held in the governed release-tools area and bound by
+`config/propertyquarry/postgres_client_release_pin.json`. The live probe checks
+canonical regular-file identity, owner/mode/link posture, exact binary SHA-256,
+and reported PostgreSQL version before admitting any tool:
+
+- `pg_dump`:
+  `864ecb96b747c5e47c2b232376fee9b2768810e5d552db9b6f50c0ad75a5977a`
+- `pg_restore`:
+  `13fc1bc1743ac1e45bd6b5d0178e73c65e99958cddf61e38ba265d481bf45595`
+- `psql`:
+  `6d593ef8e95e5275691fcc28927cc540282db141ca1ec5e3806e7db5523613cb`
+
+This is not only static executability. At `2026-08-13T07:31:31Z`, the pinned
+`psql` made a real read-only call to the live PostgreSQL `16.14` database,
+`pg_dump` created a full custom-format 42,448,996-byte archive, and pinned
+`pg_restore --list` validated all 543 archive entries. The ephemeral archive
+SHA-256 was
+`f5aa2f9c842e15cc90d2241e9d85423d4d783a963ad0dc9e4e402bfeb39febf6`;
+the plaintext archive was deleted immediately after validation and was never
+uploaded. Receipt
+`state/qa/propertyquarry-live-external-authority-20260813-v2.json` is mode
+`0600`, has SHA-256
+`6c17411e4453fbb698f616723830c5494d0bc83124998131d7d5c0a4cc6467dc`,
+and records both `secret_values_recorded=false` and
+`passing_off_host_dr_claim=false`. The focused and adjacent DR suites pass
+`110/110`.
+
+The remaining DR gates are now all external and stay fail closed: an approved
+external GPG recipient; a scoped AWS identity; a versioned S3 target with
+Compliance Object Lock; and an authorized disposable restore database. Billing,
+FlipLink publication, signed public-launch authority, the fresh current-head
+physical Android cycle, and the remaining Play tester/time threshold are also
+still open. Do not promote this live archive proof into an encrypted, immutable,
+off-host, or restored claim.
 
 ## 2026-08-13 live external-authority receipt and exact Android telemetry
 

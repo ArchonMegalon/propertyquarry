@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +30,43 @@ def _trusted(path: Path) -> None:
     path.chmod(0o600)
 
 
+def _postgres_client_pin(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
+    binaries: dict[str, Path] = {}
+    rows: dict[str, dict[str, str]] = {}
+    for name in probe.POSTGRES_CLIENT_BINARIES:
+        binary = tmp_path / "postgres-client" / "bin" / name
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text(
+            f"#!/bin/sh\nprintf '%s\\n' '{name} (PostgreSQL) 16.14'\n",
+            encoding="utf-8",
+        )
+        binary.chmod(0o700)
+        binaries[name] = binary
+        rows[name] = {
+            "path": str(binary),
+            "sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+        }
+    pin = tmp_path / "postgres-client-release-pin.json"
+    pin.write_text(
+        json.dumps(
+            {
+                "binaries": rows,
+                "package": {
+                    "name": "postgresql-client-16",
+                    "sha256": "c" * 64,
+                    "version": "16.14-0ubuntu0.24.04.1",
+                },
+                "schema": probe.POSTGRES_CLIENT_RELEASE_PIN_SCHEMA,
+                "status": "CONFIGURED",
+                "version": "16.14",
+            }
+        ),
+        encoding="utf-8",
+    )
+    pin.chmod(0o600)
+    return pin, binaries
+
+
 def test_probe_reports_only_named_external_authority_blockers(tmp_path: Path) -> None:
     def runner(command, **_kwargs):
         command = list(command)
@@ -53,6 +91,7 @@ def test_probe_reports_only_named_external_authority_blockers(tmp_path: Path) ->
         ),
         global_trust_store=tmp_path / "missing-trust.json",
         public_launch_authority=tmp_path / "missing-authority.json",
+        postgres_client_release_pin=tmp_path / "missing-postgres-pin.json",
     )
 
     assert receipt["status"] == "external_authority_required"
@@ -64,7 +103,8 @@ def test_probe_reports_only_named_external_authority_blockers(tmp_path: Path) ->
         "approved_external_encryption_recipient",
         "scoped_aws_identity",
         "versioned_compliance_locked_s3_target",
-        "disposable_restore_target_and_toolchain",
+        "local_postgres_restore_toolchain",
+        "disposable_restore_target",
         "signed_public_launch_authority",
         "same_principal_live_billing_authority",
         "fliplink_external_publication_authority",
@@ -74,6 +114,7 @@ def test_probe_reports_only_named_external_authority_blockers(tmp_path: Path) ->
 
 
 def test_probe_admits_complete_authority_without_recording_values(tmp_path: Path) -> None:
+    postgres_pin, _binaries = _postgres_client_pin(tmp_path)
     api_environment = {name: "configured-secret-value" for name in (*probe.BILLING_KEYS, *probe.FLIPLINK_KEYS)}
     backup_environment = {
         name: "configured-secret-value"
@@ -87,6 +128,10 @@ def test_probe_admits_complete_authority_without_recording_values(tmp_path: Path
             return _result(stdout=_docker_row(container=command[-1], environment=environment))
         if "--list-keys" in command:
             return _result(stdout="pub:-:4096:1:REDACTED:0:0::::::23::0:\n")
+        if command[-1:] == ["--version"]:
+            return _result(
+                stdout=f"{Path(command[0]).name} (PostgreSQL) 16.14\n"
+            )
         return _result()
 
     trust = tmp_path / "trust.json"
@@ -108,17 +153,118 @@ def test_probe_admits_complete_authority_without_recording_values(tmp_path: Path
         global_trust_store=trust,
         public_launch_authority=authority,
         authority_validator=lambda path: path in {trust, authority},
+        postgres_client_release_pin=postgres_pin,
     )
 
     assert receipt["status"] == "ready"
     assert receipt["blockers"] == []
     assert receipt["dr"]["s3_target"]["ready"] is True
     assert receipt["dr"]["restore"]["ready"] is True
+    assert receipt["dr"]["restore"]["postgres_client"]["release_pin_attested"] is True
     assert receipt["billing"]["safe_handoff_ready"] is True
     assert receipt["fliplink"]["external_publication_ready"] is True
     serialized = json.dumps(receipt)
     assert "configured-secret-value" not in serialized
     assert "redacted" not in serialized
+
+
+def test_postgres_client_pin_rejects_binary_hash_drift(tmp_path: Path) -> None:
+    postgres_pin, binaries = _postgres_client_pin(tmp_path)
+    binaries["pg_restore"].write_text("changed\n", encoding="utf-8")
+    binaries["pg_restore"].chmod(0o700)
+
+    projection = probe._postgres_client_release_pin_projection(
+        postgres_pin,
+        runner=lambda *_args, **_kwargs: _result(
+            stdout="tool (PostgreSQL) 16.14\n"
+        ),
+    )
+
+    assert projection["ready"] is False
+    assert projection["release_pin_attested"] is False
+    assert projection["state"] == "pg_restore_attestation_failed"
+    assert "path" not in json.dumps(projection).lower()
+
+
+def test_postgres_live_client_call_is_real_secret_safe_and_ephemeral(
+    tmp_path: Path,
+) -> None:
+    postgres_pin, _binaries = _postgres_client_pin(tmp_path)
+    observed_passwords: list[str] = []
+    archive_paths: list[Path] = []
+
+    def runner(command, **kwargs):
+        command = list(command)
+        name = Path(command[0]).name
+        if command[:3] == ["docker", "container", "inspect"]:
+            return _result(
+                stdout=json.dumps(
+                    [
+                        {
+                            "Config": {
+                                "Env": [
+                                    "POSTGRES_DB=propertyquarry",
+                                    "POSTGRES_PASSWORD=database-secret-value",
+                                ]
+                            },
+                            "NetworkSettings": {
+                                "Networks": {
+                                    "property_default": {"IPAddress": "192.0.2.10"}
+                                }
+                            },
+                        }
+                    ]
+                )
+            )
+        if command[-1:] == ["--version"]:
+            return _result(stdout=f"{name} (PostgreSQL) 16.14\n")
+        observed_passwords.append(str(dict(kwargs["env"]).get("PGPASSWORD") or ""))
+        if name == "psql":
+            return _result(stdout="1|160014\n")
+        if name == "pg_dump":
+            archive = Path(
+                next(
+                    arg.split("=", 1)[1]
+                    for arg in command
+                    if arg.startswith("--file=")
+                )
+            )
+            archive.write_bytes(b"private-custom-archive")
+            archive.chmod(0o600)
+            archive_paths.append(archive)
+            return _result()
+        if name == "pg_restore":
+            return _result(
+                stdout=(
+                    "1; 0 0 TABLE public example owner\n"
+                    "2; 0 0 TABLE DATA public example owner\n"
+                )
+            )
+        return _result(returncode=1)
+
+    projection = probe._postgres_live_client_call_projection(
+        postgres_pin,
+        runner=runner,
+    )
+
+    assert projection["state"] == "verified"
+    assert projection["live_database_readback"] is True
+    assert projection["server_version_num"] == "160014"
+    assert projection["archive_entries"] == 2
+    assert projection["archive_bytes"] == len(b"private-custom-archive")
+    assert projection["archive_sha256"] == hashlib.sha256(
+        b"private-custom-archive"
+    ).hexdigest()
+    assert projection["plaintext_archive_retained"] is False
+    assert projection["passing_off_host_dr_claim"] is False
+    assert projection["secret_values_recorded"] is False
+    assert observed_passwords == [
+        "database-secret-value",
+        "database-secret-value",
+        "",
+    ]
+    assert archive_paths and all(not path.exists() for path in archive_paths)
+    assert "database-secret-value" not in json.dumps(projection)
 
 
 def test_private_writer_materializes_mode_0600(tmp_path: Path) -> None:

@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -34,12 +36,21 @@ else:
 SCHEMA = "propertyquarry.live_external_authority_probe.v1"
 API_CONTAINER = "propertyquarry-api"
 BACKUP_CONTAINER = "propertyquarry-backup-live"
+DATABASE_CONTAINER = "propertyquarry-db-live"
 GLOBAL_TRUST_STORE = Path(
     "/etc/propertyquarry/release-control/global-governance-trust-store.v1.json"
 )
 PUBLIC_LAUNCH_AUTHORITY = Path(
     "/run/propertyquarry/release-control/propertyquarry-public-launch-authority.v2.json"
 )
+POSTGRES_CLIENT_RELEASE_PIN = (
+    Path(__file__).resolve().parents[1]
+    / "config/propertyquarry/postgres_client_release_pin.json"
+)
+POSTGRES_CLIENT_RELEASE_PIN_SCHEMA = (
+    "propertyquarry.postgres_client_release_pin.v1"
+)
+POSTGRES_CLIENT_BINARIES = ("pg_dump", "pg_restore", "psql")
 
 DR_PROVIDER_KEYS = (
     "AWS_ACCESS_KEY_ID",
@@ -252,6 +263,310 @@ def _trusted_authority_file(path: Path) -> bool:
     )
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _postgres_client_release_pin_projection(
+    path: Path,
+    *,
+    runner: Runner,
+) -> dict[str, object]:
+    failure = {
+        "release_pin_attested": False,
+        "version": "",
+        "package_sha256": "",
+        "binaries": {name: False for name in POSTGRES_CLIENT_BINARIES},
+        "ready": False,
+    }
+    try:
+        before = path.lstat()
+        resolved = path.resolve(strict=True)
+        if (
+            resolved != path
+            or stat.S_ISLNK(before.st_mode)
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_uid not in {0, os.geteuid()}
+            or before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > 64 * 1024
+        ):
+            return {**failure, "state": "release_pin_untrusted"}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or set(payload) != {
+            "binaries",
+            "package",
+            "schema",
+            "status",
+            "version",
+        }:
+            return {**failure, "state": "release_pin_schema_invalid"}
+        if (
+            payload.get("schema") != POSTGRES_CLIENT_RELEASE_PIN_SCHEMA
+            or payload.get("status") != "CONFIGURED"
+        ):
+            return {**failure, "state": "release_pin_unconfigured"}
+        version = str(payload.get("version") or "").strip()
+        if not re.fullmatch(r"[1-9][0-9]*\.[0-9]+", version):
+            return {**failure, "state": "release_pin_version_invalid"}
+        package = payload.get("package")
+        if not isinstance(package, dict) or set(package) != {
+            "name",
+            "sha256",
+            "version",
+        }:
+            return {**failure, "state": "release_pin_package_invalid"}
+        package_sha256 = str(package.get("sha256") or "").strip().lower()
+        if (
+            package.get("name") != "postgresql-client-16"
+            or not str(package.get("version") or "").startswith(f"{version}-")
+            or not re.fullmatch(r"[0-9a-f]{64}", package_sha256)
+        ):
+            return {**failure, "state": "release_pin_package_invalid"}
+        binaries = payload.get("binaries")
+        if not isinstance(binaries, dict) or set(binaries) != set(
+            POSTGRES_CLIENT_BINARIES
+        ):
+            return {**failure, "state": "release_pin_binaries_invalid"}
+        projected: dict[str, bool] = {}
+        for name in POSTGRES_CLIENT_BINARIES:
+            row = binaries.get(name)
+            if not isinstance(row, dict) or set(row) != {"path", "sha256"}:
+                return {**failure, "state": "release_pin_binary_invalid"}
+            binary = Path(str(row.get("path") or ""))
+            expected_sha256 = str(row.get("sha256") or "").strip().lower()
+            observed = binary.lstat()
+            if (
+                not binary.is_absolute()
+                or binary.resolve(strict=True) != binary
+                or stat.S_ISLNK(observed.st_mode)
+                or not stat.S_ISREG(observed.st_mode)
+                or observed.st_uid not in {0, os.geteuid()}
+                or observed.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                or not observed.st_mode & stat.S_IXUSR
+                or observed.st_nlink != 1
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+                or _sha256(binary) != expected_sha256
+            ):
+                return {**failure, "state": f"{name}_attestation_failed"}
+            result = runner(
+                [str(binary), "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+            )
+            if (
+                int(getattr(result, "returncode", 1)) != 0
+                or f"(PostgreSQL) {version}" not in str(
+                    getattr(result, "stdout", "") or ""
+                )
+            ):
+                return {**failure, "state": f"{name}_version_failed"}
+            projected[name] = True
+        return {
+            "release_pin_attested": True,
+            "version": version,
+            "package_sha256": package_sha256,
+            "binaries": projected,
+            "ready": all(projected.values()),
+            "state": "attested",
+        }
+    except (FileNotFoundError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return {**failure, "state": "release_pin_unavailable"}
+
+
+def _postgres_client_binary_paths(path: Path) -> dict[str, Path]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    binaries = dict(payload["binaries"])
+    return {
+        name: Path(str(dict(binaries[name])["path"]))
+        for name in POSTGRES_CLIENT_BINARIES
+    }
+
+
+def _postgres_live_call_failure(state: str, *, attempted: bool) -> dict[str, object]:
+    return {
+        "attempted": attempted,
+        "state": state,
+        "live_database_readback": False,
+        "server_version_num": "",
+        "full_custom_archive_created": False,
+        "archive_entries": 0,
+        "archive_bytes": 0,
+        "archive_sha256": "",
+        "archive_list_validated": False,
+        "plaintext_archive_retained": False,
+        "passing_off_host_dr_claim": False,
+        "secret_values_recorded": False,
+    }
+
+
+def _postgres_live_client_call_projection(
+    release_pin: Path,
+    *,
+    runner: Runner,
+) -> dict[str, object]:
+    attestation = _postgres_client_release_pin_projection(
+        release_pin,
+        runner=runner,
+    )
+    if not bool(attestation["ready"]):
+        return _postgres_live_call_failure("toolchain_not_attested", attempted=False)
+    try:
+        inspected = runner(
+            ["docker", "container", "inspect", DATABASE_CONTAINER],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+        )
+        if int(getattr(inspected, "returncode", 1)) != 0:
+            return _postgres_live_call_failure(
+                "database_runtime_unavailable",
+                attempted=False,
+            )
+        payload = json.loads(str(getattr(inspected, "stdout", "") or ""))
+        row = payload[0]
+        raw_env = list((row.get("Config") or {}).get("Env") or [])
+        database_env: dict[str, str] = {}
+        for entry in raw_env:
+            key, separator, value = str(entry).partition("=")
+            if separator and key in {"POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER"}:
+                database_env[key] = value
+        database = str(database_env.get("POSTGRES_DB") or "").strip()
+        password = str(database_env.get("POSTGRES_PASSWORD") or "")
+        user = str(database_env.get("POSTGRES_USER") or "postgres").strip()
+        networks = dict((row.get("NetworkSettings") or {}).get("Networks") or {})
+        addresses = [
+            str(dict(network).get("IPAddress") or "").strip()
+            for _name, network in sorted(networks.items())
+        ]
+        host = next((address for address in addresses if address), "")
+        if not database or not password or not user or not host:
+            return _postgres_live_call_failure(
+                "database_runtime_contract_incomplete",
+                attempted=False,
+            )
+        binaries = _postgres_client_binary_paths(release_pin)
+        process_env = {
+            "PATH": "/usr/bin:/bin",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PGCONNECT_TIMEOUT": "10",
+            "PGHOST": host,
+            "PGPORT": "5432",
+            "PGUSER": user,
+            "PGPASSWORD": password,
+            "PGDATABASE": database,
+            "PGPASSFILE": "/dev/null",
+            "PGSERVICEFILE": "/dev/null",
+        }
+        with tempfile.TemporaryDirectory(prefix="propertyquarry-pg-client-probe-") as root:
+            archive = Path(root) / "live.dump"
+            readback = runner(
+                [
+                    str(binaries["psql"]),
+                    "-X",
+                    "-A",
+                    "-t",
+                    "-q",
+                    "-c",
+                    "SELECT 1, current_setting('server_version_num')",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=process_env,
+            )
+            match = re.fullmatch(
+                r"1\|([0-9]+)\s*",
+                str(getattr(readback, "stdout", "") or ""),
+            )
+            if int(getattr(readback, "returncode", 1)) != 0 or match is None:
+                return _postgres_live_call_failure("database_readback_failed", attempted=True)
+            server_version_num = match.group(1)
+            if not server_version_num.startswith(
+                str(attestation["version"]).split(".", 1)[0]
+            ):
+                return _postgres_live_call_failure("database_version_mismatch", attempted=True)
+            dumped = runner(
+                [
+                    str(binaries["pg_dump"]),
+                    "--format=custom",
+                    "--compress=6",
+                    "--no-owner",
+                    "--no-privileges",
+                    f"--file={archive}",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3600,
+                env=process_env,
+            )
+            if int(getattr(dumped, "returncode", 1)) != 0:
+                return _postgres_live_call_failure("database_dump_failed", attempted=True)
+            observed = archive.lstat()
+            if (
+                stat.S_ISLNK(observed.st_mode)
+                or not stat.S_ISREG(observed.st_mode)
+                or observed.st_uid != os.geteuid()
+                or observed.st_mode & (stat.S_IRWXG | stat.S_IRWXO)
+                or observed.st_nlink != 1
+                or observed.st_size <= 0
+            ):
+                return _postgres_live_call_failure("database_dump_untrusted", attempted=True)
+            listed = runner(
+                [str(binaries["pg_restore"]), "--list", str(archive)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+            )
+            entries = sum(
+                1
+                for line in str(getattr(listed, "stdout", "") or "").splitlines()
+                if re.match(r"^[0-9]+;", line)
+            )
+            if int(getattr(listed, "returncode", 1)) != 0 or entries <= 0:
+                return _postgres_live_call_failure("archive_list_failed", attempted=True)
+            return {
+                "attempted": True,
+                "state": "verified",
+                "live_database_readback": True,
+                "server_version_num": server_version_num,
+                "full_custom_archive_created": True,
+                "archive_entries": entries,
+                "archive_bytes": observed.st_size,
+                "archive_sha256": _sha256(archive),
+                "archive_list_validated": True,
+                "plaintext_archive_retained": False,
+                "passing_off_host_dr_claim": False,
+                "secret_values_recorded": False,
+            }
+    except (
+        FileNotFoundError,
+        IndexError,
+        KeyError,
+        OSError,
+        subprocess.SubprocessError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
+        return _postgres_live_call_failure("live_probe_failed", attempted=True)
+
+
 def build_live_external_authority_receipt(
     *,
     environ: Mapping[str, str] | None = None,
@@ -263,6 +578,8 @@ def build_live_external_authority_receipt(
     global_trust_store: Path = GLOBAL_TRUST_STORE,
     public_launch_authority: Path = PUBLIC_LAUNCH_AUTHORITY,
     authority_validator: Callable[[Path], bool] = _trusted_authority_file,
+    postgres_client_release_pin: Path = POSTGRES_CLIENT_RELEASE_PIN,
+    probe_live_postgres: bool = False,
 ) -> dict[str, object]:
     env = dict(os.environ if environ is None else environ)
     api = _container_projection(
@@ -309,13 +626,33 @@ def build_live_external_authority_receipt(
         configured["PROPERTYQUARRY_BACKUP_ENCRYPTION_RECIPIENT"]
         and int(gpg["public_recipient_count"]) > 0
     )
+    postgres_client = _postgres_client_release_pin_projection(
+        postgres_client_release_pin,
+        runner=runner,
+    )
+    pinned_postgres_tools = dict(postgres_client["binaries"])
+    postgres_live_call = (
+        _postgres_live_client_call_projection(
+            postgres_client_release_pin,
+            runner=runner,
+        )
+        if probe_live_postgres
+        else _postgres_live_call_failure("not_requested", attempted=False)
+    )
     restore_toolchain = {
-        name: bool(which(name)) for name in ("gpg", "pg_dump", "pg_restore", "psql")
+        "gpg": bool(which("gpg")),
+        **{
+            name: bool(pinned_postgres_tools[name])
+            for name in POSTGRES_CLIENT_BINARIES
+        },
     }
-    restore_target_ready = bool(
+    restore_toolchain_ready = all(restore_toolchain.values())
+    restore_target_configured = bool(
         configured["PROPERTYQUARRY_RESTORE_DATABASE_URL"]
         and configured["PROPERTYQUARRY_RESTORE_DISPOSABLE_CONFIRM"]
-        and all(restore_toolchain.values())
+    )
+    restore_target_ready = bool(
+        restore_target_configured and restore_toolchain_ready
     )
     billing_config = dict(api["configured"])
     billing_ready = all(billing_config.get(name, False) for name in BILLING_KEYS)
@@ -332,8 +669,10 @@ def build_live_external_authority_receipt(
         blockers.append("scoped_aws_identity")
     if not s3_target_ready:
         blockers.append("versioned_compliance_locked_s3_target")
-    if not restore_target_ready:
-        blockers.append("disposable_restore_target_and_toolchain")
+    if not restore_toolchain_ready:
+        blockers.append("local_postgres_restore_toolchain")
+    if not restore_target_configured:
+        blockers.append("disposable_restore_target")
     if not all(launch_files.values()):
         blockers.append("signed_public_launch_authority")
     if not billing_ready:
@@ -368,6 +707,10 @@ def build_live_external_authority_receipt(
                 "database_target_configured": configured["PROPERTYQUARRY_RESTORE_DATABASE_URL"],
                 "destructive_confirmation_configured": configured["PROPERTYQUARRY_RESTORE_DISPOSABLE_CONFIRM"],
                 "toolchain": restore_toolchain,
+                "postgres_client": postgres_client,
+                "live_client_call": postgres_live_call,
+                "toolchain_ready": restore_toolchain_ready,
+                "target_configured": restore_target_configured,
                 "ready": restore_target_ready,
             },
         },
@@ -415,12 +758,15 @@ def _write_private_json(path: Path, payload: Mapping[str, object]) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", type=Path)
+    parser.add_argument("--probe-live-postgres", action="store_true")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    receipt = build_live_external_authority_receipt()
+    receipt = build_live_external_authority_receipt(
+        probe_live_postgres=bool(args.probe_live_postgres)
+    )
     if args.write is not None:
         _write_private_json(args.write, receipt)
     print(json.dumps(receipt, sort_keys=True))

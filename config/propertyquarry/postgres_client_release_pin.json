@@ -1,0 +1,24 @@
+{
+  "binaries": {
+    "pg_dump": {
+      "path": "/docker/EA/state/propertyquarry_release_tools/postgresql-client-16.14/bin/pg_dump",
+      "sha256": "864ecb96b747c5e47c2b232376fee9b2768810e5d552db9b6f50c0ad75a5977a"
+    },
+    "pg_restore": {
+      "path": "/docker/EA/state/propertyquarry_release_tools/postgresql-client-16.14/bin/pg_restore",
+      "sha256": "13fc1bc1743ac1e45bd6b5d0178e73c65e99958cddf61e38ba265d481bf45595"
+    },
+    "psql": {
+      "path": "/docker/EA/state/propertyquarry_release_tools/postgresql-client-16.14/bin/psql",
+      "sha256": "6d593ef8e95e5275691fcc28927cc540282db141ca1ec5e3806e7db5523613cb"
+    }
+  },
+  "package": {
+    "name": "postgresql-client-16",
+    "sha256": "8d25751b2b7ff568da1aee1c77880e56559e1f3710dea9f87ae00ec5afea9f39",
+    "version": "16.14-0ubuntu0.24.04.1"
+  },
+  "schema": "propertyquarry.postgres_client_release_pin.v1",
+  "status": "CONFIGURED",
+  "version": "16.14"
+}
