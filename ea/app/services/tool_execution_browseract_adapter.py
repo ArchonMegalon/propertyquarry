@@ -27,6 +27,7 @@ from app.services.browseract_ui_service_catalog import (
 from app.services.browseract_ui_template_catalog import browseract_ui_template_spec
 from app.services.tool_execution_common import ToolExecutionError
 from app.services.tool_execution_connector_dispatch_adapter import ConnectorDispatchToolAdapter
+from app.services.browseract_binding_readiness import configured_browseract_service_names
 
 
 def _extract_textish(value: object) -> str:
@@ -5418,43 +5419,10 @@ class BrowserActToolAdapter:
         binding_auth_metadata_json: dict[str, object],
         binding_scope_json: dict[str, object],
     ) -> tuple[str, ...]:
-        ordered: list[str] = []
-        seen: set[str] = set()
-
-        def add(value: object) -> None:
-            normalized = str(value or "").strip()
-            if not normalized:
-                return
-            key = normalized.lower()
-            if key in seen:
-                return
-            seen.add(key)
-            ordered.append(normalized)
-
-        raw_accounts = binding_auth_metadata_json.get("service_accounts_json")
-        if isinstance(raw_accounts, dict):
-            for key, value in raw_accounts.items():
-                if isinstance(value, dict) and any(field in value for field in ("tier", "plan", "account_email", "email", "status")):
-                    add(key)
-                elif key in {"service_name", "service", "name"}:
-                    add(value)
-        elif isinstance(raw_accounts, list):
-            for value in raw_accounts:
-                if isinstance(value, dict):
-                    add(value.get("service_name") or value.get("service") or value.get("name"))
-        raw_scope_services = binding_scope_json.get("services")
-        if isinstance(raw_scope_services, (list, tuple)):
-            for value in raw_scope_services:
-                add(value)
-        if isinstance(raw_scope_services, str):
-            add(raw_scope_services)
-        raw_scopes = binding_scope_json.get("scopes")
-        if isinstance(raw_scopes, (list, tuple)):
-            for value in raw_scopes:
-                add(value)
-        elif isinstance(raw_scopes, str):
-            add(raw_scopes)
-        return tuple(ordered)
+        return configured_browseract_service_names(
+            binding_auth_metadata_json=binding_auth_metadata_json,
+            binding_scope_json=binding_scope_json,
+        )
 
     def _slugify(self, value: str) -> str:
         cleaned = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value or ""))

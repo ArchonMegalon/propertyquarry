@@ -238,6 +238,9 @@ def parse_ltd_inventory_markdown(markdown_text: str) -> tuple[LtdInventoryRow, .
             parts = _parse_table_row(line)
             if parts is None:
                 continue
+            workspace_tier = str(parts[5]).strip().strip("`")
+            if workspace_tier.lower().startswith("excluded"):
+                continue
             rows.append(
                 LtdInventoryRow(
                     service_name=str(parts[0]).strip().strip("`"),
@@ -245,7 +248,7 @@ def parse_ltd_inventory_markdown(markdown_text: str) -> tuple[LtdInventoryRow, .
                     holding=str(parts[2]).strip(),
                     status=str(parts[3]).strip(),
                     redeem_by=str(parts[4]).strip(),
-                    workspace_integration_tier=str(parts[5]).strip().strip("`"),
+                    workspace_integration_tier=workspace_tier,
                     local_integration=str(parts[6]).strip(),
                     notes=str(parts[7]).strip(),
                 )
@@ -368,7 +371,7 @@ def _discover_account_action(row: LtdInventoryRow) -> LtdRuntimeAction:
         label="Discover Account Facts",
         description=f"Use BrowserAct account discovery to refresh facts for {row.service_name}.",
         execution_mode="tool_execution",
-        executable=True,
+        executable=False,
         tool_name="browseract.extract_account_facts",
         action_kind="account.extract",
         route_path=f"/v1/ltds/runtime-catalog/{encoded_service}/discover-account",
@@ -383,7 +386,10 @@ def _discover_account_action(row: LtdInventoryRow) -> LtdRuntimeAction:
                 "run_url": {"type": "string"},
             },
         },
-        notes="Requires an enabled BrowserAct connector binding for the target principal.",
+        notes=(
+            "Contract only. The principal-specific API projection marks this executable only "
+            "when an enabled BrowserAct binding explicitly includes this service."
+        ),
     )
 
 
@@ -408,13 +414,16 @@ def _browseract_ui_action(row: LtdInventoryRow, service: BrowserActUiServiceDefi
         label=service.name,
         description=service.description,
         execution_mode="tool_execution",
-        executable=True,
+        executable=False,
         tool_name=service.tool_name,
         action_kind=service.action_kind,
         route_path=route_path,
         provider_key="browseract",
         input_schema_json=service.input_schema_json(),
-        notes=f"BrowserAct template-backed lane via {service.service_key}.",
+        notes=(
+            f"Template-backed lane via {service.service_key}. Principal-specific execution "
+            "requires an enabled BrowserAct binding explicitly scoped to this service."
+        ),
     )
 
 
@@ -427,7 +436,7 @@ def _crezlo_property_tour_action(row: LtdInventoryRow) -> LtdRuntimeAction | Non
         label="Create Property Tour",
         description="Run the BrowserAct-backed Crezlo property-tour pipeline.",
         execution_mode="tool_execution",
-        executable=True,
+        executable=False,
         tool_name="browseract.crezlo_property_tour",
         action_kind="property_tour.create",
         route_path=f"/v1/ltds/runtime-catalog/{encoded_service}/actions/create_property_tour",
@@ -471,7 +480,10 @@ def _crezlo_property_tour_action(row: LtdInventoryRow) -> LtdRuntimeAction | Non
                 "login_password": {"type": "string"},
             },
         },
-        notes="Requires the Crezlo BrowserAct workflow metadata on the binding or an explicit run target.",
+        notes=(
+            "Blocked until a principal-bound, customer-visible completion receipt proves the "
+            "Crezlo tour lane. Workflow metadata alone is not release evidence."
+        ),
     )
 
 
@@ -656,6 +668,18 @@ def _runtime_state(
                 if live_evidence_verified
                 else "browseract_template_available"
             )
+        return (
+            "live_account_evidence"
+            if live_evidence_verified
+            else "account_discovery_contract_available"
+        )
+    if browseract_ui_service is not None:
+        return (
+            "live_account_evidence"
+            if live_evidence_verified
+            else "browseract_template_available"
+        )
+    if any(action.action_key == "discover_account" for action in actions):
         return (
             "live_account_evidence"
             if live_evidence_verified

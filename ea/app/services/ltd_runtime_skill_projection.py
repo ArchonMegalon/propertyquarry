@@ -59,8 +59,13 @@ def _runtime_catalog(service: LtdRuntimeCatalogService | None = None) -> LtdRunt
 
 
 def _supported_action(action: LtdRuntimeAction) -> bool:
-    if not action.executable or action.execution_mode != "tool_execution":
+    if action.execution_mode != "tool_execution":
         return False
+    if not action.executable:
+        if action.provider_key != "browseract":
+            return False
+        if action.tool_name == "browseract.crezlo_property_tour":
+            return False
     if action.tool_name == "browseract.extract_account_facts":
         return True
     if action.tool_name == "browseract.crezlo_property_tour":

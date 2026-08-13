@@ -3,8 +3,10 @@
 ## Current Flagship Gold Goal
 
 PropertyQuarry should feel like a premium product that just works for a normal
-buyer, agent, or operator on desktop and phone. The product scope is Austria,
-Germany, and Costa Rica until those markets are reliable and polished.
+buyer, agent, or operator on desktop and phone. The current customer product is
+the Austria closed test. Germany, Costa Rica, and the wider market catalog stay
+future/operator-only until each market has live provider, localization, rights,
+and browser evidence comparable to Austria.
 
 ### Product standard
 
@@ -108,14 +110,17 @@ Germany, and Costa Rica until those markets are reliable and polished.
 
 - Google or external-provider sign-in implicitly creates the account.
 - Account pages must always offer an obvious logout action on mobile and desktop.
-- Pricing/billing must respect local entitlement state before sending a user to
-  Brilliant Directories.
-- Brilliant Directories must be visually skinned to match PropertyQuarry and
-  hosted through billing.propertyquarry.com where practical.
-- Brilliant Directories subscriptions must be mapped fail-closed: never write a
-  free subscription id for a paid/lifetime local entitlement.
-- Agent lifetime users must remain synced across local auth, PropertyQuarry
-  entitlement, and Brilliant Directories.
+- Free, Plus, and Agent are the only customer plan names. Workspace modes are
+  non-authoritative collaboration settings, not subscriptions.
+- PayFunnels is the preferred checkout lane and PayPal the fallback. Both stay
+  unavailable until dedicated Live credentials and the exact same-principal
+  safe-handoff canary pass.
+- Billing-provider events must be mapped fail-closed and can never grant or
+  downgrade an entitlement without the local PropertyQuarry billing service.
+- Agent lifetime users must remain authoritative in local auth and
+  PropertyQuarry entitlement state regardless of external billing availability.
+- Brilliant Directories may later project a public partner/agent directory; it
+  must not own billing, entitlements, ranking, or publication.
 - ID Austria can be added only if it improves trust without adding noisy or
   confusing sign-in lanes.
 
@@ -136,8 +141,9 @@ Germany, and Costa Rica until those markets are reliable and polished.
 - Production readiness requires targeted E2E tests that choose a known property,
   set filters that should find it, and prove the provider/search/ranking path
   returns it.
-- Every active provider in Austria, Germany, and Costa Rica must be checked with
-  targeted searches both with and without soft filters.
+- Every active customer provider in Austria must be checked with targeted
+  searches both with and without soft filters. Future-market catalog checks do
+  not count as customer release evidence.
 - Mobile visual tests, accessibility checks, dark-mode checks, and clipped-control
   checks are release gates.
 - Billing handoff, entitlement sync, Google sign-in, account creation, logout,
@@ -167,10 +173,10 @@ Search workspace productization
 
 International market coverage
 
-- country-specific provider catalogs
-- major provider bundles per market
-- market-aware crawl entry URLs
-- future provider-specific crawler upgrades behind the same catalog
+- retain country-specific provider catalogs as non-customer research inventory
+- admit a new customer market only after live provider, localization, rights,
+  and browser receipts pass
+- keep market-aware crawl entry URLs and provider-specific upgrades behind that admission gate
 
 ## Milestone 3
 

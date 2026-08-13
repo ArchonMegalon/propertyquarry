@@ -398,14 +398,40 @@
         });
       }
       bindFlipLinkPacketButton(appendActionControl(node, {
-        label: 'Share this home',
+        label: 'Save review packet',
         attributes: {
           'data-fliplink-packet': '',
           'data-candidate-ref': candidateRef,
-          'data-rybbit-event': 'pq.packet.shared',
+          'data-rybbit-event': 'pq.packet.saved',
           'data-rybbit-prop-surface': 'research',
         },
       }));
+      const viewingButton = appendActionControl(node, {
+        label: 'Mark viewing requested',
+        attributes: {
+          'data-pw-decision-state': 'viewing_requested',
+          'data-candidate-ref': candidateRef,
+          'data-rybbit-event': 'pq.decision.saved',
+          'data-rybbit-prop-cta-key': 'viewing_requested',
+          'data-rybbit-prop-surface': 'research',
+        },
+      });
+      viewingButton?.addEventListener('click', () => {
+        recordDecisionState(candidate, 'viewing_requested', decisionStateStatusNode);
+      });
+      const askAgentButton = appendActionControl(node, {
+        label: 'Ask the agent',
+        attributes: {
+          'data-pw-ask-agent': '',
+          'data-rybbit-event': 'pq.decision.saved',
+          'data-rybbit-prop-cta-key': 'ask_agent',
+          'data-rybbit-prop-surface': 'research',
+        },
+      });
+      askAgentButton?.addEventListener('click', () => {
+        if (clippyPanel?.hidden) clippyToggle?.click();
+        window.setTimeout(() => clippyQuestionNode?.focus(), 0);
+      });
       const details = document.createElement('details');
       details.className = 'pqx-decision-advanced';
       details.style.marginTop = '12px';
@@ -414,7 +440,7 @@
       summaryTitle.textContent = 'More';
       const summaryNote = document.createElement('span');
       summaryNote.className = 'pqx-note';
-      summaryNote.textContent = 'Open the listing, share it, or request visuals.';
+      summaryNote.textContent = 'Open the listing, save a packet, or request visuals.';
       summary.append(summaryTitle, summaryNote);
       details.appendChild(summary);
       const actions = document.createElement('div');
@@ -451,10 +477,10 @@
         });
       }
       bindShortlistShareButton(appendActionControl(actions, {
-        label: 'Share results',
+        label: 'Save shortlist packet',
         attributes: {
           'data-fliplink-shortlist-share': '',
-          'data-rybbit-event': 'pq.packet.shared',
+          'data-rybbit-event': 'pq.packet.saved',
           'data-rybbit-prop-surface': 'research',
         },
       }));

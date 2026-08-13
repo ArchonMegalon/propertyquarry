@@ -360,54 +360,59 @@ mount.
 
 ### Design gaps
 
-#### Issue 18 -- Severity: bug
+#### Issue 18 -- Severity: bug (repaired)
 
 - File: `docs/PRODUCT_BRIEF.md:78` versus `docs/ROADMAP.md:7` versus `ea/app/services/property_market_catalog.py:174`
 - Description: The product brief claims Austria, Germany, Switzerland, United Kingdom, Spain, Italy, France, Netherlands, and the United States as current flagship scope. The roadmap says Austria, Germany, and Costa Rica until those markets are reliable. The market envelope is an English-only invite-only private beta for AT/DE/CR and explicitly excludes a fully localized global product. The customer search allowlist is only `AT`, `DE`, `CR`. The same catalog still defines 16 countries including Belgium, Canada, Switzerland, Ireland, UK, Australia, Spain, Italy, France, Netherlands, Portugal, Poland, Sweden, and the United States. Costa Rica is in the customer allowlist but the envelope marks it browser-state-only, not a live provider journey.
-- Suggestion: Pick one geography contract. Keep the 16-country table as a future catalog if wanted, but stop selling or documenting markets that customers cannot select. Either drop CR from the customer picker until live providers exist, or promote it with the same proof AT already has.
-- Status: open
+- Suggestion: Keep Austria as the sole customer market until another market has comparable live-provider, localization, rights, and browser proof.
+- Status: repaired; the customer picker is Austria-only and the wider catalog is explicitly future/operator-only
 
-#### Issue 19 -- Severity: bug
+#### Issue 19 -- Severity: bug (repaired)
 
 - File: `docs/PRICING.md:8` versus `ea/app/product/commercial.py:35` versus `ea/app/product/service.py:2941`
 - Description: Customer pricing is Free / Plus (3 EUR) / Agent. Search and tour code enforce `free` / `plus` / `agent` (concurrent-search caps 1 / 2 / 4 in `property_surface_state.py:2347`). `commercial.py` still defines a different inherited model: Pilot / Core / Concierge with seats, messaging flags, and `/app/settings/plan`. ROADMAP still talks about Brilliant Directories as the billing skin. LTD and Compose treat PayFunnels as preferred and PayPal as fallback, both currently unconfigured. Testers see a fail-closed HTTP 503 billing page while docs and plan objects describe three different commercial products.
-- Suggestion: Delete or quarantine the Pilot/Core/Concierge workspace plan from the PropertyQuarry customer path. Make Free/Plus/Agent the only customer plan vocabulary in code, pricing, and billing copy. Treat Brilliant Directories as a later directory lane, not as billing truth.
-- Status: open
+- Suggestion: Keep workspace collaboration modes explicitly non-authoritative and route all plan truth through the PropertyQuarry billing service.
+- Status: repaired; inherited workspace modes no longer use customer plan/billing claims, and Free/Plus/Agent remain the only customer plans
 
-#### Issue 20 -- Severity: suggestion
+#### Issue 20 -- Severity: suggestion (repaired)
 
 - File: `docs/PRICING.md:13` versus `docs/ROADMAP.md:26`
 - Description: Pricing says Free gets “1 to 2 high-level matches” and “shallow summary only”. The roadmap says every tier shows all available results ranked and that score is not a hide filter. The live Austria run persists 10 ranked candidates with opportunity briefs. Those three statements cannot all be true.
-- Suggestion: Keep the roadmap ranking rule. Change pricing copy so Free limits reruns, alerts, research depth, and share/publication, not the number of ranked homes. If a Free cap is still wanted, implement it as an honest “showing 2 of N” control, not as silent truncation.
-- Status: open
+- Suggestion: Keep paid value in breadth, reruns, alerts, and research depth instead of silent score hiding.
+- Status: repaired in pricing truth; Free explicitly shows the available ranked set and total
 
-#### Issue 21 -- Severity: suggestion
+#### Issue 21 -- Severity: suggestion (repaired)
 
 - File: `ea/app/services/ltd_runtime_catalog.py:364`
-- Description: Every LTD row gets an `discover_account` action with `executable=True`. Crezlo also gets `create_property_tour` with `executable=True` (`ltd_runtime_catalog.py:421`) even though `LTDs.md` says there is no principal-bound live completion receipt. FlipLink’s publish action is correctly `executable=False`, but the customer UI still says “Share this home”. The catalog therefore over-claims what a principal can actually run.
+- Description: Static BrowserAct discovery and template contracts previously
+  claimed `executable=True` without principal context. They now fail closed in
+  the static catalog. The authenticated API projects them executable only when
+  an enabled BrowserAct connector binding belongs to the requesting principal
+  and explicitly includes the LTD service. Crezlo remains non-executable even
+  with a binding because there is no customer-visible completion receipt.
 - Suggestion: Mark `discover_account` executable only when a BrowserAct binding exists for that principal and service. Mark Crezlo executable only after a customer-visible completion receipt. Keep FlipLink non-executable until credentials exist, and change the button label to “Create local packet” until then.
-- Status: open
+- Status: repaired with shared binding-readiness logic and focused catalog tests; FlipLink remains non-executable and the customer actions save local packets
 
-#### Issue 22 -- Severity: suggestion
+#### Issue 22 -- Severity: suggestion (repaired)
 
 - File: `docs/PROPERTYQUARRY_WHOLE_PROJECT_SCOPE.md:9`
 - Description: Whole-project gold requires canonical property identity, listing instances, claim-level evidence, change intelligence, viewing and offer capture, eight evidence overlays with Teable ingestion, Rybbit dashboard receipts, WCAG/visual CI, and Brilliant Directories as a non-authoritative handoff. The current shipped loop is still run-centric: search run, shortlist, research page, local brief, optional 1min cover, hosted Karl tour. The gold board is being used as if it were the current product definition.
 - Suggestion: Split “Austria closed-test product” from “whole-project gold”. Keep gold as a backlog with fail-closed posture. Do not let overlay, directory, or change-intelligence work block the current search/brief/tour loop.
-- Status: open
+- Status: repaired; the scope document now begins with an Austria closed-test authority boundary and labels whole-project gold as future backlog unless promoted into the exact release manifest
 
-#### Issue 23 -- Severity: suggestion
+#### Issue 23 -- Severity: suggestion (repaired)
 
 - File: `docs/propertyquarry_global_market_envelope.v1.json:6`
 - Description: The envelope is bound to candidate `fa7d2194` on 2026-07-19. Current HEAD is `2c9df6c4` and the deployed runtime is `0a44ea20`. AT content-locale, address, currency, WCAG, Firefox/Safari app, SEO hreflang, Core Web Vitals, provider-rights, and live-provider-e2e dimensions are `implemented_unproven`, `missing`, or `external_blocked`. CR evidence is a stale-terminal zero-result browser reconciliation, not a live Costa Rica search. The file still shapes release language.
-- Suggestion: Rebind or retire the envelope against the current candidate. Keep AT as private-beta. Label CR `catalog_only` until a live provider receipt exists.
-- Status: open
+- Suggestion: Keep the old evidence rows for provenance without letting them define current release scope.
+- Status: repaired; the envelope is explicitly historical/superseded and names only AT as a current customer market
 
-#### Issue 24 -- Severity: suggestion
+#### Issue 24 -- Severity: suggestion (repaired)
 
 - File: `docs/ROADMAP.md:113` versus `docs/PROPERTY_INTEGRATION_GOVERNANCE.md:1`
 - Description: ROADMAP wants Brilliant Directories visually skinned as `billing.propertyquarry.com`. Integration governance and `LTDs.md` forbid Brilliant Directories from owning billing, entitlements, ranking, or publication. The runtime lane is `directory_projection_disabled`. Two designs are still in the tree.
-- Suggestion: Strike Brilliant Directories from billing design. Keep PayFunnels/PayPal as the only checkout design. Leave Brilliant Directories as an optional public partner/agent directory after rights review.
-- Status: open
+- Suggestion: Keep Brilliant Directories limited to a future non-authoritative directory projection.
+- Status: repaired; roadmap and pricing name only PayFunnels/PayPal as checkout lanes and forbid Brilliant Directories billing authority
 
 #### Issue 25 -- Severity: nit
 
@@ -460,12 +465,12 @@ mount.
 - Suggestion: Either bind ClickRank and Rybbit to propertyquarry.com with a privacy receipt, or remove the example site id and gold language until that receipt exists.
 - Status: open
 
-#### Issue 32 -- Severity: suggestion
+#### Issue 32 -- Severity: suggestion (repaired)
 
 - File: `docs/PROPERTYQUARRY_SOURCE_OF_TRUTH_MAP.md:32`
 - Description: Decision states include unseen, reviewing, shortlisted, blocked, needs_documents, needs_agent_answer, viewing_requested, offer_candidate, rejected, and archived. Feedback can move those states. There is no customer viewing calendar, document vault UI, offer tracker, or “what changed since last run” surface. Teable restore/portability scripts know `property_entities` / `listing_instances`, but the customer product is still a search-run workspace.
 - Suggestion: Add a thin decision tray on the research page: Yes / Maybe / No, viewing requested, and “ask the agent” without waiting for Lunacal. Persist those events as the canonical memory. Layer scheduling and document research on top later.
-- Status: open
+- Status: repaired; the existing Yes/Maybe/No decision trail and persisted agent-question flow now have visible research actions for `viewing_requested` and `Ask the agent`, with a focused customer-copy contract
 
 #### Issue 33 -- Severity: nit
 
@@ -513,7 +518,7 @@ Owned tools that would complete the current PropertyQuarry loop, in recommended 
 | Priority | LTD | Why it matters now | Current honest state | Do not do |
 | --- | --- | --- | --- | --- |
 | 1 | Emailit | Registration, alerts, and support mail on `property@propertyquarry.com` | Tier 1 for `chummer.run`, not proven for this domain | Reuse the Chummer sender as if it were PropertyQuarry |
-| 2 | FlipLink.me | Family/agent share is the paid-adjacent output of the new briefs | Local packet only; UI implies share | Record a pasted URL as publication proof |
+| 2 | FlipLink.me | Family/agent share is the paid-adjacent output of the new briefs | Local packet only; UI now labels the action as save | Record a pasted URL as publication proof |
 | 3 | Rybbit + ClickRank | Public conversion and AI-search presence for propertyquarry.com | Slots exist; ClickRank live only on other domains; Rybbit disabled | Send `/app` paths or listing URLs |
 | 4 | Lunacal | Viewing/consult booking is the brief’s missing last step | Credentials only, lane disabled | Put exact addresses in public booking titles |
 | 5 | MetaSurvey | Post-viewing / rejection reasons that feed ranking | BrowserAct results reader only | Let survey text rewrite listing facts |
@@ -561,12 +566,12 @@ Owned tools that would complete the current PropertyQuarry loop, in recommended 
 - Suggestion: Wire Grok to `vexp mcp --workspace /docker/property --proxy`. Keep customer UX non-chat. If an operator assist is added, bind it to Prompt Architects or 1min code, not a new ChatPlayground product surface.
 - Status: open
 
-#### Issue 43 -- Severity: nit
+#### Issue 43 -- Severity: nit (repaired)
 
 - File: `LTDs.md`
 - Description: Heyy WhatsApp is implemented in `ea/app/api/routes/heyy_integration.py` and `product_api.py` with opt-in, STOP, and daily template budget. It is absent from `LTDs.md`. FastestVPN has a Compose file in this repo while `LTDs.md` says it is not wired here. Answerly, Pixefy, Rafter, ProductLift, and Syllabbles are Chummer/Fleet gates living in the PropertyQuarry inventory.
 - Suggestion: Add Heyy to the inventory. Move Chummer-only LTDs to a separate section so PropertyQuarry customer integration cannot be miscounted.
-- Status: open
+- Status: repaired; Heyy is tracked as a disabled/unproven Tier 2 customer lane, and the five named Chummer/Fleet-only rows are explicitly excluded from runtime-catalog and customer-integration counts
 
 ## Recommended product and LTD sequence
 

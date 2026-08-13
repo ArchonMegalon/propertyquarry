@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from app.api.routes.ltd_runtime import _browseract_action_ready_for_principal
+from app.domain.models import ConnectorBinding
+from app.services.browseract_binding_readiness import browseract_binding_supports_service
 from app.services.browseract_ui_service_catalog import browseract_ui_service_by_alias
 from app.services.ltd_runtime_catalog import LtdRuntimeCatalogService, _inventory_markdown_path
 from app.services.provider_registry import ProviderRegistryService
@@ -29,6 +33,8 @@ Updated: 2026-05-02
 | `FlipLink.me` | `Tier 10` | `1 account` | `Owned` |  | `Tier 2` | Local `.env` credentials plus bounded PropertyQuarry review-packet flipbook lane | Use only for shareable redacted review packets downstream of PropertyQuarry. |
 | `MarkupGo` | `7x code-based` | `7 codes` | `Activated` |  | `Tier 3` | None | BrowserAct workspace reader exists even though the direct provider lane is not executable. |
 | `Poppy AI` | `Tier 6` | `1 account / 5 seats` | `Owned` |  | `Tier 3` | BrowserAct workspace-reader candidate plus local API-key placeholders only | Candidate research-board and content-intelligence lane after provider verification. |
+| `Crezlo Tours` | `Tier 1` | `1 account` | `Owned` |  | `Tier 2` | BrowserAct candidate | Candidate property-tour lane. |
+| `Chummer Only` | `Tier 1` | `1 account` | `Owned` |  | `Excluded - Chummer/Fleet only` | Chummer | Not a PropertyQuarry runtime integration. |
 
 ## Discovery Tracking
 
@@ -78,6 +84,92 @@ def test_browseract_ui_service_aliases_resolve_inventory_service_names() -> None
     assert browseract_ui_service_by_alias("BrowserAct") is None
 
 
+def test_scope_excluded_inventory_does_not_enter_propertyquarry_catalog(
+    tmp_path: Path,
+) -> None:
+    catalog = _catalog(tmp_path)
+    assert catalog.get_profile("Chummer Only") is None
+
+
+def _browseract_binding(
+    *,
+    principal_id: str = "principal-1",
+    status: str = "enabled",
+    services: tuple[str, ...] = ("Documentation.AI",),
+) -> ConnectorBinding:
+    return ConnectorBinding(
+        binding_id="binding-1",
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="browseract-account",
+        scope_json={"services": list(services)},
+        auth_metadata_json={},
+        status=status,
+        created_at="2026-08-13T00:00:00Z",
+        updated_at="2026-08-13T00:00:00Z",
+    )
+
+
+def test_browseract_ltd_readiness_requires_principal_and_service_scope(
+    tmp_path: Path,
+) -> None:
+    binding = _browseract_binding()
+    assert browseract_binding_supports_service(
+        binding,
+        principal_id="principal-1",
+        service_name="Documentation.AI",
+    ) is True
+    assert browseract_binding_supports_service(
+        binding,
+        principal_id="principal-2",
+        service_name="Documentation.AI",
+    ) is False
+    assert browseract_binding_supports_service(
+        binding,
+        principal_id="principal-1",
+        service_name="Poppy AI",
+    ) is False
+    assert browseract_binding_supports_service(
+        _browseract_binding(status="disabled"),
+        principal_id="principal-1",
+        service_name="Documentation.AI",
+    ) is False
+
+    catalog = _catalog(tmp_path)
+    documentation = catalog.get_profile("Documentation.AI")
+    assert documentation is not None
+    inspect_action = next(
+        action
+        for action in documentation.actions
+        if action.action_key == "inspect_workspace"
+    )
+    container = SimpleNamespace(
+        tool_runtime=SimpleNamespace(
+            list_connector_bindings=lambda principal_id, limit=100: [binding]
+        )
+    )
+    assert _browseract_action_ready_for_principal(
+        container=container,
+        principal_id="principal-1",
+        service_name=documentation.service_name,
+        action=inspect_action,
+    ) is True
+
+    crezlo = catalog.get_profile("Crezlo Tours")
+    assert crezlo is not None
+    crezlo_action = next(
+        action
+        for action in crezlo.actions
+        if action.action_key == "create_property_tour"
+    )
+    assert _browseract_action_ready_for_principal(
+        container=container,
+        principal_id="principal-1",
+        service_name=crezlo.service_name,
+        action=crezlo_action,
+    ) is False
+
+
 def test_ltd_runtime_catalog_separates_contracts_from_live_evidence(
     tmp_path: Path,
 ) -> None:
@@ -110,6 +202,7 @@ def test_ltd_runtime_catalog_separates_contracts_from_live_evidence(
         "discover_account",
         "inspect_workspace",
     }
+    assert all(action.executable is False for action in documentation.actions)
 
     markupgo = catalog.get_profile("markupgo")
     assert markupgo is not None
@@ -158,3 +251,14 @@ def test_ltd_runtime_catalog_separates_contracts_from_live_evidence(
     assert hedy is not None
     assert hedy.runtime_state == "account_discovery_contract_available"
     assert [action.action_key for action in hedy.actions] == ["discover_account"]
+    assert hedy.actions[0].executable is False
+
+    crezlo = catalog.get_profile("Crezlo Tours")
+    assert crezlo is not None
+    crezlo_tour = next(
+        action
+        for action in crezlo.actions
+        if action.action_key == "create_property_tour"
+    )
+    assert crezlo_tour.executable is False
+    assert "customer-visible completion receipt" in crezlo_tour.notes

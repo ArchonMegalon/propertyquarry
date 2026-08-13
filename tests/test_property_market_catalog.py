@@ -583,10 +583,10 @@ def test_customer_country_options_are_limited_to_presentation_markets() -> None:
     options = country_options()
     values = [row["value"] for row in options]
 
-    assert values == ["AT", "DE", "CR"]
+    assert values == ["AT"]
     assert is_customer_search_country_code("Austria") is True
-    assert is_customer_search_country_code("Germany") is True
-    assert is_customer_search_country_code("Costa Rica") is True
+    assert is_customer_search_country_code("Germany") is False
+    assert is_customer_search_country_code("Costa Rica") is False
     assert is_customer_search_country_code("UK") is False
     assert is_customer_search_country_code("AU") is False
     assert is_customer_search_country_code("PL") is False
