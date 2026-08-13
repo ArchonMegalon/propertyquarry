@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 08:23 CEST
+Updated: 2026-08-13 09:04 CEST
 
 ## Mission
 
@@ -17,6 +17,75 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 fresh live customer and LTD proof on deployed candidate
+
+The deployed source remains
+`290e4e7efb473f0602ab29f2a34e85c616e3e331` in web image
+`sha256:7aa1390f615193eafefd52a2f2a6f217ce193ba35427a75c6be2bd1f6089cb53`.
+Two fresh customer-bound proofs now close the remaining exact-candidate browser,
+opportunity, brief, and live-LTD evidence gaps without changing the runtime.
+
+The full protected mobile browser matrix passed at
+`2026-08-13T06:45:32.286016Z`: all 16 configured customer routes in Chromium,
+Firefox, and WebKit at 390x844 and 412x915, for `96/96` real Playwright samples.
+There were zero failures, missing engines, missing samples, or static fallbacks;
+the concrete protected research-detail route remained authenticated. Billing
+returned the expected six fail-closed HTTP 503 responses for the Free persona.
+Receipt `state/qa/propertyquarry-live-browser-all-20260813-exact-290e4e7e.json`
+has SHA-256
+`9f24db275cde0937009dc9b67b34047fee6add88ae26949acd11f15e76e281af`.
+
+Authenticated reviewer `play-reviewer@propertyquarry.com` then used the rendered
+six-step search flow. Steps 1-5 exposed `Next`; step 6 replaced it with the
+single `Launch search` action. The browser persisted the Vienna/AT profile with
+HTTP 200 and created run `6e868ff69cd44a3e8ddf3d586d55cfa9` with HTTP 202.
+All three selected Austrian marketplaces completed in one durable queue attempt:
+30 raw listings, 6 reviewed and ranked candidates, 6 persisted assessments, 6
+persisted opportunities, and zero opportunity-persistence failures. The first
+shortlist was ready in 11,411.29 ms and the run completed in 14,197.12 ms.
+
+The same signed-in principal generated private brief
+`sum_777228978eca4947a12a5293f7772217` (event
+`evt_238d1d4d5a8c4827a41b93e70773bd83`) for top opportunity
+`property_opportunity:a5e22c95854e520ef1f437395ecc173590426f2aef115d9d12a201f3ca110327`.
+PostgreSQL read-back proves 22 lines and 720 characters with recommendation,
+fit, confidence, predicted reaction, reasons, trade-offs, verification steps,
+and a validated HTTPS listing link. Publication remains correctly `local_only`
+and `not_published`. Receipt
+`state/qa/propertyquarry-real-signed-in-search-290e4e7e-20260813.json` has
+SHA-256 `59b1704dc68321b320407fc650cde940ef4e8178d7d43e7a55f2e02ada4fe900`.
+
+Finally, that exact opportunity executed one fresh principal-bound 1min.AI
+`image_generate` call through the durable worker. Generation
+`a4f661939386443395ace578f45ce361` completed after exactly one attempt with
+model `gpt-image-1-mini`; the receipt is `verified`, has proof scope
+`provider_call`, and is bound to the requesting principal. The provider prompt
+used privacy scope `no_listing_or_customer_identifiers_sent`. The private
+first-party PNG is 1024x1024 and 1,305,522 bytes with SHA-256
+`a3dbd34e02a791ea427a3b921aacf4c2292dc85a7aaf3fc38c5080ca2ea66fcf`.
+An authenticated browser fetched the materialized asset with HTTP 200,
+`image/png`, `Cache-Control: private, no-store`, and independently reproduced
+the exact byte count and SHA-256. Publication remains `not_published` with no
+external publication claim.
+
+The worker-side aggregate snapshot at `2026-08-13T07:03:34.866006Z` still
+reports 70 configured 1min slots, 25 successful formal probes, 45 depleted
+probes, 26 live-dispatchable slots, and 2 ready slots. The generic API-process
+probe correctly sees no credentials because API and worker duties are
+separated; do not copy worker credentials into the API. Receipt
+`state/qa/propertyquarry-live-ltd-cover-290e4e7e-20260813.json` has SHA-256
+`9e54ea776295a37feba859ae8e921113e139bcb0eee4f85fbc1e4eb75b7a09e1`.
+
+No source repair was required by these fresh proofs. The remaining gates are
+external and unchanged: a physical Android callback/redeem/Search pass on this
+exact web candidate; 11 additional distinct real Play testers plus 14 continuous
+days and explicit production-launch authority; dedicated same-principal Live
+billing credentials and admission; real external FlipLink credentials,
+privacy/export approval, publication, and read-back (or continued honest
+`local_only` behavior); and an approved encryption recipient, scoped off-host
+identity, immutable target, exact-version read-back, and disposable restore
+proof. Do not mark the long-running goal complete while any gate remains.
 
 ## 2026-08-13 audit closure, canonical-main merge, and live deployment
 
@@ -63,9 +132,10 @@ authority remain absent and fail closed. Other markets, overlays, customer LTD
 completions, and whole-project Gold remain backlog until exact live evidence
 promotes them.
 
-## 2026-08-13 final actionable-assessment candidate and test closure
+## 2026-08-13 previous actionable-assessment candidate and test closure
 
-The current published and deployed source candidate is
+This earlier candidate was superseded by the audit-closure deployment recorded
+above. Its published and deployed source candidate at the time was
 `0a44ea202695163cf00dc8807c69d55dd0a561fc`
 (`fix(property): preserve actionable assessment briefs`). Generating a brief
 now reuses a ready durable opportunity instead of rematerializing and
