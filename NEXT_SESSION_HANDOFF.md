@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 06:15 CEST
+Updated: 2026-08-13 07:17 CEST
 
 ## Mission
 
@@ -17,6 +17,91 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 final actionable-assessment candidate and test closure
+
+The current published and deployed source candidate is
+`0a44ea202695163cf00dc8807c69d55dd0a561fc`
+(`fix(property): preserve actionable assessment briefs`). Generating a brief
+now reuses a ready durable opportunity instead of rematerializing and
+overwriting its richer assessment. Customer briefs retain known facts such as
+`heating type`, label the predicted reaction, and continue to expose
+recommendation, fit, confidence, reasons, trade-offs, verification steps, and
+the validated listing link. Source proof was published in `864f5c7a`, the
+flagship/pulse binding in `e9b003e2`, and the exact evidence envelope in
+`4fb376e0e8113fe7383e765a6190b7b6aa902bb4`. The release artifact-set identity
+is
+`propertyquarry-generated-release-artifacts-v1@sha256:29f2b7b8079d68f3cfc651f717189a0566ac3812de48b343555b341b784be804`.
+
+The affected opportunity suites pass `545 passed, 4 skipped`; the focused five
+tests, exact compilation, generated-artifact sandbox reproduction, detached
+manifest verification, 16/16 browser materializer, 8/8 journey matrix, and all
+source lanes also pass. Fresh deployed artifact
+`sum_1833a5357cd24193bc4d56a00ce2d760` was generated for durable Austrian run
+`0d39c56749b04ec795302ad5e1ab6023`. It is 738 characters over 22 lines, keeps
+the numeric fit/confidence and five unknowns, includes the predicted-reaction
+and verify sections plus HTTP listing link, and was independently read back
+from PostgreSQL with `generation_mode=local_opportunity_brief`,
+`generation_basis=durable_preference_assessment`,
+`publication_mode=local_only`, and `external_status=not_published`.
+
+The exact candidate is healthy in web image
+`sha256:b98bfbb246fc51812fc60d1bc1121c86f453339886b1a993b0b56f3518894cff`;
+render tools remain
+`sha256:98dfcedb74ab97862a88cc985ee7a795696cbc6f080793c37883054aec33b79e`.
+Deployment receipt `state/release/propertyquarry-local-deployment.v1.json`,
+SHA-256 `2fbf587d18c820372863d7bec77c69fb7be69f3789d398eff2d5c2ad6c50b8fe`,
+records `passed=true`, runtime candidate `0a44ea202695...`, envelope
+`4fb376e0e811...`, and zero failures.
+
+Fresh exact live receipt
+`state/qa/propertyquarry-live-browser-all-20260813-exact-0a44ea20-pass.json`,
+SHA-256 `d93161eb41e93bca6a6ad1212f19c9f7d877de913dcf244b8332834243ec102a`,
+records `96/96` real Playwright samples and zero failures at
+`2026-08-13T05:15:41.936374Z`: 16 routes in Chromium, Firefox, and WebKit at
+390x844 and 412x915, with no missing engines, samples, surfaces, or static
+fallbacks. The earlier single WebKit 390x844 Search measurement of 40 px did
+not reproduce in three focused release-probe runs or the full repeat; the exact
+row now measures 48 px actions and 44 px primary targets. No threshold was
+weakened and no speculative CSS change was made. Billing remains the honest
+Free-persona fail-closed HTTP 503 contract.
+
+Supplementary Android lab proof is current for source `0a44ea...` (not a claim
+of fresh physical-handset proof). The pinned preview build completed all 242
+Gradle tasks. Preview APK SHA-256 is
+`ecf09e791253b7be30eda0b52be8dd73cb5f040703deb46bae2d5b3e77d9690c` and
+instrumentation APK SHA-256 is
+`8e334ec637ac774781c93bddb03031d66012d1f6be0ced372b43dee6a3c34099`.
+The preview installed and launched in the local Android emulator, loaded the
+production runtime contract, opened the real Google authorization page for
+propertyquarry.com, and the four installed instrumentation tests passed. No
+Google account was entered in the lab, so a current callback/redeem/Search-200
+cycle on a physical handset remains required.
+
+The manual group handoff is complete. Google Groups now shows six members:
+the owner plus `archon.megalon@gmail.com`, `elisabeth.girschele@gmail.com`,
+`the.girscheles@gmail.com`, `tibor.hoza@gmail.com`, and
+`work.tibor.girschele@gmail.com`. Membership makes those accounts eligible to
+visit the Play opt-in URL; it does not prove that they opted in. The last
+confirmed Play production-access count remains 1/12, followed by the required
+14 continuous days once 12 real testers are enrolled.
+
+Fresh launch-room receipt
+`state/qa/propertyquarry-launch-room-20260813-final.json`, SHA-256
+`154bfcb12fc3a17291bffc9bbc8a17258d3562ddeb04301125ea599df82015ef`,
+records `local_runtime_ready=true`, exact candidate/envelope bindings, and
+`production_launch_ready=false`. Its remaining blockers are exactly:
+
+- `external_public_launch_authority_receipt_missing`
+- `google_play_public_launch_authority_unverified`
+- `paid_billing_safe_handoff_authority_unverified`
+- `encrypted_off_host_disaster_recovery_authority_unverified`
+
+Do not mark the long-running goal complete: the fresh physical Android cycle,
+11 additional real Play opt-ins plus 14 days, dedicated live billing canary,
+and encrypted immutable off-host restore authority are still external gaps.
+External FlipLink publication may remain closed while the useful generator is
+honestly `local_only`.
 
 ## 2026-08-13 actionable opportunity briefs and exact deployed proof
 
