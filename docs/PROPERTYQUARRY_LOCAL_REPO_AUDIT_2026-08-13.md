@@ -654,25 +654,14 @@ That is a host-hygiene defect, not the Grok handshake.
 ### What to change
 
 Do not point Grok at `vexp-codex-mcp` or at `http://127.0.0.1:7821`.
-Both are EA-scoped. For a PropertyQuarry Grok session, add a
-higher-priority user MCP that proxies the Property daemon:
+Both are EA-scoped. The PropertyQuarry Grok MCP now lives in the
+checkout at `.grok/config.toml`. It proxies this daemon with
+`vexp mcp --workspace /docker/property --proxy`. Project scope beats
+`~/.grok/config.toml` and Claude compat, so the stale 2.2.1 path is
+replaced for sessions started in this repository.
 
-```toml
-[mcp_servers.vexp]
-command = "/home/tibor/.local/bin/vexp"
-args = ["mcp", "--workspace", "/docker/property", "--proxy"]
-cwd = "/docker/property"
-startup_timeout_sec = 60
-tool_timeout_sec = 180
-
-[mcp_servers.vexp.env]
-VEXP_SKIP_UPDATE_CHECK = "1"
-VEXP_NO_AUTOSTART = "1"
-```
-
-`config.toml` beats Claude compat, so the stale 2.2.1 path will stop
-being used. A new Grok session is required; this session already
-finished the failed handshake.
+A new Grok session is required; this session already finished the
+failed handshake.
 
 Also update or remove the Claude `mcpServers.vexp` entry so Claude
 itself does not keep launching 2.2.1.
