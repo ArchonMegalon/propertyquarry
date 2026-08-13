@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 09:09 CEST
+Updated: 2026-08-13 09:18 CEST
 
 ## Mission
 
@@ -17,6 +17,52 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 live external-authority receipt and exact Android telemetry
+
+The newest audit findings now have one repeatable, secret-safe live probe:
+`scripts/propertyquarry_live_external_authority_probe.py`. It inspects only
+allowlisted configuration presence, trusted tool identity, runtime health, and
+root-owned launch-authority file posture; it never records credential values.
+Its three focused tests and the adjacent Postgres/S3 DR suites pass `108/108`.
+
+The first live receipt was materialized at `2026-08-13T07:16:53Z` as private
+mode `0600` file
+`state/qa/propertyquarry-live-external-authority-20260813.json`, SHA-256
+`9ea2a40c4f76599a58c301ec04be58dc386175d9418f4de679e221b1095999a6`.
+It records `secret_values_recorded=false`. The local backup runtime is running
+and healthy, and the release-pinned AWS CLI `2.35.16` is attested at SHA-256
+`d17130561271a8c117f517c03bcd867fd8525408c999558149dc8f2f8f9b1d3d`.
+The following gates are still absent and therefore fail closed:
+
+- an approved external GPG encryption recipient;
+- a usable scoped AWS identity;
+- a configured versioned S3 target with Compliance Object Lock retention;
+- a disposable restore database plus `pg_dump`, `pg_restore`, and `psql`
+  toolchain;
+- both signed, root-owned public-launch authority files;
+- the ten required same-principal live billing fields; and
+- the five required external FlipLink fields.
+
+The live probe consequently preserves billing as unavailable, FlipLink as
+`local_only`, public launch as unavailable, and DR as unproven off-host. These
+are exact authority/configuration blockers; do not replace them with guessed
+credentials or weaker storage claims.
+
+Fresh log telemetry from the exact deployed candidate
+`290e4e7efb473f0602ab29f2a34e85c616e3e331` was checked from its
+`2026-08-13T06:22:30Z` deployment through this audit. It contains 49
+authenticated Search 200 responses, one Search 303 boundary, and 13 expected
+Search 401 probes, all bound to the exact candidate and web image. It contains
+no `/mobile/runtime-contract`, `/sign-in/google`, `/google/callback`,
+`/mobile/auth/bridge`, or `/mobile/auth/redeem` event. This is not a live auth
+failure: it proves that no fresh installed-app attempt occurred after this
+candidate was deployed. A physical tester must open the current installed app,
+complete Google sign-in, and reach Search once; only the resulting ordered
+runtime-contract/callback/bridge/redeem/Search-200 telemetry can close that
+exact-candidate Android gate. The last Play Console read remains `6/12` opted-in
+testers, so six additional distinct real testers and the continuous 14-day
+window remain external production prerequisites.
 
 ## 2026-08-13 fresh live customer and LTD proof on deployed candidate
 
