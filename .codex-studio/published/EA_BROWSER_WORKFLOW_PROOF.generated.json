@@ -5,10 +5,10 @@
   "proof_target": "propertyquarry",
   "version": 1,
   "kind": "proof_receipt",
-  "generated_at": "2026-08-13T03:51:06Z",
+  "generated_at": "2026-08-13T04:44:42Z",
   "generated_by": "scripts/materialize_ea_browser_workflow_proof.py",
-  "status": "blocked",
-  "operator_summary": "PropertyQuarry browser workflow proof is published, but it is blocked by failing or unavailable proof lanes.",
+  "status": "pass",
+  "operator_summary": "PropertyQuarry browser workflow proof is published and green across the required journey matrix, source-backed contracts, and real-browser E2E.",
   "seed_source": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
   "release_claim_summary": "The standalone PropertyQuarry surface can only claim flagship-grade release truth when its browser workflow proof and release asset verification agree with this gate seed.",
   "expected_browser_signals": [
@@ -31,7 +31,7 @@
       "id": "propertyquarry.release-proof.v2",
       "sha256": "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
     },
-    "code_commit": "8d962091570819c4746b6c6c2816642dde5f1c6c",
+    "code_commit": "0a44ea202695163cf00dc8807c69d55dd0a561fc",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "7f8bbd29c31b9ebe32692b0befcafd312f2fa19e600131d10a6c9788302eb40a",
@@ -45,8 +45,8 @@
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
-        "sha256": "a3b8e8fa26b59b739444edc42c4728f82f6f8cce83414062c1528e9c4420dd52",
-        "git_blob_oid": "328ebc671aa314a67348134a4f212966cd6980e0"
+        "sha256": "0ed13ad8c44b88d6fb0c293614da7c81409f9a52df56bc34946c23f7a647ce98",
+        "git_blob_oid": "ceca4806e33af8ce8a61432d152e98fb62ee17e2"
       },
       {
         "path": "tests/test_property_evidence_overlays.py",
@@ -71,10 +71,10 @@
       "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
     ],
     "exit_code": 0,
-    "duration_seconds": 25.433,
+    "duration_seconds": 24.508,
     "output_excerpt": [
       ".......                                                                  [100%]",
-      "7 passed in 23.37s"
+      "7 passed in 22.54s"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -106,10 +106,10 @@
         "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
       ],
       "exit_code": 0,
-      "duration_seconds": 25.433,
+      "duration_seconds": 24.508,
       "output_excerpt": [
         ".......                                                                  [100%]",
-        "7 passed in 23.37s"
+        "7 passed in 22.54s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -134,10 +134,10 @@
         "test_property_research_rows_preserve_evidence_states_and_original_article_link"
       ],
       "exit_code": 0,
-      "duration_seconds": 2.164,
+      "duration_seconds": 2.101,
       "output_excerpt": [
         ".                                                                        [100%]",
-        "1 passed in 1.17s"
+        "1 passed in 1.05s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -154,7 +154,7 @@
     }
   ],
   "real_browser_e2e_proof": {
-    "status": "blocked",
+    "status": "pass",
     "command": "/docker/property/.venv/bin/python -m pytest -q tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_greenfield_workspace_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_greenfield_workspace_is_mobile_usable tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_expired_session_next_action_moves_keyboard_focus_to_sign_in_options tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_workbench_candidate_history_stays_in_place tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_flagship_operating_loop_in_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_best_match_opens_hosted_3d_tour_and_flythrough_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_blocked_3d_tour_can_be_retried_from_research_packet_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_research_detail_never_shows_fake_open_tour_for_generated_reconstruction_status tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_generated_reconstruction_public_launch_renders_honest_shell_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_generates_private_opportunity_brief_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_packet_tracks_followup_state_in_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_browser_alert_button_toggles_enabled_state tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_research_evidence_states_and_links_render_in_real_browser -rs",
     "cwd": "/docker/property",
     "python_bin": "/docker/property/.venv/bin/python",
@@ -177,54 +177,16 @@
       "test_propertyquarry_browser_alert_button_toggles_enabled_state",
       "test_propertyquarry_research_evidence_states_and_links_render_in_real_browser"
     ],
-    "exit_code": 1,
-    "duration_seconds": 130.774,
+    "exit_code": 0,
+    "duration_seconds": 102.535,
     "output_excerpt": [
-      "...........F....                                                         [100%]",
-      "=================================== FAILURES ===================================",
-      "___ test_propertyquarry_generates_private_opportunity_brief_in_real_browser ____",
-      "browser = <Browser type=<BrowserType name=chromium executable_path=/home/tibor/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome> version=148.0.7778.96>",
-      "propertyquarry_browser_server = {'base_url': 'http://propertyquarry.localhost:33143', 'bundle_root': PosixPath('/tmp/pytest-of-tibor/pytest-282/test_propertyquarry_generates_0/public_tours'), 'client': <starlette.testclient.TestClient object at 0x7b1a10322720>}",
-      "    def test_propertyquarry_generates_private_opportunity_brief_in_real_browser(",
-      "        browser: Browser,",
-      "        propertyquarry_browser_server: dict[str, object],",
-      "    ) -> None:",
-      "        base_url = str(propertyquarry_browser_server[\"base_url\"])",
-      "        context = _new_context(browser, mobile=False)",
-      "        page: Page = context.new_page()",
-      "        try:",
-      "            response = page.goto(f\"{base_url}/app/properties?run_id=run-42\", wait_until=\"networkidle\")",
-      "            assert response is not None and response.ok",
-      "            card = page.locator('[data-workbench-row][data-candidate-ref=\"altbau-u6\"]')",
-      "            expect(card.locator(\"[data-pqx-opportunity-summary]\")).to_contain_text(\"Verify: heating_type\")",
-      "            action = card.locator(\"[data-pqx-opportunity-generate]\")",
-      "            expect(action).to_be_visible()",
-      "            with page.expect_response(",
-      "                lambda item: \"/app/api/property/opportunities/altbau-u6/generate\" in item.url",
-      "            ) as generated:",
-      "                action.click()",
-      "            assert generated.value.ok, generated.value.text()",
-      "            expect(action).to_have_text(\"Brief ready\")",
-      "            expect(card.locator(\"[data-pqx-opportunity-generation-status]\")).to_have_text(",
-      "                \"Private brief · PropertyQuarry\"",
-      "            )",
-      "            artifact = card.locator(\"[data-pqx-opportunity-artifact]\")",
-      "            expect(artifact).to_be_visible()",
-      "            expect(artifact).to_contain_text(\"Altbau near U6\")",
-      "            expect(artifact).to_contain_text(\"Preference fit:\")",
-      ">           expect(artifact).to_contain_text(\"Verify next: heating_type\")",
-      "E           AssertionError: Locator expected to contain text 'Verify next: heating_type'",
-      "E           Actual value: # Altbau near U6",
-      "E",
-      "E           **Recommendation:** mention",
-      "E           **Preference fit:** 50/100",
-      "E           **Confidence:** 0%",
-      "E"
+      "................                                                         [100%]",
+      "16 passed in 100.18s (0:01:40)"
     ],
     "limitations": [],
     "outcome_counts": {
-      "passed": 15,
-      "failed": 1,
+      "passed": 16,
+      "failed": 0,
       "skipped": 0,
       "errors": 0,
       "xfailed": 0,
@@ -236,9 +198,9 @@
   },
   "journey_evidence_matrix": {
     "version": 1,
-    "status": "blocked",
+    "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "8d962091570819c4746b6c6c2816642dde5f1c6c",
+    "runtime_commit_sha": "0a44ea202695163cf00dc8807c69d55dd0a561fc",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
@@ -273,7 +235,7 @@
       {
         "journey_id": "onboarding_auth",
         "label": "Onboarding, authentication, session return, and sign-out",
-        "proof_status": "blocked",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/test_propertyquarry_workspace_redesign.py",
@@ -287,7 +249,7 @@
             "cases": [
               "test_propertyquarry_expired_session_next_action_moves_keyboard_focus_to_sign_in_options"
             ],
-            "lane_status": "blocked"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -300,7 +262,7 @@
       {
         "journey_id": "search_ranking",
         "label": "Search setup, ranked results, and failed-run recovery",
-        "proof_status": "blocked",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/test_propertyquarry_workspace_redesign.py",
@@ -315,7 +277,7 @@
             "cases": [
               "test_propertyquarry_greenfield_workspace_in_real_browser"
             ],
-            "lane_status": "blocked"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -328,7 +290,7 @@
       {
         "journey_id": "shortlist_research_revisit",
         "label": "Shortlist, research detail, persistence, and revisit",
-        "proof_status": "blocked",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/test_propertyquarry_workspace_redesign.py",
@@ -344,7 +306,7 @@
               "test_propertyquarry_workbench_candidate_history_stays_in_place",
               "test_propertyquarry_research_evidence_states_and_links_render_in_real_browser"
             ],
-            "lane_status": "blocked"
+            "lane_status": "pass"
           },
           {
             "file": "tests/test_property_evidence_overlays.py",
@@ -385,7 +347,7 @@
       {
         "journey_id": "packets_tours",
         "label": "Decision packets, sharing, tours, and recovery",
-        "proof_status": "blocked",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -398,7 +360,7 @@
               "test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe",
               "test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser"
             ],
-            "lane_status": "blocked"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -411,7 +373,7 @@
       {
         "journey_id": "feedback",
         "label": "Decision feedback and packet follow-up",
-        "proof_status": "blocked",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -419,7 +381,7 @@
               "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
               "test_propertyquarry_packet_tracks_followup_state_in_browser"
             ],
-            "lane_status": "blocked"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -432,7 +394,7 @@
       {
         "journey_id": "notifications",
         "label": "Alert controls, channel preferences, and external Telegram delivery",
-        "proof_status": "blocked",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -440,7 +402,7 @@
               "test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser",
               "test_propertyquarry_browser_alert_button_toggles_enabled_state"
             ],
-            "lane_status": "blocked"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -452,8 +414,6 @@
       }
     ]
   },
-  "blocking_reasons": [
-    "real browser E2E proof is not passing"
-  ],
+  "blocking_reasons": [],
   "current_limitations": []
 }
