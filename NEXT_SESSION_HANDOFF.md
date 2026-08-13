@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 07:17 CEST
+Updated: 2026-08-13 08:23 CEST
 
 ## Mission
 
@@ -17,6 +17,51 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 audit closure, canonical-main merge, and live deployment
+
+GitHub pull request [#4](https://github.com/ArchonMegalon/propertyquarry/pull/4)
+merged the verified integration history into protected `main` at
+`bbef2d6fec67722d559df4ee2cda1e093d714a17`. Local `main` and `origin/main`
+were synchronized to that merge before deployment. The immutable runtime source
+candidate is `290e4e7efb473f0602ab29f2a34e85c616e3e331`; its release artifact set is
+`propertyquarry-generated-release-artifacts-v1@sha256:d230f659b9e14a3e0dd8aaf5fe6d6eaa40eaf2a04d7935c71cb9affe829a20df`.
+
+The governed local Docker deployment passed at `2026-08-13T06:22:30Z` with no
+failures and no secret values recorded:
+
+- web image: `sha256:7aa1390f615193eafefd52a2f2a6f217ce193ba35427a75c6be2bd1f6089cb53`
+- render image: `sha256:41394141d94d01d805a945a9c8d7e1e8bbbaf3499039c238bc49c478fa997fd4`
+- deployment receipt: `state/release/propertyquarry-local-deployment.v1.json`
+  (`sha256:1c815e0cd9a124e2f20f7fee6478fa13c55d9f3d1dd874c187f9d8f59bcb1723`)
+- security receipt: `state/artifacts/property-security-posture-current.json`
+  (`status=pass`, zero failures, candidate and web-image bound;
+  `sha256:36d911cda2bf95689d3369bd7237846d2b4ae1d99f4ce90f9f13504dc555228b`)
+
+Live `/version` reports the exact candidate, exact web image, complete release
+manifest, and the expected artifact set. Live `/health/ready` reports
+`postgres_ready:property_search_schema_v20`. Anonymous `/app/search` returns
+the expected authentication boundary rather than exposing a customer workspace.
+
+The audit repair set now includes: default-deny private showcase access; owner-
+only local dump permissions; honest LTD provider-evidence versus customer-
+integration semantics; principal-and-service-bound BrowserAct executability;
+Austria-only customer geography; one Free/Plus/Agent billing vocabulary; local
+packet and decision-tray copy; an explicit viewing-request action; a non-stale
+handoff pointer; and the frozen Play package identity exception. Affected suites,
+93-test focused closure, 282-test broader closure, generated-artifact
+reproduction, canonical release preflight, merge, deployment, and live probes
+all passed.
+
+Do not mark the long-running goal complete. Play remains Closed testing in
+Austria at the last proven `1/12` opt-in count; production still needs 12 real
+testers for 14 continuous days and explicit Play launch authority. A fresh
+physical Android callback/redeem/Search cycle for this exact web candidate is
+still required. Dedicated same-principal live billing, external FlipLink
+publication, encrypted immutable off-host restore authority, and public-launch
+authority remain absent and fail closed. Other markets, overlays, customer LTD
+completions, and whole-project Gold remain backlog until exact live evidence
+promotes them.
 
 ## 2026-08-13 final actionable-assessment candidate and test closure
 
@@ -78,13 +123,12 @@ propertyquarry.com, and the four installed instrumentation tests passed. No
 Google account was entered in the lab, so a current callback/redeem/Search-200
 cycle on a physical handset remains required.
 
-The manual group handoff is complete. Google Groups now shows six members:
-the owner plus `archon.megalon@gmail.com`, `elisabeth.girschele@gmail.com`,
-`the.girscheles@gmail.com`, `tibor.hoza@gmail.com`, and
-`work.tibor.girschele@gmail.com`. Membership makes those accounts eligible to
-visit the Play opt-in URL; it does not prove that they opted in. The last
-confirmed Play production-access count remains 1/12, followed by the required
-14 continuous days once 12 real testers are enrolled.
+The manual group handoff is complete. Google Groups showed six members at the
+last observation; identities belong in the ignored operator ledger, not this
+tracked handoff. Membership makes those accounts eligible to visit the Play
+opt-in URL; it does not prove that they opted in. The last confirmed Play
+production-access count remains 1/12, followed by the required 14 continuous
+days once 12 real testers are enrolled.
 
 Fresh launch-room receipt
 `state/qa/propertyquarry-launch-room-20260813-final.json`, SHA-256
