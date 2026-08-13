@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 10:05 CEST
+Updated: 2026-08-13 10:12 CEST
 
 ## Mission
 
@@ -17,6 +17,41 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 Telegram enrollment delivery and native-auth refresh
+
+The verified Austria enrollment sequence was delivered once through EA's
+existing principal-bound Telegram service at `2026-08-13T08:11:07.933372Z`.
+The service resolved the configured `EA_DEFAULT_PRINCIPAL_ID` to an enabled
+operator binding for `tibor_concierge_bot` and Telegram acknowledged message
+ID `5219`. The message uses real line breaks, tells the tester to join the
+public Google Group first with the same Google account, and then supplies the
+Play opt-in link. No raw principal, chat reference, bot token, cookie, or other
+secret was recorded.
+
+The two delivered public links are:
+
+1. https://groups.google.com/g/propertyquarry-austria-testers/about
+2. https://play.google.com/apps/testing/com.myexternalbrain.propertyquarry
+
+A fresh allowlisted telemetry read through
+`2026-08-13T08:11:33.025937Z` remains unchanged on exact candidate
+`290e4e7efb473f0602ab29f2a34e85c616e3e331` and image
+`sha256:7aa1390f615193eafefd52a2f2a6f217ce193ba35427a75c6be2bd1f6089cb53`:
+49 Search 200, one Search 303, 13 Search 401, and zero runtime-contract,
+Google callback, native bridge, or redeem events. This means no new installed-
+app attempt reached the current API; it is not evidence that a native redeem
+failed. The exact-candidate physical Android gate still requires one tester to
+open the installed current app, complete Google sign-in, and reach Search.
+
+Secret-free receipt
+`state/qa/propertyquarry-telegram-enrollment-and-native-auth-20260813.json`
+has SHA-256
+`932387356148d2bbd62976d1f3a91517678dfe5584dbcf099f42184917db56af` and
+records the acknowledged Telegram message ID, hashed binding references,
+public URLs, exact candidate identity, and route/status aggregates. It records
+`secret_values_recorded=false` and must not be promoted into a claim that the
+physical Android sign-in gate is closed.
 
 ## 2026-08-13 Play Open-testing lock and public Austria enrollment path
 
