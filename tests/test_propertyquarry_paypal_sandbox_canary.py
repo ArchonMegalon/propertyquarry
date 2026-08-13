@@ -5,7 +5,10 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from ea.app.services.property_billing import property_plan_spec
+from ea.app.services.property_billing import (
+    _paypal_principal_binding,
+    property_plan_spec,
+)
 from scripts import propertyquarry_paypal_sandbox_canary as canary
 
 
@@ -61,6 +64,18 @@ def test_canary_prices_match_the_customer_billing_catalog() -> None:
             "amount_eur": spec.amount_eur,
             "display_name": spec.display_name,
         }
+
+
+def test_canary_uses_production_principal_binding_contract() -> None:
+    principal_sha256 = canary._principal_sha256(canary.SYNTHETIC_PRINCIPAL_LABEL)
+    for plan_key in sorted(canary.PLAN_CONTRACT):
+        assert canary._principal_binding(
+            principal_sha256=principal_sha256,
+            plan_key=plan_key,
+        ) == _paypal_principal_binding(
+            principal_id=canary.SYNTHETIC_PRINCIPAL_LABEL,
+            plan_key=plan_key,
+        )
 
 
 def test_canary_accepts_exact_safe_provider_receipt_without_exposing_secrets() -> None:

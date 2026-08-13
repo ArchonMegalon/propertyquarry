@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 10:12 CEST
+Updated: 2026-08-13 10:25 CEST
 
 ## Mission
 
@@ -17,6 +17,52 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 principal-bound PayPal capture hardening
+
+The disabled PayPal checkout path had a real pre-launch safety gap: its capture
+route accepted the caller's order ID and plan, called PayPal capture, and then
+granted that plan without first proving the order was the signed-in principal's
+pending order or validating PayPal's persisted principal binding, exact plan,
+EUR amount, and completed capture. Billing was and remains disabled, so this was
+not an active production exploit, but it was a blocker to any future handoff.
+
+The source now fails closed at both boundaries. The authenticated route requires
+the submitted order and plan to match that principal's durable pending checkout.
+The PayPal adapter performs an authenticated order read-back before capture and
+requires one purchase unit with the exact plan reference, versioned SHA-256
+principal binding, EUR currency, catalog amount, and `APPROVED` state. Capture
+uses a deterministic `PayPal-Request-Id`, accepts only one exact `COMPLETED`
+capture, and derives entitlement time from the provider capture timestamp.
+Completed provider and local retries return the same capture without charging or
+extending the entitlement twice. Raw principal IDs are no longer sent in
+PayPal `custom_id`, and raw PayPal response bodies are no longer returned from
+the adapter.
+
+The sandbox canary now uses the identical production binding format. At
+`2026-08-13T08:22:31Z`, PayPal Sandbox created fresh exact-contract Agent
+(EUR 99) and Plus (EUR 3) orders with HTTP 201 and authenticated read-back HTTP
+200. At `2026-08-13T08:22:43Z`, the same deterministic requests returned HTTP
+200 with identical order-reference and idempotency-key hashes for both plans.
+Both provider payloads preserved the exact versioned principal binding, plan,
+currency, and amount. Receipts are:
+
+- `state/qa/propertyquarry-paypal-sandbox-principal-binding-20260813.json`,
+  SHA-256
+  `8125595576ba0f4a6d2fd3f3fdd0733a7545480d033a42f67120f8a9b3ec7a51`;
+- `state/qa/propertyquarry-paypal-sandbox-principal-binding-20260813-repeat.json`,
+  SHA-256
+  `a1c6bbcb0a0450e85b5785bfd03e85e1540887bc69828db7fcb7df19a7e605e8`.
+
+Both receipts are mode `0600` locally and state
+`approval_attempted=false`, `capture_attempted=false`,
+`entitlement_mutated=false`, `webhook_claimed=false`,
+`production_billing_enabled=false`, and `secret_values_recorded=false`.
+The expanded PayPal, Brilliant Directories, and lifetime-entitlement suite passes
+`130/130`. No sandbox buyer password or equivalent approval authority is present
+in the `ea-api` PayPal configuration, so no approval or capture was attempted.
+The source change is not a live-runtime claim until its exact merged release is
+deployed and reverified; customer checkout must remain disabled.
 
 ## 2026-08-13 Telegram enrollment delivery and native-auth refresh
 

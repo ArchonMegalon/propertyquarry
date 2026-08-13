@@ -22,6 +22,7 @@ else:
 SCHEMA = "propertyquarry.paypal_sandbox_canary.v1"
 EA_API_CONTAINER = "ea-api"
 SYNTHETIC_PRINCIPAL_LABEL = "propertyquarry-paypal-sandbox-canary-v1"
+PAYPAL_PRINCIPAL_BINDING_VERSION = "v1"
 PLAN_CONTRACT = {
     "agent": {"amount_eur": "99.00", "display_name": "Agent"},
     "plus": {"amount_eur": "3.00", "display_name": "Plus"},
@@ -49,6 +50,23 @@ def _principal_sha256(label: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _principal_binding(*, principal_sha256: str, plan_key: str) -> str:
+    normalized_digest = str(principal_sha256 or "").strip().lower()
+    normalized_plan = str(plan_key or "").strip().lower()
+    if not _SHA256_RE.fullmatch(normalized_digest):
+        raise ValueError("sandbox_principal_digest_invalid")
+    if normalized_plan not in PLAN_CONTRACT:
+        raise ValueError("sandbox_plan_key_invalid")
+    return ":".join(
+        (
+            "propertyquarry",
+            PAYPAL_PRINCIPAL_BINDING_VERSION,
+            normalized_plan,
+            normalized_digest,
+        )
+    )
+
+
 def _http_status(value: object) -> int:
     try:
         parsed = int(value)
@@ -59,6 +77,14 @@ def _http_status(value: object) -> int:
 
 def _inner_source(*, principal_sha256: str) -> str:
     config = {
+        "binding_contract": f"propertyquarry:{PAYPAL_PRINCIPAL_BINDING_VERSION}",
+        "principal_bindings": {
+            plan_key: _principal_binding(
+                principal_sha256=principal_sha256,
+                plan_key=plan_key,
+            )
+            for plan_key in PLAN_CONTRACT
+        },
         "principal_sha256": principal_sha256,
         "plans": PLAN_CONTRACT,
         "schema": SCHEMA,
@@ -131,9 +157,9 @@ headers = {
 plan_receipts = []
 for plan_key in sorted(config["plans"]):
     plan = config["plans"][plan_key]
-    custom_id = f"pq-sandbox:{config['principal_sha256']}:{plan_key}"
+    custom_id = config["principal_bindings"][plan_key]
     request_id = "pq-sbx-" + hashlib.sha256(
-        f"{config['schema']}:{config['principal_sha256']}:{plan_key}".encode("utf-8")
+        f"{config['schema']}:{config['binding_contract']}:{config['principal_sha256']}:{plan_key}".encode("utf-8")
     ).hexdigest()[:30]
     payload = {
         "intent": "CAPTURE",
