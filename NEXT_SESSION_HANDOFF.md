@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 05:30 CEST
+Updated: 2026-08-13 06:15 CEST
 
 ## Mission
 
@@ -17,6 +17,72 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 actionable opportunity briefs and exact deployed proof
+
+Published source candidate `8d962091570819c4746b6c6c2816642dde5f1c6c`
+(`feat(property): generate actionable opportunity briefs`) replaces the former
+one-line local summary with a bounded, escaped customer brief. The default
+local artifact now contains a heading, recommendation, numeric preference fit,
+confidence, predicted reaction, fit reasons, trade-offs, optional blocking
+constraints, explicit next checks, and a validated HTTP(S) listing link. URL
+validation rejects credentials, malformed ports, whitespace/control injection,
+Markdown delimiters, missing hosts, and non-HTTP schemes. Publication remains
+honestly `local_only` / `not_published`; this is not a claim of external
+FlipLink authority.
+
+The focused and affected suites pass `25/25`, exact Python compilation passes,
+and the generated release artifacts exactly match their committed bytes. The
+release artifact-set identity is
+`propertyquarry-generated-release-artifacts-v1@sha256:9476cb873a0dfbc2a77a1b2c9f736e9d3b5ea20d35cd1ad8b2142f246a838751`.
+The published evidence envelope head is
+`9b97491309cdfc41c49b9e9bdabac16c3fec0999`.
+
+The exact candidate is deployed and healthy. Local deployment receipt
+`state/release/propertyquarry-local-deployment.v1.json`, SHA-256
+`482a501fd64c4a4f77cca9dcbbaa84c73e73ceb02f5ebb6c5bf7065a36eeaea9`,
+records `passed=true`, runtime candidate `8d962091570819c4746b6c6c2816642dde5f1c6c`,
+and envelope head `9b97491309cdfc41c49b9e9bdabac16c3fec0999`, with no failures. The API,
+worker, scheduler, and migration service run exact web image
+`sha256:96703a762c12c8161b64f9edc19173e714c6a7d5e5618765e04271b62eeb769f`;
+render tools run
+`sha256:98dfcedb74ab97862a88cc985ee7a795696cbc6f080793c37883054aec33b79e`.
+
+Fresh artifact `sum_ee1cb30c0b2d4f59a547ebe9db384975` was generated through the
+deployed route for durable Austrian run `0d39c56749b04ec795302ad5e1ab6023`.
+It is 714 characters over 22 lines and contains every actionable section plus
+the listing link. A separate process read it back from the PostgreSQL-backed
+event repository with `generation_mode=local_opportunity_brief`,
+`publication_mode=local_only`, `external_status=not_published`, and a durable
+preference-assessment generation basis. All ten ranked candidates in that run
+have persisted numeric fit/confidence, recommendation, and unknowns; the tenth
+assessment was written later than the initial audit timestamp and is present.
+
+Fresh deployed receipt
+`state/qa/propertyquarry-live-browser-all-20260813-exact-8d962-pass.json`,
+SHA-256 `621fc879318e4c8af8bcc3c8127752e93d7b5d2633609e745be930815ada0ac5`,
+records `96/96` real Playwright samples and zero failures at
+`2026-08-13T04:14:31.984602Z`: all 16 configured customer routes in Chromium,
+Firefox, and WebKit at 390x844 and 412x915. It has no missing engines, samples,
+surfaces, or static fallbacks. The allowlisted release-probe research detail
+rendered the full authenticated workspace in all six combinations. A prior
+attempt against a real run owned by another principal correctly redirected to
+sign-in in every engine; that receipt is negative tenant-isolation evidence,
+not an app regression, and no authentication boundary was weakened. Billing
+returned the intentional fail-closed HTTP 503 in all six samples and passed the
+Free-plan compatibility contract.
+
+The public-join tester group still needs its pending five-address direct-add
+reCAPTCHA completed. BrowserAct session `pq-goal-audit-20260813` is locked for
+manual handoff; the operator received the live assist link in Telegram message
+`5208`. Do not issue any command in that session until the operator explicitly
+replies `done`, then verify the members rather than assuming the submission
+landed. Play still needs eleven more real opt-ins and fourteen continuous days.
+A fresh physical Android sign-in on this exact candidate, dedicated live
+billing authority and canary, external FlipLink authority if desired, and
+encrypted immutable off-host restore authority also remain open. The global
+release preflight therefore remains honestly blocked; do not mark the
+long-running goal complete.
 
 ## 2026-08-13 LTD truth separation and exact-image browser proof
 
