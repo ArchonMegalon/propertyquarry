@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 05:22 CEST
+Updated: 2026-08-13 05:30 CEST
 
 ## Mission
 
@@ -116,7 +116,7 @@ and then at least 14 continuous days. The Open testing page still states that
 Open testing is available only after Production access. The isolated browser
 session was closed after the read.
 
-## 2026-08-13 public-join Austria tester group submitted
+## 2026-08-13 public-join Austria tester group published
 
 The manual Google reCAPTCHA was completed through the dedicated BrowserAct
 handoff and the group `PropertyQuarry Austria Testers` now exists at
@@ -128,15 +128,16 @@ one member. The clean public join URL is:
 https://groups.google.com/g/propertyquarry-austria-testers
 
 Play Console Closed testing - Alpha was changed from the six-address
-`PropertyQuarry internal` email list to that Google Group. The exact pending
-change says `Set testers to be managed by Google Groups:
-propertyquarry-austria-testers@googlegroups.com`. It was explicitly sent to
-Google for review and Play Console now reports **Changes in review**. Managed
-publishing is off, so Google will publish the tester change automatically after
-approval. Until approval, do not claim the group is already the live Alpha
-eligibility source. After approval, only Google accounts that have joined the
-group can opt in; public visibility of the URL alone does not count toward the
-12-tester production-access requirement.
+`PropertyQuarry internal` email list to that Google Group. The exact change was
+`Set testers to be managed by Google Groups:
+propertyquarry-austria-testers@googlegroups.com`. It was sent to Google for
+review, approved, and published on 13 August 2026. Publishing overview reports
+`Last published on 13 August 2026` and `App update published`; managed
+publishing remains off. A post-publication read of the Alpha tester tab shows
+the group as the current eligibility source, and the web opt-in page reports
+`You are a tester` for the enrolled group member. Only Google accounts that
+have joined the group can opt in; public visibility of the URL alone does not
+count toward the 12-tester production-access requirement.
 
 Play Console exposed and verified these exact tester URLs:
 
@@ -146,10 +147,11 @@ https://play.google.com/store/apps/details?id=com.myexternalbrain.propertyquarry
 
 The group URL, web opt-in URL, and Android app URL were delivered to the
 operator through `tibor_concierge_bot` as Telegram message `5206`, with each
-URL on its own line and no literal `/n` prefix. The preceding manual-CAPTCHA
-handoff was Telegram message `5204`. Do not repeat group creation or CAPTCHA;
-next session should re-read Publishing overview and, once approved, verify the
-group-backed opt-in path with a distinct tester account before counting it.
+URL on its own line and no literal `/n` prefix. After Google published the
+change, final live-status message `5207` delivered the same clean URLs. The
+preceding manual-CAPTCHA handoff was Telegram message `5204`. Do not repeat
+group creation or CAPTCHA; next session should verify the group-backed opt-in
+path with a distinct tester account before counting it.
 
 ## 2026-08-12 current-head opportunity and DR revalidation
 
