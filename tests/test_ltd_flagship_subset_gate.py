@@ -24,7 +24,9 @@ def test_ltd_flagship_subset_gate_passes_for_expected_verified_subset() -> None:
 
     assert receipt["status"] == "pass"
     assert receipt["accepted_total"] == 9
-    assert receipt["live_verified_total"] == 5
+    assert receipt["live_evidence_verified_total"] == 5
+    assert receipt["propertyquarry_customer_integration_verified_total"] == 1
+    assert receipt["live_verified_total"] == 1
     assert receipt["contract_or_unconfigured_total"] == 4
     assert receipt["not_live_integration_gate"] is True
     assert receipt["services"]["PayFunnels"]["accepted"] is True
@@ -34,6 +36,30 @@ def test_ltd_flagship_subset_gate_passes_for_expected_verified_subset() -> None:
     )
     assert (
         receipt["services"]["1min.AI"]["live_integration_verified"]
+        is True
+    )
+    assert receipt["services"]["BrowserAct"]["live_evidence_verified"] is True
+    assert (
+        receipt["services"]["BrowserAct"][
+            "propertyquarry_customer_integration_verified"
+        ]
+        is False
+    )
+    assert (
+        receipt["services"]["BrowserAct"]["live_integration_verified"]
+        is False
+    )
+    assert receipt["services"]["Emailit"]["live_evidence_verified"] is True
+    assert (
+        receipt["services"]["Emailit"][
+            "propertyquarry_customer_integration_verified"
+        ]
+        is False
+    )
+    assert (
+        receipt["services"]["1min.AI"][
+            "propertyquarry_customer_integration_verified"
+        ]
         is True
     )
     assert receipt["failures"] == []

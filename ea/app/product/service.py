@@ -13704,12 +13704,6 @@ def _property_search_ranked_candidates_from_sources(sources: object, *, limit: i
 _PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF = "karl-czerny-gasse-2-private-showcase"
 _PROPERTY_PRIVATE_SHOWCASE_SOURCE_REF = f"propertyquarry-private-showcase:{_PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF}"
 _PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG = "karl-czerny-gasse-2-urban-jungle"
-_PROPERTY_PRIVATE_SHOWCASE_DEFAULT_ALLOWED_EMAILS = frozenset(
-    {
-        "tibor.girschele@gmail.com",
-        "elisabeth.girschele@gmail.com",
-    }
-)
 
 
 def _property_private_showcase_allowed_emails() -> frozenset[str]:
@@ -13719,7 +13713,7 @@ def _property_private_showcase_allowed_emails() -> frozenset[str]:
         for value in raw_value.split(",")
         if value.strip() and "@" in value
     )
-    return frozenset((*_PROPERTY_PRIVATE_SHOWCASE_DEFAULT_ALLOWED_EMAILS, *configured))
+    return configured
 
 
 def _property_private_showcase_env_bool(name: str) -> bool:
