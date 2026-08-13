@@ -110,7 +110,7 @@ def test_probe_reports_only_named_external_authority_blockers(tmp_path: Path) ->
         "fliplink_external_publication_authority",
     ]
     assert receipt["secret_values_recorded"] is False
-    assert "environment" not in json.dumps(receipt).lower()
+    assert '"environment":' not in json.dumps(receipt).lower()
 
 
 def test_probe_admits_complete_authority_without_recording_values(tmp_path: Path) -> None:
@@ -265,6 +265,84 @@ def test_postgres_live_client_call_is_real_secret_safe_and_ephemeral(
     ]
     assert archive_paths and all(not path.exists() for path in archive_paths)
     assert "database-secret-value" not in json.dumps(projection)
+
+
+def test_external_billing_candidate_is_live_probed_but_never_authorized(
+    tmp_path: Path,
+) -> None:
+    ea_environment = {
+        "PAYPAL_CLIENT_ID": "paypal-client-secret-value",
+        "PAYPAL_SECRET": "paypal-secret-value",
+        "PAYPAL_ACCOUNT_EMAIL": "private-account@example.test",
+        "PAYFUNNELS_WEBHOOK_SECRET": "payfunnels-secret-value",
+        "EA_MEMORIAL_FLIPLINK_WEBHOOK_SECRET": "memorial-secret-value",
+    }
+
+    def runner(command, **_kwargs):
+        command = list(command)
+        if command[:3] == ["docker", "container", "inspect"]:
+            environment = ea_environment if command[-1] == probe.EA_API_CONTAINER else {}
+            return _result(
+                stdout=_docker_row(container=command[-1], environment=environment)
+            )
+        if command[:3] == ["docker", "exec", "-i"]:
+            return _result(
+                stdout=json.dumps(
+                    {
+                        "access_token_verified": True,
+                        "api_environment": "live",
+                        "classification_probe_attempted": True,
+                        "classified_token_http_status": 200,
+                        "credential_environment": "sandbox",
+                        "state": "sandbox_credentials_verified",
+                        "token_http_status": 401,
+                        "webhook_count": 0,
+                        "webhook_list_http_status": 200,
+                    }
+                )
+            )
+        if "--list-keys" in command:
+            return _result()
+        return _result(returncode=1)
+
+    receipt = probe.build_live_external_authority_receipt(
+        environ={},
+        runner=runner,
+        which=lambda name: "/usr/bin/gpg" if name == "gpg" else None,
+        attestor=lambda **_kwargs: {
+            "version": "2.35.16",
+            "sha256": "d" * 64,
+            "path": "/trusted/aws",
+        },
+        cli_runner=lambda **_kwargs: (_ for _ in ()).throw(
+            probe.DisasterRecoveryError("no_credentials", "no credentials")
+        ),
+        global_trust_store=tmp_path / "missing-trust.json",
+        public_launch_authority=tmp_path / "missing-authority.json",
+        postgres_client_release_pin=tmp_path / "missing-postgres-pin.json",
+        probe_external_billing=True,
+    )
+
+    paypal = receipt["billing"]["external_candidate"]["paypal"]
+    payfunnels = receipt["billing"]["external_candidate"]["payfunnels"]
+    fliplink = receipt["fliplink"]["external_candidate"]
+    assert paypal["client_credentials_configured"] is True
+    assert paypal["state"] == "sandbox_credentials_verified"
+    assert paypal["token_http_status"] == 401
+    assert paypal["classified_token_http_status"] == 200
+    assert paypal["credential_environment"] == "sandbox"
+    assert paypal["access_token_verified"] is True
+    assert paypal["propertyquarry_principal_authorized"] is False
+    assert paypal["billing_enabled"] is False
+    assert payfunnels["webhook_secret_configured"] is True
+    assert payfunnels["api_key_configured"] is False
+    assert payfunnels["propertyquarry_principal_authorized"] is False
+    assert fliplink["memorial_webhook_secret_configured"] is True
+    assert fliplink["propertyquarry_credential_count"] == 0
+    assert fliplink["propertyquarry_principal_authorized"] is False
+    serialized = json.dumps(receipt)
+    for secret in ea_environment.values():
+        assert secret not in serialized
 
 
 def test_private_writer_materializes_mode_0600(tmp_path: Path) -> None:

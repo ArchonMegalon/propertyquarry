@@ -37,6 +37,7 @@ SCHEMA = "propertyquarry.live_external_authority_probe.v1"
 API_CONTAINER = "propertyquarry-api"
 BACKUP_CONTAINER = "propertyquarry-backup-live"
 DATABASE_CONTAINER = "propertyquarry-db-live"
+EA_API_CONTAINER = "ea-api"
 GLOBAL_TRUST_STORE = Path(
     "/etc/propertyquarry/release-control/global-governance-trust-store.v1.json"
 )
@@ -85,6 +86,19 @@ FLIPLINK_KEYS = (
     "FLIPLINK_BROWSERACT_ENABLED",
     "FLIPLINK_WEBHOOK_SECRET",
     "FLIPLINK_CUSTOM_DOMAIN",
+)
+EA_BILLING_CANDIDATE_KEYS = (
+    "PAYPAL_CLIENT_ID",
+    "PAYPAL_SECRET",
+    "PAYPAL_ACCOUNT_EMAIL",
+    "PAYFUNNELS_API_KEY",
+    "PAYFUNNELS_WEBHOOK_SECRET",
+    "PAYFUNNELS_PLUS_CHECKOUT_URL",
+    "PAYFUNNELS_AGENT_CHECKOUT_URL",
+)
+EA_FLIPLINK_CANDIDATE_KEYS = (
+    "EA_MEMORIAL_FLIPLINK_WEBHOOK_SECRET",
+    *FLIPLINK_KEYS,
 )
 
 Runner = Callable[..., Any]
@@ -185,6 +199,187 @@ def _gpg_projection(*, runner: Runner, which: Which) -> dict[str, object]:
         "binary_available": True,
         "public_recipient_count": count if int(getattr(result, "returncode", 1)) == 0 else 0,
     }
+
+
+def _paypal_external_candidate_failure(
+    state: str,
+    *,
+    attempted: bool,
+) -> dict[str, object]:
+    return {
+        "attempted": attempted,
+        "state": state,
+        "api_environment": "",
+        "credential_environment": "",
+        "classification_probe_attempted": False,
+        "token_http_status": 0,
+        "classified_token_http_status": 0,
+        "access_token_verified": False,
+        "webhook_list_http_status": 0,
+        "webhook_count": 0,
+        "propertyquarry_principal_authorized": False,
+        "billing_enabled": False,
+        "secret_values_recorded": False,
+    }
+
+
+def _paypal_external_candidate_projection(*, runner: Runner) -> dict[str, object]:
+    source = r'''
+import json
+import os
+import requests
+
+client_id = str(os.getenv("PAYPAL_CLIENT_ID") or "").strip()
+secret = str(os.getenv("PAYPAL_SECRET") or "").strip()
+api_base = str(os.getenv("PAYPAL_API_BASE") or "https://api-m.paypal.com").strip().rstrip("/")
+allowed = {
+    "https://api-m.paypal.com": "live",
+    "https://api-m.sandbox.paypal.com": "sandbox",
+}
+payload = {
+    "api_environment": allowed.get(api_base, "invalid"),
+    "credential_environment": "",
+    "classification_probe_attempted": False,
+    "token_http_status": 0,
+    "classified_token_http_status": 0,
+    "access_token_verified": False,
+    "webhook_list_http_status": 0,
+    "webhook_count": 0,
+}
+if not client_id or not secret:
+    payload["state"] = "credentials_not_configured"
+elif api_base not in allowed:
+    payload["state"] = "api_base_invalid"
+else:
+    def token_probe(base):
+        response = requests.post(
+            f"{base}/v1/oauth2/token",
+            auth=(client_id, secret),
+            headers={"Accept": "application/json", "Accept-Language": "en_US"},
+            data={"grant_type": "client_credentials"},
+            timeout=30,
+        )
+        body = response.json() if response.status_code < 400 else {}
+        token = str(body.get("access_token") or "") if isinstance(body, dict) else ""
+        return response, token
+
+    response, token = token_probe(api_base)
+    payload["token_http_status"] = int(response.status_code)
+    payload["classified_token_http_status"] = int(response.status_code)
+    active_base = api_base
+    if response.status_code in {401, 403} and allowed[api_base] == "live":
+        payload["classification_probe_attempted"] = True
+        sandbox_base = "https://api-m.sandbox.paypal.com"
+        classified, classified_token = token_probe(sandbox_base)
+        payload["classified_token_http_status"] = int(classified.status_code)
+        if classified_token:
+            token = classified_token
+            active_base = sandbox_base
+    payload["access_token_verified"] = bool(token)
+    if token:
+        payload["credential_environment"] = allowed[active_base]
+        webhooks = requests.get(
+            f"{active_base}/v1/notifications/webhooks",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=30,
+        )
+        payload["webhook_list_http_status"] = int(webhooks.status_code)
+        webhook_payload = webhooks.json() if webhooks.status_code < 400 else {}
+        rows = webhook_payload.get("webhooks") if isinstance(webhook_payload, dict) else []
+        payload["webhook_count"] = len(rows) if isinstance(rows, list) else 0
+        if webhooks.status_code >= 400:
+            payload["state"] = "webhook_probe_failed"
+        elif allowed[active_base] == "sandbox":
+            payload["state"] = "sandbox_credentials_verified"
+        else:
+            payload["state"] = "verified"
+    elif response.status_code in {401, 403}:
+        payload["state"] = "authentication_rejected"
+    elif response.status_code >= 400:
+        payload["state"] = "token_probe_failed"
+    else:
+        payload["state"] = "token_probe_failed"
+print(json.dumps(payload, sort_keys=True))
+'''
+    try:
+        result = runner(
+            ["docker", "exec", "-i", EA_API_CONTAINER, "python", "-"],
+            input=source,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=90,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"},
+        )
+        if int(getattr(result, "returncode", 1)) != 0:
+            return _paypal_external_candidate_failure(
+                "runtime_probe_failed",
+                attempted=True,
+            )
+        payload = json.loads(str(getattr(result, "stdout", "") or ""))
+        if not isinstance(payload, dict) or set(payload) != {
+            "access_token_verified",
+            "api_environment",
+            "classification_probe_attempted",
+            "classified_token_http_status",
+            "credential_environment",
+            "state",
+            "token_http_status",
+            "webhook_count",
+            "webhook_list_http_status",
+        }:
+            return _paypal_external_candidate_failure(
+                "runtime_probe_invalid",
+                attempted=True,
+            )
+        state = str(payload.get("state") or "")
+        if state not in {
+            "api_base_invalid",
+            "authentication_rejected",
+            "credentials_not_configured",
+            "sandbox_credentials_verified",
+            "token_probe_failed",
+            "verified",
+            "webhook_probe_failed",
+        }:
+            return _paypal_external_candidate_failure(
+                "runtime_probe_invalid",
+                attempted=True,
+            )
+        return {
+            "attempted": True,
+            "state": state,
+            "api_environment": str(payload.get("api_environment") or ""),
+            "credential_environment": str(
+                payload.get("credential_environment") or ""
+            ),
+            "classification_probe_attempted": bool(
+                payload.get("classification_probe_attempted")
+            ),
+            "token_http_status": int(payload.get("token_http_status") or 0),
+            "classified_token_http_status": int(
+                payload.get("classified_token_http_status") or 0
+            ),
+            "access_token_verified": bool(payload.get("access_token_verified")),
+            "webhook_list_http_status": int(
+                payload.get("webhook_list_http_status") or 0
+            ),
+            "webhook_count": int(payload.get("webhook_count") or 0),
+            "propertyquarry_principal_authorized": False,
+            "billing_enabled": False,
+            "secret_values_recorded": False,
+        }
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
+        return _paypal_external_candidate_failure(
+            "runtime_probe_failed",
+            attempted=True,
+        )
 
 
 def _aws_projection(
@@ -580,6 +775,7 @@ def build_live_external_authority_receipt(
     authority_validator: Callable[[Path], bool] = _trusted_authority_file,
     postgres_client_release_pin: Path = POSTGRES_CLIENT_RELEASE_PIN,
     probe_live_postgres: bool = False,
+    probe_external_billing: bool = False,
 ) -> dict[str, object]:
     env = dict(os.environ if environ is None else environ)
     api = _container_projection(
@@ -590,6 +786,11 @@ def build_live_external_authority_receipt(
     backup = _container_projection(
         BACKUP_CONTAINER,
         allowlisted_names=(*DR_PROVIDER_KEYS, *DR_RECOVERY_KEYS),
+        runner=runner,
+    )
+    ea_api = _container_projection(
+        EA_API_CONTAINER,
+        allowlisted_names=(*EA_BILLING_CANDIDATE_KEYS, *EA_FLIPLINK_CANDIDATE_KEYS),
         runner=runner,
     )
     host_dr = _present_names(env, (*DR_PROVIDER_KEYS, *DR_RECOVERY_KEYS))
@@ -658,6 +859,12 @@ def build_live_external_authority_receipt(
     billing_ready = all(billing_config.get(name, False) for name in BILLING_KEYS)
     fliplink_config = dict(api["configured"])
     fliplink_ready = all(fliplink_config.get(name, False) for name in FLIPLINK_KEYS)
+    ea_candidate_config = dict(ea_api["configured"])
+    paypal_external_candidate = (
+        _paypal_external_candidate_projection(runner=runner)
+        if probe_external_billing
+        else _paypal_external_candidate_failure("not_requested", attempted=False)
+    )
     launch_files = {
         "global_trust_store": authority_validator(global_trust_store),
         "public_launch_authority": authority_validator(public_launch_authority),
@@ -720,12 +927,53 @@ def build_live_external_authority_receipt(
             "configured_field_count": sum(bool(billing_config.get(name)) for name in BILLING_KEYS),
             "safe_handoff_ready": billing_ready,
             "must_remain_fail_closed": not billing_ready,
+            "external_candidate": {
+                "source_runtime_available": ea_api["available"],
+                "paypal": {
+                    "client_credentials_configured": bool(
+                        ea_candidate_config.get("PAYPAL_CLIENT_ID")
+                        and ea_candidate_config.get("PAYPAL_SECRET")
+                    ),
+                    "account_identity_configured": bool(
+                        ea_candidate_config.get("PAYPAL_ACCOUNT_EMAIL")
+                    ),
+                    **paypal_external_candidate,
+                },
+                "payfunnels": {
+                    "api_key_configured": bool(
+                        ea_candidate_config.get("PAYFUNNELS_API_KEY")
+                    ),
+                    "webhook_secret_configured": bool(
+                        ea_candidate_config.get("PAYFUNNELS_WEBHOOK_SECRET")
+                    ),
+                    "plus_checkout_configured": bool(
+                        ea_candidate_config.get("PAYFUNNELS_PLUS_CHECKOUT_URL")
+                    ),
+                    "agent_checkout_configured": bool(
+                        ea_candidate_config.get("PAYFUNNELS_AGENT_CHECKOUT_URL")
+                    ),
+                    "propertyquarry_principal_authorized": False,
+                    "billing_enabled": False,
+                },
+                "cross_principal_reuse_forbidden": True,
+            },
         },
         "fliplink": {
             "required_field_count": len(FLIPLINK_KEYS),
             "configured_field_count": sum(bool(fliplink_config.get(name)) for name in FLIPLINK_KEYS),
             "external_publication_ready": fliplink_ready,
             "required_customer_label": "external" if fliplink_ready else "local_only",
+            "external_candidate": {
+                "source_runtime_available": ea_api["available"],
+                "memorial_webhook_secret_configured": bool(
+                    ea_candidate_config.get("EA_MEMORIAL_FLIPLINK_WEBHOOK_SECRET")
+                ),
+                "propertyquarry_credential_count": sum(
+                    bool(ea_candidate_config.get(name)) for name in FLIPLINK_KEYS
+                ),
+                "propertyquarry_principal_authorized": False,
+                "cross_principal_reuse_forbidden": True,
+            },
         },
         "public_launch": {
             **launch_files,
@@ -759,13 +1007,15 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", type=Path)
     parser.add_argument("--probe-live-postgres", action="store_true")
+    parser.add_argument("--probe-external-billing", action="store_true")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     receipt = build_live_external_authority_receipt(
-        probe_live_postgres=bool(args.probe_live_postgres)
+        probe_live_postgres=bool(args.probe_live_postgres),
+        probe_external_billing=bool(args.probe_external_billing),
     )
     if args.write is not None:
         _write_private_json(args.write, receipt)
