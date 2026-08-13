@@ -266,7 +266,7 @@ long-running launch goal complete.
   through 2026-08-13. Agents will read the stale file first.
 - Suggestion: Make `HANDOFF.md` a short pointer to the current handoff,
   or delete it.
-- Status: open
+- Status: repaired; `HANDOFF.md` is now a short, non-authoritative pointer
 
 ### Issue 16 -- Severity: nit
 
@@ -287,7 +287,8 @@ long-running launch goal complete.
   are bound to that ID, so this is frozen for the current store app.
 - Suggestion: Record it as an accepted store-identity exception, not as
   proof that MyExternalBrain is in the trust boundary.
-- Status: open
+- Status: repaired; `mobile/README.md` records the frozen store identity
+  as outside the operational authority and trust boundary
 
 ## What looks solid
 

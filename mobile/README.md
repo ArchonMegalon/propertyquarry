@@ -14,6 +14,8 @@ This directory owns the isolated Android release for PropertyQuarry. It is a thi
 - Google sign-in: external browser, short-lived one-time handoff, Android-generated S256 PKCE, HttpOnly WebView session
 - App Links: fail closed until the release signing certificate is published by `/.well-known/assetlinks.json`
 
+The production package ID is a frozen Google Play store identity for the existing listing. Its legacy namespace grants no MyExternalBrain operational authority, ownership, provider access, session access, or place in the PropertyQuarry trust boundary.
+
 ## Local verification
 
 ```bash
