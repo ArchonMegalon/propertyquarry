@@ -79,6 +79,13 @@ import_existing_runtime_environment() {
     value="${row#*=}"
     [[ "${key}" =~ ^(EA|PROPERTYQUARRY|TEABLE|EMAILIT|THREEDVISTA)_[A-Z0-9_]+$ ]] || continue
     [[ "${key}" != "POSTGRES_PASSWORD" ]] || continue
+    case "${key}" in
+      PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT|PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_*)
+        # Billing activation is exact-release authority. Never replay it from
+        # the previous container into a new release environment.
+        continue
+        ;;
+    esac
     if [[ -z "${!key:-}" ]]; then
       builtin printf -v "${key}" '%s' "${value}"
       export "${key}"

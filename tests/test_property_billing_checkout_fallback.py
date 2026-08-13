@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,24 @@ _RELEASE_COMMIT = "1" * 40
 _RELEASE_IMAGE = "sha256:" + "2" * 64
 _RECEIPT_DIGEST = "sha256:" + "3" * 64
 _PRINCIPAL_DIGEST = "sha256:" + "4" * 64
+_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_authoritative_deploy_defaults_billing_off_and_never_replays_activation() -> None:
+    compose = (_ROOT / "docker-compose.property.yml").read_text(encoding="utf-8")
+    deploy = (_ROOT / "scripts" / "deploy_propertyquarry.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        'PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT: '
+        '"${PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT:-0}"'
+    ) in compose
+    assert "${PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT:-1}" not in compose
+    assert (
+        "PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT|"
+        "PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_*"
+    ) in deploy
 
 
 def _install_safe_handoff(
