@@ -77,7 +77,7 @@ def test_opportunity_brief_is_local_and_carries_decision_evidence(tmp_path: Path
                 "predicted_reaction": "Strong initial fit, pending the cost check",
                 "match_reasons": ["The layout matches the three-room preference."],
                 "mismatch_reasons": ["The heating type is not confirmed."],
-                "unknowns": ["monthly operating costs."],
+                "unknowns": ["monthly_operating_costs"],
                 "blocking_constraints": ["Confirm financing before making an offer."],
             },
         },
@@ -94,7 +94,10 @@ def test_opportunity_brief_is_local_and_carries_decision_evidence(tmp_path: Path
     assert "**Recommendation:** shortlist" in body
     assert "**Preference fit:** 88/100" in body
     assert "**Confidence:** 82%" in body
-    assert "Strong initial fit, pending the cost check." in body
+    assert (
+        "**Predicted reaction:** Strong initial fit, pending the cost check."
+        in body
+    )
     assert "\n## Why it fits\n- " in body
     assert "The layout matches the three-room preference" in body
     assert "\n## Trade-offs\n- The heating type is not confirmed" in body

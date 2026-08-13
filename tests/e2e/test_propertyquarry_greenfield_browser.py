@@ -884,6 +884,7 @@ def propertyquarry_browser_server(
                                     "run_id": run_id,
                                     "fit_score": 92.0,
                                     "confidence": 0.91,
+                                    "predicted_reaction": "Likely to shortlist this home",
                                     "recommendation": "shortlist",
                                     "match_reasons": ["Lift and transit fit."],
                                     "mismatch_reasons": [],
@@ -1209,8 +1210,14 @@ def test_propertyquarry_generates_private_opportunity_brief_in_real_browser(
         artifact = card.locator("[data-pqx-opportunity-artifact]")
         expect(artifact).to_be_visible()
         expect(artifact).to_contain_text("Altbau near U6")
+        expect(artifact).to_contain_text("Recommendation:")
         expect(artifact).to_contain_text("Preference fit:")
-        expect(artifact).to_contain_text("Verify next: heating_type")
+        expect(artifact).to_contain_text("Confidence:")
+        expect(artifact).to_contain_text("Predicted reaction:")
+        expect(artifact).to_contain_text("Why it fits")
+        expect(artifact).to_contain_text("Trade-offs")
+        expect(artifact).to_contain_text("Verify next")
+        expect(artifact).to_contain_text("heating type")
     finally:
         context.close()
 

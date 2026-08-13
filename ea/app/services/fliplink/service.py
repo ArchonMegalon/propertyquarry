@@ -1743,9 +1743,9 @@ class FlipLinkPacketService:
             if _brief_fragment(value)
         ]
         unknowns = [
-            _brief_fragment(value)
+            _brief_fragment(str(value or "").replace("_", " "))
             for value in list(opportunity.get("unknowns") or [])
-            if _brief_fragment(value)
+            if _brief_fragment(str(value or "").replace("_", " "))
         ]
         blocking_constraints = [
             _brief_fragment(value)
@@ -1805,7 +1805,9 @@ class FlipLinkPacketService:
         if has_confidence:
             opportunity_brief_lines.append(f"**Confidence:** {confidence_percent}%")
         if predicted_reaction:
-            opportunity_brief_lines.extend(("", f"{predicted_reaction}."))
+            opportunity_brief_lines.extend(
+                ("", f"**Predicted reaction:** {predicted_reaction}.")
+            )
         opportunity_brief_lines.extend(("", "## Why it fits"))
         opportunity_brief_lines.extend(
             f"- {reason}" for reason in match_reasons[:5]
