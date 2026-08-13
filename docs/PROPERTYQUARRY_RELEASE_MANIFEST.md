@@ -57,7 +57,7 @@ The marked JSON object is the single canonical release authority consumed by the
   "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
   "release_commit_sha": "8d962091570819c4746b6c6c2816642dde5f1c6c",
   "release_deployment_id": "propertyquarry-governed-deploy-8d9620915708",
-  "release_generated_at": "2026-08-13T03:49:09Z",
+  "release_generated_at": "2026-08-13T03:51:06Z",
   "release_label": "propertyquarry-source-browser-candidate-8d9620915708",
   "release_manifest_schema": "propertyquarry.release_manifest.v1",
   "release_product": "PropertyQuarry",
