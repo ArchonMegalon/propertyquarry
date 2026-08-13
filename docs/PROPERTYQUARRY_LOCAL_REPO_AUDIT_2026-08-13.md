@@ -225,7 +225,8 @@ long-running launch goal complete.
 - Suggestion: Either merge or fast-forward `main` to the integration
   envelope, or update the role policy to the real release branch. Do not
   leave `main` as a 306-commit-stale authority label.
-- Status: open
+- Status: repaired; protected-branch PR #4 merged the integration history into
+  `main` at `bbef2d6fec67722d559df4ee2cda1e093d714a17`
 
 ### Issue 13 -- Severity: suggestion
 
@@ -276,7 +277,9 @@ long-running launch goal complete.
   receipt is not evidence for this candidate.
 - Suggestion: Regenerate it against the current image IDs, or stop
   treating the July file as current.
-- Status: open
+- Status: repaired; regenerated at `2026-08-13T06:23:06Z` with `status=pass`,
+  zero failures, source candidate `290e4e7e...`, and current web image
+  `sha256:7aa1390f...` bound in the receipt
 
 ### Issue 17 -- Severity: nit
 
