@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 09:34 CEST
+Updated: 2026-08-13 09:40 CEST
 
 ## Mission
 
@@ -17,6 +17,40 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 live external billing and FlipLink candidate proof
+
+The unified live-authority probe now distinguishes EA-wide credential
+inventory from a usable, principal-authorized PropertyQuarry integration. No
+credential value leaves its source runtime, and cross-principal reuse is
+explicitly forbidden.
+
+At `2026-08-13T07:40:44Z`, EA's live runtime contained a PayPal client pair and
+account identity, so the probe performed real client-credentials requests
+inside `ea-api`. PayPal's live token endpoint returned HTTP 401, while its
+sandbox token endpoint returned HTTP 200 and issued a token. The authenticated
+sandbox webhook-list call also returned HTTP 200 with zero configured webhooks.
+This classifies the pair precisely: it is a usable sandbox credential stored
+behind a live-default configuration, not a usable PropertyQuarry production
+billing credential. No checkout was enabled.
+
+EA also contained one PayFunnels webhook secret, but no PayFunnels API key and
+no Plus or Agent checkout URL. That is insufficient to create either paid-plan
+checkout. The only external FlipLink value was
+`EA_MEMORIAL_FLIPLINK_WEBHOOK_SECRET`; there were zero PropertyQuarry-scoped
+FlipLink fields. The Memorial-scoped value must not be copied into
+PropertyQuarry. Billing therefore remains disabled and fail closed, while
+customer packets remain honestly `local_only` and `not_published`.
+
+Private receipt
+`state/qa/propertyquarry-live-external-authority-20260813-v4.json` is mode
+`0600`, has SHA-256
+`b1e58b2992c616a1fadf1061544dbcca7d2fe2d904d441a96ac06020e3bf0d08`,
+and records `secret_values_recorded=false`. The focused and adjacent live-ops
+and DR suites pass `111/111`. A later credential repair still requires a fresh
+live provider call plus the exact same-principal billing canary authority before
+checkout can be enabled; mere environment presence is deliberately
+insufficient.
 
 ## 2026-08-13 attested PostgreSQL client and live archive proof
 
