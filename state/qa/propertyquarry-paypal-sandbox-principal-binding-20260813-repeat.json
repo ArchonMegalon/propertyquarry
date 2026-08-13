@@ -1,0 +1,45 @@
+{
+  "api_environment": "sandbox",
+  "approval_attempted": false,
+  "capture_attempted": false,
+  "entitlement_mutated": false,
+  "observed_at": "2026-08-13T08:22:43Z",
+  "plans": [
+    {
+      "amount_eur": "99.00",
+      "approval_link_present": true,
+      "create_http_status": 200,
+      "create_payload_verified": true,
+      "currency": "EUR",
+      "idempotency_key_sha256": "a3ccb58f7ba36bd7d53d34c0e3277bbdcca42c1bc21b2533e2802f924e4e5eef",
+      "order_reference_sha256": "c9b90f0070f01ced66e0e6f2d95462c4211e92f8b2f316c1e6d18ebd4f6bc672",
+      "plan_key": "agent",
+      "provider_status": "CREATED",
+      "read_http_status": 200,
+      "readback_verified": true
+    },
+    {
+      "amount_eur": "3.00",
+      "approval_link_present": true,
+      "create_http_status": 200,
+      "create_payload_verified": true,
+      "currency": "EUR",
+      "idempotency_key_sha256": "ae8cec13bf875d32ef3cb2ba293a8eafc5d08acdb7aaa0c901899433def26329",
+      "order_reference_sha256": "6964a6e3b06a07689679a3625340e318c221f5b0196a9daa87613c85f667f422",
+      "plan_key": "plus",
+      "provider_status": "CREATED",
+      "read_http_status": 200,
+      "readback_verified": true
+    }
+  ],
+  "principal_sha256": "372869f0cb3a6002068edea4a1317efea1a4605b478505c94617a95b46d957c4",
+  "production_billing_enabled": false,
+  "provider": "paypal",
+  "schema": "propertyquarry.paypal_sandbox_canary.v1",
+  "secret_values_recorded": false,
+  "state": "sandbox_orders_verified",
+  "status": "pass",
+  "synthetic_principal": true,
+  "token_http_status": 200,
+  "webhook_claimed": false
+}

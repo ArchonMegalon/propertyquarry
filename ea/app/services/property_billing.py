@@ -32,6 +32,8 @@ _PAYPAL_API_BASES = {
     "https://api-m.paypal.com": "live",
     "https://api-m.sandbox.paypal.com": "sandbox",
 }
+_PAYPAL_CURRENCY = "EUR"
+_PAYPAL_ORDER_BINDING_VERSION = "v1"
 
 _PROPERTY_FURNITURE_STYLE_LIMIT_BY_PLAN = {
     "free": 5,
@@ -1168,6 +1170,116 @@ def _paypal_access_token() -> str:
     return token
 
 
+def _paypal_principal_binding(*, principal_id: str, plan_key: str) -> str:
+    normalized_principal = str(principal_id or "").strip()
+    if not normalized_principal:
+        raise RuntimeError("paypal_principal_required")
+    spec = property_plan_spec(plan_key)
+    if spec.plan_key == "free":
+        raise RuntimeError("property_plan_free_does_not_require_checkout")
+    principal_sha256 = hashlib.sha256(normalized_principal.encode("utf-8")).hexdigest()
+    return ":".join(
+        (
+            "propertyquarry",
+            _PAYPAL_ORDER_BINDING_VERSION,
+            spec.plan_key,
+            principal_sha256,
+        )
+    )
+
+
+def _paypal_order_request_id(*, operation: str, order_id: str) -> str:
+    normalized_operation = str(operation or "").strip().lower()
+    normalized_order_id = str(order_id or "").strip()
+    digest = hashlib.sha256(
+        f"propertyquarry:{normalized_operation}:{normalized_order_id}".encode("utf-8")
+    ).hexdigest()[:32]
+    return f"propertyquarry-{normalized_operation}-{digest}"
+
+
+def _paypal_validate_order_contract(
+    body: object,
+    *,
+    order_id: str,
+    principal_id: str,
+    plan_key: str,
+    require_completed_capture: bool,
+) -> dict[str, object]:
+    if not isinstance(body, dict):
+        raise RuntimeError("paypal_order_contract_invalid")
+    normalized_order_id = str(order_id or "").strip()
+    provider_order_id = str(body.get("id") or "").strip()
+    if not provider_order_id or not hmac.compare_digest(provider_order_id, normalized_order_id):
+        raise RuntimeError("paypal_order_id_mismatch")
+
+    spec = property_plan_spec(plan_key)
+    purchase_units = list(body.get("purchase_units") or [])
+    if len(purchase_units) != 1 or not isinstance(purchase_units[0], dict):
+        raise RuntimeError("paypal_order_contract_invalid")
+    purchase_unit = dict(purchase_units[0])
+    expected_reference = f"propertyquarry-{spec.plan_key}"
+    reference_id = str(purchase_unit.get("reference_id") or "").strip()
+    if not hmac.compare_digest(reference_id, expected_reference):
+        raise RuntimeError("paypal_order_plan_mismatch")
+    expected_binding = _paypal_principal_binding(
+        principal_id=principal_id,
+        plan_key=spec.plan_key,
+    )
+    custom_id = str(purchase_unit.get("custom_id") or "").strip()
+    if not hmac.compare_digest(custom_id, expected_binding):
+        raise RuntimeError("paypal_order_principal_mismatch")
+    amount = dict(purchase_unit.get("amount") or {})
+    if (
+        str(amount.get("currency_code") or "").strip().upper() != _PAYPAL_CURRENCY
+        or str(amount.get("value") or "").strip() != spec.amount_eur
+    ):
+        raise RuntimeError("paypal_order_amount_mismatch")
+
+    order_status = str(body.get("status") or "").strip().lower()
+    if not require_completed_capture:
+        return {
+            "order_id": provider_order_id,
+            "order_status": order_status,
+            "plan_key": spec.plan_key,
+            "amount_eur": spec.amount_eur,
+            "currency": _PAYPAL_CURRENCY,
+        }
+    if order_status != "completed":
+        raise RuntimeError("paypal_order_capture_not_completed")
+
+    payments = dict(purchase_unit.get("payments") or {})
+    captures = list(payments.get("captures") or [])
+    if len(captures) != 1 or not isinstance(captures[0], dict):
+        raise RuntimeError("paypal_order_capture_invalid")
+    capture = dict(captures[0])
+    capture_id = str(capture.get("id") or "").strip()
+    capture_status = str(capture.get("status") or "").strip().lower()
+    capture_amount = dict(capture.get("amount") or {})
+    if not capture_id or capture_status != "completed":
+        raise RuntimeError("paypal_order_capture_not_completed")
+    if (
+        str(capture_amount.get("currency_code") or "").strip().upper() != _PAYPAL_CURRENCY
+        or str(capture_amount.get("value") or "").strip() != spec.amount_eur
+    ):
+        raise RuntimeError("paypal_order_capture_amount_mismatch")
+    captured_at = _parse_iso(capture.get("create_time") or body.get("update_time")) or _now()
+    payer_email = str(dict(body.get("payer") or {}).get("email_address") or "").strip()
+    return {
+        "order_id": provider_order_id,
+        "capture_id": capture_id,
+        "payment_status": capture_status,
+        "payer_email": payer_email,
+        "amount_eur": spec.amount_eur,
+        "currency": _PAYPAL_CURRENCY,
+        "plan_key": spec.plan_key,
+        "captured_at": captured_at.isoformat(),
+        "active_until": paid_plan_expiry(
+            plan_key=spec.plan_key,
+            captured_at=captured_at,
+        ),
+    }
+
+
 def create_paypal_property_order(
     *,
     principal_id: str,
@@ -1178,6 +1290,10 @@ def create_paypal_property_order(
     spec = property_plan_spec(plan_key)
     if spec.plan_key == "free":
         raise RuntimeError("property_plan_free_does_not_require_checkout")
+    principal_binding = _paypal_principal_binding(
+        principal_id=principal_id,
+        plan_key=spec.plan_key,
+    )
     token = _paypal_access_token()
     payload = {
         "intent": "CAPTURE",
@@ -1185,9 +1301,9 @@ def create_paypal_property_order(
             {
                 "reference_id": f"propertyquarry-{spec.plan_key}",
                 "description": f"PropertyQuarry {spec.display_name} 30-day pass",
-                "custom_id": f"{principal_id}:{spec.plan_key}",
+                "custom_id": principal_binding,
                 "amount": {
-                    "currency_code": "EUR",
+                    "currency_code": _PAYPAL_CURRENCY,
                     "value": spec.amount_eur,
                 },
             }
@@ -1229,46 +1345,75 @@ def create_paypal_property_order(
     }
 
 
-def capture_paypal_property_order(*, order_id: str) -> dict[str, object]:
+def capture_paypal_property_order(
+    *,
+    order_id: str,
+    principal_id: str,
+    plan_key: str,
+) -> dict[str, object]:
     normalized_order_id = str(order_id or "").strip()
     if not normalized_order_id:
         raise RuntimeError("paypal_order_id_required")
+    spec = property_plan_spec(plan_key)
+    if spec.plan_key == "free":
+        raise RuntimeError("property_plan_free_does_not_require_checkout")
     token = _paypal_access_token()
+    order_response = requests.get(
+        f"{_paypal_api_base()}/v2/checkout/orders/{normalized_order_id}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        },
+        timeout=30,
+    )
+    if order_response.status_code >= 400:
+        raise RuntimeError(f"paypal_order_read_failed:{order_response.status_code}")
+    order_body = order_response.json()
+    preflight = _paypal_validate_order_contract(
+        order_body,
+        order_id=normalized_order_id,
+        principal_id=principal_id,
+        plan_key=spec.plan_key,
+        require_completed_capture=False,
+    )
+    order_status = str(preflight.get("order_status") or "").strip().lower()
+    if order_status == "completed":
+        replayed = _paypal_validate_order_contract(
+            order_body,
+            order_id=normalized_order_id,
+            principal_id=principal_id,
+            plan_key=spec.plan_key,
+            require_completed_capture=True,
+        )
+        replayed["replayed"] = True
+        return replayed
+    if order_status != "approved":
+        raise RuntimeError("paypal_order_not_approved")
     response = requests.post(
         f"{_paypal_api_base()}/v2/checkout/orders/{normalized_order_id}/capture",
         headers={
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "PayPal-Request-Id": _paypal_order_request_id(
+                operation="capture",
+                order_id=normalized_order_id,
+            ),
         },
+        json={},
         timeout=30,
     )
     if response.status_code >= 400:
         raise RuntimeError(f"paypal_order_capture_failed:{response.status_code}")
-    body = response.json()
-    captures = (
-        body.get("purchase_units", [{}])[0].get("payments", {}).get("captures", [])
-        if isinstance(body, dict)
-        else []
+    captured = _paypal_validate_order_contract(
+        response.json(),
+        order_id=normalized_order_id,
+        principal_id=principal_id,
+        plan_key=spec.plan_key,
+        require_completed_capture=True,
     )
-    capture_id = ""
-    payment_status = str(body.get("status") or "").strip()
-    amount_eur = ""
-    if captures:
-        first_capture = dict(captures[0] or {})
-        capture_id = str(first_capture.get("id") or "").strip()
-        payment_status = str(first_capture.get("status") or payment_status).strip()
-        amount = dict(first_capture.get("amount") or {})
-        amount_eur = str(amount.get("value") or "").strip()
-    payer_email = str(dict(body.get("payer") or {}).get("email_address") or "").strip()
-    return {
-        "order_id": normalized_order_id,
-        "capture_id": capture_id,
-        "payment_status": payment_status.lower(),
-        "payer_email": payer_email,
-        "amount_eur": amount_eur,
-        "raw": body,
-    }
+    captured["replayed"] = False
+    return captured
 
 
 def paid_plan_expiry(*, plan_key: str, captured_at: datetime | None = None) -> str:

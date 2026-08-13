@@ -96,6 +96,7 @@ from app.services.property_billing import (
     create_paypal_property_order,
     enforce_property_plan_limits,
     merge_property_commercial,
+    normalize_property_commercial,
     paid_plan_expiry,
     property_billing_event_updates,
     payfunnels_configured,
@@ -1946,13 +1947,49 @@ def capture_property_billing_order(
         raise HTTPException(status_code=400, detail="property_plan_free_does_not_require_checkout")
     if not paypal_configured():
         raise HTTPException(status_code=409, detail="paypal_not_configured")
+    preferences = _property_preferences(container, principal_id=context.principal_id)
+    commercial = normalize_property_commercial(
+        dict(preferences.get("property_commercial") or {})
+    )
+    normalized_order_id = str(body.order_id or "").strip()
+    pending_order_id = str(commercial.get("pending_order_id") or "").strip()
+    pending_plan_key = str(commercial.get("pending_plan_key") or "").strip().lower()
+    if not pending_order_id or pending_order_id != normalized_order_id:
+        completed_replay = bool(
+            str(commercial.get("last_order_id") or "").strip() == normalized_order_id
+            and str(commercial.get("active_plan_key") or "").strip().lower() == spec.plan_key
+            and str(commercial.get("last_capture_id") or "").strip()
+            and str(commercial.get("last_payment_status") or "").strip().lower() == "completed"
+        )
+        if completed_replay:
+            return PropertyBillingCaptureOut(
+                generated_at=now_iso(),
+                order_id=normalized_order_id,
+                plan_key=spec.plan_key,
+                capture_id=str(commercial.get("last_capture_id") or "").strip(),
+                payment_status="completed",
+                payer_email=str(commercial.get("last_payer_email") or "").strip(),
+                amount_eur=str(commercial.get("last_payment_amount_eur") or spec.amount_eur),
+                active_until=str(commercial.get("active_until") or "").strip(),
+                current_plan_key=spec.plan_key,
+            )
+        raise HTTPException(status_code=409, detail="paypal_pending_order_mismatch")
+    if pending_plan_key != spec.plan_key:
+        raise HTTPException(status_code=409, detail="paypal_pending_plan_mismatch")
     try:
-        captured = capture_paypal_property_order(order_id=body.order_id)
+        captured = capture_paypal_property_order(
+            order_id=normalized_order_id,
+            principal_id=context.principal_id,
+            plan_key=spec.plan_key,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    active_until = paid_plan_expiry(plan_key=spec.plan_key)
+    active_until = str(captured.get("active_until") or "").strip() or paid_plan_expiry(
+        plan_key=spec.plan_key
+    )
+    captured_at = str(captured.get("captured_at") or "").strip() or now_iso()
     updated = merge_property_commercial(
-        _property_preferences(container, principal_id=context.principal_id),
+        preferences,
         updates={
             "active_plan_key": spec.plan_key,
             "status": "active",
@@ -1962,7 +1999,7 @@ def capture_property_billing_order(
             "last_payment_status": str(captured.get("payment_status") or ""),
             "last_payment_amount_eur": str(captured.get("amount_eur") or spec.amount_eur),
             "last_payer_email": str(captured.get("payer_email") or ""),
-            "captured_at": now_iso(),
+            "captured_at": captured_at,
             "pending_order_id": "",
             "pending_plan_key": "",
             "pending_approval_url": "",
