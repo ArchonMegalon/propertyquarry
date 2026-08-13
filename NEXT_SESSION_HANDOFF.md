@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 09:04 CEST
+Updated: 2026-08-13 09:09 CEST
 
 ## Mission
 
@@ -77,15 +77,17 @@ separated; do not copy worker credentials into the API. Receipt
 `state/qa/propertyquarry-live-ltd-cover-290e4e7e-20260813.json` has SHA-256
 `9e54ea776295a37feba859ae8e921113e139bcb0eee4f85fbc1e4eb75b7a09e1`.
 
-No source repair was required by these fresh proofs. The remaining gates are
-external and unchanged: a physical Android callback/redeem/Search pass on this
-exact web candidate; 11 additional distinct real Play testers plus 14 continuous
-days and explicit production-launch authority; dedicated same-principal Live
-billing credentials and admission; real external FlipLink credentials,
-privacy/export approval, publication, and read-back (or continued honest
-`local_only` behavior); and an approved encryption recipient, scoped off-host
-identity, immutable target, exact-version read-back, and disposable restore
-proof. Do not mark the long-running goal complete while any gate remains.
+No source repair was required by these fresh proofs. A read-only Play Console
+check at `2026-08-13T07:09:09Z` shows Closed testing still active and Production
+inactive, with `6/12` testers currently opted in. The remaining gates are a
+physical Android callback/redeem/Search pass on this exact web candidate; 6
+additional distinct real Play testers plus the 14-day rule and explicit
+production-launch authority; dedicated same-principal Live billing credentials
+and admission; real external FlipLink credentials, privacy/export approval,
+publication, and read-back (or continued honest `local_only` behavior); and an
+approved encryption recipient, scoped off-host identity, immutable target,
+exact-version read-back, and disposable restore proof. Do not mark the
+long-running goal complete while any gate remains.
 
 ## 2026-08-13 audit closure, canonical-main merge, and live deployment
 
