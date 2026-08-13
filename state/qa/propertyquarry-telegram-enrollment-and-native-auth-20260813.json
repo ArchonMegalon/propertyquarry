@@ -1,0 +1,68 @@
+{
+  "candidate": {
+    "api_container": "propertyquarry-api",
+    "image_digest": "sha256:7aa1390f615193eafefd52a2f2a6f217ce193ba35427a75c6be2bd1f6089cb53",
+    "release_sha": "290e4e7efb473f0602ab29f2a34e85c616e3e331",
+    "window_start": "2026-08-13T06:22:30Z"
+  },
+  "native_auth_observation": {
+    "allowlisted_fields_only": true,
+    "first_allowlisted_event_at": "2026-08-13T06:22:52.719557924Z",
+    "interpretation": "No installed-app authentication attempt reached the exact-candidate API during the observed window; this is not evidence of a failed redeem.",
+    "last_allowlisted_event_at": "2026-08-13T06:46:55.426449043Z",
+    "native_attempt_observed": false,
+    "observed_at": "2026-08-13T08:11:33.025937Z",
+    "routes": {
+      "/app/search": {
+        "count": 63,
+        "statuses": {
+          "200": 49,
+          "303": 1,
+          "401": 13
+        }
+      },
+      "/google/callback": {
+        "count": 0,
+        "statuses": {}
+      },
+      "/mobile/auth/bridge": {
+        "count": 0,
+        "statuses": {}
+      },
+      "/mobile/auth/redeem": {
+        "count": 0,
+        "statuses": {}
+      },
+      "/mobile/runtime-contract": {
+        "count": 0,
+        "statuses": {}
+      },
+      "/sign-in/google": {
+        "count": 0,
+        "statuses": {}
+      }
+    },
+    "total_allowlisted_events": 63
+  },
+  "schema": "propertyquarry.telegram_enrollment_and_native_auth_observation.v1",
+  "secret_values_recorded": false,
+  "status": "telegram_delivered_native_attempt_not_observed",
+  "telegram_delivery": {
+    "bot_handle": "tibor_concierge_bot",
+    "bot_key": "default",
+    "chat_ref_sha256": "ce600202466351c6f33d3ee3a6e66551972cacab1864f045dbe6c9060096f5e2",
+    "delivered_at": "2026-08-13T08:11:07.933372Z",
+    "group_url": "https://groups.google.com/g/propertyquarry-austria-testers/about",
+    "line_breaks": "actual_newlines",
+    "message_ids": [
+      "5219"
+    ],
+    "message_sha256": "f06401ecb950be4b2b463a92bee011a4a4eb1cde96fafe5d91b7b15c8b7aa9a9",
+    "play_opt_in_url": "https://play.google.com/apps/testing/com.myexternalbrain.propertyquarry",
+    "principal_sha256": "3477cdab157537bd83c95a3c0b0e4883dbbfa65cefd31ab328c5a302fbf4a8bf",
+    "principal_source": "EA_DEFAULT_PRINCIPAL_ID",
+    "raw_chat_ref_recorded": false,
+    "raw_principal_recorded": false,
+    "transport": "telegram"
+  }
+}
