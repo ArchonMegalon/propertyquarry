@@ -68,13 +68,17 @@ def test_opportunity_brief_is_local_and_carries_decision_evidence(tmp_path: Path
         artifact_type="why_shortlisted",
         context_json={
             "title": "Quiet Vienna flat",
+            "property_url": "https://example.com/listings/quiet-vienna-flat?source=propertyquarry",
             "opportunity": {
                 "opportunity_id": "property_opportunity:test",
                 "fit_score": 88,
+                "confidence": 0.82,
                 "recommendation": "shortlist",
+                "predicted_reaction": "Strong initial fit, pending the cost check",
                 "match_reasons": ["The layout matches the three-room preference."],
                 "mismatch_reasons": ["The heating type is not confirmed."],
                 "unknowns": ["monthly operating costs."],
+                "blocking_constraints": ["Confirm financing before making an offer."],
             },
         },
     )
@@ -86,9 +90,46 @@ def test_opportunity_brief_is_local_and_carries_decision_evidence(tmp_path: Path
     assert artifact["external_publication_status"] == "not_published"
     assert artifact["external_publication_verified"] is False
     body = str(artifact["body_markdown"])
+    assert body.startswith("# Quiet Vienna flat\n")
+    assert "**Recommendation:** shortlist" in body
+    assert "**Preference fit:** 88/100" in body
+    assert "**Confidence:** 82%" in body
+    assert "Strong initial fit, pending the cost check." in body
+    assert "\n## Why it fits\n- " in body
     assert "The layout matches the three-room preference" in body
-    assert "Preference fit: 88/100" in body
-    assert "Recommendation: shortlist" in body
-    assert "Watch: The heating type is not confirmed" in body
+    assert "\n## Trade-offs\n- The heating type is not confirmed" in body
+    assert "\n## Blocking constraints\n- Confirm financing before making an offer" in body
     assert ".." not in body
-    assert "Verify next: monthly operating costs" in body
+    assert "\n## Verify next\n- monthly operating costs" in body
+    assert "[Open property](https://example.com/listings/quiet-vienna-flat?source=propertyquarry)" in body
+
+
+def test_opportunity_brief_sanitizes_untrusted_markdown_and_urls(tmp_path: Path) -> None:
+    client = property_client_with_workspace(principal_id="pq-opportunity-safety", tmp_path=tmp_path)
+    service = build_fliplink_packet_service(client.app.state.container)
+
+    artifact = service.generate_summary_artifact(
+        principal_id="pq-opportunity-safety",
+        subject_type="property",
+        subject_id="listing-opportunity-safety",
+        artifact_type="why_shortlisted",
+        context_json={
+            "title": "<script>alert(1)</script>",
+            "property_url": "javascript:alert(1)",
+            "opportunity": {
+                "opportunity_id": "property_opportunity:safety",
+                "fit_score": 0,
+                "confidence": 0,
+                "recommendation": "review",
+                "match_reasons": ["A [label](https://malicious.example) is not a link."],
+            },
+        },
+    )
+
+    body = str(artifact["body_markdown"])
+    assert "<script>" not in body
+    assert "javascript:" not in body
+    assert "[Open property]" not in body
+    assert "**Preference fit:** 0/100" in body
+    assert "**Confidence:** 0%" in body
+    assert r"\[label\]" in body

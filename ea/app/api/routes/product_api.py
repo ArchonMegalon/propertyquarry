@@ -2291,6 +2291,11 @@ def generate_property_opportunity_artifact(
             actor=actor,
             context_json={
                 "title": str(candidate.get("title") or "Property opportunity").strip(),
+                "property_url": str(
+                    candidate.get("property_url")
+                    or candidate.get("source_url")
+                    or ""
+                ).strip(),
                 "opportunity": opportunity,
             },
         )

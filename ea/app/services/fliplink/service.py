@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from app.container import AppContainer
@@ -1725,8 +1726,11 @@ class FlipLinkPacketService:
             if isinstance(context.get("opportunity"), dict)
             else {}
         )
-        def _brief_fragment(value: object) -> str:
-            return str(value or "").strip().rstrip(" .;:")
+        def _brief_fragment(value: object, *, limit: int = 320) -> str:
+            normalized = " ".join(str(value or "").split())[:limit].rstrip(" .;:")
+            for marker in ("\\", "`", "*", "_", "[", "]", "<", ">"):
+                normalized = normalized.replace(marker, f"\\{marker}")
+            return normalized
 
         match_reasons = [
             _brief_fragment(value)
@@ -1743,12 +1747,89 @@ class FlipLinkPacketService:
             for value in list(opportunity.get("unknowns") or [])
             if _brief_fragment(value)
         ]
+        blocking_constraints = [
+            _brief_fragment(value)
+            for value in list(opportunity.get("blocking_constraints") or [])
+            if _brief_fragment(value)
+        ]
+        predicted_reaction = _brief_fragment(
+            opportunity.get("predicted_reaction"),
+            limit=600,
+        )
         recommendation = str(opportunity.get("recommendation") or "").strip().replace("_", " ")
         opportunity_fit = opportunity.get("fit_score")
+        has_fit_score = opportunity_fit is not None and str(opportunity_fit).strip() != ""
         try:
             fit_score = max(0, min(100, round(float(opportunity_fit))))
         except (TypeError, ValueError):
             fit_score = 0
+            has_fit_score = False
+        opportunity_confidence = opportunity.get("confidence")
+        has_confidence = opportunity_confidence is not None and str(opportunity_confidence).strip() != ""
+        try:
+            confidence_value = float(opportunity_confidence)
+            if 0 <= confidence_value <= 1:
+                confidence_value *= 100
+            confidence_percent = max(0, min(100, round(confidence_value)))
+        except (TypeError, ValueError):
+            confidence_percent = 0
+            has_confidence = False
+        brief_title = _brief_fragment(context.get("title") or title, limit=160) or title
+        property_url = str(context.get("property_url") or "").strip()
+        try:
+            parsed_property_url = urlsplit(property_url)
+            parsed_property_url.port
+            valid_property_url = bool(
+                len(property_url) <= 2000
+                and parsed_property_url.scheme.lower() in {"https", "http"}
+                and parsed_property_url.hostname
+                and parsed_property_url.username is None
+                and parsed_property_url.password is None
+                and not any(character.isspace() for character in property_url)
+                and not any(character in property_url for character in "\\\"'<>`()[]")
+                and "%0a" not in property_url.lower()
+                and "%0d" not in property_url.lower()
+            )
+        except ValueError:
+            valid_property_url = False
+        if not valid_property_url:
+            property_url = ""
+
+        opportunity_brief_lines = [
+            f"# {brief_title}",
+            "",
+            f"**Recommendation:** {_brief_fragment(recommendation) or 'Review before deciding'}",
+        ]
+        if has_fit_score:
+            opportunity_brief_lines.append(f"**Preference fit:** {fit_score}/100")
+        if has_confidence:
+            opportunity_brief_lines.append(f"**Confidence:** {confidence_percent}%")
+        if predicted_reaction:
+            opportunity_brief_lines.extend(("", f"{predicted_reaction}."))
+        opportunity_brief_lines.extend(("", "## Why it fits"))
+        opportunity_brief_lines.extend(
+            f"- {reason}" for reason in match_reasons[:5]
+        )
+        if not match_reasons:
+            opportunity_brief_lines.append("- No preference matches recorded yet.")
+        opportunity_brief_lines.extend(("", "## Trade-offs"))
+        opportunity_brief_lines.extend(
+            f"- {reason}" for reason in mismatch_reasons[:5]
+        )
+        if not mismatch_reasons:
+            opportunity_brief_lines.append("- No trade-offs recorded yet.")
+        if blocking_constraints:
+            opportunity_brief_lines.extend(("", "## Blocking constraints"))
+            opportunity_brief_lines.extend(
+                f"- {constraint}" for constraint in blocking_constraints[:5]
+            )
+        opportunity_brief_lines.extend(("", "## Verify next"))
+        opportunity_brief_lines.extend(f"- {unknown}" for unknown in unknowns[:5])
+        if not unknowns:
+            opportunity_brief_lines.append("- No unresolved checks recorded yet.")
+        if property_url:
+            opportunity_brief_lines.extend(("", f"[Open property]({property_url})"))
+        opportunity_brief = "\n".join(opportunity_brief_lines)
         why_parts = [
             (
                 f"Why it fits: {'; '.join(match_reasons[:3])}."
@@ -1763,7 +1844,7 @@ class FlipLinkPacketService:
         contextual_why = " ".join(part for part in why_parts if part)
         contextual_tradeoffs = "; ".join((mismatch_reasons + unknowns)[:4])
         body = {
-            "why_shortlisted": contextual_why or f"This home is worth sharing now. Feedback so far: {summary.get('dealbreaker_count', 0)} dealbreakers, {summary.get('open_questions_count', 0)} open questions.",
+            "why_shortlisted": opportunity_brief if opportunity else contextual_why or f"This home is worth sharing now. Feedback so far: {summary.get('dealbreaker_count', 0)} dealbreakers, {summary.get('open_questions_count', 0)} open questions.",
             "tradeoff_summary": (
                 f"Main tradeoffs: {contextual_tradeoffs}."
                 if contextual_tradeoffs
