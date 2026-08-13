@@ -1649,12 +1649,12 @@
       const visualMediaReady = Boolean(String(candidate.floorplan_url || candidate.source_virtual_tour_url || candidate.vendor_tour_url || tour.provider_url || '').trim());
       return [
         candidate.packet_url ? `<a class="pqx-link-button primary" href="${escapeHtml(candidate.packet_url)}" data-rybbit-event="pq.property.opened" data-rybbit-prop-surface="shortlist">Open property</a>` : '',
-        `<button class="pqx-button" type="button" data-fliplink-packet data-candidate-ref="${candidateRef}" data-rybbit-event="pq.packet.shared" data-rybbit-prop-surface="shortlist">Share this home</button>`,
+        `<button class="pqx-button" type="button" data-fliplink-packet data-candidate-ref="${candidateRef}" data-rybbit-event="pq.packet.saved" data-rybbit-prop-surface="shortlist">Save review packet</button>`,
         `<details class="pqx-decision-advanced" style="margin-top:12px;"><summary><strong>More</strong></summary><div class="pqx-actions" style="margin-top:12px;">${[
           visualPropertyUrl ? `<a class="pqx-link-button" href="${escapeHtml(visualPropertyUrl)}" target="_blank" rel="noreferrer" data-rybbit-event="pq.property.opened" data-rybbit-prop-cta-key="open_listing" data-rybbit-prop-surface="shortlist">Open listing</a>` : '',
           !tour.url && visualMediaReady && visualPropertyUrl ? `<button class="pqx-button" type="button" data-pw-visual-request="tour" data-pw-visual-style-required="1" data-property-url="${escapeHtml(visualPropertyUrl)}" data-source-ref="${escapeHtml(candidate.source_ref || '')}" data-candidate-ref="${candidateRef}" data-run-id="${runId}" data-rybbit-event="pq.tour.opened" data-rybbit-prop-cta-key="request_tour" data-rybbit-prop-surface="shortlist">Request 3D tour</button>` : '',
           !tour.url && visualMediaReady && visualPropertyUrl ? `<button class="pqx-button" type="button" data-pw-visual-request="flythrough" data-pw-visual-style-required="1" data-pw-walkthrough-provider="default" data-property-url="${escapeHtml(visualPropertyUrl)}" data-source-ref="${escapeHtml(candidate.source_ref || '')}" data-candidate-ref="${candidateRef}" data-run-id="${runId}" data-rybbit-event="pq.flythrough.opened" data-rybbit-prop-cta-key="request_flythrough" data-rybbit-prop-surface="shortlist">Request walkthrough</button>` : '',
-          `<button class="pqx-button" type="button" data-fliplink-shortlist-share data-rybbit-event="pq.packet.shared" data-rybbit-prop-surface="shortlist">Share results</button>`,
+          `<button class="pqx-button" type="button" data-fliplink-shortlist-share data-rybbit-event="pq.packet.saved" data-rybbit-prop-surface="shortlist">Save shortlist packet</button>`,
         ].filter(Boolean).join('')}</div><div class="pqx-decision-status" data-pw-visual-request-status hidden></div></details>`,
       ].filter(Boolean).join('');
     };
@@ -1837,7 +1837,7 @@
         ...selectedCandidate,
         title,
         property_title: title,
-        summary: `Shareable shortlist from PropertyQuarry with ${shareRows.length} matching homes.`,
+        summary: `Local review shortlist from PropertyQuarry with ${shareRows.length} matching homes.`,
         fit_summary: summarizeCandidateCopy(
           selectedCandidate.fit_summary
           || selectedCandidate.summary
@@ -1848,7 +1848,7 @@
         comparison_rows: shareRows,
         review_url: absoluteUrl(window.location.href),
         map_url: absoluteUrl(selectedCandidate.map_url || ''),
-        next_action: 'Open the shared shortlist and review the top homes first.',
+        next_action: 'Open the saved shortlist packet and review the top homes first.',
       };
     };
     const counterfactualApplyLabel = (_adjustments) => 'Applying broader search...';
@@ -2125,10 +2125,10 @@
     };
     const createFlipLinkPacket = async (candidate, button) => {
       if (!candidate) return;
-      const original = button?.textContent || 'Create share review';
+      const original = button?.textContent || 'Save review packet';
       if (button) {
         button.disabled = true;
-        button.textContent = 'Creating share review...';
+        button.textContent = 'Saving review packet...';
       }
       try {
         const response = await fetch(`/app/api/properties/${encodeURIComponent(candidatePropertyRef(candidate))}/packets/render`, {
@@ -2143,7 +2143,7 @@
           }),
         });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(readableErrorDetail(payload.detail || payload.error, 'Could not create the share review.'));
+        if (!response.ok) throw new Error(readableErrorDetail(payload.detail || payload.error, 'Could not save the review packet.'));
         window.location.href = '/app/properties/packets';
       } catch (error) {
         if (button) {
@@ -2156,10 +2156,10 @@
     const createShortlistSharePacket = async (button) => {
       const payload = shortlistSharePayload();
       if (!payload) return;
-      const original = button?.textContent || 'Share results';
+      const original = button?.textContent || 'Save shortlist packet';
       if (button) {
         button.disabled = true;
-        button.textContent = 'Creating shortlist...';
+        button.textContent = 'Saving shortlist packet...';
       }
       try {
         const response = await fetch(`/app/api/properties/${encodeURIComponent(candidatePropertyRef(payload))}/packets/render`, {
@@ -2174,7 +2174,7 @@
           }),
         });
         const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(readableErrorDetail(body.detail || body.error, 'Could not create the shared page.'));
+        if (!response.ok) throw new Error(readableErrorDetail(body.detail || body.error, 'Could not save the shortlist packet.'));
         window.location.href = '/app/properties/packets';
       } catch (error) {
         if (button) {

@@ -5,7 +5,7 @@
 - **Branch**: `integration/property-origin-main-20260728`
 - **Upstream**: `origin/integration/property-origin-main-20260728`
 - **HEAD**: `2c9df6c41f08d83570c01424f57591a27192b588` (`docs(release): record final property audit evidence`)
-- **Scope**: independent local audit of the checkout, git tree, host operator plane, and running runtime
+- **Scope**: independent local audit of the checkout, git tree, host operator plane, and running runtime. Extended the same day with implementation, design, product-function, and LTD-integration gaps.
 - **Not in scope**: GitHub PR review, public-launch authority, secret values, or a claim that this file makes production ready
 
 This document is operator evidence. It is not
@@ -60,6 +60,7 @@ long-running launch goal complete.
 | Envelope SHA | `4fb376e0e8113fe7383e765a6190b7b6aa902bb4` |
 | HEAD versus deploy | four later docs/chore commits, then dirty LTD edits |
 | Original issue counts | 4 bugs, 10 suggestions, 3 nits |
+| Extension issue counts | 2 design bugs, 6 design suggestions, 1 design nit; 1 implementation bug, 6 implementation suggestions, 1 implementation nit; 10 product/LTD opportunity suggestions, 1 opportunity nit |
 | Repaired in this pass | LTD evidence semantics, compile-time showcase identities, dump mode |
 
 ## Issues
@@ -319,3 +320,362 @@ long-running launch goal complete.
    images or the newest backup.
 4. Remove hardcoded showcase emails from `ea/app/product/service.py`.
 5. Keep the four public-launch blockers external and fail-closed.
+
+## Extension — implementation, design, and LTD opportunities
+
+Extended 2026-08-13 after comparing `LTDs.md`,
+`docs/PRODUCT_BRIEF.md`, `docs/ROADMAP.md`, `docs/PRICING.md`,
+`docs/PROPERTYQUARRY_WHOLE_PROJECT_SCOPE.md`,
+`docs/PROPERTY_INTEGRATION_GOVERNANCE.md`,
+`docs/propertyquarry_global_market_envelope.v1.json`, and the runtime
+catalog in `ea/app/services/ltd_runtime_catalog.py` plus the customer
+search, packet, billing, overlay, and integration code.
+
+This extension does not reopen the host-security issues above. It asks
+what the product is supposed to be, what the code actually does, and
+which owned lifetime tools are sitting unused on the PropertyQuarry
+customer path.
+
+### Extension verdict
+
+PropertyQuarry has a working Austria search-to-brief loop and one
+verified customer LTD (`1min.AI` cover generation). Around that core
+the design documents describe a larger product than the runtime sells,
+and the LTD inventory describes a larger operator toolkit than the
+customer ever sees.
+
+The important split is not “LTDs exist / LTDs missing”. It is:
+
+- **Design says one product.** The brief, roadmap, pricing page, whole-project scope, and market envelope disagree on geography, plans, billing owner, and gold.
+- **Implementation has contracts for a second product.** Governance lanes, overlay tables, FlipLink share buttons, and a 16-country catalog are present. Almost all of them are disabled, local-only, fixture-backed, or operator-only.
+- **LTDs are mostly EA/Chummer assets parked in this repo.** 58 products are tracked. The runtime catalog marks `discover_account` executable for every row. Only 1min has a PropertyQuarry customer-integration receipt.
+
+Do not promote catalog executability, BrowserAct templates, or disabled
+env flags into customer features. The highest-value unused LTD work is
+the short list that completes the current Austria decision loop:
+Emailit on `propertyquarry.com`, FlipLink family share, Rybbit/ClickRank
+for this domain, Lunacal/MetaSurvey around viewings, Unmixr audio from
+the existing brief, and Internxt as encrypted DR rather than a sync
+mount.
+
+### Design gaps
+
+#### Issue 18 -- Severity: bug
+
+- File: `docs/PRODUCT_BRIEF.md:78` versus `docs/ROADMAP.md:7` versus `ea/app/services/property_market_catalog.py:174`
+- Description: The product brief claims Austria, Germany, Switzerland, United Kingdom, Spain, Italy, France, Netherlands, and the United States as current flagship scope. The roadmap says Austria, Germany, and Costa Rica until those markets are reliable. The market envelope is an English-only invite-only private beta for AT/DE/CR and explicitly excludes a fully localized global product. The customer search allowlist is only `AT`, `DE`, `CR`. The same catalog still defines 16 countries including Belgium, Canada, Switzerland, Ireland, UK, Australia, Spain, Italy, France, Netherlands, Portugal, Poland, Sweden, and the United States. Costa Rica is in the customer allowlist but the envelope marks it browser-state-only, not a live provider journey.
+- Suggestion: Pick one geography contract. Keep the 16-country table as a future catalog if wanted, but stop selling or documenting markets that customers cannot select. Either drop CR from the customer picker until live providers exist, or promote it with the same proof AT already has.
+- Status: open
+
+#### Issue 19 -- Severity: bug
+
+- File: `docs/PRICING.md:8` versus `ea/app/product/commercial.py:35` versus `ea/app/product/service.py:2941`
+- Description: Customer pricing is Free / Plus (3 EUR) / Agent. Search and tour code enforce `free` / `plus` / `agent` (concurrent-search caps 1 / 2 / 4 in `property_surface_state.py:2347`). `commercial.py` still defines a different inherited model: Pilot / Core / Concierge with seats, messaging flags, and `/app/settings/plan`. ROADMAP still talks about Brilliant Directories as the billing skin. LTD and Compose treat PayFunnels as preferred and PayPal as fallback, both currently unconfigured. Testers see a fail-closed HTTP 503 billing page while docs and plan objects describe three different commercial products.
+- Suggestion: Delete or quarantine the Pilot/Core/Concierge workspace plan from the PropertyQuarry customer path. Make Free/Plus/Agent the only customer plan vocabulary in code, pricing, and billing copy. Treat Brilliant Directories as a later directory lane, not as billing truth.
+- Status: open
+
+#### Issue 20 -- Severity: suggestion
+
+- File: `docs/PRICING.md:13` versus `docs/ROADMAP.md:26`
+- Description: Pricing says Free gets “1 to 2 high-level matches” and “shallow summary only”. The roadmap says every tier shows all available results ranked and that score is not a hide filter. The live Austria run persists 10 ranked candidates with opportunity briefs. Those three statements cannot all be true.
+- Suggestion: Keep the roadmap ranking rule. Change pricing copy so Free limits reruns, alerts, research depth, and share/publication, not the number of ranked homes. If a Free cap is still wanted, implement it as an honest “showing 2 of N” control, not as silent truncation.
+- Status: open
+
+#### Issue 21 -- Severity: suggestion
+
+- File: `ea/app/services/ltd_runtime_catalog.py:364`
+- Description: Every LTD row gets an `discover_account` action with `executable=True`. Crezlo also gets `create_property_tour` with `executable=True` (`ltd_runtime_catalog.py:421`) even though `LTDs.md` says there is no principal-bound live completion receipt. FlipLink’s publish action is correctly `executable=False`, but the customer UI still says “Share this home”. The catalog therefore over-claims what a principal can actually run.
+- Suggestion: Mark `discover_account` executable only when a BrowserAct binding exists for that principal and service. Mark Crezlo executable only after a customer-visible completion receipt. Keep FlipLink non-executable until credentials exist, and change the button label to “Create local packet” until then.
+- Status: open
+
+#### Issue 22 -- Severity: suggestion
+
+- File: `docs/PROPERTYQUARRY_WHOLE_PROJECT_SCOPE.md:9`
+- Description: Whole-project gold requires canonical property identity, listing instances, claim-level evidence, change intelligence, viewing and offer capture, eight evidence overlays with Teable ingestion, Rybbit dashboard receipts, WCAG/visual CI, and Brilliant Directories as a non-authoritative handoff. The current shipped loop is still run-centric: search run, shortlist, research page, local brief, optional 1min cover, hosted Karl tour. The gold board is being used as if it were the current product definition.
+- Suggestion: Split “Austria closed-test product” from “whole-project gold”. Keep gold as a backlog with fail-closed posture. Do not let overlay, directory, or change-intelligence work block the current search/brief/tour loop.
+- Status: open
+
+#### Issue 23 -- Severity: suggestion
+
+- File: `docs/propertyquarry_global_market_envelope.v1.json:6`
+- Description: The envelope is bound to candidate `fa7d2194` on 2026-07-19. Current HEAD is `2c9df6c4` and the deployed runtime is `0a44ea20`. AT content-locale, address, currency, WCAG, Firefox/Safari app, SEO hreflang, Core Web Vitals, provider-rights, and live-provider-e2e dimensions are `implemented_unproven`, `missing`, or `external_blocked`. CR evidence is a stale-terminal zero-result browser reconciliation, not a live Costa Rica search. The file still shapes release language.
+- Suggestion: Rebind or retire the envelope against the current candidate. Keep AT as private-beta. Label CR `catalog_only` until a live provider receipt exists.
+- Status: open
+
+#### Issue 24 -- Severity: suggestion
+
+- File: `docs/ROADMAP.md:113` versus `docs/PROPERTY_INTEGRATION_GOVERNANCE.md:1`
+- Description: ROADMAP wants Brilliant Directories visually skinned as `billing.propertyquarry.com`. Integration governance and `LTDs.md` forbid Brilliant Directories from owning billing, entitlements, ranking, or publication. The runtime lane is `directory_projection_disabled`. Two designs are still in the tree.
+- Suggestion: Strike Brilliant Directories from billing design. Keep PayFunnels/PayPal as the only checkout design. Leave Brilliant Directories as an optional public partner/agent directory after rights review.
+- Status: open
+
+#### Issue 25 -- Severity: nit
+
+- File: `docs/propertyquarry_global_market_envelope.v1.json:95`
+- Description: The accessibility gate is documented as a contract whose “tri-engine test collection is fake” and that has no NVDA/JAWS/VoiceOver/TalkBack receipts. Dark mode exists only on admin content-studio templates, not on the customer workbench. ROADMAP requires dark mode on every surface.
+- Suggestion: Either add a real customer dark theme and assistive-technology receipts, or remove dark mode and WCAG-certified language from gold claims.
+- Status: open
+
+### Implementation gaps
+
+#### Issue 26 -- Severity: bug (repaired)
+
+- File: `ea/app/templates/app/_property_workbench_script.html:2126`
+- Description: “Share this home” and “Share results” POSTed a FlipLink-shaped packet (`fliplink_format: 'flipbook_3d'`) even though the deployed API has no FlipLink login, webhook, domain, or publication row. Packets stay `local_only` / `not_published`. The actions now say “Save review packet” and “Save shortlist packet”, their progress/error text is local, and their analytics event is `pq.packet.saved`.
+- Suggestion: Keep FlipLink external publication disabled until the account, redaction, and first public read-back exist.
+- Status: repaired with a focused customer-copy contract test; external FlipLink remains honestly unconfigured
+
+#### Issue 27 -- Severity: suggestion
+
+- File: `ea/app/product/property_search_schema.py:429`
+- Description: Evidence overlay rollup and snapshot tables exist. The workbench already renders unavailable/stale/verified states for environment, heat, traffic, mobility, school, safety, media, and fiber. Whole-project gold says launch proof comes only from `scripts/property_evidence_overlay_read_model.py` through authenticated Teable tables. Teable remains an operator projection (`LTDs.md` Tier 2, not a PropertyQuarry customer integration). Live overlay cards will stay “Not yet” or will look verified from thin local facts.
+- Suggestion: Keep the UI honest: default every overlay to unavailable until a current-candidate Teable-backed receipt exists. Do not treat OSM hints or listing adjectives as verified heat/fiber/safety.
+- Status: open
+
+#### Issue 28 -- Severity: suggestion
+
+- File: `ea/app/services/property_integration_governance.py:61`
+- Description: The priority integration lanes are all disabled: MetaSurvey and Lunacal `integrate_next_disabled`, ApiX-Drive `agent_beta_disabled`, Invoiless `commercial_ops_disabled`, Documentation.AI `docs_publishing_disabled`, Internxt `backup_pilot_disabled`, ApproveThis `agent_plan_pilot_disabled`, Unmixr `optional_prototype_disabled`, Brilliant Directories `directory_projection_disabled`, Sendr `outreach_lane_disabled`. The decision-state machine already knows `viewing_requested` and `offer_candidate`. Customers cannot schedule a viewing, send a post-viewing survey, export to a CRM, or get an invoice from those owned tools.
+- Suggestion: Implement Lunacal and MetaSurvey next if the product is a decision loop. Leave Sendr, ApproveThis, and ApiX-Drive until Agent billing is real.
+- Status: open
+
+#### Issue 29 -- Severity: suggestion
+
+- File: `ea/app/product/property_onemin_evaluation.py:47`
+- Description: 1min already has two PropertyQuarry code paths. Cover generation is the verified customer integration. `PROPERTYQUARRY_ONEMIN_EVALUATION_ENABLED` defaults to false, so the 1min code-evaluate / Google-Maps OODA lane does not run. 70 worker slots exist; 45 were depleted and only 2 were composite-ready on 2026-08-12. The LTD catalog also advertises background-remove and upscale tools that the customer product never calls.
+- Suggestion: Keep cover generation as the only customer 1min action until slot health is better. Do not enable evaluation or image mutation on listing photos without a rights and privacy receipt. If evaluation is useful, turn it on for Agent only and bound it to missing-fact questions, not a second ranking brain.
+- Status: open
+
+#### Issue 30 -- Severity: suggestion
+
+- File: `README.md:32` versus `LTDs.md:21`
+- Description: Emailit is workspace Tier 1, but the live proof is `chummer.run` sender-domain wiring. PropertyQuarry Compose and `.env.example` want `property@propertyquarry.com`. README still says the sender domain must be verified before that address can deliver. Saved-search alerts, registration mail, and billing mail therefore depend on a domain that is not the Emailit proof in `LTDs.md`. Heyy WhatsApp already has product routes and opt-out/budget guards, but Heyy is not in `LTDs.md` at all.
+- Suggestion: Verify Emailit for `propertyquarry.com` or stop calling Emailit a PropertyQuarry Tier 1. Add Heyy to the LTD inventory with an honest integration tier. Do not promise recurring alerts until one customer delivery lane is proven on this domain.
+- Status: open
+
+#### Issue 31 -- Severity: suggestion
+
+- File: `ea/app/services/public_clickrank.py:12` versus `LTDs.md:123`
+- Description: ClickRank is live for `chummer.run` and `myexternalbrain.com`. The PropertyQuarry helper has a dedicated `CLICKRANK_AI_PROPERTYQUARRY_SITE_ID` slot and only allows public marketing paths. `.env.example` leaves that site ID empty. Rybbit has site id `10315` in the example file and is disabled by default (`PROPERTYQUARRY_RYBBIT_ENABLED=0`). Whole-project gold requires Rybbit dashboard receipts. Public SEO and analytics for this product are therefore designed, partially coded, and not evidenced on propertyquarry.com.
+- Suggestion: Either bind ClickRank and Rybbit to propertyquarry.com with a privacy receipt, or remove the example site id and gold language until that receipt exists.
+- Status: open
+
+#### Issue 32 -- Severity: suggestion
+
+- File: `docs/PROPERTYQUARRY_SOURCE_OF_TRUTH_MAP.md:32`
+- Description: Decision states include unseen, reviewing, shortlisted, blocked, needs_documents, needs_agent_answer, viewing_requested, offer_candidate, rejected, and archived. Feedback can move those states. There is no customer viewing calendar, document vault UI, offer tracker, or “what changed since last run” surface. Teable restore/portability scripts know `property_entities` / `listing_instances`, but the customer product is still a search-run workspace.
+- Suggestion: Add a thin decision tray on the research page: Yes / Maybe / No, viewing requested, and “ask the agent” without waiting for Lunacal. Persist those events as the canonical memory. Layer scheduling and document research on top later.
+- Status: open
+
+#### Issue 33 -- Severity: nit
+
+- File: `ea/app/services/property_market_catalog.py:51`
+- Description: Provider defaults are `market_readiness=private_beta`, `terms_review_status=needs_review`, `robots_review_status=needs_review`, `listing_cache_allowed=false`, `photo_republication_allowed=false`, `public_packet_allowed=false`, `maximum_concurrency=1`. ROADMAP wants four concurrent searches. The plan cap allows up to four Agent runs, but each provider is defined as serial. Live-provider e2e remains `external_blocked` in the market envelope.
+- Suggestion: Keep concurrency honest: one in-flight fetch per provider, multiple runs queued. Do not advertise four parallel portal crawls until rights and rate limits say so.
+- Status: open
+
+### Missed product opportunities
+
+These are useful product moves that do not require a new LTD.
+
+#### Issue 34 -- Severity: suggestion
+
+- File: `docs/PRODUCT_BRIEF.md:54`
+- Description: The brief promises enrichment of heating, lift, transit, and family details, plus “which options deserve a real viewing”. Opportunity briefs now persist recommendation, fit, confidence, predicted reaction, trade-offs, and a listing link. They are `local_only`. There is no one-tap “prepare a viewing” pack (questions, unknowns, listing link, floorplan, tour) and no change-since-last-run line on a saved search.
+- Suggestion: Promote the existing brief into a viewing sheet and a saved-search digest. That is the Free-to-Plus value without FlipLink or billing.
+- Status: open
+
+#### Issue 35 -- Severity: suggestion
+
+- File: `docs/ROADMAP.md:87`
+- Description: Tours are request-time, style-selected, with real progress. Karl has a licensed 3DVista control and a Crezlo tour that must not be re-created. The generic customer path still cannot request a 3DVista/Pano2VR/krpano export the way it can request a 1min cover. Crezlo is catalog-executable for operators, not a customer button.
+- Suggestion: Add an explicit “Request a layout preview” versus “Request a licensed tour” split. Keep AI previews on 1min/render. Keep 3DVista as the branded viewer for accepted exports only. Do not put Crezlo on the customer request path until the completion receipt exists.
+- Status: open
+
+#### Issue 36 -- Severity: suggestion
+
+- File: `docs/ROADMAP.md:21`
+- Description: German and Spanish critical-shell localization exists; public, auth, account, billing, legal, provider, and dynamic content remain English. Play Closed testing is Austria. The store listing is German. The app the tester then uses is still largely English outside the search shell.
+- Suggestion: Localize the signed-in search, shortlist, research, account, and billing-503 pages to de-AT before opening more markets. That is higher leverage than adding ES/IT/FR/NL/US catalog rows.
+- Status: open
+
+#### Issue 37 -- Severity: suggestion
+
+- File: `ea/app/product/service.py:70725`
+- Description: New product work keeps landing in one 70k-line module. Search, briefs, showcase, overlays, and plan limits cannot be changed safely. This is now a product-delivery gap, not only a reviewability gap.
+- Suggestion: Extract briefs, showcase, and plan-limit enforcement before adding Lunacal, FlipLink live publish, or another market.
+- Status: open
+
+### Missed LTD integration opportunities
+
+Owned tools that would complete the current PropertyQuarry loop, in recommended order. Do not wire the rest just because they are owned.
+
+| Priority | LTD | Why it matters now | Current honest state | Do not do |
+| --- | --- | --- | --- | --- |
+| 1 | Emailit | Registration, alerts, and support mail on `property@propertyquarry.com` | Tier 1 for `chummer.run`, not proven for this domain | Reuse the Chummer sender as if it were PropertyQuarry |
+| 2 | FlipLink.me | Family/agent share is the paid-adjacent output of the new briefs | Local packet only; UI implies share | Record a pasted URL as publication proof |
+| 3 | Rybbit + ClickRank | Public conversion and AI-search presence for propertyquarry.com | Slots exist; ClickRank live only on other domains; Rybbit disabled | Send `/app` paths or listing URLs |
+| 4 | Lunacal | Viewing/consult booking is the brief’s missing last step | Credentials only, lane disabled | Put exact addresses in public booking titles |
+| 5 | MetaSurvey | Post-viewing / rejection reasons that feed ranking | BrowserAct results reader only | Let survey text rewrite listing facts |
+| 6 | Unmixr | Audio of the existing redacted brief; 3M prebuilt credits already live in EA | Catalog-only for PropertyQuarry | Narrate raw listings or unpublished docs |
+| 7 | Internxt | 100 TB already reachable; launch DR is the blocker | Plain rclone mount, not crypt/Object Lock | Upload plaintext dumps |
+| 8 | 3DVista / Pano2VR / krpano | Karl already proves the viewer path | Tier 2; control-panel/export receipts still pending | Re-run Crezlo or treat AI panoramas as the licensed tour |
+| 9 | Invoiless | Invoice/VAT once Plus exists | Commercial ops disabled; billing itself is 503 | Create invoices that grant entitlements |
+| 10 | Documentation.AI | Public help and market guides for Austria testers | Username/password only | Ingest the repo, runbooks, or customer packets |
+| 11 | Paperguide | Cited research on redacted public documents | Tier 3, no runtime | Send private PDFs or unredacted contracts |
+| 12 | Teable | Designed home for overlay rollups | Operator projection / compaction design, not customer evidence | Treat Teable as listing truth |
+| later | ApiX-Drive, ApproveThis, Sendr, Subscribr, Brilliant Directories, Deftform, NeuronWriter, ChatPlayground, MarkupGo, PeekShot, AvoMap, Jogg, MagicFit, VidBoard | Useful after Agent billing or for operator/newsroom work | Mostly credentials, BrowserAct templates, or Chummer/Fleet proof | Present any of these as a PropertyQuarry customer integration |
+
+#### Issue 38 -- Severity: suggestion
+
+- File: `LTDs.md:17`
+- Description: 1min is the only row that `_PROPERTYQUARRY_CUSTOMER_LIVE_EVIDENCE` will accept. BrowserAct, Teable, ClickRank, Emailit, Unmixr, and Internxt can count as live evidence without being customer integrations. That distinction is correct. The missed opportunity is that several of those live-evidence services have an obvious customer job and are not queued as such: Emailit delivery, ClickRank/Rybbit public presence, Unmixr briefing, Internxt encrypted backup.
+- Suggestion: Keep the verifier strict. Add an explicit “next customer LTD” queue of the four above, each with one receipt type, instead of refreshing the 58-row inventory.
+- Status: open
+
+#### Issue 39 -- Severity: suggestion
+
+- File: `LTDs.md:52`
+- Description: FlipLink is a stacked Tier 10 LTD bought for review packets, family flipbooks, QR, and later paid reports. The generator and privacy contract exist. The account does not. Every new brief makes this gap more visible because the product now has something worth sharing.
+- Suggestion: Treat FlipLink credentialing and one redacted family-review read-back as the first post-billing product integration, or stop showing share CTAs.
+- Status: open
+
+#### Issue 40 -- Severity: suggestion
+
+- File: `LTDs.md:81`
+- Description: Unmixr has six usable accounts and large remaining credits, refreshed 2026-09-01. Governance already defines the safe input: redacted compiled dossier or approved public script. Opportunity briefs are now bounded, escaped, and local. That is exactly the input the Unmixr lane was designed for.
+- Suggestion: Prototype Agent-only audio from the redacted brief with a transcript and “not a listing recording” disclosure. Keep `PROPERTYQUARRY_UNMIXR_ENABLED` off until the first human-reviewed receipt.
+- Status: open
+
+#### Issue 41 -- Severity: suggestion
+
+- File: `LTDs.md:30`
+- Description: Internxt is live as a storage principal and is already called out as insufficient for launch DR. Paperguide is the designed cited-document pilot. Using Internxt as a crypt remote for the existing dump+S3 design, or as the restore-drill target, is the LTD that unblocks a launch gate. Using it as “more cloud disk” is not.
+- Suggestion: If an external GPG recipient appears, prefer Internxt crypt or the locked-S3 path, not another plain rclone canary.
+- Status: open
+
+#### Issue 42 -- Severity: suggestion
+
+- File: `LTDs.md:19`
+- Description: ChatPlayground, NeuronWriter, Poppy, Prompt Architects, Documentation.AI, and vexp are owned AI workbenches. The PropertyQuarry vexp *index* is healthy; this Grok session could not call it. See the vexp wiring section below. Prompt Architects is seeded but GM/runtime assist stays disabled. None of these should become customer chat. The missed opportunity is operator-side: one governed assist lane for missing-fact questions and help-center drafts, with PropertyQuarry remaining source of truth.
+- Suggestion: Wire Grok to `vexp mcp --workspace /docker/property --proxy`. Keep customer UX non-chat. If an operator assist is added, bind it to Prompt Architects or 1min code, not a new ChatPlayground product surface.
+- Status: open
+
+#### Issue 43 -- Severity: nit
+
+- File: `LTDs.md`
+- Description: Heyy WhatsApp is implemented in `ea/app/api/routes/heyy_integration.py` and `product_api.py` with opt-in, STOP, and daily template budget. It is absent from `LTDs.md`. FastestVPN has a Compose file in this repo while `LTDs.md` says it is not wired here. Answerly, Pixefy, Rafter, ProductLift, and Syllabbles are Chummer/Fleet gates living in the PropertyQuarry inventory.
+- Suggestion: Add Heyy to the inventory. Move Chummer-only LTDs to a separate section so PropertyQuarry customer integration cannot be miscounted.
+- Status: open
+
+## Recommended product and LTD sequence
+
+Use this after the host/security actions in the original list.
+
+1. Resolve design contradictions in writing: AT private beta only; Free/Plus/Agent only; PayFunnels/PayPal only; Brilliant Directories is not billing.
+2. Make share, overlays, and LTD catalog labels honest.
+3. Localize the signed-in Austria loop to de-AT.
+4. Turn the opportunity brief into a viewing sheet and a saved-search digest.
+5. Prove Emailit on `propertyquarry.com`.
+6. Credential FlipLink and publish one redacted family packet, or remove the share CTA.
+7. Bind Rybbit/ClickRank to this domain with the existing privacy masks.
+8. Add Lunacal + MetaSurvey only after a customer can mark `viewing_requested` inside PropertyQuarry.
+9. Leave Unmixr, Invoiless, Paperguide, Documentation.AI, and Internxt crypt for the next slice. Do not start ChatPlayground, MagicFit, Jogg, Sendr, or Poppy as PropertyQuarry customer features.
+
+## vexp wiring — Codex works, this Grok session does not
+
+Looked at after the implementation/LTD extension. vexp is not down on
+this host. The PropertyQuarry daemon and index are live. What failed is
+only Grok’s MCP child.
+
+### What is actually running
+
+| Plane | State |
+| --- | --- |
+| Property daemon | PID 625048, workspace `/docker/property`, socket `/docker/property/.vexp/daemon.sock` connects, uptime about 6d 19h |
+| Property index | 1,935 files, 31,014 nodes, 55,691 edges; `.vexp/healthy` current; `index.db` about 630 MiB |
+| CLI from this checkout | `vexp daemon-cmd status` reports running. `vexp capsule` returns PropertyQuarry pivots, including `ea/app/services/ltd_runtime_catalog.py:_propertyquarry_customer_integration_verified` |
+| Codex MCP | Works. `~/.codex/config.toml` runs `/home/tibor/.local/bin/vexp-codex-mcp` with `cwd = /docker/EA` and `VEXP_CODEX_DEFAULT_REPO=EA` |
+| HTTP MCP `:7821` | Listening, Bearer-auth required. `vexp-http-supervisor.mjs` is pinned to `/docker/EA/.vexp/daemon.sock`, so this port is the EA gateway, not PropertyQuarry |
+| Grok MCP | `grok mcp list` reports no servers in `~/.grok/config.toml`. This session still started a server named `vexp` via Claude compat and failed handshake |
+
+CLI `vexp` is 2.5.1; 2.6.0 is available. VS Code has extensions 2.5.3 and
+2.6.0. That version skew is not why Grok failed.
+
+### Why Codex works
+
+`/home/tibor/.local/libexec/vexp-codex-mcp.mjs` is a stable wrapper.
+It does not start an in-process indexer. It waits for the existing
+daemon socket and then execs:
+
+```text
+vexp mcp --workspace /docker/EA --proxy
+```
+
+That is why Codex can call `run_pipeline`. It is also why Codex vexp is
+an **EA** context plane. PropertyQuarry is a second daemon in
+`~/.vexp/daemons.json`. Codex does not attach to it.
+
+### Why this Grok session failed
+
+Grok loads MCP configs from `config.toml`, then Claude, then Cursor,
+then `.mcp.json`. There is no `[mcp_servers.vexp]` in
+`~/.grok/config.toml`. Claude compat supplied one from
+`~/.claude.json`:
+
+```json
+"vexp": {
+  "command": "node",
+  "args": [
+    "/home/tibor/.vscode-server/extensions/vexp.vexp-vscode-2.2.1-linux-x64/dist/mcp-server.cjs"
+  ]
+}
+```
+
+That 2.2.1 path is gone. The installed extensions are 2.5.3 and 2.6.0.
+Grok spawned `node` on the missing file. The child exited with
+`MODULE_NOT_FOUND`. The parent then reported:
+
+```text
+MCP server 'vexp' handshake failed: ... Broken pipe ... when send initialize request
+```
+
+The matching stderr is `~/.grok/logs/mcp/vexp.stderr.log`. This is not
+an empty PropertyQuarry index and not a license failure.
+
+### Cross-workspace noise
+
+`/docker/property/.vexp/daemon.log` repeatedly warns that another
+indexer (PID 60655) is already running on this workspace. PID 60655 is
+the **EA** daemon (`--workspace /docker/EA`). Property still serves
+queries, but file-sync on this checkout waits behind the EA indexer.
+That is a host-hygiene defect, not the Grok handshake.
+
+### What to change
+
+Do not point Grok at `vexp-codex-mcp` or at `http://127.0.0.1:7821`.
+Both are EA-scoped. For a PropertyQuarry Grok session, add a
+higher-priority user MCP that proxies the Property daemon:
+
+```toml
+[mcp_servers.vexp]
+command = "/home/tibor/.local/bin/vexp"
+args = ["mcp", "--workspace", "/docker/property", "--proxy"]
+cwd = "/docker/property"
+startup_timeout_sec = 60
+tool_timeout_sec = 180
+
+[mcp_servers.vexp.env]
+VEXP_SKIP_UPDATE_CHECK = "1"
+VEXP_NO_AUTOSTART = "1"
+```
+
+`config.toml` beats Claude compat, so the stale 2.2.1 path will stop
+being used. A new Grok session is required; this session already
+finished the failed handshake.
+
+Also update or remove the Claude `mcpServers.vexp` entry so Claude
+itself does not keep launching 2.2.1.
+
+This session’s audit used grep/read because MCP was unavailable. The
+index was queryable from the CLI the whole time.
