@@ -2,6 +2,7 @@
   "contract_name": "propertyquarry.floorplan_analysis_input.v2",
   "review_status": "approved",
   "reviewer": "operator",
+  "entry_room_id": "vorraum",
   "rooms": [
     {
       "id": "terrace",
@@ -123,10 +124,10 @@
       ]
     },
     {
-      "id": "entrance-vestibule",
-      "label": "Entrance vestibule · 18.80 m²",
+      "id": "vorraum",
+      "label": "VR / Vorraum · 18.80 m²",
       "kind": "interior",
-      "scene_id": "hall",
+      "scene_id": "vorraum",
       "shape": "composite",
       "floorplan_bounds_pct": {"x": 44.2, "y": 76.7, "width": 17.8, "height": 19.3},
       "source_bbox_px": {"x": 795, "y": 1005, "width": 320, "height": 255},
@@ -167,12 +168,16 @@
     ["bathroom", "circulation-hall"],
     ["circulation-hall", "living-kitchen"],
     ["circulation-hall", "guest-bedroom"],
-    ["entrance-vestibule", "living-kitchen"],
+    ["vorraum", "living-kitchen"],
     ["balcony-loggia", "living-kitchen"]
   ],
   "boundary_adjacency": {
     "required": [["balcony-loggia", "living-kitchen"]],
-    "forbidden": [["living-kitchen", "terrace"], ["balcony-loggia", "terrace"]]
+    "forbidden": [
+      ["living-kitchen", "terrace"],
+      ["balcony-loggia", "terrace"],
+      ["balcony-loggia", "vorraum"]
+    ]
   },
   "source_geometry": {
     "contract_name": "propertyquarry.floorplan_source_geometry.v1",
@@ -186,7 +191,7 @@
       {"id": "circulation-hall", "components_px": [{"x": 1090, "y": 630, "width": 170, "height": 150}]},
       {"id": "guest-bedroom", "components_px": [{"x": 1260, "y": 510, "width": 255, "height": 275}]},
       {"id": "living-kitchen", "components_px": [{"x": 795, "y": 780, "width": 720, "height": 245}]},
-      {"id": "entrance-vestibule", "components_px": [
+      {"id": "vorraum", "components_px": [
         {"x": 795, "y": 1005, "width": 320, "height": 74},
         {"x": 795, "y": 1079, "width": 139, "height": 181}
       ]},
@@ -194,25 +199,35 @@
     ],
     "portals": [
       {
-        "id": "entrance-to-living",
+        "id": "vorraum-to-living",
         "label": "Door · Wohnküche",
         "kind": "door",
-        "room_ids": ["entrance-vestibule", "living-kitchen"],
-        "room_sides": {"entrance-vestibule": "north", "living-kitchen": "south"},
+        "room_ids": ["vorraum", "living-kitchen"],
+        "room_sides": {"vorraum": "north", "living-kitchen": "south"},
         "center_px": {"x": 1040, "y": 1005},
         "width_px": 80,
         "target_room_id": "living-kitchen"
       },
       {
         "id": "entrance-exit-gate",
-        "label": "Entrance / exit · Stairwell 3",
+        "label": "Apartment entrance · VR / Vorraum ↔ Stairwell 3",
         "kind": "exit_gate",
-        "room_ids": ["entrance-vestibule", "outside"],
-        "room_sides": {"entrance-vestibule": "west"},
+        "room_ids": ["vorraum", "outside"],
+        "room_sides": {"vorraum": "west"},
         "center_px": {"x": 795, "y": 1100},
         "width_px": 90,
         "target_room_id": "outside",
         "target_label": "Stairwell 3"
+      },
+      {
+        "id": "living-to-balcony-loggia",
+        "label": "Door · Balkon / Loggia",
+        "kind": "door",
+        "room_ids": ["living-kitchen", "balcony-loggia"],
+        "room_sides": {"living-kitchen": "south", "balcony-loggia": "west"},
+        "center_px": {"x": 1360, "y": 1055},
+        "width_px": 80,
+        "target_room_id": "balcony-loggia"
       }
     ]
   }

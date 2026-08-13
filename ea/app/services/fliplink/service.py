@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from app.container import AppContainer
@@ -137,6 +138,12 @@ class FlipLinkPacketService:
 
     def capacity_status(self, *, principal_id: str) -> dict[str, object]:
         settings = fliplink_settings_from_env()
+        external_account_configured = bool(
+            settings.login_email and settings.login_password_present
+        )
+        external_publish_request_ready = bool(
+            external_account_configured and settings.browseract_enabled
+        )
         principal_active = self._repo.count_publications(principal_id=principal_id, statuses=ACTIVE_PACKET_STATUSES)
         global_active = self._repo.count_publications(statuses=ACTIVE_PACKET_STATUSES)
         cap = max(1, int(settings.active_publication_cap or 1))
@@ -155,8 +162,16 @@ class FlipLinkPacketService:
             "state": global_state,
             "principal_state": principal_state,
             "global_state": global_state,
-            "account_tier": int(settings.account_tier or 0),
-            "custom_domain": settings.custom_domain,
+            "capacity_scope": "local_packet_repository",
+            "external_provider": "FlipLink.me",
+            "external_account_configured": external_account_configured,
+            "external_account_verified": False,
+            "external_publish_request_ready": external_publish_request_ready,
+            "browseract_publish_enabled": bool(settings.browseract_enabled),
+            "account_tier": 0,
+            "account_tier_verified": False,
+            "custom_domain": "",
+            "custom_domain_verified": False,
         }
 
     def _require_capacity(self, *, principal_id: str) -> None:
@@ -1696,6 +1711,7 @@ class FlipLinkPacketService:
         artifact_type: str,
         audience_type: str = "family",
         actor: str = "browser",
+        context_json: dict[str, object] | None = None,
     ) -> dict[str, object]:
         subject = str(subject_id or "").strip()
         artifact_kind = str(artifact_type or "").strip()
@@ -1704,11 +1720,148 @@ class FlipLinkPacketService:
         title = artifact_kind.replace("_", " ").title()
         property_ref = subject if subject_type == "property" else ""
         summary = self.feedback_summary(principal_id=principal_id, property_ref=property_ref) if property_ref else {}
+        context = dict(context_json or {})
+        opportunity = (
+            dict(context.get("opportunity") or {})
+            if isinstance(context.get("opportunity"), dict)
+            else {}
+        )
+        def _brief_fragment(value: object, *, limit: int = 320) -> str:
+            normalized = " ".join(str(value or "").split())[:limit].rstrip(" .;:")
+            for marker in ("\\", "`", "*", "_", "[", "]", "<", ">"):
+                normalized = normalized.replace(marker, f"\\{marker}")
+            return normalized
+
+        match_reasons = [
+            _brief_fragment(value)
+            for value in list(opportunity.get("match_reasons") or [])
+            if _brief_fragment(value)
+        ]
+        mismatch_reasons = [
+            _brief_fragment(value)
+            for value in list(opportunity.get("mismatch_reasons") or [])
+            if _brief_fragment(value)
+        ]
+        unknowns = [
+            _brief_fragment(str(value or "").replace("_", " "))
+            for value in list(opportunity.get("unknowns") or [])
+            if _brief_fragment(str(value or "").replace("_", " "))
+        ]
+        blocking_constraints = [
+            _brief_fragment(value)
+            for value in list(opportunity.get("blocking_constraints") or [])
+            if _brief_fragment(value)
+        ]
+        predicted_reaction = _brief_fragment(
+            opportunity.get("predicted_reaction"),
+            limit=600,
+        )
+        recommendation = str(opportunity.get("recommendation") or "").strip().replace("_", " ")
+        opportunity_fit = opportunity.get("fit_score")
+        has_fit_score = opportunity_fit is not None and str(opportunity_fit).strip() != ""
+        try:
+            fit_score = max(0, min(100, round(float(opportunity_fit))))
+        except (TypeError, ValueError):
+            fit_score = 0
+            has_fit_score = False
+        opportunity_confidence = opportunity.get("confidence")
+        has_confidence = opportunity_confidence is not None and str(opportunity_confidence).strip() != ""
+        try:
+            confidence_value = float(opportunity_confidence)
+            if 0 <= confidence_value <= 1:
+                confidence_value *= 100
+            confidence_percent = max(0, min(100, round(confidence_value)))
+        except (TypeError, ValueError):
+            confidence_percent = 0
+            has_confidence = False
+        brief_title = _brief_fragment(context.get("title") or title, limit=160) or title
+        property_url = str(context.get("property_url") or "").strip()
+        try:
+            parsed_property_url = urlsplit(property_url)
+            parsed_property_url.port
+            valid_property_url = bool(
+                len(property_url) <= 2000
+                and parsed_property_url.scheme.lower() in {"https", "http"}
+                and parsed_property_url.hostname
+                and parsed_property_url.username is None
+                and parsed_property_url.password is None
+                and not any(character.isspace() for character in property_url)
+                and not any(character in property_url for character in "\\\"'<>`()[]")
+                and "%0a" not in property_url.lower()
+                and "%0d" not in property_url.lower()
+            )
+        except ValueError:
+            valid_property_url = False
+        if not valid_property_url:
+            property_url = ""
+
+        opportunity_brief_lines = [
+            f"# {brief_title}",
+            "",
+            f"**Recommendation:** {_brief_fragment(recommendation) or 'Review before deciding'}",
+        ]
+        if has_fit_score:
+            opportunity_brief_lines.append(f"**Preference fit:** {fit_score}/100")
+        if has_confidence:
+            opportunity_brief_lines.append(f"**Confidence:** {confidence_percent}%")
+        if predicted_reaction:
+            opportunity_brief_lines.extend(
+                ("", f"**Predicted reaction:** {predicted_reaction}.")
+            )
+        opportunity_brief_lines.extend(("", "## Why it fits"))
+        opportunity_brief_lines.extend(
+            f"- {reason}" for reason in match_reasons[:5]
+        )
+        if not match_reasons:
+            opportunity_brief_lines.append("- No preference matches recorded yet.")
+        opportunity_brief_lines.extend(("", "## Trade-offs"))
+        opportunity_brief_lines.extend(
+            f"- {reason}" for reason in mismatch_reasons[:5]
+        )
+        if not mismatch_reasons:
+            opportunity_brief_lines.append("- No trade-offs recorded yet.")
+        if blocking_constraints:
+            opportunity_brief_lines.extend(("", "## Blocking constraints"))
+            opportunity_brief_lines.extend(
+                f"- {constraint}" for constraint in blocking_constraints[:5]
+            )
+        opportunity_brief_lines.extend(("", "## Verify next"))
+        opportunity_brief_lines.extend(f"- {unknown}" for unknown in unknowns[:5])
+        if not unknowns:
+            opportunity_brief_lines.append("- No unresolved checks recorded yet.")
+        if property_url:
+            opportunity_brief_lines.extend(("", f"[Open property]({property_url})"))
+        opportunity_brief = "\n".join(opportunity_brief_lines)
+        why_parts = [
+            (
+                f"Why it fits: {'; '.join(match_reasons[:3])}."
+            )
+            if match_reasons
+            else "",
+            f"Preference fit: {fit_score}/100." if fit_score else "",
+            f"Recommendation: {recommendation}." if recommendation else "",
+            f"Watch: {'; '.join(mismatch_reasons[:2])}." if mismatch_reasons else "",
+            f"Verify next: {'; '.join(unknowns[:2])}." if unknowns else "",
+        ]
+        contextual_why = " ".join(part for part in why_parts if part)
+        contextual_tradeoffs = "; ".join((mismatch_reasons + unknowns)[:4])
         body = {
-            "why_shortlisted": f"This home is worth sharing now. Feedback so far: {summary.get('dealbreaker_count', 0)} dealbreakers, {summary.get('open_questions_count', 0)} open questions.",
-            "tradeoff_summary": f"Main tradeoffs: {', '.join(cluster.get('theme') for cluster in list(summary.get('clusters') or [])[:3]) or 'No major tradeoffs captured yet.'}",
+            "why_shortlisted": opportunity_brief if opportunity else contextual_why or f"This home is worth sharing now. Feedback so far: {summary.get('dealbreaker_count', 0)} dealbreakers, {summary.get('open_questions_count', 0)} open questions.",
+            "tradeoff_summary": (
+                f"Main tradeoffs: {contextual_tradeoffs}."
+                if contextual_tradeoffs
+                else f"Main tradeoffs: {', '.join(cluster.get('theme') for cluster in list(summary.get('clusters') or [])[:3]) or 'No major tradeoffs captured yet.'}"
+            ),
             "what_changed": "; ".join(item.get("summary") or item.get("detail") or "Page and reply status updated." for item in self.property_change_log(principal_id=principal_id, property_ref=property_ref)[:3]) or "No major change recorded yet.",
-            "recommended_next_step": "Check the replies here and send the next focused follow-up.",
+            "recommended_next_step": (
+                f"Recommended next step: {recommendation}. Verify {unknowns[0]} before deciding."
+                if recommendation and unknowns
+                else (
+                    f"Recommended next step: {recommendation}."
+                    if recommendation
+                    else "Check the replies here and send the next focused follow-up."
+                )
+            ),
             "family_review_digest": "Family digest: keep the current reason, tradeoffs, and open questions in one shared note.",
         }[artifact_kind]
         artifact = {
@@ -1723,6 +1876,14 @@ class FlipLinkPacketService:
             "created_by": actor,
             "created_at": now_utc_iso(),
         }
+        if opportunity:
+            artifact["opportunity_id"] = str(opportunity.get("opportunity_id") or "").strip()
+            artifact["generation_provider"] = "PropertyQuarry"
+            artifact["generation_mode"] = "local_opportunity_brief"
+            artifact["generation_basis"] = "durable_preference_assessment"
+            artifact["publication_mode"] = "local_only"
+            artifact["external_publication_status"] = "not_published"
+            artifact["external_publication_verified"] = False
         self._repo.record_event(
             {
                 "publication_id": "",

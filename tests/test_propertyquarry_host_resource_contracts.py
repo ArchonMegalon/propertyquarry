@@ -52,15 +52,16 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
         "propertyquarry-scheduler",
         "propertyquarry-render-tools",
         "propertyquarry-db",
+        "propertyquarry-backup",
     }
 
     expected = {
         "propertyquarry-api": ("1536m", 128, "${PROPERTYQUARRY_API_RESTART_POLICY:-on-failure:3}"),
         "propertyquarry-migrate": ("768m", 64, "no"),
         "propertyquarry-worker": (
-            "1536m",
+            "4g",
             128,
-            "${PROPERTYQUARRY_WORKER_RESTART_POLICY:-on-failure:3}",
+            "${PROPERTYQUARRY_WORKER_RESTART_POLICY:-unless-stopped}",
         ),
         "propertyquarry-scheduler": (
             "1536m",
@@ -77,6 +78,11 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
             128,
             "${PROPERTYQUARRY_DB_RESTART_POLICY:-on-failure:3}",
         ),
+        "propertyquarry-backup": (
+            "512m",
+            64,
+            "${PROPERTYQUARRY_BACKUP_RESTART_POLICY:-unless-stopped}",
+        ),
     }
     for name, (memory_default, pids_default, restart_default) in expected.items():
         _assert_bounded_service(
@@ -84,11 +90,10 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
             memory_default=memory_default,
             pids_default=pids_default,
             restart_default=restart_default,
-            independent_memswap_limit=(
-                "${PROPERTYQUARRY_RENDER_MEMORY_SWAP_LIMIT:-4g}"
-                if name == "propertyquarry-render-tools"
-                else None
-            ),
+            independent_memswap_limit={
+                "propertyquarry-worker": "${PROPERTYQUARRY_WORKER_MEMORY_SWAP_LIMIT:-6g}",
+                "propertyquarry-render-tools": "${PROPERTYQUARRY_RENDER_MEMORY_SWAP_LIMIT:-4g}",
+            }.get(name),
         )
 
     for name in (
@@ -97,6 +102,7 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
         "propertyquarry-worker",
         "propertyquarry-scheduler",
         "propertyquarry-render-tools",
+        "propertyquarry-backup",
     ):
         assert services[name]["tmpfs"]
     render = services["propertyquarry-render-tools"]
@@ -127,6 +133,16 @@ def test_propertyquarry_worker_is_a_hardened_property_only_durable_consumer() ->
     assert worker["volumes"] == [
         "./config:/config:ro",
         "./config:/app/config:ro",
+        {
+            "type": "bind",
+            "source": (
+                "${ONEMIN_DIRECT_API_KEYS_JSON_FILE:?Set the host 1min "
+                "key-manifest path for the PropertyQuarry worker}"
+            ),
+            "target": "/run/propertyquarry/onemin/onemin_api_keys.json",
+            "read_only": True,
+            "bind": {"create_host_path": False},
+        },
         "propertyquarry_artifacts:/data/artifacts",
         "propertyquarry_provider_ledger:/data/provider-ledger",
     ]

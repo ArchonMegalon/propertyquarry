@@ -19,7 +19,7 @@ import stat
 import sys
 import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +50,7 @@ except ModuleNotFoundError:
 
 SCHEMA = "propertyquarry-public-tour-volume-privacy-v1"
 SAFE_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+CORE_GOLD_WALKTHROUGH_CONTRACT = "propertyquarry.core_gold_walkthrough.v1"
 # Accepted MagicFit v4 deliveries deliberately retain this exact functional
 # augmentation in tour.json.  The shared eligibility validator binds every
 # field to the active manifest, media, audit evidence, signed reviewer
@@ -120,6 +121,18 @@ def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
 
 def _sha256_bytes(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
+
+
+def _canonical_object_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _read_object(path: Path) -> dict[str, object]:
@@ -252,7 +265,76 @@ def _merge_private_receipt(
     return merged
 
 
-def _write_atomic(path: Path, content: bytes, *, mode: int) -> None:
+def _core_gold_walkthrough_sidecar_rebind(
+    public_payload: dict[str, object],
+    *,
+    bundle_dir: Path,
+) -> tuple[Path, dict[str, object], dict[str, object], int] | None:
+    raw_relpath = str(
+        public_payload.get("video_sidecar_relpath")
+        or public_payload.get("walkthrough_sidecar_relpath")
+        or ""
+    ).strip().replace("\\", "/")
+    if not raw_relpath:
+        return None
+    relpath = PurePosixPath(raw_relpath)
+    if (
+        relpath.is_absolute()
+        or relpath.suffix.lower() != ".json"
+        or any(part in {"", ".", ".."} for part in relpath.parts)
+    ):
+        raise ValueError("walkthrough_sidecar_relpath_invalid")
+    resolved_bundle = bundle_dir.resolve()
+    unresolved = resolved_bundle
+    for part in relpath.parts:
+        unresolved /= part
+        if unresolved.is_symlink():
+            raise ValueError("walkthrough_sidecar_symlink")
+    sidecar_path = unresolved.resolve()
+    if resolved_bundle not in sidecar_path.parents:
+        raise ValueError("walkthrough_sidecar_outside_bundle")
+    if not sidecar_path.exists():
+        return None
+    sidecar = _read_object(sidecar_path)
+    if str(sidecar.get("contract_name") or "") != CORE_GOLD_WALKTHROUGH_CONTRACT:
+        return None
+    if str(sidecar.get("property_slug") or "") != str(
+        public_payload.get("slug") or ""
+    ):
+        raise ValueError("walkthrough_sidecar_subject_mismatch")
+    walkable_scene = public_payload.get("walkable_scene")
+    if not isinstance(walkable_scene, dict) or not walkable_scene:
+        raise ValueError("walkthrough_sidecar_scene_graph_missing")
+    expected_hash = _canonical_object_sha256(walkable_scene)
+    rebound = {**sidecar, "walkable_scene_sha256": expected_hash}
+    sidecar_mode = stat.S_IMODE(sidecar_path.stat(follow_symlinks=False).st_mode)
+    if sidecar_mode not in {0o600, 0o640, 0o644}:
+        raise ValueError("walkthrough_sidecar_mode_invalid")
+    return sidecar_path, sidecar, rebound, sidecar_mode
+
+
+def _write_atomic(path: Path, content: bytes, *, mode: int) -> bool:
+    owner: tuple[int, int] | None = None
+    ownership_repaired = False
+    try:
+        existing = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISREG(existing.st_mode) or existing.st_nlink != 1:
+            raise ValueError("atomic_write_target_not_regular")
+        owner = (existing.st_uid, existing.st_gid)
+        effective_uid = os.geteuid()
+        parent = path.parent.stat(follow_symlinks=False)
+        legacy_root_owned_runtime_file = (
+            effective_uid != 0
+            and existing.st_uid == 0
+            and parent.st_uid == effective_uid
+            and stat.S_IMODE(existing.st_mode) & 0o022 == 0
+        )
+        if legacy_root_owned_runtime_file:
+            owner = None
+            ownership_repaired = True
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.privacy.",
         dir=path.parent,
@@ -260,6 +342,8 @@ def _write_atomic(path: Path, content: bytes, *, mode: int) -> None:
     temporary = Path(temporary_name)
     try:
         os.fchmod(descriptor, mode)
+        if owner is not None:
+            os.fchown(descriptor, *owner)
         with os.fdopen(descriptor, "wb", closefd=True) as handle:
             handle.write(content)
             handle.flush()
@@ -276,6 +360,7 @@ def _write_atomic(path: Path, content: bytes, *, mode: int) -> None:
             temporary.unlink()
         except FileNotFoundError:
             pass
+    return ownership_repaired
 
 
 def _tree_digest(root: Path) -> str:
@@ -337,10 +422,13 @@ def audit_or_repair(
         "private_key_manifests": 0,
         "noncanonical_manifests": 0,
         "private_mode_violations": 0,
+        "repaired_ownership_entries": 0,
         "accepted_ai_panorama_manifests": 0,
         "accepted_magicfit_manifests": 0,
+        "core_gold_sidecar_hash_mismatches": 0,
         "repaired_manifests": 0,
         "repaired_private_receipts": 0,
+        "repaired_core_gold_sidecars": 0,
     }
     changed_digests: list[str] = []
 
@@ -380,6 +468,10 @@ def audit_or_repair(
                     bundle_dir=manifest_path.parent,
                 )
             )
+            core_gold_sidecar = _core_gold_walkthrough_sidecar_rebind(
+                canonical,
+                bundle_dir=manifest_path.parent,
+            )
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
             counts["invalid_manifests"] += 1
             continue
@@ -399,8 +491,15 @@ def audit_or_repair(
             existing_private.setdefault("legacy_declared_slug", declared_slug)
         has_private = _contains_private_key(privacy_payload)
         noncanonical = canonical != payload
+        core_gold_sidecar_mismatch = bool(
+            core_gold_sidecar is not None
+            and core_gold_sidecar[1] != core_gold_sidecar[2]
+        )
         counts["private_key_manifests"] += int(has_private)
         counts["noncanonical_manifests"] += int(noncanonical)
+        counts["core_gold_sidecar_hash_mismatches"] += int(
+            core_gold_sidecar_mismatch
+        )
         counts["accepted_ai_panorama_manifests"] += int(
             accepted_ai_panorama
         )
@@ -414,7 +513,9 @@ def audit_or_repair(
         )
         if noncanonical:
             public_bytes = _canonical_json_bytes(canonical)
-            _write_atomic(manifest_path, public_bytes, mode=0o644)
+            counts["repaired_ownership_entries"] += int(
+                _write_atomic(manifest_path, public_bytes, mode=0o644)
+            )
             counts["repaired_manifests"] += 1
             changed_digests.append(_sha256_bytes(public_bytes))
         if merged_private or private_path.exists():
@@ -424,15 +525,26 @@ def audit_or_repair(
                 or _read_object(private_path) != merged_private
                 or stat.S_IMODE(private_path.stat().st_mode) != 0o600
             ):
-                _write_atomic(private_path, private_bytes, mode=0o600)
+                counts["repaired_ownership_entries"] += int(
+                    _write_atomic(private_path, private_bytes, mode=0o600)
+                )
                 counts["repaired_private_receipts"] += 1
                 changed_digests.append(_sha256_bytes(private_bytes))
+        if core_gold_sidecar_mismatch and core_gold_sidecar is not None:
+            sidecar_path, _sidecar, rebound_sidecar, sidecar_mode = core_gold_sidecar
+            sidecar_bytes = _canonical_json_bytes(rebound_sidecar)
+            counts["repaired_ownership_entries"] += int(
+                _write_atomic(sidecar_path, sidecar_bytes, mode=sidecar_mode)
+            )
+            counts["repaired_core_gold_sidecars"] += 1
+            changed_digests.append(_sha256_bytes(sidecar_bytes))
 
     post_failures = (
         counts["invalid_manifests"]
         + (0 if apply else counts["private_key_manifests"])
         + (0 if apply else counts["noncanonical_manifests"])
         + (0 if apply else counts["private_mode_violations"])
+        + (0 if apply else counts["core_gold_sidecar_hash_mismatches"])
     )
     receipt: dict[str, object] = {
         "schema": SCHEMA,

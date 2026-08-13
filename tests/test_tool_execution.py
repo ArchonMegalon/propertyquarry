@@ -43,6 +43,132 @@ def _tool_execution_service(*args, **kwargs) -> ToolExecutionService:
     return ToolExecutionService(*args, **kwargs)
 
 
+def test_onemin_media_transform_receipt_is_bound_to_request_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.services.tool_execution_onemin_adapter import OneminToolAdapter
+
+    adapter = OneminToolAdapter()
+    captured: dict[str, object] = {}
+
+    def _fake_call_feature(**kwargs):  # noqa: ANN003, ANN202
+        captured.update(kwargs)
+        return (
+            {"url": "https://media.example.invalid/transformed.png"},
+            "account-1",
+            "ONEMIN_AI_API_KEY",
+            "image-model",
+            3,
+            5,
+        )
+
+    monkeypatch.setattr(adapter, "_call_feature", _fake_call_feature)
+    result = adapter.execute_media_transform(
+        ToolInvocationRequest(
+            session_id="session-onemin-principal-receipt",
+            step_id="step-onemin-principal-receipt",
+            tool_name="provider.onemin.media_transform",
+            action_kind="media_transform",
+            payload_json={
+                "feature_type": "BACKGROUND_REMOVER",
+                "image_url": "https://media.example.invalid/source.png",
+            },
+            context_json={"principal_id": "principal-onemin-receipt"},
+        ),
+        SimpleNamespace(
+            tool_name="provider.onemin.media_transform",
+            version="tool-v1",
+        ),
+    )
+
+    assert captured["principal_id"] == "principal-onemin-receipt"
+    assert result.receipt_json["principal_id"] == "principal-onemin-receipt"
+    assert result.receipt_json["provider_backend"] == "1min"
+    assert result.receipt_json["feature_type"] == "BACKGROUND_REMOVER"
+
+
+def test_onemin_text_and_image_receipts_are_bound_to_request_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.services.tool_execution_onemin_adapter import OneminToolAdapter
+
+    adapter = OneminToolAdapter()
+    captured_text_principals: list[str] = []
+    captured_image_principals: list[str] = []
+
+    def _fake_call_text(**kwargs):  # noqa: ANN003, ANN202
+        captured_text_principals.append(str(kwargs["principal_id"]))
+        return SimpleNamespace(
+            text="completed",
+            model="text-model",
+            provider_backend="1min",
+            provider_account_name="account-1",
+            provider_key_slot="ONEMIN_AI_API_KEY",
+            tokens_in=2,
+            tokens_out=4,
+        )
+
+    def _fake_call_feature(**kwargs):  # noqa: ANN003, ANN202
+        captured_image_principals.append(str(kwargs["principal_id"]))
+        return (
+            {"url": "https://media.example.invalid/generated.png"},
+            "account-1",
+            "ONEMIN_AI_API_KEY",
+            "image-model",
+            3,
+            5,
+        )
+
+    monkeypatch.setattr(adapter, "_call_text", _fake_call_text)
+    monkeypatch.setattr(adapter, "_call_feature", _fake_call_feature)
+    principal_id = "principal-onemin-all-receipts"
+    context_json = {"principal_id": principal_id}
+
+    code_result = adapter.execute_code_generate(
+        ToolInvocationRequest(
+            session_id="session-onemin-code-receipt",
+            step_id="step-onemin-code-receipt",
+            tool_name="provider.onemin.code_generate",
+            action_kind="code_generate",
+            payload_json={"prompt": "Create a small CLI"},
+            context_json=context_json,
+        ),
+        SimpleNamespace(tool_name="provider.onemin.code_generate", version="tool-v1"),
+    )
+    review_result = adapter.execute_reasoned_patch_review(
+        ToolInvocationRequest(
+            session_id="session-onemin-review-receipt",
+            step_id="step-onemin-review-receipt",
+            tool_name="provider.onemin.reasoned_patch_review",
+            action_kind="reasoned_patch_review",
+            payload_json={"diff_text": "+ safe change"},
+            context_json=context_json,
+        ),
+        SimpleNamespace(tool_name="provider.onemin.reasoned_patch_review", version="tool-v1"),
+    )
+    image_result = adapter.execute_image_generate(
+        ToolInvocationRequest(
+            session_id="session-onemin-image-receipt",
+            step_id="step-onemin-image-receipt",
+            tool_name="provider.onemin.image_generate",
+            action_kind="image_generate",
+            payload_json={"prompt": "Render an apartment"},
+            context_json=context_json,
+        ),
+        SimpleNamespace(tool_name="provider.onemin.image_generate", version="tool-v1"),
+    )
+
+    assert captured_text_principals == [principal_id, principal_id]
+    assert captured_image_principals == [principal_id]
+    assert code_result.receipt_json["principal_id"] == principal_id
+    assert review_result.receipt_json["principal_id"] == principal_id
+    assert image_result.receipt_json["principal_id"] == principal_id
+
+
 def _stub_mootion_public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     import socket
 
@@ -2038,6 +2164,190 @@ def test_tool_execution_service_executes_builtin_browseract_extract_handler() ->
     assert result.receipt_json["handler_key"] == "browseract.extract_account_facts"
     assert result.receipt_json["invocation_contract"] == "tool.v1"
     assert result.receipt_json["requested_run_url"] == "https://browseract.example/run"
+
+
+def test_tool_execution_service_executes_browseract_extract_with_native_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_runtime = ToolRuntimeService(
+        tool_registry=InMemoryToolRegistryRepository(),
+        connector_bindings=InMemoryConnectorBindingRepository(),
+    )
+    service = _tool_execution_service(
+        tool_runtime=tool_runtime,
+        artifacts=InMemoryArtifactRepository(),
+    )
+    binding = tool_runtime.upsert_connector_binding(
+        principal_id="exec-1",
+        connector_name="browseract",
+        external_account_ref="browseract-maps",
+        scope_json={"scopes": ["google_maps_distance_research"]},
+        auth_metadata_json={
+            "browseract_service_workflows_json": {
+                "google_maps_distance_research": {
+                    "browseract_workflow_id": "workflow-google-maps",
+                }
+            },
+            "browseract_workflow_input_names_json": [
+                "KeyWords",
+                "language",
+                "country",
+            ],
+        },
+        status="enabled",
+    )
+    adapter = service._browseract_module._adapter
+    captured: dict[str, object] = {}
+
+    def _run_workflow(*, workflow_id: str, input_values: dict[str, object]) -> dict[str, object]:
+        captured.update({"workflow_id": workflow_id, "input_values": input_values})
+        return {"id": "task-maps-1"}
+
+    monkeypatch.setenv("BROWSERACT_API_KEY", "test-browseract-key")
+    monkeypatch.setattr(adapter, "_run_browseract_workflow_task_with_inputs", _run_workflow)
+    monkeypatch.setattr(
+        adapter,
+        "_wait_for_browseract_task",
+        lambda **_: {
+            "status": "finished",
+            "output": {
+                "string": json.dumps(
+                    [
+                        {
+                            "fact_key": "supermarket",
+                            "place_name": "BILLA",
+                            "place_category": "Supermarket",
+                            "place_id": "ChIJexample",
+                            "destination_latitude": 48.2251,
+                            "destination_longitude": 16.4012,
+                            "final_surface_url": "https://www.google.com/maps/dir/?api=1&destination=48.2251,16.4012",
+                            "visible_text": "BILLA — Supermarket",
+                        }
+                    ]
+                )
+            },
+        },
+    )
+
+    result = service.execute_invocation(
+        ToolInvocationRequest(
+            session_id="session-browseract-maps-workflow-1",
+            step_id="step-browseract-maps-workflow-1",
+            tool_name="browseract.extract_account_facts",
+            action_kind="account.extract",
+            payload_json={
+                "binding_id": binding.binding_id,
+                "principal_id": "exec-1",
+                "service_name": "google_maps_distance_research",
+                "requested_fields": [
+                    "fact_key",
+                    "place_name",
+                    "place_category",
+                    "place_id",
+                    "destination_latitude",
+                    "destination_longitude",
+                    "final_surface_url",
+                    "visible_text",
+                ],
+                "instructions": "Return only coordinate-bound Google Maps evidence.",
+                "account_hints_json": {
+                    "query_url": "https://www.google.com/maps/dir/?api=1&origin=48.224,16.400&destination=supermarket",
+                    "fact_key": "supermarket",
+                    "listing_latitude": 48.224,
+                    "listing_longitude": 16.4,
+                    "travel_mode": "walking",
+                },
+                "workflow_inputs_json": {
+                    "KeyWords": "supermarket near 48.224,16.400",
+                    "language": "de",
+                    "country": "at",
+                    "unapproved_input": "must not cross the binding boundary",
+                    "service_name": "must not override the reserved input",
+                },
+            },
+            context_json={"principal_id": "exec-1"},
+        )
+    )
+
+    assert captured["workflow_id"] == "workflow-google-maps"
+    workflow_inputs = captured["input_values"]
+    assert isinstance(workflow_inputs, dict)
+    assert workflow_inputs["service_name"] == "google_maps_distance_research"
+    assert json.loads(str(workflow_inputs["requested_fields_json"])) == result.output_json["requested_fields"]
+    assert json.loads(str(workflow_inputs["account_hints_json"]))["fact_key"] == "supermarket"
+    assert workflow_inputs["query_url"].startswith("https://www.google.com/maps/dir/")
+    assert workflow_inputs["KeyWords"] == "supermarket near 48.224,16.400"
+    assert workflow_inputs["language"] == "de"
+    assert workflow_inputs["country"] == "at"
+    assert "unapproved_input" not in workflow_inputs
+    assert workflow_inputs["service_name"] == "google_maps_distance_research"
+    assert result.output_json["facts_json"]["place_id"] == "ChIJexample"
+    assert result.output_json["verification_source"] == "browseract_workflow"
+    assert result.output_json["requested_workflow_id"] == "workflow-google-maps"
+    assert result.output_json["browseract_task_id"] == "task-maps-1"
+    assert result.output_json["missing_fields"] == []
+    assert result.receipt_json["requested_workflow_id"] == "workflow-google-maps"
+    assert result.receipt_json["browseract_task_id"] == "task-maps-1"
+
+
+def test_tool_execution_service_browseract_extract_workflow_fails_closed_without_facts_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool_runtime = ToolRuntimeService(
+        tool_registry=InMemoryToolRegistryRepository(),
+        connector_bindings=InMemoryConnectorBindingRepository(),
+    )
+    service = _tool_execution_service(
+        tool_runtime=tool_runtime,
+        artifacts=InMemoryArtifactRepository(),
+    )
+    binding = tool_runtime.upsert_connector_binding(
+        principal_id="exec-1",
+        connector_name="browseract",
+        external_account_ref="browseract-maps",
+        scope_json={"scopes": ["google_maps_distance_research"]},
+        auth_metadata_json={"browseract_workflow_id": "workflow-google-maps"},
+        status="enabled",
+    )
+    adapter = service._browseract_module._adapter
+    monkeypatch.setenv("BROWSERACT_API_KEY", "test-browseract-key")
+    monkeypatch.setattr(
+        adapter,
+        "_run_browseract_workflow_task_with_inputs",
+        lambda **_: {"id": "task-maps-2"},
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_wait_for_browseract_task",
+        lambda **_: {
+            "status": "finished",
+            "output": {"string": json.dumps({"summary": "A nearby supermarket exists."})},
+        },
+    )
+
+    result = service.execute_invocation(
+        ToolInvocationRequest(
+            session_id="session-browseract-maps-workflow-missing-1",
+            step_id="step-browseract-maps-workflow-missing-1",
+            tool_name="browseract.extract_account_facts",
+            action_kind="account.extract",
+            payload_json={
+                "binding_id": binding.binding_id,
+                "principal_id": "exec-1",
+                "service_name": "google_maps_distance_research",
+                "requested_fields": ["place_id", "destination_latitude", "destination_longitude"],
+            },
+            context_json={"principal_id": "exec-1"},
+        )
+    )
+
+    assert result.output_json["discovery_status"] == "missing"
+    assert result.output_json["verification_source"] == "missing"
+    assert result.output_json["missing_fields"] == ["place_id", "destination_latitude", "destination_longitude"]
+    assert result.output_json["requested_workflow_id"] == "workflow-google-maps"
+    assert result.output_json["browseract_task_id"] == ""
+    assert result.output_json["live_discovery_error"] == "browseract_workflow_facts_missing:task-maps-2"
+    assert result.output_json["facts_json"] == {"service_name": "google_maps_distance_research"}
 
 
 def test_tool_execution_service_executes_builtin_browseract_inventory_handler() -> None:
@@ -5885,6 +6195,15 @@ def test_crezlo_worker_script_path_resolves_existing_worker() -> None:
     path = BrowserActToolAdapter._crezlo_worker_script_path()
     assert path.name == "crezlo_property_tour_worker.py"
     assert path.exists()
+
+
+def test_crezlo_worker_uses_live_workspace_api_and_normalizes_bare_fqdn() -> None:
+    source = BrowserActToolAdapter._crezlo_worker_script_path().read_text(encoding="utf-8")
+
+    assert "https://api.caliqik.com/api/seller/tours/workspaces" in source
+    assert "https://tours.crezlo.com/api/seller/tours/workspaces" not in source
+    assert "rawWorkspaceDomain && !rawWorkspaceDomain.includes('.')" in source
+    assert "`${rawWorkspaceDomain}.crezlotours.com`" in source
 
 
 @pytest.mark.parametrize(

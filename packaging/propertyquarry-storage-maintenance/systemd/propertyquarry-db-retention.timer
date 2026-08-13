@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PropertyQuarry bounded PostgreSQL retention weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 03:15:00 Europe/Vienna
+RandomizedDelaySec=30m
+Persistent=true
+Unit=propertyquarry-db-retention.service
+
+[Install]
+WantedBy=timers.target

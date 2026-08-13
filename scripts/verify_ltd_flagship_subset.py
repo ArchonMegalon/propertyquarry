@@ -7,9 +7,9 @@ from pathlib import Path
 
 
 FLAGSHIP_REQUIRED = {
-    "1min.AI": {"manual_seeded", "complete"},
+    "1min.AI": {"live_provider_call_verified"},
     "Prompt Architects": {"manual_seeded", "complete"},
-    "PayFunnels": {"manual_seeded", "complete"},
+    "PayFunnels": {"unconfigured_external_authority"},
     "BrowserAct": {"complete"},
     "Teable": {"complete"},
     "ClickRank.ai": {"complete"},
@@ -19,15 +19,42 @@ FLAGSHIP_REQUIRED = {
 }
 
 ACCEPTED_SOURCES = {
-    "1min.AI": {"local_env_browseract_refresh"},
+    "1min.AI": {"worker_health_probe + principal_bound_provider_receipt"},
     "Prompt Architects": {"local_env + prompt_foundry_receipts"},
-    "PayFunnels": {"payfunnels_plan_billing_receipts"},
+    "PayFunnels": {"deployed_runtime_probe + contract_tests"},
     "BrowserAct": {"browseract_live"},
     "Teable": {"browseract_live"},
     "ClickRank.ai": {"clickrank_live"},
     "Emailit": {"emailit_api_live"},
     "Pixefy": {"fleet_verified"},
     "Rafter": {"fleet_verified"},
+}
+
+EVIDENCE_CLASSES = {
+    "1min.AI": "principal_bound_live_provider_call",
+    "Prompt Architects": "credential_and_contract_evidence",
+    "PayFunnels": "unconfigured_external_authority",
+    "BrowserAct": "live_account_evidence",
+    "Teable": "live_account_evidence",
+    "ClickRank.ai": "live_service_evidence",
+    "Emailit": "live_service_evidence",
+    "Pixefy": "auxiliary_verification_evidence",
+    "Rafter": "auxiliary_verification_evidence",
+}
+
+LIVE_EVIDENCE_SERVICES = {
+    "1min.AI",
+    "BrowserAct",
+    "Teable",
+    "ClickRank.ai",
+    "Emailit",
+}
+
+# A live provider/account/service is not automatically a PropertyQuarry
+# customer integration. Keep this list deliberately narrower and require a
+# principal-bound customer-call receipt before adding another service.
+PROPERTYQUARRY_CUSTOMER_INTEGRATION_SERVICES = {
+    "1min.AI",
 }
 
 MIN_ACCEPTED_COUNT = 9
@@ -66,6 +93,8 @@ def build_receipt(*, markdown_text: str) -> dict[str, object]:
     rows = _extract_discovery_rows(markdown_text)
     failures: list[str] = []
     accepted_total = 0
+    live_evidence_verified_total = 0
+    propertyquarry_customer_integration_verified_total = 0
     service_checks: dict[str, dict[str, object]] = {}
     for service, accepted_statuses in FLAGSHIP_REQUIRED.items():
         row = rows.get(service)
@@ -76,11 +105,32 @@ def build_receipt(*, markdown_text: str) -> dict[str, object]:
             accepted_total += 1
         else:
             failures.append(f"flagship_subset_mismatch:{service}:{status or 'missing'}:{source or 'missing'}")
+        live_evidence_verified = (
+            accepted and service in LIVE_EVIDENCE_SERVICES
+        )
+        propertyquarry_customer_integration_verified = (
+            accepted
+            and service in PROPERTYQUARRY_CUSTOMER_INTEGRATION_SERVICES
+        )
+        if live_evidence_verified:
+            live_evidence_verified_total += 1
+        if propertyquarry_customer_integration_verified:
+            propertyquarry_customer_integration_verified_total += 1
         service_checks[service] = {
             "present": bool(row),
             "status": status,
             "source": source,
             "accepted": accepted,
+            "evidence_class": EVIDENCE_CLASSES[service],
+            "live_evidence_verified": live_evidence_verified,
+            "propertyquarry_customer_integration_verified": (
+                propertyquarry_customer_integration_verified
+            ),
+            # Backward-compatible field with corrected semantics. It no longer
+            # inflates account/service evidence into customer integration.
+            "live_integration_verified": (
+                propertyquarry_customer_integration_verified
+            ),
         }
     if accepted_total < MIN_ACCEPTED_COUNT:
         failures.append(f"flagship_subset_coverage_below_floor:{accepted_total}<{MIN_ACCEPTED_COUNT}")
@@ -88,7 +138,28 @@ def build_receipt(*, markdown_text: str) -> dict[str, object]:
         "contract_name": "ea.verify_ltd_flagship_subset",
         "status": "pass" if not failures else "fail",
         "accepted_total": accepted_total,
+        "live_evidence_verified_total": live_evidence_verified_total,
+        "propertyquarry_customer_integration_verified_total": (
+            propertyquarry_customer_integration_verified_total
+        ),
+        "live_verified_total": (
+            propertyquarry_customer_integration_verified_total
+        ),
+        "contract_or_unconfigured_total": (
+            accepted_total - live_evidence_verified_total
+        ),
         "minimum_required": MIN_ACCEPTED_COUNT,
+        "not_live_integration_gate": True,
+        "acceptance_semantics": (
+            "Passing means each named service has its exact recorded posture; "
+            "contract-only, auxiliary, and unconfigured rows do not count as "
+            "live evidence, and live account/service evidence does not count "
+            "as a PropertyQuarry customer integration."
+        ),
+        "legacy_field_semantics": (
+            "live_integration_verified and live_verified_total mean verified "
+            "PropertyQuarry customer integration, not merely live evidence."
+        ),
         "services": service_checks,
         "failures": failures,
     }

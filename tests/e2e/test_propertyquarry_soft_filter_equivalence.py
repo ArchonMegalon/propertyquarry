@@ -246,6 +246,13 @@ def test_propertyquarry_e2e_soft_preferences_preserve_search_hits(monkeypatch) -
         }
 
     monkeypatch.setattr(product_service, "_property_scout_page_preview_with_timeout", _fake_preview)
+    monkeypatch.setattr(
+        product_service,
+        "_merge_property_facts_with_source_research",
+        lambda *, property_url, property_facts, image_urls=(): dict(
+            property_facts or {}
+        ),
+    )
 
     def _fake_fit(**kwargs) -> dict[str, object]:
         property_url = str(kwargs.get("property_url") or "")
@@ -328,8 +335,12 @@ def test_propertyquarry_e2e_soft_preferences_preserve_search_hits(monkeypatch) -
     plain_status = _poll_search_run(client, plain_started.json()["run_id"])
     soft_status = _poll_search_run(client, soft_started.json()["run_id"])
 
-    assert plain_status["status"] == "processed"
-    assert soft_status["status"] == "processed"
+    assert plain_status["status"] == "processed", json.dumps(
+        plain_status, ensure_ascii=False, sort_keys=True, default=str
+    )
+    assert soft_status["status"] == "processed", json.dumps(
+        soft_status, ensure_ascii=False, sort_keys=True, default=str
+    )
     assert _candidate_urls(plain_status) == set(listing_urls)
     assert _candidate_urls(soft_status) == set(listing_urls)
     assert _candidate_urls(soft_status) == _candidate_urls(plain_status)
@@ -431,6 +442,13 @@ def test_propertyquarry_e2e_targeted_listing_survives_strict_and_soft_runs(monke
         }
 
     monkeypatch.setattr(product_service, "_property_scout_page_preview_with_timeout", _fake_preview)
+    monkeypatch.setattr(
+        product_service,
+        "_merge_property_facts_with_source_research",
+        lambda *, property_url, property_facts, image_urls=(): dict(
+            property_facts or {}
+        ),
+    )
 
     def _fake_fit(**kwargs) -> dict[str, object]:
         property_url = str(kwargs.get("property_url") or "")
@@ -620,6 +638,13 @@ def test_propertyquarry_e2e_exact_district_selection_remains_a_hard_filter(monke
     monkeypatch.setattr(product_service, "_property_scout_page_preview_with_timeout", _fake_preview)
     monkeypatch.setattr(
         product_service,
+        "_merge_property_facts_with_source_research",
+        lambda *, property_url, property_facts, image_urls=(): dict(
+            property_facts or {}
+        ),
+    )
+    monkeypatch.setattr(
+        product_service,
         "_property_alert_personal_fit_from_facts",
         lambda **kwargs: {
             "fit_score": 72.0,
@@ -745,6 +770,13 @@ def test_propertyquarry_e2e_adjacent_districts_enabled_for_fuzzy_search(monkeypa
     monkeypatch.setattr(product_service, "_property_scout_page_preview_with_timeout", _fake_preview)
     monkeypatch.setattr(
         product_service,
+        "_merge_property_facts_with_source_research",
+        lambda *, property_url, property_facts, image_urls=(): dict(
+            property_facts or {}
+        ),
+    )
+    monkeypatch.setattr(
+        product_service,
         "_property_alert_personal_fit_from_facts",
         lambda **kwargs: {
             "fit_score": 72.0,
@@ -792,7 +824,9 @@ def test_propertyquarry_e2e_adjacent_districts_enabled_for_fuzzy_search(monkeypa
     assert strict_started.status_code == 202, strict_started.text
     strict_status = _poll_search_run(client, strict_started.json()["run_id"])
 
-    assert strict_status["status"] == "processed"
+    assert strict_status["status"] == "processed", json.dumps(
+        strict_status, ensure_ascii=False, sort_keys=True, default=str
+    )
     assert _candidate_urls(strict_status) == {in_scope_url}
 
     fuzzy_started = client.post(

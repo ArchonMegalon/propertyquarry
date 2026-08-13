@@ -80,6 +80,150 @@ _DE_AT = {
     "PropertyQuarry Shortlist": "PropertyQuarry Merkliste",
     "PropertyQuarry Research": "PropertyQuarry Recherche",
     "Skip to content": "Zum Inhalt springen",
+    "Product": "Produkt",
+    "How it works": "So funktioniert es",
+    "Pricing": "Preise",
+    "Sign in": "Anmelden",
+    "Sign in to PropertyQuarry": "Bei PropertyQuarry anmelden",
+    "Continue your property search.": "Setzen Sie Ihre Immobiliensuche fort.",
+    "Use a secure email link if your address already has access. You can also continue with an available provider.": (
+        "Verwenden Sie einen sicheren E-Mail-Link, wenn Ihre Adresse bereits Zugriff hat. "
+        "Sie können auch mit einem verfügbaren Anbieter fortfahren."
+    ),
+    "Use a secure email link if your address already has access. You can also continue with an available provider. Google only verifies your identity for a PropertyQuarry-local session.": (
+        "Verwenden Sie einen sicheren E-Mail-Link, wenn Ihre Adresse bereits Zugriff hat. "
+        "Sie können auch mit einem verfügbaren Anbieter fortfahren. Google bestätigt nur "
+        "Ihre Identität für eine lokale PropertyQuarry-Sitzung."
+    ),
+    "Sign-in options": "Anmeldeoptionen",
+    "Send secure sign-in link": "Sicheren Anmeldelink senden",
+    "New here?": "Neu hier?",
+    "Create an account with email.": "Konto mit E-Mail erstellen.",
+    "Email sign-in is not available right now.": "Die E-Mail-Anmeldung ist derzeit nicht verfügbar.",
+    "Use a provider below instead.": "Verwenden Sie stattdessen einen der folgenden Anbieter.",
+    "Try again later or ask the account owner for a fresh access link.": (
+        "Versuchen Sie es später erneut oder bitten Sie den Kontoinhaber um einen neuen Zugriffslink."
+    ),
+    "Sign-in providers verify who you are, then open the same local account or create it if needed.": (
+        "Anmeldeanbieter bestätigen Ihre Identität und öffnen anschließend dasselbe lokale "
+        "Konto oder erstellen es bei Bedarf."
+    ),
+    "Sign-in providers": "Anmeldeanbieter",
+    "Identity only": "Nur Identitätsprüfung",
+    "Continue": "Weiter",
+    "Continue with Google": "Mit Google fortfahren",
+    "Continue with Facebook": "Mit Facebook fortfahren",
+    "Continue with ID Austria": "Mit ID Austria fortfahren",
+    "Opening Google...": "Google wird geöffnet…",
+    "Opening Facebook...": "Facebook wird geöffnet…",
+    "Opening ID Austria...": "ID Austria wird geöffnet…",
+    "Opening...": "Wird geöffnet…",
+    "Sign-in provider": "Anmeldeanbieter",
+    "If nothing opens, use email instead.": "Falls sich nichts öffnet, verwenden Sie stattdessen E-Mail.",
+    "If nothing opens, choose another available sign-in option.": (
+        "Falls sich nichts öffnet, wählen Sie eine andere verfügbare Anmeldeoption."
+    ),
+    "If nothing opens, try again or contact support.": (
+        "Falls sich nichts öffnet, versuchen Sie es erneut oder wenden Sie sich an den Support."
+    ),
+    "Still here. Try again or use email instead.": (
+        "Noch auf dieser Seite? Versuchen Sie es erneut oder verwenden Sie stattdessen E-Mail."
+    ),
+    "Still here. Try again or choose another available sign-in option.": (
+        "Noch auf dieser Seite? Versuchen Sie es erneut oder wählen Sie eine andere Anmeldeoption."
+    ),
+    "Still here. Try again or contact support.": (
+        "Noch auf dieser Seite? Versuchen Sie es erneut oder wenden Sie sich an den Support."
+    ),
+    "Google sign-in is temporarily unavailable.": "Die Google-Anmeldung ist vorübergehend nicht verfügbar.",
+    "Use the secure email form above, or check Google again.": (
+        "Verwenden Sie das sichere E-Mail-Formular oben oder prüfen Sie Google erneut."
+    ),
+    "Check Google again in a moment. Your saved property search is not affected.": (
+        "Prüfen Sie Google gleich noch einmal. Ihre gespeicherte Immobiliensuche bleibt unverändert."
+    ),
+    "Check Google again": "Google erneut prüfen",
+    "Your session ended.": "Ihre Sitzung wurde beendet.",
+    "Your search is still saved. Choose a sign-in option to continue where you left off.": (
+        "Ihre Suche ist weiterhin gespeichert. Wählen Sie eine Anmeldeoption, um dort fortzufahren, wo Sie aufgehört haben."
+    ),
+    "Show sign-in options": "Anmeldeoptionen anzeigen",
+    "Your search is still saved. Sign-in is temporarily unavailable; try again later.": (
+        "Ihre Suche ist weiterhin gespeichert. Die Anmeldung ist vorübergehend nicht verfügbar; versuchen Sie es später erneut."
+    ),
+    "You are signed out.": "Sie sind abgemeldet.",
+    "Sign in below.": "Melden Sie sich unten an.",
+    "Check your inbox.": "Prüfen Sie Ihren Posteingang.",
+    "Enter a valid email address.": "Geben Sie eine gültige E-Mail-Adresse ein.",
+    "Use the inbox that already has access or an invite.": (
+        "Verwenden Sie das Postfach, das bereits Zugriff oder eine Einladung hat."
+    ),
+    "We could not send a sign-in link.": "Der Anmeldelink konnte nicht gesendet werden.",
+    "Open search": "Suche öffnen",
+    "Email sign-in": "Mit E-Mail anmelden",
+    "Your privacy choice": "Ihre Datenschutzauswahl",
+    "Optional analytics help us understand which public pages are useful. They stay off unless you allow them. Essential security and preference cookies still work.": (
+        "Optionale Analysen helfen uns zu verstehen, welche öffentlichen Seiten nützlich sind. "
+        "Sie bleiben deaktiviert, bis Sie zustimmen. Notwendige Sicherheits- und "
+        "Einstellungscookies funktionieren weiterhin."
+    ),
+    "Review cookie settings": "Cookie-Einstellungen prüfen",
+    "Reject optional analytics": "Optionale Analysen ablehnen",
+    "Allow analytics": "Analysen erlauben",
+    "Search once. See the right homes. Decide faster.": (
+        "Einmal suchen. Die richtigen Immobilien sehen. Schneller entscheiden."
+    ),
+    "One brief, matching homes, and the details that matter before a viewing.": (
+        "Ein Suchprofil, passende Immobilien und die entscheidenden Details vor der Besichtigung."
+    ),
+    "Brief": "Suchprofil",
+    "Decide": "Entscheiden",
+    "Example shortlist": "Beispiel-Merkliste",
+    "Tap any row to open the example.": "Öffnen Sie ein Beispiel mit einem Klick.",
+    "Example": "Beispiel",
+    "Sample homes": "Beispielimmobilien",
+    "3 examples": "3 Beispiele",
+    "Example home with a 3D tour and walkthrough.": (
+        "Beispielimmobilie mit 3D-Tour und Rundgang."
+    ),
+    "Quiet layout near transit": "Ruhiger Grundriss mit guter Anbindung",
+    "Good fit. Parking still unclear.": "Gute Eignung. Parkplatz noch ungeklärt.",
+    "Strong price, open questions": "Attraktiver Preis, offene Fragen",
+    "Strong price. Check the details.": "Attraktiver Preis. Details prüfen.",
+    "Must-haves stay clear": "Unverzichtbares bleibt klar",
+    "Area, mode, and must-haves can exclude.": (
+        "Gebiet, Angebotsart und Muss-Kriterien können Ergebnisse ausschließen."
+    ),
+    "Preferences shape fit": "Präferenzen bestimmen die Eignung",
+    "Schools, errands, noise, and commute adjust order.": (
+        "Schulen, Alltagswege, Lärm und Pendelzeit beeinflussen die Reihenfolge."
+    ),
+    "Details stay together": "Alle Details an einem Ort",
+    "Costs, floorplans, tours, and open questions stay with the home.": (
+        "Kosten, Grundrisse, Touren und offene Fragen bleiben bei der Immobilie."
+    ),
+    "Property onboarding": "Immobiliensuche einrichten",
+    "Set up your property search.": "Richten Sie Ihre Immobiliensuche ein.",
+    "Create an account, then start with your brief.": (
+        "Erstellen Sie ein Konto und beginnen Sie mit Ihrem Suchprofil."
+    ),
+    "Email": "E-Mail",
+    "Create your account.": "Erstellen Sie Ihr Konto.",
+    "Send verification code": "Bestätigungscode senden",
+    "Privacy": "Datenschutz",
+    "Terms": "Nutzungsbedingungen",
+    "Support": "Hilfe",
+    "Imprint": "Impressum",
+    "Cookie settings": "Cookie-Einstellungen",
+    "Subprocessors": "Unterauftragsverarbeiter",
+    "Refunds": "Rückerstattungen",
+    "Disclaimers": "Haftungsausschlüsse",
+    "Ready": "Bereit",
+    "1. Email": "1. E-Mail",
+    "2. Details": "2. Details",
+    "3. Access": "3. Zugriff",
+    "4. Ready": "4. Bereit",
+    "Step 1": "Schritt 1",
     "Try again": "Erneut versuchen",
     "Search": "Suche",
     "Shortlist": "Merkliste",
@@ -109,6 +253,9 @@ _DE_AT = {
     "Sites": "Portale",
     "Updates": "Aktualisierungen",
     "Search totals": "Suchsummen",
+    "Search progress": "Suchfortschritt",
+    "Homes found": "Immobilien gefunden",
+    "Homes checked": "Geprüft",
     "Checking the saved search.": "Gespeicherte Suche wird geprüft.",
     "Checking the latest search status.": "Aktueller Suchstatus wird geprüft.",
     "Saved defaults": "Gespeicherte Vorgaben",
@@ -215,6 +362,7 @@ _DE_AT = {
     "Next step": "Nächster Schritt",
     "Premium next step": "Premium-Nächster Schritt",
     "Best so far": "Bisher am besten",
+    "Diorama preview in progress": "Diorama-Vorschau wird erstellt",
     "Fit": "Eignung",
     "Monthly total": "Monatlich gesamt",
     "It is meaningfully cheaper.": "Deutlich günstiger.",
@@ -345,6 +493,151 @@ _ES_CR = {
     "PropertyQuarry Shortlist": "Favoritos de PropertyQuarry",
     "PropertyQuarry Research": "Investigación de PropertyQuarry",
     "Skip to content": "Saltar al contenido",
+    "Product": "Producto",
+    "How it works": "Cómo funciona",
+    "Pricing": "Precios",
+    "Sign in": "Iniciar sesión",
+    "Sign in to PropertyQuarry": "Iniciar sesión en PropertyQuarry",
+    "Continue your property search.": "Continúe su búsqueda de propiedades.",
+    "Use a secure email link if your address already has access. You can also continue with an available provider.": (
+        "Use un enlace seguro por correo si su dirección ya tiene acceso. También puede "
+        "continuar con un proveedor disponible."
+    ),
+    "Use a secure email link if your address already has access. You can also continue with an available provider. Google only verifies your identity for a PropertyQuarry-local session.": (
+        "Use un enlace seguro por correo si su dirección ya tiene acceso. También puede "
+        "continuar con un proveedor disponible. Google solo verifica su identidad para una "
+        "sesión local de PropertyQuarry."
+    ),
+    "Sign-in options": "Opciones para iniciar sesión",
+    "Send secure sign-in link": "Enviar enlace seguro para iniciar sesión",
+    "New here?": "¿Es nuevo aquí?",
+    "Create an account with email.": "Cree una cuenta con correo electrónico.",
+    "Email sign-in is not available right now.": "El inicio de sesión por correo no está disponible en este momento.",
+    "Use a provider below instead.": "Use uno de los proveedores disponibles a continuación.",
+    "Try again later or ask the account owner for a fresh access link.": (
+        "Inténtelo de nuevo más tarde o pida al propietario de la cuenta un enlace de acceso nuevo."
+    ),
+    "Sign-in providers verify who you are, then open the same local account or create it if needed.": (
+        "Los proveedores verifican su identidad y luego abren la misma cuenta local o la crean si es necesario."
+    ),
+    "Sign-in providers": "Proveedores de inicio de sesión",
+    "Identity only": "Solo identidad",
+    "Continue": "Continuar",
+    "Continue with Google": "Continuar con Google",
+    "Continue with Facebook": "Continuar con Facebook",
+    "Continue with ID Austria": "Continuar con ID Austria",
+    "Opening Google...": "Abriendo Google…",
+    "Opening Facebook...": "Abriendo Facebook…",
+    "Opening ID Austria...": "Abriendo ID Austria…",
+    "Opening...": "Abriendo…",
+    "Sign-in provider": "Proveedor de inicio de sesión",
+    "If nothing opens, use email instead.": "Si no se abre nada, use el correo electrónico.",
+    "If nothing opens, choose another available sign-in option.": (
+        "Si no se abre nada, elija otra opción disponible para iniciar sesión."
+    ),
+    "If nothing opens, try again or contact support.": (
+        "Si no se abre nada, inténtelo de nuevo o contacte con soporte."
+    ),
+    "Still here. Try again or use email instead.": (
+        "¿Sigue aquí? Inténtelo de nuevo o use el correo electrónico."
+    ),
+    "Still here. Try again or choose another available sign-in option.": (
+        "¿Sigue aquí? Inténtelo de nuevo o elija otra opción disponible."
+    ),
+    "Still here. Try again or contact support.": (
+        "¿Sigue aquí? Inténtelo de nuevo o contacte con soporte."
+    ),
+    "Google sign-in is temporarily unavailable.": "El inicio de sesión con Google no está disponible temporalmente.",
+    "Use the secure email form above, or check Google again.": (
+        "Use el formulario seguro de correo anterior o vuelva a comprobar Google."
+    ),
+    "Check Google again in a moment. Your saved property search is not affected.": (
+        "Vuelva a comprobar Google en un momento. Su búsqueda guardada no se verá afectada."
+    ),
+    "Check Google again": "Comprobar Google de nuevo",
+    "Your session ended.": "Su sesión terminó.",
+    "Your search is still saved. Choose a sign-in option to continue where you left off.": (
+        "Su búsqueda sigue guardada. Elija una opción para iniciar sesión y continuar donde la dejó."
+    ),
+    "Show sign-in options": "Mostrar opciones para iniciar sesión",
+    "Your search is still saved. Sign-in is temporarily unavailable; try again later.": (
+        "Su búsqueda sigue guardada. El inicio de sesión no está disponible temporalmente; inténtelo más tarde."
+    ),
+    "You are signed out.": "Su sesión está cerrada.",
+    "Sign in below.": "Inicie sesión a continuación.",
+    "Check your inbox.": "Revise su bandeja de entrada.",
+    "Enter a valid email address.": "Ingrese una dirección de correo válida.",
+    "Use the inbox that already has access or an invite.": (
+        "Use la bandeja de entrada que ya tiene acceso o una invitación."
+    ),
+    "We could not send a sign-in link.": "No se pudo enviar el enlace para iniciar sesión.",
+    "Open search": "Abrir búsqueda",
+    "Email sign-in": "Iniciar sesión por correo",
+    "Your privacy choice": "Su elección de privacidad",
+    "Optional analytics help us understand which public pages are useful. They stay off unless you allow them. Essential security and preference cookies still work.": (
+        "Los análisis opcionales nos ayudan a entender qué páginas públicas son útiles. "
+        "Permanecen desactivados hasta que usted los permita. Las cookies esenciales de "
+        "seguridad y preferencias siguen funcionando."
+    ),
+    "Review cookie settings": "Revisar la configuración de cookies",
+    "Reject optional analytics": "Rechazar análisis opcionales",
+    "Allow analytics": "Permitir análisis",
+    "Search once. See the right homes. Decide faster.": (
+        "Busque una vez. Vea las propiedades adecuadas. Decida más rápido."
+    ),
+    "One brief, matching homes, and the details that matter before a viewing.": (
+        "Un perfil, propiedades adecuadas y los detalles importantes antes de una visita."
+    ),
+    "Brief": "Perfil",
+    "Decide": "Decidir",
+    "Example shortlist": "Lista de muestra",
+    "Tap any row to open the example.": "Seleccione cualquier fila para abrir el ejemplo.",
+    "Example": "Ejemplo",
+    "Sample homes": "Propiedades de muestra",
+    "3 examples": "3 ejemplos",
+    "Example home with a 3D tour and walkthrough.": (
+        "Propiedad de ejemplo con recorrido 3D y visita guiada."
+    ),
+    "Quiet layout near transit": "Distribución tranquila cerca del transporte",
+    "Good fit. Parking still unclear.": (
+        "Buena compatibilidad. El estacionamiento aún no está claro."
+    ),
+    "Strong price, open questions": "Buen precio, preguntas pendientes",
+    "Strong price. Check the details.": "Buen precio. Revise los detalles.",
+    "Must-haves stay clear": "Los requisitos indispensables quedan claros",
+    "Area, mode, and must-haves can exclude.": (
+        "La zona, modalidad y requisitos indispensables pueden excluir resultados."
+    ),
+    "Preferences shape fit": "Las preferencias definen la compatibilidad",
+    "Schools, errands, noise, and commute adjust order.": (
+        "Escuelas, diligencias, ruido y desplazamientos ajustan el orden."
+    ),
+    "Details stay together": "Los detalles permanecen juntos",
+    "Costs, floorplans, tours, and open questions stay with the home.": (
+        "Costos, planos, recorridos y preguntas pendientes permanecen con la propiedad."
+    ),
+    "Property onboarding": "Configuración de búsqueda de propiedades",
+    "Set up your property search.": "Configure su búsqueda de propiedades.",
+    "Create an account, then start with your brief.": (
+        "Cree una cuenta y empiece con su perfil de búsqueda."
+    ),
+    "Email": "Correo electrónico",
+    "Create your account.": "Cree su cuenta.",
+    "Send verification code": "Enviar código de verificación",
+    "Privacy": "Privacidad",
+    "Terms": "Términos",
+    "Support": "Ayuda",
+    "Imprint": "Aviso legal",
+    "Cookie settings": "Configuración de cookies",
+    "Subprocessors": "Subprocesadores",
+    "Refunds": "Reembolsos",
+    "Disclaimers": "Descargos de responsabilidad",
+    "Ready": "Listo",
+    "1. Email": "1. Correo electrónico",
+    "2. Details": "2. Detalles",
+    "3. Access": "3. Acceso",
+    "4. Ready": "4. Listo",
+    "Step 1": "Paso 1",
     "Try again": "Intentar de nuevo",
     "Search": "Buscar",
     "Shortlist": "Favoritos",
@@ -374,6 +667,9 @@ _ES_CR = {
     "Sites": "Portales",
     "Updates": "Actualizaciones",
     "Search totals": "Totales de búsqueda",
+    "Search progress": "Progreso de búsqueda",
+    "Homes found": "Propiedades encontradas",
+    "Homes checked": "Propiedades revisadas",
     "Checking the saved search.": "Revisando la búsqueda guardada.",
     "Checking the latest search status.": "Revisando el estado más reciente de la búsqueda.",
     "Saved defaults": "Preferencias guardadas",
@@ -480,6 +776,7 @@ _ES_CR = {
     "Next step": "Siguiente paso",
     "Premium next step": "Siguiente paso premium",
     "Best so far": "La mejor hasta ahora",
+    "Diorama preview in progress": "Creando vista previa del diorama",
     "Fit": "Compatibilidad",
     "Monthly total": "Total mensual",
     "It is meaningfully cheaper.": "Es considerablemente más económica.",
@@ -786,7 +1083,7 @@ _PROTECTED_BLOCK_RE = re.compile(
 )
 _TEXT_NODE_RE = re.compile(r">(?P<text>[^<>]+)<")
 _TRANSLATABLE_ATTRIBUTE_RE = re.compile(
-    r"(?P<prefix>\b(?P<name>href|action|aria-label|title|placeholder)\s*=\s*)"
+    r"(?P<prefix>\b(?P<name>href|action|aria-label|title|placeholder|data-submitting-label|data-auth-copy-[a-z0-9-]+)\s*=\s*)"
     r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
     re.IGNORECASE | re.DOTALL,
 )
@@ -989,11 +1286,13 @@ def resolve_propertyquarry_locale(
             "cookie",
             query_locale_rejected=bool(query_values),
         )
-    accepted_locale = _accept_language_locale(_header_value(header_list, "accept-language"))
-    if accepted_locale is not None:
+    accept_language_locale = _accept_language_locale(
+        _header_value(header_list, "accept-language")
+    )
+    if accept_language_locale is not None:
         return PropertyQuarryLocaleDecision(
-            accepted_locale,
-            "accept-language",
+            accept_language_locale,
+            "accept_language",
             query_locale_rejected=bool(query_values),
         )
     return PropertyQuarryLocaleDecision("en", "default", query_locale_rejected=bool(query_values))
@@ -1071,6 +1370,18 @@ def propertyquarry_translation(value: str, *, locale: str) -> str:
                 "saved opportunities": "oportunidades guardadas",
             }[unit]
         return f"{matching_total.group(1)} {label}"
+    source_progress = re.fullmatch(
+        r"(\d+)\s*/\s*(\d+)\s+(sources|search queries)",
+        source,
+        flags=re.IGNORECASE,
+    )
+    if source_progress:
+        unit = source_progress.group(3).casefold()
+        if is_german:
+            label = "Quellen" if unit == "sources" else "Suchanfragen"
+        else:
+            label = "fuentes" if unit == "sources" else "consultas de búsqueda"
+        return f"{source_progress.group(1)} / {source_progress.group(2)} {label}"
     rooms = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s+rooms?(\s*\|\s*.+)?", source, flags=re.IGNORECASE)
     if rooms:
         unit = "Zimmer" if is_german else ("habitación" if rooms.group(1) == "1" else "habitaciones")

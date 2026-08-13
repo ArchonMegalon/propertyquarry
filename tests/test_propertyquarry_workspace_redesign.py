@@ -71,6 +71,21 @@ def _read_workbench_bundle() -> str:
     return "\n".join(path.read_text(encoding="utf-8") for path in paths if path.exists())
 
 
+def test_propertyquarry_public_surfaces_keep_minimal_premium_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    public_shell = (repo_root / "ea/app/templates/base_public.html").read_text(encoding="utf-8")
+    home = (repo_root / "ea/app/templates/propertyquarry_home.html").read_text(encoding="utf-8")
+    example = (repo_root / "ea/app/templates/propertyquarry_example_shortlist.html").read_text(encoding="utf-8")
+
+    assert ".skip-link:focus-visible" in public_shell
+    assert ".skip-link:focus {" not in public_shell
+    assert "backdrop-filter: blur(16px) saturate(120%);" in public_shell
+    assert 'font-family: Georgia, "Times New Roman", serif;' in home
+    assert "box-shadow: var(--shadow);" in home
+    assert 'font-family: Georgia, "Times New Roman", serif;' in example
+    assert "box-shadow: inset 3px 0 0 var(--accent);" in example
+
+
 def _assert_billing_fail_closed(response, *, marker: str = "The billing portal is still being connected.") -> None:
     if response.status_code in {303, 307}:
         assert response.headers["location"] == "/app/account?billing=1#delivery"
@@ -322,9 +337,9 @@ def test_property_mobile_search_header_and_district_picker_stay_compact() -> Non
     assert "const keywordPreferenceStateMapFromSaved = (preferences) => {" in workbench_script
     assert "progress.hidden = isMobileSearch;" in workbench_script
     assert "const saveHidden = isMobileSearch;" in workbench_script
-    assert "next.dataset.pqxStepMode = isFinalStep ? 'launch' : 'advance';" in workbench_script
-    assert "localizedWorkbenchCopy('step-search', 'Search')" in workbench_script
-    assert "localizedWorkbenchCopy('step-review', 'Review')" in workbench_script
+    assert "next.dataset.pqxStepMode = 'advance';" in workbench_script
+    assert "launch.hidden = !isFinalStep;" in workbench_script
+    assert "launch.dataset.pqxStepMode = 'launch';" in workbench_script
     assert "localizedWorkbenchCopy('step-next', 'Next')" in workbench_script
 
 
@@ -511,7 +526,7 @@ def test_property_shortlist_templates_expose_visual_actions_without_hidden_agent
     feedback_script = (repo_root / "ea/app/templates/app/_property_workbench_feedback_script.html").read_text(encoding="utf-8")
 
     assert "loop.first and brief.get('plan_key') == 'agent'" not in results
-    assert ">Walkthrough</a>" in results
+    assert ">Camera walkthrough</a>" in results
     assert ">3D tour</a>" in results
     assert 'class="pqx-result-fact pqx-result-tour-link"' in results
     assert "tour.get('url')" in results
@@ -530,10 +545,12 @@ def test_property_shortlist_templates_expose_visual_actions_without_hidden_agent
     assert "selected.get('diorama_preview_url')" in review
     assert "selected.get('diorama_preview_url')" in workbench
     assert "candidate?.diorama_preview_url" in feedback_script
-    assert "selected.get('verified_tour_url') or selected.get('open_tour_url')" in review
-    assert "selected.get('verified_tour_url') or selected.get('open_tour_url')" in workbench
+    assert "selected.get('verified_tour_url') or selected.get('open_tour_url')" not in review
+    assert "selected.get('verified_tour_url') or selected.get('open_tour_url')" not in workbench
+    assert "selected.get('verified_tour_url') or selected_tour.get('url')" in review
+    assert "selected.get('verified_tour_url') or selected_tour.get('url')" in workbench
     assert "candidate?.verified_tour_url" in feedback_script
-    assert "candidate?.open_tour_url" in feedback_script
+    assert "candidate?.open_tour_url" not in feedback_script
     assert "{{ selected_tour.get('provider_label') or '3D tour' }}" not in review
     assert "{{ selected_tour.get('provider_label') or '3D tour' }}" not in workbench
     assert "{{ selected_flythrough.get('provider_label') or 'Walkthrough' }}" not in review
@@ -542,7 +559,7 @@ def test_property_shortlist_templates_expose_visual_actions_without_hidden_agent
     assert "candidate?.flythrough?.provider_label || 'Rendered walkthrough'" not in script
     assert "Rendered walkthrough" not in script
     assert "<summary><strong>More actions</strong></summary>" not in review
-    assert "Request walkthrough" in review
+    assert "Request camera walkthrough" in review
     assert "Open 3D tour" in review
     assert "Open listing" in review
     assert "Open property" in review
@@ -1661,6 +1678,58 @@ def test_propertyquarry_progress_current_property_falls_back_to_source_top_candi
     assert card["orientation_preview"]["image_url"] == "/app/api/property/map-previews/current-source.png"
 
 
+def test_propertyquarry_progress_best_so_far_skips_unconfirmed_search_candidate() -> None:
+    card = landing_property_workspace_helpers._property_progress_current_property_card(
+        run_summary={
+            "ranked_candidates": [
+                {
+                    "candidate_ref": "provider-placeholder",
+                    "title": "Willhaben · search candidate",
+                    "summary": "Willhaben returned a search-results page. PropertyQuarry is still extracting a concrete listing before this becomes a confirmed property.",
+                    "fit_score": 52,
+                    "property_facts": {"postal_name": "1020 Leopoldstadt"},
+                },
+                {
+                    "candidate_ref": "confirmed-flat",
+                    "title": "2-Zimmer Altbauflair mit modernem Wohnkomfort",
+                    "summary": "Concrete apartment listing.",
+                    "fit_score": 51,
+                    "property_facts": {
+                        "postal_name": "1020 Wien",
+                        "rooms": 2,
+                        "area_m2": 57,
+                        "price_eur": 319000,
+                    },
+                },
+            ]
+        },
+        run_id="run-best-so-far",
+    )
+
+    assert card["status_label"] == "Best so far"
+    assert card["title"] == "2-Zimmer Altbauflair mit modernem Wohnkomfort"
+    assert card["detail_url"] == "/app/research/confirmed-flat?run_id=run-best-so-far"
+
+
+def test_propertyquarry_compact_live_run_keeps_safe_best_candidate_detail_link() -> None:
+    compact = landing_property_workspace_payload._property_workbench_client_run_payload(
+        {
+            "run_id": "run-best-so-far",
+            "status": "in_progress",
+            "current_property": {
+                "candidate_ref": "confirmed-flat",
+                "title": "Confirmed flat",
+                "status_label": "Best so far",
+                "detail_url": "/app/research/confirmed-flat?run_id=run-best-so-far",
+            },
+        }
+    )
+
+    assert compact["current_property"]["detail_url"] == (
+        "/app/research/confirmed-flat?run_id=run-best-so-far"
+    )
+
+
 def test_propertyquarry_browser_route_preview_uses_confirmed_distance_fallback_copy() -> None:
     body = _read_workbench_bundle()
 
@@ -1670,6 +1739,7 @@ def test_propertyquarry_browser_route_preview_uses_confirmed_distance_fallback_c
     assert "lowered.includes('google.com/maps')" in body
     assert "const href = routePreviewHref(route?.map_url);" in body
     assert "const currentPropertyCardPayload = (runPayload) => {" in body
+    assert ".replace(/\\b(\\d+)(?:[.,]0+)\\s+m2\\b/gi, '$1 m²')" in body
     assert "const href = routePreviewHref(property?.detail_url);" in body
     assert "routePreviewHref(property?.map_url)" not in body
     assert "pqx-current-property-card" in body
@@ -3933,7 +4003,7 @@ def test_propertyquarry_running_panel_does_not_use_raw_url_as_best_title(monkeyp
     assert "1010 Vienna" in response.text
 
 
-def test_propertyquarry_running_panel_does_not_use_raw_url_as_best_summary(monkeypatch) -> None:
+def test_propertyquarry_running_panel_hides_raw_url_but_keeps_safe_best_candidate(monkeypatch) -> None:
     client = build_property_client(principal_id="pq-running-url-summary")
     start_workspace(client, mode="personal", workspace_name="Running Url Summary Office")
 
@@ -3976,7 +4046,8 @@ def test_propertyquarry_running_panel_does_not_use_raw_url_as_best_summary(monke
     assert response.status_code == 200
     assert raw_url not in response.text
     rendered_html = re.sub(r"<script\b[^>]*>.*?</script>", " ", response.text, flags=re.IGNORECASE | re.DOTALL)
-    assert "Altbau near U6" not in rendered_html
+    assert "Best so far" in rendered_html
+    assert "Altbau near U6" in rendered_html
     assert "Diorama preparing" not in rendered_html
     assert "Diorama is being prepared" not in rendered_html
 
@@ -5697,8 +5768,9 @@ def test_propertyquarry_fast_ranked_run_open_property_stays_first_party_for_list
     assert 'href="https://www.immobilienscout24.de/expose/listing-only-loft">Open property</a>' not in response.text
     assert re.search(r'href="/app/research/[^"]+\?run_id=run-listing-only-fast">Open property</a>', response.text)
     assert f'href="{external_listing}" target="_blank" rel="noopener noreferrer">Open listing</a>' in response.text
-    assert 'data-visual-kind="placeholder"' in response.text
-    assert '<img src="https://img.example.test/listing-only-loft.jpg"' not in response.text
+    assert 'data-visual-kind="preview"' in response.text
+    assert '<img src="https://img.example.test/listing-only-loft.jpg"' in response.text
+    assert 'referrerpolicy="no-referrer" data-pq-fast-thumbnail-image' in response.text
 
 
 def test_propertyquarry_fast_ranked_run_stays_public_without_auth_headers_when_api_token_is_configured(
@@ -6502,17 +6574,58 @@ def test_property_client_scripts_summarize_compact_candidate_copy_for_quiet_refr
     assert "fit_summary: cleanCandidateCopy(candidate?.fit_summary || candidate?.summary || candidate?.compare_reason || '')," not in workbench_script
 
 
-def test_property_results_do_not_hotlink_unverified_provider_thumbnails() -> None:
+def test_property_results_keep_remote_thumbnails_no_referrer_with_fallbacks() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     results_template = (repo_root / "ea/app/templates/app/_property_results_list.html").read_text(encoding="utf-8")
     workbench_template = (repo_root / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
     workbench_script = (repo_root / "ea/app/templates/app/_property_workbench_script.html").read_text(encoding="utf-8")
 
     assert "diorama_preview_url if diorama_preview_url.startswith('/') else ''" in results_template
-    assert "primary_preview_url if primary_preview_url.startswith('/') else ''" in results_template
-    assert "if ranked_preview_url.startswith('/')" in workbench_template
-    assert "const clientRenderableImageUrl = (value) => {" in workbench_script
-    assert "parsed.origin === window.location.origin ? candidateUrl : ''" in workbench_script
+    assert "primary_preview_url.startswith('https://')" in results_template
+    assert "if not shortlist_preview_url %} is-placeholder" in results_template
+    assert "{% if shortlist_preview_url %}" in results_template
+    assert 'src="{{ shortlist_preview_url }}"' in results_template
+    assert 'data-pqx-deferred-src="{{ shortlist_preview_url }}"' in results_template
+    assert "diorama_preview_url or primary_preview_url" in results_template
+    assert 'referrerpolicy="no-referrer"' in results_template
+    assert "data-pqx-thumbnail-image" in results_template
+    assert "ranked_preview_url" in workbench_template
+    assert "const thumbnailRenderableUrl = (value) => {" in workbench_script
+    assert "(!sameOrigin && candidateUrl.protocol !== 'https:')" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" in workbench_script
+
+
+def test_property_shortlist_premium_surface_keeps_dioramas_at_the_visual_center() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    results_template = (repo_root / "ea/app/templates/app/_property_results_list.html").read_text(encoding="utf-8")
+    workbench_template = (repo_root / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
+    workbench_script = (repo_root / "ea/app/templates/app/_property_workbench_script.html").read_text(encoding="utf-8")
+
+    assert 'class="pqx-shortlist-hero" data-pqx-premium-shortlist' in results_template
+    assert "Private collection" in results_template
+    assert "Your shortlist" in results_template
+    assert "Compare the spaces, fit, and trade-offs" in results_template
+    assert "data-pqx-shortlist-card" in results_template
+    assert "Spatial diorama" in results_template
+    assert "Preview not available" in results_template
+    assert "Explore diorama and area map for" in results_template
+    assert 'class="pqx-result-open pqx-result-open-button is-primary"' in results_template
+    assert 'class="pqx-result-open pqx-result-open-button is-remove"' in results_template
+
+    assert 'id="pqx-premium-shortlist-styles"' in workbench_template
+    assert '.pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card]' in workbench_template
+    assert ".pqx-shortlist-visual-chrome" in workbench_template
+    assert "@media (max-width: 760px)" in workbench_template
+    assert "@media (prefers-reduced-motion: reduce)" in workbench_template
+    assert ":focus-visible" in workbench_template
+
+    assert "const shortlistHero = (count) => shortlistSurface" in workbench_script
+    assert "${shortlistHero(rows.length)}" in workbench_script
+    assert "data-pqx-shortlist-card" in workbench_script
+    assert "Spatial diorama" in workbench_script
+    assert "Area preview" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;" in workbench_script
+    assert "const shortlistPreviewUrl = dioramaPreviewUrl;" not in workbench_script
 
 
 def test_propertyquarry_customer_copy_uses_sources_not_provider_coverage() -> None:
@@ -6582,20 +6695,25 @@ def test_propertyquarry_fast_ranked_run_rows_show_thumbnail_and_title_property_l
         Path(__file__).resolve().parents[1] / "ea/app/templates/app/property_ranked_run_fast.html"
     ).read_text(encoding="utf-8")
 
-    assert "const candidateDioramaHref = (candidate) => {" in template
+    assert "const candidateDioramaHrefs = (candidate) => {" in template
     assert "candidate.diorama_preview_url" in template
     assert "const dioramaHref = candidateDioramaHref(candidate);" in template
-    assert "const thumbHref = dioramaHref;" in template
-    assert "const thumbVisualKind = dioramaHref ? 'diorama' : 'placeholder';" in template
+    assert "const thumbnailHrefs = candidateThumbnailHrefs(candidate);" in template
+    assert "const thumbHref = thumbnailHrefs[0] || previewHref;" in template
+    assert "? 'diorama'" in template
+    assert ": (thumbHref ? 'preview' : 'placeholder');" in template
     assert "const openHref = propertyHref;" in template
     assert "const openHref = propertyHref || listingHref;" not in template
-    assert "const candidatePreviewHref = (candidate) => {" in template
+    assert "const candidatePreviewHrefs = (candidate) => {" in template
     assert "candidate.preview_image_url" in template
+    assert "candidate.preview_image_fallback_urls" in template
     assert "orientation.thumb_image_url" in template
     assert "facts.media_urls_json" in template
     assert "const media = document.createElement(openHref ? 'a' : 'div');" in template
     assert "media.className = `pq-fast-thumb pq-fast-diorama${thumbHref ? '' : ' no-thumb'}`;" in template
     assert "media.setAttribute('data-visual-kind', thumbVisualKind);" in template
+    assert "image.referrerPolicy = 'no-referrer';" in template
+    assert "image.dataset.pqFastThumbnailIndex = '0';" in template
     assert "room-main" in template
     assert "pq-fast-diorama-label" in template
     assert "titleLink.className = 'pq-fast-title-link';" in template
@@ -7161,6 +7279,57 @@ def test_propertyquarry_example_shortlist_page_opens_sample_without_internal_lan
     assert "queued" not in response.text.lower()
 
 
+def test_propertyquarry_example_shortlist_conversation_uses_selected_candidate_context() -> None:
+    public_client = build_property_client(principal_id="pq-example-conversation-public")
+    public_client.headers.pop("X-EA-Principal-ID", None)
+
+    page = public_client.get(
+        "/app/example/shortlist?candidate=quiet-layout-near-transit",
+        headers={"host": "propertyquarry.com"},
+    )
+    assert page.status_code == 200
+    assert "Decision conversation" in page.text
+    assert "Ask about this home." in page.text
+    assert 'data-candidate-key="quiet-layout-near-transit"' in page.text
+    assert "/app/api/property/example-conversation" in page.text
+
+    response = public_client.post(
+        "/app/api/property/example-conversation",
+        headers={"host": "propertyquarry.com"},
+        json={
+            "candidate_key": "quiet-layout-near-transit",
+            "question": "Why is this only a maybe?",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["candidate_key"] == "quiet-layout-near-transit"
+    assert "Quiet layout near transit" in body["answer"]
+    assert "parking availability is still unclear" in body["answer"].lower()
+    assert "no lift" not in body["answer"].lower()
+    assert any("parking" in str(item.get("detail") or "").lower() for item in body["evidence"])
+
+    german = public_client.post(
+        "/app/api/property/example-conversation",
+        headers={"host": "propertyquarry.com"},
+        json={
+            "candidate_key": "quiet-layout-near-transit",
+            "question": "Was sollte ich vor einer Besichtigung noch klären?",
+        },
+    )
+    assert german.status_code == 200, german.text
+    german_body = german.json()
+    assert german_body["answer"].startswith("Für Quiet layout near transit")
+    assert any(item["action"] == "ask_agent" for item in german_body["actions"])
+
+    missing_candidate = public_client.post(
+        "/app/api/property/example-conversation",
+        headers={"host": "propertyquarry.com"},
+        json={"candidate_key": "not-a-demo-home", "question": "Why?"},
+    )
+    assert missing_candidate.status_code == 404
+
+
 @pytest.mark.parametrize(
     "public_base_url",
     (
@@ -7249,7 +7418,7 @@ def test_propertyquarry_example_media_targets_use_real_public_tour_assets(
         "demo_href": "/tours/demo-home-tour",
         "tour_href": "/tours/demo-home-tour/control/3dvista",
         "tour_label": "3D tour available",
-        "walkthrough_href": "/tours/demo-home-tour?pane=flythrough-pane&autoplay=1",
+        "walkthrough_href": "/tours/demo-home-tour/walkthrough",
         "walkthrough_label": "Walkthrough available",
     }
 
@@ -7533,7 +7702,7 @@ def test_propertyquarry_example_shortlist_rows_keep_static_diorama_preview_when_
     rows = landing_routes._propertyquarry_example_shortlist_rows()
 
     assert rows[0]["tour_href"] == "/tours/demo-home-tour/control/3dvista"
-    assert rows[0]["walkthrough_href"] == "/tours/demo-home-tour?pane=flythrough-pane&autoplay=1"
+    assert rows[0]["walkthrough_href"] == "/tours/demo-home-tour/walkthrough"
     assert rows[0]["scope_preview"]["image_url"].startswith("/static/property/home/example-shortlist-diorama-1.webp?v=")
     assert rows[0]["scope_preview"]["preview_image_url"].startswith(
         "/static/property/home/example-shortlist-diorama-1.webp?v="
@@ -9280,6 +9449,295 @@ def test_property_workbench_selected_review_prefers_diorama_cover(monkeypatch) -
     )
     assert not re.search(
         rf'<img[^>]+src="{re.escape(photo_url)}"[^>]+data-pw-cover-image',
+        response.text,
+        flags=re.IGNORECASE,
+    )
+
+
+def test_property_shortlist_legacy_diorama_alias_resolves_only_inside_scoped_candidates(
+    monkeypatch,
+) -> None:
+    canonical_ref = "canonical-diorama-home"
+    legacy_ref = "legacy-diorama-link"
+    entry = {
+        "candidate_refs": [canonical_ref, legacy_ref],
+        "asset_url": "/static/property/research/canonical-diorama-home.webp",
+        "preview_kind": "rendered_diorama",
+        "representation": "illustrative",
+        "source_basis": "listing_floorplan_and_reference_images",
+        "truth_boundary": "Illustrative reconstruction; not listing evidence.",
+        "alt": "Illustrative 3D diorama of the canonical home",
+    }
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_entry_index",
+        lambda: {
+            f"candidate:{canonical_ref}": entry,
+            f"candidate:{legacy_ref}": entry,
+        },
+    )
+
+    scoped_context = {
+        "run": {
+            "summary": {
+                "ranked_candidates": [
+                    {
+                        "candidate_ref": canonical_ref,
+                        "title": "Canonical diorama home",
+                    }
+                ]
+            }
+        }
+    }
+    assert landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context=scoped_context,
+    ) == canonical_ref
+    assert landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context={"run": {"summary": {"ranked_candidates": []}}},
+    ) == legacy_ref
+
+    class _PrincipalScopedIndex:
+        def get_property_research_packet_link(
+            self,
+            *,
+            principal_id: str,
+            candidate_ref: str,
+            account_email: str = "",
+        ):
+            del account_email
+            if (
+                principal_id != "owned-principal"
+                or candidate_ref != canonical_ref
+            ):
+                return None
+            return {
+                "last_run_id": "owned-run",
+                "candidate": {
+                    "candidate_ref": canonical_ref,
+                    "packet_source_run_id": "owned-run",
+                    "title": "Canonical indexed diorama home",
+                    "property_url": "https://example.test/canonical-indexed-home",
+                },
+            }
+
+    indexed_context = {
+        "run": {
+            "run_id": "owned-run",
+            "summary": {"ranked_candidates": []},
+        }
+    }
+    assert landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context=indexed_context,
+        product=_PrincipalScopedIndex(),
+        principal_id="owned-principal",
+    ) == canonical_ref
+    recovered_candidates = list(
+        dict(indexed_context["run"]).get("summary", {}).get(
+            "ranked_candidates"
+        )
+        or []
+    )
+    assert [candidate["candidate_ref"] for candidate in recovered_candidates] == [
+        canonical_ref
+    ]
+    assert recovered_candidates[0]["diorama_preview_url"] == entry["asset_url"]
+
+    wrong_principal_context = {
+        "run": {
+            "run_id": "owned-run",
+            "summary": {"ranked_candidates": []},
+        }
+    }
+    assert landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context=wrong_principal_context,
+        product=_PrincipalScopedIndex(),
+        principal_id="different-principal",
+    ) == legacy_ref
+    assert not dict(wrong_principal_context["run"])["summary"][
+        "ranked_candidates"
+    ]
+
+
+def test_property_shortlist_legacy_diorama_alias_selects_owned_canonical_card(
+    monkeypatch,
+) -> None:
+    principal_id = "pq-shortlist-legacy-diorama-alias"
+    client = build_property_client(principal_id=principal_id)
+    start_workspace(client, mode="personal", workspace_name="Alias Diorama Office")
+    canonical_ref = "canonical-diorama-home"
+    legacy_ref = "legacy-diorama-link"
+    diorama_url = "/static/property/research/canonical-diorama-home.webp"
+    first_photo_url = "https://cdn.example.test/first-ranked-photo.jpg"
+    entry = {
+        "candidate_refs": [canonical_ref, legacy_ref],
+        "asset_url": diorama_url,
+        "preview_kind": "rendered_diorama",
+        "representation": "illustrative",
+        "source_basis": "listing_floorplan_and_reference_images",
+        "truth_boundary": "Illustrative reconstruction; not listing evidence.",
+        "alt": "Illustrative 3D diorama of the canonical home",
+    }
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_entry_index",
+        lambda: {
+            f"candidate:{canonical_ref}": entry,
+            f"candidate:{legacy_ref}": entry,
+        },
+    )
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_preview_index",
+        lambda: {
+            f"candidate:{canonical_ref}": diorama_url,
+            f"candidate:{legacy_ref}": diorama_url,
+        },
+    )
+    ranked_candidates = [
+        {
+            "candidate_ref": f"ranked-home-{index}",
+            "title": f"Ranked home {index}",
+            "recommendation": "shortlist",
+            "fit_score": 93 - index,
+            "preview_image_url": first_photo_url if index == 0 else "",
+            "property_url": f"https://example.test/ranked-home-{index}",
+            "source_label": "Willhaben",
+            "property_facts": {
+                "price_eur": 500000 + index * 1000,
+                "area_m2": 80,
+                "rooms": 3,
+            },
+        }
+        for index in range(24)
+    ]
+    canonical_candidate = {
+        "candidate_ref": canonical_ref,
+        "listing_id": "canonical-listing-id",
+        "title": "Canonical diorama home",
+        "recommendation": "review",
+        "fit_score": 41,
+        "property_url": "https://example.test/canonical-diorama-home",
+        "source_label": "Willhaben",
+        "property_facts": {
+            "price_eur": 540000,
+            "area_m2": 88,
+            "rooms": 3,
+            "postal_name": "1020 Wien",
+        },
+    }
+
+    def _fake_run_status(self, *, principal_id: str, run_id: str, **_kwargs):
+        return {
+            "run_id": run_id,
+            "principal_id": principal_id,
+            "status": "processed",
+            "progress": 100,
+            "summary": {
+                "sources_total": 1,
+                "listing_total": 25,
+                "ranked_candidates": ranked_candidates,
+                "sources": [
+                    {
+                        "source_label": "Willhaben",
+                        "listing_total": 25,
+                        "top_candidates": [canonical_candidate],
+                    }
+                ],
+            },
+            "events": [],
+        }
+
+    monkeypatch.setattr(ProductService, "get_property_search_run_status", _fake_run_status)
+
+    def _fake_packet_link(
+        self,
+        *,
+        principal_id: str,
+        candidate_ref: str,
+        account_email: str = "",
+    ):
+        del self, account_email
+        if (
+            principal_id != "pq-shortlist-legacy-diorama-alias"
+            or candidate_ref != canonical_ref
+        ):
+            return None
+        return {
+            "last_run_id": "run-legacy-alias",
+            "candidate": {
+                **canonical_candidate,
+                "packet_source_run_id": "run-legacy-alias",
+            },
+        }
+
+    monkeypatch.setattr(
+        ProductService,
+        "get_property_research_packet_link",
+        _fake_packet_link,
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "list_property_saved_shortlist_candidates",
+        lambda self, *, principal_id, status=None: [],
+    )
+    captured_property_state: dict[str, object] = {}
+    original_workspace_payload = landing_routes._property_workspace_payload
+
+    def _capturing_workspace_payload(section, *, status, property_state):
+        captured_property_state.update(dict(property_state))
+        payload = original_workspace_payload(
+            section,
+            status=status,
+            property_state=property_state,
+        )
+        captured_property_state["_rendered_selected_candidate_ref"] = str(
+            dict(payload.get("decision_workbench") or {}).get(
+                "selected_candidate_ref"
+            )
+            or ""
+        )
+        return payload
+
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_workspace_payload",
+        _capturing_workspace_payload,
+    )
+
+    response = client.get(
+        "/app/shortlist",
+        params={"candidate": legacy_ref},
+        headers={"host": "propertyquarry.com"},
+    )
+
+    assert response.status_code == 200
+    assert captured_property_state.get("selected_candidate_ref") == canonical_ref
+    assert dict(captured_property_state.get("run") or {}).get("run_id") == (
+        "run-legacy-alias"
+    )
+    assert (
+        captured_property_state.get("_rendered_selected_candidate_ref")
+        == canonical_ref
+    )
+    cover_sources = re.findall(
+        r'<img[^>]+src="([^"]*)"[^>]+data-pw-cover-image',
+        response.text,
+        flags=re.IGNORECASE,
+    )
+    rendered_candidate_refs = re.findall(
+        r'data-candidate-ref="([^"]+)"',
+        response.text,
+        flags=re.IGNORECASE,
+    )
+    assert diorama_url in cover_sources, (cover_sources, rendered_candidate_refs)
+    assert canonical_ref in rendered_candidate_refs
+    assert "Selected home" in response.text
+    assert not re.search(
+        rf'<img[^>]+src="{re.escape(first_photo_url)}"[^>]+data-pw-cover-image',
         response.text,
         flags=re.IGNORECASE,
     )
@@ -13805,7 +14263,7 @@ def test_property_workspace_payload_drops_oversized_inline_candidate_previews() 
     )
 
     result = payload["decision_workbench"]["results"][0]
-    assert result["preview_image_url"] == ""
+    assert result["preview_image_url"].startswith("/app/api/property/map-previews/")
     assert json.dumps(payload).find(oversized_preview) == -1
 
 
@@ -15011,7 +15469,7 @@ def test_property_research_detail_uses_minimal_top_navigation_layout() -> None:
     assert "{'href': '/app/agents' ~ research_query_suffix, 'label': 'Saved searches', 'key': 'agents'}" not in body
     assert "{'href': '/app/alerts' ~ research_query_suffix, 'label': 'Alerts', 'key': 'alerts'}" not in body
     assert "{% if item.key == current_nav or (item.key == 'account' and current_nav in ['agents', 'alerts', 'billing', 'settings']) %}" in body
-    assert '<span class="is-active" aria-current="page">{{ item.label }}</span>' in body
+    assert '<span class="is-active" aria-current="page" data-prd-nav-key="{{ item.key }}">{{ item.label }}</span>' in body
     assert "{'href': '/app/billing' ~ research_query_suffix, 'label': 'Billing', 'key': 'billing'}" not in body
     assert "{'href': '/app/account' ~ research_query_suffix, 'label': 'Account', 'key': 'account'}" in body
     assert 'aria-label="Account navigation"' in body
@@ -15071,7 +15529,7 @@ def test_property_research_detail_mobile_open_property_layout_is_compact() -> No
     assert ".prd-media-frame {\n      height: min(46vw, 176px);" in mobile_block
     assert ".prd-media-frame.prd-media-frame-live {\n      height: min(58vw, 224px);" in mobile_block
     assert ".prd-media-gradient,\n    .prd-media-caption {\n      display: none;" in mobile_block
-    assert '.prd-top-actions .account-menu summary::before {\n      content: "Me";' in mobile_block
+    assert '.prd-top-actions .account-menu summary::before {\n      content: "A";' in mobile_block
     assert ".prd-headline-panel h1" in mobile_block
     assert ".prd-headline-panel .prd-actions {\n      grid-template-columns: 1fr;" in mobile_block
     assert ".prd-headline-panel .prd-actions .prd-action-secondary {\n      display: none;" in mobile_block
@@ -16147,7 +16605,7 @@ def test_property_research_matterport_bundle_uses_authenticated_exact_run_handof
 
     assert page.status_code == 200
     assert "Original tour available" in page.text
-    assert "Open original tour" in page.text
+    assert "Open 3D tour" in page.text
     assert raw_provider_url not in page.text
     assert canonical_provider_url not in page.text
     assert retired_local_url not in page.text
@@ -18038,6 +18496,8 @@ def test_property_surface_state_builds_search_form_state_snapshot() -> None:
 def test_propertyquarry_results_template_marks_top_rank_and_watch_out_copy() -> None:
     body = (Path(__file__).resolve().parents[1] / "ea/app/templates/app/_property_results_list.html").read_text(encoding="utf-8")
     assert "is-top-ranked" in body
+    assert "Closest available" in body
+    assert "Selected home" in body
     assert "mismatch_reasons" in body
     assert "pqx-progress-button" in body
     assert "walkthrough_tooltip" in body
@@ -18049,6 +18509,13 @@ def test_propertyquarry_results_template_marks_top_rank_and_watch_out_copy() -> 
     assert "Filtered floorplans pending These homes are still being checked for a floorplan Floorplan still missing" not in body
     assert "Results are ready</span>" not in body
     assert "100% · complete</span>" not in body
+
+
+def test_propertyquarry_shortlist_compacts_redundant_mid_width_topbar_actions() -> None:
+    body = (Path(__file__).resolve().parents[1] / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
+    assert '@media (min-width: 761px) and (max-width: 1600px)' in body
+    assert '.pqx-shell[data-pqx-surface="shortlist"] .pqx-primary-nav [data-pqx-nav-account]' in body
+    assert '.pqx-shell[data-pqx-surface="shortlist"] .pqx-top-actions > .pqx-link-button.subtle' in body
 
 
 def test_propertyquarry_workspace_routes_render_greenfield_surfaces(monkeypatch) -> None:
@@ -18523,7 +18990,8 @@ def test_propertyquarry_workspace_routes_render_greenfield_surfaces(monkeypatch)
     assert "Map" in search.text
     assert 'data-pqx-route-preview-strip' in search.text
     assert "Best so far" in search.text
-    assert 'class="pqx-current-property-card"' not in search.text
+    assert 'class="pqx-current-property-card"' in search.text
+    assert "pqx-current-property-diorama-placeholder" in search.text
     assert 'class="pqx-route-preview-thumb"' in search.text
     assert "/app/api/property/map-previews/greenfield-route.png" in search.text
     assert "Your route" in search.text
@@ -19507,11 +19975,11 @@ def test_property_packets_dashboard_uses_customer_facing_language() -> None:
     assert "Packet sharing" not in body
     assert "PropertyQuarry Packets" not in body
     assert "Shared pages" in body
-    assert "Ready to share" in body
+    assert "Local PDF ready" in body
     assert "Ready to share · PDF ready · sharing active" not in body
     assert "Paste shared link" in body
     assert "Copy reply link" in body
-    assert "Pages that are ready to share" in body
+    assert "Private PDFs and manually linked pages" in body
     assert "Read replies here before they change the search" in body
     assert "Review replies before they change the search" not in body
     assert 'href="/app/account{{ packet_query_suffix or \'\' }}" data-pqx-nav-account>Account</a>' in body
@@ -22021,7 +22489,7 @@ def test_property_shortlist_surface_keeps_results_first_and_restores_desktop_rev
     assert 'data-candidate-listing-url="${escapeHtml(propertyUrl)}"' in body
     assert "const openRowTarget = () => {" not in body
     assert (
-        'packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">'
+        'packetUrl ? `<a class="pqx-result-open is-secondary" href="${escapeHtml(packetUrl)}">'
         "${escapeHtml(localizeLiveCopy('Open property'))}</a>`"
         in body
     )
@@ -22181,8 +22649,8 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
     assert body.index('<header class="pqx-topbar"') < body.index("data-property-workbench-json")
     assert "runListingQueueMessage(found, toReview)" in script_body
     assert "lowered.includes('0 to review')" in script_body
-    assert "const detailQueueIsSourceBacklog = !(toReview > 0) && Number(sourceWork.total || 0) > 0 && sourceLeft > 0;" in script_body
-    assert "detailQueueIsSourceBacklog ? 'Checks left' : 'To review'" in script_body
+    assert "const toReviewPct = toReview > 0 ? Math.round((toReview / reviewDenominator) * 100) : 0;" in script_body
+    assert "localizeLiveCopy('To review')" in script_body
     assert "Nothing waiting to review" not in script_body
     assert "data-pqx-progress-eta" in body
     assert "data-pqx-running-provider-state" not in body
@@ -22195,7 +22663,9 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
     assert "Latest updates" not in running_body
     assert "Latest 10" not in running_body
     assert "<summary><strong>Updates</strong></summary>" in running_body
-    assert "visible_event_count.value < 10" in running_body
+    assert "visible_event_count.value < 6" in running_body
+    assert "visible_event_steps = namespace(value='|')" in running_body
+    assert "visible_event_steps.value = visible_event_steps.value ~ event_step_key ~ '|'" in running_body
     assert "suppressed_generic_listing_page" in running_body
     assert "could not load property search status" in running_body
     assert "checking run status" in running_body
@@ -22218,7 +22688,9 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
     landing_body = (repo_root / "ea/app/api/routes/landing.py").read_text(encoding="utf-8")
     assert '"settings": "/app/account"' in landing_body
     assert 'allowed.update({"properties", "search", "shortlist", "agents", "alerts", "billing", "account"})' in landing_body
-    assert ".reverse().slice(0, 10)" in script_body
+    assert "const seenGroups = new Set();" in script_body
+    assert "return rows.length >= 6;" in script_body
+    assert "if (seenGroups.has(group)) return false;" in script_body
     assert "const labelRunEvent = (event) => {" in script_body
     assert "return 'Preparing';" in script_body
     assert "return 'Details';" in script_body
@@ -22234,6 +22706,8 @@ def test_property_workspace_running_state_explains_slow_provider_checks() -> Non
     assert "return 'Checking again';" in script_body
     assert "const currentPropertyCardPayload = (runPayload) => {" in script_body
     assert "const renderCurrentPropertyCard = (runPayload) => {" in script_body
+    assert "if (!imageUrl) return '';" not in script_body
+    assert "localizeLiveCopy('Diorama preview in progress')" in script_body
     assert "Checking homes" not in script_body
     assert "Scoring homes" not in script_body
     assert "Updating shortlist" not in script_body
@@ -22877,8 +23351,7 @@ def test_propertyquarry_in_progress_run_hides_search_form_and_shows_live_run(mon
     assert "Searching" in live.text
     assert 'data-pqx-progress-board' in live.text
     assert 'data-pqx-progress-eta' in live.text
-    assert "20 / 117 checks" in live.text
-    assert "29 sites" in live.text
+    assert "20 / 117 search queries" in live.text
     assert "20 / 117 checked" not in live.text
     assert "179 homes found" in live.text
     assert 'class="pqx-live-review-bars"' in live.text
@@ -25816,7 +26289,7 @@ def test_propertyquarry_shortlist_shows_media_ready_status_without_direct_media_
     monkeypatch.setattr(
         landing_property_research.property_tour_hosting,
         "_hosted_property_tour_walkthrough_asset_url",
-        lambda _url: verified_walkthrough_href,
+        lambda _url, *, principal_id="": verified_walkthrough_href,
     )
 
     shortlist = client.get("/app/shortlist", params={"run_id": "run-43"}, headers={"host": "propertyquarry.com"})
@@ -27121,7 +27594,7 @@ def test_propertyquarry_run_script_treats_completed_partial_as_terminal() -> Non
 def test_propertyquarry_run_script_compacts_candidate_progress_to_fraction() -> None:
     bundle = _read_workbench_bundle()
     assert "const compactRunMessage = (value) => {" in bundle
-    assert "return `Checking home details ${candidateMatch[1]} / ${candidateMatch[2]}`;" in bundle
+    assert "return `Checking home details ${candidateMatch[1]} / ${candidateMatch[2]}${sourceSuffix}`;" in bundle
     assert "return `${scanLabel}${noPlan > 0 ? ` · ${noPlan} floorplans pending` : ''}`;" in bundle
 
 
@@ -27148,7 +27621,7 @@ def test_propertyquarry_run_script_preserves_non_empty_trail_from_omitted_or_emp
     assert "if (!Array.isArray(events)) return true;" in bundle
     assert "return events.length === 0;" in bundle
     assert "if (eventsNode && !shouldPreserveRenderedRunEvents(eventsNode, runPayload.events)) {" in bundle
-    assert "eventsNode.innerHTML = renderRunEvents(runPayload.events);" in bundle
+    assert "eventsNode.innerHTML = renderRunEvents(runPayload);" in bundle
     assert "events: pollRetryEvents()," in bundle
     assert "Using the last confirmed update while the next status check catches up." in bundle
     assert "Checking the latest search update." in bundle
@@ -28546,7 +29019,7 @@ def test_property_research_packet_renders_request_actions_when_hosted_tour_is_no
     assert "Warm Scandinavian" in rendered_html
     assert "Trump gold" in rendered_html
     assert 'data-pw-visual-request="flythrough"' in rendered_html
-    assert '>Request walkthrough</button>' in rendered_html
+    assert '>Request camera walkthrough</button>' in rendered_html
     assert 'data-pw-walkthrough-provider="magicfit"' not in rendered_html
     assert "data-pw-walkthrough-provider-select" not in rendered_html
     assert rendered_html.count('data-pw-visual-style-required="1"') >= 2
@@ -28728,7 +29201,7 @@ def test_property_workbench_client_payload_drops_unvalidated_visual_urls(
     assert "vendor_tour_url" not in payload
 
 
-def test_property_workbench_client_payload_keeps_validated_visual_urls() -> None:
+def test_property_workbench_client_payload_keeps_floorplan_but_hides_raw_provider_url() -> None:
     floorplan_url = "https://assets.example.test/plans/unit-17.png"
     source_virtual_tour_url = "https://my.matterport.com/show/?m=verified-model"
     payload = landing_property_workspace_payload._property_workbench_client_candidate_payload(
@@ -28743,7 +29216,8 @@ def test_property_workbench_client_payload_keeps_validated_visual_urls() -> None
     )
 
     assert payload["floorplan_url"] == floorplan_url
-    assert payload["source_virtual_tour_url"] == source_virtual_tour_url
+    assert "source_virtual_tour_url" not in payload
+    assert "tour_url" not in payload
 
 
 @pytest.mark.parametrize(
@@ -28797,7 +29271,7 @@ def test_property_workbench_client_payload_strips_unsafe_nested_visual_targets_a
     assert payload["tour"]["status"] == "unavailable"
     assert payload["flythrough"]["status"] == "unavailable"
     assert payload["tour"]["status_detail"] == "Tour not available yet."
-    assert payload["flythrough"]["status_detail"] == "Walkthrough not available yet."
+    assert payload["flythrough"]["status_detail"] == "Camera walkthrough not available yet."
     for key in (
         "tour_url",
         "verified_tour_url",
@@ -28817,7 +29291,7 @@ def test_property_workbench_client_payload_strips_unsafe_nested_visual_targets_a
     assert "floorplan_urls_json" not in payload["property_facts"]
 
 
-def test_property_workbench_client_payload_preserves_only_validated_nested_visual_targets() -> None:
+def test_property_workbench_client_payload_preserves_assets_but_hides_unhosted_visual_targets() -> None:
     provider_viewer_url = "https://my.matterport.com/show/?m=verified-model"
     floorplan_url = "https://assets.example.test/plans/unit-17.png"
     walkthrough_url = "https://assets.example.test/tours/unit-17-walkthrough.mp4"
@@ -28852,19 +29326,19 @@ def test_property_workbench_client_payload_preserves_only_validated_nested_visua
     )
 
     assert payload["floorplan_url"] == floorplan_url
-    assert payload["source_virtual_tour_url"] == provider_viewer_url
-    assert payload["tour_url"] == provider_viewer_url
-    assert payload["verified_tour_url"] == provider_viewer_url
-    assert payload["open_tour_url"] == provider_viewer_url
+    assert "source_virtual_tour_url" not in payload
+    assert "tour_url" not in payload
+    assert "verified_tour_url" not in payload
+    assert "open_tour_url" not in payload
     assert "flythrough_url" not in payload
     assert payload["preview_image_url"] == preview_url
     assert payload["diorama_preview_url"] == diorama_url
     assert payload["orientation_preview"] == {"image_url": map_preview_url}
     assert payload["diorama_scene"] == {"image_url": diorama_url}
-    assert payload["tour"]["url"] == provider_viewer_url
-    assert payload["tour"]["embed_url"] == provider_viewer_url
-    assert payload["tour"]["provider_url"] == provider_viewer_url
-    assert payload["tour"]["status"] == "source"
+    assert "url" not in payload["tour"]
+    assert "embed_url" not in payload["tour"]
+    assert "provider_url" not in payload["tour"]
+    assert payload["tour"]["status"] == "unavailable"
     assert payload["flythrough"]["status"] == "unavailable"
     assert "url" not in payload["flythrough"]
     assert "embed_url" not in payload["flythrough"]
@@ -29024,7 +29498,7 @@ def test_property_workbench_client_payload_rejects_deeply_encoded_network_image_
         assert "media_urls_json" not in payload.get("property_facts", {})
 
 
-def test_property_workbench_client_payload_uses_valid_verified_tour_after_invalid_raw_urls() -> None:
+def test_property_workbench_client_payload_rejects_raw_provider_tour_after_invalid_urls() -> None:
     verified_tour_url = "https://my.matterport.com/show/?m=verified-fallback-model"
     payload = landing_property_workspace_payload._property_workbench_client_candidate_payload(
         {
@@ -29037,10 +29511,10 @@ def test_property_workbench_client_payload_uses_valid_verified_tour_after_invali
         }
     )
 
-    assert payload["tour_status"] == "ready"
-    assert payload["tour_url"] == verified_tour_url
-    assert payload["verified_tour_url"] == verified_tour_url
-    assert payload["open_tour_url"] == verified_tour_url
+    assert payload["tour_status"] == "unavailable"
+    assert "tour_url" not in payload
+    assert "verified_tour_url" not in payload
+    assert "open_tour_url" not in payload
 
 
 def test_property_tour_requestability_does_not_treat_panorama_asset_as_live_viewer() -> None:
@@ -29208,7 +29682,7 @@ def test_property_research_packet_opens_nested_verified_provider_tour(monkeypatc
     rendered_html = re.sub(r"<script\b[^>]*>.*?</script>", " ", packet.text, flags=re.IGNORECASE | re.DOTALL)
     rendered_html = re.sub(r"<style\b[^>]*>.*?</style>", " ", rendered_html, flags=re.IGNORECASE | re.DOTALL)
     assert f'href="{verified_provider_url}"' in rendered_html
-    assert ">Open original tour</a>" in rendered_html
+    assert ">Open 3D tour</a>" in rendered_html
     assert "Request 3D tour" not in rendered_html
     assert "Retry 3D tour" not in rendered_html
 
@@ -30208,7 +30682,7 @@ def test_property_research_packet_shows_ready_walkthrough_inside_visual_console(
         "tour_url": "https://propertyquarry.com/tours/walkthrough-ready-loft",
         "flythrough_status": "ready",
         "flythrough_provider": "magicfit",
-        "flythrough_url": "https://propertyquarry.com/tours/walkthrough-ready-loft?pane=flythrough-pane&autoplay=1",
+        "flythrough_url": "https://propertyquarry.com/tours/walkthrough-ready-loft/walkthrough",
         "property_facts": {
             "price_eur": 2650.0,
             "area_m2": 94.0,
@@ -30252,11 +30726,11 @@ def test_property_research_packet_shows_ready_walkthrough_inside_visual_console(
         "_hosted_property_tour_verified_provider",
         lambda _url, *, principal_id="": "3dvista",
     )
-    verified_walkthrough_href = "https://propertyquarry.com/tours/walkthrough-ready-loft?pane=flythrough-pane&autoplay=1"
+    verified_walkthrough_href = "https://propertyquarry.com/tours/walkthrough-ready-loft/walkthrough"
     monkeypatch.setattr(
         landing_property_research.property_tour_hosting,
         "_hosted_property_tour_walkthrough_asset_url",
-        lambda _url: "https://propertyquarry.com/tours/files/walkthrough-ready-loft/walkthrough.mp4",
+        lambda _url, *, principal_id="": "https://propertyquarry.com/tours/files/walkthrough-ready-loft/walkthrough.mp4",
     )
 
     packet_ref = landing_property_research._property_candidate_ref(
@@ -30276,7 +30750,7 @@ def test_property_research_packet_shows_ready_walkthrough_inside_visual_console(
     assert f'href="{hosted_href}"' in rendered_html
     assert f'href="{verified_walkthrough_href.replace("&", "&amp;")}"' in rendered_html
     assert '>Open 3D tour</a>' in rendered_html
-    assert '>Open walkthrough</a>' in rendered_html
+    assert '>Open camera walkthrough</a>' in rendered_html
     assert "Walkthrough is ready." in rendered_html
     assert "Open now." in rendered_html
     assert 'data-prd-visual-card="walkthrough"' in packet.text
@@ -30360,7 +30834,7 @@ def test_property_research_packet_keeps_ready_tour_in_visual_rail_while_walkthro
     rendered_html = re.sub(r"<style\b[^>]*>.*?</style>", " ", rendered_html, flags=re.IGNORECASE | re.DOTALL)
     assert f'href="{hosted_href}"' in rendered_html
     assert '>Open 3D tour</a>' in rendered_html
-    assert "Preparing walkthrough" in rendered_html
+    assert "Preparing camera walkthrough" in rendered_html
     rail_match = re.search(
         r'<div\s+class="prd-visual-rail(?P<class_suffix>[^"]*)".*?<strong data-prd-visual-label>(?P<label>.*?)</strong>.*?<p class="prd-visual-status"[^>]*>(?P<status>.*?)</p>',
         packet.text,

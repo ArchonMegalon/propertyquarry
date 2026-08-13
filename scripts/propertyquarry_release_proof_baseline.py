@@ -6,8 +6,8 @@ import json
 from typing import Any
 
 
-APPROVED_BASELINE_ID = "propertyquarry.release-proof.v1"
-APPROVED_BASELINE_SHA256 = "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
+APPROVED_BASELINE_ID = "propertyquarry.release-proof.v2"
+APPROVED_BASELINE_SHA256 = "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
 APPROVED_PRODUCT = "propertyquarry"
 APPROVED_SURFACE = "propertyquarry_flagship_release_control"
 APPROVED_PROOF_TARGET = "propertyquarry"
@@ -105,7 +105,7 @@ REAL_BROWSER_CASES = (
     "test_propertyquarry_expired_session_next_action_moves_keyboard_focus_to_sign_in_options",
     "test_propertyquarry_workbench_candidate_history_stays_in_place",
     *PACKETS_TOURS_REAL_BROWSER_CASES,
-    "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+    "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
     "test_propertyquarry_packet_tracks_followup_state_in_browser",
     "test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser",
     "test_propertyquarry_browser_alert_button_toggles_enabled_state",
@@ -200,7 +200,7 @@ APPROVED_JOURNEY_EVIDENCE = (
             (
                 REAL_BROWSER_TEST_FILE,
                 (
-                    "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+                    "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
                     "test_propertyquarry_packet_tracks_followup_state_in_browser",
                 ),
             ),

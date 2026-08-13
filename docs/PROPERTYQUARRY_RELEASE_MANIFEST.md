@@ -7,13 +7,13 @@ This file is the concise, current release authority. Detailed dated notes are ar
 PropertyQuarry is a source/browser candidate whose production state is decided
 by the current local Docker deployment receipt:
 
-- The locally materialized candidate receipt covers `7/7` source cases, `16/16` flagship real-browser cases, and all eight required product journeys for the exact source identity recorded below. Local Compose deployment and its mode-`0600` operator receipt—not GitHub Actions—decide whether that candidate is live. This candidate includes explicit hosted/generated/blocked/expired 3D-tour truth, a topology-gated captured Matterport control, multi-node enforcement for 3DVista walkable claims, attributable unavailable/stale/verified area-evidence states, in-place shortlist history, Telegram delivery proof, production-mode PostgreSQL storage/browser parity, fail-closed production registration delivery, and canonical public-tour volume controls.
+- The locally materialized candidate receipt covers `7/7` source cases, `16/16` flagship real-browser cases, and all eight required product journeys for the exact source identity recorded below. Local Compose deployment and its mode-`0600` operator receipt—not GitHub Actions—decide whether that candidate is live. This candidate keeps the normal camera walkthrough primary, exposes 3D tour only for verified Matterport or 3DVista publications, labels generated reconstruction as an AI layout preview, enforces topology-gated Matterport and multi-node 3DVista walkable claims, and preserves attributable area evidence, in-place shortlist history, Telegram delivery proof, production-mode PostgreSQL storage/browser parity, fail-closed production registration delivery, and canonical public-tour volume controls.
 - Candidate/browser proof does not prove deployment, production storage, authentication, external delivery, observability, rollback, or disaster recovery.
 - A prior, separately observed public-edge check returned `200` for `/` after a narrow generated-tour permission repair and received a response from `/health/ready`; the observation has no current timestamp, immutable image binding, or exact-candidate authority and is therefore historical context only. At that observation, `/version` reported an incomplete release manifest without canonical release identity. None of those checks is deployment proof for this candidate.
 - Production promotion requires a passing exact-candidate local Docker receipt with distinct immutable web/render image IDs, completed migration, healthy services, and localhost readiness.
 - ID Austria is optional and unconfigured. Another supported sign-in path must pass the local live activation proof.
 - External notification release evidence is Telegram-only. WhatsApp is outside the current launch evidence.
-- Release claims are split. **Core Gold** covers search, shortlist, property detail, topology-verified Matterport/public-tour delivery, dossier, decision, and governed delivery evidence. Captured Matterport topology remains eligible for 30 days while live viewer availability stays provider-controlled; 3DVista remains an optional import lane and only counts as walkable when multiple spatial panorama nodes are present. Missing or unconfigured MagicFit, Magic, OMagic, generated scene-video, or other advanced visual lanes do not block Core Gold and must remain unavailable in customer copy.
+- Release claims are split. **Core Gold** covers search, shortlist, property detail, provider-authentic public-tour delivery, dossier, decision, and governed delivery evidence. Core requires one walkable provider lane: either a topology-verified Matterport capture or a licensed, verified multi-node 3DVista export. Captured Matterport topology remains eligible for 30 days while live viewer availability stays provider-controlled; 3DVista counts only with PropertyQuarry-specific license/provenance evidence and multiple spatial panorama nodes. Missing or unconfigured MagicFit, Magic, OMagic, generated scene-video, or other advanced visual lanes do not block Core Gold and must remain unavailable in customer copy.
 - **Advanced Visual Gold** is a separate opt-in claim scope. It fails closed unless every claimed MagicFit/Magic/OMagic lane has exact candidate-bound provider provenance, accepted playback, quota/account state, privacy, isolation, source-receipt hashes, and media-artifact hashes. Adapter configuration or a generated file alone is never Advanced Visual Gold evidence.
 - The current Advanced Visual producer receipts do not yet carry source-side `release_commit_sha` + `image_digest` identities and exact verifier/source packet hashes. Therefore this candidate records Advanced Visual Gold as `unavailable_unbound_producer_receipts`. The aggregate rejects these legacy/current shapes and never relabels them from its own CLI arguments; Core Gold remains independently eligible.
 
@@ -52,13 +52,13 @@ The marked JSON object is the single canonical release authority consumed by the
 <!-- propertyquarry-release-manifest-json:start -->
 ```json
 {
-  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:f886cb3db39a3efde3fd578a097ebf5e08e6084623035c87538a98625337e5bf",
+  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:d230f659b9e14a3e0dd8aaf5fe6d6eaa40eaf2a04d7935c71cb9affe829a20df",
   "release_branch": "main",
   "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
-  "release_commit_sha": "54ec8bcefecd1beee9c8c64d168561da4d3e2be1",
-  "release_deployment_id": "propertyquarry-governed-deploy-54ec8bcefecd",
-  "release_generated_at": "2026-07-31T04:28:31Z",
-  "release_label": "propertyquarry-source-browser-candidate-54ec8bcefecd",
+  "release_commit_sha": "290e4e7efb473f0602ab29f2a34e85c616e3e331",
+  "release_deployment_id": "propertyquarry-governed-deploy-290e4e7efb47",
+  "release_generated_at": "2026-08-13T06:17:04Z",
+  "release_label": "propertyquarry-source-browser-candidate-290e4e7efb47",
   "release_manifest_schema": "propertyquarry.release_manifest.v1",
   "release_product": "PropertyQuarry",
   "release_public_origin": "https://propertyquarry.com",
@@ -87,7 +87,7 @@ Production stays fail-closed until every item is bound to the exact runtime cand
 ## Gold evidence tier and claim scope
 
 - Evidence tier (`standard|flagship|launch`) is independent from claim scope (`core|advanced_visual`). Production release always uses `launch`; standard preserves operator-summary semantics and cannot make a release claim.
-- `core_gold` is a strict compatibility alias for `launch` + `core`. It requires the first-party customer operating loop, every Core launch/UX receipt, and topology-verified Matterport/public-tour evidence. Its provider fields are `core_required_provider_modes` and `core_missing_provider_modes`.
+- `core_gold` is a strict compatibility alias for `launch` + `core`. It requires the first-party customer operating loop, every Core launch/UX receipt, and one provider-authentic walkable tour from the `matterport|3dvista` alternative group. Its provider fields are `core_required_provider_mode_groups`, `core_required_provider_modes`, and `core_missing_provider_modes`.
 - `advanced_visual_gold` is a strict compatibility alias for `launch` + `advanced_visual`. It adds governed MagicFit, Magic, and OMagic evidence plus an offline aggregate binding to the exact release SHA/image, current source receipts, provider artifact hashes, quota/account state, privacy, and isolation. Its provider fields are `advanced_visual_required_provider_modes` and `advanced_visual_missing_provider_modes`.
 - Every authoritative Advanced Visual source must carry its expected schema plus source-side `release_commit_sha` and `image_digest`. Every derived verifier/status/packet must also bind the exact upstream receipt or packet SHA-256. Missing or replayed identities yield `unavailable_unbound_producer_receipts`; freshness plus aggregate CLI arguments are not release authority.
 - Legacy `required_provider_modes` / `missing_provider_modes` remain a combined operator envelope. They must not be used to make a Core Gold decision; operator dashboards consume the explicit combined `operator_*` fields.

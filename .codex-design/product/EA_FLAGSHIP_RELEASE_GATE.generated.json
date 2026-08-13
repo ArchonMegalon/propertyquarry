@@ -3,11 +3,11 @@
   "surface": "propertyquarry_flagship_release_control",
   "version": 2,
   "kind": "release_receipt",
-  "generated_at": "2026-07-31T04:28:31Z",
+  "generated_at": "2026-08-13T06:17:04Z",
   "generated_by": "scripts/materialize_ea_flagship_release_gate.py",
   "approved_baseline": {
-    "id": "propertyquarry.release-proof.v1",
-    "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
+    "id": "propertyquarry.release-proof.v2",
+    "sha256": "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
   },
   "status": "pass",
   "readiness_scope": "source_and_browser_proof",
@@ -25,25 +25,25 @@
   "source_binding": {
     "version": 1,
     "approved_baseline": {
-      "id": "propertyquarry.release-proof.v1",
-      "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
+      "id": "propertyquarry.release-proof.v2",
+      "sha256": "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
     },
-    "code_commit": "54ec8bcefecd1beee9c8c64d168561da4d3e2be1",
+    "code_commit": "290e4e7efb473f0602ab29f2a34e85c616e3e331",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
-      "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
-      "git_blob_oid": "f268edbb601f409bfb306295d7367f61581e0581"
+      "sha256": "7f8bbd29c31b9ebe32692b0befcafd312f2fa19e600131d10a6c9788302eb40a",
+      "git_blob_oid": "14583d46fa64ef1c6ee17afa0036006eaedd3e7c"
     },
     "required_test_sources": [
       {
         "path": "tests/test_propertyquarry_workspace_redesign.py",
-        "sha256": "ab2442f166e57ee45bc0159932929ef435c03890c6601d50038a5912356bb5cd",
-        "git_blob_oid": "14dae6b24b6ba7d7774b4a6a0bfd2111143e64cd"
+        "sha256": "78dd1489dabe6c3d4f9243b322ba3b21b9d457bb2bcc94286fe57a03d9a2c50a",
+        "git_blob_oid": "643d5d44cd117518562b207f8ab7a4302c417b73"
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
-        "sha256": "bd91d60791bbb65ab752127211c29ed5329c6e31e02a1bdf60ed23dcc3a682d9",
-        "git_blob_oid": "c33dc419a36e50be71b6c85639d88b850a11e1cd"
+        "sha256": "0ed13ad8c44b88d6fb0c293614da7c81409f9a52df56bc34946c23f7a647ce98",
+        "git_blob_oid": "ceca4806e33af8ce8a61432d152e98fb62ee17e2"
       },
       {
         "path": "tests/test_property_evidence_overlays.py",
@@ -54,8 +54,8 @@
   },
   "browser_receipt_binding": {
     "path": ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json",
-    "sha256": "e1bc2e7ffc8c8322eb86576a6f4c9f5661377322909582cd143c5a1085e14eeb",
-    "git_blob_oid": "c9db26349757769f3b056f51e16bc51ab7fa84f1"
+    "sha256": "072112c0bada9f7bff3e88f55100642af5be0f6cbb17e1eab3926cf484ca4513",
+    "git_blob_oid": "62554b7e477c0ab27fce97e5a641a0cf92800c24"
   },
   "operator_summary": "PropertyQuarry source/browser checkpoint is published and green; this does not establish global launch authority, and final live readiness is not evaluated by this receipt.",
   "truth_plane": {
@@ -242,7 +242,7 @@
           "test_propertyquarry_generated_reconstruction_public_launch_renders_honest_shell_in_real_browser",
           "test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe",
           "test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser",
-          "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+          "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
           "test_propertyquarry_packet_tracks_followup_state_in_browser",
           "test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser",
           "test_propertyquarry_browser_alert_button_toggles_enabled_state",
@@ -285,7 +285,7 @@
           "test_propertyquarry_generated_reconstruction_public_launch_renders_honest_shell_in_real_browser",
           "test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe",
           "test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser",
-          "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+          "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
           "test_propertyquarry_packet_tracks_followup_state_in_browser",
           "test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser",
           "test_propertyquarry_browser_alert_button_toggles_enabled_state",
@@ -307,7 +307,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "54ec8bcefecd1beee9c8c64d168561da4d3e2be1",
+    "runtime_commit_sha": "290e4e7efb473f0602ab29f2a34e85c616e3e331",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
@@ -485,7 +485,7 @@
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
             "cases": [
-              "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+              "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
               "test_propertyquarry_packet_tracks_followup_state_in_browser"
             ],
             "lane_status": "pass"

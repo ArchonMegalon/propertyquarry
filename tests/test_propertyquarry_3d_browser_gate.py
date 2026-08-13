@@ -12,13 +12,17 @@ from scripts import propertyquarry_3d_browser_gate as gate
 SLUG = "verified-3dvista-provider-only"
 
 
+def test_default_demo_is_the_published_karl_3dvista_tour() -> None:
+    assert gate.DEFAULT_DEMO_SLUG == "karl-czerny-gasse-2-urban-jungle"
+
+
 def _accepted_walkthrough_state() -> dict[str, object]:
     return {
         "video_count": 1,
         "sources": [
             {
                 "src": "/tours/files/verified-3dvista-provider-only/"
-                "magicfit-walkthrough-mobile-720p60.mp4",
+                "walkthrough-mobile-720p60.mp4",
                 "media": "(max-width: 760px)",
                 "type": "video/mp4",
             },
@@ -30,7 +34,7 @@ def _accepted_walkthrough_state() -> dict[str, object]:
         ],
         "current_src": f"https://propertyquarry.com/tours/{SLUG}/walkthrough",
         "ready_state": 1,
-        "duration_seconds": 65.0,
+        "duration_seconds": 32.0,
         "current_time_seconds": 7.0,
         "video_width": 1920,
         "video_height": 1080,
@@ -120,6 +124,50 @@ def test_non_csp_failure_is_not_exempted_by_report_only_words() -> None:
     }
 
     assert gate._bad_console_messages([message]) == [message]
+
+
+@pytest.mark.parametrize(
+    ("url", "resource_type"),
+    [
+        (
+            "https://propertyquarry.com/tours/3dvista/home/3dvista/media/map_en_3.webp?v=1",
+            "xhr",
+        ),
+        (
+            "https://propertyquarry.com/tours/3dvista/home/3dvista/skin/IconButton.png?v=1",
+            "image",
+        ),
+    ],
+)
+def test_3dvista_speculative_image_abort_is_not_a_transport_failure(
+    url: str,
+    resource_type: str,
+) -> None:
+    failures = [
+        {
+            "url": url,
+            "resource_type": resource_type,
+            "failure": "net::ERR_ABORTED",
+        }
+    ]
+
+    assert gate._bad_request_failures(
+        failures, browser_base_url="https://propertyquarry.com"
+    ) == []
+
+
+def test_same_origin_non_image_xhr_abort_remains_a_browser_gate_failure() -> None:
+    failures = [
+        {
+            "url": "https://propertyquarry.com/tours/3dvista/home/3dvista/media/config.json",
+            "resource_type": "xhr",
+            "failure": "net::ERR_ABORTED",
+        }
+    ]
+
+    assert gate._bad_request_failures(
+        failures, browser_base_url="https://propertyquarry.com"
+    ) == failures
 
 
 @pytest.mark.parametrize(

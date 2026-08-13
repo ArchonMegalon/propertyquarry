@@ -171,7 +171,10 @@ COUNTRIES: tuple[PropertyCountrySpec, ...] = (
 )
 
 
-CUSTOMER_SEARCH_COUNTRY_ORDER: tuple[str, ...] = ("AT", "DE", "CR")
+# Austria is the only current closed-test customer market. The full country and
+# provider catalog stays available to operator/research tooling, but catalog
+# presence must not make a market selectable in the customer product.
+CUSTOMER_SEARCH_COUNTRY_ORDER: tuple[str, ...] = ("AT",)
 CUSTOMER_SEARCH_COUNTRY_CODES: frozenset[str] = frozenset(CUSTOMER_SEARCH_COUNTRY_ORDER)
 
 

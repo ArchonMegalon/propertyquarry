@@ -487,7 +487,11 @@ def test_generated_reconstruction_publication_restores_or_cleans_on_base_excepti
         ) -> None:
             source_path = Path(source)
             target_path = Path(target)
-            if target_path == bundle_dir / "tour.json" and source_path.name.startswith(".tour.json."):
+            if (
+                target_path == Path("tour.json")
+                and source_path.name.startswith(".tour.json.stage.")
+                and replace_kwargs.get("dst_dir_fd") is not None
+            ):
                 original_replace(source, target, **replace_kwargs)
                 _interrupt()
             original_replace(source, target, **replace_kwargs)
@@ -530,25 +534,16 @@ def test_generated_reconstruction_publication_rejects_generating_manifest_even_i
         _write_interrupted_working_bundle(bundle_dir)
         return {"publication_status": "generating"}
 
-    original_replace = os.replace
-
-    def _skip_manifest_replace(
-        source: object,
-        target: object,
-        **replace_kwargs: object,
-    ) -> None:
-        source_path = Path(source)
-        target_path = Path(target)
-        if target_path == bundle_dir / "tour.json" and source_path.name.startswith(".tour.json."):
-            return
-        original_replace(source, target, **replace_kwargs)
-
     monkeypatch.setattr(
         product_service,
         "_write_generated_reconstruction_property_tour_bundle_unchecked",
         _fake_unchecked,
     )
-    monkeypatch.setattr(product_service.os, "replace", _skip_manifest_replace)
+    monkeypatch.setattr(
+        product_service,
+        "_write_hosted_property_tour_payload_with_slug_lock_held",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         product_service,
         "_hosted_property_tour_generated_reconstruction_bundle_ready",

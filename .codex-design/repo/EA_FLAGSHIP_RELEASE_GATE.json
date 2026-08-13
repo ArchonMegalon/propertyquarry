@@ -142,7 +142,7 @@
           "test_propertyquarry_generated_reconstruction_public_launch_renders_honest_shell_in_real_browser",
           "test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe",
           "test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser",
-          "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+          "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
           "test_propertyquarry_packet_tracks_followup_state_in_browser",
           "test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser",
           "test_propertyquarry_browser_alert_button_toggles_enabled_state",
@@ -324,7 +324,7 @@
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
             "cases": [
-              "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+              "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
               "test_propertyquarry_packet_tracks_followup_state_in_browser"
             ]
           }

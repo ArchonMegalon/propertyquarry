@@ -42,6 +42,11 @@ except ModuleNotFoundError:
         playwright_engine_launch_browser,
     )
 
+try:
+    from scripts.propertyquarry_live_probe_auth import live_probe_request_headers
+except ModuleNotFoundError:
+    from propertyquarry_live_probe_auth import live_probe_request_headers  # type: ignore[no-redef]
+
 
 DEFAULT_ROUTE_BUDGET_MS = {
     "/sign-in": 1200,
@@ -572,7 +577,7 @@ def constrained_client_profile_receipt(
         },
         "cache_policy": {
             "cold": "browser_http_cache_cleared_before_first_navigation",
-            "warm": "same_context_repeat_navigation_cache_eligible",
+            "warm": "same_context_neutral_page_repeat_cache_eligible",
             "service_workers": "blocked",
         },
         "thresholds": {
@@ -1491,7 +1496,10 @@ def _measure_browser_navigation(
         wait_until="load",
         timeout=profile.navigation_timeout_ms,
     )
-    page.wait_for_timeout(250)
+    # Keep the strict zero-incomplete-request contract while giving deferred
+    # images and fonts a bounded post-load window under the throttled profile.
+    # This time remains inside the measured navigation budget.
+    page.wait_for_timeout(1_000)
     duration_ms = max(0, round((time.perf_counter() - started) * 1000))
     metrics = capture.finish()
     status_code = int(getattr(response, "status", 0) or 0)
@@ -1795,10 +1803,6 @@ def collect_constrained_client_browser_evidence(
             signed_navigation_count = 0
             signing_interception_errors: list[str] = []
             if probe_secret:
-                from scripts.propertyquarry_live_probe_auth import (
-                    live_probe_request_headers,
-                )
-
                 def record_interception_error(reason: str) -> None:
                     if (
                         len(signing_interception_errors) < 8
@@ -1974,12 +1978,19 @@ def collect_constrained_client_browser_evidence(
             cold["ok"] = all(
                 check["ok"] is True for check in cold["checks"]
             )
+            page.goto(
+                "about:blank",
+                wait_until="load",
+                timeout=validated_profile.navigation_timeout_ms,
+            )
+            if str(getattr(page, "url", "") or "") != "about:blank":
+                raise RuntimeError("warm_navigation_neutral_page_not_observed")
             warm = _measure_browser_navigation(
                 page,
                 capture,
                 url=target,
                 phase="warm",
-                cache_state="same_context_repeat_cache_observed",
+                cache_state="same_context_neutral_page_repeat_cache_observed",
                 profile=validated_profile,
                 expected_release_identity=normalized_expected_identity,
                 signed_navigation_nonce_hashes=(
@@ -2237,7 +2248,7 @@ def _passing_engine_receipt_errors(
             expected_cache_state = (
                 "cleared_before_navigation"
                 if phase == "cold"
-                else "same_context_repeat_cache_observed"
+                else "same_context_neutral_page_repeat_cache_observed"
             )
             if (
                 measurement.get("phase") != phase

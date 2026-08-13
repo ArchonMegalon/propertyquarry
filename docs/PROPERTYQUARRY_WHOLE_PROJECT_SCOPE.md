@@ -1,8 +1,24 @@
 # PropertyQuarry Whole Project Scope
 
-This is the working definition of "whole product" for hardening passes, audits, release gates, and long-running Codex work.
+This is the future whole-product gold backlog for hardening passes and audits.
+It is not the release definition for the current Austria closed test.
 
 PropertyQuarry is a paid property decision product. A pass is not whole-project complete when it only improves one page, one provider, one visual component, or one happy path. It must check the customer journey, the operator control plane, the data lifecycle, and the safety boundaries that keep the product credible.
+
+## Authority Boundary
+
+The current customer product is the Austria closed-test search-to-brief loop:
+sign in, set Austrian search preferences, run live-provider search, review all
+available ranked results, persist decisions and opportunity assessments, open
+research/tour evidence, and save a local review packet. Free, Plus, and Agent
+are the only customer plans. Billing, external packet publication, additional
+markets, and optional LTD lanes remain fail-closed until their own authority
+receipts exist.
+
+Everything below is a future gold backlog unless the release manifest names it
+as a current-candidate gate. Missing gold-board overlays, directory projection,
+or future-market evidence must not block an otherwise honest Austria closed-test
+candidate. It also must not be presented as implemented customer functionality.
 
 ## Scope Rule
 
@@ -25,7 +41,7 @@ Whole-project work includes every system below:
 15. Observability: SLOs, structured logs, queue depth, provider success, cost per run, incident signals, and live smoke checks.
 16. Documentation, help center, legal pages, provider attribution, generated-tour disclaimers, and localization.
 17. Integration governance for LTD/provider lanes such as Subscribr, MetaSurvey, ApiX-Drive, Invoiless, Lunacal, Documentation.AI, Paperguide, Internxt, ApproveThis, Unmixr, and Brilliant Directories.
-18. Brilliant Directories billing and directory handoff, with PropertyQuarry retaining plan, invoice, entitlement, access-check, ranking, and customer-data source of truth.
+18. Optional Brilliant Directories directory projection, with PropertyQuarry retaining identity, plan, invoice, entitlement, access-check, ranking, publication, and customer-data source of truth.
 19. Documentation.AI/release-audit governance, including authoritative release manifest, branch/deployment reconciliation, security posture, reproducible builds, CI gates, documentation separation, and current-HEAD proof receipts.
 
 ## Definition Of Done
@@ -58,9 +74,10 @@ The additional whole-scope goal is to keep moving PropertyQuarry from run-centri
 
 This goal remains active until those systems are implemented, tested, and visible in the relevant customer or operator surfaces.
 
-## Gold Board Extensions
+## Future Gold Board Extensions
 
-The active gold board also includes these non-negotiable extensions:
+The future gold board includes these extensions. They become release gates only
+when promoted into an exact-candidate release manifest:
 
 - Billing must feel premium on desktop and mobile: current plan, checkout, upgrade, downgrade, cancellation, renewal, failed-payment recovery, invoice history, refunds, VAT/tax copy, entitlement state, and support path must be visible without breaking the search workflow.
 - Brilliant Directories can be used only as a governed white-label directory or payment/account handoff lane. It cannot own billing truth, entitlements, provider access, private user profile data, property facts, ranking, search scope, or publication approval.
@@ -86,9 +103,11 @@ The active gold board also includes these non-negotiable extensions:
 - Whole-project gold must include continuous release gates for visual quality and accessibility, not only focused smoke tests. CI or release scripts must include browser screenshot baselines, axe/accessibility scans, keyboard/focus checks, high-zoom/mobile checks, empty/error/loading state coverage, and performance budgets for first-value journeys.
 - Whole-project gold must include production hardening receipts for runtime security, supply chain, and authorization: non-root/default no-host-Docker posture, locked dependencies and pinned images, dependency/container scans, SBOM, durable workspace RBAC/session revocation, key rotation posture, and proof that loopback no-auth/principal-header overrides are disabled in production.
 
-## Documentation.AI Audit Intake
+## Documentation.AI Future-Gold Audit Intake
 
-The documentation.ai whole-project audit is now part of the active gold board. Treat it as release evidence, not commentary.
+The documentation.ai whole-project audit remains future-gold input. Current
+release blockers must be copied into the authoritative release manifest rather
+than inferred from this backlog.
 
 P0 items that block a gold claim:
 
@@ -107,14 +126,16 @@ P1 items that remain active until fixed or explicitly scoped out:
 - Separate customer/product documentation from operator/provider/internal mechanics.
 - Add responsive visual stability, keyboard, screen-reader, high-zoom, empty/error/loading, large-data, and mobile usability proof for first-value journeys.
 
-## Brilliant Directories Billing Goal
+## Brilliant Directories Directory Projection Goal
 
-Brilliant Directories billing is included only as a governed premium billing support lane. The gold goal is not to move billing authority into Brilliant Directories; it is to make the customer-facing billing surface feel premium while PropertyQuarry remains source of truth.
+Brilliant Directories is limited to a future governed public partner/agent
+directory projection. It is not a checkout, subscription, billing, invoice, or
+entitlement lane. PropertyQuarry remains source of truth.
 
 Required behavior before promotion:
 
 - PropertyQuarry owns account identity, plan, invoice display, entitlement checks, refunds, cancellation, renewal, failed-payment recovery, support state, and agent-tier unlimited behavior.
-- Brilliant Directories may expose only an HTTPS allowlisted white-label checkout or account-management handoff and signed advisory webhook notifications.
+- Brilliant Directories may expose only allowlisted public directory/profile links and signed advisory webhook notifications.
 - Webhooks must have signature verification, replay protection, receipt logging, idempotency, and local entitlement reconciliation before they can affect any user-visible billing or access state.
 - Every billing state must have a mobile-safe local fallback that keeps the user on PropertyQuarry when the handoff is unavailable, unsigned, replayed, misconfigured, or returns a non-allowlisted URL.
 - Billing receipts must avoid credentials, payment secrets, raw webhook bodies with private data, and provider-owned customer truth.
@@ -122,13 +143,12 @@ Required behavior before promotion:
 ### Current Long-Running Flagship Goal (active)
 
 The authoritative active objective is defined in
-`docs/PROPERTYQUARRY_GLOBAL_FLAGSHIP_GOAL.md`. Bring the preserved
-release-candidate worktree to a genuinely global flagship standard: close every
-safe local product, accessibility, internationalization, privacy/security,
-reliability, observability, operations, provenance, and customer-journey gap;
-then obtain exact-candidate cross-browser, production-like, and protected-live
-evidence. Core Gold must remain independently launchable when optional paid
-advanced visuals are unavailable. No local source, generated receipt, unsigned
+`docs/PROPERTYQUARRY_GLOBAL_FLAGSHIP_GOAL.md`. For the current release slice,
+bring the preserved candidate to an honest Austria closed-test standard: close
+safe local product, accessibility, localization, privacy/security, reliability,
+operations, provenance, and customer-journey gaps; then obtain exact-candidate
+browser, production-like, protected-live, and physical-device evidence. Wider
+markets remain future backlog. No local source, generated receipt, unsigned
 self-assertion, or historical live observation may be relabelled as launch
 authority.
 
@@ -144,7 +164,7 @@ For every continuation pass, the objective is:
 
 1. Remove noise, internal vocabulary, redundant hops, fake readiness, and cramped mobile layouts wherever they appear.
 2. Keep search semantics correct: hard filters constrain eligibility, soft filters rank, district/postal scope is country-safe, and all tiers see ranked results by default.
-3. Keep provider execution, repair, quarantine, ETA, progress, and targeted-search E2E proof truthful across Austria, Germany, and Costa Rica.
+3. Keep provider execution, repair, quarantine, ETA, progress, and targeted-search E2E proof truthful for Austria; Germany, Costa Rica, and other catalog markets remain non-customer backlog until admitted separately.
 4. Keep 3D tours and walkthroughs request-driven, style-aware, vendor-real, browser-rendered, and free of user-facing provider/internal labels.
 5. Keep billing and account access single-sign-on quality: a signed-in PropertyQuarry user must not be asked to create a second account or complete an avoidable second login.
 6. Keep release governance strict: documentation.ai P0/P1 findings, runtime security, reproducible builds, visual/accessibility gates, Rybbit receipts, and release-manifest freshness are active blockers until proven or explicitly scoped out.

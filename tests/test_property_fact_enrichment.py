@@ -42,6 +42,11 @@ from app.product.property_location_research import (
     PROPERTY_FACT_OSM_QUERY_SCHEMA,
     property_fact_osm_nearby_query,
 )
+from app.product.property_search_work_queue import (
+    PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+    InMemoryPropertySearchWorkQueue,
+    PropertySearchWorkJob,
+)
 from app.product.service import (
     ProductService,
     _property_fact_fresh_geo_snapshot,
@@ -2397,6 +2402,63 @@ def test_required_fact_scheduler_survives_restart_and_unblocks_ranking(
         _clear_run(run_id)
 
 
+def test_fact_claim_rebinds_projected_facts_but_not_authority_inputs() -> None:
+    job: dict[str, object] = {
+        "source_fingerprint": "source-a",
+        "facts_digest": "facts-before-projection",
+        "preference_digest": "preferences-a",
+        "requirement_digest": "requirements-a",
+        "request_digest": "request-before-projection",
+    }
+    binding = {
+        "source_fingerprint": "source-a",
+        "facts_digest": "facts-after-projection",
+        "preference_digest": "preferences-a",
+        "requirement_digest": "requirements-a",
+        "request_digest": "request-after-projection",
+    }
+
+    assert product_service._property_fact_rebind_job_inputs(
+        job=job,
+        binding=binding,
+    ) is True
+    assert job["facts_digest"] == "facts-after-projection"
+    assert job["request_digest"] == "request-after-projection"
+    assert job["input_binding_rebased"] is True
+    assert (
+        job["input_binding_original_request_digest"]
+        == "request-before-projection"
+    )
+    assert product_service._property_fact_rebind_job_inputs(
+        job=job,
+        binding={
+            **binding,
+            "facts_digest": "facts-after-second-projection",
+            "request_digest": "request-after-second-projection",
+        },
+    ) is True
+    assert job["facts_digest"] == "facts-after-second-projection"
+    assert job["request_digest"] == "request-after-second-projection"
+    assert (
+        job["input_binding_original_request_digest"]
+        == "request-before-projection"
+    )
+
+    for protected_key in (
+        "source_fingerprint",
+        "preference_digest",
+        "requirement_digest",
+    ):
+        protected_job = dict(job)
+        protected_job[protected_key] = "different-authority-input"
+        before = dict(protected_job)
+        assert product_service._property_fact_rebind_job_inputs(
+            job=protected_job,
+            binding=binding,
+        ) is False
+        assert protected_job == before
+
+
 def test_required_fact_exhaustion_is_terminal_partial_and_never_notifies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4082,6 +4144,114 @@ def test_fact_enrichment_no_work_returns_complete_resolved_snapshot(
         _clear_run(run_id)
 
 
+def test_prod_fact_enrichment_dispatches_to_durable_worker_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-durable-dispatch"
+    run_id = "run-property-facts-durable-dispatch"
+    candidate_ref = "candidate-durable-dispatch"
+    candidate = _candidate(candidate_ref=candidate_ref)
+    client = build_property_operator_client(principal_id=principal_id)
+    service = ProductService(client.app.state.container)
+    _seed_run(
+        _run_record(
+            principal_id=principal_id,
+            run_id=run_id,
+            candidate=candidate,
+        )
+    )
+    repository = InMemoryPropertySearchWorkQueue()
+    monkeypatch.setattr(
+        product_service,
+        "_property_fact_validated_source_url",
+        lambda url: str(url),
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_durable_work_required",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_work_queue_repository",
+        lambda: repository,
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "_launch_property_candidate_fact_enrichment",
+        lambda self, **kwargs: pytest.fail("prod API launched provider work locally"),
+    )
+    try:
+        started = service.start_property_candidate_fact_enrichment(
+            principal_id=principal_id,
+            run_id=run_id,
+            candidate_ref=candidate_ref,
+        )
+
+        jobs = repository.list_jobs()
+        assert started["status"] == "queued"
+        assert len(jobs) == 1
+        assert jobs[0].payload_json["work_kind"] == PROPERTY_FACT_ENRICHMENT_WORK_KIND
+        assert jobs[0].payload_json["candidate_ref"] == candidate_ref
+        assert "property_url" not in jobs[0].payload_json
+    finally:
+        _clear_run(run_id)
+
+
+def test_durable_worker_consumes_fact_work_for_completed_search_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-worker-dispatch"
+    run_id = "run-property-facts-worker-dispatch"
+    candidate_ref = "candidate-worker-dispatch"
+    fact_job_id = "pfe_worker_dispatch"
+    client = build_property_operator_client(principal_id=principal_id)
+    service = ProductService(client.app.state.container)
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda **kwargs: {
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "status": "processed",
+        },
+    )
+    consumed: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        ProductService,
+        "_run_property_candidate_fact_enrichment",
+        lambda self, **kwargs: consumed.append(dict(kwargs)),
+    )
+    queued_at = datetime.now(timezone.utc)
+    job = PropertySearchWorkJob(
+        job_id="durable-fact-work",
+        principal_id=principal_id,
+        run_id=run_id,
+        idempotency_key="durable-fact-key",
+        payload_json={
+            "work_kind": PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+            "candidate_ref": candidate_ref,
+            "fact_job_id": fact_job_id,
+        },
+        status="leased",
+        attempt_count=1,
+        max_attempts=3,
+        available_at=queued_at,
+    )
+
+    result = service.execute_property_search_work_job(job)
+
+    assert result["status"] == "fact_enrichment_consumed"
+    assert consumed == [
+        {
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "candidate_ref": candidate_ref,
+            "job_id": fact_job_id,
+        }
+    ]
+
+
 def test_fact_enrichment_partial_retry_api_preserves_complete_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4232,7 +4402,7 @@ def test_fact_enrichment_run_mutation_retries_durable_compare_and_swap(
     principal_id = "exec-property-facts-cas"
     run_id = "run-property-facts-cas"
     stored = _run_record(principal_id=principal_id, run_id=run_id, candidate=_candidate())
-    calls = {"cas": 0}
+    calls = {"cas": 0, "preserve_memberships": []}
 
     monkeypatch.setattr(product_service, "_property_search_run_database_url", lambda: "postgresql://durable.test/property")
     monkeypatch.setattr(
@@ -4243,6 +4413,9 @@ def test_fact_enrichment_run_mutation_retries_durable_compare_and_swap(
 
     def _cas(**kwargs: object) -> dict[str, object]:
         calls["cas"] += 1
+        calls["preserve_memberships"].append(
+            kwargs.get("preserve_unprojected_packet_memberships") is True
+        )
         if calls["cas"] == 1:
             return {"status": "record_changed", "record_sha256": "changed"}
         updated = copy.deepcopy(kwargs["updated_record"])
@@ -4258,10 +4431,180 @@ def test_fact_enrichment_run_mutation_retries_durable_compare_and_swap(
 
         assert result == "stored"
         assert calls["cas"] == 2
+        assert calls["preserve_memberships"] == [True, True]
         with product_service._PROPERTY_SEARCH_RUN_LOCK:
             assert product_service._PROPERTY_SEARCH_RUN_REGISTRY[run_id]["fact_test_marker"] == "stored"
     finally:
         _clear_run(run_id)
+
+
+def test_fact_candidate_hydrates_only_exact_indexed_packet_after_run_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-indexed"
+    run_id = "run-property-facts-indexed"
+    candidate_ref = "candidate-indexed"
+    candidate = _candidate(candidate_ref=candidate_ref)
+    record: dict[str, object] = {
+        "run_id": run_id,
+        "principal_id": principal_id,
+        "status": "completed_partial",
+        "summary": {"fact_enrichment_jobs": {}},
+    }
+    observed: list[dict[str, str]] = []
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_run_database_url",
+        lambda: "postgresql://durable.test/property",
+    )
+
+    def _load_indexed(**kwargs: str) -> dict[str, object]:
+        observed.append(dict(kwargs))
+        return {"candidate": copy.deepcopy(candidate)}
+
+    monkeypatch.setattr(
+        product_service._property_search_storage,
+        "_load_property_research_packet_link_for_run",
+        _load_indexed,
+    )
+
+    hydrated = product_service._property_fact_find_candidate(
+        record,
+        candidate_ref=candidate_ref,
+    )
+
+    assert hydrated == candidate
+    assert observed == [
+        {
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "candidate_ref": candidate_ref,
+        }
+    ]
+    assert record["summary"]["research_candidates"] == [candidate]
+    bounded = property_search_storage._bounded_property_search_run_payload(record)
+    bounded_candidates = list(
+        dict(bounded.get("summary") or {}).get("research_candidates") or []
+    )
+    assert len(bounded_candidates) == 1
+    assert bounded_candidates[0]["candidate_ref"] == candidate_ref
+
+
+def test_fact_candidate_prefers_exact_packet_over_lossy_bounded_preview(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-bounded-preview"
+    run_id = "run-property-facts-bounded-preview"
+    candidate_ref = "candidate-bounded-preview"
+    indexed_candidate = _candidate(candidate_ref=candidate_ref)
+    indexed_candidate["property_facts"] = {
+        "address": "Karl-Czerny-Gasse 2, 1020 Wien",
+        **{f"durable_fact_{index}": index for index in range(40)},
+    }
+    compact_candidate = copy.deepcopy(indexed_candidate)
+    compact_candidate["property_facts"] = {
+        "address": "Karl-Czerny-Gasse 2, 1020 Wien"
+    }
+    record: dict[str, object] = {
+        "run_id": run_id,
+        "principal_id": principal_id,
+        "status": "completed_partial",
+        "payload_retention_status": "compact_only",
+        "summary": {
+            "fact_enrichment_jobs": {},
+            "research_candidates": [compact_candidate],
+        },
+    }
+    observed: list[dict[str, str]] = []
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_run_database_url",
+        lambda: "postgresql://durable.test/property",
+    )
+
+    def _load_indexed(**kwargs: str) -> dict[str, object]:
+        observed.append(dict(kwargs))
+        return {"candidate": copy.deepcopy(indexed_candidate)}
+
+    monkeypatch.setattr(
+        product_service._property_search_storage,
+        "_load_property_research_packet_link_for_run",
+        _load_indexed,
+    )
+
+    hydrated = product_service._property_fact_find_candidate(
+        record,
+        candidate_ref=candidate_ref,
+    )
+
+    assert hydrated == indexed_candidate
+    assert hydrated != compact_candidate
+    assert observed == [
+        {
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "candidate_ref": candidate_ref,
+        }
+    ]
+    assert record["summary"]["research_candidates"] == [indexed_candidate]
+
+
+def test_fact_candidate_recovers_membership_removed_by_legacy_partial_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_id = "exec-property-facts-recovery"
+    run_id = "run-property-facts-recovery"
+    candidate_ref = "candidate-recovery"
+    candidate = _candidate(candidate_ref=candidate_ref)
+    record: dict[str, object] = {
+        "run_id": run_id,
+        "principal_id": principal_id,
+        "status": "completed_partial",
+        "summary": {
+            "fact_enrichment_jobs": {
+                "pfe_recovery": {
+                    "job_id": "pfe_recovery",
+                    "candidate_ref": candidate_ref,
+                    "status": "queued",
+                }
+            }
+        },
+    }
+    active_lookups: list[dict[str, str]] = []
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_run_database_url",
+        lambda: "postgresql://durable.test/property",
+    )
+    monkeypatch.setattr(
+        product_service._property_search_storage,
+        "_load_property_research_packet_link_for_run",
+        lambda **_kwargs: None,
+    )
+
+    def _load_active(**kwargs: str) -> dict[str, object]:
+        active_lookups.append(dict(kwargs))
+        return {"candidate": copy.deepcopy(candidate)}
+
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_research_packet_link_storage",
+        _load_active,
+    )
+
+    hydrated = product_service._property_fact_find_candidate(
+        record,
+        candidate_ref=candidate_ref,
+    )
+
+    assert hydrated == candidate
+    assert active_lookups == [
+        {"principal_id": principal_id, "candidate_ref": candidate_ref}
+    ]
+    assert record["summary"]["research_candidates"] == [candidate]
 
 
 def test_fact_enrichment_api_is_authenticated_same_origin_and_never_accepts_url(

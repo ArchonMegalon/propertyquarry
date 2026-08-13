@@ -44,12 +44,12 @@ AWS_CLI_MINIMAL_PATH = "/usr/bin:/bin"
 SNAPSHOT_CONTRACT_NAME = "propertyquarry.postgres_exported_snapshot"
 SNAPSHOT_CONTRACT_VERSION = 2
 CRITICAL_DATA_CONTRACT_NAME = "propertyquarry.postgres_critical_data"
-CRITICAL_DATA_CONTRACT_VERSION = 3
-CRITICAL_DATA_EVIDENCE_VERSION = 3
+CRITICAL_DATA_CONTRACT_VERSION = 4
+CRITICAL_DATA_EVIDENCE_VERSION = 4
 CRITICAL_DATA_FINGERPRINT_ALGORITHM = "postgresql_sha256_bounded_chunk_merkle_v2"
 CRITICAL_DATA_SCHEMA = "public"
 CRITICAL_DATA_CHUNK_SIZE = 1_024
-CRITICAL_DATA_MAX_ROW_BYTES = 4 * 1_024 * 1_024
+CRITICAL_DATA_MAX_ROW_BYTES = 128 * 1_024 * 1_024
 CRITICAL_DATA_MAX_CHUNKS = 65_536
 CRITICAL_DATA_MAX_SUPPORTED_ROWS = CRITICAL_DATA_CHUNK_SIZE * CRITICAL_DATA_MAX_CHUNKS
 CRITICAL_DATA_PRIVACY_SCHEMA_VERSION = 15
@@ -89,11 +89,15 @@ CRITICAL_DATA_TABLES: tuple[tuple[str, tuple[str, ...], bool], ...] = (
     ),
     ("propertyquarry_admission_capacity_state", ("capacity_key",), True),
 )
+_CRITICAL_DATA_NON_TEXT_IDENTITIES = {
+    ("property_content_job_events", "event_sequence"),
+    ("propertyquarry_admission_leases", "lease_id"),
+}
 _CRITICAL_DATA_TEXT_IDENTITIES = {
     (table, column)
     for table, columns, _data_required in CRITICAL_DATA_TABLES
     for column in columns
-    if (table, column) != ("property_content_job_events", "event_sequence")
+    if (table, column) not in _CRITICAL_DATA_NON_TEXT_IDENTITIES
 }
 DISPOSABLE_CONFIRMATION = "YES_DESTROY_DISPOSABLE_TARGET"
 DEFAULT_DISPOSABLE_PREFIX = "propertyquarry_restore_drill_"
@@ -102,6 +106,7 @@ DEFAULT_RESTORE_MAX_DURATION_SECONDS = 1_800.0
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 3_600.0
 DEFAULT_RELEASE_EVIDENCE_MAX_AGE_SECONDS = 86_400.0
 DEFAULT_RECEIPT_FUTURE_TOLERANCE_SECONDS = 300.0
+DEFAULT_OFF_HOST_MINIMUM_RETENTION_SECONDS = 7 * 86_400.0
 MAX_RECEIPT_BYTES = 16 * 1024 * 1024
 RESTORE_RTO_SCOPE = (
     "off_host_retrieval",
@@ -2321,37 +2326,29 @@ def _critical_data_evidence_from_database(
                 ", 'capacity_state', COALESCE((SELECT json_agg(json_build_object("
                 "'capacity_key', capacity_key, 'row_count', row_count, "
                 "'row_limit', row_limit) ORDER BY capacity_key) "
-                "FROM bounded_source), '[]'::json)"
+                f'FROM "{CRITICAL_DATA_SCHEMA}"."{table}"), \'[]\'::json)'
             )
         sql = (
             "SET TIME ZONE 'UTC'; "
+            "SET work_mem TO '16MB'; "
             f"/* propertyquarry_critical_data:{table} */ "
-            "WITH bounded_source AS MATERIALIZED ("
-            "SELECT source_row.* "
-            f'FROM "{CRITICAL_DATA_SCHEMA}"."{table}" AS source_row '
-            f"LIMIT {CRITICAL_DATA_MAX_SUPPORTED_ROWS}"
-            "), serialized_rows AS MATERIALIZED ("
+            "WITH digested_rows AS MATERIALIZED ("
             f"SELECT {identity_projection_sql}, "
-            "convert_to(to_jsonb(source_row)::text, 'UTF8') AS row_bytes "
-            "FROM bounded_source AS source_row"
-            "), digested_rows AS MATERIALIZED ("
-            "SELECT serialized_row.*, "
+            "octet_length(serialized_row.row_bytes)::bigint AS row_size_bytes, "
             "encode(sha256(serialized_row.row_bytes), 'hex') AS row_sha256 "
-            "FROM serialized_rows AS serialized_row"
+            f'FROM "{CRITICAL_DATA_SCHEMA}"."{table}" AS source_row '
+            "CROSS JOIN LATERAL (SELECT "
+            "convert_to(to_jsonb(source_row)::text, 'UTF8') AS row_bytes "
+            "OFFSET 0) AS serialized_row"
             "), canonical_rows AS MATERIALIZED ("
             f"SELECT row_number() OVER (ORDER BY {identity_sql}, "
             "digested_row.row_sha256 COLLATE \"C\")::bigint AS ordinal, "
-            "digested_row.row_bytes, digested_row.row_sha256 "
+            "digested_row.row_size_bytes, digested_row.row_sha256 "
             "FROM digested_rows AS digested_row"
-            "), measured_rows AS MATERIALIZED ("
-            "SELECT ordinal, row_bytes, row_sha256, "
-            "octet_length(row_bytes)::bigint AS row_size_bytes "
-            "FROM canonical_rows"
             "), bounded_rows AS MATERIALIZED ("
             "SELECT ordinal, row_size_bytes, row_sha256, "
             f"((ordinal - 1) / {CRITICAL_DATA_CHUNK_SIZE})::bigint AS chunk_index "
-            f"FROM measured_rows WHERE row_size_bytes <= {CRITICAL_DATA_MAX_ROW_BYTES} "
-            f"AND ordinal <= {CRITICAL_DATA_MAX_SUPPORTED_ROWS}"
+            f"FROM canonical_rows WHERE row_size_bytes <= {CRITICAL_DATA_MAX_ROW_BYTES}"
             "), bounded_chunks AS MATERIALIZED ("
             "SELECT chunk_index, COUNT(*)::bigint AS row_count, "
             "MAX(row_size_bytes)::bigint AS max_row_bytes_observed, "
@@ -2359,11 +2356,13 @@ def _critical_data_evidence_from_database(
             "'UTF8')), 'hex') AS chunk_sha256 FROM bounded_rows GROUP BY chunk_index"
             ") SELECT json_build_object("
             f"'evidence_version', {CRITICAL_DATA_EVIDENCE_VERSION}, "
-            "'row_count', (SELECT COUNT(*)::bigint FROM measured_rows), "
-            "'oversized_row_count', (SELECT COUNT(*)::bigint FROM measured_rows "
+            "'row_count', (SELECT COUNT(*)::bigint FROM canonical_rows), "
+            "'oversized_row_count', (SELECT COUNT(*)::bigint FROM canonical_rows "
             f"WHERE row_size_bytes > {CRITICAL_DATA_MAX_ROW_BYTES}), "
+            "'max_row_bytes_observed', (SELECT COALESCE(MAX(row_size_bytes), 0)::bigint "
+            "FROM canonical_rows), "
             "'chunk_count', (SELECT CASE WHEN COUNT(*) = 0 THEN 0 "
-            f"ELSE ((COUNT(*) - 1) / {CRITICAL_DATA_CHUNK_SIZE}) + 1 END FROM measured_rows), "
+            f"ELSE ((COUNT(*) - 1) / {CRITICAL_DATA_CHUNK_SIZE}) + 1 END FROM canonical_rows), "
             "'chunks', COALESCE((SELECT json_agg(json_build_object("
             "'chunk_index', chunk_index, 'row_count', row_count, "
             "'max_row_bytes_observed', max_row_bytes_observed, "
@@ -2407,10 +2406,21 @@ def _critical_data_evidence_from_database(
             code="critical_data_query_invalid",
             message=f"{label} oversized-row count is invalid for {table}.",
         )
+        max_row_bytes_observed = _strict_nonnegative_int(
+            observed.get("max_row_bytes_observed"),
+            code="critical_data_query_invalid",
+            message=f"{label} maximum row size is invalid for {table}.",
+        )
         if oversized_row_count:
             raise DisasterRecoveryError(
                 "critical_data_row_too_large",
                 f"{label} contains a canonical row larger than the release bound in {table}.",
+                details={
+                    "table": table,
+                    "max_row_bytes": CRITICAL_DATA_MAX_ROW_BYTES,
+                    "max_row_bytes_observed": max_row_bytes_observed,
+                    "oversized_row_count": oversized_row_count,
+                },
             )
         chunks = observed.get("chunks")
         if not isinstance(chunks, list):
@@ -2475,6 +2485,10 @@ def _validated_off_host_object(
     etag = _normalize_s3_etag(payload.get("etag"))
     verification_method = str(payload.get("verification_method") or "").strip()
     provider_request_id = str(payload.get("provider_request_id") or "").strip()
+    object_lock_mode = str(payload.get("object_lock_mode") or "").strip().upper()
+    object_lock_retain_until = str(
+        payload.get("object_lock_retain_until") or ""
+    ).strip()
     sha256 = str(payload.get("sha256") or "").strip().lower()
     try:
         size_bytes = int(payload.get("size_bytes") or 0)
@@ -2543,6 +2557,23 @@ def _validated_off_host_object(
             "off_host_checksum_unverified",
             "The remote verifier did not verify the off-host object checksum.",
         )
+    try:
+        retain_until_epoch = _parse_utc_iso(object_lock_retain_until)
+    except DisasterRecoveryError as exc:
+        raise DisasterRecoveryError(
+            "off_host_immutability_invalid",
+            "Off-host Object Lock retention is invalid.",
+        ) from exc
+    if (
+        payload.get("immutability_verified") is not True
+        or object_lock_mode != "COMPLIANCE"
+        or retain_until_epoch
+        < now_epoch + DEFAULT_OFF_HOST_MINIMUM_RETENTION_SECONDS
+    ):
+        raise DisasterRecoveryError(
+            "off_host_immutability_unverified",
+            "Off-host evidence must prove active S3 Object Lock COMPLIANCE retention.",
+        )
     if payload.get("encrypted") is not True:
         raise DisasterRecoveryError(
             "off_host_encryption_unverified",
@@ -2589,6 +2620,9 @@ def _validated_off_host_object(
         "off_host": True,
         "object_exists": True,
         "checksum_verified": True,
+        "immutability_verified": True,
+        "object_lock_mode": "COMPLIANCE",
+        "object_lock_retain_until": _utc_iso(retain_until_epoch),
         "verified_at": _utc_iso(verified_epoch),
         "verification_method": verification_method,
         "provider_request_id": provider_request_id,
@@ -3188,6 +3222,8 @@ def _validated_off_host_retrieval(
         "object_key",
         "version_id",
         "etag",
+        "object_lock_mode",
+        "object_lock_retain_until",
     )
     normalized_identity = {
         key: (
@@ -3333,6 +3369,13 @@ def _retrieve_off_host_object(
     object_key = str(off_host_object.get("object_key") or "")
     version_id = str(off_host_object.get("version_id") or "")
     etag = _normalize_s3_etag(off_host_object.get("etag"))
+    object_lock_mode = str(
+        off_host_object.get("object_lock_mode") or ""
+    ).strip().upper()
+    object_lock_retain_until = str(
+        off_host_object.get("object_lock_retain_until") or ""
+    ).strip()
+    object_lock_retain_epoch = _parse_utc_iso(object_lock_retain_until)
     provider_env = _minimal_hook_environment(env, declared_keys_env=None, provider_keys=True)
     provider_env.update(
         {
@@ -3457,11 +3500,34 @@ def _retrieve_off_host_object(
                     "off_host_retrieval_identity_mismatch",
                     f"Provider {label} response does not match the immutable receipt identity.",
                 )
-        if not str(head.get("ServerSideEncryption") or retrieved.get("ServerSideEncryption") or "").strip():
-            raise DisasterRecoveryError(
-                "off_host_encryption_unverified",
-                "Provider response does not prove server-side encryption.",
-            )
+            response_lock_mode = str(
+                response.get("ObjectLockMode") or ""
+            ).strip().upper()
+            response_encryption = str(
+                response.get("ServerSideEncryption") or ""
+            ).strip()
+            try:
+                response_retain_epoch = _parse_utc_iso(
+                    response.get("ObjectLockRetainUntilDate")
+                )
+            except DisasterRecoveryError as exc:
+                raise DisasterRecoveryError(
+                    "off_host_immutability_unverified",
+                    f"Provider {label} Object Lock retention is invalid.",
+                ) from exc
+            if response_encryption != "AES256":
+                raise DisasterRecoveryError(
+                    "off_host_encryption_unverified",
+                    f"Provider {label} response does not prove the required AES256 server-side encryption.",
+                )
+            if (
+                response_lock_mode != object_lock_mode
+                or response_retain_epoch < object_lock_retain_epoch
+            ):
+                raise DisasterRecoveryError(
+                    "off_host_immutability_unverified",
+                    f"Provider {label} response does not preserve the receipt-bound Object Lock retention.",
+                )
 
         def provider_request_id(response: Mapping[str, object], result: object) -> str:
             metadata = response.get("ResponseMetadata")
@@ -3474,10 +3540,14 @@ def _retrieve_off_host_object(
 
         head_request_id = provider_request_id(head, head_result)
         get_request_id = provider_request_id(retrieved, get_result)
-        if not head_request_id or not get_request_id:
+        if (
+            not head_request_id
+            or not get_request_id
+            or head_request_id == get_request_id
+        ):
             raise DisasterRecoveryError(
                 "off_host_retrieval_provenance_missing",
-                "Provider head/get request identities are required.",
+                "Distinct provider head/get request identities are required.",
             )
         opened = _validate_open_retrieval_file(
             destination=destination,
@@ -3492,6 +3562,8 @@ def _retrieve_off_host_object(
             "object_key": object_key,
             "version_id": version_id,
             "etag": etag,
+            "object_lock_mode": object_lock_mode,
+            "object_lock_retain_until": object_lock_retain_until,
             "sha256": _sha256_descriptor(destination_descriptor),
             "size_bytes": opened.st_size,
             "object_exists": True,

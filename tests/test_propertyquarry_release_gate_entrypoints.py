@@ -2400,12 +2400,16 @@ def test_release_preflight_verification_leaves_preserve_generated_artifacts() ->
                     or "release asset verification passed" in combined_output
                 )
             else:
-                assert (
-                    "semantic drift" in combined_output
-                    or "exact HEAD" in combined_output
-                    or (
-                        "release manifest worktree content differs from HEAD"
-                        in combined_output
+                    assert (
+                        "semantic drift" in combined_output
+                        or "exact HEAD" in combined_output
+                        or (
+                            "weekly pulse release provenance is stale relative to current HEAD"
+                            in combined_output
+                        )
+                        or (
+                            "release manifest worktree content differs from HEAD"
+                            in combined_output
                     )
                 )
         assert snapshot() == expected_snapshot

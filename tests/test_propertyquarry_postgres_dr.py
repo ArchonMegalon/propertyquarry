@@ -211,6 +211,10 @@ def _critical_query_result(
         "evidence_version": row["evidence_version"],
         "row_count": row["row_count"],
         "oversized_row_count": 0,
+        "max_row_bytes_observed": max(
+            (chunk["max_row_bytes_observed"] for chunk in row["chunks"]),
+            default=0,
+        ),
         "chunk_count": row["chunk_count"],
         "chunks": row["chunks"],
     }
@@ -300,6 +304,9 @@ def _off_host_object(
         "off_host": True,
         "object_exists": True,
         "checksum_verified": True,
+        "immutability_verified": True,
+        "object_lock_mode": "COMPLIANCE",
+        "object_lock_retain_until": "2026-08-13T10:00:00Z",
         "provider_request_id": "verify-request-release-1",
         "verified_at": verified_at,
         "verification_method": dr.REMOTE_PROVIDER_CONTRACTS["s3"]["verification_method"],
@@ -324,6 +331,8 @@ def _off_host_retrieval(
                 "object_key",
                 "version_id",
                 "etag",
+                "object_lock_mode",
+                "object_lock_retain_until",
             )
         },
         "sha256": remote["sha256"],
@@ -343,13 +352,17 @@ def _aws_object_response(
     *,
     artifact: Path,
     version_id: str = "3LgX-release-object-version",
+    object_lock_mode: str = "COMPLIANCE",
+    server_side_encryption: str = "AES256",
 ) -> str:
     return json.dumps(
         {
             "VersionId": version_id,
             "ETag": '"d41d8cd98f00b204e9800998ecf8427e"',
             "ContentLength": artifact.stat().st_size,
-            "ServerSideEncryption": "AES256",
+            "ServerSideEncryption": server_side_encryption,
+            "ObjectLockMode": object_lock_mode,
+            "ObjectLockRetainUntilDate": "2026-08-13T10:00:00Z",
         }
     ) + "\n"
 
@@ -708,6 +721,9 @@ def test_backup_encrypts_validated_dump_and_emits_redacted_checksum_receipt(
                         "off_host": True,
                         "object_exists": True,
                         "checksum_verified": True,
+                        "immutability_verified": True,
+                        "object_lock_mode": "COMPLIANCE",
+                        "object_lock_retain_until": "1970-02-01T00:16:40Z",
                         "provider_request_id": "verify-request-release-1",
                         "verified_at": dr._utc_iso(1_000.0),
                         "verification_method": dr.REMOTE_PROVIDER_CONTRACTS["s3"][
@@ -1804,6 +1820,8 @@ def test_provider_retrieval_uses_minimal_environment_and_binds_cli_attestation(
         clock=_Clock(datetime(2026, 7, 13, 10, 0, 15, tzinfo=timezone.utc).timestamp()),
     ) as (retrieval, descriptor):
         assert retrieval["aws_cli"]["path"] == aws_pin["path"]
+        assert retrieval["object_lock_mode"] == "COMPLIANCE"
+        assert retrieval["object_lock_retain_until"] == "2026-08-13T10:00:00Z"
         assert os.pread(descriptor, len(remote_artifact.read_bytes()), 0) == remote_artifact.read_bytes()
     assert observed_envs[0] == {
         "PATH": dr.AWS_CLI_MINIMAL_PATH,
@@ -1817,6 +1835,178 @@ def test_provider_retrieval_uses_minimal_environment_and_binds_cli_attestation(
         assert "DATABASE_URL" not in provider_env
         assert "HOME" not in provider_env
         assert "UNRELATED_SECRET" not in provider_env
+
+
+def test_provider_retrieval_rejects_weakened_object_lock_retention(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    remote_artifact = tmp_path / "remote-backup.dump"
+    remote_artifact.write_bytes(b"verified-remote-bytes")
+    destination = tmp_path / "retrieved-backup.dump"
+    _install_fake_aws_cli(monkeypatch, tmp_path)
+
+    def runner(command, **_kwargs):
+        command = list(command)
+        if "--version" in command:
+            return _result(
+                stdout=(
+                    f"aws-cli/{AWS_CLI_APPROVED_VERSION} Python/3 test/Linux\n"
+                )
+            )
+        if "get-object" in command:
+            Path(command[-1]).write_bytes(remote_artifact.read_bytes())
+        return _result(
+            stdout=_aws_object_response(
+                artifact=remote_artifact,
+                object_lock_mode="GOVERNANCE",
+            ),
+            stderr=_aws_debug_stderr("provider-request-object-lock"),
+        )
+
+    artifact_receipt = dict(
+        _backup_receipt_payload(artifact=remote_artifact)["artifact"]
+    )
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        with dr._retrieve_off_host_object(
+            env={
+                "AWS_ACCESS_KEY_ID": "provider-access",
+                "AWS_SECRET_ACCESS_KEY": "provider-secret",
+            },
+            runner=runner,
+            commands=[],
+            off_host_object=_off_host_object(artifact=remote_artifact),
+            artifact=artifact_receipt,
+            destination=destination,
+            clock=_Clock(
+                datetime(
+                    2026,
+                    7,
+                    13,
+                    10,
+                    0,
+                    15,
+                    tzinfo=timezone.utc,
+                ).timestamp()
+            ),
+        ):
+            pytest.fail("weakened Object Lock must not reach restore")
+
+    assert exc.value.code == "off_host_immutability_unverified"
+
+
+def test_provider_retrieval_requires_aes256_on_each_provider_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    remote_artifact = tmp_path / "remote-backup.dump"
+    remote_artifact.write_bytes(b"verified-remote-bytes")
+    destination = tmp_path / "retrieved-backup.dump"
+    _install_fake_aws_cli(monkeypatch, tmp_path)
+
+    def runner(command, **_kwargs):
+        command = list(command)
+        if "--version" in command:
+            return _result(
+                stdout=(
+                    f"aws-cli/{AWS_CLI_APPROVED_VERSION} Python/3 test/Linux\n"
+                )
+            )
+        is_get = "get-object" in command
+        if is_get:
+            Path(command[-1]).write_bytes(remote_artifact.read_bytes())
+        return _result(
+            stdout=_aws_object_response(
+                artifact=remote_artifact,
+                server_side_encryption="aws:kms" if is_get else "AES256",
+            ),
+            stderr=_aws_debug_stderr("provider-request-encryption"),
+        )
+
+    artifact_receipt = dict(
+        _backup_receipt_payload(artifact=remote_artifact)["artifact"]
+    )
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        with dr._retrieve_off_host_object(
+            env={
+                "AWS_ACCESS_KEY_ID": "provider-access",
+                "AWS_SECRET_ACCESS_KEY": "provider-secret",
+            },
+            runner=runner,
+            commands=[],
+            off_host_object=_off_host_object(artifact=remote_artifact),
+            artifact=artifact_receipt,
+            destination=destination,
+            clock=_Clock(
+                datetime(
+                    2026,
+                    7,
+                    13,
+                    10,
+                    0,
+                    15,
+                    tzinfo=timezone.utc,
+                ).timestamp()
+            ),
+        ):
+            pytest.fail("changed server-side encryption must not reach restore")
+
+    assert exc.value.code == "off_host_encryption_unverified"
+
+
+def test_provider_retrieval_requires_distinct_head_and_get_request_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    remote_artifact = tmp_path / "remote-backup.dump"
+    remote_artifact.write_bytes(b"verified-remote-bytes")
+    destination = tmp_path / "retrieved-backup.dump"
+    _install_fake_aws_cli(monkeypatch, tmp_path)
+
+    def runner(command, **_kwargs):
+        command = list(command)
+        if "--version" in command:
+            return _result(
+                stdout=(
+                    f"aws-cli/{AWS_CLI_APPROVED_VERSION} Python/3 test/Linux\n"
+                )
+            )
+        if "get-object" in command:
+            Path(command[-1]).write_bytes(remote_artifact.read_bytes())
+        return _result(
+            stdout=_aws_object_response(artifact=remote_artifact),
+            stderr=_aws_debug_stderr("reused-provider-request"),
+        )
+
+    artifact_receipt = dict(
+        _backup_receipt_payload(artifact=remote_artifact)["artifact"]
+    )
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        with dr._retrieve_off_host_object(
+            env={
+                "AWS_ACCESS_KEY_ID": "provider-access",
+                "AWS_SECRET_ACCESS_KEY": "provider-secret",
+            },
+            runner=runner,
+            commands=[],
+            off_host_object=_off_host_object(artifact=remote_artifact),
+            artifact=artifact_receipt,
+            destination=destination,
+            clock=_Clock(
+                datetime(
+                    2026,
+                    7,
+                    13,
+                    10,
+                    0,
+                    15,
+                    tzinfo=timezone.utc,
+                ).timestamp()
+            ),
+        ):
+            pytest.fail("reused provider request identity must not reach restore")
+
+    assert exc.value.code == "off_host_retrieval_provenance_missing"
 
 
 def test_provider_retrieval_detects_destination_swap_during_cli(
@@ -2823,20 +3013,47 @@ def test_canonical_queries_are_snapshot_bound_public_quoted_and_chunk_bounded() 
             assert expensive_operation not in preflight_sql
 
         assert f'FROM "public"."{table}" AS source_row' in full_sql
-        assert "bounded_source AS MATERIALIZED" in full_sql
-        assert f"LIMIT {dr.CRITICAL_DATA_MAX_SUPPORTED_ROWS}" in full_sql
+        assert "SET work_mem TO '16MB'" in full_sql
+        assert "bounded_source AS MATERIALIZED" not in full_sql
+        assert "serialized_rows AS MATERIALIZED" not in full_sql
+        assert "digested_rows AS MATERIALIZED" in full_sql
+        assert "CROSS JOIN LATERAL" in full_sql
+        assert "OFFSET 0) AS serialized_row" in full_sql
+        assert "digested_row.row_size_bytes" in full_sql
+        assert "digested_row.row_bytes" not in full_sql
+        assert f"LIMIT {dr.CRITICAL_DATA_MAX_SUPPORTED_ROWS}" not in full_sql
         for column in identity_columns:
             assert f'source_row."{column}"' in full_sql
             assert f'digested_row."{column}"' in full_sql
+            identity_order = f'digested_row."{column}" COLLATE "C"'
+            if (table, column) in dr._CRITICAL_DATA_NON_TEXT_IDENTITIES:
+                assert identity_order not in full_sql
+            else:
+                assert identity_order in full_sql
         assert 'digested_row.row_sha256 COLLATE "C"' in full_sql
         assert "bounded_chunks AS MATERIALIZED" in full_sql
         assert f"((ordinal - 1) / {dr.CRITICAL_DATA_CHUNK_SIZE})" in full_sql
         assert f"row_size_bytes <= {dr.CRITICAL_DATA_MAX_ROW_BYTES}" in full_sql
-        assert f"ordinal <= {dr.CRITICAL_DATA_MAX_SUPPORTED_ROWS}" in full_sql
+        assert f"ordinal <= {dr.CRITICAL_DATA_MAX_SUPPORTED_ROWS}" not in full_sql
         assert "string_agg(row_sha256, '' ORDER BY ordinal)" in full_sql
         assert "all_chunks" not in full_sql
         assert f"FROM {table} " not in preflight_sql
         assert f"FROM {table} " not in full_sql
+
+
+def test_critical_data_identity_collations_match_schema_types() -> None:
+    assert dr._CRITICAL_DATA_NON_TEXT_IDENTITIES == {
+        ("property_content_job_events", "event_sequence"),
+        ("propertyquarry_admission_leases", "lease_id"),
+    }
+    assert (
+        "propertyquarry_admission_leases",
+        "dimension_key",
+    ) in dr._CRITICAL_DATA_TEXT_IDENTITIES
+    assert (
+        "propertyquarry_admission_leases",
+        "lease_id",
+    ) not in dr._CRITICAL_DATA_TEXT_IDENTITIES
 
 
 def test_over_limit_preflight_never_executes_full_merkle_query() -> None:
@@ -2910,6 +3127,43 @@ def test_full_merkle_query_must_match_same_snapshot_preflight_count() -> None:
         )
         for command in commands
     )
+
+
+def test_critical_data_query_reports_oversized_row_bound_evidence() -> None:
+    commands: list[dict[str, object]] = []
+
+    def runner(command, **_kwargs):
+        sql = list(command)[list(command).index("--command") + 1]
+        raw = _critical_query_result(sql)
+        if (
+            "propertyquarry_critical_data:property_search_runs" in sql
+            and "row_bound_preflight" not in sql
+        ):
+            observed = json.loads(raw)
+            observed["oversized_row_count"] = 1
+            observed["max_row_bytes_observed"] = dr.CRITICAL_DATA_MAX_ROW_BYTES + 1
+            raw = json.dumps(observed) + "\n"
+        return _result(stdout="BEGIN\nSET\nSET\n" + raw)
+
+    with pytest.raises(dr.DisasterRecoveryError) as exc:
+        dr._critical_data_evidence_from_database(
+            label="Source",
+            step="source_critical_data",
+            psql="/mock/bin/psql",
+            database_url="postgresql://owner@db.example/propertyquarry",
+            env={},
+            runner=runner,
+            commands=commands,
+            snapshot_id="00000003-0000001B-1",
+        )
+
+    assert exc.value.code == "critical_data_row_too_large"
+    assert exc.value.details == {
+        "table": "property_search_runs",
+        "max_row_bytes": 128 * 1_024 * 1_024,
+        "max_row_bytes_observed": (128 * 1_024 * 1_024) + 1,
+        "oversized_row_count": 1,
+    }
 
 
 def test_schema_ledger_queries_are_snapshot_bound_to_quoted_public_table() -> None:

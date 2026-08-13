@@ -487,8 +487,29 @@ SELECT concat_ws('|',
 """
 
 
-def _ingress_migration_sql() -> str:
+def _ingress_migration_sql(
+    *,
+    SCHEMA_NAME: str = SCHEMA_NAME,
+    OWNER_ROLE: str = OWNER_ROLE,
+    CAPACITY_OWNER_ROLE: str = CAPACITY_OWNER_ROLE,
+    RUNTIME_ROLE: str = RUNTIME_ROLE,
+    INGRESS_RUNTIME_ROLE: str = INGRESS_RUNTIME_ROLE,
+) -> str:
     """Return the isolated API-ingress schema and bounded counter contract."""
+    identifiers = (
+        SCHEMA_NAME,
+        OWNER_ROLE,
+        CAPACITY_OWNER_ROLE,
+        RUNTIME_ROLE,
+        INGRESS_RUNTIME_ROLE,
+    )
+    if any(
+        re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", value) is None
+        for value in identifiers
+    ):
+        raise ProvisioningError("ingress_migration_identifier_invalid")
+    if len(set(identifiers[1:])) != 4:
+        raise ProvisioningError("ingress_migration_role_separation_invalid")
     return f"""
 BEGIN;
 SET LOCAL ROLE {OWNER_ROLE};

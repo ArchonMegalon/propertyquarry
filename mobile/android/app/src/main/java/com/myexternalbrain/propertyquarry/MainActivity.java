@@ -1,0 +1,427 @@
+package com.myexternalbrain.propertyquarry;
+
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.webkit.CookieManager;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+
+import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.JSExport;
+import com.getcapacitor.PluginHandle;
+
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import org.json.JSONObject;
+
+import java.util.Collections;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public final class MainActivity extends BridgeActivity {
+    private static final String AUTH_BRIDGE_PATH = "/mobile/auth/bridge";
+    private static final String SHARE_BRIDGE_PATH = "/mobile/share/bridge";
+    private static final int BRIDGE_READY_MAX_ATTEMPTS = 100;
+    private static final long BRIDGE_READY_RETRY_MILLIS = 100L;
+
+    private final ExecutorService runtimeExecutor = Executors.newSingleThreadExecutor();
+    private volatile boolean runtimeReady = false;
+    private boolean activityResumed = false;
+    private boolean navigationStarted = false;
+    private boolean nativeAuthPayloadDelivered = false;
+    private boolean nativeSharePayloadDelivered = false;
+    private boolean nativeAuthPayloadDeliveryScheduled = false;
+    private boolean nativeSharePayloadDeliveryScheduled = false;
+    private int nativeAuthPayloadGeneration = 0;
+    private int nativeSharePayloadGeneration = 0;
+    private Intent pendingIntent;
+    private PropertyQuarryRuntimeContract.Verified verifiedRuntime;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        registerPlugin(PropertyQuarryNativePlugin.class);
+        super.onCreate(savedInstanceState);
+        hardenWebView();
+        pendingIntent = getIntent();
+        verifyRuntimeAndContinue();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        pendingIntent = intent;
+        continueWhenReady();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        activityResumed = true;
+        continueWhenReady();
+    }
+
+    @Override
+    public void onPause() {
+        activityResumed = false;
+        super.onPause();
+    }
+
+    @Override
+    public void onDestroy() {
+        nativeAuthPayloadGeneration++;
+        nativeSharePayloadGeneration++;
+        nativeAuthPayloadDeliveryScheduled = false;
+        nativeSharePayloadDeliveryScheduled = false;
+        runtimeExecutor.shutdownNow();
+        super.onDestroy();
+    }
+
+    private void hardenWebView() {
+        WebView webView = bridge.getWebView();
+        webView.setWebViewClient(new PropertyQuarryWebViewClient(bridge, this));
+        WebSettings settings = webView.getSettings();
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setSaveFormData(false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            settings.setSafeBrowsingEnabled(true);
+        }
+        settings.setUserAgentString(settings.getUserAgentString() + " PropertyQuarryAndroid/" + BuildConfig.VERSION_NAME);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+        installTrustedRemoteBridge(webView);
+    }
+
+    private void installTrustedRemoteBridge(WebView webView) {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return;
+        PluginHandle nativePlugin = bridge.getPlugin("PropertyQuarryNative");
+        if (nativePlugin == null) {
+            throw new IllegalStateException("propertyquarry_native_plugin_missing");
+        }
+        try {
+            String localOrigin = bridge.getScheme() + "://" + bridge.getHost();
+            String script = JSExport.getGlobalJS(this, bridge.getConfig().isLoggingEnabled(), bridge.isDevMode())
+                + "\nwindow.WEBVIEW_SERVER_URL = " + JSONObject.quote(localOrigin) + ";\n"
+                + JSExport.getBridgeJS(this) + "\n"
+                + JSExport.getPluginJS(Collections.singletonList(nativePlugin));
+            WebViewCompat.addDocumentStartJavaScript(
+                webView,
+                script,
+                Collections.singleton(BuildConfig.PROPERTYQUARRY_ORIGIN)
+            );
+        } catch (Exception exception) {
+            throw new IllegalStateException("trusted_remote_bridge_install_failed", exception);
+        }
+    }
+
+    private void verifyRuntimeAndContinue() {
+        runtimeReady = false;
+        runtimeExecutor.execute(() -> {
+            try {
+                PropertyQuarryRuntimeContract.Verified verified = PropertyQuarryRuntimeContract.verify();
+                runOnUiThread(() -> {
+                    verifiedRuntime = verified;
+                    runtimeReady = true;
+                    continueWhenReady();
+                });
+            } catch (Exception exception) {
+                String reason = String.valueOf(exception.getMessage());
+                runOnUiThread(() -> showRuntimeFailure(reason));
+            }
+        });
+    }
+
+    private void continueWhenReady() {
+        if (!runtimeReady || !activityResumed) return;
+        Intent intent = pendingIntent;
+        pendingIntent = null;
+        if (intent != null && handleIntent(intent)) {
+            navigationStarted = true;
+            return;
+        }
+        if (!navigationStarted) {
+            navigationStarted = true;
+            resumePendingFlowOrStart();
+        }
+    }
+
+    private void resumePendingFlowOrStart() {
+        if (PropertyQuarryNativePlugin.hasPendingAuth(this)) {
+            loadTrustedPath(AUTH_BRIDGE_PATH);
+        } else if (PropertyQuarryNativePlugin.hasPendingShare(this)) {
+            loadTrustedPath(SHARE_BRIDGE_PATH);
+        } else {
+            loadTrustedPath(verifiedRuntime.startPath());
+        }
+    }
+
+    private boolean handleIntent(Intent intent) {
+        if (intent == null) return false;
+        Uri data = intent.getData();
+        if (Intent.ACTION_VIEW.equals(intent.getAction()) && data != null) {
+            if (isAuthCallback(data)) {
+                String code = String.valueOf(data.getQueryParameter("code"));
+                if (!code.matches("[A-Za-z0-9_-]{32,160}")) {
+                    showMessage("Sign-in could not be completed", "The secure handoff was invalid. Please start sign-in again.");
+                    return true;
+                }
+                PropertyQuarryNativePlugin.acceptAuthCode(this, code);
+                nativeAuthPayloadDelivered = false;
+                nativeAuthPayloadDeliveryScheduled = false;
+                nativeAuthPayloadGeneration++;
+                loadTrustedPath(AUTH_BRIDGE_PATH);
+                return true;
+            }
+            if (isTrustedAppLink(data)) {
+                String path = String.valueOf(data.getEncodedPath());
+                String query = data.getEncodedQuery();
+                loadTrustedPath(path + (query == null || query.isBlank() ? "" : "?" + query));
+                return true;
+            }
+        }
+        if (Intent.ACTION_SEND.equals(intent.getAction()) && "text/plain".equals(intent.getType())) {
+            CharSequence shared = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+            Optional<SharedPropertyUrl.Value> parsed = SharedPropertyUrl.parse(
+                shared == null ? "" : shared.toString()
+            );
+            if (parsed.isEmpty()) {
+                showMessage(
+                    "No property link found",
+                    "Share a secure HTTPS listing link from a supported property site."
+                );
+                return true;
+            }
+            confirmSharedProperty(parsed.get());
+            return true;
+        }
+        return false;
+    }
+
+    private void confirmSharedProperty(SharedPropertyUrl.Value property) {
+        new AlertDialog.Builder(this)
+            .setTitle("Add to PropertyQuarry?")
+            .setMessage("Evaluate this listing and add it to your private shortlist?\n\n" + property.host())
+            .setNegativeButton("Cancel", (dialog, which) -> resumePendingFlowOrStart())
+            .setPositiveButton("Add property", (dialog, which) -> {
+                PropertyQuarryNativePlugin.acceptSharedProperty(
+                    this,
+                    property.url(),
+                    property.idempotencyKey()
+                );
+                nativeSharePayloadDelivered = false;
+                nativeSharePayloadDeliveryScheduled = false;
+                nativeSharePayloadGeneration++;
+                loadTrustedPath(SHARE_BRIDGE_PATH);
+            })
+            .setCancelable(true)
+            .setOnCancelListener(dialog -> resumePendingFlowOrStart())
+            .show();
+    }
+
+    private boolean isAuthCallback(Uri uri) {
+        return "propertyquarry".equals(uri.getScheme())
+            && "auth".equals(uri.getHost())
+            && "/callback".equals(uri.getPath())
+            && uri.getQueryParameterNames().size() == 1
+            && uri.getQueryParameterNames().contains("code");
+    }
+
+    private boolean isTrustedAppLink(Uri uri) {
+        if (!"https".equals(uri.getScheme()) || !"propertyquarry.com".equals(uri.getHost())
+            || uri.getUserInfo() != null || uri.getPort() != -1 || uri.getFragment() != null) {
+            return false;
+        }
+        String path = String.valueOf(uri.getPath());
+        return path.equals("/app") || path.startsWith("/app/")
+            || path.equals("/shortlist") || path.startsWith("/shortlist/");
+    }
+
+    private void loadTrustedPath(String pathAndQuery) {
+        if (verifiedRuntime == null || pathAndQuery == null || pathAndQuery.length() > 4096
+            || !pathAndQuery.startsWith("/") || pathAndQuery.startsWith("//")
+            || pathAndQuery.contains("\\") || pathAndQuery.indexOf('\0') >= 0) {
+            showRuntimeFailure("trusted_path_invalid");
+            return;
+        }
+        Uri relative = Uri.parse(pathAndQuery);
+        if (relative.isAbsolute() || relative.getHost() != null || relative.getFragment() != null) {
+            showRuntimeFailure("trusted_path_invalid");
+            return;
+        }
+        bridge.getWebView().loadUrl(verifiedRuntime.origin() + pathAndQuery);
+    }
+
+    void schedulePendingBridgePayloadDelivery(WebView webView, String url) {
+        if (isExactTrustedBridgeUrl(url, AUTH_BRIDGE_PATH)
+            && !nativeAuthPayloadDelivered
+            && !nativeAuthPayloadDeliveryScheduled) {
+            nativeAuthPayloadDeliveryScheduled = true;
+            probeBridgeReadiness(
+                webView,
+                AUTH_BRIDGE_PATH,
+                nativeAuthPayloadGeneration,
+                0
+            );
+            return;
+        }
+        if (isExactTrustedBridgeUrl(url, SHARE_BRIDGE_PATH)
+            && !nativeSharePayloadDelivered
+            && !nativeSharePayloadDeliveryScheduled) {
+            nativeSharePayloadDeliveryScheduled = true;
+            probeBridgeReadiness(
+                webView,
+                SHARE_BRIDGE_PATH,
+                nativeSharePayloadGeneration,
+                0
+            );
+        }
+    }
+
+    private void probeBridgeReadiness(
+        WebView webView,
+        String path,
+        int generation,
+        int attempt
+    ) {
+        boolean authMode = AUTH_BRIDGE_PATH.equals(path);
+        boolean obsolete = authMode
+            ? generation != nativeAuthPayloadGeneration || nativeAuthPayloadDelivered
+            : generation != nativeSharePayloadGeneration || nativeSharePayloadDelivered;
+        if (obsolete) return;
+        if (!isExactTrustedBridgeUrl(webView.getUrl(), path)) {
+            if (authMode) {
+                nativeAuthPayloadDeliveryScheduled = false;
+            } else {
+                nativeSharePayloadDeliveryScheduled = false;
+            }
+            return;
+        }
+        webView.evaluateJavascript(
+            "window.__propertyQuarryNativeBridgeReady === true",
+            result -> {
+                boolean callbackObsolete = authMode
+                    ? generation != nativeAuthPayloadGeneration || nativeAuthPayloadDelivered
+                    : generation != nativeSharePayloadGeneration || nativeSharePayloadDelivered;
+                if (callbackObsolete) return;
+                if (!isExactTrustedBridgeUrl(webView.getUrl(), path)) {
+                    if (authMode) {
+                        nativeAuthPayloadDeliveryScheduled = false;
+                    } else {
+                        nativeSharePayloadDeliveryScheduled = false;
+                    }
+                    return;
+                }
+                if ("true".equals(result)) {
+                    deliverPendingBridgePayload(webView, path);
+                    return;
+                }
+                if (attempt + 1 < BRIDGE_READY_MAX_ATTEMPTS) {
+                    webView.postDelayed(
+                        () -> probeBridgeReadiness(webView, path, generation, attempt + 1),
+                        BRIDGE_READY_RETRY_MILLIS
+                    );
+                    return;
+                }
+                if (authMode) {
+                    nativeAuthPayloadDeliveryScheduled = false;
+                    showMessage(
+                        "Sign-in could not be completed",
+                        "The secure page did not become ready. Start sign-in again."
+                    );
+                } else {
+                    nativeSharePayloadDeliveryScheduled = false;
+                    showMessage(
+                        "Property could not be added",
+                        "The secure page did not become ready. Share the listing again."
+                    );
+                }
+            }
+        );
+    }
+
+    private void deliverPendingBridgePayload(WebView webView, String path) {
+        if (AUTH_BRIDGE_PATH.equals(path) && !nativeAuthPayloadDelivered) {
+            Optional<PropertyQuarryNativePlugin.PendingAuth> pending;
+            try {
+                pending = PropertyQuarryNativePlugin.consumePendingAuth(this);
+            } catch (Exception exception) {
+                nativeAuthPayloadDeliveryScheduled = false;
+                showMessage("Sign-in could not be completed", "The secure handoff could not be cleared. Start sign-in again.");
+                return;
+            }
+            if (pending.isEmpty()) return;
+            nativeAuthPayloadDelivered = true;
+            PropertyQuarryNativePlugin.PendingAuth auth = pending.get();
+            String script = "window.__propertyQuarryNativeAuthOwned=true;"
+                + "window.dispatchEvent(new CustomEvent('propertyquarry:native-auth-payload',{detail:{code:"
+                + JSONObject.quote(auth.code())
+                + ",pkceVerifier:" + JSONObject.quote(auth.pkceVerifier())
+                + ",hasPendingShare:" + PropertyQuarryNativePlugin.hasPendingShare(this)
+                + "}}));";
+            webView.evaluateJavascript(script, null);
+            return;
+        }
+        if (SHARE_BRIDGE_PATH.equals(path) && !nativeSharePayloadDelivered) {
+            Optional<PropertyQuarryNativePlugin.PendingShare> pending;
+            try {
+                pending = PropertyQuarryNativePlugin.consumePendingShare(this);
+            } catch (Exception exception) {
+                nativeSharePayloadDeliveryScheduled = false;
+                showMessage("Property could not be added", "The approved listing handoff could not be cleared. Share it again.");
+                return;
+            }
+            if (pending.isEmpty()) return;
+            nativeSharePayloadDelivered = true;
+            PropertyQuarryNativePlugin.PendingShare share = pending.get();
+            String script = "window.__propertyQuarryNativeShareOwned=true;"
+                + "window.dispatchEvent(new CustomEvent('propertyquarry:native-share-payload',{detail:{propertyUrl:"
+                + JSONObject.quote(share.propertyUrl())
+                + ",idempotencyKey:" + JSONObject.quote(share.idempotencyKey())
+                + "}}));";
+            webView.evaluateJavascript(script, null);
+        }
+    }
+
+    private boolean isExactTrustedBridgeUrl(String url, String path) {
+        Uri current = Uri.parse(String.valueOf(url == null ? "" : url));
+        Uri expected = Uri.parse(BuildConfig.PROPERTYQUARRY_ORIGIN);
+        return String.valueOf(expected.getScheme()).equals(current.getScheme())
+            && String.valueOf(expected.getHost()).equals(current.getHost())
+            && current.getUserInfo() == null
+            && current.getPort() == expected.getPort()
+            && current.getQuery() == null
+            && current.getFragment() == null
+            && path.equals(current.getPath());
+    }
+
+    private void showRuntimeFailure(String reason) {
+        String safeReason = reason == null || reason.isBlank() ? "runtime_contract_unavailable" : reason;
+        bridge.getWebView().evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('propertyquarry:runtime-error',{detail:"
+                + JSONObject.quote("Secure connection unavailable (" + safeReason + ")") + "}));",
+            null
+        );
+        new AlertDialog.Builder(this)
+            .setTitle("Secure connection unavailable")
+            .setMessage("PropertyQuarry could not verify the app service. Check your connection and try again.")
+            .setNegativeButton("Close", (dialog, which) -> finish())
+            .setPositiveButton("Try again", (dialog, which) -> verifyRuntimeAndContinue())
+            .setCancelable(false)
+            .show();
+    }
+
+    void showMessage(String title, String message) {
+        new AlertDialog.Builder(this)
+            .setTitle(title)
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show();
+    }
+}

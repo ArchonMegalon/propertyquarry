@@ -1,9 +1,60 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 from app.domain.models import Artifact, normalize_artifact, now_utc_iso
+
+
+_DEFAULT_ARTIFACT_MAX_BYTES = 16 * 1024 * 1024
+_MAX_ARTIFACT_MAX_BYTES = 1024 * 1024 * 1024
+_MAX_ARTIFACT_MIN_FREE_BYTES = 1024 * 1024 * 1024 * 1024
+
+
+def _bounded_artifact_storage_int(name: str, *, default: int, maximum: int) -> int:
+    raw_value = str(os.environ.get(name) or "").strip()
+    if not raw_value:
+        return default
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return max(0, min(parsed, maximum))
+
+
+def _validate_artifact_storage_admission(
+    root: Path,
+    content_bytes: bytes,
+    *,
+    existing_size_bytes: int = 0,
+) -> None:
+    """Reject unsafe growth without deleting or rewriting durable artifacts."""
+
+    max_bytes = _bounded_artifact_storage_int(
+        "EA_ARTIFACT_MAX_BYTES",
+        default=_DEFAULT_ARTIFACT_MAX_BYTES,
+        maximum=_MAX_ARTIFACT_MAX_BYTES,
+    )
+    if len(content_bytes) > max_bytes:
+        raise ValueError(
+            f"artifact_payload_too_large:{len(content_bytes)}>{max_bytes}"
+        )
+    minimum_free_bytes = _bounded_artifact_storage_int(
+        "EA_ARTIFACTS_MIN_FREE_BYTES",
+        default=0,
+        maximum=_MAX_ARTIFACT_MIN_FREE_BYTES,
+    )
+    growth_bytes = max(0, len(content_bytes) - max(0, int(existing_size_bytes)))
+    if minimum_free_bytes <= 0 or growth_bytes <= 0:
+        return
+    filesystem = os.statvfs(root)
+    free_bytes = int(filesystem.f_bavail) * int(filesystem.f_frsize)
+    if free_bytes - growth_bytes < minimum_free_bytes:
+        raise RuntimeError(
+            "artifact_storage_low_water:"
+            f"free={free_bytes}:growth={growth_bytes}:minimum={minimum_free_bytes}"
+        )
 
 
 def _file_uri(path: Path) -> str:
@@ -109,7 +160,17 @@ class PostgresArtifactRepository:
     def save(self, artifact: Artifact) -> None:
         normalized = normalize_artifact(artifact)
         path = self._path_for(normalized.artifact_id)
-        path.write_text(normalized.content, encoding="utf-8")
+        content_bytes = normalized.content.encode("utf-8")
+        try:
+            existing_size_bytes = path.stat().st_size
+        except FileNotFoundError:
+            existing_size_bytes = 0
+        _validate_artifact_storage_admission(
+            self._artifacts_dir,
+            content_bytes,
+            existing_size_bytes=existing_size_bytes,
+        )
+        path.write_bytes(content_bytes)
         stamp = now_utc_iso()
         with self._connect() as conn:
             with conn.cursor() as cur:

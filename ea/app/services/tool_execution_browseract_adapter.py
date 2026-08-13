@@ -27,6 +27,7 @@ from app.services.browseract_ui_service_catalog import (
 from app.services.browseract_ui_template_catalog import browseract_ui_template_spec
 from app.services.tool_execution_common import ToolExecutionError
 from app.services.tool_execution_connector_dispatch_adapter import ConnectorDispatchToolAdapter
+from app.services.browseract_binding_readiness import configured_browseract_service_names
 
 
 def _extract_textish(value: object) -> str:
@@ -823,6 +824,7 @@ class BrowserActToolAdapter:
             "observed_usage_window_hours": observed_usage_window_hours,
             "observed_usage_burn_credits_per_hour": observed_usage_burn_credits_per_hour,
         }
+        return packet
 
     @classmethod
     def _extract_onemin_billing_sections(cls, value: object) -> dict[str, list[dict[str, object]]]:
@@ -1516,6 +1518,8 @@ class BrowserActToolAdapter:
                 "instructions": record["instructions"],
                 "account_hints_json": record["account_hints_json"],
                 "requested_run_url": record["requested_run_url"],
+                "requested_workflow_id": record["requested_workflow_id"],
+                "browseract_task_id": record["browseract_task_id"],
                 "live_discovery_error": record["live_discovery_error"],
                 "normalized_text": record["normalized_text"],
                 "preview_text": record["preview_text"],
@@ -1537,6 +1541,8 @@ class BrowserActToolAdapter:
                 "discovery_status": record["discovery_status"],
                 "verification_source": record["verification_source"],
                 "requested_run_url": record["requested_run_url"],
+                "requested_workflow_id": record["requested_workflow_id"],
+                "browseract_task_id": record["browseract_task_id"],
                 "live_discovery_error": record["live_discovery_error"],
                 "tool_version": definition.version,
             },
@@ -5413,43 +5419,10 @@ class BrowserActToolAdapter:
         binding_auth_metadata_json: dict[str, object],
         binding_scope_json: dict[str, object],
     ) -> tuple[str, ...]:
-        ordered: list[str] = []
-        seen: set[str] = set()
-
-        def add(value: object) -> None:
-            normalized = str(value or "").strip()
-            if not normalized:
-                return
-            key = normalized.lower()
-            if key in seen:
-                return
-            seen.add(key)
-            ordered.append(normalized)
-
-        raw_accounts = binding_auth_metadata_json.get("service_accounts_json")
-        if isinstance(raw_accounts, dict):
-            for key, value in raw_accounts.items():
-                if isinstance(value, dict) and any(field in value for field in ("tier", "plan", "account_email", "email", "status")):
-                    add(key)
-                elif key in {"service_name", "service", "name"}:
-                    add(value)
-        elif isinstance(raw_accounts, list):
-            for value in raw_accounts:
-                if isinstance(value, dict):
-                    add(value.get("service_name") or value.get("service") or value.get("name"))
-        raw_scope_services = binding_scope_json.get("services")
-        if isinstance(raw_scope_services, (list, tuple)):
-            for value in raw_scope_services:
-                add(value)
-        if isinstance(raw_scope_services, str):
-            add(raw_scope_services)
-        raw_scopes = binding_scope_json.get("scopes")
-        if isinstance(raw_scopes, (list, tuple)):
-            for value in raw_scopes:
-                add(value)
-        elif isinstance(raw_scopes, str):
-            add(raw_scopes)
-        return tuple(ordered)
+        return configured_browseract_service_names(
+            binding_auth_metadata_json=binding_auth_metadata_json,
+            binding_scope_json=binding_scope_json,
+        )
 
     def _slugify(self, value: str) -> str:
         cleaned = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value or ""))
@@ -6655,6 +6628,169 @@ class BrowserActToolAdapter:
         normalized.setdefault("workflow_output_json", output_json)
         return normalized
 
+    @staticmethod
+    def _extract_workflow_id_for_service(
+        *,
+        binding_auth_metadata_json: dict[str, object],
+        service_name: str,
+    ) -> str:
+        service_workflows: object = (
+            binding_auth_metadata_json.get("browseract_service_workflows_json")
+            or binding_auth_metadata_json.get("service_workflows_json")
+            or {}
+        )
+        if isinstance(service_workflows, str):
+            service_workflows = _load_jsonish(service_workflows) or {}
+        candidate: object = ""
+        if isinstance(service_workflows, dict):
+            normalized_service_name = service_name.strip().casefold()
+            for key, value in service_workflows.items():
+                if str(key or "").strip().casefold() == normalized_service_name:
+                    candidate = value
+                    break
+            if isinstance(candidate, dict):
+                candidate = candidate.get("browseract_workflow_id") or candidate.get("workflow_id") or ""
+        if not candidate:
+            candidate = binding_auth_metadata_json.get("browseract_workflow_id") or ""
+        workflow_id = str(candidate or "").strip()
+        if not workflow_id or not re.fullmatch(r"[A-Za-z0-9._:-]{1,160}", workflow_id):
+            return ""
+        return workflow_id
+
+    @classmethod
+    def _extract_workflow_facts(cls, value: object, *, depth: int = 0) -> dict[str, object] | None:
+        if depth > 5:
+            return None
+        if isinstance(value, str):
+            parsed = _load_jsonish(value)
+            if parsed is None or parsed == value:
+                return None
+            return cls._extract_workflow_facts(parsed, depth=depth + 1)
+        if isinstance(value, list):
+            rows = [row for row in value if isinstance(row, dict)]
+            if len(rows) != 1:
+                return None
+            return cls._extract_workflow_facts(rows[0], depth=depth + 1)
+        if not isinstance(value, dict):
+            return None
+        facts_json = value.get("facts_json")
+        if isinstance(facts_json, dict):
+            return {str(key): nested for key, nested in facts_json.items()}
+        for key in ("string", "text", "json", "data", "result", "output"):
+            if key not in value:
+                continue
+            facts_json = cls._extract_workflow_facts(value.get(key), depth=depth + 1)
+            if facts_json is not None:
+                return facts_json
+        if any(
+            key in value
+            for key in (
+                "place_name",
+                "place_category",
+                "final_surface_url",
+                "address",
+                "plus_code",
+            )
+        ):
+            return {str(key): nested for key, nested in value.items()}
+        return None
+
+    @staticmethod
+    def _extract_workflow_timeout_seconds(
+        *,
+        binding_auth_metadata_json: dict[str, object],
+        payload: dict[str, object],
+    ) -> int:
+        raw = str(
+            payload.get("workflow_timeout_seconds")
+            or binding_auth_metadata_json.get("browseract_workflow_timeout_seconds")
+            or "300"
+        ).strip() or "300"
+        try:
+            return max(30, min(600, int(raw)))
+        except Exception:
+            return 300
+
+    def _live_extract_with_workflow(
+        self,
+        *,
+        binding_auth_metadata_json: dict[str, object],
+        payload: dict[str, object],
+        service_name: str,
+        requested_fields: tuple[str, ...],
+        workflow_id: str,
+    ) -> dict[str, object]:
+        instructions = str(payload.get("instructions") or binding_auth_metadata_json.get("instructions") or "").strip()
+        account_hints_json = dict(payload.get("account_hints_json") or {})
+        input_values: dict[str, object] = {
+            "service_name": service_name,
+            "requested_fields_json": json.dumps(list(requested_fields), ensure_ascii=True),
+            "instructions": instructions,
+            "account_hints_json": json.dumps(account_hints_json, ensure_ascii=True, sort_keys=True),
+        }
+        for key in ("query_url", "fact_key", "listing_latitude", "listing_longitude", "travel_mode"):
+            value = account_hints_json.get(key)
+            if isinstance(value, (str, int, float, bool)) and str(value).strip():
+                input_values[key] = value
+        allowed_workflow_input_names = binding_auth_metadata_json.get(
+            "browseract_workflow_input_names_json"
+        ) or binding_auth_metadata_json.get("workflow_input_names_json") or ()
+        if isinstance(allowed_workflow_input_names, str):
+            allowed_workflow_input_names = (
+                _load_jsonish(allowed_workflow_input_names)
+                or [
+                    value.strip()
+                    for value in allowed_workflow_input_names.split(",")
+                    if value.strip()
+                ]
+            )
+        allowed_names = {
+            str(value or "").strip()
+            for value in (
+                allowed_workflow_input_names
+                if isinstance(allowed_workflow_input_names, (list, tuple, set))
+                else ()
+            )
+            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,79}", str(value or "").strip())
+        }
+        requested_workflow_inputs = payload.get("workflow_inputs_json") or {}
+        if isinstance(requested_workflow_inputs, str):
+            requested_workflow_inputs = _load_jsonish(requested_workflow_inputs) or {}
+        if isinstance(requested_workflow_inputs, dict):
+            reserved_names = set(input_values)
+            for raw_name, value in requested_workflow_inputs.items():
+                name = str(raw_name or "").strip()
+                if (
+                    name not in allowed_names
+                    or name in reserved_names
+                    or not isinstance(value, (str, int, float, bool))
+                    or not str(value).strip()
+                ):
+                    continue
+                input_values[name] = value
+        started = self._run_browseract_workflow_task_with_inputs(
+            workflow_id=workflow_id,
+            input_values=input_values,
+        )
+        task_id = self._browseract_task_id(started)
+        timeout_seconds = self._extract_workflow_timeout_seconds(
+            binding_auth_metadata_json=binding_auth_metadata_json,
+            payload=payload,
+        )
+        task_body = self._wait_for_browseract_task(
+            task_id=task_id,
+            timeout_seconds=timeout_seconds,
+            created_stall_seconds=min(120, timeout_seconds),
+        )
+        facts_json = self._extract_workflow_facts(self._browseract_task_output(task_body))
+        if facts_json is None:
+            raise ToolExecutionError(f"browseract_workflow_facts_missing:{task_id}")
+        return facts_json | {
+            "verification_source": "browseract_workflow",
+            "_browseract_workflow_id": workflow_id,
+            "_browseract_task_id": task_id,
+        }
+
     def _live_extract(
         self,
         *,
@@ -6665,8 +6801,22 @@ class BrowserActToolAdapter:
     ) -> dict[str, object] | None:
         run_url = str(payload.get("run_url") or binding_auth_metadata_json.get("browseract_run_url") or binding_auth_metadata_json.get("run_url") or "").strip()
         api_key = self._configured_api_key()
-        if not run_url or not api_key:
+        if not api_key:
             return None
+        workflow_id = self._extract_workflow_id_for_service(
+            binding_auth_metadata_json=binding_auth_metadata_json,
+            service_name=service_name,
+        )
+        if not run_url:
+            if not workflow_id:
+                return None
+            return self._live_extract_with_workflow(
+                binding_auth_metadata_json=binding_auth_metadata_json,
+                payload=payload,
+                service_name=service_name,
+                requested_fields=requested_fields,
+                workflow_id=workflow_id,
+            )
         request_body = {
             "service_name": service_name,
             "requested_fields": list(requested_fields),
@@ -6777,11 +6927,15 @@ class BrowserActToolAdapter:
                         merged_facts_json[str(key)] = value
                 facts_json = merged_facts_json
         verification_source = "connector_metadata"
+        browseract_workflow_id = ""
+        browseract_task_id = ""
         if facts_json is None:
             facts_json = {}
             verification_source = "missing"
         else:
             verification_source = str(facts_json.pop("verification_source", "") or "connector_metadata").strip() or "connector_metadata"
+            browseract_workflow_id = str(facts_json.pop("_browseract_workflow_id", "") or "").strip()
+            browseract_task_id = str(facts_json.pop("_browseract_task_id", "") or "").strip()
         normalized_facts_json = {str(key): value for key, value in facts_json.items()}
         normalized_facts_json.setdefault("service_name", service_name)
         resolved_requested_fields = requested_fields or tuple(key for key in normalized_facts_json.keys() if key != "service_name")
@@ -6803,6 +6957,12 @@ class BrowserActToolAdapter:
         instructions = str(payload.get("instructions") or binding_auth_metadata_json.get("instructions") or "").strip()
         account_hints_json = dict(payload.get("account_hints_json") or {})
         requested_run_url = str(payload.get("run_url") or binding_auth_metadata_json.get("browseract_run_url") or binding_auth_metadata_json.get("run_url") or "").strip()
+        requested_workflow_id = self._extract_workflow_id_for_service(
+            binding_auth_metadata_json=binding_auth_metadata_json,
+            service_name=service_name,
+        )
+        if browseract_workflow_id:
+            requested_workflow_id = browseract_workflow_id
         structured_output_json = {
             "service_name": service_name,
             "facts_json": normalized_facts_json,
@@ -6816,6 +6976,8 @@ class BrowserActToolAdapter:
             "instructions": instructions,
             "account_hints_json": account_hints_json,
             "requested_run_url": requested_run_url,
+            "requested_workflow_id": requested_workflow_id,
+            "browseract_task_id": browseract_task_id,
             "live_discovery_error": live_discovery_error,
         }
         return {
@@ -6831,6 +6993,8 @@ class BrowserActToolAdapter:
             "instructions": instructions,
             "account_hints_json": account_hints_json,
             "requested_run_url": requested_run_url,
+            "requested_workflow_id": requested_workflow_id,
+            "browseract_task_id": browseract_task_id,
             "live_discovery_error": live_discovery_error,
             "normalized_text": normalized_text,
             "preview_text": artifact_preview_text(normalized_text),

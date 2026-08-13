@@ -2238,6 +2238,124 @@ $propertyquarry_admission_capacity_owner_install$;
 """
 
 
+_PROPERTY_SEARCH_WORK_HEARTBEAT_ERASURE_ORDER_SCHEMA_V18 = r"""
+CREATE OR REPLACE FUNCTION property_search_work_jobs_enforce_erasure_fence()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $property_search_work_jobs_erasure_fence_function$
+BEGIN
+    IF COALESCE(
+        current_setting('propertyquarry.property_search_writer_contract', TRUE),
+        ''
+    ) <> '3' THEN
+        RAISE EXCEPTION 'property_search_writer_contract_required'
+            USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    IF TG_OP = 'UPDATE' AND (
+        NEW.principal_id IS DISTINCT FROM OLD.principal_id
+        OR NEW.run_id IS DISTINCT FROM OLD.run_id
+        OR NEW.principal_key IS DISTINCT FROM OLD.principal_key
+    ) THEN
+        RAISE EXCEPTION 'property_search_work_job_owner_immutable'
+            USING ERRCODE = '23514';
+    END IF;
+    IF TG_OP = 'UPDATE'
+       AND (
+           to_jsonb(NEW)
+           - 'heartbeat_at'
+           - 'lease_expires_at'
+           - 'updated_at'
+       ) IS NOT DISTINCT FROM (
+           to_jsonb(OLD)
+           - 'heartbeat_at'
+           - 'lease_expires_at'
+           - 'updated_at'
+       ) THEN
+        -- Lease liveness is not publication.  This update cannot create a row
+        -- or change product data, and PostgreSQL row/FK locking orders it with
+        -- account/run deletion.  Avoiding the principal advisory lock keeps a
+        -- long erasure-ordered publication from starving the worker heartbeat.
+        RETURN NEW;
+    END IF;
+    PERFORM property_search_assert_run_owner(
+        NEW.principal_key,
+        NEW.run_id
+    );
+    PERFORM property_search_assert_write_allowed(NEW.principal_key, NEW.run_id);
+    RETURN NEW;
+END
+$property_search_work_jobs_erasure_fence_function$;
+"""
+
+
+_BOUNDED_STORAGE_RETENTION_CONTROL_SCHEMA_V19 = r"""
+CREATE TABLE IF NOT EXISTS propertyquarry_retention_runs (
+    retention_run_id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    target_database TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT 'operator',
+    batch_size INTEGER NOT NULL,
+    max_rows_per_table INTEGER NOT NULL,
+    candidate_rows BIGINT NOT NULL DEFAULT 0,
+    deleted_rows BIGINT NOT NULL DEFAULT 0,
+    compacted_rows BIGINT NOT NULL DEFAULT 0,
+    database_bytes_before BIGINT NOT NULL DEFAULT 0,
+    database_bytes_after BIGINT NOT NULL DEFAULT 0,
+    policy_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_code TEXT NOT NULL DEFAULT '',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMPTZ NULL,
+    CHECK (char_length(retention_run_id) BETWEEN 1 AND 128),
+    CHECK (scope IN ('postgres_retention', 'property_search_retention')),
+    CHECK (mode = 'apply'),
+    CHECK (status IN ('running', 'completed', 'failed', 'abandoned')),
+    CHECK (char_length(target_database) BETWEEN 1 AND 128),
+    CHECK (char_length(profile) BETWEEN 1 AND 32),
+    CHECK (char_length(actor) BETWEEN 1 AND 128),
+    CHECK (batch_size BETWEEN 1 AND 10000),
+    CHECK (max_rows_per_table BETWEEN 1 AND 1000000),
+    CHECK (candidate_rows >= 0),
+    CHECK (deleted_rows >= 0),
+    CHECK (compacted_rows >= 0),
+    CHECK (database_bytes_before >= 0),
+    CHECK (database_bytes_after >= 0),
+    CHECK (pg_column_size(policy_json) <= 65536),
+    CHECK (pg_column_size(result_json) <= 262144),
+    CHECK (char_length(error_code) <= 256),
+    CHECK (
+        (status = 'running' AND completed_at IS NULL)
+        OR (status <> 'running' AND completed_at IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_propertyquarry_retention_runs_started
+ON propertyquarry_retention_runs(started_at DESC, retention_run_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_propertyquarry_retention_single_running
+ON propertyquarry_retention_runs(scope, target_database)
+WHERE status = 'running';
+"""
+
+
+_DURABLE_FACT_ENRICHMENT_WORK_SCHEMA_V20 = r"""
+DROP INDEX IF EXISTS idx_property_search_work_principal_run;
+
+CREATE UNIQUE INDEX idx_property_search_work_principal_run
+ON property_search_work_jobs(principal_id, run_id)
+WHERE COALESCE(
+    payload_json->>'work_kind',
+    'property_search_run'
+) = 'property_search_run';
+"""
+
+
 PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
     PropertySearchMigration(1, "property_search_runs_tenant_schema", _RUN_SCHEMA_V1),
     PropertySearchMigration(
@@ -2309,6 +2427,21 @@ PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
         17,
         "bounded_admission_capacity_state",
         _ADMISSION_CAPACITY_STATE_SCHEMA_V17,
+    ),
+    PropertySearchMigration(
+        18,
+        "nonpublishing_work_lease_heartbeat",
+        _PROPERTY_SEARCH_WORK_HEARTBEAT_ERASURE_ORDER_SCHEMA_V18,
+    ),
+    PropertySearchMigration(
+        19,
+        "bounded_storage_retention_control",
+        _BOUNDED_STORAGE_RETENTION_CONTROL_SCHEMA_V19,
+    ),
+    PropertySearchMigration(
+        20,
+        "durable_fact_enrichment_work",
+        _DURABLE_FACT_ENRICHMENT_WORK_SCHEMA_V20,
     ),
 )
 LATEST_PROPERTY_SEARCH_SCHEMA_VERSION = PROPERTY_SEARCH_MIGRATIONS[-1].version
@@ -2389,6 +2522,9 @@ _REQUIRED_RELATIONS = (
     "idx_propertyquarry_admission_lease_dimension_expiry",
     "idx_propertyquarry_admission_lease_expiry",
     ADMISSION_CAPACITY_STATE_TABLE,
+    "propertyquarry_retention_runs",
+    "idx_propertyquarry_retention_runs_started",
+    "idx_propertyquarry_retention_single_running",
 )
 
 _FORBIDDEN_RELATIONS = ("idx_delivery_outbox_idempotency_key_unique",)

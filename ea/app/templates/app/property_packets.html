@@ -81,11 +81,13 @@
       justify-content: center;
     }
     .pq-pack-nav :is(a, span) {
+      display: inline-flex;
+      align-items: center;
       border: 1px solid var(--pq-border);
       border-radius: 999px;
       background: color-mix(in srgb, var(--pq-card) 72%, transparent);
       color: var(--pq-muted);
-      min-height: 38px;
+      min-height: 44px;
       padding: 9px 12px;
       font-size: 13px;
       font-weight: 800;
@@ -120,7 +122,7 @@
       align-items: center;
       justify-content: center;
       min-width: 40px;
-      min-height: 40px;
+      min-height: 44px;
       padding: 0 12px;
       border: 1px solid var(--pq-border);
       border-radius: 999px;
@@ -165,7 +167,7 @@
       border-radius: 8px;
       background: var(--pq-panel);
       color: var(--pq-ink);
-      min-height: 40px;
+      min-height: 44px;
       padding: 10px 14px;
       font-weight: 700;
       text-decoration: none;
@@ -371,7 +373,7 @@
       }
       .pq-pack-nav::-webkit-scrollbar { display: none; }
       .pq-pack-nav :is(a, span) {
-        min-height: 40px;
+        min-height: 44px;
         padding: 0 12px;
         font-size: 11px;
       }
@@ -489,20 +491,24 @@
         <div class="pq-pack-stat-grid">
           <div class="pq-pack-stat"><span>Homes</span><strong>{{ publications|length }}</strong></div>
           <div class="pq-pack-stat"><span>Responses</span><strong>{{ feedback_total }}</strong></div>
-          <div class="pq-pack-stat"><span>Ready</span><strong>{{ publications|selectattr("status", "equalto", "published")|list|length }}</strong></div>
-          <div class="pq-pack-stat"><span>Slots</span><strong>{{ fliplink_capacity.active }}/{{ fliplink_capacity.cap }}</strong></div>
+          <div class="pq-pack-stat"><span>Linked</span><strong>{{ publications|selectattr("status", "equalto", "published")|list|length }}</strong></div>
+          <div class="pq-pack-stat"><span>Local packets</span><strong>{{ fliplink_capacity.principal_active }}</strong></div>
         </div>
-        <p class="pq-pack-muted" style="margin:12px 0 0;">{{ fliplink_capacity.remaining }} sharing slot(s) remain on the current sharing plan.</p>
+        {% if fliplink_capacity.external_account_verified %}
+        <p class="pq-pack-muted" style="margin:12px 0 0;">External publishing is verified for this account.</p>
+        {% else %}
+        <p class="pq-pack-muted" style="margin:12px 0 0;">Local packet storage is ready. External FlipLink publishing is not connected or verified.</p>
+        {% endif %}
       </div>
     </section>
 
     <section class="pq-pack-summary-grid" aria-label="Property sharing summary">
       <article class="pq-pack-summary-card">
-        <div class="pq-pack-kicker">Ready to share</div>
-        <strong>Pages that are ready to share</strong>
+        <div class="pq-pack-kicker">Local packets</div>
+        <strong>Private PDFs and manually linked pages</strong>
         <ul>
-          <li>{{ dashboard_summary.published_total }} shared page(s) ready and {{ dashboard_summary.share_total }} already shared.</li>
-          <li>{{ fliplink_capacity.remaining }} sharing slot(s) remain on the current plan.</li>
+          <li>{{ dashboard_summary.published_total }} page(s) have a manually recorded external link and {{ dashboard_summary.share_total }} were shared.</li>
+          <li>{{ fliplink_capacity.principal_remaining }} local packet slot(s) remain under the repository limit.</li>
           <li>Use this page instead of forwarding loose PDFs or scattered links.</li>
         </ul>
       </article>
@@ -541,7 +547,7 @@
               <span class="pq-pack-pill">{{ row.fliplink_format|replace("_", " ") }}</span>
             </div>
             <div class="pq-pack-muted">{{ row.recommended_folder }} · Updated {{ row.updated_at[:19] }}</div>
-            <div class="pq-pack-muted">Ready to share</div>
+            <div class="pq-pack-muted">Local PDF ready</div>
             <div class="pq-pack-muted" data-analytics-summary>
               Views:
               {{ row.analytics.views if row.analytics.views is not none else 'n/a' }} views ·
@@ -556,7 +562,7 @@
             </div>
             <div class="pq-pack-muted">
               Status:
-              {% if row.fliplink_url %}shared link ready{% else %}link not added yet{% endif %} ·
+              {% if row.fliplink_url %}manual external link recorded{% else %}local PDF only{% endif %} ·
               {% if row.structured_feedback %}responses present{% else %}no responses yet{% endif %}
             </div>
             <div class="pq-pack-decision-grid">
@@ -651,7 +657,11 @@
               <button class="pq-pack-button small" type="button" data-copy-kind="title" data-copy-value="{{ row.recommended_title or row.property_ref }}">Copy title</button>
               <button class="pq-pack-button small" type="button" data-copy-kind="webhook" data-copy-value="{{ fliplink_webhook_url }}">Copy reply link</button>
               <button class="pq-pack-button small" type="button" data-copy-lead-schema data-property-ref="{{ row.property_ref }}" data-packet-kind="{{ row.packet_kind }}" data-privacy-mode="{{ row.privacy_mode }}">Copy response fields</button>
+              {% if fliplink_capacity.external_publish_request_ready %}
               <button class="pq-pack-button small" type="button" data-browseract-publish data-publication-id="{{ row.publication_id }}">Publish assist</button>
+              {% else %}
+              <span class="pq-pack-muted" data-external-publish-unavailable>External publishing not connected</span>
+              {% endif %}
               <button class="pq-pack-button small danger" type="button" data-archive-publication data-publication-id="{{ row.publication_id }}">Archive</button>
             </div>
             <div class="pq-pack-muted">

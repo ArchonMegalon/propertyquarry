@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import inspect
 import json
@@ -52,6 +53,14 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     from app.api.app import create_app
 
     return TestClient(create_app(), base_url="https://propertyquarry.com")
+
+
+def _mobile_pkce_pair() -> tuple[str, str]:
+    verifier = "PropertyQuarryAndroidVerifier_2026_secure-bridge"
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).decode("ascii").rstrip("=")
+    return verifier, challenge
 
 
 @pytest.fixture(autouse=True)
@@ -910,9 +919,10 @@ def test_rendered_propertyquarry_compose_wires_identity_only_to_api_without_ea_f
             **identity_environment,
             "EA_SIGNING_SECRET": "compose-test-signing-secret",
             "POSTGRES_PASSWORD": "compose-test-postgres-password",
-            "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": "postgresql://admission:test@db/propertyquarry",
-            "PROPERTYQUARRY_API_DATABASE_URL": "postgresql://api:test@db/propertyquarry",
-            "PROPERTYQUARRY_MIGRATION_DATABASE_URL": "postgresql://migrate:test@db/propertyquarry",
+                "PROPERTYQUARRY_API_ADMISSION_DATABASE_URL": "postgresql://admission:test@db/propertyquarry",
+                "PROPERTYQUARRY_API_DATABASE_URL": "postgresql://api:test@db/propertyquarry",
+                "PROPERTYQUARRY_API_INGRESS_DATABASE_URL": "postgresql://ingress:test@db/propertyquarry",
+                "PROPERTYQUARRY_MIGRATION_DATABASE_URL": "postgresql://migrate:test@db/propertyquarry",
             "PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN": "compose-test-render-token",
             "PROPERTYQUARRY_RENDER_DATABASE_URL": "postgresql://render:test@db/propertyquarry",
             "PROPERTYQUARRY_SCHEDULER_DATABASE_URL": "postgresql://scheduler:test@db/propertyquarry",
@@ -952,3 +962,132 @@ def test_rendered_propertyquarry_compose_wires_identity_only_to_api_without_ea_f
                     or "MYEXTERNALBRAIN" in normalized_name
                 )
             ), f"{service_name}:{name}"
+
+
+def test_mobile_identity_handoff_is_pkce_bound_single_use_and_issues_a_fresh_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import propertyquarry_google_identity as identity
+
+    _configure_propertyquarry_google(monkeypatch)
+    verifier, challenge = _mobile_pkce_pair()
+    packet = identity.build_propertyquarry_google_identity_start(
+        redirect_uri="https://propertyquarry.com/google/callback",
+        return_to=identity.MOBILE_IDENTITY_RETURN_TO,
+        mobile_pkce_challenge=challenge,
+    )
+    monkeypatch.setattr(
+        identity,
+        "_exchange_google_code_for_tokens",
+        lambda **_kwargs: {"access_token": "transient"},
+    )
+    monkeypatch.setattr(
+        identity,
+        "_fetch_google_userinfo",
+        lambda _token: {
+            "sub": "mobile-subject",
+            "email": "mobile@example.com",
+            "email_verified": True,
+            "name": "Mobile Owner",
+        },
+    )
+    browser_session = identity.complete_propertyquarry_google_identity_callback(
+        code="provider-code",
+        state=packet.state,
+        flow_nonce=packet.flow_nonce,
+    )
+    handoff = identity.create_propertyquarry_mobile_identity_handoff(
+        identity_session=browser_session,
+    )
+
+    assert browser_session.session_id == ""
+    assert browser_session.token == ""
+    assert identity._MEMORY_SESSIONS == {}
+    assert not handoff.code.startswith(identity.GOOGLE_IDENTITY_SESSION_PREFIX)
+    with pytest.raises(RuntimeError, match="pkce_mismatch"):
+        identity.redeem_propertyquarry_mobile_identity_handoff(
+            code=handoff.code,
+            pkce_verifier="WrongVerifier_abcdefghijklmnopqrstuvwxyz0123456789",
+        )
+
+    app_session = identity.redeem_propertyquarry_mobile_identity_handoff(
+        code=handoff.code,
+        pkce_verifier=verifier,
+    )
+    assert app_session.session_id != browser_session.session_id
+    assert identity.resolve_propertyquarry_identity_session(token=app_session.token)
+    with pytest.raises(RuntimeError, match="handoff_replayed"):
+        identity.redeem_propertyquarry_mobile_identity_handoff(
+            code=handoff.code,
+            pkce_verifier=verifier,
+        )
+
+
+def test_mobile_external_login_callback_redeems_into_an_httponly_webview_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import propertyquarry_google_identity as identity
+
+    _configure_propertyquarry_google(monkeypatch)
+    verifier, challenge = _mobile_pkce_pair()
+    client = _client(monkeypatch)
+    started = client.get(
+        "/sign-in/google",
+        params={
+            "return_to": identity.MOBILE_IDENTITY_RETURN_TO,
+            "mobile_challenge": challenge,
+        },
+        follow_redirects=False,
+    )
+    assert started.status_code == 303
+    state = urllib.parse.parse_qs(
+        urllib.parse.urlparse(started.headers["location"]).query
+    )["state"][0]
+    monkeypatch.setattr(
+        identity,
+        "_exchange_google_code_for_tokens",
+        lambda **_kwargs: {"access_token": "transient"},
+    )
+    monkeypatch.setattr(
+        identity,
+        "_fetch_google_userinfo",
+        lambda _token: {
+            "sub": "mobile-route-subject",
+            "email": "mobile-route@example.com",
+            "email_verified": True,
+        },
+    )
+
+    callback = client.get(
+        "/google/callback",
+        params={"code": "provider-code", "state": state},
+        follow_redirects=False,
+    )
+    assert callback.status_code == 303
+    callback_uri = urllib.parse.urlparse(callback.headers["location"])
+    assert (callback_uri.scheme, callback_uri.netloc, callback_uri.path) == (
+        "propertyquarry",
+        "auth",
+        "/callback",
+    )
+    assert not any(
+        header.startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
+        for header in callback.headers.get_list("set-cookie")
+    )
+    handoff_code = urllib.parse.parse_qs(callback_uri.query)["code"][0]
+
+    redeemed = client.post(
+        "/mobile/auth/redeem",
+        json={"code": handoff_code, "pkce_verifier": verifier},
+    )
+    assert redeemed.status_code == 200
+    assert redeemed.json() == {"status": "authenticated", "return_to": "/app/search"}
+    identity_cookies = [
+        header
+        for header in redeemed.headers.get_list("set-cookie")
+        if header.startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
+    ]
+    assert len(identity_cookies) == 1
+    assert "HttpOnly" in identity_cookies[0]
+    assert "Secure" in identity_cookies[0]
+    assert "SameSite=lax" in identity_cookies[0]

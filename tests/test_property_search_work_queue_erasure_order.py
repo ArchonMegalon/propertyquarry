@@ -49,6 +49,7 @@ class _SqlWorld:
         self.returning_rows: list[tuple[object, ...] | None] = []
         self.enqueue_job_row: tuple[object, ...] | None = None
         self.reject_authority = False
+        self.conditional_update_changed = True
 
 
 class _FakeCursor:
@@ -107,7 +108,7 @@ class _FakeCursor:
                 self._row = self.world.returning_rows.pop(0)
                 self.rowcount = 1 if self._row is not None else 0
             else:
-                self.rowcount = 1
+                self.rowcount = 1 if self.world.conditional_update_changed else 0
 
     def fetchone(self) -> tuple[object, ...] | None:
         row = self._row
@@ -177,29 +178,25 @@ def _assert_update_transactions_are_authorized(
         previous_boundary = boundary
 
 
-@pytest.mark.parametrize("mutation", ("heartbeat", "complete", "fail"))
+@pytest.mark.parametrize("mutation", ("complete", "fail"))
 def test_direct_job_mutations_lookup_identity_then_authorize_before_update(
     mutation: str,
 ) -> None:
     world = _SqlWorld()
     world.identities["job-1"] = ("principal-1", "run-1", 1, 3)
     returned_status = "completed" if mutation == "complete" else "queued"
-    if mutation != "heartbeat":
-        world.returning_rows.append(
-            _job_row(
-                job_id="job-1",
-                principal_id="principal-1",
-                run_id="run-1",
-                status=returned_status,
-                lease_owner="" if mutation == "complete" else "worker-1",
-            )
+    world.returning_rows.append(
+        _job_row(
+            job_id="job-1",
+            principal_id="principal-1",
+            run_id="run-1",
+            status=returned_status,
+            lease_owner="" if mutation == "complete" else "worker-1",
         )
+    )
     queue = _queue(world)
 
-    if mutation == "heartbeat":
-        result = queue.heartbeat(job_id="job-1", lease_owner="worker-1", lease_seconds=60)
-        assert result is True
-    elif mutation == "complete":
+    if mutation == "complete":
         result = queue.complete(job_id="job-1", lease_owner="worker-1")
         assert isinstance(result, PropertySearchWorkJob)
         assert result.status == "completed"
@@ -220,22 +217,39 @@ def test_direct_job_mutations_lookup_identity_then_authorize_before_update(
     assert authority_event[1] == ("principal-1", "run-1")
 
 
-def test_authority_rejection_prevents_direct_job_update() -> None:
+@pytest.mark.parametrize("changed", (True, False))
+def test_heartbeat_is_one_conditional_nonpublishing_update(changed: bool) -> None:
     world = _SqlWorld()
     world.identities["job-erased"] = ("principal-erased", "run-erased")
     world.reject_authority = True
+    world.conditional_update_changed = changed
     queue = _queue(world)
 
-    with pytest.raises(RuntimeError, match="property_search_account_erased"):
+    assert (
         queue.heartbeat(
             job_id="job-erased",
             lease_owner="worker-1",
             lease_seconds=60,
         )
+        is changed
+    )
 
-    assert not any(
-        statement.startswith("update property_search_work_jobs")
-        for statement, _params in world.events
+    statements = [statement for statement, _params in world.events]
+    updates = [
+        statement
+        for statement in statements
+        if statement.startswith("update property_search_work_jobs")
+    ]
+    assert len(updates) == 1
+    heartbeat_update = updates[0]
+    assert "where job_id = %s" in heartbeat_update
+    assert "status = 'leased'" in heartbeat_update
+    assert "lease_owner = %s" in heartbeat_update
+    assert "lease_expires_at > now()" in heartbeat_update
+    assert all("property_search_assert" not in statement for statement in statements)
+    assert all(
+        not statement.startswith("select principal_id, run_id")
+        for statement in statements
     )
 
 

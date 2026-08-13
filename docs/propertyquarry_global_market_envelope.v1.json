@@ -7,10 +7,16 @@
     "candidate_tree": "02c611f7845eb7b07c056e5131ab7fda60bad475",
     "candidate_staged_diff_sha256_before_global_envelope": "2290f58ae884b3d18dacab164d45dea36df96c0f813c32f94e18015e7807c571",
     "audited_at": "2026-07-19",
-    "scope": "AT, DE, and CR customer-facing market readiness"
+    "scope": "Historical AT/DE/CR readiness audit; superseded for customer selection by the Austria-only closed-test contract"
+  },
+  "lifecycle": {
+    "status": "historical_superseded_not_release_authority",
+    "current_customer_market_codes": ["AT"],
+    "future_catalog_market_codes": ["DE", "CR", "BE", "CA", "CH", "IE", "UK", "AU", "ES", "IT", "FR", "NL", "PT", "PL", "SE", "US"],
+    "admission_rule": "A future market requires current live-provider, localization, rights, and browser evidence before customer selection."
   },
   "phase_one": {
-    "name": "English-only invite-only cross-border buyer and renter decision-support private beta",
+    "name": "Austria closed-test buyer and renter decision-support private beta",
     "operating_mode": "invite_only_private_beta",
     "content_language": "en",
     "supported_workflows": [

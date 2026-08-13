@@ -32,6 +32,8 @@ GOOGLE_IDENTITY_STATE_PREFIX = "pqg1"
 GOOGLE_IDENTITY_SESSION_PREFIX = "pqis1"
 GOOGLE_IDENTITY_LANE = "propertyquarry_google_identity"
 GOOGLE_IDENTITY_SCOPES = ("openid", "email", "profile")
+MOBILE_IDENTITY_RETURN_TO = "/mobile/auth/complete"
+MOBILE_IDENTITY_HANDOFF_MAX_AGE_SECONDS = 180
 @dataclass(frozen=True)
 class PropertyQuarryGoogleIdentityConfig:
     client_id: str
@@ -62,6 +64,14 @@ class PropertyQuarryGoogleIdentitySession:
     return_to: str
     expires_at: str
     max_age_seconds: int
+    mobile_pkce_challenge: str = ""
+
+
+@dataclass(frozen=True)
+class PropertyQuarryMobileIdentityHandoff:
+    code: str
+    return_to: str
+    max_age_seconds: int
 
 
 _MEMORY_LOCK = threading.RLock()
@@ -69,6 +79,7 @@ _MEMORY_ACCOUNTS: dict[str, dict[str, object]] = {}
 _MEMORY_SESSIONS: dict[str, dict[str, object]] = {}
 _MEMORY_AUDIT: list[dict[str, object]] = []
 _MEMORY_CONSUMED_STATES: dict[str, int] = {}
+_MEMORY_MOBILE_HANDOFFS: dict[str, dict[str, object]] = {}
 
 
 def _env(name: str) -> str:
@@ -277,15 +288,38 @@ def propertyquarry_google_expected_email_binding(email: str) -> str:
     return _expected_email_binding(email=email, secret=config.state_secret)
 
 
+def _validated_mobile_pkce_challenge(value: object) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if (
+        len(normalized) != 43
+        or any(
+            character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+            for character in normalized
+        )
+    ):
+        raise RuntimeError("google_oauth_propertyquarry_mobile_pkce_invalid")
+    return normalized
+
+
 def build_propertyquarry_google_identity_start(
     *,
     redirect_uri: str,
     return_to: str,
     expected_email_binding: str = "",
+    mobile_pkce_challenge: str = "",
 ) -> PropertyQuarryGoogleIdentityStart:
     config = load_propertyquarry_google_identity_config()
     resolved_redirect_uri = _validate_redirect_uri(redirect_uri, expected=config.redirect_uri)
     resolved_return_to = _safe_return_to(return_to)
+    resolved_mobile_pkce_challenge = _validated_mobile_pkce_challenge(
+        mobile_pkce_challenge
+    )
+    if bool(resolved_mobile_pkce_challenge) != bool(
+        resolved_return_to == MOBILE_IDENTITY_RETURN_TO
+    ):
+        raise RuntimeError("google_oauth_propertyquarry_mobile_flow_invalid")
     issued_at = int(time.time())
     flow_nonce = secrets.token_urlsafe(32)
     state_payload: dict[str, object] = {
@@ -303,6 +337,8 @@ def build_propertyquarry_google_identity_start(
     )
     if resolved_expected_email_binding:
         state_payload["expected_email_binding"] = resolved_expected_email_binding
+    if resolved_mobile_pkce_challenge:
+        state_payload["mobile_pkce_challenge"] = resolved_mobile_pkce_challenge
     state = _encode_prefixed_payload(
         prefix=GOOGLE_IDENTITY_STATE_PREFIX,
         secret=config.state_secret,
@@ -372,6 +408,13 @@ def read_propertyquarry_google_identity_state(
     payload["expected_email_binding"] = _validated_expected_email_binding(
         str(payload.get("expected_email_binding") or "")
     )
+    payload["mobile_pkce_challenge"] = _validated_mobile_pkce_challenge(
+        payload.get("mobile_pkce_challenge")
+    )
+    if bool(payload["mobile_pkce_challenge"]) != bool(
+        payload["return_to"] == MOBILE_IDENTITY_RETURN_TO
+    ):
+        raise RuntimeError("google_oauth_propertyquarry_mobile_flow_invalid")
     return payload
 
 
@@ -736,6 +779,65 @@ def _persist_identity_session(
         _MEMORY_AUDIT.extend(dict(audit) for audit in audits)
 
 
+def _issue_propertyquarry_identity_session(
+    *,
+    principal_id: str,
+    subject_hash: str,
+    email: str,
+    display_name: str,
+    return_to: str,
+    database_url: str,
+    mobile_pkce_challenge: str = "",
+    persist_session: bool = True,
+) -> PropertyQuarryGoogleIdentitySession:
+    config = load_propertyquarry_google_identity_config()
+    issued_at_unix = int(time.time())
+    issued_at = datetime.fromtimestamp(issued_at_unix, tz=timezone.utc)
+    expires_at_unix = issued_at_unix + config.session_ttl_seconds
+    session_id = f"pqis_{uuid4().hex}"
+    session_payload = {
+        "display_name": display_name,
+        "email": email,
+        "expires_at": expires_at_unix,
+        "issued_at": issued_at_unix,
+        "kind": "propertyquarry_google_identity_session",
+        "principal_id": principal_id,
+        "session_id": session_id,
+        "version": 1,
+    }
+    session_token = _encode_prefixed_payload(
+        prefix=GOOGLE_IDENTITY_SESSION_PREFIX,
+        payload=session_payload,
+        secret=config.session_secret,
+    )
+    expires_at = datetime.fromtimestamp(expires_at_unix, tz=timezone.utc)
+    if persist_session:
+        _persist_identity_session(
+            principal_id=principal_id,
+            subject_hash=subject_hash,
+            email=email,
+            display_name=display_name,
+            session_id=session_id,
+            token_hash=_token_hash(session_token, secret=config.session_secret),
+            issued_at=issued_at,
+            expires_at=expires_at,
+            database_url=database_url,
+        )
+    return PropertyQuarryGoogleIdentitySession(
+        principal_id=principal_id,
+        session_id=session_id if persist_session else "",
+        email=email,
+        display_name=display_name,
+        token=session_token if persist_session else "",
+        return_to=_safe_return_to(return_to),
+        expires_at=expires_at.isoformat(),
+        max_age_seconds=config.session_ttl_seconds,
+        mobile_pkce_challenge=_validated_mobile_pkce_challenge(
+            mobile_pkce_challenge
+        ),
+    )
+
+
 def complete_propertyquarry_google_identity_callback(
     *,
     code: str,
@@ -788,44 +890,18 @@ def complete_propertyquarry_google_identity_callback(
         issued_at=issued_at,
         database_url=database_url,
     )
-    expires_at_unix = issued_at_unix + config.session_ttl_seconds
-    session_id = f"pqis_{uuid4().hex}"
-    session_payload = {
-        "display_name": display_name,
-        "email": email,
-        "expires_at": expires_at_unix,
-        "issued_at": issued_at_unix,
-        "kind": "propertyquarry_google_identity_session",
-        "principal_id": principal_id,
-        "session_id": session_id,
-        "version": 1,
-    }
-    session_token = _encode_prefixed_payload(
-        prefix=GOOGLE_IDENTITY_SESSION_PREFIX,
-        payload=session_payload,
-        secret=config.session_secret,
-    )
-    expires_at = datetime.fromtimestamp(expires_at_unix, tz=timezone.utc)
-    _persist_identity_session(
+    mobile_pkce_challenge = str(
+        state_payload.get("mobile_pkce_challenge") or ""
+    ).strip()
+    return _issue_propertyquarry_identity_session(
         principal_id=principal_id,
         subject_hash=subject_hash,
         email=email,
         display_name=display_name,
-        session_id=session_id,
-        token_hash=_token_hash(session_token, secret=config.session_secret),
-        issued_at=issued_at,
-        expires_at=expires_at,
-        database_url=database_url,
-    )
-    return PropertyQuarryGoogleIdentitySession(
-        principal_id=principal_id,
-        session_id=session_id,
-        email=email,
-        display_name=display_name,
-        token=session_token,
         return_to=_safe_return_to(state_payload.get("return_to")),
-        expires_at=expires_at.isoformat(),
-        max_age_seconds=config.session_ttl_seconds,
+        database_url=database_url,
+        mobile_pkce_challenge=mobile_pkce_challenge,
+        persist_session=not bool(mobile_pkce_challenge),
     )
 
 
@@ -1005,6 +1081,218 @@ def revoke_propertyquarry_identity_session(
     return True
 
 
+def _mobile_handoff_code_hash(*, code: str, secret: str) -> str:
+    normalized = str(code or "").strip()
+    if len(normalized) < 32 or len(normalized) > 160:
+        raise RuntimeError("propertyquarry_mobile_identity_handoff_invalid")
+    return hmac.new(
+        secret.encode("utf-8"),
+        ("propertyquarry-mobile-identity-handoff-v1\0" + normalized).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _mobile_pkce_challenge_from_verifier(verifier: str) -> str:
+    normalized = str(verifier or "").strip()
+    if (
+        len(normalized) < 43
+        or len(normalized) > 128
+        or any(
+            character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+            for character in normalized
+        )
+    ):
+        raise RuntimeError("propertyquarry_mobile_identity_pkce_invalid")
+    return _b64url_encode(hashlib.sha256(normalized.encode("ascii")).digest())
+
+
+def _identity_account_subject_hash(*, principal_id: str, database_url: str) -> str:
+    normalized_database_url = str(database_url or "").strip()
+    if normalized_database_url:
+        _require_schema(normalized_database_url)
+        with _connect(normalized_database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT subject_hash FROM propertyquarry_google_identity_accounts WHERE principal_id = %s LIMIT 1",
+                    (principal_id,),
+                )
+                row = cursor.fetchone()
+        subject_hash = str(row[0] or "").strip() if row else ""
+    else:
+        with _MEMORY_LOCK:
+            account = dict(_MEMORY_ACCOUNTS.get(principal_id) or {})
+        subject_hash = str(account.get("subject_hash") or "").strip()
+    if len(subject_hash) != 64:
+        raise RuntimeError("propertyquarry_mobile_identity_account_missing")
+    return subject_hash
+
+
+def create_propertyquarry_mobile_identity_handoff(
+    *,
+    identity_session: PropertyQuarryGoogleIdentitySession,
+    database_url: str = "",
+) -> PropertyQuarryMobileIdentityHandoff:
+    if identity_session.return_to != MOBILE_IDENTITY_RETURN_TO:
+        raise RuntimeError("propertyquarry_mobile_identity_flow_invalid")
+    pkce_challenge = _validated_mobile_pkce_challenge(
+        identity_session.mobile_pkce_challenge
+    )
+    if not pkce_challenge:
+        raise RuntimeError("propertyquarry_mobile_identity_pkce_required")
+    config = load_propertyquarry_google_identity_config()
+    code = secrets.token_urlsafe(32)
+    code_hash = _mobile_handoff_code_hash(code=code, secret=config.session_secret)
+    subject_hash = _identity_account_subject_hash(
+        principal_id=identity_session.principal_id,
+        database_url=database_url,
+    )
+    issued_at = datetime.now(timezone.utc)
+    expires_at = datetime.fromtimestamp(
+        int(issued_at.timestamp()) + MOBILE_IDENTITY_HANDOFF_MAX_AGE_SECONDS,
+        tz=timezone.utc,
+    )
+    record = {
+        "code_hash": code_hash,
+        "principal_id": identity_session.principal_id,
+        "subject_hash": subject_hash,
+        "email": identity_session.email,
+        "display_name": identity_session.display_name,
+        "pkce_challenge": pkce_challenge,
+        "return_to": "/app/search",
+        "issued_at": issued_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "consumed_at": "",
+    }
+    normalized_database_url = str(database_url or "").strip()
+    if normalized_database_url:
+        _require_schema(normalized_database_url)
+        with _connect(normalized_database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM propertyquarry_google_identity_mobile_handoffs WHERE expires_at < NOW() - INTERVAL '1 day'"
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO propertyquarry_google_identity_mobile_handoffs (
+                        code_hash, principal_id, subject_hash, email, display_name,
+                        pkce_challenge, return_to, issued_at, expires_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        code_hash,
+                        identity_session.principal_id,
+                        subject_hash,
+                        identity_session.email,
+                        identity_session.display_name,
+                        pkce_challenge,
+                        "/app/search",
+                        issued_at,
+                        expires_at,
+                    ),
+                )
+            connection.commit()
+    else:
+        with _MEMORY_LOCK:
+            _MEMORY_MOBILE_HANDOFFS[code_hash] = record
+    return PropertyQuarryMobileIdentityHandoff(
+        code=code,
+        return_to="/app/search",
+        max_age_seconds=MOBILE_IDENTITY_HANDOFF_MAX_AGE_SECONDS,
+    )
+
+
+def redeem_propertyquarry_mobile_identity_handoff(
+    *,
+    code: str,
+    pkce_verifier: str,
+    database_url: str = "",
+) -> PropertyQuarryGoogleIdentitySession:
+    config = load_propertyquarry_google_identity_config()
+    code_hash = _mobile_handoff_code_hash(code=code, secret=config.session_secret)
+    supplied_challenge = _mobile_pkce_challenge_from_verifier(pkce_verifier)
+    now = datetime.now(timezone.utc)
+    normalized_database_url = str(database_url or "").strip()
+    record: dict[str, object]
+    if normalized_database_url:
+        _require_schema(normalized_database_url)
+        with _connect(normalized_database_url) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT principal_id, subject_hash, email, display_name,
+                           pkce_challenge, return_to, expires_at, consumed_at
+                    FROM propertyquarry_google_identity_mobile_handoffs
+                    WHERE code_hash = %s
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    (code_hash,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise RuntimeError("propertyquarry_mobile_identity_handoff_invalid")
+                record = {
+                    "principal_id": row[0],
+                    "subject_hash": row[1],
+                    "email": row[2],
+                    "display_name": row[3],
+                    "pkce_challenge": row[4],
+                    "return_to": row[5],
+                    "expires_at": row[6],
+                    "consumed_at": row[7],
+                }
+                if record["consumed_at"]:
+                    raise RuntimeError("propertyquarry_mobile_identity_handoff_replayed")
+                expires_at = record["expires_at"]
+                if not isinstance(expires_at, datetime) or now > expires_at:
+                    raise RuntimeError("propertyquarry_mobile_identity_handoff_expired")
+                if not hmac.compare_digest(
+                    str(record["pkce_challenge"] or ""),
+                    supplied_challenge,
+                ):
+                    raise RuntimeError("propertyquarry_mobile_identity_pkce_mismatch")
+                cursor.execute(
+                    """
+                    UPDATE propertyquarry_google_identity_mobile_handoffs
+                    SET consumed_at = %s
+                    WHERE code_hash = %s AND consumed_at IS NULL
+                    """,
+                    (now, code_hash),
+                )
+                if cursor.rowcount != 1:
+                    raise RuntimeError("propertyquarry_mobile_identity_handoff_replayed")
+            connection.commit()
+    else:
+        with _MEMORY_LOCK:
+            stored = _MEMORY_MOBILE_HANDOFFS.get(code_hash)
+            if not stored:
+                raise RuntimeError("propertyquarry_mobile_identity_handoff_invalid")
+            record = dict(stored)
+            if str(record.get("consumed_at") or "").strip():
+                raise RuntimeError("propertyquarry_mobile_identity_handoff_replayed")
+            try:
+                expires_at = datetime.fromisoformat(str(record.get("expires_at") or ""))
+            except ValueError as exc:
+                raise RuntimeError("propertyquarry_mobile_identity_handoff_invalid") from exc
+            if now > expires_at:
+                raise RuntimeError("propertyquarry_mobile_identity_handoff_expired")
+            if not hmac.compare_digest(
+                str(record.get("pkce_challenge") or ""),
+                supplied_challenge,
+            ):
+                raise RuntimeError("propertyquarry_mobile_identity_pkce_mismatch")
+            stored["consumed_at"] = now.isoformat()
+
+    return _issue_propertyquarry_identity_session(
+        principal_id=str(record.get("principal_id") or "").strip(),
+        subject_hash=str(record.get("subject_hash") or "").strip(),
+        email=str(record.get("email") or "").strip(),
+        display_name=str(record.get("display_name") or "").strip(),
+        return_to=_safe_return_to(record.get("return_to")),
+        database_url=database_url,
+    )
+
+
 def reset_propertyquarry_google_identity_memory_for_tests() -> None:
     reset_propertyquarry_google_identity_schema_cache_for_tests()
     with _MEMORY_LOCK:
@@ -1012,3 +1300,4 @@ def reset_propertyquarry_google_identity_memory_for_tests() -> None:
         _MEMORY_SESSIONS.clear()
         _MEMORY_AUDIT.clear()
         _MEMORY_CONSUMED_STATES.clear()
+        _MEMORY_MOBILE_HANDOFFS.clear()

@@ -292,6 +292,85 @@ def test_repair_preserves_legacy_declared_slug_and_binds_public_directory(
     assert audit_or_repair(root)["status"] == "pass"
 
 
+def test_repair_rebinds_core_gold_sidecar_to_privacy_safe_scene_graph(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "public"
+    backup = tmp_path / "backup"
+    bundle = root / "core-gold-tour"
+    bundle.mkdir(parents=True)
+    walkable_scene = {
+        "initial_scene_id": "entry",
+        "representation_kind": "ai_reconstruction",
+        "representation_disclosure": (
+            "AI-reconstructed from a reviewed floorplan; not a captured 360 "
+            "or measured survey."
+        ),
+        "scenes": [
+            {
+                "id": "entry",
+                "label": "Entrance",
+                "asset_relpath": "scene.jpg",
+                "projection": "equirectangular",
+                "start_fov": 72.0,
+                "start_pitch": 0.0,
+                "start_yaw": 0.0,
+                "hotspots": [],
+                "recipient_email": "private@example.invalid",
+            }
+        ],
+    }
+    (bundle / "scene.jpg").write_bytes(b"scene")
+    manifest = {
+        "slug": "core-gold-tour",
+        "publication_status": "published",
+        "video_relpath": "walkthrough-desktop.mp4",
+        "video_mobile_relpath": "walkthrough-mobile.mp4",
+        "video_sidecar_relpath": "tour.walkthrough.json",
+        "walkable_scene": walkable_scene,
+    }
+    (bundle / "walkthrough-desktop.mp4").write_bytes(b"desktop")
+    (bundle / "walkthrough-mobile.mp4").write_bytes(b"mobile")
+    (bundle / "tour.json").write_text(json.dumps(manifest), encoding="utf-8")
+    sidecar = {
+        "contract_name": privacy.CORE_GOLD_WALKTHROUGH_CONTRACT,
+        "property_slug": "core-gold-tour",
+        "walkable_scene_sha256": privacy._canonical_object_sha256(
+            walkable_scene
+        ),
+        "provider_key": "propertyquarry_core_gold",
+    }
+    sidecar_path = bundle / "tour.walkthrough.json"
+    sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+    sidecar_path.chmod(0o640)
+    original_sidecar = sidecar_path.read_bytes()
+
+    audit = audit_or_repair(root)
+
+    assert audit["status"] == "fail"
+    assert audit["counts"]["core_gold_sidecar_hash_mismatches"] == 1
+
+    receipt = audit_or_repair(root, apply=True, backup_root=backup)
+
+    assert receipt["status"] == "pass"
+    assert receipt["counts"]["repaired_core_gold_sidecars"] == 1
+    assert (
+        backup
+        / "public_property_tours"
+        / "core-gold-tour"
+        / "tour.walkthrough.json"
+    ).read_bytes() == original_sidecar
+    public = json.loads((bundle / "tour.json").read_text(encoding="utf-8"))
+    rebound = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert "recipient_email" not in json.dumps(public["walkable_scene"])
+    assert rebound["walkable_scene_sha256"] == privacy._canonical_object_sha256(
+        public["walkable_scene"]
+    )
+    assert rebound["provider_key"] == "propertyquarry_core_gold"
+    assert stat.S_IMODE(sidecar_path.stat().st_mode) == 0o640
+    assert audit_or_repair(root)["status"] == "pass"
+
+
 def test_public_projection_converges_before_repair_write(
     monkeypatch,
     tmp_path: Path,

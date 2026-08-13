@@ -23,6 +23,16 @@ _AGENT_PLAN_ALIASES = {
 _LIFETIME_AGENT_ENTITLEMENT_KIND = "lifetime"
 _LIFETIME_AGENT_EXPIRY = datetime(2999, 1, 1, tzinfo=timezone.utc)
 
+_PAID_BILLING_SAFE_HANDOFF_CONTRACT = (
+    "propertyquarry.paid_billing_safe_handoff.v1"
+)
+_PAID_BILLING_SAFE_HANDOFF_MAX_AGE = timedelta(hours=24)
+_PAID_BILLING_SAFE_HANDOFF_FUTURE_SKEW = timedelta(minutes=5)
+_PAYPAL_API_BASES = {
+    "https://api-m.paypal.com": "live",
+    "https://api-m.sandbox.paypal.com": "sandbox",
+}
+
 _PROPERTY_FURNITURE_STYLE_LIMIT_BY_PLAN = {
     "free": 5,
     "plus": 5,
@@ -787,11 +797,138 @@ def enforce_property_plan_limits(
         raise RuntimeError(f"property_plan_upgrade_required:{target}")
 
 
+def _lower_hex(value: object, *, length: int) -> str:
+    normalized = str(value or "").strip()
+    if len(normalized) != length or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        return ""
+    return normalized
+
+
+def _sha256_digest(value: object) -> str:
+    normalized = str(value or "").strip()
+    if not normalized.startswith("sha256:"):
+        return ""
+    digest = _lower_hex(normalized.removeprefix("sha256:"), length=64)
+    return f"sha256:{digest}" if digest else ""
+
+
+def paid_billing_safe_handoff_configured(
+    *,
+    provider: str,
+    plan_key: str = "",
+) -> bool:
+    """Admit customer checkout only for a fresh, exact-release canary handoff.
+
+    Provider credentials are necessary but deliberately insufficient.  The
+    external release controller must inject the non-secret canary bindings
+    after proving same-principal checkout, signed/idempotent webhook handling,
+    entitlement grant, and cancellation for both paid plans.
+    """
+
+    expected_provider = str(provider or "").strip().lower()
+    if expected_provider not in {"paypal", "payfunnels"}:
+        return False
+    if (
+        str(
+            os.getenv("PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_CONTRACT")
+            or ""
+        ).strip()
+        != _PAID_BILLING_SAFE_HANDOFF_CONTRACT
+    ):
+        return False
+    admitted_provider = str(
+        os.getenv("PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PROVIDER") or ""
+    ).strip().lower()
+    if not hmac.compare_digest(admitted_provider, expected_provider):
+        return False
+    admitted_environment = str(
+        os.getenv(
+            "PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PROVIDER_ENVIRONMENT"
+        )
+        or ""
+    ).strip().lower()
+    # A sandbox canary is useful evidence, but it must never unlock a
+    # customer-facing production checkout lane.
+    if not hmac.compare_digest(admitted_environment, "live"):
+        return False
+    admitted_plans = {
+        normalize_property_plan_key(value)
+        for value in str(
+            os.getenv("PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PLAN_KEYS")
+            or ""
+        ).split(",")
+        if str(value).strip()
+    }
+    if admitted_plans != set(_PAID_PLANS):
+        return False
+    normalized_plan = (
+        normalize_property_plan_key(plan_key)
+        if str(plan_key or "").strip()
+        else ""
+    )
+    if normalized_plan and normalized_plan not in admitted_plans:
+        return False
+
+    runtime_commit = _lower_hex(
+        os.getenv("PROPERTYQUARRY_RELEASE_COMMIT_SHA"),
+        length=40,
+    )
+    admitted_commit = _lower_hex(
+        os.getenv("PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_RELEASE_COMMIT_SHA"),
+        length=40,
+    )
+    runtime_image = _sha256_digest(
+        os.getenv("PROPERTYQUARRY_RELEASE_IMAGE_DIGEST")
+    )
+    admitted_image = _sha256_digest(
+        os.getenv("PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_RELEASE_IMAGE_DIGEST")
+    )
+    receipt_digest = _sha256_digest(
+        os.getenv("PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_RECEIPT_SHA256")
+    )
+    principal_digest = _sha256_digest(
+        os.getenv("PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_PRINCIPAL_SHA256")
+    )
+    if not all(
+        (
+            runtime_commit,
+            admitted_commit,
+            runtime_image,
+            admitted_image,
+            receipt_digest,
+            principal_digest,
+        )
+    ):
+        return False
+    if not hmac.compare_digest(runtime_commit, admitted_commit):
+        return False
+    if not hmac.compare_digest(runtime_image, admitted_image):
+        return False
+
+    verified_at = _parse_iso(
+        os.getenv("PROPERTYQUARRY_PAID_BILLING_SAFE_HANDOFF_VERIFIED_AT")
+    )
+    if verified_at is None:
+        return False
+    age = _now() - verified_at
+    return (
+        age >= -_PAID_BILLING_SAFE_HANDOFF_FUTURE_SKEW
+        and age <= _PAID_BILLING_SAFE_HANDOFF_MAX_AGE
+    )
+
+
 def paypal_configured() -> bool:
     enabled = str(os.getenv("PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT") or "").strip().lower()
     if enabled not in {"1", "true", "yes", "on"}:
         return False
-    return bool(str(os.getenv("PAYPAL_CLIENT_ID") or "").strip() and str(os.getenv("PAYPAL_SECRET") or "").strip())
+    return bool(
+        str(os.getenv("PAYPAL_CLIENT_ID") or "").strip()
+        and str(os.getenv("PAYPAL_SECRET") or "").strip()
+        and paypal_api_environment() == "live"
+        and paid_billing_safe_handoff_configured(provider="paypal")
+    )
 
 
 def _payfunnels_checkout_env_name(plan_key: str) -> str:
@@ -824,7 +961,10 @@ def payfunnels_checkout_url(*, plan_key: str) -> str:
 
 def payfunnels_configured(*, plan_key: str = "") -> bool:
     webhook_secret = str(os.getenv("PAYFUNNELS_WEBHOOK_SECRET") or "").strip()
-    if not webhook_secret:
+    if not webhook_secret or not paid_billing_safe_handoff_configured(
+        provider="payfunnels",
+        plan_key=plan_key,
+    ):
         return False
     if str(plan_key or "").strip():
         return bool(payfunnels_checkout_url(plan_key=plan_key) or payfunnels_api_key())
@@ -984,7 +1124,19 @@ def verify_payfunnels_webhook_signature(*, body_bytes: bytes, signature: str) ->
 
 
 def _paypal_api_base() -> str:
-    return str(os.getenv("PAYPAL_API_BASE") or "https://api-m.paypal.com").strip().rstrip("/")
+    normalized = str(
+        os.getenv("PAYPAL_API_BASE") or "https://api-m.paypal.com"
+    ).strip().rstrip("/")
+    if normalized not in _PAYPAL_API_BASES:
+        raise RuntimeError("paypal_api_base_invalid")
+    return normalized
+
+
+def paypal_api_environment() -> str:
+    try:
+        return _PAYPAL_API_BASES[_paypal_api_base()]
+    except (KeyError, RuntimeError):
+        return ""
 
 
 def _paypal_auth_header() -> str:

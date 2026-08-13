@@ -12,6 +12,8 @@ from app.product import service as product_service
 from app.product import property_research_packet_links as packet_index
 from app.product import property_search_work_queue as queue_module
 from app.product.property_search_work_queue import (
+    PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+    InMemoryPropertySearchWorkQueue,
     PostgresPropertySearchWorkQueue,
     PropertySearchWorkEnqueueResult,
     PropertySearchWorkJob,
@@ -451,6 +453,324 @@ def test_durable_job_execution_is_synchronous_and_retries_only_failed_runs(
     assert captured["force_refresh"] is False
 
 
+def test_durable_worker_executes_opportunity_cover_with_worker_tool_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(ProductService)
+    tool_execution = object()
+    service._container = SimpleNamespace(tool_execution=tool_execution)
+    opportunity = {
+        "status": "ready",
+        "opportunity_id": "property_opportunity:abc",
+        "fit_score": 72,
+        "recommendation": "shortlist",
+    }
+    job = _job(
+        run_id="run-cover",
+        principal_id="principal-cover",
+        attempt_count=1,
+        status="leased",
+        payload_json={
+            "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+            "candidate_ref": "property-scout:123",
+            "opportunity_id": "property_opportunity:abc",
+        },
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda **_kwargs: {
+            "run_id": job.run_id,
+            "principal_id": job.principal_id,
+            "summary": {
+                "sources": [
+                    {
+                        "top_candidates": [
+                            {
+                                "candidate_ref": "property-scout:123",
+                                "opportunity": opportunity,
+                            }
+                        ]
+                    }
+                ]
+            },
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def _execute(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return {"status": "ready", "receipt": {"status": "verified"}}
+
+    monkeypatch.setattr(
+        product_service,
+        "execute_property_opportunity_concept_cover",
+        _execute,
+    )
+
+    result = service.execute_property_search_work_job(job)
+
+    assert result["status"] == "ready"
+    assert captured["tool_execution"] is tool_execution
+    assert captured["principal_id"] == "principal-cover"
+    assert captured["job_id"] == "job-1"
+    assert dict(captured["opportunity"])["opportunity_id"] == "property_opportunity:abc"
+    assert dict(captured["opportunity"])["fit_score"] == 72.0
+
+
+def test_opportunity_cover_enqueue_and_status_are_scoped_to_request_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(ProductService)
+    repository = InMemoryPropertySearchWorkQueue()
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_work_queue_repository",
+        lambda: repository,
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_load_property_search_run_record",
+        lambda **_kwargs: {
+            "run_id": "run-cover",
+            "principal_id": "principal-cover",
+            "summary": {
+                "sources": [
+                    {
+                        "top_candidates": [
+                            {
+                                "candidate_ref": "property-scout:123",
+                                "opportunity": {
+                                    "status": "ready",
+                                    "opportunity_id": "property_opportunity:abc",
+                                    "fit_score": 72,
+                                    "recommendation": "shortlist",
+                                },
+                            }
+                        ]
+                    }
+                ]
+            },
+        },
+    )
+
+    first = service.enqueue_property_opportunity_concept_cover(
+        principal_id="principal-cover",
+        run_id="run-cover",
+        candidate_ref="property-scout:123",
+        opportunity_id="property_opportunity:abc",
+        actor="browser",
+    )
+    duplicate = service.enqueue_property_opportunity_concept_cover(
+        principal_id="principal-cover",
+        run_id="run-cover",
+        candidate_ref="property-scout:123",
+        opportunity_id="property_opportunity:abc",
+        actor="browser",
+    )
+
+    assert first["created"] is True
+    assert first["status"] == "queued"
+    assert duplicate["created"] is False
+    assert duplicate["generation_id"] == first["generation_id"]
+    assert service.get_property_opportunity_concept_cover(
+        principal_id="principal-cover",
+        generation_id=str(first["generation_id"]),
+    )["status"] == "queued"  # type: ignore[index]
+    assert service.get_property_opportunity_concept_cover(
+        principal_id="principal-other",
+        generation_id=str(first["generation_id"]),
+    ) is None
+
+
+def test_opportunity_cover_asset_is_authorized_before_private_file_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = object.__new__(ProductService)
+    job = _job(
+        run_id="run-cover",
+        principal_id="principal-cover",
+        status="completed",
+        payload_json={
+            "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+            "opportunity_id": "property_opportunity:abc",
+            "result_json": {"status": "ready"},
+        },
+    )
+
+    class _Repository:
+        def get(self, _job_id):  # type: ignore[no-untyped-def]
+            return job
+
+        def replace_completed_result(self, **kwargs):  # type: ignore[no-untyped-def]
+            persisted.append(dict(kwargs))
+            return job
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_work_queue_repository",
+        lambda: _Repository(),
+    )
+    resolved: list[dict[str, object]] = []
+    persisted: list[dict[str, object]] = []
+
+    def _descriptor(value, **kwargs):  # type: ignore[no-untyped-def]
+        resolved.append({"value": value, **kwargs})
+        return {
+            "path": "/data/artifacts/private.image",
+            "media_type": "image/png",
+            "sha256": "a" * 64,
+            "byte_length": 128,
+            "width": 8,
+            "height": 8,
+        }
+
+    monkeypatch.setattr(
+        product_service,
+        "property_opportunity_concept_cover_asset_descriptor",
+        _descriptor,
+    )
+    monkeypatch.setattr(
+        product_service,
+        "property_opportunity_concept_cover_public_projection",
+        lambda *_args, **_kwargs: {"receipt": {"asset_materialized": False}},
+    )
+    migrated = {
+        "status": "ready",
+        "artifact": {
+            "asset_url": "/app/api/property/opportunities/generations/job-1/asset"
+        },
+        "receipt": {"asset_materialized": True},
+    }
+    monkeypatch.setattr(
+        product_service,
+        "property_opportunity_concept_cover_materialized_result",
+        lambda *_args, **_kwargs: migrated,
+    )
+
+    assert service.get_property_opportunity_concept_cover_asset(
+        principal_id="principal-other",
+        generation_id="job-1",
+    ) is None
+    assert resolved == []
+    descriptor = service.get_property_opportunity_concept_cover_asset(
+        principal_id="principal-cover",
+        generation_id="job-1",
+    )
+    assert descriptor is not None
+    assert descriptor["media_type"] == "image/png"
+    assert resolved[0]["generation_id"] == "job-1"
+    assert resolved[0]["opportunity_id"] == "property_opportunity:abc"
+    assert persisted == [
+        {
+            "job_id": "job-1",
+            "principal_id": "principal-cover",
+            "expected_result_json": {"status": "ready"},
+            "result_json": migrated,
+        }
+    ]
+
+
+def test_postgres_completed_result_replacement_is_authorized_and_compare_and_swap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime(2026, 8, 12, 18, 0, tzinfo=timezone.utc)
+    replacement = {"status": "ready", "receipt": {"asset_materialized": True}}
+    expected = {
+        "status": "ready",
+        "artifact": {"asset_url": "https://provider.example.test/legacy.png"},
+    }
+    row = (
+        "job-db-1",
+        "principal-cover",
+        "run-cover",
+        "cover-key",
+        {
+            "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+            "opportunity_id": "property_opportunity:abc",
+            "result_json": replacement,
+        },
+        "completed",
+        1,
+        2,
+        now,
+        None,
+        None,
+        now,
+        "",
+        now,
+        now,
+        now,
+    )
+    executed: list[tuple[str, tuple[object, ...]]] = []
+
+    class _Cursor:
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return None
+
+        def execute(self, sql, params=None):  # type: ignore[no-untyped-def]
+            executed.append((" ".join(sql.split()), tuple(params or ())))
+
+        def fetchone(self):  # type: ignore[no-untyped-def]
+            return row
+
+    class _Connection:
+        committed = False
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return None
+
+        def cursor(self):  # type: ignore[no-untyped-def]
+            return _Cursor()
+
+        def commit(self):  # type: ignore[no-untyped-def]
+            self.committed = True
+
+    connection = _Connection()
+    repository = object.__new__(PostgresPropertySearchWorkQueue)
+    repository._connect = lambda: connection  # type: ignore[method-assign]
+    monkeypatch.setattr(repository, "_set_writer_contract", lambda _cur: None)
+    monkeypatch.setattr(
+        repository,
+        "_nonlocking_job_identity",
+        lambda _cur, **_kwargs: ("principal-cover", "run-cover"),
+    )
+    authority: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        repository,
+        "_acquire_principal_write_authority",
+        lambda _cur, **kwargs: authority.append(dict(kwargs)),
+    )
+
+    updated = repository.replace_completed_result(
+        job_id="job-db-1",
+        principal_id="principal-cover",
+        expected_result_json=expected,
+        result_json=replacement,
+    )
+
+    assert updated is not None
+    assert updated.payload_json["result_json"] == replacement
+    assert connection.committed is True
+    assert authority == [
+        {"principal_id": "principal-cover", "run_id": "run-cover"}
+    ]
+    update_sql, update_params = executed[-1]
+    assert "status = 'completed'" in update_sql
+    assert "payload_json->'result_json' = %s::jsonb" in update_sql
+    assert update_params[1:4] == (
+        "job-db-1",
+        "principal-cover",
+        "run-cover",
+    )
+
+
 def test_prod_stale_recovery_requeues_instead_of_starting_a_daemon(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -585,6 +905,83 @@ def test_worker_role_processes_property_job_on_main_execution_path(
     assert [name for name, _value in calls] == ["claim", "complete"]
     assert heartbeat_statuses == [("worker", "loop"), ("worker", "loop")]
     runner._record_property_search_queue_metrics(None)
+
+
+def test_worker_persists_verified_opportunity_cover_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import runner
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused-in-unit-test")
+    job = _job(
+        run_id="run-cover-worker",
+        principal_id="principal-cover-worker",
+        attempt_count=1,
+        status="leased",
+        payload_json={
+            "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+            "candidate_ref": "property-scout:123",
+            "opportunity_id": "property_opportunity:abc",
+        },
+    )
+    verified_result = {
+        "status": "ready",
+        "receipt": {
+            "status": "verified",
+            "principal_bound": True,
+            "proof_scope": "provider_call",
+        },
+    }
+    persisted: list[dict[str, object]] = []
+
+    class _Repository:
+        def __init__(self, _database_url: str) -> None:
+            pass
+
+        def claim(self, **_kwargs):  # type: ignore[no-untyped-def]
+            return job
+
+        def heartbeat(self, **_kwargs) -> bool:  # type: ignore[no-untyped-def]
+            return True
+
+        def observability_snapshot(self) -> PropertySearchWorkQueueSnapshot:
+            return PropertySearchWorkQueueSnapshot(
+                depth=1,
+                oldest_item_age_seconds=0.0,
+            )
+
+        def complete(self, *, job_id, lease_owner, result_json):  # type: ignore[no-untyped-def]
+            assert job_id == job.job_id
+            assert lease_owner
+            persisted.append(dict(result_json))
+            return _job(
+                run_id=job.run_id,
+                principal_id=job.principal_id,
+                attempt_count=1,
+                status="completed",
+                payload_json={**job.payload_json, "result_json": result_json},
+            )
+
+        def fail(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("verified generation must not fail the job")
+
+    class _Service:
+        def execute_property_search_work_job(self, claimed_job):  # type: ignore[no-untyped-def]
+            assert claimed_job is job
+            return verified_result
+
+    monkeypatch.setattr(queue_module, "PostgresPropertySearchWorkQueue", _Repository)
+    monkeypatch.setattr(product_service, "build_product_service", lambda _container: _Service())
+    monkeypatch.setattr(runner, "_write_scheduler_heartbeat", lambda **_kwargs: None)
+
+    result = runner._run_property_search_work_once(
+        SimpleNamespace(),
+        role="worker",
+        log=logging.getLogger("test.property-cover-worker"),
+    )
+
+    assert result["completed"] is True
+    assert persisted == [verified_result]
 
 
 def test_worker_pool_starts_configured_persistent_search_slots(

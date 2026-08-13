@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import os
+import threading
 from uuid import uuid4
 
 import pytest
 
 from app.product.property_search_work_queue import (
+    PROPERTY_FACT_ENRICHMENT_WORK_KIND,
     PostgresPropertySearchWorkQueue,
+    property_fact_enrichment_work_idempotency_key,
     property_search_work_idempotency_key,
 )
+from app.product.property_search_storage import _property_search_principal_key
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -149,6 +153,62 @@ def test_postgres_enqueue_rolls_back_run_when_job_payload_cannot_be_persisted() 
         _cleanup(database_url, principal_ids=(principal_id,))
 
 
+def test_postgres_fact_attempt_shares_parent_run_without_duplicate_search_job() -> None:
+    database_url = _db_url()
+    repository = PostgresPropertySearchWorkQueue(database_url)
+    suffix = uuid4().hex
+    principal_id = f"queue-fact-{suffix}"
+    run_id = f"run-{suffix}"
+    candidate_ref = f"candidate-{suffix}"
+    fact_job_id = f"pfe_{suffix}"
+    try:
+        repository.enqueue_run(
+            run_record=_record(principal_id=principal_id, run_id=run_id),
+            payload_json={"actor": "contract"},
+            idempotency_key=f"search-{suffix}",
+        )
+        key = property_fact_enrichment_work_idempotency_key(
+            principal_id=principal_id,
+            run_id=run_id,
+            candidate_ref=candidate_ref,
+            fact_job_id=fact_job_id,
+            attempt=1,
+        )
+        payload = {
+            "work_kind": PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+            "candidate_ref": candidate_ref,
+            "fact_job_id": fact_job_id,
+        }
+        first = repository.enqueue_fact_enrichment(
+            principal_id=principal_id,
+            run_id=run_id,
+            payload_json=payload,
+            idempotency_key=key,
+        )
+        duplicate = repository.enqueue_fact_enrichment(
+            principal_id=principal_id,
+            run_id=run_id,
+            payload_json=payload,
+            idempotency_key=key,
+        )
+
+        assert first.created is True
+        assert duplicate.created is False
+        assert duplicate.job.job_id == first.job.job_id
+
+        import psycopg
+
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM property_search_work_jobs WHERE principal_id = %s AND run_id = %s",
+                    (principal_id, run_id),
+                )
+                assert cur.fetchone()[0] == 2
+    finally:
+        _cleanup(database_url, principal_ids=(principal_id,))
+
+
 def test_postgres_claim_skips_locked_row_and_preserves_unique_lease() -> None:
     database_url = _db_url()
     repository = PostgresPropertySearchWorkQueue(database_url)
@@ -216,6 +276,119 @@ def test_postgres_retry_budget_requeues_then_fails_terminally() -> None:
         assert terminal.status == "failed"
         assert terminal.completed_at is not None
         assert repository.claim(lease_owner="worker-c", lease_seconds=60) is None
+    finally:
+        _cleanup(database_url, principal_ids=(principal_id,))
+
+
+def test_postgres_heartbeat_does_not_wait_for_principal_advisory_lock() -> None:
+    database_url = _db_url()
+    repository = PostgresPropertySearchWorkQueue(database_url)
+    suffix = uuid4().hex
+    principal_id = f"queue-heartbeat-lock-{suffix}"
+    run_id = f"run-{suffix}"
+    try:
+        repository.enqueue_run(
+            run_record=_record(principal_id=principal_id, run_id=run_id),
+            payload_json={},
+            idempotency_key=f"key-{suffix}",
+        )
+        claimed = repository.claim(lease_owner="worker-heartbeat", lease_seconds=60)
+        assert claimed is not None
+
+        import psycopg
+
+        principal_key = _property_search_principal_key(principal_id)
+        with psycopg.connect(database_url, autocommit=False) as lock_conn:
+            with lock_conn.cursor() as lock_cur:
+                lock_cur.execute(
+                    """
+                    SELECT pg_advisory_xact_lock(
+                        hashtextextended('property_search_erasure:' || %s, 0)
+                    )
+                    """,
+                    (principal_key,),
+                )
+                result: list[bool] = []
+                finished = threading.Event()
+
+                def _heartbeat() -> None:
+                    result.append(
+                        repository.heartbeat(
+                            job_id=claimed.job_id,
+                            lease_owner="worker-heartbeat",
+                            lease_seconds=60,
+                        )
+                    )
+                    finished.set()
+
+                thread = threading.Thread(target=_heartbeat, daemon=False)
+                thread.start()
+                assert finished.wait(timeout=2.0)
+                thread.join(timeout=1.0)
+                assert result == [True]
+    finally:
+        _cleanup(database_url, principal_ids=(principal_id,))
+
+
+def test_postgres_concurrent_delete_wins_without_heartbeat_resurrection() -> None:
+    database_url = _db_url()
+    repository = PostgresPropertySearchWorkQueue(database_url)
+    suffix = uuid4().hex
+    principal_id = f"queue-heartbeat-delete-{suffix}"
+    run_id = f"run-{suffix}"
+    try:
+        repository.enqueue_run(
+            run_record=_record(principal_id=principal_id, run_id=run_id),
+            payload_json={},
+            idempotency_key=f"key-{suffix}",
+        )
+        claimed = repository.claim(lease_owner="worker-delete", lease_seconds=60)
+        assert claimed is not None
+
+        import psycopg
+
+        with psycopg.connect(database_url, autocommit=False) as delete_conn:
+            with delete_conn.cursor() as delete_cur:
+                from app.product.property_search_storage import (
+                    _set_property_search_writer_contract,
+                )
+
+                _set_property_search_writer_contract(delete_cur)
+                delete_cur.execute(
+                    "DELETE FROM property_search_work_jobs WHERE job_id = %s",
+                    (claimed.job_id,),
+                )
+                result: list[bool] = []
+                started = threading.Event()
+                finished = threading.Event()
+
+                def _heartbeat() -> None:
+                    started.set()
+                    result.append(
+                        repository.heartbeat(
+                            job_id=claimed.job_id,
+                            lease_owner="worker-delete",
+                            lease_seconds=60,
+                        )
+                    )
+                    finished.set()
+
+                thread = threading.Thread(target=_heartbeat, daemon=False)
+                thread.start()
+                assert started.wait(timeout=1.0)
+                assert not finished.wait(timeout=0.2)
+                delete_conn.commit()
+                assert finished.wait(timeout=2.0)
+                thread.join(timeout=1.0)
+                assert result == [False]
+
+        with psycopg.connect(database_url) as verify_conn:
+            with verify_conn.cursor() as verify_cur:
+                verify_cur.execute(
+                    "SELECT COUNT(*) FROM property_search_work_jobs WHERE job_id = %s",
+                    (claimed.job_id,),
+                )
+                assert verify_cur.fetchone()[0] == 0
     finally:
         _cleanup(database_url, principal_ids=(principal_id,))
 

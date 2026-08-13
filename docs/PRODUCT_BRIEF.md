@@ -40,8 +40,9 @@ PropertyQuarry aggregates listings, ranks them against personal preferences, and
 
 1. Discovery
    - search major portals
-   - support multiple countries and research languages
-   - switch provider sets by market
+   - launch the customer product in Austria closed testing
+   - keep other countries as a future operator catalog until each market has live provider proof
+   - switch provider sets by market only after that market is admitted
    - keep budget posture market-aware instead of assuming one currency everywhere
    - save profile preferences
    - re-run searches over time
@@ -75,7 +76,7 @@ Freemium entry with paid research depth.
 
 ## Current flagship scope
 
-- Austria, Germany, Switzerland, United Kingdom, Spain, Italy, France, Netherlands, and United States market selection
-- per-country provider catalog in the account
-- language-aware property brief defaults
-- provider-specific source generation as the crawl entry layer
+- Austria-only customer market selection for the closed test
+- Austrian provider selection, German/English shell support, and EUR/Vienna defaults
+- provider-specific source generation as the live crawl entry layer
+- Germany, Costa Rica, and the wider country/provider table remain future catalog and operator research only; they are not current customer markets

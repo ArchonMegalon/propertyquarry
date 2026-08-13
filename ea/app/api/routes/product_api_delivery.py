@@ -25,6 +25,8 @@ from app.api.routes.product_api_contracts import (
     GooglePhotosSignalSyncOut,
     GoogleSignalSyncOut,
     GoogleSignalSyncStatusOut,
+    MobilePropertyLinkImportIn,
+    MobilePropertyLinkImportOut,
     NoneverbiaSignalImportIn,
     NoneverbiaSignalImportOut,
     OneDriveDocumentQueryTelegramDeliveryOut,
@@ -66,6 +68,9 @@ from app.api.routes.product_api_contracts import (
     now_iso,
 )
 from app.api.routes.landing_property_research import _property_candidate_ref
+from app.api.routes.landing_property_workspace_payload import (
+    _property_workbench_client_image_url,
+)
 from app.api.routes.landing_view_models import _property_customer_candidate_summary
 from app.container import AppContainer
 from app.observability import runtime_trace_context_from_mapping
@@ -76,6 +81,9 @@ from app.product.property_surface_state import (
     property_run_public_eta_label,
 )
 from app.product.property_search_storage import _property_search_compact_candidate_preview_url
+from app.product.property_onemin_evaluation import (
+    property_onemin_customer_assessment,
+)
 from app.product.service import (
     _hosted_property_tour_telegram_preview_image_url_for_style,
     _property_visual_ready_tour_url,
@@ -657,6 +665,54 @@ def _property_search_lightweight_candidate_payload(
         preview_image_url = _property_search_lightweight_image_url(_property_search_compact_candidate_preview_url(raw))
     if preview_image_url:
         compact["preview_image_url"] = preview_image_url
+    preview_fallback_values: list[object] = []
+    raw_fallbacks = raw.get("preview_image_fallback_urls")
+    if isinstance(raw_fallbacks, (list, tuple)):
+        preview_fallback_values.extend(raw_fallbacks[:8])
+    preview_fallback_values.extend(
+        (
+            raw.get("preview_image_fallback_url"),
+            raw.get("thumbnail_url"),
+            raw.get("image_url"),
+            raw.get("hero_image_url"),
+        )
+    )
+    raw_facts = (
+        dict(raw.get("property_facts") or {})
+        if isinstance(raw.get("property_facts"), dict)
+        else {}
+    )
+    for key in ("media_urls_json", "photo_urls_json", "image_urls_json"):
+        values = raw_facts.get(key) or raw.get(key)
+        if isinstance(values, (list, tuple)):
+            preview_fallback_values.extend(values[:8])
+    preview_fallback_urls: list[str] = []
+    for value in preview_fallback_values:
+        fallback_url = _property_workbench_client_image_url(value)
+        if (
+            fallback_url
+            and fallback_url != preview_image_url
+            and fallback_url not in preview_fallback_urls
+        ):
+            preview_fallback_urls.append(fallback_url)
+    if preview_fallback_urls:
+        ordered_preview_fallbacks = [
+            fallback_url
+            for fallback_url in preview_fallback_urls
+            if fallback_url.startswith("/") and not fallback_url.startswith("//")
+        ]
+        ordered_preview_fallbacks.extend(
+            fallback_url
+            for fallback_url in preview_fallback_urls
+            if fallback_url not in ordered_preview_fallbacks
+        )
+        ordered_preview_fallbacks = ordered_preview_fallbacks[:4]
+        if not preview_image_url:
+            preview_image_url = ordered_preview_fallbacks.pop(0)
+            compact["preview_image_url"] = preview_image_url
+        if ordered_preview_fallbacks:
+            compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
+            compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
     orientation_preview = _property_search_lightweight_image_payload(raw.get("orientation_preview"))
     if orientation_preview:
         compact["orientation_preview"] = orientation_preview
@@ -683,6 +739,11 @@ def _property_search_lightweight_candidate_payload(
     match_reasons = [str(item).strip() for item in list(raw.get("match_reasons") or []) if str(item).strip()]
     if match_reasons:
         compact["match_reasons"] = match_reasons[:3]
+    ai_assessment = property_onemin_customer_assessment(
+        raw.get("onemin_evaluation")
+    )
+    if ai_assessment:
+        compact["ai_assessment"] = ai_assessment
     return compact
 
 
@@ -1623,6 +1684,49 @@ def sync_direct_property_scout(
     return PropertyScoutSyncOut(**payload)
 
 
+@router.post(
+    "/mobile/property-links",
+    response_model=MobilePropertyLinkImportOut,
+    status_code=201,
+)
+def import_mobile_property_link(
+    body: MobilePropertyLinkImportIn,
+    container: AppContainer = Depends(get_container),
+    context: RequestContext = Depends(get_request_context),
+) -> MobilePropertyLinkImportOut:
+    if (
+        context.authenticated is not True
+        or not str(context.principal_id or "").strip()
+        or str(context.auth_source or "").strip().lower()
+        in {"", "anonymous", "loopback_no_auth", "propertyquarry_release_probe"}
+    ):
+        raise HTTPException(status_code=401, detail="authentication_required")
+    service = build_product_service(container)
+    actor = str(
+        context.operator_id
+        or context.access_email
+        or context.principal_id
+        or "android_share_import"
+    ).strip()
+    try:
+        payload = service.import_mobile_property_link(
+            principal_id=context.principal_id,
+            property_url=body.property_url,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    status = str(payload.get("status") or "").strip().lower()
+    if status == "invalid":
+        raise HTTPException(status_code=400, detail=str(payload.get("reason") or "property_url_invalid"))
+    if status == "blocked":
+        raise HTTPException(status_code=422, detail=str(payload.get("reason") or "property_preview_unavailable"))
+    if status != "saved":
+        raise HTTPException(status_code=409, detail=str(payload.get("reason") or "property_import_failed"))
+    return MobilePropertyLinkImportOut(**payload)
+
+
 @router.post("/signals/property/search/run", response_model=PropertySearchRunStartOut, status_code=202)
 def start_property_search_run(
     body: PropertySearchRunStartIn,
@@ -1785,6 +1889,14 @@ def _create_property_billing_order_payfunnels(
     )
 
 
+def _property_billing_checkout_provider(*, plan_key: str) -> str:
+    if payfunnels_configured(plan_key=plan_key):
+        return "payfunnels"
+    if paypal_configured():
+        return "paypal"
+    return ""
+
+
 @router.post("/signals/property/billing/checkout/order", response_model=PropertyBillingCheckoutOut)
 def create_property_billing_checkout_order(
     body: PropertyBillingCheckoutCreateIn,
@@ -1792,7 +1904,22 @@ def create_property_billing_checkout_order(
     container: AppContainer = Depends(get_container),
     context: RequestContext = Depends(get_request_context),
 ) -> PropertyBillingCheckoutOut:
-    return _create_property_billing_order_payfunnels(body=body, request=request, container=container, context=context)
+    provider = _property_billing_checkout_provider(plan_key=body.plan_key)
+    if provider == "payfunnels":
+        return _create_property_billing_order_payfunnels(
+            body=body,
+            request=request,
+            container=container,
+            context=context,
+        )
+    if provider == "paypal":
+        return create_property_billing_order(
+            body=body,
+            request=request,
+            container=container,
+            context=context,
+        )
+    raise HTTPException(status_code=409, detail="property_billing_not_configured")
 
 
 @router.post("/signals/property/billing/payfunnels/order", response_model=PropertyBillingCheckoutOut, include_in_schema=False)
@@ -1817,6 +1944,8 @@ def capture_property_billing_order(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if spec.plan_key == "free":
         raise HTTPException(status_code=400, detail="property_plan_free_does_not_require_checkout")
+    if not paypal_configured():
+        raise HTTPException(status_code=409, detail="paypal_not_configured")
     try:
         captured = capture_paypal_property_order(order_id=body.order_id)
     except RuntimeError as exc:

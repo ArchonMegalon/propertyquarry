@@ -60,6 +60,10 @@ from app.product.property_surface_state import (
     property_run_public_eta_label,
 )
 from app.product.property_score_methodology import build_property_score_methodology
+from app.product.property_opportunities import property_opportunity_public_projection
+from app.product.property_onemin_evaluation import (
+    property_onemin_customer_assessment,
+)
 from app.product.property_delivery_governance import property_delivery_governance_rows
 from app.product import property_tour_hosting
 from app.product.service import (
@@ -94,6 +98,10 @@ _PROPERTY_WORKBENCH_CLIENT_IMAGE_EXTENSIONS = (
     ".tiff",
     ".webp",
 )
+_PROPERTY_WORKBENCH_CLIENT_DYNAMIC_IMAGE_PATH_PREFIXES = (
+    "/app/api/property/map-preview/",
+    "/app/api/property/map-previews/",
+)
 _PROPERTY_WORKBENCH_CLIENT_VIDEO_EXTENSIONS = (".m4v", ".mov", ".mp4", ".ogv", ".webm")
 _PROPERTY_WORKBENCH_CLIENT_TRACKING_MARKERS = (
     "/analytics/",
@@ -107,6 +115,10 @@ _PROPERTY_WORKBENCH_CLIENT_TRACKING_MARKERS = (
     "preview-click",
     "virtual-tour-click",
     "virtual_tour_click",
+)
+_PROPERTY_WORKBENCH_CLIENT_NON_LISTING_IMAGE_MARKERS = (
+    "/img/upselling/",
+    "/plus-insider-locked.",
 )
 _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES = {
     "available",
@@ -256,15 +268,57 @@ def _property_workbench_client_asset_url(value: object, *, kind: str) -> str:
     if not url or _property_workbench_client_url_is_tracking(url):
         return ""
     try:
-        path = urllib.parse.unquote(urllib.parse.urlsplit(url).path or "").strip().lower()
+        parsed = urllib.parse.urlsplit(url)
+        path = urllib.parse.unquote(parsed.path or "").strip().lower()
+        path_and_query = urllib.parse.unquote(
+            f"{parsed.path or ''}?{parsed.query or ''}"
+        ).strip().lower()
     except ValueError:
+        return ""
+    normalized_kind = str(kind or "").strip().lower()
+    if normalized_kind == "image" and any(
+        marker in path_and_query
+        for marker in _PROPERTY_WORKBENCH_CLIENT_NON_LISTING_IMAGE_MARKERS
+    ):
+        # Provider chrome is not listing evidence. Present the next real media
+        # candidate (or the honest unavailable state) instead of rendering an
+        # upsell/locked-content badge as though it were a property photo.
         return ""
     extensions = (
         _PROPERTY_WORKBENCH_CLIENT_VIDEO_EXTENSIONS
-        if str(kind or "").strip().lower() == "video"
+        if normalized_kind == "video"
         else _PROPERTY_WORKBENCH_CLIENT_IMAGE_EXTENSIONS
     )
-    return url if path.endswith(extensions) else ""
+    if path.endswith(extensions):
+        return url
+    if normalized_kind == "image" and (
+        any(
+            segment.endswith(extensions)
+            for segment in path.split("/")
+            if segment
+        )
+        or any(
+            marker in path_and_query
+            for extension in extensions
+            for marker in (
+                f"format:{extension.lstrip('.')}",
+                f"format={extension.lstrip('.')}",
+            )
+        )
+    ):
+        # Image CDNs commonly place the source filename before signed resize or
+        # format path segments. The listing extractor already recognizes this
+        # shape; retaining it here prevents valid thumbnails from disappearing
+        # between extraction and the customer payload.
+        return url
+    if (
+        normalized_kind == "image"
+        and url.startswith("/")
+        and not url.startswith("//")
+        and path.startswith(_PROPERTY_WORKBENCH_CLIENT_DYNAMIC_IMAGE_PATH_PREFIXES)
+    ):
+        return url
+    return ""
 
 
 def _property_workbench_client_image_url(value: object) -> str:
@@ -293,6 +347,66 @@ def _property_workbench_client_image_payload(value: object) -> dict[str, object]
     return compact
 
 
+def _property_workbench_client_preview_urls(
+    candidate: dict[str, object],
+    *,
+    orientation_preview: dict[str, object] | None = None,
+    diorama_preview_url: object = "",
+) -> tuple[str, list[str]]:
+    raw = dict(candidate or {})
+    raw_facts = (
+        dict(raw.get("property_facts") or {})
+        if isinstance(raw.get("property_facts"), dict)
+        else {}
+    )
+    safe_orientation = dict(orientation_preview or {})
+    primary_url = _property_workbench_client_image_url(
+        raw.get("preview_image_url") or _property_candidate_preview_image(raw)
+    )
+    fallback_candidates: list[str] = []
+
+    def _append(value: object) -> None:
+        safe_url = _property_workbench_client_image_url(value)
+        if (
+            safe_url
+            and safe_url != primary_url
+            and safe_url not in fallback_candidates
+        ):
+            fallback_candidates.append(safe_url)
+
+    for value in (
+        safe_orientation.get("thumb_image_url"),
+        safe_orientation.get("image_url"),
+        diorama_preview_url,
+        raw.get("preview_image_url"),
+        raw.get("thumbnail_url"),
+        raw.get("image_url"),
+        raw.get("hero_image_url"),
+    ):
+        _append(value)
+    for key in ("media_urls_json", "photo_urls_json", "image_urls_json"):
+        raw_values = raw_facts.get(key)
+        if raw_values in (None, "", [], {}):
+            raw_values = raw.get(key)
+        if not isinstance(raw_values, (list, tuple)):
+            continue
+        for value in raw_values[:12]:
+            _append(value)
+
+    ordered_fallbacks = [
+        url
+        for url in fallback_candidates
+        if url.startswith("/") and not url.startswith("//")
+    ]
+    ordered_fallbacks.extend(
+        url for url in fallback_candidates if url not in ordered_fallbacks
+    )
+    ordered_fallbacks = ordered_fallbacks[:4]
+    if not primary_url and ordered_fallbacks:
+        primary_url = ordered_fallbacks.pop(0)
+    return primary_url, ordered_fallbacks
+
+
 def _property_workbench_client_provider_viewer_url(value: object) -> str:
     url = _property_workbench_client_safe_web_or_local_url(value)
     if not url or _property_workbench_client_url_is_tracking(url):
@@ -313,7 +427,11 @@ def _property_workbench_client_provider_viewer_url(value: object) -> str:
     return url if recognized == url else ""
 
 
-def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -> str:
+def _property_workbench_candidate_ready_tour_url(
+    candidate: dict[str, object],
+    *,
+    principal_id: str = "",
+) -> str:
     raw = dict(candidate or {})
     raw_tour_payload = dict(raw.get("tour") or {}) if isinstance(raw.get("tour"), dict) else {}
     recognized_source_url = _property_candidate_source_virtual_tour_url(raw)
@@ -348,27 +466,39 @@ def _property_workbench_candidate_ready_tour_url(candidate: dict[str, object]) -
             normalized_candidate_url
         ):
             continue
-        # A recognized public provider viewer is a valid original-tour target.
-        # It is distinct from a first-party hosted-tour proof, but may be
-        # projected as the verified customer-safe source URL.
-        safe_provider_candidate = _property_workbench_client_provider_viewer_url(
+        safe_ready_tour_url = _property_workbench_client_safe_web_or_local_url(
             normalized_candidate_url
         )
-        if safe_provider_candidate:
-            return safe_provider_candidate
-        ready_tour_url = _property_visual_ready_tour_url(
-            tour_url=normalized_candidate_url,
-            open_tour_url=normalized_candidate_url,
-        )
-        safe_ready_tour_url = _property_workbench_client_safe_web_or_local_url(ready_tour_url)
         if not safe_ready_tour_url or _property_workbench_client_url_is_tracking(safe_ready_tour_url):
             continue
+        # A raw provider URL is source evidence, never the public action. Only
+        # a first-party hosted bundle with a verified 3DVista or Matterport
+        # control may become the optional 3D-tour target.
+        if property_tour_hosting._hosted_property_tour_reference_parts(safe_ready_tour_url) is None:
+            continue
+        provider = str(
+            property_tour_hosting._hosted_property_tour_verified_provider(
+                safe_ready_tour_url,
+                principal_id=principal_id,
+            )
+            or ""
+        ).strip().lower()
+        if provider not in {"3dvista", "matterport"}:
+            continue
         verified_hosted_url = str(
-            property_tour_hosting._hosted_property_tour_verified_open_url(safe_ready_tour_url)
+            property_tour_hosting._hosted_property_tour_verified_open_url(
+                safe_ready_tour_url,
+                principal_id=principal_id,
+            )
             or ""
         ).strip()
         safe_hosted_url = _property_workbench_client_safe_web_or_local_url(verified_hosted_url)
-        if safe_hosted_url and not _property_workbench_client_url_is_tracking(safe_hosted_url):
+        if (
+            safe_hosted_url
+            and not _property_workbench_client_url_is_tracking(safe_hosted_url)
+            and property_tour_hosting._hosted_property_tour_reference_parts(safe_hosted_url)
+            is not None
+        ):
             return safe_hosted_url
     return ""
 
@@ -416,6 +546,7 @@ def _property_workbench_candidate_flythrough_url(
     candidate: dict[str, object],
     *,
     ready_tour_url: str,
+    principal_id: str = "",
 ) -> str:
     raw = dict(candidate or {})
     raw_flythrough = dict(raw.get("flythrough") or {}) if isinstance(raw.get("flythrough"), dict) else {}
@@ -425,18 +556,39 @@ def _property_workbench_candidate_flythrough_url(
         or raw_flythrough.get("embed_url")
         or raw_flythrough.get("provider_url")
     )
-    # Never turn a loose video URL into customer-ready walkthrough copy. The
-    # hosted bundle verifier below is the only authority for that claim.
-    if not ready_tour_url:
-        return ""
-    resolved_url = property_tour_hosting._hosted_property_tour_walkthrough_open_url(
+    raw_tour = dict(raw.get("tour") or {}) if isinstance(raw.get("tour"), dict) else {}
+    hosted_sources = (
         ready_tour_url,
         raw_url,
+        raw.get("tour_url"),
+        raw.get("open_tour_url"),
+        raw.get("verified_tour_url"),
+        raw.get("generated_reconstruction_url"),
+        raw.get("layout_preview_url"),
+        raw_tour.get("url"),
+        raw_tour.get("tour_url"),
+        raw_tour.get("open_tour_url"),
+        raw_tour.get("generated_reconstruction_url"),
+        raw_tour.get("layout_preview_url"),
     )
-    resolved_url = _property_workbench_client_safe_web_or_local_url(resolved_url)
-    if not resolved_url or _property_workbench_client_url_is_tracking(resolved_url):
-        return ""
-    return resolved_url
+    seen: set[str] = set()
+    for hosted_source in hosted_sources:
+        normalized_source = str(hosted_source or "").strip()
+        if not normalized_source or normalized_source in seen:
+            continue
+        seen.add(normalized_source)
+        # Never turn a loose video URL into customer-ready walkthrough copy.
+        # The exact hosted bundle remains the only publication authority, but
+        # it no longer depends on an optional spatial-provider tour being ready.
+        resolved_url = property_tour_hosting._hosted_property_tour_walkthrough_open_url(
+            normalized_source,
+            raw_url,
+            principal_id=principal_id,
+        )
+        resolved_url = _property_workbench_client_safe_web_or_local_url(resolved_url)
+        if resolved_url and not _property_workbench_client_url_is_tracking(resolved_url):
+            return resolved_url
+    return ""
 
 
 def _property_workbench_candidate_diorama_preview_url(candidate: dict[str, object]) -> str:
@@ -698,6 +850,8 @@ def _property_workbench_client_tour_payload(
     if reason_key:
         compact["reason_key"] = reason_key
     normalized_kind = "flythrough" if str(request_kind or "").strip().lower() == "flythrough" else "tour"
+    if normalized_kind == "flythrough":
+        compact["media_kind"] = "camera_walkthrough"
     status = str(raw.get("status") or "").strip().lower()
     generated_reconstruction_ready = bool(
         normalized_kind == "tour"
@@ -719,8 +873,13 @@ def _property_workbench_client_tour_payload(
     if safe_validated_url and not _property_workbench_client_url_is_tracking(safe_validated_url):
         compact["url"] = safe_validated_url
         compact["embed_url"] = safe_validated_url
+        status = "ready"
+        compact["status"] = "ready"
         if normalized_kind == "flythrough":
             compact["customer_claim_ready"] = True
+        elif not generated_reconstruction_ready:
+            generated_reconstruction_ready = False
+            compact.pop("tour_media_mode", None)
     if safe_provider_url:
         compact["provider_url"] = safe_provider_url
     if generated_reconstruction_ready and safe_validated_url:
@@ -744,6 +903,9 @@ def _property_workbench_client_tour_payload(
         "Request walkthrough",
         "Retry 3D tour",
         "Retry walkthrough",
+        "Camera walkthrough available",
+        "Camera walkthrough queued",
+        "Camera walkthrough rendering",
         "Walkthrough available",
         "Walkthrough queued",
         "Walkthrough rendering",
@@ -752,8 +914,26 @@ def _property_workbench_client_tour_payload(
         label = str(raw.get(key) or "").strip()
         if label in safe_labels:
             compact[key] = label
+    if safe_validated_url:
+        compact["label"] = (
+            "Camera walkthrough available"
+            if normalized_kind == "flythrough"
+            else (
+                "Open AI-generated 3D tour"
+                if generated_reconstruction_ready
+                else "3D tour available"
+            )
+        )
+        compact.pop("control_label", None)
     provider_label = str(raw.get("provider_label") or "").strip()
-    if provider_label in {"3D tour", "AI-generated 3D tour", "Layout tour", "Original tour", "Walkthrough"}:
+    if provider_label in {
+        "3D tour",
+        "AI-generated 3D tour",
+        "Layout tour",
+        "Original tour",
+        "Camera walkthrough",
+        "Walkthrough",
+    }:
         compact["provider_label"] = provider_label
     eta_label = str(raw.get("eta_label") or "").strip().lower()
     active_statuses = {"queued", "pending", "processing", "running", "in_progress", "started", "rendering", "repairing"}
@@ -762,7 +942,7 @@ def _property_workbench_client_tour_payload(
         compact["eta_label"] = eta_label
     if status in {"ready", "created", "existing", "source"}:
         compact["status_detail"] = (
-            "Walkthrough is ready."
+            "Camera walkthrough is ready."
             if normalized_kind == "flythrough"
             else (
                 _PROPERTY_GENERATED_TOUR_STATUS_DETAIL
@@ -771,14 +951,14 @@ def _property_workbench_client_tour_payload(
             )
         )
     elif status in {"queued", "pending"}:
-        compact["status_detail"] = "Walkthrough queued." if normalized_kind == "flythrough" else "Queued."
+        compact["status_detail"] = "Camera walkthrough queued." if normalized_kind == "flythrough" else "Queued."
     elif status in {"processing", "running", "in_progress", "started", "rendering", "repairing"}:
-        compact["status_detail"] = "Walkthrough rendering." if normalized_kind == "flythrough" else "Rendering."
+        compact["status_detail"] = "Camera walkthrough rendering." if normalized_kind == "flythrough" else "Rendering."
     elif status in {"blocked", "failed", "skipped", "not_applicable", "unavailable", "missing"}:
         terminal_detail = (
             {
-                "property_tour_video_delivery_failed": "The walkthrough could not be published. You can try again.",
-            }.get(reason_key, "Walkthrough not available yet.")
+                "property_tour_video_delivery_failed": "The camera walkthrough could not be published. You can try again.",
+            }.get(reason_key, "Camera walkthrough not available yet.")
             if normalized_kind == "flythrough"
             else {
                 "listing_expired": "The source listing has expired, and no captured source is available for a 3D tour.",
@@ -846,6 +1026,7 @@ def _property_workbench_client_candidate_payload(
     candidate: dict[str, object],
     *,
     preserve_preview_media_facts: bool = False,
+    principal_id: str = "",
 ) -> dict[str, object]:
     raw = dict(candidate or {})
     facts = _property_workbench_client_facts(raw.get("property_facts"))
@@ -910,6 +1091,7 @@ def _property_workbench_client_candidate_payload(
             "personal_fit_score",
             "fit_label",
             "fit_summary",
+            "selected_via_link",
             "budget_revalidated",
             "revalidated_from_old_brief",
             "packet_url",
@@ -926,12 +1108,10 @@ def _property_workbench_client_candidate_payload(
     derived_floorplan_url = _property_candidate_floorplan_url(raw, facts=derived_facts)
     if derived_floorplan_url:
         compact["floorplan_url"] = derived_floorplan_url
-    derived_source_virtual_tour_url = _property_workbench_client_provider_viewer_url(
-        _property_candidate_source_virtual_tour_url(raw, facts=derived_facts)
+    ready_tour_url = _property_workbench_candidate_ready_tour_url(
+        raw,
+        principal_id=principal_id,
     )
-    if derived_source_virtual_tour_url:
-        compact["source_virtual_tour_url"] = derived_source_virtual_tour_url
-    ready_tour_url = _property_workbench_candidate_ready_tour_url(raw)
     generated_layout_url = _property_workbench_candidate_generated_layout_url(raw)
     if ready_tour_url:
         compact["tour_url"] = ready_tour_url
@@ -952,14 +1132,12 @@ def _property_workbench_client_candidate_payload(
     flythrough_url = _property_workbench_candidate_flythrough_url(
         raw,
         ready_tour_url=ready_tour_url,
+        principal_id=principal_id,
     )
     if flythrough_url:
         compact["flythrough_url"] = flythrough_url
     elif str(compact.get("flythrough_status") or "").strip().lower() in _PROPERTY_WORKBENCH_READY_VISUAL_STATUSES:
         compact["flythrough_status"] = "unavailable"
-    preview_image_url = _property_workbench_client_image_url(raw.get("preview_image_url"))
-    if preview_image_url:
-        compact["preview_image_url"] = preview_image_url
     orientation_preview = _property_workbench_client_image_payload(raw.get("orientation_preview"))
     if orientation_preview:
         compact["orientation_preview"] = orientation_preview
@@ -969,20 +1147,36 @@ def _property_workbench_client_candidate_payload(
     diorama_preview_url = _property_workbench_candidate_diorama_preview_url(raw)
     if diorama_preview_url:
         compact["diorama_preview_url"] = diorama_preview_url
+    preview_image_url, ordered_preview_fallbacks = (
+        _property_workbench_client_preview_urls(
+            raw,
+            orientation_preview=orientation_preview,
+            diorama_preview_url=diorama_preview_url,
+        )
+    )
+    if preview_image_url:
+        compact["preview_image_url"] = preview_image_url
+    if ordered_preview_fallbacks:
+        compact["preview_image_fallback_url"] = ordered_preview_fallbacks[0]
+        compact["preview_image_fallback_urls"] = ordered_preview_fallbacks
     tour_payload = _property_workbench_client_tour_payload(
-        raw.get("tour"),
+        raw.get("tour") if isinstance(raw.get("tour"), dict) else {},
         fallback_reason=raw.get("blocked_reason") or raw.get("tour_reason"),
-        validated_url=ready_tour_url or generated_layout_url,
-        validated_provider_url=(
-            dict(raw.get("tour") or {}).get("provider_url")
-            if isinstance(raw.get("tour"), dict)
-            else ""
-        ),
+        validated_url=ready_tour_url,
+        validated_provider_url="",
     )
     if tour_payload:
+        if generated_layout_url:
+            # The captured/provider tour remains blocked, but the disclosed
+            # AI layout visual itself is ready and has a safe first-party URL.
+            tour_payload["status"] = "ready"
+            tour_payload["status_detail"] = (
+                "AI-generated from the floor plan and listing photos. "
+                "It is an interactive spatial aid, not a captured 360° tour."
+            )
         compact["tour"] = tour_payload
     flythrough_payload = _property_workbench_client_tour_payload(
-        raw.get("flythrough"),
+        raw.get("flythrough") if isinstance(raw.get("flythrough"), dict) else {},
         fallback_reason=raw.get("flythrough_reason"),
         request_kind="flythrough",
         validated_url=flythrough_url,
@@ -994,6 +1188,11 @@ def _property_workbench_client_candidate_payload(
     match_reasons = [str(item).strip() for item in list(raw.get("match_reasons") or []) if str(item).strip()]
     if match_reasons:
         compact["match_reasons"] = match_reasons[:3]
+    ai_assessment = property_onemin_customer_assessment(
+        raw.get("onemin_evaluation")
+    )
+    if ai_assessment:
+        compact["ai_assessment"] = ai_assessment
     route_rows = _property_workbench_client_route_rows(raw.get("route_evidence"))
     if route_rows:
         compact["route_evidence"] = route_rows
@@ -1262,6 +1461,9 @@ def _property_workbench_client_run_payload(run_payload: dict[str, object]) -> di
         for key in ("status_label", "status_detail"):
             if current_property.get(key) not in (None, "", [], {}):
                 compact_current_property[key] = current_property.get(key)
+        detail_url = str(current_property.get("detail_url") or "").strip()
+        if detail_url.startswith("/app/research/") and not detail_url.startswith("//"):
+            compact_current_property["detail_url"] = detail_url
         if compact_current_property:
             compact_run["current_property"] = compact_current_property
     reliability = dict(raw_run.get("reliability") or {}) if isinstance(raw_run.get("reliability"), dict) else {}
@@ -1869,9 +2071,20 @@ def property_workspace_payload(
         for candidate in list(property_meta.get("shortlist_candidates") or [])
         if isinstance(candidate, dict)
     ]
+    def _workspace_candidate_ref(candidate: dict[str, object]) -> str:
+        restored_ref = str(candidate.get("_selected_candidate_ref") or "").strip().lower()
+        if (
+            bool(candidate.get("_explicitly_selected_source_candidate"))
+            and re.fullmatch(r"[0-9a-f]{16}", restored_ref) is not None
+        ):
+            return restored_ref
+        return _property_candidate_ref(candidate)
+
     def _shortlist_identity(candidate: dict[str, object]) -> str:
         facts = dict(candidate.get("property_facts") or {}) if isinstance(candidate.get("property_facts"), dict) else {}
         for value in (
+            candidate.get("_selected_candidate_ref"),
+            candidate.get("candidate_ref"),
             candidate.get("property_ref"),
             candidate.get("property_url"),
             candidate.get("source_url"),
@@ -1879,7 +2092,6 @@ def property_workspace_payload(
             facts.get("listing_url"),
             candidate.get("source_ref"),
             candidate.get("listing_id"),
-            candidate.get("candidate_ref"),
         ):
             normalized = str(value or "").strip()
             if normalized:
@@ -1959,6 +2171,9 @@ def property_workspace_payload(
     run_health = dict(property_state.get("run_health") or {})
     packet_recovery = dict(property_state.get("packet_recovery") or {})
     route_recovery = dict(property_state.get("route_recovery") or {})
+    selected_candidate_ref = str(
+        property_state.get("selected_candidate_ref") or ""
+    ).strip()
     run_events = property_run_customer_visible_events(run_payload=run_payload)
     raw_run_summary = dict(run_payload.get("summary") or {})
     run_summary = _property_customer_run_summary(raw_run_summary, preferences=property_preferences)
@@ -2159,6 +2374,34 @@ def property_workspace_payload(
         synthesized_ranked_candidates.sort(key=lambda item: float(item.get("fit_score") or 0.0), reverse=True)
     explicit_run_surface = bool(str(run_payload.get("run_id") or "").strip())
     active_run_candidates = ranked_candidates or synthesized_ranked_candidates
+    explicitly_selected_source_candidate: dict[str, object] = {}
+    if selected_candidate_ref and not any(
+        _workspace_candidate_ref(candidate) == selected_candidate_ref
+        for candidate in active_run_candidates
+    ):
+        for source in raw_run_sources:
+            source_label = str(
+                source.get("source_label") or source.get("label") or ""
+            ).strip()
+            for candidate_key in (
+                "top_candidates",
+                "research_candidates",
+                "evaluating_candidates",
+            ):
+                for raw_candidate in list(source.get(candidate_key) or []):
+                    if not isinstance(raw_candidate, dict):
+                        continue
+                    candidate = dict(raw_candidate)
+                    if _workspace_candidate_ref(candidate) != selected_candidate_ref:
+                        continue
+                    candidate.setdefault("source_label", source_label)
+                    candidate["_explicitly_selected_source_candidate"] = True
+                    explicitly_selected_source_candidate = candidate
+                    break
+                if explicitly_selected_source_candidate:
+                    break
+            if explicitly_selected_source_candidate:
+                break
     if normalized_section == "search" and explicit_run_surface and not active_run_candidates:
         active_run_candidates = [
             {**dict(candidate), "_active_run_ranked": True}
@@ -2172,6 +2415,10 @@ def property_workspace_payload(
             shortlist_candidates = _dedupe_shortlist_candidates([*active_run_candidates, *shortlist_candidates])
     elif not shortlist_candidates:
         shortlist_candidates = list(active_run_candidates)
+    if explicitly_selected_source_candidate:
+        shortlist_candidates = _dedupe_shortlist_candidates(
+            [*shortlist_candidates, explicitly_selected_source_candidate]
+        )
     if not compact_summary_surface and active_run_candidates and not list(run_summary_for_surface.get("ranked_candidates") or []):
         run_summary_for_surface = {
             **dict(run_summary_for_surface),
@@ -2250,7 +2497,8 @@ def property_workspace_payload(
                 "generated_reconstruction_url": raw_generated_reconstruction_url,
                 "layout_preview_url": generated_layout_preview_url,
                 "tour": tour_payload,
-            }
+            },
+            principal_id=workspace_principal_id,
         )
         if ready_tour_url:
             normalized["tour_url"] = ready_tour_url
@@ -2460,7 +2708,6 @@ def property_workspace_payload(
         )
     delivery_proof_rows = _delivery_proof_rows(run_summary)
     artifact_receipt_rows = _artifact_receipt_rows(run_summary)
-    selected_candidate_ref = str(property_state.get("selected_candidate_ref") or "").strip()
     run_id = str(run_payload.get("run_id") or "").strip()
     run_suffix = f"?run_id={run_id}" if run_id else ""
     signed_in_billing_href = str(billing_handoff.get("open_href") or "").strip() or f"/app/billing{run_suffix}"
@@ -3669,6 +3916,7 @@ def property_workspace_payload(
             open_flythrough_url = property_tour_hosting._hosted_property_tour_walkthrough_open_url(  # type: ignore[attr-defined]
                 candidate.get("tour_url"),
                 flythrough_url,
+                principal_id=workspace_principal_id,
             )
         except Exception:
             open_flythrough_url = ""
@@ -4193,6 +4441,8 @@ def property_workspace_payload(
         listing_mode: str,
         selected_locations: list[str],
     ) -> bool:
+        if bool(candidate.get("_explicitly_selected_source_candidate")):
+            return True
         active_run_ranked = bool(candidate.get("_active_run_ranked"))
         source_family = str(candidate.get("source_family") or facts.get("source_family") or "").strip().lower()
         has_price_signal = bool(_candidate_price_signal(facts, listing_mode=listing_mode, title=candidate.get("title")))
@@ -4245,7 +4495,30 @@ def property_workspace_payload(
 
     first_paint_candidates = [] if management_surface else list(shortlist_candidates)
     if normalized_section in {"properties", "shortlist"}:
-        first_paint_candidates = first_paint_candidates[:_PROPERTY_PROPERTIES_FIRST_PAINT_RESULT_LIMIT]
+        selected_first_paint_candidate = next(
+            (
+                candidate
+                for candidate in first_paint_candidates
+                if _workspace_candidate_ref(candidate) == selected_candidate_ref
+            ),
+            None,
+        )
+        first_paint_candidates = first_paint_candidates[
+            :_PROPERTY_PROPERTIES_FIRST_PAINT_RESULT_LIMIT
+        ]
+        if (
+            selected_first_paint_candidate is not None
+            and not any(
+                _workspace_candidate_ref(candidate) == selected_candidate_ref
+                for candidate in first_paint_candidates
+            )
+        ):
+            first_paint_candidates = [
+                *first_paint_candidates[
+                    : max(_PROPERTY_PROPERTIES_FIRST_PAINT_RESULT_LIMIT - 1, 0)
+                ],
+                selected_first_paint_candidate,
+            ]
     search_surface_fallback_candidates: list[tuple[dict[str, object], dict[str, object], str]] = []
 
     def _append_workbench_candidate(
@@ -4292,7 +4565,16 @@ def property_workspace_payload(
         map_url = str(candidate.get("map_url") or "").strip() or _property_candidate_maps_url(candidate)
         tour_status_line = _tour_status_line(candidate)
         ooda_detail = _distance_line(candidate)
-        candidate_ref = str(packet_url or "").split("/app/research/", 1)[-1].split("?", 1)[0] if "/app/research/" in packet_url else _property_candidate_ref(candidate)
+        if bool(candidate.get("_explicitly_selected_source_candidate")):
+            candidate_ref = _workspace_candidate_ref(candidate)
+        else:
+            candidate_ref = (
+                str(packet_url or "")
+                .split("/app/research/", 1)[-1]
+                .split("?", 1)[0]
+                if "/app/research/" in packet_url
+                else _workspace_candidate_ref(candidate)
+            )
         if not packet_url and candidate_ref:
             packet_url = f"/app/research/{candidate_ref}"
             if run_id:
@@ -4336,7 +4618,7 @@ def property_workspace_payload(
             "reasons": [str(item).strip() for item in list(candidate_investment.get("reasons") or []) if str(item).strip()][:3],
             "blockers": [str(item).strip() for item in list(candidate_investment.get("blockers") or []) if str(item).strip()][:3],
         }
-        orientation_preview = _property_workbench_lightweight_orientation_preview(
+        orientation_preview = _property_workbench_client_image_payload(
             _property_candidate_orientation_preview(candidate)
         )
         repair_flag_label, repair_flag_detail = _candidate_repair_flag(
@@ -4350,18 +4632,22 @@ def property_workspace_payload(
         if not fit_summary:
             fit_summary = summarize_property_description_copy(_clean_property_candidate_copy(candidate.get("summary") or ""))
         diorama_preview_url = _property_workbench_candidate_diorama_preview_url(candidate)
+        preview_image_url, preview_image_fallback_urls = (
+            _property_workbench_client_preview_urls(
+                candidate,
+                orientation_preview=orientation_preview,
+                diorama_preview_url=diorama_preview_url,
+            )
+        )
         ready_tour_url = str(tour_payload.get("url") or "").strip()
         ready_tour_status = str(tour_payload.get("status") or "").strip().lower()
-        workbench_results.append(
-            build_property_workbench_candidate_snapshot(
+        workbench_candidate = build_property_workbench_candidate_snapshot(
                 candidate_ref=candidate_ref,
                 rank=len(workbench_results) + 1,
                 title=_property_result_title_display(candidate.get("title") or "Home"),
                 recovered_by_filter=bool(candidate.get("recovered_by_filter") or candidate.get("counterfactual_recovered")),
                 relaxed_filter_label=str(candidate.get("relaxed_filter_label") or candidate.get("counterfactual_label") or "").strip(),
-                preview_image_url=_property_workbench_lightweight_image_url(
-                    candidate.get("preview_image_url") or _property_candidate_preview_image(candidate)
-                ),
+                preview_image_url=preview_image_url,
                 diorama_preview_url=diorama_preview_url,
                 source_label=_compact_provider_label(candidate.get("source_label") or ""),
                 location_label=str(facts.get("district") or facts.get("postal_name") or facts.get("city") or facts.get("address") or "").strip(),
@@ -4450,7 +4736,21 @@ def property_workspace_payload(
                 repair_flag_label=repair_flag_label,
                 repair_flag_detail=repair_flag_detail,
             )
-        )
+        if preview_image_fallback_urls:
+            workbench_candidate["preview_image_fallback_url"] = (
+                preview_image_fallback_urls[0]
+            )
+            workbench_candidate["preview_image_fallback_urls"] = (
+                preview_image_fallback_urls
+            )
+        opportunity = property_opportunity_public_projection(candidate.get("opportunity"))
+        if opportunity:
+            workbench_candidate["opportunity"] = opportunity
+            workbench_candidate["opportunity_id"] = str(opportunity.get("opportunity_id") or "")
+            workbench_candidate["opportunity_status"] = str(opportunity.get("status") or "")
+        if bool(candidate.get("_explicitly_selected_source_candidate")):
+            workbench_candidate["selected_via_link"] = True
+        workbench_results.append(workbench_candidate)
         tour_payload = _tour_payload(candidate)
         results_table_rows.append(
             {
@@ -5840,10 +6140,15 @@ def property_workspace_payload(
                 _property_workbench_client_candidate_payload(
                     candidate,
                     preserve_preview_media_facts=bool(selected_candidate_ref) and candidate_ref == selected_candidate_ref,
+                    principal_id=workspace_principal_id,
                 )
             )
         client_selected = (
-            _property_workbench_client_candidate_payload(surface_selected_result, preserve_preview_media_facts=True)
+            _property_workbench_client_candidate_payload(
+                surface_selected_result,
+                preserve_preview_media_facts=True,
+                principal_id=workspace_principal_id,
+            )
             if surface_selected_result
             else (client_results[0] if client_results else {})
         )

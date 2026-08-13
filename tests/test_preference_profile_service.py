@@ -290,6 +290,55 @@ def test_preference_profile_service_uses_candidate_currency_in_rent_reasons() ->
     assert "EUR 900" not in copy
 
 
+def test_search_brief_produces_actionable_opportunity_without_learned_nodes() -> None:
+    service = _service()
+
+    assessment = service.assess_candidate(
+        principal_id="search-brief-principal",
+        person_id="self",
+        domain="willhaben",
+        object_type="listing",
+        object_id="listing-search-brief",
+        object_payload={
+            "title": "Serviced Apartment with terrace",
+            "postal_name": "1020 Wien",
+            "source_postal_code": "1020",
+            "total_rent_eur": 2680.0,
+            "area_m2": 89.0,
+            "rooms": 3,
+            "has_floorplan": True,
+            "has_360": False,
+            "fact_requirement_plan": [
+                {"key": "nearest_supermarket_m", "label": "Supermarket distance", "state": "unknown"},
+            ],
+            "search_preferences": {
+                "max_price_eur": 3500,
+                "min_area_m2": 45,
+                "location_query": "1010 Vienna, 1020 Vienna",
+                "keyword_preferences": {
+                    "balcony": "nice_to_have",
+                    "lift": "nice_to_have",
+                },
+            },
+        },
+        persist=False,
+    )
+
+    assert assessment is not None
+    assert assessment["fit_score"] >= 68
+    assert assessment["recommendation"] == "shortlist"
+    assert assessment["confidence"] >= 0.6
+    reasons = list(assessment["match_reasons_json"])
+    assert any("within the EUR 3500 search ceiling" in reason for reason in reasons)
+    assert any("89 m² living area" in reason for reason in reasons)
+    assert any("1020 Wien is inside" in reason for reason in reasons)
+    assert any("Balcony, terrace, or loggia" in reason for reason in reasons)
+    assert any("floor plan" in reason for reason in reasons)
+    assert "Lift access is not confirmed." in assessment["unknowns_json"]
+    assert "Supermarket distance is not verified yet." in assessment["unknowns_json"]
+    assert not any("360" in reason for reason in assessment["mismatch_reasons_json"])
+
+
 def test_preference_profile_service_builds_teable_projection_rows() -> None:
     service = _service()
     service.ensure_profile(principal_id="pref-principal", person_id="self", display_name="Tibor")

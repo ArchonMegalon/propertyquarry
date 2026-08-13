@@ -2626,10 +2626,15 @@
     },
     {
       "rank": 41,
+      "search_visibility": "suppressed",
+      "suppression_reason": "owner_removed_from_search_results",
+      "suppressed_at": "2026-08-06T07:59:00Z",
       "candidate_refs": [
-        "ad48357be22535c1"
+        "karl-czerny-gasse-2-private-showcase",
+        "cece2dad814fdf68"
       ],
-      "listing_ids": [
+      "listing_ids": [],
+      "binding_listing_ids": [
         "1536069684"
       ],
       "preview_kind": "rendered_diorama",
@@ -2647,6 +2652,23 @@
       "source_basis": "listing_floorplan_and_reference_images",
       "truth_boundary": "AI-rendered illustrative reconstruction based on the listing floor plan and reference photos; it is not listing evidence, a captured 3D scan, or measured geometry.",
       "alt": "Illustrative AI-reconstructed 3D diorama of the three-room Altbau apartment",
+      "hosted_tour": {
+        "binding_contract": "propertyquarry.curated_hosted_tour_binding.v1",
+        "slug": "karl-czerny-gasse-2-urban-jungle",
+        "provider": "3dvista",
+        "default_mode": "camera_walkthrough",
+        "hosted_tour_url": "/tours/karl-czerny-gasse-2-urban-jungle",
+        "walkthrough_url": "/tours/karl-czerny-gasse-2-urban-jungle/walkthrough",
+        "spatial_tour_url": "/tours/3dvista/karl-czerny-gasse-2-urban-jungle/3dvista/index.htm",
+        "property_url_sha256": "c20cc5d801fa85982874524703514160d3aa6003456738ba0c816d6d4a825431",
+        "binding_sha256": "423d24216c8690478440f59d15b93756f21341e60cafc205c6d128071fb53e7e",
+        "review": {
+          "status": "approved",
+          "reviewed_by": "codex-release-owner",
+          "reviewed_at": "2026-08-06T06:28:06Z",
+          "evidence_sha256": "423d24216c8690478440f59d15b93756f21341e60cafc205c6d128071fb53e7e"
+        }
+      },
       "governance": {
         "rights": {
           "status": "approved",

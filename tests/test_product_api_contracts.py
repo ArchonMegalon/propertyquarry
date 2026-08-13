@@ -6038,7 +6038,13 @@ def test_property_scout_shortlist_uses_cached_or_required_floorplan_detail_when_
             },
         ),
     )
-    monkeypatch.setattr(product_service, "_property_scout_fetch_html", lambda *args, **kwargs: "<html></html>")
+    raw_html_fetches: list[str] = []
+
+    def _empty_source_html(url: str, *args, **kwargs) -> str:
+        raw_html_fetches.append(str(url))
+        return "<html></html>"
+
+    monkeypatch.setattr(product_service, "_property_scout_fetch_html", _empty_source_html)
     monkeypatch.setattr(product_service, "_property_scout_extract_listing_urls", lambda **kwargs: (property_url,))
     fast_preview = {
         "listing_id": "immobilien.derstandard.at:15201500",
@@ -6168,6 +6174,7 @@ def test_property_scout_shortlist_uses_cached_or_required_floorplan_detail_when_
     assert result["listing_total"] == 1
     assert result["require_floorplan"] is True
     assert detailed_fetches == [property_url] * expected_detail_fetches
+    assert property_url not in raw_html_fetches
     enriched_assessment = next(
         facts for facts in assessed_facts if facts.get("has_floorplan") is True
     )

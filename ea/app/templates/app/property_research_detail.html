@@ -2250,7 +2250,7 @@
       display: none;
     }
     .prd-top-actions .account-menu summary::before {
-      content: "Me";
+      content: "A";
       font-size: 0.72rem;
       font-weight: 780;
       letter-spacing: 0.02em;
@@ -3171,8 +3171,8 @@
     }
     .prd-primary-nav a,
     .prd-primary-nav span {
-      min-height: 30px;
-      height: 30px;
+      min-height: 44px;
+      height: 44px;
       padding: 0 9px;
       border-radius: 999px;
       font-size: 0.72rem;
@@ -3220,6 +3220,12 @@
     }
     .prd-top-actions {
       gap: 6px;
+      min-width: 44px;
+    }
+    .prd-top-actions [data-pq-localization-slot],
+    .prd-top-actions .pq-locale-panel,
+    .prd-primary-nav [data-prd-nav-key="account"] {
+      display: none !important;
     }
     .prd-top-actions .prd-run-chip {
       display: none;
@@ -3306,9 +3312,9 @@
     <nav class="prd-primary-nav" aria-label="PropertyQuarry sections" data-property-console-topnav>
       {% for item in research_topnav_items %}
         {% if item.key == current_nav or (item.key == 'account' and current_nav in ['agents', 'alerts', 'billing', 'settings']) %}
-        <span class="is-active" aria-current="page">{{ item.label }}</span>
+        <span class="is-active" aria-current="page" data-prd-nav-key="{{ item.key }}">{{ item.label }}</span>
         {% else %}
-        <a href="{{ item.href }}">{{ item.label }}</a>
+        <a href="{{ item.href }}" data-prd-nav-key="{{ item.key }}">{{ item.label }}</a>
         {% endif %}
       {% endfor %}
     </nav>
@@ -3406,11 +3412,11 @@
       {% if action.get('kind') == 'ai_360_reconstruction' or 'ai 360 tour' in action_label %}
         {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'ai_360_reconstruction', 'eyebrow': 'AI 360 reconstruction', 'title': 'AI 360 tour', 'copy': action.get('status_detail') or research_media.get('ai_360_disclosure') or 'AI reconstruction based on property photos; not a captured 360 or measured survey.', 'action': action}] %}
       {% elif action.get('kind') == 'generated_reconstruction' or 'layout tour' in action_label or 'ai-generated 3d tour' in action_label %}
-        {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'generated_reconstruction', 'eyebrow': 'AI-generated 3D tour', 'title': 'AI-generated 3D tour', 'copy': action.get('status_detail') or research_media.get('generated_reconstruction_status_detail') or research_media.get('status_detail') or 'Open the generated spatial tour here.', 'action': action}] %}
+        {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'generated_reconstruction', 'eyebrow': 'AI layout preview', 'title': 'AI layout preview', 'copy': action.get('status_detail') or research_media.get('generated_reconstruction_status_detail') or research_media.get('status_detail') or 'Open the generated spatial layout here.', 'action': action}] %}
       {% elif action.get('kind') == 'tour' or '3d tour' in action_label or 'matterport' in action_label or '3dvista' in action_label or 'original tour' in action_label %}
         {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'tour', 'eyebrow': '3D tour', 'title': '3D tour', 'copy': action.get('status_detail') or research_media.get('status_detail') or 'Open or request it here.', 'action': action}] %}
       {% elif action.get('kind') == 'flythrough' or 'walkthrough' in action_label %}
-        {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'walkthrough', 'eyebrow': 'Walkthrough', 'title': 'Walkthrough', 'copy': action.get('status_detail') or research_media.get('walkthrough_status_detail') or 'Open or request it here.', 'action': action}] %}
+        {% set primary_visual_actions.items = primary_visual_actions.items + [{'key': 'walkthrough', 'eyebrow': 'Camera walkthrough', 'title': 'Camera walkthrough', 'copy': action.get('status_detail') or research_media.get('walkthrough_status_detail') or 'Open or request the normal camera video here.', 'action': action}] %}
       {% endif %}
     {% endfor %}
     {% set visual_status = namespace(active=None) %}
@@ -3434,7 +3440,14 @@
       progress=0,
       detail=''
     ) %}
-    {% if visual_ready_tour %}
+    {% if visual_ready_walkthrough %}
+      {% set visual_rail.kind = 'flythrough' %}
+      {% set visual_rail.state = 'ready' %}
+      {% set visual_rail.label = 'Open camera walkthrough' %}
+      {% set visual_rail.eta = '' %}
+      {% set visual_rail.progress = 100 %}
+      {% set visual_rail.detail = research_visual_status_line or research_media.get('walkthrough_status_detail') or 'Camera walkthrough is ready.' %}
+    {% elif visual_ready_tour %}
       {% set visual_rail.kind = 'tour' %}
       {% set visual_rail.state = 'ready' %}
       {% set visual_rail.label = research_media.get('status_label') or 'Open 3D tour' %}
@@ -3451,10 +3464,10 @@
     {% elif visual_ready_layout %}
       {% set visual_rail.kind = 'generated_reconstruction' %}
       {% set visual_rail.state = 'ready' %}
-      {% set visual_rail.label = research_media.get('status_label') or 'Open AI-generated 3D tour' %}
+      {% set visual_rail.label = research_media.get('status_label') or 'Open AI layout preview' %}
       {% set visual_rail.eta = '' %}
       {% set visual_rail.progress = 100 %}
-      {% set visual_rail.detail = research_visual_status_line or research_media.get('generated_reconstruction_status_detail') or 'AI-generated 3D tour is ready.' %}
+      {% set visual_rail.detail = research_visual_status_line or research_media.get('generated_reconstruction_status_detail') or 'AI layout preview is ready.' %}
     {% elif visual_status.active %}
       {% set visual_rail.kind = visual_status.active.get('kind') or '' %}
       {% set visual_rail.state = visual_status.active.get('state') or '' %}
@@ -3462,13 +3475,6 @@
       {% set visual_rail.eta = visual_status.active.get('eta_label') or '' %}
       {% set visual_rail.progress = visual_status.active.get('progress_pct') or 0 %}
       {% set visual_rail.detail = visual_status.active.get('status_detail') or research_visual_status_line or '' %}
-    {% elif visual_ready_walkthrough %}
-      {% set visual_rail.kind = 'flythrough' %}
-      {% set visual_rail.state = 'ready' %}
-      {% set visual_rail.label = 'Open walkthrough' %}
-      {% set visual_rail.eta = '' %}
-      {% set visual_rail.progress = 100 %}
-      {% set visual_rail.detail = research_visual_status_line or research_media.get('walkthrough_status_detail') or 'Walkthrough is ready.' %}
     {% else %}
       {% set media_tour_state = (research_media.get('tour_status') or '')|lower %}
       {% set media_visible_states = ['pending', 'queued', 'rendering', 'processing', 'running', 'in_progress', 'started', 'repairing', 'blocked', 'failed', 'skipped', 'not_applicable', 'unavailable'] %}
@@ -3486,23 +3492,23 @@
     {% elif visual_rail.state == 'ready' and visual_rail.kind == 'ai_360_reconstruction' %}
       {% set visual_rail_label_display = 'AI 360 reconstruction' %}
     {% elif visual_rail.state == 'ready' and visual_rail.kind == 'generated_reconstruction' %}
-      {% set visual_rail_label_display = 'AI-generated 3D tour' %}
+      {% set visual_rail_label_display = 'AI layout preview' %}
     {% elif visual_rail.state == 'ready' and visual_rail.kind in ['flythrough', 'walkthrough'] %}
-      {% set visual_rail_label_display = 'Walkthrough' %}
+      {% set visual_rail_label_display = 'Camera walkthrough' %}
     {% elif visual_rail.state in visual_pending_states and visual_rail.kind == 'tour' %}
       {% set visual_rail_label_display = 'Preparing 3D tour' %}
     {% elif visual_rail.state in visual_pending_states and visual_rail.kind in ['flythrough', 'walkthrough'] %}
-      {% set visual_rail_label_display = 'Preparing walkthrough' %}
+      {% set visual_rail_label_display = 'Preparing camera walkthrough' %}
     {% endif %}
     {% set research_media_badge_label = research_media.get('status_label') or 'Media' %}
-    {% if visual_ready_ai_360 %}
+    {% if visual_ready_walkthrough %}
+      {% set research_media_badge_label = 'Camera walkthrough' %}
+    {% elif visual_ready_ai_360 %}
       {% set research_media_badge_label = 'AI 360 reconstruction' %}
     {% elif visual_ready_layout %}
-      {% set research_media_badge_label = 'AI-generated 3D tour' %}
+      {% set research_media_badge_label = 'AI layout preview' %}
     {% elif visual_ready_tour %}
       {% set research_media_badge_label = '3D tour' %}
-    {% elif visual_ready_walkthrough %}
-      {% set research_media_badge_label = 'Walkthrough' %}
     {% endif %}
     <section class="prd-media-stack">
       {% set inline_media_preview = research_hero_preview_image or research_preview_image or research_location_preview.get('image_url') or '' %}
@@ -3560,7 +3566,7 @@
       <div class="prd-visual-toolbar">
         <div class="prd-visual-heading">
           <div class="prd-kicker">Visuals</div>
-          <p class="prd-copy">Tours and walkthroughs for this home.</p>
+          <p class="prd-copy">Cinematic walkthroughs and immersive 3D tours, crafted for this home.</p>
         </div>
         {% if research_media.get('show_status_line') %}
         <span class="prd-status-badge">{{ research_media.get('status_label') or 'Ready' }}</span>
@@ -3595,18 +3601,39 @@
           {% endif %}
           <div class="prd-actions prd-media-actions" aria-label="Media requests">
           {% if action.get('href') %}
+          {% set action_link_label = action.get('label') or 'Open visual review' %}
+          {% if visual_card.get('key') == 'walkthrough' %}
+            {% set action_link_label = 'Open camera walkthrough' %}
+          {% elif visual_card.get('key') == 'tour' %}
+            {% set action_link_label = 'Open 3D tour' %}
+          {% elif visual_card.get('key') == 'generated_reconstruction' %}
+            {% set action_link_label = 'Open AI layout preview' %}
+          {% endif %}
           <a
             class="console-action prd-visual-hero-action"
             href="{{ action.get('href') }}"
             {% if action.get('external') %}target="_blank" rel="noopener noreferrer"{% endif %}
-            aria-label="{{ action.get('label') or 'Open visual review' }}"
-          >{{ action.get('label') }}</a>
+            aria-label="{{ action_link_label }}"
+          >{{ action_link_label }}</a>
           {% else %}
           {% set action_state = (action.get('state') or 'idle')|lower %}
           {% set is_walkthrough_request = action.get('kind') == 'flythrough' %}
           {% set action_button_label = action.get('label') or 'Request visual review' %}
+          {% if visual_card.get('key') == 'walkthrough' %}
+            {% set action_button_label = 'Retry camera walkthrough' if action_state in ['blocked', 'failed'] else 'Request camera walkthrough' %}
+          {% elif visual_card.get('key') == 'tour' %}
+            {% set action_button_label = 'Retry 3D tour' if action_state in ['blocked', 'failed'] else 'Request 3D tour' %}
+          {% elif visual_card.get('key') == 'generated_reconstruction' %}
+            {% set action_button_label = 'Retry AI layout preview' if action_state in ['blocked', 'failed'] else 'Request AI layout preview' %}
+          {% endif %}
           {% if action_state in ['pending', 'queued', 'rendering', 'processing', 'running', 'in_progress', 'started'] %}
-            {% set action_button_label = 'Preparing walkthrough' if is_walkthrough_request else 'Preparing 3D tour' %}
+            {% if visual_card.get('key') == 'walkthrough' %}
+              {% set action_button_label = 'Preparing camera walkthrough' %}
+            {% elif visual_card.get('key') == 'generated_reconstruction' %}
+              {% set action_button_label = 'Preparing AI layout preview' %}
+            {% else %}
+              {% set action_button_label = 'Preparing 3D tour' %}
+            {% endif %}
           {% endif %}
           <button
             class="console-action prd-visual-hero-action"
@@ -4086,6 +4113,47 @@
       {% set fact_score_state = (fact_score.get('state') or 'final')|lower %}
       {% set fact_job_status = (fact_enrichment.get('status') or 'idle')|lower %}
       {% set fact_job_pending = fact_job_status in ['queued', 'running'] or (fact_job_status == 'idle' and fact_enrichment.get('start_url') and fact_fields) %}
+      {% set onemin = fact_enrichment.get('onemin_evaluation') or {} %}
+      {% set onemin_judgment = onemin.get('judgment') or {} %}
+      {% set onemin_ooda = onemin.get('ooda') or {} %}
+      {% if onemin.get('status') == 'succeeded' and onemin.get('manager_routed') %}
+      <section class="prd-panel prd-related-homes" data-property-onemin-evaluation>
+        <span class="prd-kicker">1minAI via EA 1min Manager</span>
+        <h2>AI property judgment</h2>
+        <p class="prd-section-copy">
+          {{ onemin_judgment.get('summary') or 'The evidence-bound qualitative review is ready.' }}
+        </p>
+        <div class="object-list">
+          <div class="prd-row">
+            <div>
+              <strong>{{ (onemin_judgment.get('recommendation') or 'consider')|replace('_', ' ')|title }}</strong>
+              <small>Qualitative recommendation grounded in verified facts</small>
+            </div>
+            <span class="prd-tag">{{ ((onemin_judgment.get('confidence') or 0) * 100)|round|int }}% confidence</span>
+          </div>
+          {% for action in (onemin_ooda.get('actions') or [])[:2] %}
+          <div class="prd-row">
+            <div>
+              <strong>{{ action.get('label') or action.get('fact_key') or 'Maps research' }}</strong>
+              <small>
+                {% if action.get('status') == 'verified' and action.get('observed_distance_m') %}
+                Google Maps verified {{ action.get('place_name') or 'the matching place' }} at {{ action.get('observed_distance_m') }} m straight-line distance.
+                {% elif action.get('blockers') %}
+                {{ action.get('blockers')|join(', ')|replace('_', ' ') }}
+                {% else %}
+                {{ action.get('reason') or 'Research planned.' }}
+                {% endif %}
+              </small>
+            </div>
+            <span class="prd-tag">Google Maps · {{ (action.get('status') or 'planned')|replace('_', ' ')|title }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        <p class="prd-fact-provenance">
+          Advisory only. The deterministic PropertyQuarry fit score remains authoritative.
+        </p>
+      </section>
+      {% endif %}
       {% if fact_fields or research_selected_distance_rows %}
       <section
         class="prd-panel prd-related-homes prd-fact-enrichment"

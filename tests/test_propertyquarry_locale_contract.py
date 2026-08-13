@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+import pytest
 from starlette.requests import Request
 
 from app.api.routes import landing as landing_routes
@@ -13,7 +14,7 @@ def test_propertyquarry_public_route_shell_is_localized_without_native_review_cl
     client.headers.pop("X-EA-Principal-ID", None)
 
     response = client.get(
-        "/?ui_locale=de",
+        "/?lang=de-AT",
         headers={
             "host": "propertyquarry.com",
             "accept-language": "de-AT,de;q=0.9,en;q=0.8",
@@ -35,7 +36,7 @@ def test_propertyquarry_route_shell_preserves_explicit_fallback_boundaries() -> 
     start_workspace(client, mode="personal", workspace_name="Locale contract")
 
     response = client.get(
-        "/app/search?ui_locale=es",
+        "/app/search?lang=es-CR",
         headers={"host": "propertyquarry.com", "accept-language": "es-CR,es;q=0.9"},
     )
 
@@ -55,6 +56,85 @@ def test_propertyquarry_route_shell_preserves_explicit_fallback_boundaries() -> 
     ) in response.text
     assert 'data-pq-professional-review="false"' in response.text
     assert "Los textos legales, de proveedores y aún no traducidos permanecen en inglés." in response.text
+
+
+def test_propertyquarry_anonymous_home_uses_supported_browser_language_coherently() -> None:
+    client = build_property_client(principal_id="pq-ui-locale-default")
+    client.headers.pop("X-EA-Principal-ID", None)
+
+    response = client.get(
+        "/",
+        headers={
+            "host": "propertyquarry.com",
+            "accept-language": "de-DE,de;q=0.9,en;q=0.8",
+        },
+    )
+
+    assert response.status_code == 200
+    assert re.search(r'<html\b[^>]*\blang="de-DE"', response.text)
+    assert response.headers["content-language"] == "de-DE"
+    assert ">Zum Inhalt springen</a>" in response.text
+    assert "<span>Übereinstimmung</span>" in response.text
+    assert ">Immobilie öffnen</a>" in response.text
+    assert ">Skip to content</a>" not in response.text
+    assert "<span>Match</span>" not in response.text
+    assert ">Open property</a>" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("locale", "expected", "unexpected"),
+    [
+        (
+            "de-AT",
+            (
+                "Setzen Sie Ihre Immobiliensuche fort.",
+                "Verwenden Sie einen sicheren E-Mail-Link",
+                'aria-label="Anmeldeoptionen"',
+                'data-auth-copy-still-here-email="Noch auf dieser Seite?',
+            ),
+            (
+                "Continue your property search.",
+                ">Send secure sign-in link</button>",
+                ">New here?",
+                ">Create an account with email.</a>",
+            ),
+        ),
+        (
+            "es-CR",
+            (
+                "Continúe su búsqueda de propiedades.",
+                "Use un enlace seguro por correo",
+                'aria-label="Opciones para iniciar sesión"',
+                'data-auth-copy-still-here-email="¿Sigue aquí?',
+            ),
+            (
+                "Continue your property search.",
+                ">Send secure sign-in link</button>",
+                ">New here?",
+                ">Create an account with email.</a>",
+            ),
+        ),
+    ],
+)
+def test_propertyquarry_anonymous_sign_in_uses_supported_language_coherently(
+    locale: str,
+    expected: tuple[str, ...],
+    unexpected: tuple[str, ...],
+) -> None:
+    client = build_property_client(principal_id=f"pq-sign-in-locale-{locale}")
+    client.headers.pop("X-EA-Principal-ID", None)
+
+    response = client.get(
+        f"/sign-in?lang={locale}",
+        headers={"host": "propertyquarry.com"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-language"] == locale
+    for text in expected:
+        assert text in response.text
+    for text in unexpected:
+        assert text not in response.text
 
 
 def test_propertyquarry_locale_resolver_uses_only_governed_complete_ui_locales() -> None:

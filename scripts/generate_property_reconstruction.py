@@ -11215,6 +11215,7 @@ def _write_stop_card_walkthrough(
     route_labels: list[str] | tuple[str, ...] = (),
     room_count: int = 0,
     walkable_scene: dict[str, object] | None = None,
+    seconds_per_stop: float | None = None,
 ) -> dict[str, object]:
     sidecar_path = target.with_suffix(".quality.json")
     target.unlink(missing_ok=True)
@@ -11227,15 +11228,17 @@ def _write_stop_card_walkthrough(
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="propertyquarry-reconstruction-", dir=str(target.parent)) as tempdir:
         working_dir = Path(tempdir)
-        try:
-            seconds_per_stop = float(
-                os.getenv("PROPERTYQUARRY_RECONSTRUCTION_WALKTHROUGH_SECONDS_PER_STOP")
-                or os.getenv("PROPERTYQUARRY_FLYTHROUGH_SECONDS_PER_ROUTE_STOP")
-                or "5"
-            )
-        except Exception:
-            seconds_per_stop = 5.0
-        seconds_per_stop = max(5.0, min(30.0, seconds_per_stop))
+        requested_seconds_per_stop = seconds_per_stop
+        if requested_seconds_per_stop is None:
+            try:
+                requested_seconds_per_stop = float(
+                    os.getenv("PROPERTYQUARRY_RECONSTRUCTION_WALKTHROUGH_SECONDS_PER_STOP")
+                    or os.getenv("PROPERTYQUARRY_FLYTHROUGH_SECONDS_PER_ROUTE_STOP")
+                    or "5"
+                )
+            except Exception:
+                requested_seconds_per_stop = 5.0
+            requested_seconds_per_stop = max(5.0, min(30.0, requested_seconds_per_stop))
         normalized_route_labels = [
             _compact_route_label(label)
             for label in list(route_labels or [])
@@ -11249,11 +11252,10 @@ def _write_stop_card_walkthrough(
             if fallback_stop_count <= 0:
                 fallback_stop_count = 1
             expected_segments = [f"Room view {index:02d}" for index in range(1, fallback_stop_count + 1)]
-        requested_seconds_per_stop = seconds_per_stop
         seconds_per_stop = _quality_safe_walkthrough_seconds_per_stop(
             requested_seconds_per_stop,
             stop_count=len(expected_segments),
-            crossfade=True,
+            crossfade=seconds_per_stop is None,
         )
         duration_seconds = max(
             seconds_per_stop,
@@ -11578,6 +11580,7 @@ def _write_walkthrough(
         route_labels=expected_segments,
         room_count=room_count,
         walkable_scene=walkable_scene,
+        seconds_per_stop=seconds_per_stop,
     )
 
 

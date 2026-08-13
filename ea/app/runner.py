@@ -1344,19 +1344,46 @@ def _scheduler_property_maintenance_order(principal_ids: tuple[str, ...]) -> tup
 
 def _scheduler_property_search_recovery_interval_seconds() -> float:
     try:
-        return max(15.0, float(os.environ.get("EA_SCHEDULER_PROPERTY_SEARCH_RECOVERY_INTERVAL_SECONDS") or 60.0))
+        return max(15.0, float(os.environ.get("EA_SCHEDULER_PROPERTY_SEARCH_RECOVERY_INTERVAL_SECONDS") or 300.0))
     except Exception:
-        return 60.0
+        return 300.0
 
 
 def _scheduler_property_search_recovery_timeout_seconds() -> float:
     return max(30.0, _env_float("EA_SCHEDULER_PROPERTY_SEARCH_RECOVERY_TIMEOUT_SECONDS", 240.0))
 
 
+_PROPERTY_SCOUT_SYNTHETIC_PRINCIPAL_IDS = frozenset(
+    {
+        "cf-email:thumbnail-audit@propertyquarry.local",
+        "pq-auth-performance-smoke",
+        "pq-live-mobile-smoke",
+    }
+)
+
+
+def _scheduler_property_scout_excluded_principal_ids() -> frozenset[str]:
+    configured = {
+        part.strip()
+        for part in str(os.environ.get("EA_PROPERTY_SCOUT_EXCLUDED_PRINCIPAL_IDS") or "").split(",")
+        if part.strip()
+    }
+    return frozenset(_PROPERTY_SCOUT_SYNTHETIC_PRINCIPAL_IDS | configured)
+
+
 def _scheduler_property_scout_principal_ids(container) -> tuple[str, ...]:  # type: ignore[no-untyped-def]
+    excluded = _scheduler_property_scout_excluded_principal_ids()
     raw = str(os.environ.get("EA_PROPERTY_SCOUT_PRINCIPAL_IDS") or "").strip()
     if raw:
-        values = tuple(sorted({part.strip() for part in raw.split(",") if part.strip()}))
+        values = tuple(
+            sorted(
+                {
+                    part.strip()
+                    for part in raw.split(",")
+                    if part.strip() and part.strip() not in excluded
+                }
+            )
+        )
         if values:
             return values
     onboarding_service = getattr(container, "onboarding", None)
@@ -1370,6 +1397,7 @@ def _scheduler_property_scout_principal_ids(container) -> tuple[str, ...]:  # ty
                             str(value or "").strip()
                             for value in list_principals(limit=1000)
                             if str(value or "").strip()
+                            and str(value or "").strip() not in excluded
                         }
                     )
                 )
@@ -1385,7 +1413,7 @@ def _scheduler_property_scout_principal_ids(container) -> tuple[str, ...]:  # ty
         str(getattr(getattr(settings, "auth", None), "default_principal_id", "") or "").strip(),
         str(os.environ.get("EA_DEFAULT_PRINCIPAL_ID") or "").strip(),
     }
-    return tuple(sorted(value for value in principal_candidates if value))
+    return tuple(sorted(value for value in principal_candidates if value and value not in excluded))
 
 
 def _run_scheduler_property_scout(container, log: logging.Logger) -> dict[str, object]:  # type: ignore[no-untyped-def]
@@ -1448,6 +1476,18 @@ def _run_scheduler_property_search_recovery(container, log: logging.Logger) -> d
     service = build_product_service(container)
     principal_ids = tuple(str(value or "").strip() for value in _scheduler_property_scout_principal_ids(container) if str(value or "").strip())
     aggregate = {"scanned": 0, "stale_total": 0, "repaired": 0, "replacement_started": 0, "errors": 0}
+    maintenance = {
+        "terminalized": 0,
+        "observations_compacted": 0,
+        "payload_bytes_reclaimed": 0,
+    }
+    try:
+        bounded_storage = service.maintain_bounded_property_search_storage(limit=80)
+        for key in maintenance:
+            maintenance[key] = int(bounded_storage.get(key) or 0)
+    except Exception:
+        aggregate["errors"] += 1
+        log.exception("scheduler bounded property search storage maintenance failed")
     if principal_ids:
         for principal_id in principal_ids:
             try:
@@ -1476,6 +1516,9 @@ def _run_scheduler_property_search_recovery(container, log: logging.Logger) -> d
         "repaired": int(aggregate.get("repaired") or 0),
         "replacement_started": int(aggregate.get("replacement_started") or 0),
         "errors": int(aggregate.get("errors") or 0),
+        "orphaned_queued_runs_terminalized": maintenance["terminalized"],
+        "scout_completion_observations_compacted": maintenance["observations_compacted"],
+        "storage_payload_bytes_reclaimed": maintenance["payload_bytes_reclaimed"],
     }
 
 
@@ -2249,8 +2292,9 @@ def _run_scheduler_telegram_async_recovery(container, log: logging.Logger) -> di
 
 
 def _run_role_heartbeat_loop(*, role: str, stop_event: threading.Event) -> None:
+    status = "serving" if str(role or "").strip().lower() == "api" else "loop"
     while not stop_event.wait(30.0):
-        _write_scheduler_heartbeat(role=role, status="serving")
+        _write_scheduler_heartbeat(role=role, status=status)
 
 
 def _run_api() -> None:
@@ -2306,6 +2350,7 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
         return {"claimed": False, "reason": "database_url_missing"}
 
     from app.product.property_search_work_queue import (
+        PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
         PostgresPropertySearchWorkQueue,
         property_search_work_heartbeat_seconds,
         property_search_work_lease_seconds,
@@ -2476,7 +2521,22 @@ def _run_property_search_work_once(container, *, role: str, log: logging.Logger)
         }
     stop_heartbeat.set()
     heartbeat_thread.join(timeout=max(1.0, float(property_search_work_heartbeat_seconds()) + 1.0))
-    completed = None if lease_lost.is_set() else repository.complete(job_id=job.job_id, lease_owner=lease_owner)
+    if lease_lost.is_set():
+        completed = None
+    elif (
+        str(job.payload_json.get("work_kind") or "").strip()
+        == PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
+    ):
+        completed = repository.complete(
+            job_id=job.job_id,
+            lease_owner=lease_owner,
+            result_json=result,
+        )
+    else:
+        completed = repository.complete(
+            job_id=job.job_id,
+            lease_owner=lease_owner,
+        )
     _refresh_property_search_queue_metrics(repository)
     _write_scheduler_heartbeat(role=role, status="loop")
     if completed is None:
@@ -2671,6 +2731,18 @@ def _run_execution_worker(role: str) -> None:
     property_only_worker = role == "worker" and _worker_property_only_profile_enabled()
     log.info("role=%s started worker loop", role)
     _write_scheduler_heartbeat(role=role, status="started")
+    worker_heartbeat_thread: threading.Thread | None = None
+    if role == "worker":
+        # Queue lease renewal and provider execution can both block on external
+        # systems. Keep process liveness independent so a healthy worker is not
+        # restarted while its durable lease heartbeat is recovering.
+        worker_heartbeat_thread = threading.Thread(
+            target=_run_role_heartbeat_loop,
+            kwargs={"role": role, "stop_event": stop_event},
+            name="property-search-worker-process-heartbeat",
+            daemon=True,
+        )
+        worker_heartbeat_thread.start()
     if property_only_worker:
         try:
             _run_property_search_work_pool(
@@ -2680,6 +2752,9 @@ def _run_execution_worker(role: str) -> None:
                 stop_event=stop_event,
             )
         finally:
+            stop_event.set()
+            if worker_heartbeat_thread is not None:
+                worker_heartbeat_thread.join(timeout=2.0)
             _write_scheduler_heartbeat(role=role, status="stopped")
         return
     while not stop_event.is_set():
@@ -2982,6 +3057,9 @@ def _run_execution_worker(role: str) -> None:
             artifact.execution_session_id,
             artifact.artifact_id,
         )
+    stop_event.set()
+    if worker_heartbeat_thread is not None:
+        worker_heartbeat_thread.join(timeout=2.0)
     log.info("role=%s stopped worker loop", role)
 
 

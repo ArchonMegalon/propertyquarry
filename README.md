@@ -259,18 +259,33 @@ Runtime DB visibility and retention helpers remain part of the standalone releas
 - `bash scripts/db_status.sh`
 - `bash scripts/db_size.sh`
 - `bash scripts/db_retention.sh`
+- `bash scripts/storage_size.sh`
 
 Supported controls include:
 
 - `EA_RETENTION_PROFILE=aggressive|standard|conservative`
 - `EA_RETENTION_TABLES`
 - `EA_RETENTION_SKIP_TABLES`
+- `EA_RETENTION_BATCH_SIZE=<1..10000>`
+- `EA_RETENTION_MAX_ROWS_PER_TABLE=<1..1000000>`
+- `EA_PROPERTY_SEARCH_RUN_MAX_PAYLOAD_BYTES=<bytes>`
+- `EA_PROPERTY_SEARCH_RUN_MAX_ROWS_PER_PRINCIPAL=<rows>`
+- `EA_OBSERVATION_MAX_PAYLOAD_BYTES=<bytes>`
 - `EA_DB_SIZE_SCHEMA=<schema>`
-- `EA_DB_SIZE_SORT_KEY=total|table|index`
+- `EA_DB_SIZE_SORT_KEY=total|table|index|toast|dead`
 - `EA_DB_SIZE_TABLE_PREFIX=<prefix>`
 - `EA_DB_SIZE_MIN_MB=<n>`
+- `EA_DB_SIZE_WARN_MB=<n>` / `EA_DB_SIZE_CRITICAL_MB=<n>`
+- `EA_DB_WAL_WARN_MB=<n>` / `EA_DB_DEAD_TUPLE_WARN_PERCENT=<n>`
 - `SUPPORT_INCLUDE_DB_SIZE=0`
 - `SUPPORT_DB_SIZE_LIMIT=<n>`
+
+Apply runs are journaled in `propertyquarry_retention_runs`, use short
+`SKIP LOCKED` transactions, and stop at a per-table ceiling. They never delete
+packet/legal-hold rows or run `VACUUM FULL`. See
+[the bounded-storage contract](docs/PROPERTYQUARRY_STORAGE_RETENTION.md) for
+tenant quotas, physical reclaim, generated-media/backup boundaries, alerting,
+and the checked-in systemd timers.
 
 ## Property release gates
 
@@ -292,6 +307,7 @@ This bundle includes docs links, runtime security posture, repo-isolation checks
 - release-control wire protocol: [docs/PROPERTYQUARRY_RELEASE_CONTROL_PROTOCOL_V1.md](docs/PROPERTYQUARRY_RELEASE_CONTROL_PROTOCOL_V1.md)
 - domain rollout: [docs/DOMAIN_ROLLOUT.md](docs/DOMAIN_ROLLOUT.md)
 - runbook: [RUNBOOK.md](RUNBOOK.md)
+- bounded storage: [docs/PROPERTYQUARRY_STORAGE_RETENTION.md](docs/PROPERTYQUARRY_STORAGE_RETENTION.md)
 
 ## Migration status
 
@@ -315,7 +331,7 @@ Runtime storage and deploy notes:
 - `docker-compose.host-tools.yml` is the explicit opt-in host-tools profile. The default API, worker, scheduler, and property runtime must not mount `/var/run/docker.sock` or the host repository.
 - If you deploy through `scripts/deploy.sh`, keep the overlay explicit with `EA_ENABLE_FASTESTVPN=1`.
 - Operator alias envs include `PROPERTYQUARRY_API_SERVICE`, `PROPERTYQUARRY_DB_SERVICE`, `PROPERTYQUARRY_SCHEDULER_SERVICE`, and `scripts/support_bundle.sh`.
-- Support exports and DB helpers document `SUPPORT_INCLUDE_DB_VOLUME=0`, `ea-db mount/volume attribution`, `SUPPORT_INCLUDE_DB_SIZE=0`, `SUPPORT_DB_SIZE_LIMIT=<n>`, `EA_RETENTION_PROFILE=aggressive|standard|conservative`, `EA_RETENTION_TABLES`, `EA_RETENTION_SKIP_TABLES`, `EA_DB_SIZE_SCHEMA=<schema>`, `EA_DB_SIZE_SORT_KEY=total|table|index`, `EA_DB_SIZE_TABLE_PREFIX=<prefix>`, and `EA_DB_SIZE_MIN_MB=<n>`.
+- Support exports and DB helpers document `SUPPORT_INCLUDE_DB_VOLUME=0`, `ea-db mount/volume attribution`, `SUPPORT_INCLUDE_DB_SIZE=0`, `SUPPORT_DB_SIZE_LIMIT=<n>`, `EA_RETENTION_PROFILE=aggressive|standard|conservative`, `EA_RETENTION_TABLES`, `EA_RETENTION_SKIP_TABLES`, `EA_RETENTION_BATCH_SIZE`, `EA_RETENTION_MAX_ROWS_PER_TABLE`, `EA_DB_SIZE_SCHEMA=<schema>`, `EA_DB_SIZE_SORT_KEY=total|table|index|toast|dead`, `EA_DB_SIZE_TABLE_PREFIX=<prefix>`, and `EA_DB_SIZE_MIN_MB=<n>`.
 - Pay/bootstrap helpers include `bootstrap_payfunnels_propertyquarry.py` and `bootstrap_emailit_propertyquarry.py`.
 
 Provider health and runtime hints:

@@ -15,6 +15,10 @@ from app.container import AppContainer
 from app.observability import runtime_build_identity, runtime_heartbeat_readiness
 from app.product.property_search_schema import LATEST_PROPERTY_SEARCH_SCHEMA_VERSION
 from app.product.property_search_storage import property_search_run_retention_policy
+from app.services.propertyquarry_android_app_links import (
+    propertyquarry_android_app_links_ready,
+    propertyquarry_android_app_links_readiness,
+)
 from app.services.id_austria_oidc import id_austria_provider_readiness
 
 router = APIRouter(tags=["system"])
@@ -52,6 +56,7 @@ RELEASE_IDENTITY_RESPONSE_HEADERS = (
     ("release_manifest_sha256", "X-PropertyQuarry-Release-Manifest-SHA256"),
     ("replica_id", "X-PropertyQuarry-Replica-ID"),
 )
+PROPERTYQUARRY_MOBILE_CONTRACT_VERSION = "1"
 
 
 def _env_value(name: str) -> str:
@@ -261,6 +266,28 @@ async def health() -> dict[str, str]:
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
     return await health()
+
+
+@router.get("/mobile/runtime-contract", include_in_schema=False)
+async def propertyquarry_mobile_runtime_contract() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "contract_version": PROPERTYQUARRY_MOBILE_CONTRACT_VERSION,
+        "app_id": "com.myexternalbrain.propertyquarry",
+        "public_origin": "https://propertyquarry.com",
+        "minimum_android_build": 1,
+        "start_path": "/app/search",
+        "external_auth_path": "/sign-in/google",
+        "mobile_auth_return_to": "/mobile/auth/complete",
+        "mobile_auth_redeem_path": "/mobile/auth/redeem",
+        "share_import_path": "/app/api/mobile/property-links",
+        "app_link_paths": ["/app", "/app/*", "/shortlist", "/shortlist/*"],
+        "app_links_ready": propertyquarry_android_app_links_ready(),
+        "app_links_ready_by_app_id": propertyquarry_android_app_links_readiness(),
+        "walkthrough_default": "camera",
+        "spatial_tour_providers": ["3dvista", "matterport"],
+        "vr_mode": "optional",
+    }
 
 
 @router.get("/health/live")

@@ -37,9 +37,35 @@
 {% set current_property_status_label = current_property.get('status_label') or ('Best so far' if current_property else '') %}
 {% set current_property_status_detail = current_property.get('status_detail') or current_property.get('fit_summary') or current_property.get('summary') or '' %}
 {% set current_property_detail_url = current_property.get('detail_url') or current_property.get('packet_url') or current_property.get('review_url') or '' %}
+<style>
+  .pqx-opportunity-cover{display:grid;grid-template-columns:44px minmax(0,1fr);gap:7px;align-items:center;width:100%;max-width:100%;margin-top:8px;padding:7px;border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:11px;background:color-mix(in srgb,var(--pqx-surface,#fff) 94%,#b76545 6%)}
+  .pqx-opportunity-cover img{width:44px;height:44px;object-fit:cover;border-radius:8px}
+  .pqx-opportunity-cover>span{display:block;min-width:0}
+  .pqx-opportunity-cover strong{display:block;font-size:.68rem;line-height:1.18;font-weight:750}
+  .pqx-opportunity-cover>span>span{display:block;margin-top:2px;font-size:.62rem;line-height:1.22;opacity:.72}
+</style>
 <section class="pqx-result-panel active{% if is_research_surface and not results %} is-empty-research{% endif %}" data-pqx-mobile-panel="results">
   <div class="pqx-result-panel-head">
     <div class="pqx-results-headline">
+      {% if is_shortlist_surface %}
+      <div class="pqx-shortlist-hero" data-pqx-premium-shortlist>
+        <div class="pqx-shortlist-hero-copy">
+          <span class="pqx-shortlist-eyebrow"><i aria-hidden="true"></i>Private collection</span>
+          <h1>Your shortlist</h1>
+          <p>Compare the spaces, fit, and trade-offs that are genuinely worth a closer look.</p>
+        </div>
+        <div class="pqx-shortlist-hero-actions">
+          <span class="pqx-shortlist-count" aria-label="{{ full_results_total }} {{ results_label }}">
+            <strong>{{ full_results_total }}</strong>
+            <span>{{ 'opportunities' if brief.get('search_goal') == 'investment' else 'homes' }}</span>
+          </span>
+          <a class="pqx-shortlist-refine" href="/app/search">
+            Refine search
+            <span aria-hidden="true">&#8599;</span>
+          </a>
+        </div>
+      </div>
+      {% endif %}
       {% if is_research_surface %}
       <div class="pqx-title" style="margin-bottom:12px;">
         <span>{{ hero_kicker or 'Property pages' }}</span>
@@ -69,10 +95,11 @@
     </div>
   </div>
   {% include "app/_property_recent_run_strip.html" %}
-  {% if current_property_image or route_previews %}
+  {% if current_property or route_previews %}
   <div class="pqx-route-preview-strip">
-    {% if current_property and current_property_image %}
+    {% if current_property %}
     <article class="pqx-current-property-card">
+      {% if current_property_image %}
       <button
         class="pqx-current-property-diorama-button"
         type="button"
@@ -87,6 +114,9 @@
       >
         <img class="pqx-current-property-thumb" src="{{ current_property_image }}" alt="{{ current_property.get('diorama_alt') or current_property_diorama.get('alt') or current_property.get('title') or 'Illustrative property diorama' }}">
       </button>
+      {% else %}
+      <div class="pqx-current-property-diorama-button pqx-current-property-diorama-placeholder" role="img" aria-label="Diorama preview in progress"></div>
+      {% endif %}
       {% if current_property_detail_url %}<a class="pqx-current-property-link" href="{{ current_property_detail_url }}">{% else %}<div class="pqx-current-property-link">{% endif %}
         <div class="pqx-current-property-copy">
           <span class="pqx-small">{{ current_property_status_label or 'Current property' }}</span>
@@ -135,95 +165,132 @@
 	    <span hidden></span>
 	    <dialog data-pqx-filtered-dialog aria-label="Homes outside this search" hidden></dialog>
 	    {% for candidate in visible_results %}
-    <article class="pqx-result pqx-card{% if candidate.get('recovered_by_filter') %} is-filter-recovered{% endif %}{% if loop.first %} is-top-ranked{% endif %}" aria-current="{{ 'true' if loop.first else 'false' }}" data-candidate-ref="{{ candidate.get('candidate_ref') }}" data-candidate-packet-url="{{ candidate.get('packet_url') or '' }}" data-candidate-listing-url="{{ candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url') or '' }}" data-tour-status="{{ candidate.get('tour', {}).get('status') or 'missing' }}" data-tour-eta="{{ candidate.get('tour', {}).get('eta_label') or '' }}" data-workbench-row>
+    {% set is_selected_candidate = candidate.get('candidate_ref') and candidate.get('candidate_ref') == selected.get('candidate_ref') %}
+    {% set is_strong_top_match = loop.first and (candidate.get('fit_score') or candidate.get('personal_fit_score') or 0)|int >= 70 %}
+    <article class="pqx-result pqx-card{% if candidate.get('recovered_by_filter') %} is-filter-recovered{% endif %}{% if loop.first %} is-top-ranked{% endif %}{% if is_selected_candidate %} is-selected-candidate{% endif %}" aria-current="{{ 'true' if is_selected_candidate else 'false' }}" data-candidate-ref="{{ candidate.get('candidate_ref') }}" data-candidate-packet-url="{{ candidate.get('packet_url') or '' }}" data-candidate-listing-url="{{ candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url') or '' }}" data-tour-status="{{ candidate.get('tour', {}).get('status') or 'missing' }}" data-tour-eta="{{ candidate.get('tour', {}).get('eta_label') or '' }}"{% if is_shortlist_surface %} data-pqx-shortlist-card{% endif %} data-workbench-row>
       {% set orientation_preview = candidate.get('orientation_preview') or {} %}
 		      {% set diorama_scene = candidate.get('diorama_scene') or {} %}
 		      {% set diorama_preview_url = candidate.get('diorama_preview_url') or diorama_scene.get('image_url') or '' %}
 		      {% set primary_preview_url = candidate.get('preview_image_url') or orientation_preview.get('thumb_image_url') or orientation_preview.get('image_url') or '' %}
 		      {% set diorama_preview_url = diorama_preview_url if diorama_preview_url.startswith('/') else '' %}
-		      {% set primary_preview_url = primary_preview_url if primary_preview_url.startswith('/') else '' %}
+		      {% set primary_preview_url = primary_preview_url if ((primary_preview_url.startswith('/') and not primary_preview_url.startswith('//')) or primary_preview_url.startswith('https://')) else '' %}
+		      {% set shortlist_preview_url = diorama_preview_url or primary_preview_url %}
 	      {% set candidate_facts = candidate.get('property_facts') or {} %}
 	      {% set provisional_facts = candidate.get('provisional_facts') or candidate.get('facts') or {} %}
-	      {% set candidate_price_text = candidate.get('price_display') if candidate.get('price_display') and candidate.get('price_display') != 'n/a' else (candidate.get('costs_display') or candidate.get('rent_display') or candidate_facts.get('price_display') or candidate_facts.get('rent_display') or candidate_facts.get('price') or candidate_facts.get('rent') or provisional_facts.get('price_display') or provisional_facts.get('rent_display') or provisional_facts.get('price') or provisional_facts.get('rent') or '') %}
+	      {% set candidate_price_text = candidate.get('price_display') if candidate.get('price_display') and candidate.get('price_display') != 'n/a' else (candidate.get('rent_display') or candidate_facts.get('price_display') or candidate_facts.get('rent_display') or candidate_facts.get('price') or candidate_facts.get('rent') or provisional_facts.get('price_display') or provisional_facts.get('rent_display') or provisional_facts.get('price') or provisional_facts.get('rent') or '') %}
 	      {% set candidate_price_numeric = candidate.get('price_eur') or candidate.get('purchase_price_eur') or candidate.get('buy_price_eur') or candidate.get('rent_eur') or candidate.get('total_rent_eur') or candidate.get('monthly_rent_eur') or candidate_facts.get('price_eur') or candidate_facts.get('purchase_price_eur') or candidate_facts.get('buy_price_eur') or candidate_facts.get('rent_eur') or candidate_facts.get('total_rent_eur') or candidate_facts.get('monthly_rent_eur') or provisional_facts.get('price_eur') or provisional_facts.get('purchase_price_eur') or provisional_facts.get('buy_price_eur') or provisional_facts.get('rent_eur') or provisional_facts.get('total_rent_eur') or provisional_facts.get('monthly_rent_eur') %}
 	      {% set candidate_price_currency = candidate.get('currency_code') or candidate_facts.get('currency_code') or provisional_facts.get('currency_code') or ('EUR' if candidate_price_numeric else '') %}
       {% set primary_price = candidate_price_text or ((candidate_price_currency ~ ' ' ~ '{:,.0f}'.format(candidate_price_numeric|float)) if candidate_price_numeric else 'No price published') %}
       {% set secondary_price = candidate.get('costs_display') if candidate.get('price_display') and candidate.get('price_display') != 'n/a' else (candidate.get('price_per_sqm_display') or candidate.get('costs_display') or candidate.get('rent_display') or candidate_facts.get('price_per_sqm_display') or '') %}
+      {% if secondary_price == primary_price %}{% set secondary_price = '' %}{% endif %}
       {% set thesis_line = candidate.get('investment', {}).get('headline') if brief.get('search_goal') == 'investment' else '' %}
       {% set fit_tooltip = candidate.get('fit_summary') or ((candidate.get('match_reasons') or [])[:2]|join(' · ')) or 'How closely this home matches your search.' %}
       {% if not thesis_line %}
       {% set thesis_line = (candidate.get('match_reasons') or [candidate.get('fit_summary') or ''])|first %}
       {% endif %}
       {% set blocker_line = (candidate.get('mismatch_reasons') or [candidate.get('investment', {}).get('underwriting_summary') or ''])|first %}
+      {% set opportunity = candidate.get('opportunity') or {} %}
+      {% set ai_assessment = candidate.get('ai_assessment') or {} %}
+      {% set ai_assessment_receipt = ai_assessment.get('receipt') or {} %}
+      {% set opportunity_unknown = (opportunity.get('unknowns') or candidate.get('unknowns') or [])|first %}
       {% set visual_property_url = candidate.get('property_url') or candidate.get('source_url') or candidate.get('listing_url') %}
       {% set visual_media_ready = candidate.get('floorplan_url') or candidate.get('source_virtual_tour_url') or candidate.get('vendor_tour_url') %}
       {% set tour = candidate.get('tour', {}) %}
       {% set tour_status = (tour.get('status') or '')|lower %}
       {% set tour_pending = tour_status in ['queued', 'pending', 'processing', 'running', 'in_progress', 'started', 'rendering', 'repairing'] %}
       {% set tour_progress = tour.get('progress_pct') if tour.get('progress_pct') is not none else (100 if tour.get('url') else 0) %}
-      {% set tour_tooltip = (tour.get('detail') or ('Open the 3D tour.' if tour.get('url') else 'Preparing 3D tour.')) ~ ((' · ETA ' ~ tour.get('eta_label')) if tour.get('eta_label') else '') %}
+      {% set tour_tooltip = (tour.get('detail') or ('Open the verified 3D tour.' if tour.get('url') else 'Preparing verified 3D tour.')) ~ ((' · ETA ' ~ tour.get('eta_label')) if tour.get('eta_label') else '') %}
       {% set tour_progress_label = 'Preparing 3D tour' if tour_pending else (tour.get('label') or '3D tour') %}
       {% set walkthrough = candidate.get('flythrough') or {} %}
       {% set walkthrough_status = (walkthrough.get('status') or '')|lower %}
       {% set walkthrough_pending = walkthrough_status in ['queued', 'pending', 'processing', 'running', 'in_progress', 'started', 'rendering', 'repairing'] %}
       {% set walkthrough_progress = walkthrough.get('progress_pct') if walkthrough.get('progress_pct') is not none else (100 if walkthrough.get('url') else 0) %}
-      {% set walkthrough_label = walkthrough.get('label') or ('Walkthrough' if walkthrough.get('url') else ('Preparing walkthrough' if walkthrough_pending else 'Request walkthrough')) %}
-      {% set walkthrough_tooltip = (walkthrough.get('detail') or ('Open the walkthrough.' if walkthrough.get('url') else ('Preparing walkthrough.' if walkthrough_pending else 'Request when you want a guided walkthrough.'))) ~ ((' · ETA ' ~ walkthrough.get('eta_label')) if walkthrough.get('eta_label') else '') %}
+      {% set walkthrough_label = walkthrough.get('label') or ('Camera walkthrough' if walkthrough.get('url') else ('Preparing camera walkthrough' if walkthrough_pending else 'Request camera walkthrough')) %}
+      {% set walkthrough_tooltip = (walkthrough.get('detail') or ('Open the normal camera walkthrough.' if walkthrough.get('url') else ('Preparing camera walkthrough.' if walkthrough_pending else 'Request a normal camera walkthrough.'))) ~ ((' · ETA ' ~ walkthrough.get('eta_label')) if walkthrough.get('eta_label') else '') %}
       {% set visual_delivery_note = '' %}
-      {% if tour.get('status_detail') and (tour.get('url') or tour_pending or tour_status == 'blocked') %}
-      {% set visual_delivery_note = tour.get('status_detail') %}
-      {% elif walkthrough.get('status_detail') and (walkthrough.get('url') or walkthrough_pending or walkthrough_status == 'blocked') %}
+      {% if walkthrough.get('status_detail') and (walkthrough.get('url') or walkthrough_pending or walkthrough_status == 'blocked') %}
       {% set visual_delivery_note = walkthrough.get('status_detail') %}
+      {% elif tour.get('status_detail') and (tour.get('url') or tour_pending or tour_status == 'blocked') %}
+      {% set visual_delivery_note = tour.get('status_detail') %}
       {% endif %}
-      <span class="pqx-result-main">
-        <span class="pqx-result-media{% if not primary_preview_url and not is_shortlist_surface %} no-thumb{% endif %}{% if is_shortlist_surface %} has-diorama{% endif %}">
+	      <span class="pqx-result-main">
+	        <span class="pqx-result-media{% if is_shortlist_surface %} has-diorama{% endif %}">
           {% if is_shortlist_surface %}
           <button
-            class="pqx-result-diorama pqx-result-diorama-button{% if not (diorama_preview_url or primary_preview_url) %} is-placeholder{% endif %}"
+            class="pqx-result-diorama pqx-result-diorama-button{% if not shortlist_preview_url %} is-placeholder{% endif %}"
             type="button"
             data-pqx-shortlist-diorama
+            data-pqx-thumbnail
             data-pqx-atlas-open
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
-            aria-label="Open area map for {{ candidate.get('title') or 'property' }}"
-            {% if loop.first %}{% else %}data-pqx-deferred-preview-host{% endif %}
+            data-pqx-thumbnail-fallback="{{ candidate.get('preview_image_fallback_url') or '' }}"
+            data-pqx-thumbnail-fallbacks='{{ (candidate.get("preview_image_fallback_urls") or [])|tojson|safe }}'
+            aria-label="{{ 'Explore diorama and area map for' if diorama_preview_url else 'Open area map for' }} {{ candidate.get('title') or 'property' }}"
+            {% if loop.index > 3 %}data-pqx-deferred-preview-host{% endif %}
           >
-            {% if diorama_preview_url or primary_preview_url %}
+            {% if shortlist_preview_url %}
             <img
-              {% if loop.first %}
-              src="{{ diorama_preview_url or primary_preview_url }}"
-              loading="eager"
-              fetchpriority="high"
+              {% if loop.index <= 3 %}
+              src="{{ shortlist_preview_url }}"
+              loading="{{ 'eager' if loop.first else 'lazy' }}"
+              fetchpriority="{{ 'high' if loop.first else 'low' }}"
               {% else %}
               src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
-              data-pqx-deferred-src="{{ diorama_preview_url or primary_preview_url }}"
+              data-pqx-deferred-src="{{ shortlist_preview_url }}"
               loading="lazy"
               fetchpriority="low"
               {% endif %}
               alt=""
               decoding="async"
+              referrerpolicy="no-referrer"
+              data-pqx-thumbnail-image
             >
+            <span class="pqx-result-diorama-empty-label" aria-hidden="true" hidden>Preview not available</span>
             {% else %}
             <span class="pqx-result-diorama-room room-main"></span>
             <span class="pqx-result-diorama-room room-side"></span>
             <span class="pqx-result-diorama-room room-terrace"></span>
             <span class="pqx-result-diorama-empty-label" aria-hidden="true">Preview not available</span>
             {% endif %}
+            <span class="pqx-shortlist-visual-chrome" aria-hidden="true">
+              <span class="pqx-shortlist-visual-label">{{ 'Spatial diorama' if diorama_preview_url else 'Area preview' }}</span>
+              <span class="pqx-shortlist-visual-action">Explore <b>&#8599;</b></span>
+            </span>
           </button>
           {% elif primary_preview_url %}
-          <span class="pqx-thumb">
-            <button
+	          <span
+              class="pqx-thumb"
+              data-pqx-thumbnail
+              data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
+              data-pqx-thumbnail-fallback="{{ candidate.get('preview_image_fallback_url') or '' }}"
+              data-pqx-thumbnail-fallbacks='{{ (candidate.get("preview_image_fallback_urls") or [])|tojson|safe }}'
+            >
+	            <button
               class="pqx-thumb-link pqx-thumb-atlas-button"
               type="button"
               data-pqx-atlas-open
               data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
               aria-label="Open area map for {{ candidate.get('title') or 'property' }}"
             >
-              <img src="{{ primary_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low">
-            </button>
-          </span>
-          {% endif %}
+	              <img
+                src="{{ primary_preview_url }}"
+                alt=""
+                loading="lazy"
+                decoding="async"
+                fetchpriority="low"
+                referrerpolicy="no-referrer"
+                data-pqx-thumbnail-image
+              >
+	            </button>
+	            <span class="pqx-thumb-placeholder" aria-hidden="true">Media preview not available.</span>
+	          </span>
+	          {% else %}
+	          <span class="pqx-thumb is-placeholder" data-pqx-thumbnail data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}" role="img" aria-label="Media preview not available.">
+	            <span class="pqx-thumb-placeholder">Media preview not available.</span>
+	          </span>
+	          {% endif %}
           <span class="pqx-result-summary">
-            <span class="pqx-result-kicker"><span class="pqx-rank">#{{ candidate.get('rank') }}</span>{% if candidate.get('location_label') %}<span>{{ candidate.get('location_label') }}</span>{% endif %}</span>
+            <span class="pqx-result-kicker">{% if is_shortlist_surface and loop.first %}<span class="pqx-shortlist-top-label">{{ 'Top match' if is_strong_top_match else 'Closest available' }}</span>{% elif is_shortlist_surface and candidate.get('selected_via_link') %}<span class="pqx-shortlist-top-label">Selected home</span>{% endif %}<span class="pqx-rank">#{{ candidate.get('rank') }}</span>{% if candidate.get('location_label') %}<span>{{ candidate.get('location_label') }}</span>{% endif %}</span>
             <span class="pqx-result-title">{{ candidate.get('title') }}</span>
             <span class="pqx-result-facts">
               {% if candidate.get('repair_flag_label') %}
@@ -253,13 +320,31 @@
               {% if brief.get('search_goal') == 'investment' and candidate.get('investment', {}).get('market_delta_display') %}
               <span class="pqx-result-fact">{{ candidate.get('investment', {}).get('market_delta_display') }}</span>
               {% endif %}
-              {% if tour.get('url') %}
-              <a class="pqx-result-fact pqx-result-tour-link" href="{{ tour.get('url') }}" title="{{ tour.get('detail') or 'Open the 3D tour.' }}" aria-label="3D tour" data-rybbit-event="pq.tour.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">3D tour</a>
-              {% endif %}
               {% if walkthrough.get('url') %}
-              <a class="pqx-result-fact pqx-result-tour-link" href="{{ walkthrough.get('url') }}" title="{{ walkthrough.get('detail') or 'Open the walkthrough.' }}" aria-label="Walkthrough" data-rybbit-event="pq.flythrough.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">Walkthrough</a>
+              <a class="pqx-result-fact pqx-result-tour-link" href="{{ walkthrough.get('url') }}" title="{{ walkthrough.get('detail') or 'Open the normal camera walkthrough.' }}" aria-label="Camera walkthrough" data-rybbit-event="pq.flythrough.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">Camera walkthrough</a>
+              {% endif %}
+              {% if tour.get('url') %}
+              <a class="pqx-result-fact pqx-result-tour-link" href="{{ tour.get('url') }}" title="{{ tour.get('detail') or 'Open the verified 3D tour.' }}" aria-label="3D tour" data-rybbit-event="pq.tour.opened" data-rybbit-prop-surface="{{ surface_mode or 'results' }}">3D tour</a>
               {% endif %}
             </span>
+            {% if is_shortlist_surface and (candidate.get('fit_summary') or thesis_line) %}
+            <span class="pqx-note pqx-shortlist-thesis">{{ candidate.get('fit_summary') or thesis_line }}</span>
+            {% endif %}
+            {% if opportunity.get('status') in ['ready', 'preview'] %}
+            <span class="pqx-note pqx-opportunity-summary" data-pqx-opportunity-summary>
+              <strong>{{ (opportunity.get('recommendation') or candidate.get('recommendation') or 'Review')|replace('_', ' ')|title }}</strong>
+              {% if blocker_line %}<span>Watch: {{ blocker_line }}</span>{% endif %}
+              {% if opportunity_unknown %}<span>Verify: {{ opportunity_unknown }}</span>{% endif %}
+            </span>
+            <span class="pqx-note" data-pqx-opportunity-artifact hidden></span>
+            <span class="pqx-opportunity-cover" data-pqx-opportunity-cover hidden></span>
+            {% endif %}
+            {% if ai_assessment.get('status') == 'succeeded' and ai_assessment_receipt.get('manager_routed') and ai_assessment.get('summary') %}
+            <span class="pqx-note pqx-ai-assessment" data-pqx-ai-assessment title="Receipt-backed {{ ai_assessment.get('provider') or '1minAI' }} assessment">
+              <strong>{{ ai_assessment.get('provider') or '1minAI' }} evidence review · {{ (ai_assessment.get('recommendation') or 'Review')|replace('_', ' ')|title }}</strong>
+              <span>{{ ai_assessment.get('summary') }}</span>
+            </span>
+            {% endif %}
           </span>
         </span>
       </span>
@@ -284,14 +369,31 @@
         {% endif %}
         <span class="pqx-result-actions">
           <button
-            class="pqx-result-open pqx-result-open-button"
+            class="pqx-result-open pqx-result-open-button is-primary"
             type="button"
             data-workbench-select-candidate
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"
             aria-label="Review {{ candidate.get('title') or 'property' }}"
           >Review</button>
+          {% if not is_shortlist_surface and opportunity.get('status') in ['ready', 'preview'] and run.get('run_id') and candidate.get('candidate_ref') %}
+          <button
+            class="pqx-result-open pqx-result-open-button is-secondary"
+            type="button"
+            data-pqx-opportunity-generate
+            data-candidate-ref="{{ candidate.get('candidate_ref') }}"
+            data-run-id="{{ run.get('run_id') }}"
+          >Create brief</button>
+          <button
+            class="pqx-result-open pqx-result-open-button is-secondary"
+            type="button"
+            data-pqx-opportunity-cover-generate
+            data-candidate-ref="{{ candidate.get('candidate_ref') }}"
+            data-run-id="{{ run.get('run_id') }}"
+          >Create cover</button>
+          <span class="pqx-note" data-pqx-opportunity-generation-status aria-live="polite"></span>
+          {% endif %}
           {% if candidate.get('packet_url') %}
-          <a class="pqx-result-open" href="{{ candidate.get('packet_url') }}">Open property</a>
+          <a class="pqx-result-open is-secondary" href="{{ candidate.get('packet_url') }}">Open property</a>
           {% endif %}
           {% if (candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url')) and not shortlist_compact_actions %}
           <a class="pqx-result-open" href="{{ candidate.get('source_url') or candidate.get('property_url') or candidate.get('listing_url') }}" target="_blank" rel="noopener noreferrer">Open listing</a>
@@ -304,7 +406,7 @@
           {% endif %}
         {% if surface_mode == 'shortlist' %}
           <button
-            class="pqx-result-open pqx-result-open-button"
+            class="pqx-result-open pqx-result-open-button is-remove"
             type="button"
             data-pw-decision-state="archived"
             data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}"

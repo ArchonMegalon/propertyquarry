@@ -648,13 +648,14 @@ class OneminToolAdapter:
 
     def execute_code_generate(self, request: ToolInvocationRequest, definition: ToolDefinition) -> ToolInvocationResult:
         payload = dict(request.payload_json or {})
+        principal_id = self._request_principal_id(request)
         prompt = self._build_code_prompt(payload)
         model = str(payload.get("model") or self._default_code_model()).strip() or self._default_code_model()
         result = self._call_text(
             prompt=prompt,
             model=model,
             lane="hard",
-            principal_id=self._request_principal_id(request),
+            principal_id=principal_id,
         )
         normalized_text, structured_output_json, mime_type = _parse_structured(result.text)
         action_kind = str(request.action_kind or "code.generate") or "code.generate"
@@ -682,6 +683,7 @@ class OneminToolAdapter:
                 "provider_account_name": result.provider_account_name,
                 "provider_key_slot": result.provider_key_slot,
                 "model": result.model,
+                "principal_id": principal_id,
                 "tool_version": definition.version,
             },
             model_name=result.model,
@@ -692,13 +694,14 @@ class OneminToolAdapter:
 
     def execute_reasoned_patch_review(self, request: ToolInvocationRequest, definition: ToolDefinition) -> ToolInvocationResult:
         payload = dict(request.payload_json or {})
+        principal_id = self._request_principal_id(request)
         prompt = self._build_review_prompt(payload)
         model = str(payload.get("model") or self._default_review_model()).strip() or self._default_review_model()
         result = self._call_text(
             prompt=prompt,
             model=model,
             lane="review",
-            principal_id=self._request_principal_id(request),
+            principal_id=principal_id,
         )
         normalized_text, structured_output_json, mime_type = _parse_structured(result.text)
         action_kind = str(request.action_kind or "code.review") or "code.review"
@@ -726,6 +729,7 @@ class OneminToolAdapter:
                 "provider_account_name": result.provider_account_name,
                 "provider_key_slot": result.provider_key_slot,
                 "model": result.model,
+                "principal_id": principal_id,
                 "tool_version": definition.version,
             },
             model_name=result.model,
@@ -736,6 +740,7 @@ class OneminToolAdapter:
 
     def execute_image_generate(self, request: ToolInvocationRequest, definition: ToolDefinition) -> ToolInvocationResult:
         payload = dict(request.payload_json or {})
+        principal_id = self._request_principal_id(request)
         prompt = _extract_text(payload.get("prompt") or payload.get("source_text") or payload.get("normalized_text"))
         if not prompt:
             raise ToolExecutionError("prompt_required:provider.onemin.image_generate")
@@ -761,7 +766,7 @@ class OneminToolAdapter:
             feature_payload=feature_payload,
             lane="hard",
             capability="image_generate",
-            principal_id=self._request_principal_id(request),
+            principal_id=principal_id,
             allow_reserve=self._manager_allow_reserve(request),
         )
         asset_urls = _collect_asset_urls(raw_response)
@@ -769,7 +774,6 @@ class OneminToolAdapter:
             {
                 "asset_urls": asset_urls,
                 "model": resolved_model,
-                "provider_account_name": account_name,
             },
             ensure_ascii=True,
         )
@@ -803,6 +807,7 @@ class OneminToolAdapter:
                 "provider_key_slot": key_slot,
                 "model": resolved_model,
                 "feature_type": "IMAGE_GENERATOR",
+                "principal_id": principal_id,
                 "tool_version": definition.version,
             },
             model_name=resolved_model,
@@ -813,6 +818,7 @@ class OneminToolAdapter:
 
     def execute_media_transform(self, request: ToolInvocationRequest, definition: ToolDefinition) -> ToolInvocationResult:
         payload = dict(request.payload_json or {})
+        principal_id = self._request_principal_id(request)
         feature_type = _infer_media_feature_type(payload)
         prompt = _extract_text(payload.get("prompt") or payload.get("source_text"))
         prompt_object = _normalize_media_prompt_object(payload)
@@ -834,7 +840,7 @@ class OneminToolAdapter:
             feature_payload=feature_payload,
             lane="hard",
             capability="media_transform",
-            principal_id=self._request_principal_id(request),
+            principal_id=principal_id,
             allow_reserve=self._manager_allow_reserve(request),
         )
         asset_urls = _collect_asset_urls(raw_response)
@@ -845,7 +851,6 @@ class OneminToolAdapter:
                 "asset_urls": asset_urls,
                 "text": response_text,
                 "model": resolved_model,
-                "provider_account_name": account_name,
             },
             ensure_ascii=True,
         )
@@ -881,6 +886,7 @@ class OneminToolAdapter:
                 "provider_key_slot": key_slot,
                 "model": resolved_model,
                 "feature_type": feature_type,
+                "principal_id": principal_id,
                 "tool_version": definition.version,
             },
             model_name=resolved_model,

@@ -1,0 +1,21 @@
+{
+  "contract_name": "propertyquarry.search_suppressions.v1",
+  "entries": [
+    {
+      "status": "suppressed",
+      "scope": "all_workspaces",
+      "property_label": "Karl-Czerny-Gasse 2",
+      "reason": "owner_removed_from_search_results",
+      "candidate_refs": [
+        "16290a106d16a31c",
+        "ad48357be22535c1",
+        "cece2dad814fdf68",
+        "karl-czerny-gasse-2-private-showcase"
+      ],
+      "listing_ids": [
+        "1536069684"
+      ],
+      "suppressed_at": "2026-08-06T07:59:00Z"
+    }
+  ]
+}

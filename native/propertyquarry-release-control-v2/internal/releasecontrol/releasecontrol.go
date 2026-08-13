@@ -178,21 +178,16 @@ func runSupervisor(args []string, stderr io.Writer) int {
 func runController(args []string, stderr io.Writer) int {
 	responseFD, responseFDOwned := responseFDAtFixedPosition(args)
 	installedExecutableFD, installedExecutableFDOwned := installedExecutableFDAtFixedPosition(args)
-	if responseFDOwned {
-		defer func() {
-			if responseFDOwned {
-				_ = syscall.Close(responseFD)
-			}
-		}()
-	}
-	if installedExecutableFDOwned {
-		defer func() {
-			if installedExecutableFDOwned {
-				_ = syscall.Close(installedExecutableFD)
-			}
-		}()
-	}
-	if (len(args) != 10 && len(args) != 12) ||
+	authenticatedRequestFD, authenticatedRequestFDOwned := authenticatedRequestFDAtFixedPosition(args)
+	defer func() {
+		closeOwnedControllerDescriptors(
+			syscall.Close,
+			ownedControllerDescriptor{fd: responseFD, owned: responseFDOwned},
+			ownedControllerDescriptor{fd: installedExecutableFD, owned: installedExecutableFDOwned},
+			ownedControllerDescriptor{fd: authenticatedRequestFD, owned: authenticatedRequestFDOwned},
+		)
+	}()
+	if (len(args) != 10 && len(args) != 12 && len(args) != 14) ||
 		args[0] != "--config" || args[1] != ControllerConfig ||
 		args[2] != "--operation" ||
 		args[4] != "--response-fd" ||
@@ -200,10 +195,21 @@ func runController(args []string, stderr io.Writer) int {
 		args[8] != "--request-transport-digest" {
 		return refuse(stderr)
 	}
-	if len(args) == 12 {
-		if !installedExecutableFDOwned {
+	if len(args) >= 12 {
+		if !installedExecutableFDOwned ||
+			(responseFDOwned && installedExecutableFD == responseFD) {
 			return refuse(stderr)
 		}
+	}
+	if len(args) == 14 {
+		if args[12] != "--authenticated-request-fd" ||
+			!authenticatedRequestFDOwned ||
+			authenticatedRequestFD == responseFD ||
+			authenticatedRequestFD == installedExecutableFD {
+			return refuse(stderr)
+		}
+	}
+	if len(args) >= 12 {
 		installedExecutableFDOwned = false
 		if !closeInstalledExecutableFD(args) {
 			return refuse(stderr)
@@ -221,9 +227,47 @@ func runController(args []string, stderr io.Writer) int {
 	if err := validateWritePipe(responseFD); err != nil {
 		return refuse(stderr)
 	}
+	if len(args) == 14 {
+		authenticatedRequestFDOwned = false
+		transaction, err := authenticateControllerTransaction(
+			authenticatedRequestFD,
+			args[3],
+			args[7],
+			args[9],
+			time.Now(),
+		)
+		if err != nil || transaction == nil {
+			return refuse(stderr)
+		}
+	}
 	_ = syscall.Close(responseFD)
 	responseFDOwned = false
 	return refuse(stderr)
+}
+
+type ownedControllerDescriptor struct {
+	fd    int
+	owned bool
+}
+
+func closeOwnedControllerDescriptors(
+	closeFD func(int) error,
+	descriptors ...ownedControllerDescriptor,
+) {
+	if closeFD == nil {
+		return
+	}
+	closed := make(map[int]struct{}, len(descriptors))
+	for _, descriptor := range descriptors {
+		if !descriptor.owned {
+			continue
+		}
+		if _, duplicate := closed[descriptor.fd]; duplicate {
+			continue
+		}
+		closed[descriptor.fd] = struct{}{}
+		_ = closeFD(descriptor.fd)
+	}
 }
 
 func responseFDAtFixedPosition(args []string) (int, bool) {
@@ -232,6 +276,17 @@ func responseFDAtFixedPosition(args []string) (int, bool) {
 	}
 	fd, err := strconv.Atoi(args[5])
 	if err != nil || fd < 3 || strconv.Itoa(fd) != args[5] {
+		return 0, false
+	}
+	return fd, true
+}
+
+func authenticatedRequestFDAtFixedPosition(args []string) (int, bool) {
+	if len(args) != 14 || args[12] != "--authenticated-request-fd" {
+		return 0, false
+	}
+	fd, err := strconv.Atoi(args[13])
+	if err != nil || fd < 3 || strconv.Itoa(fd) != args[13] {
 		return 0, false
 	}
 	return fd, true
@@ -289,20 +344,27 @@ func readBearerFDWithTimeout(fd int, timeout time.Duration) ([]byte, error) {
 }
 
 func readBearerPipeUntilEOF(fd int, timeout time.Duration) ([]byte, error) {
+	return readPipeUntilEOF(fd, MaxBearerBytes+1, timeout)
+}
+
+func readPipeUntilEOF(fd int, maximum int, timeout time.Duration) ([]byte, error) {
+	if maximum < 1 || timeout <= 0 {
+		return nil, fmt.Errorf("pipe read bounds invalid")
+	}
 	deadline := time.Now().Add(timeout)
-	value := make([]byte, 0, MaxBearerBytes+1)
+	value := make([]byte, 0, maximum)
 	chunk := make([]byte, 4096)
 	defer zero(chunk)
 
 	for {
 		if time.Until(deadline) <= 0 {
-			return value, fmt.Errorf("bearer read timed out")
+			return value, fmt.Errorf("pipe read timed out")
 		}
 		count, err := syscall.Read(fd, chunk)
 		if count > 0 {
-			if count > MaxBearerBytes+1-len(value) {
+			if count > maximum-len(value) {
 				zero(chunk[:count])
-				return value, fmt.Errorf("bearer framing invalid")
+				return value, fmt.Errorf("pipe framing invalid")
 			}
 			value = append(value, chunk[:count]...)
 			zero(chunk[:count])
@@ -317,12 +379,12 @@ func readBearerPipeUntilEOF(fd int, timeout time.Duration) ([]byte, error) {
 			continue
 		}
 		if err != syscall.EAGAIN && err != syscall.EWOULDBLOCK {
-			return value, fmt.Errorf("bearer read failed")
+			return value, fmt.Errorf("pipe read failed")
 		}
 
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return value, fmt.Errorf("bearer read timed out")
+			return value, fmt.Errorf("pipe read timed out")
 		}
 		pause := time.Millisecond
 		if remaining < pause {

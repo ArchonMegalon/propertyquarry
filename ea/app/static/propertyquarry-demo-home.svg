@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title description">
+  <title id="title">PropertyQuarry demo apartment</title>
+  <desc id="description">A calm, illustrated Vienna apartment interior used only for synthetic demo data.</desc>
+  <defs>
+    <linearGradient id="wall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8f4ea"/>
+      <stop offset="1" stop-color="#ded6c7"/>
+    </linearGradient>
+    <linearGradient id="window" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#aec9d4"/>
+      <stop offset="1" stop-color="#e7ded0"/>
+    </linearGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8c755e"/>
+      <stop offset="1" stop-color="#b49a7b"/>
+    </linearGradient>
+    <linearGradient id="sofa" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#455346"/>
+      <stop offset="1" stop-color="#26352d"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#fff4ce" stop-opacity=".95"/>
+      <stop offset="1" stop-color="#fff4ce" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#211d17" flood-opacity=".18"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="900" fill="url(#wall)"/>
+  <circle cx="1225" cy="168" r="280" fill="url(#sun)"/>
+  <rect y="650" width="1600" height="250" fill="url(#floor)"/>
+  <g stroke="#675b4b" stroke-opacity=".24" stroke-width="3">
+    <path d="M0 720h1600M0 798h1600M128 650v250M410 650v250M692 650v250M974 650v250M1256 650v250M1538 650v250"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="870" y="82" width="600" height="492" rx="8" fill="#f6f1e6" stroke="#786b58" stroke-width="14"/>
+    <rect x="902" y="114" width="536" height="428" fill="url(#window)"/>
+    <path d="M1170 114v428M902 328h536" stroke="#f6f1e6" stroke-width="18"/>
+    <g fill="#7a8c82" opacity=".82">
+      <path d="M902 474l92-82 88 72 106-112 112 122 138-96v164H902z"/>
+      <path d="M902 500l118-64 96 52 102-60 94 66 126-70v118H902z" fill="#4d6659"/>
+    </g>
+    <g fill="#7d6251" opacity=".8">
+      <path d="M1028 356h58v186h-58zM1238 382h72v160h-72zM1354 336h54v206h-54z"/>
+      <path d="M1016 346h82l-41-32zM1224 372h100l-50-38zM1342 326h78l-39-30z" fill="#6d5144"/>
+    </g>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="168" y="510" width="690" height="232" rx="64" fill="url(#sofa)"/>
+    <rect x="204" y="455" width="618" height="172" rx="54" fill="#526253"/>
+    <path d="M512 468v150" stroke="#6d796b" stroke-width="5"/>
+    <rect x="266" y="500" width="190" height="118" rx="34" fill="#c69345" transform="rotate(-3 361 559)"/>
+    <rect x="566" y="492" width="184" height="124" rx="34" fill="#e5d5b4" transform="rotate(4 658 554)"/>
+    <rect x="206" y="716" width="72" height="96" rx="18" fill="#2a332d"/>
+    <rect x="748" y="716" width="72" height="96" rx="18" fill="#2a332d"/>
+  </g>
+  <g filter="url(#shadow)">
+    <ellipse cx="1020" cy="756" rx="282" ry="62" fill="#493b31" opacity=".18"/>
+    <ellipse cx="1020" cy="696" rx="250" ry="72" fill="#d7c5a4" stroke="#7c6a54" stroke-width="8"/>
+    <path d="M850 706l-42 144M1190 706l42 144" stroke="#5e4b3d" stroke-width="20" stroke-linecap="round"/>
+    <ellipse cx="1018" cy="676" rx="48" ry="16" fill="#b8893c"/>
+  </g>
+  <g filter="url(#shadow)">
+    <path d="M1390 622v160h-138V622z" fill="#8b6240"/>
+    <path d="M1320 630c-116-120-62-250 8-202 38 26 18 98-8 142 18-120 116-168 136-84 18 74-68 122-136 144z" fill="#476149"/>
+    <path d="M1318 632c-58-130-158-116-140-42 14 60 82 58 140 42z" fill="#688069"/>
+    <path d="M1322 630c94-116 174-78 140-18-24 42-84 38-140 18z" fill="#365440"/>
+  </g>
+  <g stroke="#26231e" stroke-width="12" stroke-linecap="round">
+    <path d="M520 0v186"/>
+    <path d="M416 230h208l-52-74H468z" fill="#d5a856" stroke-linejoin="round"/>
+  </g>
+  <g transform="translate(72 72)">
+    <rect width="330" height="74" rx="37" fill="#242321" opacity=".94"/>
+    <text x="42" y="48" fill="#fffaf0" font-family="Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="5">DEMO HOME</text>
+  </g>
+</svg>

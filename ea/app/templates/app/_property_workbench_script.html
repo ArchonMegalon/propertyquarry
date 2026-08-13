@@ -14,6 +14,178 @@
     const metaNode = root.querySelector('[data-property-workspace-meta]');
     const data = JSON.parse(payloadNode?.textContent || '{}');
     const meta = JSON.parse(metaNode?.getAttribute('data-property-workspace-meta') || '{}');
+    const thumbnailRenderableUrl = (value) => {
+      const rawUrl = String(value || '').trim();
+      if (!rawUrl) return '';
+      try {
+        const candidateUrl = new URL(rawUrl, window.location.origin);
+        const sameOrigin = candidateUrl.origin === window.location.origin;
+        if (
+          (!sameOrigin && candidateUrl.protocol !== 'https:')
+          || candidateUrl.username
+          || candidateUrl.password
+        ) return '';
+        return candidateUrl.href;
+      } catch (_error) {
+        return '';
+      }
+    };
+    const thumbnailUrlsFromCandidate = (candidate) => {
+      if (!candidate || typeof candidate !== 'object') return [];
+      const values = [
+        candidate.preview_image_url,
+        candidate.orientation_preview?.thumb_image_url,
+        candidate.orientation_preview?.image_url,
+        ...(Array.isArray(candidate.preview_image_fallback_urls) ? candidate.preview_image_fallback_urls : []),
+        candidate.preview_image_fallback_url,
+      ];
+      return values
+        .map(thumbnailRenderableUrl)
+        .filter((value, index, rows) => value && rows.indexOf(value) === index)
+        .slice(0, 5);
+    };
+    const thumbnailFallbackUrls = (image) => {
+      if (!(image instanceof HTMLImageElement)) return [];
+      const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
+      const rawFallbacks = [];
+      const rawList = String(
+        image.getAttribute('data-pqx-thumbnail-fallbacks')
+        || thumbnail?.getAttribute('data-pqx-thumbnail-fallbacks')
+        || ''
+      ).trim();
+      if (rawList) {
+        try {
+          const parsed = JSON.parse(rawList);
+          if (Array.isArray(parsed)) rawFallbacks.push(...parsed.slice(0, 4));
+        } catch (_error) {
+          // A malformed optional fallback list must not break the result card.
+        }
+      }
+      rawFallbacks.push(
+        image.getAttribute('data-pqx-thumbnail-fallback')
+        || thumbnail?.getAttribute('data-pqx-thumbnail-fallback')
+        || ''
+      );
+      const fallbacks = [];
+      rawFallbacks.forEach((value) => {
+        const rawFallback = String(value || '').trim();
+        if (!rawFallback) return;
+        try {
+          const fallback = new URL(rawFallback, window.location.origin);
+          const sameOrigin = fallback.origin === window.location.origin;
+          if (
+            (!sameOrigin && fallback.protocol !== 'https:')
+            || fallback.username
+            || fallback.password
+            || fallbacks.includes(fallback.href)
+          ) return;
+          fallbacks.push(fallback.href);
+        } catch (_error) {
+          // Ignore an invalid candidate and keep trying the bounded chain.
+        }
+      });
+      return fallbacks.slice(0, 4);
+    };
+    const markThumbnailUnavailable = (image) => {
+      if (!(image instanceof HTMLImageElement)) return;
+      const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
+      if (!thumbnail) return;
+      const placeholder = thumbnail.querySelector(
+        '.pqx-thumb-placeholder, .pqx-result-diorama-empty-label'
+      );
+      const failedUrls = (() => {
+        try {
+          const parsed = JSON.parse(image.dataset.pqxThumbnailFailedUrls || '[]');
+          return Array.isArray(parsed) ? parsed.map(thumbnailRenderableUrl).filter(Boolean) : [];
+        } catch (_error) {
+          return [];
+        }
+      })();
+      const failedUrl = thumbnailRenderableUrl(image.currentSrc || image.src || '');
+      if (failedUrl && !failedUrls.includes(failedUrl)) failedUrls.push(failedUrl);
+      image.dataset.pqxThumbnailFailedUrls = JSON.stringify(failedUrls.slice(-8));
+      const fallbackUrls = thumbnailFallbackUrls(image);
+      let fallbackIndex = Math.max(0, Number(image.dataset.pqxThumbnailFallbackIndex || 0) || 0);
+      const currentUrl = thumbnailRenderableUrl(image.currentSrc || image.src || '');
+      let fallbackUrl = '';
+      while (fallbackIndex < fallbackUrls.length && !fallbackUrl) {
+        const candidateUrl = fallbackUrls[fallbackIndex];
+        fallbackIndex += 1;
+        if (
+          candidateUrl
+          && candidateUrl !== currentUrl
+          && !failedUrls.includes(candidateUrl)
+        ) fallbackUrl = candidateUrl;
+      }
+      image.dataset.pqxThumbnailFallbackIndex = String(fallbackIndex);
+      if (fallbackUrl) {
+        image.dataset.pqxThumbnailFallbackAttempted = '1';
+        image.hidden = false;
+        if (placeholder instanceof HTMLElement) placeholder.hidden = true;
+        thumbnail.classList.remove('is-unavailable');
+        thumbnail.classList.add('is-recovering');
+        image.src = fallbackUrl;
+        return;
+      }
+      thumbnail.classList.remove('is-recovering');
+      thumbnail.classList.add('is-unavailable');
+      image.hidden = true;
+      if (placeholder instanceof HTMLElement) placeholder.hidden = false;
+      if (image.dataset.pqxThumbnailDetailRefreshAttempted === '1') return;
+      const candidateRef = String(
+        thumbnail.getAttribute('data-candidate-ref')
+        || thumbnail.closest('[data-candidate-ref]')?.getAttribute('data-candidate-ref')
+        || ''
+      ).trim();
+      const runId = String(data.run?.run_id || meta.run_id || '').trim();
+      if (!candidateRef || !runId) return;
+      image.dataset.pqxThumbnailDetailRefreshAttempted = '1';
+      void (async () => {
+        try {
+          const response = await fetch(
+            `/app/api/property/candidates/${encodeURIComponent(candidateRef)}/preview-refresh?run_id=${encodeURIComponent(runId)}&thumbnail_failed=true`,
+            { credentials: 'same-origin', cache: 'no-store' },
+          );
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload || typeof payload !== 'object') return;
+          const refreshedUrls = thumbnailUrlsFromCandidate(payload.candidate)
+            .filter((value) => !failedUrls.includes(value));
+          const refreshedUrl = refreshedUrls[0] || '';
+          if (!refreshedUrl) return;
+          const refreshedFallbacks = refreshedUrls.slice(1, 5);
+          thumbnail.setAttribute('data-pqx-thumbnail-fallback', refreshedFallbacks[0] || '');
+          thumbnail.setAttribute('data-pqx-thumbnail-fallbacks', JSON.stringify(refreshedFallbacks));
+          image.dataset.pqxThumbnailFallbackIndex = '0';
+          image.hidden = false;
+          if (placeholder instanceof HTMLElement) placeholder.hidden = true;
+          thumbnail.classList.remove('is-unavailable');
+          thumbnail.classList.add('is-recovering');
+          image.src = refreshedUrl;
+        } catch (_error) {
+          // The placeholder remains honest; a later page load can use the refreshed cache.
+        }
+      })();
+    };
+    root.addEventListener('error', (event) => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement) || !image.matches('[data-pqx-thumbnail-image]')) return;
+      markThumbnailUnavailable(image);
+    }, true);
+    root.addEventListener('load', (event) => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement) || !image.matches('[data-pqx-thumbnail-image]')) return;
+      const thumbnail = image.closest('[data-pqx-thumbnail], .pqx-thumb');
+      if (!thumbnail || image.naturalWidth <= 0) return;
+      image.hidden = false;
+      const placeholder = thumbnail.querySelector(
+        '.pqx-thumb-placeholder, .pqx-result-diorama-empty-label'
+      );
+      if (placeholder instanceof HTMLElement) placeholder.hidden = true;
+      thumbnail.classList.remove('is-recovering', 'is-unavailable');
+    }, true);
+    root.querySelectorAll('[data-pqx-thumbnail-image]').forEach((image) => {
+      if (image.complete && image.naturalWidth === 0) markThumbnailUnavailable(image);
+    });
     const clientLocale = String(document.documentElement.lang || 'en').trim().toLowerCase();
     const liveCopyCatalog = clientLocale.startsWith('de')
       ? {
@@ -22,6 +194,7 @@
           'Dark mode': 'Dunkelmodus',
           'Light mode': 'Hellmodus',
           'Searching': 'Suche läuft',
+          'Search progress': 'Suchfortschritt',
           'Results ready': 'Ergebnisse bereit',
           'Paused': 'Pausiert',
           'estimating': 'wird geschätzt',
@@ -32,10 +205,33 @@
           'Queued for execution.': 'Zur Ausführung eingeplant.',
           'checking': 'wird geprüft',
           'Homes': 'Immobilien',
+          'Homes found': 'Immobilien gefunden',
+          'Homes checked': 'Geprüft',
           'To review': 'Zu prüfen',
           'Checks left': 'Offene Prüfungen',
           'Checked': 'Geprüft',
           'Sites': 'Portale',
+          'Providers': 'Portale',
+          'Saved pages': 'Gespeicherte Seiten',
+          'Edit search': 'Suche bearbeiten',
+          'It is meaningfully cheaper.': 'Deutlich günstiger.',
+          'Tour not available yet.': '3D-Tour noch nicht verfügbar.',
+          'Media preview not available.': 'Medienvorschau nicht verfügbar.',
+          'Best part': 'Größter Vorteil',
+          'Keep in mind': 'Zu beachten',
+          'Best points': 'Größte Vorteile',
+          'Things to watch': 'Zu beachten',
+          'Price level': 'Preisniveau',
+          'Adjust search': 'Suche anpassen',
+          'Viewing requested': 'Besichtigung angefragt',
+          'Documents requested': 'Unterlagen angefragt',
+          'Offer candidate': 'Kaufangebot erwägen',
+          'Archived': 'Archiviert',
+          'Premium market report': 'Premium-Marktbericht',
+          'Open checkout': 'Zur Kasse',
+          'Why it works': 'Warum sie passt',
+          'Visuals': 'Visualisierungen',
+          'Request camera walkthrough or 3D tour': 'Kamera-Rundgang oder 3D-Tour anfordern',
           'Search totals': 'Suchsummen',
           'Updates': 'Aktualisierungen',
           'Checking the saved search.': 'Gespeicherte Suche wird geprüft.',
@@ -43,6 +239,7 @@
           'Search is still running.': 'Suche läuft weiter.',
           'Preparing': 'Vorbereitung',
           'Sources': 'Quellen',
+          'Search queries': 'Suchanfragen',
           'Details': 'Details',
           'Checks': 'Prüfungen',
           'Shortlist': 'Engere Auswahl',
@@ -83,6 +280,8 @@
           'Hide search settings': 'Sucheinstellungen ausblenden',
           'Best so far': 'Bisher am besten',
           'Current property': 'Aktuelle Immobilie',
+          'Diorama preview in progress': 'Diorama-Vorschau wird erstellt',
+          'Area preview': 'Umgebungsvorschau',
           'Provider': 'Anbieter',
           'all found homes are checked': 'alle gefundenen Immobilien sind geprüft',
           'home details are still loading': 'Immobiliendetails werden noch geladen',
@@ -99,6 +298,7 @@
                 'Dark mode': 'Modo oscuro',
                 'Light mode': 'Modo claro',
                 'Searching': 'Buscando',
+                'Search progress': 'Progreso de búsqueda',
                 'Results ready': 'Resultados listos',
                 'Paused': 'En pausa',
                 'estimating': 'calculando',
@@ -109,10 +309,33 @@
                 'Queued for execution.': 'En cola para ejecutarse.',
                 'checking': 'revisando',
                 'Homes': 'Propiedades',
+                'Homes found': 'Propiedades encontradas',
+                'Homes checked': 'Propiedades revisadas',
                 'To review': 'Por revisar',
                 'Checks left': 'Revisiones pendientes',
                 'Checked': 'Revisado',
                 'Sites': 'Portales',
+                'Providers': 'Portales',
+                'Saved pages': 'Páginas guardadas',
+                'Edit search': 'Editar búsqueda',
+                'It is meaningfully cheaper.': 'Es considerablemente más económica.',
+                'Tour not available yet.': 'El recorrido 3D aún no está disponible.',
+                'Media preview not available.': 'Vista previa multimedia no disponible.',
+                'Best part': 'Punto fuerte',
+                'Keep in mind': 'Tenga en cuenta',
+                'Best points': 'Puntos fuertes',
+                'Things to watch': 'Tenga en cuenta',
+                'Price level': 'Nivel de precio',
+                'Adjust search': 'Ajustar búsqueda',
+                'Viewing requested': 'Visita solicitada',
+                'Documents requested': 'Documentos solicitados',
+                'Offer candidate': 'Candidata para oferta',
+                'Archived': 'Archivada',
+                'Premium market report': 'Informe de mercado premium',
+                'Open checkout': 'Ir al pago',
+                'Why it works': 'Por qué funciona',
+                'Visuals': 'Visualizaciones',
+                'Request camera walkthrough or 3D tour': 'Solicitar recorrido con cámara o recorrido 3D',
                 'Search totals': 'Totales de búsqueda',
                 'Updates': 'Actualizaciones',
                 'Checking the saved search.': 'Revisando la búsqueda guardada.',
@@ -120,6 +343,7 @@
                 'Search is still running.': 'La búsqueda sigue en curso.',
                 'Preparing': 'Preparando',
                 'Sources': 'Fuentes',
+                'Search queries': 'Consultas de búsqueda',
                 'Details': 'Detalles',
                 'Checks': 'Revisiones',
                 'Shortlist': 'Selección',
@@ -160,6 +384,8 @@
                 'Hide search settings': 'Ocultar configuración de búsqueda',
                 'Best so far': 'La mejor hasta ahora',
                 'Current property': 'Propiedad actual',
+                'Diorama preview in progress': 'Creando vista previa del diorama',
+                'Area preview': 'Vista previa de la zona',
                 'Provider': 'Proveedor',
                 'all found homes are checked': 'todas las propiedades encontradas están revisadas',
                 'home details are still loading': 'los detalles de las propiedades aún se están cargando',
@@ -190,12 +416,21 @@
       if (matchingTotal) {
         return `${matchingTotal[1]} ${liveCopyCatalog[String(matchingTotal[2]).toLowerCase()] || matchingTotal[2]}`;
       }
+      const matchesTotal = text.match(/^(\d+) matches$/i);
+      if (matchesTotal) {
+        return clientLocale.startsWith('de')
+          ? `${matchesTotal[1]} Treffer`
+          : `${matchesTotal[1]} coincidencias`;
+      }
       const roomsLabel = text.match(/^(\d+(?:[.,]\d+)?) rooms?(\s*\|\s*.+)?$/i);
       if (roomsLabel) {
         const unit = clientLocale.startsWith('de')
           ? 'Zimmer'
           : (roomsLabel[1] === '1' ? 'habitación' : 'habitaciones');
-        return `${roomsLabel[1]} ${unit}${roomsLabel[2] || ''}`;
+        const layoutSuffix = String(roomsLabel[2] || '')
+          .replace(/\b(\d+)(?:[.,]0+)\s+m2\b/gi, '$1 m²')
+          .replace(/\bm2\b/gi, 'm²');
+        return `${roomsLabel[1]} ${unit}${layoutSuffix}`;
       }
       const fitScore = text.match(/^Fit (\d+)$/i);
       if (fitScore) {
@@ -207,21 +442,51 @@
           ? `${toReview[1]} zu prüfen`
           : `${toReview[1]} por revisar`;
       }
-      const workLeft = text.match(/^(\d+) (sources|checks) left$/i);
+      const workLeft = text.match(/^(\d+) (sources|checks|search queries) left$/i);
       if (workLeft) {
-        const unit = workLeft[2].toLowerCase() === 'checks'
+        const rawUnit = workLeft[2].toLowerCase();
+        const unit = rawUnit === 'checks'
           ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
-          : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+          : (
+              rawUnit === 'search queries'
+                ? (clientLocale.startsWith('de') ? 'Suchanfragen' : 'consultas de búsqueda')
+                : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes')
+            );
         return clientLocale.startsWith('de')
           ? `${workLeft[1]} ${unit} offen`
           : `${workLeft[1]} ${unit} pendientes`;
       }
-      const workProgress = text.match(/^(\d+)\s*\/\s*(\d+)\s+(sources|checks)$/i);
+      const workProgress = text.match(/^(\d+)\s*\/\s*(\d+)\s+(sources|checks|search queries)$/i);
       if (workProgress) {
-        const unit = workProgress[3].toLowerCase() === 'checks'
+        const rawUnit = workProgress[3].toLowerCase();
+        const unit = rawUnit === 'checks'
           ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
-          : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+          : (
+              rawUnit === 'search queries'
+                ? (clientLocale.startsWith('de') ? 'Suchanfragen' : 'consultas de búsqueda')
+                : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes')
+            );
         return `${workProgress[1]} / ${workProgress[2]} ${unit}`;
+      }
+      const detailedQueue = text.match(
+        /^(\d+) homes? found · (\d+) checked · (\d+) awaiting review · (\d+)\s*\/\s*(\d+) (sources|checks|search queries) complete$/i
+      );
+      if (detailedQueue) {
+        const foundTotal = Number(detailedQueue[1] || 0);
+        const awaitingReviewTotal = Number(detailedQueue[3] || 0);
+        const completedWorkTotal = Number(detailedQueue[4] || 0);
+        const workTotal = Number(detailedQueue[5] || 0);
+        const workRemainingTotal = Math.max(0, workTotal - completedWorkTotal);
+        const compactParts = [localizeLiveCopy(`${foundTotal} homes found`)];
+        if (awaitingReviewTotal > 0) {
+          compactParts.push(localizeLiveCopy(`${awaitingReviewTotal} to review`));
+        }
+        if (workRemainingTotal > 0) {
+          compactParts.push(
+            localizeLiveCopy(`${workRemainingTotal} ${String(detailedQueue[6] || 'sources').toLowerCase()} left`)
+          );
+        }
+        return compactParts.join(' · ');
       }
       const percentEstimating = text.match(/^(\d+)% · estimating$/i);
       if (percentEstimating) {
@@ -269,10 +534,19 @@
         [/\b(\d+) to review\b/gi, (_match, count) => (
           clientLocale.startsWith('de') ? `${count} zu prüfen` : `${count} por revisar`
         )],
-        [/\b(\d+) (sources|checks) left\b/gi, (_match, count, rawUnit) => {
-          const unit = String(rawUnit || '').toLowerCase() === 'checks'
+        [/\b(\d+(?:[.,]\d+)?) rooms?\b/gi, (_match, count) => (
+          clientLocale.startsWith('de') ? `${count} Zimmer` : `${count} habitaciones`
+        )],
+        [/\b(\d+(?:[.,]\d+)?) m2\b/gi, (_match, count) => `${count} m²`],
+        [/\b(\d+) (sources|checks|search queries) left\b/gi, (_match, count, rawUnit) => {
+          const normalizedUnit = String(rawUnit || '').toLowerCase();
+          const unit = normalizedUnit === 'checks'
             ? (clientLocale.startsWith('de') ? 'Prüfungen' : 'revisiones')
-            : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes');
+            : (
+                normalizedUnit === 'search queries'
+                  ? (clientLocale.startsWith('de') ? 'Suchanfragen' : 'consultas de búsqueda')
+                  : (clientLocale.startsWith('de') ? 'Quellen' : 'fuentes')
+              );
           return clientLocale.startsWith('de')
             ? `${count} ${unit} offen`
             : `${count} ${unit} pendientes`;
@@ -777,8 +1051,8 @@
       const safeFallback = String(fallback || '').trim();
       if (!raw) return safeFallback;
       const normalized = raw.toLowerCase();
-      if (['3d tour', 'tour', 'walkthrough'].includes(normalized)) return raw;
-      if (normalized.includes('walkthrough')) return 'Walkthrough';
+      if (['3d tour', 'tour'].includes(normalized)) return raw;
+      if (normalized.includes('walkthrough')) return 'Camera walkthrough';
       if (normalized.includes('tour') || normalized.includes('360') || normalized.includes('virtual')) return '3D tour';
       return safeFallback;
     };
@@ -1375,12 +1649,12 @@
       const visualMediaReady = Boolean(String(candidate.floorplan_url || candidate.source_virtual_tour_url || candidate.vendor_tour_url || tour.provider_url || '').trim());
       return [
         candidate.packet_url ? `<a class="pqx-link-button primary" href="${escapeHtml(candidate.packet_url)}" data-rybbit-event="pq.property.opened" data-rybbit-prop-surface="shortlist">Open property</a>` : '',
-        `<button class="pqx-button" type="button" data-fliplink-packet data-candidate-ref="${candidateRef}" data-rybbit-event="pq.packet.shared" data-rybbit-prop-surface="shortlist">Share this home</button>`,
+        `<button class="pqx-button" type="button" data-fliplink-packet data-candidate-ref="${candidateRef}" data-rybbit-event="pq.packet.saved" data-rybbit-prop-surface="shortlist">Save review packet</button>`,
         `<details class="pqx-decision-advanced" style="margin-top:12px;"><summary><strong>More</strong></summary><div class="pqx-actions" style="margin-top:12px;">${[
           visualPropertyUrl ? `<a class="pqx-link-button" href="${escapeHtml(visualPropertyUrl)}" target="_blank" rel="noreferrer" data-rybbit-event="pq.property.opened" data-rybbit-prop-cta-key="open_listing" data-rybbit-prop-surface="shortlist">Open listing</a>` : '',
           !tour.url && visualMediaReady && visualPropertyUrl ? `<button class="pqx-button" type="button" data-pw-visual-request="tour" data-pw-visual-style-required="1" data-property-url="${escapeHtml(visualPropertyUrl)}" data-source-ref="${escapeHtml(candidate.source_ref || '')}" data-candidate-ref="${candidateRef}" data-run-id="${runId}" data-rybbit-event="pq.tour.opened" data-rybbit-prop-cta-key="request_tour" data-rybbit-prop-surface="shortlist">Request 3D tour</button>` : '',
           !tour.url && visualMediaReady && visualPropertyUrl ? `<button class="pqx-button" type="button" data-pw-visual-request="flythrough" data-pw-visual-style-required="1" data-pw-walkthrough-provider="default" data-property-url="${escapeHtml(visualPropertyUrl)}" data-source-ref="${escapeHtml(candidate.source_ref || '')}" data-candidate-ref="${candidateRef}" data-run-id="${runId}" data-rybbit-event="pq.flythrough.opened" data-rybbit-prop-cta-key="request_flythrough" data-rybbit-prop-surface="shortlist">Request walkthrough</button>` : '',
-          `<button class="pqx-button" type="button" data-fliplink-shortlist-share data-rybbit-event="pq.packet.shared" data-rybbit-prop-surface="shortlist">Share results</button>`,
+          `<button class="pqx-button" type="button" data-fliplink-shortlist-share data-rybbit-event="pq.packet.saved" data-rybbit-prop-surface="shortlist">Save shortlist packet</button>`,
         ].filter(Boolean).join('')}</div><div class="pqx-decision-status" data-pw-visual-request-status hidden></div></details>`,
       ].filter(Boolean).join('');
     };
@@ -1563,7 +1837,7 @@
         ...selectedCandidate,
         title,
         property_title: title,
-        summary: `Shareable shortlist from PropertyQuarry with ${shareRows.length} matching homes.`,
+        summary: `Local review shortlist from PropertyQuarry with ${shareRows.length} matching homes.`,
         fit_summary: summarizeCandidateCopy(
           selectedCandidate.fit_summary
           || selectedCandidate.summary
@@ -1574,7 +1848,7 @@
         comparison_rows: shareRows,
         review_url: absoluteUrl(window.location.href),
         map_url: absoluteUrl(selectedCandidate.map_url || ''),
-        next_action: 'Open the shared shortlist and review the top homes first.',
+        next_action: 'Open the saved shortlist packet and review the top homes first.',
       };
     };
     const counterfactualApplyLabel = (_adjustments) => 'Applying broader search...';
@@ -1851,10 +2125,10 @@
     };
     const createFlipLinkPacket = async (candidate, button) => {
       if (!candidate) return;
-      const original = button?.textContent || 'Create share review';
+      const original = button?.textContent || 'Save review packet';
       if (button) {
         button.disabled = true;
-        button.textContent = 'Creating share review...';
+        button.textContent = 'Saving review packet...';
       }
       try {
         const response = await fetch(`/app/api/properties/${encodeURIComponent(candidatePropertyRef(candidate))}/packets/render`, {
@@ -1869,7 +2143,7 @@
           }),
         });
         const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(readableErrorDetail(payload.detail || payload.error, 'Could not create the share review.'));
+        if (!response.ok) throw new Error(readableErrorDetail(payload.detail || payload.error, 'Could not save the review packet.'));
         window.location.href = '/app/properties/packets';
       } catch (error) {
         if (button) {
@@ -1882,10 +2156,10 @@
     const createShortlistSharePacket = async (button) => {
       const payload = shortlistSharePayload();
       if (!payload) return;
-      const original = button?.textContent || 'Share results';
+      const original = button?.textContent || 'Save shortlist packet';
       if (button) {
         button.disabled = true;
-        button.textContent = 'Creating shortlist...';
+        button.textContent = 'Saving shortlist packet...';
       }
       try {
         const response = await fetch(`/app/api/properties/${encodeURIComponent(candidatePropertyRef(payload))}/packets/render`, {
@@ -1900,7 +2174,7 @@
           }),
         });
         const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(readableErrorDetail(body.detail || body.error, 'Could not create the shared page.'));
+        if (!response.ok) throw new Error(readableErrorDetail(body.detail || body.error, 'Could not save the shortlist packet.'));
         window.location.href = '/app/properties/packets';
       } catch (error) {
         if (button) {
@@ -3231,11 +3505,11 @@
 	        if (['source_detail_check', 'listing_detail_check', 'source_fetch', 'source_fetch_page'].includes(step)) {
 	          return 'Details';
 	        }
-	        if (['source_previewing', 'source_assessing', 'source_ranking'].includes(step)) {
-	          return 'Current check';
-	        }
+	        if (step === 'source_previewing') return 'Checks';
+	        if (step === 'source_assessing') return 'Property fit';
+	        if (step === 'source_ranking') return 'Ranking';
 	        if (['source_fetching', 'source_extracting', 'source_preview_prepare', 'source_rank_prep'].includes(step)) {
-	          return 'Source scan';
+	          return 'Checks';
 	        }
 	        if (step === 'source_shortlist') return 'Shortlist';
 	        if (['source_low_fit_ranked', 'source_discovery_penalty'].includes(step)) return 'Tradeoffs';
@@ -3283,8 +3557,12 @@
       });
 		      return rows.map((event) => {
 		        const label = labelRunEvent(event);
-		        const message = compactRunMessage(event?.message || 'Search is still running.');
-		        return `<div class="pqx-event-card"><strong>${escapeHtml(localizeLiveCopy(label))}</strong><span class="pqx-note">${escapeHtml(localizedLiveMessage(message))}</span></div>`;
+            const rawMessage = String(event?.message || 'Search is still running.').trim();
+            const directlyLocalizedMessage = localizeLiveCopy(rawMessage);
+            const message = directlyLocalizedMessage !== rawMessage
+              ? directlyLocalizedMessage
+              : localizedLiveMessage(compactRunMessage(rawMessage));
+		        return `<div class="pqx-event-card"><strong>${escapeHtml(localizeLiveCopy(label))}</strong><span class="pqx-note">${escapeHtml(message)}</span></div>`;
 		      }).join('') || '<div class="pqx-empty">Waiting for the next useful update.</div>';
 	    };
     const displayRunMessage = (runPayload) => {
@@ -3549,10 +3827,50 @@
           ? runPayload.summary.current_property
           : null);
       if (direct && (direct.title || direct.status_detail || direct.orientation_preview || direct.preview_image_url)) {
-        return direct;
+        return {
+          ...direct,
+          status_label: localizeLiveCopy(String(direct.status_label || 'Current property').trim() || 'Current property'),
+          status_detail: localizedLiveMessage(
+            direct.status_detail || direct.fit_summary || direct.summary,
+            'Open the property page for more context.'
+          ),
+        };
       }
       const ranked = rankedCandidatesFromRunPayload(runPayload);
-      const candidate = ranked[0];
+      const candidateIsConcrete = (row) => {
+        if (!row || typeof row !== 'object') return false;
+        const facts = {
+          ...(row.property_facts && typeof row.property_facts === 'object' ? row.property_facts : {}),
+          ...(row.property_facts_json && typeof row.property_facts_json === 'object' ? row.property_facts_json : {}),
+        };
+        const concreteSignals = [
+          facts.rooms,
+          facts.living_area_sqm,
+          facts.area_sqm,
+          facts.area_m2,
+          facts.usable_area_sqm,
+          facts.price_eur,
+          facts.purchase_price_eur,
+          facts.buy_price_eur,
+          facts.rent_eur,
+          facts.monthly_rent_eur,
+          facts.warm_rent_eur,
+          facts.cold_rent_eur,
+          facts.exact_address,
+          facts.street_address,
+        ];
+        if (concreteSignals.some((value) => value !== null && value !== undefined && value !== '' && Number(value) !== 0)) {
+          return true;
+        }
+        const summaryText = [row.title, row.summary, row.fit_summary].map((value) => String(value || '').trim()).filter(Boolean).join(' ').toLowerCase();
+        return ![
+          'search candidate',
+          'search-results page',
+          'search results page',
+          'extracting a concrete listing',
+        ].some((marker) => summaryText.includes(marker));
+      };
+      const candidate = ranked.find(candidateIsConcrete) || ranked[0];
       if (!candidate || typeof candidate !== 'object') return null;
       const facts = {
         ...(candidate.property_facts && typeof candidate.property_facts === 'object' ? candidate.property_facts : {}),
@@ -3607,7 +3925,7 @@
       ).trim();
       return {
         status_label: localizeLiveCopy(
-          Array.isArray(runPayload?.summary?.ranked_candidates) && runPayload.summary.ranked_candidates.length
+          candidateIsConcrete(candidate)
             ? 'Best so far'
             : 'Current property'
         ),
@@ -3647,27 +3965,18 @@
       property?.location_label,
       property?.price_display,
       property?.layout_display,
-    ].map((value) => String(value || '').trim()).filter((value, index, rows) => value && rows.indexOf(value) === index).join(' · ');
+    ].map((value) => localizeLiveCopy(String(value || '').trim())).filter((value, index, rows) => value && rows.indexOf(value) === index).join(' · ');
     const renderCurrentPropertyCard = (runPayload) => {
       const property = currentPropertyCardPayload(runPayload);
       if (!property || typeof property !== 'object') return '';
       const href = routePreviewHref(property?.detail_url);
       const imageUrl = currentPropertyImageUrl(property);
-      if (!imageUrl) return '';
       const meta = currentPropertyMeta(property);
       const title = String(property?.title || 'Property under review').trim() || 'Property under review';
       const imageAlt = currentPropertyImageAlt(property);
       const caption = String(property?.location_label || property?.source_label || property?.status_label || 'Best so far').trim() || 'Best so far';
-      const detail = `
-        <div class="pqx-current-property-copy">
-          <span class="pqx-small">${escapeHtml(String(property?.status_label || 'Current property').trim() || 'Current property')}</span>
-          <strong>${escapeHtml(title)}</strong>
-          ${meta ? `<div class="pqx-current-property-meta"><span>${escapeHtml(meta)}</span></div>` : ''}
-          ${property?.status_detail ? `<p class="pqx-note">${escapeHtml(String(property.status_detail).trim())}</p>` : ''}
-        </div>
-      `;
-      return `
-        <article class="pqx-current-property-card">
+      const visual = imageUrl
+        ? `
           <button
             class="pqx-current-property-diorama-button"
             type="button"
@@ -3682,6 +3991,19 @@
           >
             <img class="pqx-current-property-thumb" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(imageAlt)}">
           </button>
+        `
+        : `<div class="pqx-current-property-diorama-button pqx-current-property-diorama-placeholder" role="img" aria-label="${escapeHtml(localizeLiveCopy('Diorama preview in progress'))}"></div>`;
+      const detail = `
+        <div class="pqx-current-property-copy">
+          <span class="pqx-small">${escapeHtml(String(property?.status_label || 'Current property').trim() || 'Current property')}</span>
+          <strong>${escapeHtml(title)}</strong>
+          ${meta ? `<div class="pqx-current-property-meta"><span>${escapeHtml(meta)}</span></div>` : ''}
+          ${property?.status_detail ? `<p class="pqx-note">${escapeHtml(String(property.status_detail).trim())}</p>` : ''}
+        </div>
+      `;
+      return `
+        <article class="pqx-current-property-card">
+          ${visual}
           ${href ? `<a class="pqx-current-property-link" href="${escapeHtml(href)}">${detail}</a>` : `<div class="pqx-current-property-link">${detail}</div>`}
         </article>
       `;
@@ -3821,8 +4143,12 @@
 	      const providerCheckTotal = Math.max(0, Number(sourceWork.total || 0), Number(providerDisplayTotal || 0));
 	      const providerCheckDone = providerCheckTotal > 0 ? Math.min(providerCheckTotal, Math.max(0, Number(sourceWork.done || 0))) : 0;
       const providerCheckValue = providerCheckTotal > 0 ? `${providerCheckDone} / ${providerCheckTotal}` : '0';
-      const providerCheckPct = providerCheckTotal > 0 && providerCheckDone > 0 ? Math.round((providerCheckDone / providerCheckTotal) * 100) : 0;
+      const providerCheckUnit = runSourceUnitLabel(summary, providerCheckTotal, providerDisplayTotal);
+      const providerCheckLabel = providerCheckTotal > 0
+        ? localizeLiveCopy(`${providerCheckValue} ${providerCheckUnit}`)
+        : localizeLiveCopy('Search progress');
       const reviewedPct = reviewed > 0 ? Math.round((reviewed / reviewDenominator) * 100) : 0;
+      const toReviewPct = toReview > 0 ? Math.round((toReview / reviewDenominator) * 100) : 0;
       const matchingTotal = rankedTotalFromSummary(summary);
 	      return `
 	        <div class="pqx-concierge-pulse">
@@ -3834,8 +4160,8 @@
 	        </div>
 	        <div class="pqx-source-progress" data-pqx-source-progress>
 		          <div class="pqx-source-progress-head">
-			            <strong data-pqx-radar-count>${escapeHtml(localizeLiveCopy('Search progress'))}</strong>
-			            <span class="pqx-small">${escapeHtml(matchingTotal)} ${escapeHtml(localizeLiveCopy('matching homes'))}</span>
+			            <strong data-pqx-radar-count>${escapeHtml(providerCheckLabel)}</strong>
+			            <span class="pqx-small">${escapeHtml(localizeLiveCopy(`${found || matchingTotal} homes found`))}</span>
 		          </div>
 	          <div class="pqx-live-review-bars" aria-label="${escapeHtml(localizeLiveCopy('Search totals'))}">
 		            <span>
@@ -3844,14 +4170,14 @@
 		              <em><u style="--progress: ${escapeHtml(foundBarPct)}"></u></em>
 		            </span>
 	            <span>
-	              <b>${escapeHtml(localizeLiveCopy('Homes checked'))}</b>
-			              <i>${escapeHtml(reviewed)} / ${escapeHtml(found || 0)}</i>
-		              <em><u style="--progress: ${escapeHtml(reviewedPct)}"></u></em>
+	              <b>${escapeHtml(localizeLiveCopy('To review'))}</b>
+			              <i>${escapeHtml(toReview || 0)}</i>
+		              <em><u style="--progress: ${escapeHtml(toReviewPct)}"></u></em>
 		            </span>
 		            <span>
-				              <b>${escapeHtml(localizeLiveCopy(runSourceUnitLabel(summary, providerCheckTotal, providerDisplayTotal) === 'search queries' ? 'Search queries' : 'Sources'))}</b>
-			              <i>${escapeHtml(providerCheckValue)}</i>
-			              <em><u style="--progress: ${escapeHtml(providerCheckPct)}"></u></em>
+				              <b>${escapeHtml(localizeLiveCopy('Homes checked'))}</b>
+			              <i>${escapeHtml(reviewed || 0)} / ${escapeHtml(found || 0)}</i>
+			              <em><u style="--progress: ${escapeHtml(reviewedPct)}"></u></em>
 		            </span>
 	          </div>
 	          <div class="pqx-progress-meter under-source" aria-hidden="true"><i class="pqx-progress-meter-fill" style="--progress: ${escapeHtml(progressFill)}"></i></div>
@@ -3909,12 +4235,32 @@
             <div class="pqx-source-list" data-pqx-source-breakdown>${renderSourceBreakdown(runPayload?.summary?.sources || [])}</div>
           </details>
       ` : '';
+      const shortlistHero = (count) => shortlistSurface ? `
+        <div class="pqx-shortlist-hero" data-pqx-premium-shortlist>
+          <div class="pqx-shortlist-hero-copy">
+            <span class="pqx-shortlist-eyebrow"><i aria-hidden="true"></i>${escapeHtml(localizeLiveCopy('Private collection'))}</span>
+            <h1>${escapeHtml(localizeLiveCopy('Your shortlist'))}</h1>
+            <p>${escapeHtml(localizeLiveCopy('Compare the spaces, fit, and trade-offs that are genuinely worth a closer look.'))}</p>
+          </div>
+          <div class="pqx-shortlist-hero-actions">
+            <span class="pqx-shortlist-count" aria-label="${escapeHtml(count)} ${escapeHtml(localizeLiveCopy(summaryLabel))}">
+              <strong>${escapeHtml(count)}</strong>
+              <span>${escapeHtml(localizeLiveCopy(investmentSearch ? 'opportunities' : 'homes'))}</span>
+            </span>
+            <a class="pqx-shortlist-refine" href="/app/search">
+              ${escapeHtml(localizeLiveCopy('Refine search'))}
+              <span aria-hidden="true">&#8599;</span>
+            </a>
+          </div>
+        </div>
+      ` : '';
       const panelClass = rows.length === 1 ? ' is-single-result' : '';
       if (!rows.length) {
         return `
           <section class="pqx-result-panel active${panelClass}" data-pqx-mobile-panel="results" data-pqx-ranked-candidates>
             <div class="pqx-result-panel-head">
               <div class="pqx-results-headline">
+                ${shortlistHero(0)}
                 <div class="pqx-note pqx-results-summary-row">
                   <a class="pqx-results-summary-link" href="#results-list"><b>0</b> ${summaryLabel}</a>
             ${filteredLabel}
@@ -3930,29 +4276,68 @@
           </section>
         `;
       }
-      const body = rows.map((candidate, index) => {
-        const title = safeCandidateTitle(candidate?.title);
-        const location = String(candidate?.location_label || '').trim();
-        const clientRenderableImageUrl = (value) => {
-          const candidateUrl = String(value || '').trim();
-          if (!candidateUrl) return '';
-          try {
-            const parsed = new URL(candidateUrl, window.location.origin);
-            return parsed.origin === window.location.origin ? candidateUrl : '';
-          } catch (_err) {
-            return '';
-          }
-        };
-	        const previewUrl = [
+	      const clientRenderableImageUrl = (value) => {
+	        const candidateUrl = String(value || '').trim();
+	        if (!candidateUrl || candidateUrl.startsWith('//')) return '';
+	        try {
+	          const parsed = new URL(candidateUrl, window.location.origin);
+	          if (parsed.origin === window.location.origin && candidateUrl.startsWith('/')) {
+	            return candidateUrl;
+	          }
+	          const imagePath = decodeURIComponent(parsed.pathname || '');
+	          const decodedUrl = decodeURIComponent(candidateUrl).toLowerCase();
+	          const isSupportedImage = /\.(?:avif|bmp|gif|heic|jpe?g|png|svg|tiff?|webp)$/i.test(imagePath);
+	          const isTrackingImage = [
+	            '/analytics/',
+	            '/beacon/',
+	            '/collect/',
+	            '/events/',
+	            '/logevent/',
+	            '/tracking/',
+	            '360-click',
+	            'floorplan-click',
+	            'preview-click',
+	            'virtual-tour-click',
+	            'virtual_tour_click',
+	          ].some((marker) => decodedUrl.includes(marker));
+	          const isWillhabenApiTracker = parsed.hostname === 'api.willhaben.at'
+	            && imagePath.toLowerCase().startsWith('/restapi/');
+	          return parsed.protocol === 'https:'
+	            && !parsed.username
+	            && !parsed.password
+	            && isSupportedImage
+	            && !isTrackingImage
+	            && !isWillhabenApiTracker
+	              ? candidateUrl
+	              : '';
+	        } catch (_err) {
+	          return '';
+	        }
+	      };
+	      const body = rows.map((candidate, index) => {
+	        const title = safeCandidateTitle(candidate?.title);
+	        const location = String(candidate?.location_label || '').trim();
+	        const previewUrls = [
 	          candidate?.preview_image_url,
 	          candidate?.orientation_preview?.thumb_image_url,
 	          candidate?.orientation_preview?.image_url,
-	        ].map(clientRenderableImageUrl).find(Boolean) || '';
+	          ...(Array.isArray(candidate?.preview_image_fallback_urls) ? candidate.preview_image_fallback_urls : []),
+	          candidate?.preview_image_fallback_url,
+	        ].map(clientRenderableImageUrl).filter((value, valueIndex, values) => value && values.indexOf(value) === valueIndex);
+	        const previewUrl = previewUrls[0] || '';
+	        const previewFallbackUrls = previewUrls.slice(1, 5);
 	        const dioramaPreviewUrl = [
 	          candidate?.diorama_preview_url,
 	          candidate?.diorama_scene?.image_url,
 	        ].map(clientRenderableImageUrl).find(Boolean) || '';
 	        const shortlistPreviewUrl = dioramaPreviewUrl || previewUrl;
+	        const shortlistPreviewIsDiorama = Boolean(dioramaPreviewUrl);
+	        const shortlistPreviewLabel = shortlistPreviewIsDiorama
+	          ? 'Spatial diorama'
+	          : 'Area preview';
+	        const shortlistPreviewAriaLabel = shortlistPreviewIsDiorama
+	          ? 'Explore diorama and area map for'
+	          : 'Open area map for';
         const candidateRef = String(
           candidate?.candidate_ref
           || candidate?.listing_id
@@ -3962,13 +4347,40 @@
           || candidate?.source_url
           || title
         ).trim();
+        const opportunity = candidate?.opportunity && typeof candidate.opportunity === 'object'
+          ? candidate.opportunity
+          : {};
+        const opportunityReady = ['ready', 'preview'].includes(String(opportunity.status || '').trim().toLowerCase());
+        const opportunityRunId = String(opportunity.run_id || runPayload?.run_id || data.run?.run_id || '').trim();
+        const opportunityUnknown = Array.isArray(opportunity.unknowns)
+          ? String(opportunity.unknowns[0] || '').trim()
+          : '';
+        const opportunityBlocker = Array.isArray(opportunity.mismatch_reasons)
+          ? String(opportunity.mismatch_reasons[0] || '').trim()
+          : '';
+        const opportunityRecommendation = String(opportunity.recommendation || candidate?.recommendation || '')
+          .trim()
+          .replaceAll('_', ' ');
+        const aiAssessment = candidate?.ai_assessment && typeof candidate.ai_assessment === 'object'
+          ? candidate.ai_assessment
+          : {};
+        const aiAssessmentReceipt = aiAssessment?.receipt && typeof aiAssessment.receipt === 'object'
+          ? aiAssessment.receipt
+          : {};
+        const aiAssessmentSummary = summarizeCandidateCopy(aiAssessment?.summary || '');
+        const aiAssessmentProvider = String(aiAssessment?.provider || '1minAI').trim() || '1minAI';
+        const aiAssessmentRecommendation = String(aiAssessment?.recommendation || 'review')
+          .trim()
+          .replaceAll('_', ' ');
+        const aiAssessmentReady = aiAssessment?.status === 'succeeded'
+          && aiAssessmentReceipt?.manager_routed === true
+          && Boolean(aiAssessmentSummary);
         const packetUrl = String(candidate?.packet_url || candidate?.review_url || '').trim();
         const propertyUrl = String(candidate?.property_url || candidate?.source_url || candidate?.listing_url || '').trim();
         const facts = (candidate?.property_facts && typeof candidate.property_facts === 'object') ? candidate.property_facts : {};
         const visualMediaReady = Boolean(String(candidate?.floorplan_url || candidate?.source_virtual_tour_url || candidate?.vendor_tour_url || candidate?.tour?.provider_url || '').trim());
         const derivedPrimaryPrice = [
           candidate?.price_display,
-          candidate?.costs_display,
           candidate?.rent_display,
           facts?.price_display,
           facts?.rent_display,
@@ -3995,7 +4407,8 @@
         const primaryPrice = typeof derivedPrimaryPrice === 'number'
           ? `${String(candidate?.currency_code || facts?.currency_code || 'EUR').trim() || 'EUR'} ${Math.round(derivedPrimaryPrice).toLocaleString('en-US')}`
           : String(derivedPrimaryPrice || '').trim() || localizeLiveCopy('No price published');
-        const secondaryPrice = String(candidate?.costs_display || candidate?.price_per_sqm_display || candidate?.rent_display || facts?.price_per_sqm_display || '').trim();
+        const secondaryPriceCandidate = String(candidate?.costs_display || candidate?.price_per_sqm_display || candidate?.rent_display || facts?.price_per_sqm_display || '').trim();
+        const secondaryPrice = secondaryPriceCandidate === primaryPrice ? '' : secondaryPriceCandidate;
         const layout = String(candidate?.layout_display || '').trim();
         const fitSummary = summarizeCandidateCopy(
           candidate?.fit_summary
@@ -4005,10 +4418,10 @@
           || 'Open the property page for more context.'
         );
 	        const thumb = shortlistSurface
-	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span>'}</button>`
+	          ? `<button class="pqx-result-diorama pqx-result-diorama-button${shortlistPreviewUrl ? '' : ' is-placeholder'}" type="button" data-pqx-shortlist-diorama data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy(shortlistPreviewAriaLabel))} ${escapeHtml(title)}">${shortlistPreviewUrl ? `<img src="${escapeHtml(shortlistPreviewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low">` : '<span class="pqx-result-diorama-room room-main"></span><span class="pqx-result-diorama-room room-side"></span><span class="pqx-result-diorama-room room-terrace"></span><span class="pqx-result-diorama-empty-label" aria-hidden="true">Preview not available</span>'}<span class="pqx-shortlist-visual-chrome" aria-hidden="true"><span class="pqx-shortlist-visual-label">${escapeHtml(localizeLiveCopy(shortlistPreviewLabel))}</span><span class="pqx-shortlist-visual-action">${escapeHtml(localizeLiveCopy('Explore'))} <b>&#8599;</b></span></span></button>`
 	          : (previewUrl
-	            ? `<span class="pqx-thumb"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async"></button></span>`
-	            : '');
+	            ? `<span class="pqx-thumb" data-pqx-thumbnail data-candidate-ref="${escapeHtml(candidateRef)}" data-pqx-thumbnail-fallback="${escapeHtml(previewFallbackUrls[0] || '')}" data-pqx-thumbnail-fallbacks="${escapeHtml(JSON.stringify(previewFallbackUrls))}"><button class="pqx-thumb-link pqx-thumb-atlas-button" type="button" data-pqx-atlas-open data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Open area map for'))} ${escapeHtml(title)}"><img src="${escapeHtml(previewUrl)}" alt="" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" data-pqx-thumbnail-image></button><span class="pqx-thumb-placeholder" aria-hidden="true">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`
+	            : `<span class="pqx-thumb is-placeholder" data-pqx-thumbnail role="img" aria-label="${escapeHtml(localizeLiveCopy('Media preview not available.'))}"><span class="pqx-thumb-placeholder">${escapeHtml(localizeLiveCopy('Media preview not available.'))}</span></span>`);
         const tour = (candidate?.tour && typeof candidate.tour === 'object') ? candidate.tour : {};
         const tourUrl = directHostedTourUrl(tour.url, candidate?.tour_url, tour.embed_url, tour.provider_url, candidate?.vendor_tour_url, candidate?.source_virtual_tour_url);
         const tourStatus = String(tour.status || candidate?.tour_status || '').trim().toLowerCase();
@@ -4061,24 +4474,27 @@
             : '',
         ].filter(Boolean).join('');
         const actions = [
-          `<button class="pqx-result-open pqx-result-open-button" type="button" data-workbench-select-candidate data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Review'))} ${escapeHtml(title)}">${escapeHtml(localizeLiveCopy('Review'))}</button>`,
-          packetUrl ? `<a class="pqx-result-open" href="${escapeHtml(packetUrl)}">${escapeHtml(localizeLiveCopy('Open property'))}</a>` : '',
+          `<button class="pqx-result-open pqx-result-open-button is-primary" type="button" data-workbench-select-candidate data-candidate-ref="${escapeHtml(candidateRef)}" aria-label="${escapeHtml(localizeLiveCopy('Review'))} ${escapeHtml(title)}">${escapeHtml(localizeLiveCopy('Review'))}</button>`,
+          !shortlistSurface && opportunityReady && opportunityRunId && candidateRef ? `<button class="pqx-result-open pqx-result-open-button is-secondary" type="button" data-pqx-opportunity-generate data-candidate-ref="${escapeHtml(candidateRef)}" data-run-id="${escapeHtml(opportunityRunId)}">Create brief</button><span class="pqx-note" data-pqx-opportunity-generation-status aria-live="polite"></span>` : '',
+          packetUrl ? `<a class="pqx-result-open is-secondary" href="${escapeHtml(packetUrl)}">${escapeHtml(localizeLiveCopy('Open property'))}</a>` : '',
           propertyUrl && !shortlistSurface ? `<a class="pqx-result-open" href="${escapeHtml(propertyUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(localizeLiveCopy('Open listing'))}</a>` : '',
           tourPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(tourProgress)}%;" title="${escapeHtml(localizeLiveCopy(tourTooltip))}" aria-label="${escapeHtml(localizeLiveCopy(tourTooltip))}">${escapeHtml(localizeLiveCopy(tourLabel))}</button>` : '',
           flythroughPending && !shortlistSurface ? `<button class="pqx-progress-button is-processing" type="button" disabled style="--pqx-fill: ${escapeHtml(flythroughProgress)}%;" title="${escapeHtml(localizeLiveCopy(flythroughTooltip))}" aria-label="${escapeHtml(localizeLiveCopy(flythroughTooltip))}">${escapeHtml(localizeLiveCopy(flythroughLabel))}</button>` : '',
-          shortlistSurface ? `<button class="pqx-result-open pqx-result-open-button" type="button" data-pw-decision-state="archived" data-candidate-ref="${escapeHtml(candidateRef)}" data-pw-remove-row>Remove</button>` : '',
+          shortlistSurface ? `<button class="pqx-result-open pqx-result-open-button is-remove" type="button" data-pw-decision-state="archived" data-candidate-ref="${escapeHtml(candidateRef)}" data-pw-remove-row>Remove</button>` : '',
         ].filter(Boolean).join('');
         const personalFitScore = candidatePersonalFitScore(candidate);
         return `
-          <article class="pqx-result pqx-card${index === 0 ? ' is-top-ranked' : ''}" aria-current="${index === 0 ? 'true' : 'false'}" data-candidate-ref="${escapeHtml(candidateRef)}" data-candidate-packet-url="${escapeHtml(packetUrl)}" data-candidate-listing-url="${escapeHtml(propertyUrl)}" data-workbench-row>
+          <article class="pqx-result pqx-card${index === 0 ? ' is-top-ranked' : ''}" aria-current="${index === 0 ? 'true' : 'false'}" data-candidate-ref="${escapeHtml(candidateRef)}" data-candidate-packet-url="${escapeHtml(packetUrl)}" data-candidate-listing-url="${escapeHtml(propertyUrl)}"${shortlistSurface ? ' data-pqx-shortlist-card' : ''} data-workbench-row>
             <span class="pqx-result-main">
-	              <span class="pqx-result-media${shortlistSurface ? ' has-diorama' : (previewUrl ? '' : ' no-thumb')}">
+	              <span class="pqx-result-media${shortlistSurface ? ' has-diorama' : ''}">
                 ${thumb}
                 <span class="pqx-result-summary">
-                  <span class="pqx-result-kicker"><span class="pqx-rank">#${escapeHtml(candidate?.rank || index + 1)}</span>${location ? `<span>${escapeHtml(location)}</span>` : ''}</span>
+                  <span class="pqx-result-kicker">${shortlistSurface && index === 0 ? '<span class="pqx-shortlist-top-label">Top match</span>' : ''}<span class="pqx-rank">#${escapeHtml(candidate?.rank || index + 1)}</span>${location ? `<span>${escapeHtml(location)}</span>` : ''}</span>
                   <span class="pqx-result-title">${escapeHtml(title)}</span>
                   <span class="pqx-result-facts">${factChips}</span>
-                  <span class="pqx-note">${escapeHtml(localizedLiveMessage(fitSummary, 'Open the property page for more context.'))}</span>
+                  <span class="pqx-note${shortlistSurface ? ' pqx-shortlist-thesis' : ''}">${escapeHtml(localizedLiveMessage(fitSummary, 'Open the property page for more context.'))}</span>
+                  ${opportunityReady ? `<span class="pqx-note pqx-opportunity-summary" data-pqx-opportunity-summary><strong>${escapeHtml(opportunityRecommendation || 'Review')}</strong>${opportunityBlocker ? `<span>Watch: ${escapeHtml(opportunityBlocker)}</span>` : ''}${opportunityUnknown ? `<span>Verify: ${escapeHtml(opportunityUnknown)}</span>` : ''}</span><span class="pqx-note" data-pqx-opportunity-artifact hidden></span>` : ''}
+                  ${aiAssessmentReady ? `<span class="pqx-note pqx-ai-assessment" data-pqx-ai-assessment title="${escapeHtml(`Receipt-backed ${aiAssessmentProvider} assessment`)}"><strong>${escapeHtml(`${aiAssessmentProvider} evidence review · ${aiAssessmentRecommendation}`)}</strong><span>${escapeHtml(aiAssessmentSummary)}</span></span>` : ''}
                 </span>
               </span>
             </span>
@@ -4097,6 +4513,7 @@
         <section class="pqx-result-panel active${panelClass}" data-pqx-mobile-panel="results" data-pqx-ranked-candidates>
           <div class="pqx-result-panel-head">
             <div class="pqx-results-headline">
+              ${shortlistHero(rows.length)}
               <div class="pqx-note pqx-results-summary-row">
                 <a class="pqx-results-summary-link" href="#results-list"><b>${rows.length}</b> ${escapeHtml(localizeLiveCopy(summaryLabel))}</a>
                 ${filteredLabel}
@@ -4886,6 +5303,7 @@
       const summary = root.querySelector('[data-property-step-summary]');
       const back = root.querySelector('[data-property-step-back]');
       const next = root.querySelector('[data-property-step-next]');
+      const launch = root.querySelector('[data-property-start-top]');
       const saveTop = root.querySelector('[data-property-save-top]');
       const actions = root.querySelector('[data-property-actions]');
       const stepNav = form.querySelector('[data-property-step-nav]');
@@ -4963,15 +5381,16 @@
           saveTop.hidden = saveHidden;
           saveTop.setAttribute('aria-hidden', saveHidden ? 'true' : 'false');
         }
+        const isFinalStep = current >= visibleSteps.length - 1;
         if (next) {
-          const isFinalStep = current >= visibleSteps.length - 1;
-          next.hidden = false;
-          next.dataset.pqxStepMode = isFinalStep ? 'launch' : 'advance';
-          next.textContent = isFinalStep
-            ? localizedWorkbenchCopy('step-search', 'Search')
-            : current === visibleSteps.length - 2
-              ? localizedWorkbenchCopy('step-review', 'Review')
-              : localizedWorkbenchCopy('step-next', 'Next');
+          next.hidden = isFinalStep;
+          next.dataset.pqxStepMode = 'advance';
+          next.textContent = localizedWorkbenchCopy('step-next', 'Next');
+        }
+        if (launch) {
+          launch.hidden = !isFinalStep;
+          launch.setAttribute('aria-hidden', isFinalStep ? 'false' : 'true');
+          launch.dataset.pqxStepMode = 'launch';
         }
         if (actions) actions.hidden = current !== visibleSteps.length - 1;
         if (!silent && stepNav && typeof stepNav.scrollIntoView === 'function') {
@@ -8485,6 +8904,188 @@
           if (localStatusNode) localStatusNode.textContent = error instanceof Error ? error.message : counterfactualSaveErrorLabel(adjustments);
         }
       });
+    });
+    const boundedCoverFetch = async (url, options = {}) => {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    };
+    root.addEventListener('click', async (event) => {
+      const button = event.target?.closest?.('[data-pqx-opportunity-generate]');
+      if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.disabled) return;
+      const rawCandidateRef = String(button.getAttribute('data-candidate-ref') || '').trim();
+      let candidateRef = rawCandidateRef;
+      try {
+        candidateRef = decodeURIComponent(rawCandidateRef);
+      } catch (_error) {
+        candidateRef = rawCandidateRef;
+      }
+      const runId = String(button.getAttribute('data-run-id') || '').trim();
+      const card = button.closest('[data-workbench-row]');
+      const statusNode = card?.querySelector('[data-pqx-opportunity-generation-status]');
+      const artifactNode = card?.querySelector('[data-pqx-opportunity-artifact]');
+      if (!candidateRef || !runId) {
+        if (statusNode) statusNode.textContent = 'Brief unavailable for this result.';
+        return;
+      }
+      const previousLabel = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Creating brief…';
+      if (statusNode) statusNode.textContent = '';
+      try {
+        const response = await fetch(
+          `/app/api/property/opportunities/${encodeURIComponent(candidateRef)}/generate`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ run_id: runId, artifact_type: 'why_shortlisted', audience_type: 'family' }),
+          },
+        );
+        if (recoverExpiredSession(response)) return;
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const errorMessage = String(payload?.error?.message || payload?.detail || '').trim();
+          throw new Error(errorMessage || 'Could not create the brief.');
+        }
+        const artifactBody = String(payload?.artifact?.body_markdown || payload?.artifact?.body || '').trim();
+        const provider = String(payload?.generation?.provider || 'PropertyQuarry').trim();
+        if (artifactNode && artifactBody) {
+          artifactNode.textContent = artifactBody;
+          artifactNode.hidden = false;
+        }
+        if (statusNode) statusNode.textContent = `Private brief · ${provider}`;
+        button.textContent = 'Brief ready';
+        trackRybbitEvent('property_opportunity_brief_generated', {
+          surface: initialSurface || 'results',
+          provider,
+        });
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previousLabel || 'Create brief';
+        if (statusNode) statusNode.textContent = error instanceof Error ? error.message : 'Could not create the brief.';
+      }
+    });
+    root.addEventListener('click', async (event) => {
+      const button = event.target?.closest?.('[data-pqx-opportunity-cover-generate]');
+      if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.disabled) return;
+      const rawCandidateRef = String(button.getAttribute('data-candidate-ref') || '').trim();
+      let candidateRef = rawCandidateRef;
+      try {
+        candidateRef = decodeURIComponent(rawCandidateRef);
+      } catch (_error) {
+        candidateRef = rawCandidateRef;
+      }
+      const runId = String(button.getAttribute('data-run-id') || '').trim();
+      const card = button.closest('[data-workbench-row]');
+      const statusNode = card?.querySelector('[data-pqx-opportunity-generation-status]');
+      const coverNode = card?.querySelector('[data-pqx-opportunity-cover]');
+      if (!candidateRef || !runId || !(coverNode instanceof HTMLElement)) {
+        if (statusNode) statusNode.textContent = 'Concept cover unavailable for this result.';
+        return;
+      }
+      const previousLabel = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Creating cover…';
+      if (statusNode) statusNode.textContent = 'Private worker request queued.';
+      try {
+        const queuedResponse = await boundedCoverFetch(
+          `/app/api/property/opportunities/${encodeURIComponent(candidateRef)}/generate-cover`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            cache: 'no-store',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ run_id: runId }),
+          },
+        );
+        if (recoverExpiredSession(queuedResponse)) return;
+        let payload = await queuedResponse.json().catch(() => ({}));
+        if (!queuedResponse.ok) {
+          const errorMessage = String(payload?.error?.message || payload?.detail || '').trim();
+          throw new Error(errorMessage || 'Could not queue the concept cover.');
+        }
+        const generationId = String(payload?.generation_id || '').trim();
+        if (!generationId) throw new Error('Concept-cover receipt is unavailable.');
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          if (String(payload?.status || '') === 'ready') break;
+          if (String(payload?.status || '') === 'unavailable') {
+            throw new Error(String(payload?.message || 'Concept-cover generation is temporarily unavailable.'));
+          }
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
+          if (!button.isConnected || !root.contains(button)) return;
+          const statusResponse = await boundedCoverFetch(
+            `/app/api/property/opportunities/generations/${encodeURIComponent(generationId)}`,
+            { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } },
+          );
+          if (recoverExpiredSession(statusResponse)) return;
+          payload = await statusResponse.json().catch(() => ({}));
+          if (!statusResponse.ok) {
+            const errorMessage = String(payload?.error?.message || payload?.detail || '').trim();
+            throw new Error(errorMessage || 'Could not read the concept-cover status.');
+          }
+        }
+        if (String(payload?.status || '') !== 'ready') {
+          throw new Error('Concept-cover generation is still running. Try again shortly.');
+        }
+        const result = payload?.result || {};
+        const receipt = result?.receipt || {};
+        const assetUrl = String(result?.artifact?.asset_url || '').trim();
+        let parsedAssetUrl = null;
+        try {
+          parsedAssetUrl = new URL(assetUrl, window.location.origin);
+        } catch (_error) {
+          parsedAssetUrl = null;
+        }
+        if (
+          receipt?.status !== 'verified'
+          || receipt?.principal_bound !== true
+          || receipt?.proof_scope !== 'provider_call'
+          || parsedAssetUrl?.origin !== window.location.origin
+          || !parsedAssetUrl?.pathname.startsWith('/app/api/property/opportunities/generations/')
+          || !parsedAssetUrl?.pathname.endsWith('/asset')
+        ) {
+          throw new Error('Concept-cover provider receipt could not be verified.');
+        }
+        const image = document.createElement('img');
+        image.src = parsedAssetUrl.href;
+        image.alt = 'Synthetic concept cover for this opportunity';
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        image.referrerPolicy = 'no-referrer';
+        const copy = document.createElement('span');
+        const title = document.createElement('strong');
+        title.textContent = String(result?.artifact?.label || 'AI concept cover');
+        const disclaimer = document.createElement('span');
+        disclaimer.textContent = String(result?.artifact?.disclaimer || 'Synthetic illustration · not listing photography');
+        copy.append(title, disclaimer);
+        coverNode.replaceChildren(image, copy);
+        coverNode.hidden = false;
+        const provider = String(result?.generation?.provider || '1min.AI').trim();
+        if (statusNode) statusNode.textContent = `Private concept cover · ${provider} · verified`;
+        button.textContent = 'Cover ready';
+        button.hidden = true;
+        trackRybbitEvent('property_opportunity_cover_generated', {
+          surface: initialSurface || 'results',
+          provider,
+          receipt: 'verified',
+        });
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previousLabel || 'Create cover';
+        if (statusNode) statusNode.textContent = error instanceof Error ? error.message : 'Could not create the concept cover.';
+      }
     });
     root.querySelectorAll('[data-fliplink-packet]').forEach((button) => {
       bindFlipLinkPacketButton(button);

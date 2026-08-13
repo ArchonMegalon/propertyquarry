@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 
 uvicorn = pytest.importorskip("uvicorn")
 pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Locator, Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
 
 Config = uvicorn.Config
 Server = uvicorn.Server
@@ -37,6 +37,7 @@ from app.property_distance_preferences import (
     property_distance_preference_keys,
 )
 from app.product import property_evidence_overlays as evidence_overlays
+from app.product import service as product_service
 from app.product.models import HandoffNote
 from app.product.service import ProductService
 from app.services.property_market_catalog import selectable_property_platform_keys
@@ -628,6 +629,20 @@ def propertyquarry_browser_server(
 
     cleanup = ExitStack()
     request.addfinalizer(cleanup.close)
+    with product_service._PROPERTY_SEARCH_RUN_LOCK:  # type: ignore[attr-defined]
+        previous_run_registry = dict(
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY  # type: ignore[attr-defined]
+        )
+        product_service._PROPERTY_SEARCH_RUN_REGISTRY.clear()  # type: ignore[attr-defined]
+
+    def _restore_run_registry() -> None:
+        with product_service._PROPERTY_SEARCH_RUN_LOCK:  # type: ignore[attr-defined]
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY.clear()  # type: ignore[attr-defined]
+            product_service._PROPERTY_SEARCH_RUN_REGISTRY.update(  # type: ignore[attr-defined]
+                previous_run_registry
+            )
+
+    cleanup.callback(_restore_run_registry)
     monkeypatch.setenv("EMAILIT_API_KEY", "propertyquarry-browser-test-emailit-key")
     monkeypatch.setenv("PROPERTYQUARRY_LEGACY_PDF_RENDERER_ALLOW", "1")
     monkeypatch.setenv("PAYPAL_CLIENT_ID", "paypal-client")
@@ -854,10 +869,27 @@ def propertyquarry_browser_server(
                         "notified_total": 1,
                         "top_candidates": [
                             {
+                                "candidate_ref": "altbau-u6",
                                 "title": "Altbau near U6",
                                 "property_url": "https://www.immobilienscout24.de/expose/altbau-u6",
                                 "fit_summary": "Personal fit 92/100 · shortlist · Lift and transit fit.",
                                 "recommendation": "shortlist",
+                                "opportunity": {
+                                    "opportunity_id": "assessment:altbau-u6",
+                                    "status": "ready",
+                                    "domain": "property",
+                                    "object_type": "listing",
+                                    "object_id": "altbau-u6",
+                                    "person_id": "elisabeth",
+                                    "run_id": run_id,
+                                    "fit_score": 92.0,
+                                    "confidence": 0.91,
+                                    "predicted_reaction": "Likely to shortlist this home",
+                                    "recommendation": "shortlist",
+                                    "match_reasons": ["Lift and transit fit."],
+                                    "mismatch_reasons": [],
+                                    "unknowns": ["heating_type"],
+                                },
                                 "review_url": "/app/handoffs/human_task:review-1",
                                 "tour_url": "/tours/altbau-u6/control/3dvista",
                                 "match_reasons": ["Lift and transit fit."],
@@ -1068,6 +1100,17 @@ def _new_context(
     )
 
 
+def _propertyquarry_final_launch(page: Page) -> Locator:
+    page.locator('[data-property-step-trigger="providers"]').click()
+    form = page.locator('[data-console-form-variant="property_search"]').first
+    expect(form).to_have_attribute("data-property-active-step", "providers")
+    launch = page.locator("[data-property-start-top]")
+    expect(page.locator("[data-property-step-next]")).to_be_hidden()
+    expect(launch).to_be_visible()
+    expect(launch).to_be_enabled()
+    return launch
+
+
 def _issue_browser_workspace_session(
     *,
     client: TestClient,
@@ -1137,6 +1180,46 @@ def _assert_no_horizontal_overflow(page: Page) -> None:
     )
     assert overflow["scrollWidth"] <= overflow["innerWidth"] + 1, overflow
     assert overflow["bodyScrollWidth"] <= overflow["innerWidth"] + 1, overflow
+
+
+def test_propertyquarry_generates_private_opportunity_brief_in_real_browser(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False)
+    page: Page = context.new_page()
+    try:
+        response = page.goto(f"{base_url}/app/properties?run_id=run-42", wait_until="networkidle")
+        assert response is not None and response.ok
+        card = page.locator('[data-workbench-row][data-candidate-ref="altbau-u6"]')
+        expect(card.locator("[data-pqx-opportunity-summary]")).to_contain_text("Verify: heating_type")
+        action = card.locator("[data-pqx-opportunity-generate]")
+        expect(action).to_be_visible()
+
+        with page.expect_response(
+            lambda item: "/app/api/property/opportunities/altbau-u6/generate" in item.url
+        ) as generated:
+            action.click()
+
+        assert generated.value.ok, generated.value.text()
+        expect(action).to_have_text("Brief ready")
+        expect(card.locator("[data-pqx-opportunity-generation-status]")).to_have_text(
+            "Private brief · PropertyQuarry"
+        )
+        artifact = card.locator("[data-pqx-opportunity-artifact]")
+        expect(artifact).to_be_visible()
+        expect(artifact).to_contain_text("Altbau near U6")
+        expect(artifact).to_contain_text("Recommendation:")
+        expect(artifact).to_contain_text("Preference fit:")
+        expect(artifact).to_contain_text("Confidence:")
+        expect(artifact).to_contain_text("Predicted reaction:")
+        expect(artifact).to_contain_text("Why it fits")
+        expect(artifact).to_contain_text("Trade-offs")
+        expect(artifact).to_contain_text("Verify next")
+        expect(artifact).to_contain_text("heating type")
+    finally:
+        context.close()
 
 
 def test_propertyquarry_ai_panorama_mobile_hotspot_labels_stay_inside_viewport(
@@ -1509,7 +1592,7 @@ def test_propertyquarry_ai_panorama_mobile_hotspot_labels_stay_inside_viewport(
         assert long_hotspot.text_content() == long_label
 
         assert page.locator("body").get_attribute("data-viewer") == "propertyquarry-ai-panorama"
-        assert disclosure in page.locator(".identity span").inner_text()
+        assert disclosure in page.locator(".identity .disclosure-copy").text_content()
         assert not page_errors
         assert not failed_requests
     finally:
@@ -1578,6 +1661,9 @@ _MOBILE_DOLLHOUSE_THREE_STUB = """
   export class Group { add() {} }
   export class SphereGeometry { scale() {} }
   export class BoxGeometry {}
+  export class BufferGeometry {
+    setFromPoints(points) { this.points = points; return this; }
+  }
   export class MeshBasicMaterial {
     constructor(values = {}) {
       Object.assign(this, values);
@@ -1586,6 +1672,14 @@ _MOBILE_DOLLHOUSE_THREE_STUB = """
   }
   export class MeshStandardMaterial extends MeshBasicMaterial {}
   export class Mesh extends Positioned {
+    constructor(geometry, material) {
+      super();
+      this.geometry = geometry;
+      this.material = material;
+    }
+  }
+  export class LineBasicMaterial extends MeshBasicMaterial {}
+  export class Line extends Positioned {
     constructor(geometry, material) {
       super();
       this.geometry = geometry;
@@ -1999,7 +2093,7 @@ def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_br
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
 ) -> None:
-    """The prominent Launch search CTA must survive lazy hydration and navigate."""
+    """The final-step Launch search CTA must survive hydration and navigate."""
     base_url = str(propertyquarry_browser_server["base_url"])
     context = _new_context(browser, mobile=False, width=1440, height=900)
     page = context.new_page()
@@ -2024,8 +2118,17 @@ def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_br
         response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
         launch = page.locator("[data-property-start-top]")
+        next_button = page.locator("[data-property-step-next]")
+        expect(next_button).to_be_visible()
+        expect(launch).to_be_hidden()
+        for _ in range(10):
+            if launch.is_visible():
+                break
+            expect(next_button).to_be_visible()
+            next_button.click()
         expect(launch).to_be_visible()
         expect(launch).to_be_enabled()
+        expect(next_button).to_be_hidden()
         launch.click()
         page.wait_for_url(re.compile(r"/app/properties\?run_id=[^&]+$"), timeout=10000)
         assert launch_requests and all(row["method"] == "POST" for row in launch_requests)
@@ -2305,7 +2408,7 @@ def test_propertyquarry_live_progress_uses_authoritative_query_count_in_real_bro
         board = page.locator("[data-pqx-progress-board]").first
         expect(board).to_be_visible()
         expect(board).to_contain_text("142 / 185")
-        expect(board).to_contain_text("Search queries")
+        expect(board).to_contain_text("search queries")
         expect(page.locator("[data-pqx-run-message]")).to_contain_text(
             "2363 homes found · 576 checked · 1787 awaiting review"
         )
@@ -2678,11 +2781,12 @@ def test_propertyquarry_every_results_and_research_button_works_in_real_browser(
             expect(page.get_by_role("dialog")).to_be_visible()
             page.keyboard.press("Escape")
 
-        floorplan_preview = page.locator("[data-pqx-scope-open]:visible")
-        expect(floorplan_preview).to_have_count(1)
-        floorplan_preview.click()
-        expect(page.get_by_role("dialog")).to_be_visible()
-        page.keyboard.press("Escape")
+        scope_previews = page.locator("[data-pqx-scope-open]:visible")
+        expect(scope_previews).to_have_count(1)
+        for index in range(scope_previews.count()):
+            scope_previews.nth(index).click()
+            expect(page.get_by_role("dialog")).to_be_visible()
+            page.keyboard.press("Escape")
 
         candidate_refs = page.locator(
             "[data-workbench-select-candidate]:visible"
@@ -4103,7 +4207,12 @@ def test_propertyquarry_home_example_media_links_open_real_public_tour_targets(
         tour_href = page.get_by_role("link", name="3D tour available").get_attribute("href")
         walkthrough_href = page.get_by_role("link", name="Walkthrough available").get_attribute("href")
         assert tour_href == f"/tours/{slug}/control/3dvista"
-        assert walkthrough_href == f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
+        assert walkthrough_href == f"/tours/{slug}/walkthrough"
+        walkthrough_response = public_context.request.get(
+            f"{base_url}{walkthrough_href}"
+        )
+        assert walkthrough_response.ok
+        assert walkthrough_response.headers["content-type"].startswith("video/mp4")
         assert "#tour-preview" not in page.content()
         assert "#walkthrough-preview" not in page.content()
     finally:
@@ -4707,7 +4816,7 @@ def test_propertyquarry_greenfield_workspace_in_real_browser(
         family_row = page.locator("[data-workbench-row]", has_text="Family flat near Tiergarten").first
         selected_candidate_ref = str(family_row.get_attribute("data-candidate-ref") or "").strip()
         assert selected_candidate_ref
-        family_row.click()
+        family_row.get_by_role("button", name=re.compile(r"^Review\b", re.I)).click()
         selected_panel = page.get_by_role("region", name="Selected property")
         expect(selected_panel.locator("[data-pw-title]")).to_contain_text("Family flat near Tiergarten")
         before_parts = urllib.parse.urlsplit(before_url)
@@ -5872,7 +5981,98 @@ def test_propertyquarry_packet_tracks_followup_state_in_browser(
         context.close()
 
 
-def test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser(
+def test_propertyquarry_public_example_conversation_answers_and_keeps_multiple_turns(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=False)
+    page: Page = context.new_page()
+    console_errors: list[str] = []
+    page_errors: list[str] = []
+    page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+    page.on("pageerror", lambda err: page_errors.append(str(err)))
+    try:
+        response = page.goto(
+            f"{base_url}/app/example/shortlist?candidate=quiet-layout-near-transit",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        conversation = page.locator("[data-pq-example-conversation]")
+        assert conversation.is_visible()
+        assert conversation.get_attribute("data-candidate-key") == "quiet-layout-near-transit"
+
+        page.locator('[data-pq-example-prompt="Why is this only a maybe?"]').click()
+        with page.expect_response("**/app/api/property/example-conversation") as first_response_info:
+            page.locator("[data-pq-example-ask]").click()
+        first_response = first_response_info.value
+        assert first_response.ok, first_response.text()
+        page.wait_for_function("document.querySelectorAll('[data-pq-example-turn]').length === 2")
+        first_answer = page.locator('[data-pq-example-turn="assistant"]').first
+        assert first_answer.is_visible()
+        assert "Quiet layout near transit" in first_answer.inner_text()
+        assert "parking availability is still unclear" in first_answer.inner_text().lower()
+        assert "no lift" not in first_answer.inner_text().lower()
+
+        page.locator("[data-pq-example-question]").fill("What should I ask before the viewing?")
+        with page.expect_response("**/app/api/property/example-conversation") as second_response_info:
+            page.locator("[data-pq-example-ask]").click()
+        second_response = second_response_info.value
+        assert second_response.ok, second_response.text()
+        page.wait_for_function("document.querySelectorAll('[data-pq-example-turn]').length === 4")
+        answers = page.locator('[data-pq-example-turn="assistant"]')
+        assert answers.count() == 2
+        assert "Quiet layout near transit" in answers.nth(1).inner_text()
+        assert "agent" in answers.nth(1).inner_text().lower()
+
+        page.locator('[data-pq-example-prompt="What is the main risk?"]').click()
+        with page.expect_response("**/app/api/property/example-conversation") as third_response_info:
+            page.locator("[data-pq-example-ask]").click()
+        third_response = third_response_info.value
+        assert third_response.ok, third_response.text()
+        page.wait_for_function("document.querySelectorAll('[data-pq-example-turn]').length === 6")
+        answers = page.locator('[data-pq-example-turn="assistant"]')
+        assert answers.count() == 3
+        assert "parking availability is still unclear" in answers.nth(2).inner_text().lower()
+        assert page.locator("[data-pq-example-conversation-status]").inner_text() == "Answered from the selected demo property."
+        assert console_errors == []
+        assert page_errors == []
+    finally:
+        context.close()
+
+
+def test_propertyquarry_public_example_conversation_is_mobile_usable(
+    browser: Browser,
+    propertyquarry_browser_server: dict[str, object],
+) -> None:
+    base_url = str(propertyquarry_browser_server["base_url"])
+    context = _new_context(browser, mobile=True)
+    page: Page = context.new_page()
+    try:
+        response = page.goto(
+            f"{base_url}/app/example/shortlist?candidate=quiet-layout-near-transit",
+            wait_until="networkidle",
+        )
+        assert response is not None and response.ok
+        conversation = page.locator("[data-pq-example-conversation]")
+        conversation_box = conversation.bounding_box()
+        assert conversation_box is not None and conversation_box["width"] <= 430
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
+
+        page.locator("[data-pq-example-question]").fill("Was sollte ich vor einer Besichtigung noch klären?")
+        with page.expect_response("**/app/api/property/example-conversation") as response_info:
+            page.locator("[data-pq-example-ask]").click()
+        answer_response = response_info.value
+        assert answer_response.ok, answer_response.text()
+        page.wait_for_function("document.querySelectorAll('[data-pq-example-turn]').length === 2")
+        answer = page.locator('[data-pq-example-turn="assistant"]')
+        assert answer.is_visible()
+        assert "Für Quiet layout near transit" in answer.inner_text()
+    finally:
+        context.close()
+
+
+def test_propertyquarry_decision_to_packet_followup_flow_in_browser(
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
 ) -> None:
@@ -6105,7 +6305,7 @@ def test_propertyquarry_stale_terminal_zero_first_paint_reconciles_to_authoritat
         expect(page.locator("[data-property-decision-workbench]")).to_have_attribute("data-pqx-state", "running")
         expect(page.locator("[data-pqx-reconciled-running]")).to_be_visible()
         expect(page.locator("[data-pqx-progress-board]")).to_be_visible()
-        expect(page.locator("[data-pqx-radar-count]")).to_contain_text("4 / 10")
+        expect(page.locator("[data-pqx-radar-count]")).to_contain_text("10 / 10")
         expect(page.locator("[data-pqx-empty-results]")).to_have_count(0)
         expect(page.locator("[data-pqx-run-status]")).not_to_have_text("Finished")
         assert status_calls["full"] >= 1
@@ -6883,7 +7083,10 @@ def test_propertyquarry_search_wizard_steps_replace_visible_controls_without_acc
         response = page.goto(f"{base_url}/app/search", wait_until="domcontentloaded")
         assert response is not None and response.ok
         page.locator('[data-console-form-variant="property_search"]').wait_for(state="visible")
-        expect(page.locator('[data-property-start-top]')).to_be_visible()
+        launch = page.locator('[data-property-start-top]')
+        next_button = page.locator('[data-property-step-next]')
+        expect(launch).to_be_hidden()
+        expect(next_button).to_be_visible()
         expect(page.locator('[data-property-step-nav]')).to_be_visible()
         expected_fields = {
             "search": "country_code",
@@ -6911,6 +7114,12 @@ def test_propertyquarry_search_wizard_steps_replace_visible_controls_without_acc
             assert set(visible_steps) == {step}, {"clicked": step, "visible_steps": visible_steps}
             if field_name:
                 expect(page.locator(f'[data-property-field-name="{field_name}"]')).to_be_visible()
+            if step == "providers":
+                expect(next_button).to_be_hidden()
+                expect(launch).to_be_visible()
+            else:
+                expect(next_button).to_be_visible()
+                expect(launch).to_be_hidden()
             assert page.locator(".pqx-workflow-step.active").count() == 1
             nav_box = page.locator('[data-property-step-nav]').bounding_box()
             assert nav_box is not None
@@ -8792,7 +9001,7 @@ def test_propertyquarry_shortlist_and_research_have_browser_performance_budget(
         )
         assert page.locator(".pqx-results-summary-row", has_text=re.compile(r"(saved|matching) (homes|opportunities)", re.I)).is_visible()
         expect(page.locator("[data-property-app-shell]")).to_be_visible()
-        expect(page.locator('a[href*="/app/research/"]').first).to_be_visible()
+        expect(page.locator('a[href*="/app/research/"]:visible').first).to_be_visible()
         _assert_property_shell_visual_gates(page, max_appbar_height=92)
 
         packet_href = page.locator('a[href*="/app/research/"]').first.get_attribute("href")
@@ -8901,7 +9110,7 @@ def test_propertyquarry_research_detail_is_mobile_optimized_and_visuals_are_opt_
         assert response is not None and response.ok
         expect(page.locator("[data-property-research-detail]")).to_be_visible()
         expect(page.locator(".prd-media-frame")).to_be_visible()
-        expect(page.get_by_role("button", name=re.compile("Request walkthrough", re.I))).to_be_visible()
+        expect(page.get_by_role("button", name=re.compile("Request camera walkthrough", re.I))).to_be_visible()
         expect(page.get_by_role("button", name="Copy link")).to_be_hidden()
         assert visual_requests == []
         _assert_no_horizontal_overflow(page)
@@ -9048,7 +9257,7 @@ def test_propertyquarry_research_detail_is_mobile_optimized_and_visuals_are_opt_
         page.screenshot(path=str(screenshot_path), full_page=True, animations="disabled", caret="hide")
         assert screenshot_path.exists() and screenshot_path.stat().st_size > 20_000
 
-        request_button = page.get_by_role("button", name=re.compile("Request walkthrough", re.I)).first
+        request_button = page.get_by_role("button", name=re.compile("Request camera walkthrough", re.I)).first
         request_button.click()
         _choose_research_visual_style(page, accept_external_processing=True)
         page.wait_for_timeout(500)
@@ -9130,7 +9339,7 @@ def test_propertyquarry_visual_request_does_not_invent_eta_before_backend_suppli
         packet_url = packet_href if packet_href.startswith("http") else f"{base_url}{packet_href}"
         response = page.goto(packet_url, wait_until="domcontentloaded")
         assert response is not None and response.ok
-        request_button = page.get_by_role("button", name=re.compile("Request walkthrough", re.I)).first
+        request_button = page.get_by_role("button", name=re.compile("Request camera walkthrough", re.I)).first
         request_button.click()
         _choose_research_visual_style(page, accept_external_processing=True)
         page.wait_for_timeout(900)
@@ -9798,7 +10007,7 @@ def test_propertyquarry_research_detail_surfaces_generated_diorama_and_layout_to
         )
         generated_tour_card = page.locator("[data-prd-visual-card='generated_reconstruction']")
         expect(generated_tour_card).to_be_visible()
-        expect(generated_tour_card).to_contain_text("AI-generated 3D tour")
+        expect(generated_tour_card).to_contain_text("AI layout preview")
         expect(page.locator(".prd-status-badge")).to_contain_text("AI-generated 3D tour available")
         expect(page.locator("[data-prd-visual-status]")).to_contain_text(
             (
@@ -9808,7 +10017,7 @@ def test_propertyquarry_research_detail_surfaces_generated_diorama_and_layout_to
         )
         expect(page.get_by_role("button", name=re.compile("Request 3D tour", re.I))).to_have_count(0)
         _assert_no_horizontal_overflow(page)
-        open_generated_tour = page.get_by_role("link", name="Open AI-generated 3D tour").first
+        open_generated_tour = page.get_by_role("link", name="Open AI layout preview").first
         expect(open_generated_tour).to_have_attribute(
             "href",
             re.compile(r".*/tours/generated-reconstruction-loft$"),
@@ -10843,9 +11052,10 @@ def test_propertyquarry_search_setup_fits_desktop_viewport_and_captures_screensh
                     topLaunchWidth: topLaunchRect ? topLaunchRect.width : 0,
                     topLaunchRight: topLaunchRect ? topLaunchRect.right : 0,
                     drawerScrollTopBeforeInteraction: drawerScrollTopInitial,
-                    railOverflowX: railStyle ? railStyle.overflowX : '',
-                    railDisplay: railStyle ? railStyle.display : '',
-                    railGridColumns: railStyle ? railStyle.gridTemplateColumns : '',
+                        railOverflowX: railStyle ? railStyle.overflowX : '',
+                        railDisplay: railStyle ? railStyle.display : '',
+                        railFlexWrap: railStyle ? railStyle.flexWrap : '',
+                        railGridColumns: railStyle ? railStyle.gridTemplateColumns : '',
                     railScrollWidth: rail ? rail.scrollWidth : 0,
                     railClientWidth: rail ? rail.clientWidth : 0,
                     railPosition: railStyle ? railStyle.position : '',
@@ -10946,8 +11156,11 @@ def test_propertyquarry_search_setup_fits_desktop_viewport_and_captures_screensh
         assert mobile_metrics["topnavFirstLeft"] >= -1
         assert mobile_metrics["topLaunchWidth"] <= 1
         assert mobile_metrics["drawerScrollTopBeforeInteraction"] <= 2
-        assert mobile_metrics["railDisplay"] == "grid"
-        assert len(str(mobile_metrics["railGridColumns"]).split()) == 3
+        assert mobile_metrics["railDisplay"] in {"grid", "flex"}
+        if mobile_metrics["railDisplay"] == "grid":
+            assert len(str(mobile_metrics["railGridColumns"]).split()) == 3
+        else:
+            assert mobile_metrics["railFlexWrap"] == "wrap"
         assert mobile_metrics["railOverflowX"] == "visible"
         assert mobile_metrics["railScrollWidth"] <= mobile_metrics["railClientWidth"] + 1
         assert mobile_metrics["railPosition"] == "sticky"
@@ -11170,7 +11383,7 @@ def test_propertyquarry_search_launch_strips_cross_country_provider_selection(
             }
             """
         )
-        page.locator("[data-property-start-top]").click()
+        _propertyquarry_final_launch(page).click()
         expect(page).to_have_url(re.compile("run-cross-country-provider"), timeout=10000)
 
         preferences = observed.get("preferences")
@@ -11238,7 +11451,7 @@ def test_propertyquarry_search_launch_preserves_checked_provider_set(
         assert len(eligible_checked_before_launch) > 1
         assert isinstance(plan_cap, (int, float))
 
-        page.locator("[data-property-start-top]").click()
+        _propertyquarry_final_launch(page).click()
         expect(page).to_have_url(re.compile("run-provider-preserve"), timeout=10000)
 
         preferences = observed.get("preferences")
@@ -11285,7 +11498,7 @@ def test_propertyquarry_search_launch_reuses_idempotency_key_after_lost_response
         response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
 
-        launch = page.locator("[data-property-start-top]")
+        launch = _propertyquarry_final_launch(page)
         launch.click()
         expect(page.locator("[data-property-inline-error]").first).to_contain_text(
             "connection dropped",
@@ -11350,7 +11563,7 @@ def test_propertyquarry_search_launch_turns_quota_rejection_into_retryable_calm_
         response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
 
-        page.locator("[data-property-start-top]").click()
+        _propertyquarry_final_launch(page).click()
         marker = page.locator('[data-pq-failure-state="quota_blocked"]:visible').first
         expect(marker).to_contain_text("temporary request limit", timeout=10000)
         expect(marker).to_contain_text("saved search is unchanged")
@@ -11484,17 +11697,10 @@ def test_propertyquarry_search_launch_resumes_active_run_in_localized_real_brows
             assert mobile_layout["railScrollWidth"] <= mobile_layout["railClientWidth"] + 1
             assert mobile_layout["labelsFit"] is True
             assert mobile_layout["nextWidth"] >= mobile_layout["actionsWidth"] - 2
-            page.locator('[data-property-step-trigger="providers"]').click()
-            page.wait_for_function(
-                """() => document.querySelector(
-                  '[data-console-form-variant="property_search"]'
-                )?.dataset.propertyActiveStep === 'providers'"""
-            )
-            launch = page.locator("[data-property-step-next]:visible")
-            expect(launch).to_have_text("Suche" if locale == "de-AT" else "Buscar")
-        else:
-            launch = page.locator("[data-property-start-top]")
-            expect(launch).to_have_attribute("aria-label", "Suche starten")
+        launch = _propertyquarry_final_launch(page)
+        expected_launch_label = "Suche starten" if locale == "de-AT" else "Iniciar búsqueda"
+        expect(launch).to_have_attribute("aria-label", expected_launch_label)
+        expect(launch).to_have_text(expected_launch_label)
         expect(launch).to_be_visible()
         launch_box = launch.evaluate(
             """(button) => ({
@@ -11601,7 +11807,7 @@ def test_propertyquarry_search_launch_continues_when_preference_save_times_out(
             )?.dataset.pqWorkbenchController === 'loaded'"""
         )
 
-        launch = page.locator("[data-property-start-top]")
+        launch = _propertyquarry_final_launch(page)
         expect(launch).to_be_enabled()
         launch.click()
         expect(page).to_have_url(
@@ -11656,7 +11862,7 @@ def test_propertyquarry_app_search_launch_uses_any_property_type_when_all_boxes_
         )
         expect(page.locator('input[name="property_type"]:checked')).to_have_count(0)
 
-        page.locator("[data-property-start-top]").click()
+        _propertyquarry_final_launch(page).click()
         expect(page).to_have_url(re.compile("run-any-property-type"), timeout=10000)
 
         preferences = observed.get("preferences")
@@ -12559,7 +12765,7 @@ def test_propertyquarry_start_failure_explains_backend_reason(
             ),
         )
         page.route("**/app/api/property/search-runs**", _delayed_failure)
-        response = page.goto(f"{base_url}/app/properties", wait_until="networkidle")
+        response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
         page.select_option('select[name="country_code"]', "AT")
         page.get_by_role("button", name="Select all areas", exact=True).click()
@@ -12593,8 +12799,7 @@ def test_propertyquarry_start_failure_explains_backend_reason(
         expect(inline_error).to_contain_text("plus plan")
         launch_button = page.locator("[data-property-start-top]")
         expect(launch_button).to_have_attribute("aria-busy", "false")
-        expect(launch_button.locator(".pqx-top-start-label-full")).to_have_text("Launch search")
-        expect(launch_button.locator(".pqx-top-start-label-short")).to_have_text("Search")
+        expect(launch_button).to_have_text("Launch search")
     finally:
         context.close()
 
@@ -12661,7 +12866,7 @@ def test_propertyquarry_agent_can_launch_all_austria_providers_from_real_browser
         )
 
         with page.expect_response("**/app/api/property/search-runs") as start_response:
-            page.locator("[data-property-start-top]").click()
+            _propertyquarry_final_launch(page).click()
 
         assert start_response.value.status == 202
         page.wait_for_url(
@@ -12724,7 +12929,7 @@ def test_propertyquarry_launch_posts_real_start_payload_and_shows_run_status(
     context = _new_context(browser, mobile=False)
     page: Page = context.new_page()
     try:
-        response = page.goto(f"{base_url}/app/properties", wait_until="networkidle")
+        response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
         page.select_option('select[name="country_code"]', "AT")
         page.get_by_role("button", name="Select all areas", exact=True).click()
@@ -12859,7 +13064,7 @@ def test_propertyquarry_launch_posts_real_start_payload_and_shows_run_status(
         with bottom_launch_page.expect_response(
             "**/app/api/property/search-runs"
         ) as bottom_start_response:
-            bottom_launch_page.locator("[data-property-step-next]:visible").click()
+            _propertyquarry_final_launch(bottom_launch_page).click()
         assert bottom_start_response.value.ok
         bottom_launch_page.wait_for_url(
             re.compile(r".*/app/(properties|shortlist)\?run_id=.*"),
@@ -13848,7 +14053,7 @@ def test_propertyquarry_walkthrough_request_is_user_initiated_in_real_browser(
         packet_url = packet_href if packet_href.startswith("http") else f"{base_url}{packet_href}"
         response = page.goto(packet_url, wait_until="domcontentloaded")
         assert response is not None and response.ok
-        request_button = page.get_by_role("button", name="Request walkthrough")
+        request_button = page.get_by_role("button", name="Request camera walkthrough")
         expect(request_button).to_be_visible()
         request_button.click()
         _choose_research_visual_style(page, accept_external_processing=True)
@@ -14061,7 +14266,7 @@ def test_propertyquarry_ready_tour_rail_stays_on_tour_while_walkthrough_queue_is
         expect(page.locator("[data-prd-visual-status]")).to_contain_text("3D tour is ready.", timeout=10000)
         expect(page.get_by_role("button", name="Open 3D tour").first).to_be_visible()
 
-        request_button = page.get_by_role("button", name="Request walkthrough").first
+        request_button = page.get_by_role("button", name="Request camera walkthrough").first
         expect(request_button).to_be_visible()
 
         request_button.click()
@@ -14330,7 +14535,7 @@ def test_propertyquarry_visual_request_uses_listing_url_fallback_in_real_browser
         packet_url = packet_href if packet_href.startswith("http") else f"{base_url}{packet_href}"
         response = page.goto(packet_url, wait_until="networkidle")
         assert response is not None and response.ok
-        request_button = page.get_by_role("button", name="Request walkthrough")
+        request_button = page.get_by_role("button", name="Request camera walkthrough")
         expect(request_button).to_be_visible()
         assert str(request_button.get_attribute("data-property-url") or "").endswith("/listing-url-only-loft")
         request_button.click()

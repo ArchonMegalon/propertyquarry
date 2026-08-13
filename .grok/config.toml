@@ -1,0 +1,20 @@
+# PropertyQuarry Grok MCP. Project scope beats ~/.grok/config.toml and
+# Claude/Cursor compat, so this session must not inherit the stale
+# VS Code 2.2.1 vexp path or the EA-pinned Codex wrapper.
+#
+# Do not point this server at vexp-codex-mcp or http://127.0.0.1:7821.
+# Both are EA-scoped. This checkout's daemon socket is
+# /docker/property/.vexp/daemon.sock.
+
+[mcp_servers.vexp]
+command = "/home/tibor/.local/bin/vexp"
+args = ["mcp", "--workspace", "/docker/property", "--proxy"]
+cwd = "/docker/property"
+enabled = true
+startup_timeout_sec = 60
+tool_timeout_sec = 180
+
+[mcp_servers.vexp.env]
+VEXP_SKIP_UPDATE_CHECK = "1"
+VEXP_NO_AUTOSTART = "1"
+VEXP_WORKSPACE = "/docker/property"

@@ -173,6 +173,7 @@ def test_workspace_access_email_alone_is_not_authoritative_identity_evidence() -
         )
     assert "workspace_access_sessions" not in email_cursor.queries[0]
     assert "FROM identity_accounts" not in email_cursor.queries[0]
+    assert "propertyquarry_google_identity_accounts" not in email_cursor.queries[1]
 
     resolution_cursor = _QueryCursor([])
     with pytest.raises(module.EntitlementGrantError, match="target_account_not_found"):
@@ -183,6 +184,7 @@ def test_workspace_access_email_alone_is_not_authoritative_identity_evidence() -
         )
     assert "workspace_access_sessions" not in resolution_cursor.queries[0]
     assert "FROM identity_accounts" not in resolution_cursor.queries[0]
+    assert "propertyquarry_google_identity_accounts" not in resolution_cursor.queries[1]
 
 
 def _rollback_fixture(module, *, before: dict[str, object], after: dict[str, object]):

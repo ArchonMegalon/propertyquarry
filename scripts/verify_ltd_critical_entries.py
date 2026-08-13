@@ -55,6 +55,17 @@ def _verified_live_discovery(rows: dict[str, dict[str, str]], service: str) -> b
     )
 
 
+def _verified_onemin_provider_call(
+    rows: dict[str, dict[str, str]],
+) -> bool:
+    row = rows.get("1min.AI") or {}
+    return (
+        row.get("discovery_status") == "live_provider_call_verified"
+        and row.get("verification_source")
+        == "worker_health_probe + principal_bound_provider_receipt"
+    )
+
+
 def build_receipt(*, markdown_text: str, env: dict[str, str]) -> dict[str, object]:
     discovery_rows = _extract_discovery_rows(markdown_text)
     checks = {
@@ -67,13 +78,19 @@ def build_receipt(*, markdown_text: str, env: dict[str, str]) -> dict[str, objec
         "onemin_inventory": _contains(
             markdown_text,
             "| `1min.AI` | `Advanced Business Plan` |",
-            "scripts/resolve_onemin_ai_key.sh",
-            "remaining credits",
+            "Worker-owned credential pool",
+            "principal-bound provider receipts",
+            "exactly one real `1min` image call",
+        ),
+        "onemin_provider_call_discovery": _verified_onemin_provider_call(
+            discovery_rows
         ),
         "browseract_discovery": _verified_live_discovery(discovery_rows, "BrowserAct"),
         "teable_discovery": _verified_live_discovery(discovery_rows, "Teable"),
         "prompt_architects_env": bool(str(env.get("PROMPTING_SYSTEMS_API_KEY") or "").strip()),
-        "onemin_env": bool(str(env.get("ONEMIN_AI_API_KEY") or "").strip()),
+        "onemin_local_credential_slot": bool(
+            str(env.get("ONEMIN_AI_API_KEY") or "").strip()
+        ),
     }
     failures = [name for name, ok in checks.items() if not ok]
     return {
@@ -81,6 +98,11 @@ def build_receipt(*, markdown_text: str, env: dict[str, str]) -> dict[str, objec
         "status": "pass" if not failures else "fail",
         "checks": checks,
         "failures": failures,
+        "not_live_integration_gate": True,
+        "proof_semantics": (
+            "Inventory and local credential posture are checked separately; "
+            "only the exact 1min provider-call discovery row records live proof."
+        ),
     }
 
 

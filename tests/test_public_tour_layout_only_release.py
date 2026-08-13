@@ -520,8 +520,9 @@ def test_layout_only_routes_serve_only_verified_public_bytes(
         SLUG,
         _request(f"/tours/{SLUG}/layout-preview"),
     )
-    assert root.status_code == 404
-    assert b"This old link no longer opens as a 3D tour." in root.body
+    assert isinstance(root, RedirectResponse)
+    assert root.status_code == 302
+    assert root.headers["location"] == viewer_url
     assert isinstance(layout, RedirectResponse)
     assert layout.status_code == 302
     assert layout.headers["location"] == viewer_url

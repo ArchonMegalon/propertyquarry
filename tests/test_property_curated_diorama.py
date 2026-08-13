@@ -9,9 +9,11 @@ from pathlib import Path
 import pytest
 
 from app.api.routes import landing as landing_routes
+from app.api.routes import landing_property_workspace_payload as workspace_payload_routes
 from app.services.property_curated_diorama import (
     build_curated_diorama_entry_index,
     build_curated_diorama_preview_index,
+    curated_diorama_entry_is_approved,
     curated_diorama_governance_subject_sha256,
 )
 from tests.product_test_helpers import build_property_client
@@ -53,6 +55,57 @@ def _manifest_for(asset: Path, *, asset_url: str = "/static/property/research/ap
             }
         ],
     }
+
+
+def _approved_hosted_tour_binding(
+    *,
+    candidate_refs: list[str] | None = None,
+    listing_ids: list[str] | None = None,
+    reviewed_at: str = "2026-08-04T15:45:33Z",
+    evidence_sha256: str = "f653f438caafe3c4f4802c3692f2ae0919cc457d61b1602bfcd9a01be0279e38",
+) -> dict[str, object]:
+    resolved_candidate_refs = sorted(candidate_refs or ["candidate-a"])
+    resolved_listing_ids = sorted(listing_ids or ["123456"])
+    binding: dict[str, object] = {
+        "binding_contract": "propertyquarry.curated_hosted_tour_binding.v1",
+        "slug": "karl-czerny-gasse-2-urban-jungle",
+        "provider": "3dvista",
+        "default_mode": "camera_walkthrough",
+        "hosted_tour_url": "/tours/karl-czerny-gasse-2-urban-jungle",
+        "walkthrough_url": "/tours/karl-czerny-gasse-2-urban-jungle/walkthrough",
+        "spatial_tour_url": "/tours/3dvista/karl-czerny-gasse-2-urban-jungle/3dvista/index.htm",
+        "property_url_sha256": "c20cc5d801fa85982874524703514160d3aa6003456738ba0c816d6d4a825431",
+    }
+    binding_payload = {
+        **binding,
+        "candidate_refs": resolved_candidate_refs,
+        "listing_ids": resolved_listing_ids,
+    }
+    binding["binding_sha256"] = hashlib.sha256(
+        json.dumps(
+            binding_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    binding["review"] = {
+        "status": "approved",
+        "reviewed_by": "codex-release-owner",
+        "reviewed_at": reviewed_at,
+        "evidence_sha256": evidence_sha256,
+    }
+    return binding
+
+
+def test_workbench_legacy_candidate_link_uses_server_selected_canonical_ref() -> None:
+    script = Path(
+        "ea/app/templates/app/_property_workbench_feedback_script.html"
+    ).read_text(encoding="utf-8")
+
+    assert "const canonicalBrowserCandidateRef = (candidateRef = '') =>" in script
+    assert "candidateByRef.has(selectedPayloadRef)" in script
+    assert "selectCandidate(initialCandidateRef, { updateUrl: false });" in script
+    assert "replaceCandidateQueryParam(initialCandidateRef);" in script
 
 
 def test_curated_diorama_v2_requires_complete_approved_governance(tmp_path: Path) -> None:
@@ -330,6 +383,221 @@ def test_landing_curated_drawn_diorama_overrides_stale_runtime_preview(
     }
 
 
+def test_landing_curated_diorama_applies_validated_camera_first_tour_binding() -> None:
+    candidate: dict[str, object] = {
+        "candidate_ref": "candidate-a",
+        "title": "A city home",
+    }
+    landing_routes._property_apply_curated_diorama_preview(
+        candidate,
+        entry={
+            "asset_url": "/static/property/research/approved.webp",
+            "representation": "illustrative",
+            "candidate_refs": ["candidate-a"],
+            "listing_ids": ["123456"],
+            "hosted_tour": _approved_hosted_tour_binding(),
+        },
+    )
+
+    assert candidate["flythrough_url"] == (
+        "/tours/karl-czerny-gasse-2-urban-jungle/walkthrough"
+    )
+    assert candidate["flythrough_status"] == "ready"
+    assert candidate["tour_url"] == (
+        "/tours/karl-czerny-gasse-2-urban-jungle"
+    )
+    assert candidate["tour_status"] == "ready"
+    assert candidate["tour_provider"] == "3dvista"
+
+
+def test_workspace_tour_and_walkthrough_readiness_are_owner_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    principal_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        workspace_payload_routes.property_tour_hosting,
+        "_hosted_property_tour_verified_provider",
+        lambda _url, *, principal_id="": principal_calls.append(
+            ("provider", principal_id)
+        )
+        or "3dvista",
+    )
+    monkeypatch.setattr(
+        workspace_payload_routes.property_tour_hosting,
+        "_hosted_property_tour_verified_open_url",
+        lambda _url, *, principal_id="": principal_calls.append(
+            ("tour", principal_id)
+        )
+        or "/tours/karl/control/3dvista",
+    )
+    monkeypatch.setattr(
+        workspace_payload_routes.property_tour_hosting,
+        "_hosted_property_tour_walkthrough_open_url",
+        lambda _url, _walkthrough="", *, principal_id="": principal_calls.append(
+            ("walkthrough", principal_id)
+        )
+        or "/tours/karl/walkthrough",
+    )
+    candidate = {
+        "tour_url": "/tours/karl",
+        "flythrough_url": "/tours/karl/walkthrough",
+    }
+
+    tour_url = workspace_payload_routes._property_workbench_candidate_ready_tour_url(
+        candidate,
+        principal_id="user-owner",
+    )
+    walkthrough_url = (
+        workspace_payload_routes._property_workbench_candidate_flythrough_url(
+            candidate,
+            ready_tour_url=tour_url,
+            principal_id="user-owner",
+        )
+    )
+
+    assert tour_url == "/tours/karl/control/3dvista"
+    assert walkthrough_url == "/tours/karl/walkthrough"
+    assert [call for call in principal_calls if call[1]] == [
+        ("provider", "user-owner"),
+        ("tour", "user-owner"),
+        ("walkthrough", "user-owner"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("default_mode", "stereoscopic"),
+        ("provider", "unverified-viewer"),
+        ("hosted_tour_url", "/tours/another-home"),
+        ("walkthrough_url", "/tours/another-home/walkthrough"),
+        ("spatial_tour_url", "https://vendor.invalid/tour"),
+    ],
+)
+def test_landing_curated_diorama_rejects_invalid_tour_binding(
+    field: str,
+    value: str,
+) -> None:
+    hosted_tour = _approved_hosted_tour_binding()
+    hosted_tour[field] = value
+    candidate: dict[str, object] = {"candidate_ref": "candidate-a"}
+
+    landing_routes._property_apply_curated_diorama_preview(
+        candidate,
+        entry={
+            "asset_url": "/static/property/research/approved.webp",
+            "candidate_refs": ["candidate-a"],
+            "listing_ids": ["123456"],
+            "hosted_tour": hosted_tour,
+        },
+    )
+
+    assert candidate["diorama_preview_url"] == (
+        "/static/property/research/approved.webp"
+    )
+    assert "tour_url" not in candidate
+    assert "flythrough_url" not in candidate
+
+
+def test_legacy_curated_alias_restores_and_marks_ranked_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_ref = "karl-czerny-gasse-2-private-showcase"
+    legacy_ref = "cece2dad814fdf68"
+    candidate = {
+        "candidate_ref": canonical_ref,
+        "title": "Karl candidate",
+        "property_url": "https://listing.invalid/1536069684",
+    }
+    property_context: dict[str, object] = {
+        "run": {
+            "run_id": "owned-run",
+            "summary": {"ranked_candidates": [candidate]},
+        }
+    }
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_candidate_ref",
+        lambda row: str(row.get("candidate_ref") or ""),
+    )
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_candidate_refs",
+        lambda _candidate_ref: (canonical_ref, legacy_ref),
+    )
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_preview_entry",
+        lambda _candidate: {
+            "asset_url": "/static/property/research/ad48357be22535c1-ai-diorama.webp",
+            "representation": "illustrative",
+            "candidate_refs": [canonical_ref, legacy_ref],
+            "listing_ids": [],
+            "binding_listing_ids": ["1536069684"],
+            "hosted_tour": _approved_hosted_tour_binding(
+                candidate_refs=[canonical_ref, legacy_ref],
+                listing_ids=["1536069684"],
+            ),
+        },
+    )
+
+    selected_ref = landing_routes._property_resolve_scoped_curated_candidate_ref(
+        requested_candidate_ref=legacy_ref,
+        property_context=property_context,
+    )
+
+    assert selected_ref == canonical_ref
+    restored = property_context["run"]["summary"]["ranked_candidates"][0]
+    assert restored["_explicitly_selected_source_candidate"] is True
+    assert restored["_selected_candidate_ref"] == canonical_ref
+    assert restored["diorama_preview_url"].endswith(
+        "ad48357be22535c1-ai-diorama.webp"
+    )
+    assert restored["flythrough_url"].endswith("/walkthrough")
+    assert restored["tour_provider"] == "3dvista"
+
+
+def test_curated_alias_deep_link_resolves_owned_historical_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_ref = "karl-czerny-gasse-2-private-showcase"
+    legacy_ref = "cece2dad814fdf68"
+    observed_refs: list[str] = []
+
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_curated_diorama_candidate_refs",
+        lambda _candidate_ref: (canonical_ref, legacy_ref),
+    )
+
+    def _lookup_across_runs(
+        _product: object,
+        **kwargs: object,
+    ) -> tuple[dict[str, object] | None, str]:
+        candidate_ref = str(kwargs.get("candidate_ref") or "")
+        observed_refs.append(candidate_ref)
+        if candidate_ref == canonical_ref:
+            return {"candidate_ref": canonical_ref}, "historical-karl-run"
+        return None, ""
+
+    monkeypatch.setattr(
+        landing_routes,
+        "_property_lookup_candidate_across_runs",
+        _lookup_across_runs,
+    )
+
+    run_id = landing_routes._property_resolve_curated_candidate_run_id(
+        object(),
+        principal_id="owned-principal",
+        access_email="owner@example.com",
+        requested_candidate_ref=legacy_ref,
+    )
+
+    assert run_id == "historical-karl-run"
+    assert observed_refs == [canonical_ref]
+
+
 def test_exact_shortlist_run_renders_all_drawn_diorama_thumbnails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -400,7 +668,17 @@ def test_exact_shortlist_run_renders_all_drawn_diorama_thumbnails(
     assert len(asset_urls) == 40
     assert len(set(asset_urls)) == 40
     assert "stale-runtime-preview" not in response.text
-    assert response.text.count(">Illustrative</span>") == 40
+    drawn_rows = [
+        row
+        for row in re.findall(
+            r'<article class="pq-fast-row">(.*?)</article>',
+            response.text,
+            re.DOTALL,
+        )
+        if "-drawn-diorama.webp" in row
+    ]
+    assert len(drawn_rows) == 40
+    assert all(">Illustrative</span>" in row for row in drawn_rows)
     assert (
         response.text.count('alt="Illustrative hand-drawn property diorama"')
         == 40
@@ -420,15 +698,12 @@ def test_tracked_curated_diorama_assets_are_not_orphaned() -> None:
     }
     manifest_path = repo_root / "ea" / "app" / "data" / "property_diorama_previews.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
-    index = build_curated_diorama_preview_index(
-        payload,
-        static_root=repo_root / "ea" / "app" / "static",
-    )
-    approved_assets = {
-        f"ea/app/static/{asset_url.removeprefix('/static/')}"
-        for asset_url in index.values()
+    declared_assets = {
+        f"ea/app/static/{str(entry.get('asset_url') or '').removeprefix('/static/')}"
+        for entry in list(payload.get("entries") or [])
+        if str(entry.get("asset_url") or "").startswith("/static/")
     }
-    assert tracked_assets == approved_assets
+    assert tracked_assets == declared_assets
 
 
 def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
@@ -442,15 +717,59 @@ def test_tracked_drawn_diorama_manifest_is_complete_and_truthful() -> None:
     assert payload["contract_name"] == "propertyquarry.curated_diorama_previews.v2"
     assert payload["run_binding"] == {
         "run_id": "9dd6a4993d7245a0acf48aeb50c44a9b",
-        "candidate_count": 40,
+        "candidate_count": len(entries),
     }
-    assert len(entries) == 40
-    assert {entry["rank"] for entry in entries} == set(range(1, 41))
-    assert all(
+    assert len(entries) == 41
+    assert {entry["rank"] for entry in entries} == set(range(1, 42))
+    assert sum(
         entry["preview_kind"] == "illustrative_drawn_diorama"
+        for entry in entries
+    ) == 40
+    assert sum(entry["preview_kind"] == "rendered_diorama" for entry in entries) == 1
+    rendered_entry = next(
+        entry for entry in entries if entry["preview_kind"] == "rendered_diorama"
+    )
+    assert rendered_entry["candidate_refs"] == [
+        "karl-czerny-gasse-2-private-showcase",
+        "cece2dad814fdf68",
+    ]
+    assert rendered_entry["listing_ids"] == []
+    assert rendered_entry["binding_listing_ids"] == ["1536069684"]
+    assert rendered_entry["search_visibility"] == "suppressed"
+    assert rendered_entry["suppression_reason"] == (
+        "owner_removed_from_search_results"
+    )
+    assert curated_diorama_entry_is_approved(
+        rendered_entry,
+        asset_sha256=rendered_entry["asset_sha256"],
+    )
+    assert rendered_entry["hosted_tour"] == _approved_hosted_tour_binding(
+        candidate_refs=[
+            "karl-czerny-gasse-2-private-showcase",
+            "cece2dad814fdf68",
+        ],
+        listing_ids=["1536069684"],
+        reviewed_at="2026-08-06T06:28:06Z",
+        evidence_sha256="423d24216c8690478440f59d15b93756f21341e60cafc205c6d128071fb53e7e",
+    )
+    rendered_index = build_curated_diorama_entry_index(
+        payload,
+        static_root=repo_root / "ea" / "app" / "static",
+    )
+    assert "candidate:karl-czerny-gasse-2-private-showcase" not in rendered_index
+    assert "candidate:cece2dad814fdf68" not in rendered_index
+    assert "candidate:ad48357be22535c1" not in rendered_index
+    assert "listing:1536069684" not in rendered_index
+    assert all(
+        entry["preview_kind"]
+        in {"illustrative_drawn_diorama", "rendered_diorama"}
         and entry["representation"] == "illustrative"
         and "not listing evidence" in entry["truth_boundary"]
         and entry["source_basis"]
-        in {"listing_reference_image", "listing_metadata_only"}
+        in {
+            "listing_reference_image",
+            "listing_metadata_only",
+            "listing_floorplan_and_reference_images",
+        }
         for entry in entries
     )

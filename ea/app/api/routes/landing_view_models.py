@@ -9,6 +9,7 @@ import math
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -69,7 +70,9 @@ from app.api.routes.landing_property_surface_contracts import (
 
 _PROPERTY_MAP_PREVIEW_RENDER_LOCK = threading.Lock()
 _PROPERTY_MAP_PREVIEW_RENDER_IN_FLIGHT: set[str] = set()
-_PROPERTY_MAP_PREVIEW_STYLE_VERSION = "flagship_map_v12_focus_card_contrast"
+_PROPERTY_MAP_PREVIEW_CACHE_PRUNE_LOCK = threading.Lock()
+_PROPERTY_MAP_PREVIEW_CACHE_LAST_PRUNED_MONOTONIC = 0.0
+_PROPERTY_MAP_PREVIEW_STYLE_VERSION = "flagship_map_v14_calm_backdrop"
 _PROPERTY_MAP_PREVIEW_SELECTED_FILL = (194, 42, 48, 46)
 _PROPERTY_MAP_PREVIEW_COVERAGE_FILL = (194, 42, 48, 24)
 _PROPERTY_MAP_PREVIEW_SECONDARY_FILL = (194, 42, 48, 24)
@@ -962,7 +965,82 @@ def _mercator_fraction_y(lat: float) -> float:
 def _map_preview_cache_root() -> Path:
     root = Path(str(os.environ.get("EA_ARTIFACTS_DIR") or "/tmp/ea_artifacts")).resolve() / "map_previews"
     root.mkdir(parents=True, exist_ok=True)
+    _prune_map_preview_cache(root)
     return root
+
+
+def _map_preview_cache_limit(name: str, *, default: int, maximum: int) -> int:
+    raw_value = str(os.environ.get(name) or "").strip()
+    if not raw_value:
+        return default
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(parsed, maximum))
+
+
+def _prune_map_preview_cache(
+    root: Path,
+    *,
+    force: bool = False,
+    now_monotonic: float | None = None,
+) -> dict[str, int]:
+    """Bound the fully reconstructible PNG cache by both rows and bytes."""
+
+    global _PROPERTY_MAP_PREVIEW_CACHE_LAST_PRUNED_MONOTONIC
+    observed_monotonic = float(
+        time.monotonic() if now_monotonic is None else now_monotonic
+    )
+    with _PROPERTY_MAP_PREVIEW_CACHE_PRUNE_LOCK:
+        if (
+            not force
+            and _PROPERTY_MAP_PREVIEW_CACHE_LAST_PRUNED_MONOTONIC > 0
+            and observed_monotonic
+            - _PROPERTY_MAP_PREVIEW_CACHE_LAST_PRUNED_MONOTONIC
+            < 300.0
+        ):
+            return {"entries": 0, "bytes": 0, "deleted": 0}
+        _PROPERTY_MAP_PREVIEW_CACHE_LAST_PRUNED_MONOTONIC = observed_monotonic
+
+        max_entries = _map_preview_cache_limit(
+            "EA_PROPERTY_MAP_PREVIEW_CACHE_MAX_ENTRIES",
+            default=2048,
+            maximum=20_000,
+        )
+        max_bytes = _map_preview_cache_limit(
+            "EA_PROPERTY_MAP_PREVIEW_CACHE_MAX_BYTES",
+            default=256 * 1024 * 1024,
+            maximum=2 * 1024 * 1024 * 1024,
+        )
+        rows: list[tuple[int, str, int, Path]] = []
+        for path in root.glob("*.png"):
+            try:
+                if path.is_symlink() or not path.is_file():
+                    continue
+                info = path.stat()
+            except OSError:
+                continue
+            rows.append((info.st_mtime_ns, path.name, max(0, int(info.st_size)), path))
+        rows.sort(key=lambda row: (row[0], row[1]))
+        total_bytes = sum(row[2] for row in rows)
+        deleted = 0
+        while rows and (len(rows) > max_entries or total_bytes > max_bytes):
+            _mtime, _name, size_bytes, path = rows.pop(0)
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                continue
+            else:
+                deleted += 1
+            total_bytes = max(0, total_bytes - size_bytes)
+        return {
+            "entries": len(rows),
+            "bytes": total_bytes,
+            "deleted": deleted,
+        }
 
 
 def _map_preview_cache_path_for_key(cache_key: dict[str, object]) -> Path:
@@ -976,8 +1054,11 @@ def _map_preview_cache_path_for_key(cache_key: dict[str, object]) -> Path:
 
 def _flagship_map_backdrop(image: Image.Image) -> Image.Image:
     """Keep OSM readable under the selected-area layer without turning noisy."""
-    softened = image.convert("RGB")
-    softened = softened.filter(ImageFilter.GaussianBlur(radius=0.65))
+    source = image.convert("RGB")
+    softened = source.filter(ImageFilter.GaussianBlur(radius=1.5))
+    # Preserve street labels and broad terrain contrast while damping the
+    # high-frequency tile texture that becomes noisy at card-thumbnail size.
+    softened = Image.blend(softened, source, 0.48)
     softened = ImageEnhance.Color(softened).enhance(0.44)
     softened = ImageEnhance.Contrast(softened).enhance(0.78)
     softened = ImageEnhance.Brightness(softened).enhance(1.01)

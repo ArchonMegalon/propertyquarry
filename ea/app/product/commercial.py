@@ -33,8 +33,8 @@ class WorkspacePlan:
 
 _PLANS = {
     "personal": WorkspacePlan(
-        plan_key="pilot",
-        display_name="Pilot",
+        plan_key="workspace_personal",
+        display_name="Personal workspace",
         unit_of_sale="workspace",
         entitlements=PlanEntitlements(
             principal_seats=1,
@@ -44,20 +44,20 @@ _PLANS = {
             feature_flags=("market_update", "review_queue", "follow-up_ledger", "review_workflow"),
         ),
         support_tier="guided",
-        billing_state="trial",
-        price_label="Pilot conversion after first value",
-        billing_cadence="pilot",
-        invoice_window_label="Invoice only after pilot sign-off",
-        renewal_window_label="Pilot review before conversion",
-        billing_portal_state="guided",
-        billing_portal_path="/app/settings/support",
+        billing_state="non_authoritative_workspace_mode",
+        price_label="PropertyQuarry plan is managed separately",
+        billing_cadence="not_applicable",
+        invoice_window_label="See PropertyQuarry billing",
+        renewal_window_label="See PropertyQuarry billing",
+        billing_portal_state="property_billing_authoritative",
+        billing_portal_path="/app/billing",
         upgrade_target_mode="team",
         renewal_owner_role="principal",
-        contract_note="PropertyQuarry pilot with one account owner and one collaborator.",
+        contract_note="Personal workspace mode; this object does not grant a paid PropertyQuarry plan.",
     ),
     "team": WorkspacePlan(
-        plan_key="core",
-        display_name="Core",
+        plan_key="workspace_team",
+        display_name="Shared workspace",
         unit_of_sale="workspace",
         entitlements=PlanEntitlements(
             principal_seats=1,
@@ -67,20 +67,20 @@ _PLANS = {
             feature_flags=("market_update", "review_queue", "follow-up_ledger", "review_workflow", "collaborator_notes", "shared_follow_ups"),
         ),
         support_tier="standard",
-        billing_state="active",
-        price_label="Core monthly workspace",
-        billing_cadence="monthly",
-        invoice_window_label="Monthly invoice window",
-        renewal_window_label="Monthly renewal cadence",
-        billing_portal_state="self_serve",
-        billing_portal_path="/app/settings/plan",
+        billing_state="non_authoritative_workspace_mode",
+        price_label="PropertyQuarry plan is managed separately",
+        billing_cadence="not_applicable",
+        invoice_window_label="See PropertyQuarry billing",
+        renewal_window_label="See PropertyQuarry billing",
+        billing_portal_state="property_billing_authoritative",
+        billing_portal_path="/app/billing",
         upgrade_target_mode="executive_ops",
         renewal_owner_role="office_admin",
-        contract_note="Shared property search with collaborative review coverage.",
+        contract_note="Shared workspace mode; this object does not grant a paid PropertyQuarry plan.",
     ),
     "executive_ops": WorkspacePlan(
-        plan_key="executive",
-        display_name="Concierge",
+        plan_key="workspace_managed",
+        display_name="Managed workspace",
         unit_of_sale="workspace",
         entitlements=PlanEntitlements(
             principal_seats=1,
@@ -98,16 +98,16 @@ _PLANS = {
             ),
         ),
         support_tier="priority",
-        billing_state="active",
-        price_label="Concierge contract",
-        billing_cadence="contract",
-        invoice_window_label="Contract-managed billing window",
-        renewal_window_label="Contract renewal review",
-        billing_portal_state="account_managed",
-        billing_portal_path="/app/settings/support",
+        billing_state="non_authoritative_workspace_mode",
+        price_label="PropertyQuarry plan is managed separately",
+        billing_cadence="not_applicable",
+        invoice_window_label="See PropertyQuarry billing",
+        renewal_window_label="See PropertyQuarry billing",
+        billing_portal_state="property_billing_authoritative",
+        billing_portal_path="/app/billing",
         upgrade_target_mode="executive_ops",
         renewal_owner_role="account_lead",
-        contract_note="Managed property search with priority support and extended account history.",
+        contract_note="Managed workspace mode; this object does not grant a paid PropertyQuarry plan.",
     ),
 }
 
@@ -131,25 +131,21 @@ def workspace_commercial_snapshot(
     warnings: list[str] = []
     blocked_actions: list[str] = []
     upgrade_target = workspace_plan_for_mode(plan.upgrade_target_mode or "team")
-    invoice_status = "current" if plan.billing_state == "active" else "trial_active"
+    invoice_status = "property_billing_authoritative"
     blocked_action_message = "No current commercial blocks."
     usage_pressure_state = "within_limit"
-    if plan.billing_state == "trial":
-        warnings.append("Pilot workspace is still in trial.")
     if seat_overage:
         warnings.append("Active collaborators exceed included seats.")
         blocked_actions.append("operator_seat_overage")
-        invoice_status = "upgrade_required"
         blocked_action_message = (
-            f"Add {seat_overage} more collaborator seat"
-            f"{'' if seat_overage == 1 else 's'} or move to {upgrade_target.display_name} before assigning more people."
+            f"Remove {seat_overage} collaborator seat"
+            f"{'' if seat_overage == 1 else 's'} or change workspace mode before assigning more people."
         )
         usage_pressure_state = "seat_overage"
     elif selected_messaging and not plan.entitlements.messaging_channels_enabled:
         warnings.append("Messaging channels are selected but not included in this plan.")
         blocked_actions.append("messaging_setup")
-        invoice_status = "upgrade_required"
-        blocked_action_message = f"Upgrade to {upgrade_target.display_name} before enabling Telegram or WhatsApp alerts."
+        blocked_action_message = "Messaging is not available in this workspace mode."
         usage_pressure_state = "messaging_locked"
     seat_pressure_label = f"{int(seats_used or 0)} of {seat_limit} collaborator seats used"
     if seat_overage:
@@ -161,6 +157,7 @@ def workspace_commercial_snapshot(
         upgrade_path_label = upgrade_target.display_name
     return {
         "billing": {
+            "authority": "property_billing_service",
             "billing_state": plan.billing_state,
             "support_tier": plan.support_tier,
             "renewal_owner_role": plan.renewal_owner_role,

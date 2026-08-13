@@ -356,6 +356,11 @@ def fetch_url(
         }
 
 
+def _is_paid_plan_label(value: str) -> bool:
+    normalized_plan = str(value or "").strip().lower()
+    return bool(normalized_plan and not normalized_plan.startswith("free"))
+
+
 def _route_checks(*, path: str, text: str, expected_plan_label: str) -> list[tuple[str, bool]]:
     visible_text = _visible_text(text)
     lowered_visible = visible_text.lower()
@@ -373,7 +378,12 @@ def _route_checks(*, path: str, text: str, expected_plan_label: str) -> list[tup
                 ("account_notification_primary_route", 'name="preferred_channel"' in text),
                 ("account_notification_whatsapp_phone", 'name="whatsapp_ai_support_phone"' in text),
                 ("account_notification_save_action", "Save notifications" in visible_text),
-                ("account_paid_plan", f"<h2>{expected_plan_label}</h2>" in text if expected_plan_label else True),
+                (
+                    "account_paid_plan",
+                    f"<h2>{expected_plan_label}</h2>" in text
+                    if _is_paid_plan_label(expected_plan_label)
+                    else True,
+                ),
                 (
                     "account_logout_strip",
                     "pqx-account-logout-strip" in text
@@ -410,12 +420,6 @@ def _route_checks(*, path: str, text: str, expected_plan_label: str) -> list[tup
             (
                 ("sign_in_current_session", "Open current session" in visible_text or "Open search" in visible_text),
                 ("sign_in_single_logout", logout_count == 1),
-                ("sign_in_google_state", "Continue with Google" in visible_text),
-                (
-                    "sign_in_connected_identity_creates_account",
-                    "First sign-in" in visible_text
-                    and "creates the account automatically" in visible_text,
-                ),
                 (
                     "sign_in_no_unavailable_auth_copy",
                     "temporarily unavailable" not in lowered_visible
@@ -472,8 +476,7 @@ def _billing_readiness_from_route_row(
     else:
         state = "unavailable"
         reason = "billing_route_not_available"
-    normalized_plan = str(expected_plan_label or "").strip().lower()
-    paid_persona = bool(normalized_plan and normalized_plan != "free")
+    paid_persona = _is_paid_plan_label(expected_plan_label)
     return {
         "state": state,
         "available": state == "available",

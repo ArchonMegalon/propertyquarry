@@ -284,7 +284,7 @@ async function main() {
     // The provider may rotate the workspace FQDN.  Resolve the current
     // workspace from the authenticated seller API before trying a label so a
     // stale env/default hostname cannot strand the worker on the picker.
-    const workspaceResponse = await page.request.get('https://tours.crezlo.com/api/seller/tours/workspaces').catch(() => null);
+    const workspaceResponse = await page.request.get('https://api.caliqik.com/api/seller/tours/workspaces').catch(() => null);
     if (workspaceResponse && workspaceResponse.ok()) {
       try {
         const workspacePayload = await workspaceResponse.json();
@@ -301,7 +301,13 @@ async function main() {
           await setActiveWorkspaceCookie();
           result.workspace_id = String(selected.id || '');
           result.workspace_name = String(selected.name || '');
-          result.workspace_domain = String(selected.internal_fqdn || selected.external_fqdn || '');
+          const rawWorkspaceDomain = String(selected.internal_fqdn || selected.external_fqdn || '')
+            .trim()
+            .replace(/^https?:\/\//i, '')
+            .replace(/\/.*$/, '');
+          result.workspace_domain = rawWorkspaceDomain && !rawWorkspaceDomain.includes('.')
+            ? `${rawWorkspaceDomain}.crezlotours.com`
+            : rawWorkspaceDomain;
           result.workspace_base_url = result.workspace_domain ? `https://${result.workspace_domain}` : '';
           const workspaceCard = page
             .locator('[title="Use Workspace"]')

@@ -1032,15 +1032,37 @@ def test_map_preview_flagship_gate_uses_canonical_renderer_when_live_state_has_n
     assert receipt["preview_results"][0]["source"] == "canonical_renderer"
 
 
+def test_map_preview_style_version_is_part_of_the_persisted_cache_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from app.api.routes import landing_view_models as view_models
+
+    monkeypatch.setenv("EA_ARTIFACTS_DIR", str(tmp_path))
+    cache_key = {
+        "kind": "scope",
+        "country": "AT",
+        "region": "vienna",
+        "query": "1020 Vienna",
+    }
+
+    current_path = view_models._map_preview_cache_path_for_key(cache_key)
+    monkeypatch.setattr(view_models, "_PROPERTY_MAP_PREVIEW_STYLE_VERSION", "next-renderer-style")
+    next_style_path = view_models._map_preview_cache_path_for_key(cache_key)
+
+    assert current_path.parent == next_style_path.parent
+    assert current_path.name != next_style_path.name
+
+
 def test_deploy_and_release_scripts_wire_3d_walkthrough_and_map_preview_as_exit_gates() -> None:
     deploy = (ROOT / "scripts" / "deploy_propertyquarry.sh").read_text(encoding="utf-8")
     release = (ROOT / "scripts" / "property_release_gates.sh").read_text(encoding="utf-8")
 
-    assert 'PROPERTYQUARRY_EXTERNAL_CONTROLLER_PATH="/usr/libexec/propertyquarry-release-control/propertyquarry-deploy-controller"' in deploy
-    assert 'PROPERTYQUARRY_EXTERNAL_CONTROLLER_MANIFEST="/etc/propertyquarry/release-control/external-deploy-controller.v1.json"' in deploy
-    assert "--controller-owns-all-privileged-actions" in deploy
-    assert "--require-controller-self-attestation" in deploy
-    assert "--forbid-candidate-output-authority" in deploy
+    assert "Authoritative local-Docker PropertyQuarry deployment." in deploy
+    assert "scripts/check_property_repository_role.py" in deploy
+    assert "--require-clean-worktree" in deploy
+    assert "/usr/bin/docker compose" in deploy
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
     for candidate_owned_gate in (
         "scripts/propertyquarry_3d_browser_gate.py",
         "scripts/propertyquarry_walkthrough_quality_gate.py",

@@ -93,18 +93,42 @@ def test_production_deploy_holds_ingress_until_canonical_gold_then_consumes_sign
     assert "scripts/propertyquarry_deploy_controller_guard.py" not in script
     assert "PROPERTYQUARRY_DRAIN_RECEIPT_ED25519_PUBLIC_KEY" not in script
     assert "PROPERTYQUARRY_DEPLOY_DRAIN_CONSUMPTION_LEDGER" not in script
-    assert "/usr/libexec/propertyquarry-release-control/propertyquarry-deploy-controller" in script
-    assert "/etc/propertyquarry/release-control/deploy-drain-keyring.v2.json" in script
-    assert "/etc/propertyquarry/monitoring-topology.v1.json" in script
-    assert "/etc/propertyquarry/monitoring-tools.v1.json" in script
-    assert "--controller-owns-all-privileged-actions" in script
-    assert "--contain-before-candidate-validation" in script
-    assert "--require-root-pinned-monitoring-runtime" in script
-    assert "--require-cloudflared-immutable-digest-and-config-binding" in script
-    assert "--forbid-caller-compose" in script
-    assert "--forbid-candidate-output-authority" in script
-    assert "docker compose" not in script.lower()
-    assert "docker-compose" not in script.lower()
+    for retired_controller_contract in (
+        "/usr/libexec/propertyquarry-release-control/propertyquarry-deploy-controller",
+        "/etc/propertyquarry/release-control/deploy-drain-keyring.v2.json",
+        "--controller-owns-all-privileged-actions",
+        "--contain-before-candidate-validation",
+        "--require-root-pinned-monitoring-runtime",
+        "--require-cloudflared-immutable-digest-and-config-binding",
+        "--forbid-caller-compose",
+        "--forbid-candidate-output-authority",
+    ):
+        assert retired_controller_contract not in script
+
+    repository_validation = script.index("scripts/check_property_repository_role.py")
+    compose_validation = script.index("config --quiet")
+    database_start = script.index(
+        "up --detach --wait --wait-timeout 120 propertyquarry-db"
+    )
+    admission_provisioning = script.index(
+        "scripts/provision_propertyquarry_admission_database.py"
+    )
+    stack_start = script.index("up --detach --remove-orphans --wait --wait-timeout 420")
+    deployment_receipt = script.index(
+        "scripts/propertyquarry_local_deployment_receipt.py"
+    )
+
+    assert "Only the local Docker Unix socket is release authority." in script
+    assert "/usr/bin/docker compose" in script
+    assert "--require-clean-worktree" in script
+    assert (
+        repository_validation
+        < compose_validation
+        < database_start
+        < admission_provisioning
+        < stack_start
+        < deployment_receipt
+    )
 
 
 def test_slo_release_operator_environment_and_runbook_are_source_controlled() -> None:

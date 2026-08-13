@@ -54,6 +54,7 @@ def _base_metrics() -> dict[str, object]:
         "topnav_visible": True,
         "min_action_height": 46,
         "measured_touch_target_height": 46,
+        "measured_primary_touch_target_height": 46,
         "visible_card_count": 12,
         "heavy_shadow_count": 0,
         "district_picker_available": True,
@@ -190,6 +191,12 @@ def test_live_mobile_smoke_browser_worker_uses_selected_shared_engine_runtime(mo
     class Page:
         url = "https://propertyquarry.test/app/search"
 
+        class Touchscreen:
+            def tap(self, x: int, y: int) -> None:
+                observed["touchscreen_tap"] = (x, y)
+
+        touchscreen = Touchscreen()
+
         def set_default_timeout(self, _timeout: int) -> None:
             pass
 
@@ -205,7 +212,9 @@ def test_live_mobile_smoke_browser_worker_uses_selected_shared_engine_runtime(mo
         def wait_for_timeout(self, _timeout: int) -> None:
             pass
 
-        def evaluate(self, _script: str) -> dict[str, object]:
+        def evaluate(self, script: str) -> dict[str, object] | None:
+            if "async () =>" not in script:
+                return None
             return {"viewport_width": 390}
 
     class Context:
@@ -271,6 +280,7 @@ def test_live_mobile_smoke_browser_worker_uses_selected_shared_engine_runtime(mo
     }
     assert observed["context"].get("extra_http_headers") is None
     assert observed["route_pattern"] == "**/*"
+    assert observed["touchscreen_tap"] == (10, 10)
     assert observed["payload"] == {
         "ok": True,
         "status_code": 200,
@@ -283,6 +293,7 @@ def test_live_mobile_smoke_browser_worker_uses_selected_shared_engine_runtime(mo
             "navigation_committed": True,
             "requested_url": "https://propertyquarry.test/app/search",
             "final_url": "https://propertyquarry.test/app/search",
+            "touchscreen_tap_capable": True,
         },
     }
 
@@ -429,6 +440,193 @@ def test_live_mobile_smoke_flagship_browser_all_rejects_static_probe_fallback(mo
         if row["name"] == "flagship_browser_all_playwright_proof"
     )
     assert proof_check["ok"] is False
+
+
+def test_live_mobile_smoke_resolves_signed_redirect_before_browser_navigation(monkeypatch) -> None:
+    browser_urls: list[str] = []
+
+    monkeypatch.setattr(
+        mobile_smoke,
+        "_http_get_for_smoke",
+        lambda url, **_kwargs: {
+            "status_code": 200,
+            "headers": {},
+            "url": (
+                "https://propertyquarry.com/app/search"
+                if url.endswith("/app/properties")
+                else url
+            ),
+            "text": "",
+        },
+    )
+
+    def fake_browser_probe(**kwargs):
+        browser_urls.append(str(kwargs["url"]))
+        metrics = _base_metrics()
+        metrics.update(
+            {
+                "browser_probe": True,
+                "browser_engine": kwargs["browser_engine"],
+                "proof_mode": "playwright",
+                "navigation_committed": True,
+                "touch_capable": True,
+                "focus_navigation_ok": True,
+                "requested_url": kwargs["url"],
+                "final_url": kwargs["url"],
+            }
+        )
+        return 200, metrics
+
+    monkeypatch.setattr(mobile_smoke, "collect_playwright_route_metrics", fake_browser_probe)
+    monkeypatch.setattr(
+        mobile_smoke,
+        "_registry_mobile_surface_coverage_checks",
+        lambda **_kwargs: [{"name": "registry_mobile_customer_surfaces_covered", "ok": True}],
+    )
+
+    receipt = build_live_mobile_surface_receipt(
+        base_url="https://propertyquarry.com",
+        api_token="",
+        principal_id="propertyquarry-release-probe",
+        release_probe_secret="dedicated-probe-secret",
+        routes=(
+            "/app/properties",
+            "/app/research/current-result?run_id=run-flagship",
+        ),
+        proof_mode="flagship",
+        supported_viewports=((390, 844),),
+        required_browser_engines=("chromium",),
+    )
+
+    assert receipt["status"] == "pass"
+    assert browser_urls == [
+        "https://propertyquarry.com/app/search",
+        "https://propertyquarry.com/app/research/current-result?run_id=run-flagship",
+    ]
+    assert receipt["routes"][0]["metrics"]["release_probe_redirect_resolved"] is True
+
+
+def test_live_mobile_smoke_flagship_billing_is_strict_only_for_paid_persona(monkeypatch) -> None:
+    monkeypatch.setattr(
+        mobile_smoke,
+        "_http_get_for_smoke",
+        lambda url, **_kwargs: {
+            "status_code": 503 if url.endswith("/app/billing") else 200,
+            "headers": {},
+            "url": url,
+            "text": (
+                BILLING_PORTAL_UNAVAILABLE_BODY
+                if url.endswith("/app/billing")
+                else ""
+            ),
+        },
+    )
+
+    def fake_browser_probe(**kwargs):
+        metrics = _base_metrics()
+        status_code = 503 if kwargs["route"] == "/app/billing" else 200
+        metrics.update(
+            {
+                "status_code": status_code,
+                "browser_probe": True,
+                "browser_engine": kwargs["browser_engine"],
+                "proof_mode": "playwright",
+                "navigation_committed": True,
+                "touch_capable": True,
+                "focus_navigation_ok": True,
+            }
+        )
+        return status_code, metrics
+
+    monkeypatch.setattr(mobile_smoke, "collect_playwright_route_metrics", fake_browser_probe)
+    monkeypatch.setattr(
+        mobile_smoke,
+        "_registry_mobile_surface_coverage_checks",
+        lambda **_kwargs: [{"name": "registry_mobile_customer_surfaces_covered", "ok": True}],
+    )
+    kwargs = {
+        "base_url": "https://propertyquarry.com",
+        "api_token": "",
+        "principal_id": "propertyquarry-release-probe",
+        "release_probe_secret": "dedicated-probe-secret",
+        "routes": (
+            "/app/billing",
+            "/app/research/current-result?run_id=run-flagship",
+        ),
+        "proof_mode": "flagship",
+        "supported_viewports": ((390, 844),),
+        "required_browser_engines": ("chromium",),
+    }
+
+    free_receipt = build_live_mobile_surface_receipt(
+        **kwargs,
+        expected_plan_label="Free standard research",
+    )
+    paid_receipt = build_live_mobile_surface_receipt(
+        **kwargs,
+        expected_plan_label="Agent",
+    )
+
+    assert free_receipt["status"] == "pass"
+    assert free_receipt["billing_readiness"]["paid_persona"] is False
+    assert free_receipt["billing_readiness"]["strict_required"] is False
+    assert paid_receipt["status"] == "fail"
+    assert paid_receipt["billing_readiness"]["paid_persona"] is True
+    assert paid_receipt["billing_readiness"]["strict_required"] is True
+
+
+def test_propertyquarry_mobile_topnav_fallback_keeps_touch_targets_at_least_44px() -> None:
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "ea/app/templates/app/property_decision_workbench.html"
+    ).read_text(encoding="utf-8")
+
+    assert "item.style.setProperty('min-height', '44px', 'important');" in template
+
+
+def test_flagship_browser_proof_uses_actual_touchscreen_capability_and_primary_targets() -> None:
+    metrics = _base_metrics()
+    metrics.update(
+        {
+            "require_browser_proof": True,
+            "navigation_committed": True,
+            "touch_capable": False,
+            "touchscreen_tap_capable": True,
+            "focus_navigation_ok": True,
+            "measured_touch_target_height": 24,
+            "measured_primary_touch_target_height": 44,
+        }
+    )
+
+    assert _failed_names("/app/settings/usage", metrics) == set()
+
+    metrics["touchscreen_tap_capable"] = False
+    metrics["measured_primary_touch_target_height"] = 40
+    assert _failed_names("/app/settings/usage", metrics) == {
+        "browser_touch_context",
+        "primary_touch_targets",
+    }
+
+
+def test_flagship_mobile_navigation_templates_keep_primary_links_at_44px() -> None:
+    templates = Path(__file__).resolve().parents[1] / "ea/app/templates/app"
+    packets = (templates / "property_packets.html").read_text(encoding="utf-8")
+    research = (templates / "property_research_detail.html").read_text(encoding="utf-8")
+    base_console = (templates.parent / "base_console.html").read_text(encoding="utf-8")
+
+    assert ".pq-pack-nav :is(a, span) {\n      display: inline-flex;" in packets
+    assert (
+        ".pq-pack-nav :is(a, span) {\n"
+        "        min-height: 44px;\n"
+        "        padding: 0 12px;"
+    ) in packets
+    assert (
+        ".prd-primary-nav a,\n"
+        "    .prd-primary-nav span {\n"
+        "      min-height: 44px;\n"
+        "      height: 44px;"
+    ) in research
+    assert "--touch-target: 44px;" in base_console
 
 
 def test_live_mobile_smoke_accepts_empty_shortlist_with_top_navigation_only() -> None:
@@ -815,7 +1013,19 @@ def test_live_mobile_smoke_seeded_research_detail_payload_is_valid_detail_fixtur
     assert candidate["candidate_ref"] == "perf-candidate-1020"
     assert candidate["saved_from_run_id"] == "run-gold-mobile"
     assert candidate["packet_url"] == "/app/research/perf-candidate-1020"
-    assert dict(candidate["property_facts"])["listing_fact_confirmation"]["status"] == "confirmed"
+    assert candidate["title"] == "Bright three-room apartment in 1020 Vienna · Demo"
+    assert candidate["source_label"].startswith("PropertyQuarry demo")
+    assert candidate["preview_image_url"] == "/static/propertyquarry-demo-home.svg"
+    assert candidate["diorama_preview_url"] == "/static/propertyquarry-demo-home.svg"
+    demo_image = Path(__file__).resolve().parents[1] / "ea" / "app" / "static" / "propertyquarry-demo-home.svg"
+    assert demo_image.is_file()
+    assert demo_image.read_text(encoding="utf-8").startswith("<svg ")
+    facts = dict(candidate["property_facts"])
+    assert facts["country_code"] == "AT"
+    assert facts["city"] == "Vienna"
+    assert facts["map_lat"] == 48.2167
+    assert facts["map_lng"] == 16.4
+    assert facts["listing_fact_confirmation"]["status"] == "confirmed"
 
 
 def test_live_mobile_smoke_seed_headers_include_public_edge_safe_metadata() -> None:

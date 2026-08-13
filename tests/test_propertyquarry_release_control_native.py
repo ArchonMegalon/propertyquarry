@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -8,13 +9,19 @@ import re
 import select
 import shlex
 import shutil
+import signal
 import socket
 import stat
 import subprocess
+import time
 
 import pytest
 
+from scripts import propertyquarry_release_authenticated_package as authenticated
 from scripts import propertyquarry_release_local_container_gate as container_gate
+from scripts import propertyquarry_release_local_identity as local_identity
+from scripts import propertyquarry_release_oci_materializer as oci
+from scripts import propertyquarry_release_package_payload as package_payload
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,12 +59,23 @@ NATIVE_SOURCE_FILES = (
     "tools/source-files.txt",
     "tools/stage-verify.sh",
     "tools/verify-static-elf.sh",
+    "internal/releasecontrol/authority_receipts.go",
+    "internal/releasecontrol/authority_receipts_test.go",
+    "internal/releasecontrol/authenticated_request.go",
+    "internal/releasecontrol/authenticated_request_test.go",
     "internal/releasecontrol/releasecontrol.go",
     "internal/releasecontrol/releasecontrol_test.go",
     "internal/releasecontrol/installed_authority_linux.go",
     "internal/releasecontrol/installed_authority_linux_test.go",
+    "internal/releasecontrol/installed_result_journal_linux.go",
+    "internal/releasecontrol/installed_result_journal_linux_test.go",
+    "internal/releasecontrol/installed_replay_linux.go",
+    "internal/releasecontrol/installed_replay_linux_test.go",
     "internal/releasecontrol/installed_runtime_linux.go",
     "internal/releasecontrol/installed_tree_linux.go",
+    "internal/releasecontrol/phase_b_oidc_linux.go",
+    "internal/releasecontrol/phase_b_preflight_linux.go",
+    "internal/releasecontrol/phase_b_preflight_linux_test.go",
     "internal/releasecontrol/quarantine_request.go",
     "internal/releasecontrol/quarantine_request_test.go",
     "internal/releasecontrol/quarantine_transport_linux.go",
@@ -201,6 +219,21 @@ def test_native_source_stays_outside_exact_seven_file_package_template() -> None
         path = PACKAGE / relative
         assert not path.is_symlink()
         assert stat.S_ISREG(path.stat(follow_symlinks=False).st_mode)
+
+    source_manifest = tuple(
+        (NATIVE / "tools" / "source-files.txt").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    )
+    assert len(source_manifest) == len(set(source_manifest))
+    assert set(source_manifest) == set(NATIVE_SOURCE_FILES)
+    actual_native_files = {
+        str(path.relative_to(NATIVE))
+        for path in NATIVE.rglob("*")
+        if path.is_file()
+    }
+    assert actual_native_files == set(source_manifest)
+
     assert NATIVE.is_dir()
     for relative in NATIVE_SOURCE_FILES:
         path = NATIVE / relative
@@ -241,45 +274,355 @@ def test_build_contract_is_offline_reproducible_and_has_no_candidate_path() -> N
     assert "stage-verify: repro" in makefile
     assert "env -i" in build
     assert "tar --extract" in build
+    assert "source tree is not the exact source manifest" in build
     assert "PROPERTYQUARRY_NATIVE_GO" not in build
     assert "--build-info-json" not in stage_verify
     assert "import subprocess" not in stage_verify
     assert "subprocess.run" not in stage_verify
+
+    repro = (NATIVE / "tools" / "repro-build.sh").read_text(encoding="utf-8")
+    private_build = build.index('target="$BUILD_ROOT/$name"')
+    output_lock = build.index("/usr/bin/flock -n -x 9")
+    receipt_recheck = build.index(
+        '[ ! -e "$OUTPUT_ROOT/build-receipt.json" ]',
+        output_lock,
+    )
+    direct_publication = build.index(
+        'install -m 0755 "$source" "$target"',
+        receipt_recheck,
+    )
+    assert private_build < output_lock < receipt_recheck < direct_publication
+    assert build.count(
+        "refusing to overwrite a receipted bundle; use repro-build.sh"
+    ) == 2
+    assert 'INITIAL_OUTPUT_IDENTITY=$(' in build
+    assert 'locked_output_identity" = "$INITIAL_OUTPUT_IDENTITY' in build
+    receipt_invalidation = repro.index(
+        'rm -- "$FINAL_ROOT/build-receipt.json"'
+    )
+    binary_publication = repro.index(
+        'install -m 0755 "$PUBLISH_ROOT/$name" "$FINAL_ROOT/$name"'
+    )
+    receipt_publication = repro.index(
+        'install -m 0644 "$PUBLISH_ROOT/build-receipt.json" '
+        '"$FINAL_ROOT/build-receipt.json"'
+    )
+    assert receipt_invalidation < binary_publication < receipt_publication
+    assert "/usr/bin/flock -n -x 9" in repro
+    assert 'INITIAL_FINAL_IDENTITY=$(' in repro
+    assert '"$LOCKED_FINAL_IDENTITY" = "$INITIAL_FINAL_IDENTITY"' in repro
+    assert 'validate_final_entries "$FINAL_ROOT"' in repro
+    assert "previous final binary cannot be invalidated" in repro
+    assert "trap 'exit 143' TERM" in build
+    assert "trap 'exit 143' TERM" in repro
+    assert 'PRIVATE_ROOT=$(mktemp -d "$OUTPUT_PARENT/.pq-native-build.XXXXXX")' in build
+    assert "/tmp/propertyquarry-release-control-v2-build." not in build
     all_source = "\n".join(
         (NATIVE / relative).read_text(encoding="utf-8")
         for relative in NATIVE_SOURCE_FILES
     )
-    for forbidden in ("/docker/property", "GITHUB_WORKSPACE", "net/http"):
+    for forbidden in ("/docker/property", "GITHUB_WORKSPACE"):
         assert forbidden not in all_source
 
 
-def test_native_effect_claim_is_release_scoped_and_local_lifecycle_is_explicit() -> None:
-    metadata_contracts = (
-        NATIVE / "internal" / "releasecontrol" / "releasecontrol.go",
-        NATIVE / "tools" / "repro-build.sh",
-        ROOT / "scripts" / "propertyquarry_release_local_container_gate.py",
+def test_native_build_rejects_shared_output_parent_before_toolchain_use() -> None:
+    output = Path("/tmp") / f"pq-native-shared-parent-{os.getpid()}"
+    result = subprocess.run(
+        [str(NATIVE / "tools" / "build.sh"), str(output)],
+        cwd=ROOT,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TZ": "UTC"},
+        check=False,
+        capture_output=True,
+        text=True,
     )
-    for path in metadata_contracts:
-        contract = path.read_text(encoding="utf-8")
-        assert '"performs_effects"' not in contract
-        assert "performs_release_effects" in contract
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert result.stderr == "error: output parent must not be group- or world-writable\n"
+    assert not output.exists()
 
-    documentation = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            ROOT / "docs" / "PROPERTYQUARRY_RELEASE_NATIVE_BUILD_V2.md",
-            ROOT / "docs" / "PROPERTYQUARRY_RELEASE_LOCAL_OCI_V2.md",
-        )
+
+@pytest.mark.parametrize(
+    ("script_name", "expected_error"),
+    (
+        ("build.sh", "source tree is not the exact source manifest"),
+        ("repro-build.sh", "copied source tree is not the exact source manifest"),
+    ),
+)
+def test_build_lanes_reject_unlisted_compiler_input_before_toolchain_use(
+    tmp_path: Path,
+    script_name: str,
+    expected_error: str,
+) -> None:
+    copied_native = tmp_path / "native"
+    shutil.copytree(NATIVE, copied_native)
+    (copied_native / "internal" / "releasecontrol" / "unlisted_injection.go").write_text(
+        "package releasecontrol\n",
+        encoding="ascii",
     )
-    assert "performs no effects" not in documentation
-    for required in (
-        "performs_release_effects",
-        "local Unix socket",
-        "pinned inert controller",
-        "SIGUSR2",
-        "not a release effect",
-    ):
-        assert required in documentation
+    result = subprocess.run(
+        [str(copied_native / "tools" / script_name), str(tmp_path / "output")],
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TZ": "UTC"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert result.stderr == f"error: {expected_error}\n"
+    assert not (tmp_path / "output").exists()
+
+
+@pytest.mark.parametrize(
+    ("script_name", "expected_error"),
+    (
+        ("build.sh", "source tree contains a symlink or special entry"),
+        (
+            "repro-build.sh",
+            "copied source tree contains a symlink or special entry",
+        ),
+    ),
+)
+@pytest.mark.parametrize("entry_kind", ("symlink", "fifo"))
+def test_build_lanes_reject_unlisted_nonregular_source_entries(
+    tmp_path: Path,
+    script_name: str,
+    expected_error: str,
+    entry_kind: str,
+) -> None:
+    copied_native = tmp_path / "native"
+    shutil.copytree(NATIVE, copied_native)
+    injection = copied_native / "internal" / "releasecontrol" / "unlisted"
+    if entry_kind == "symlink":
+        injection.symlink_to("releasecontrol.go")
+    else:
+        os.mkfifo(injection)
+
+    result = subprocess.run(
+        [str(copied_native / "tools" / script_name), str(tmp_path / "output")],
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TZ": "UTC"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert result.stderr == f"error: {expected_error}\n"
+    assert not (tmp_path / "output").exists()
+
+
+def test_build_termination_cannot_resume_after_private_cleanup(
+    tmp_path: Path,
+) -> None:
+    copied_native = tmp_path / "native"
+    shutil.copytree(NATIVE, copied_native)
+    slow_input = (
+        copied_native
+        / "internal"
+        / "releasecontrol"
+        / "installed_authority_linux_test.go"
+    )
+    with slow_input.open("r+b") as stream:
+        stream.truncate(8 * 1024 * 1024 * 1024)
+
+    output = tmp_path / "output"
+    process = subprocess.Popen(
+        [str(copied_native / "tools" / "build.sh"), str(output)],
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C", "TZ": "UTC"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 5
+    caught_mask = 1 << (signal.SIGTERM - 1)
+    while True:
+        if process.poll() is not None:
+            pytest.fail("build exited before its termination trap could be exercised")
+        status = Path(f"/proc/{process.pid}/status").read_text(encoding="ascii")
+        caught = next(
+            int(line.split()[1], 16)
+            for line in status.splitlines()
+            if line.startswith("SigCgt:")
+        )
+        if caught & caught_mask:
+            break
+        if time.monotonic() >= deadline:
+            process.kill()
+            process.wait(timeout=5)
+            pytest.fail("build did not install its termination trap")
+        time.sleep(0.001)
+
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        stdout, _stderr = process.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate(timeout=5)
+        raise
+    assert process.returncode == 128 + signal.SIGTERM
+    assert stdout == ""
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("blocker", "expected_error"),
+    (
+        ("none", None),
+        ("receipt", "refusing to overwrite a receipted bundle; use repro-build.sh"),
+        ("lock", "another output publisher is active"),
+    ),
+)
+def test_direct_build_publication_is_private_locked_and_receipt_aware(
+    tmp_path: Path,
+    blocker: str,
+    expected_error: str | None,
+) -> None:
+    source = (NATIVE / "tools" / "build.sh").read_text(encoding="utf-8")
+    publish_match = re.search(r"(?ms)^publish_binaries\(\) \{\n.*?^\}\n", source)
+    assert publish_match is not None
+
+    output = tmp_path / "output"
+    private = tmp_path / "private"
+    source_root = tmp_path / "source"
+    output.mkdir()
+    private.mkdir()
+    (source_root / "tools").mkdir(parents=True)
+    verifier = source_root / "tools" / "verify-static-elf.sh"
+    verifier.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+    verifier.chmod(0o755)
+    for component in COMPONENTS:
+        (private / component).write_bytes(f"new:{component}\n".encode("ascii"))
+        (output / component).write_bytes(f"old:{component}\n".encode("ascii"))
+    receipt = output / "build-receipt.json"
+    if blocker == "receipt":
+        receipt.write_text('{"status":"pass"}\n', encoding="ascii")
+
+    harness = f"""\
+set -eu
+{publish_match.group(0)}
+fail() {{
+  printf '%s\\n' "error: $1" >&2
+  exit 1
+}}
+INITIAL_OUTPUT_IDENTITY=$(
+  /usr/bin/stat -Lc '%d:%i:%f:%u:%g' -- "$OUTPUT_ROOT"
+)
+publish_binaries
+"""
+    lock_descriptor = -1
+    if blocker == "lock":
+        lock_descriptor = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        result = subprocess.run(
+            ["/bin/sh", "-c", harness],
+            env={
+                "PATH": "/usr/bin:/bin",
+                "LANG": "C",
+                "LC_ALL": "C",
+                "TZ": "UTC",
+                "OUTPUT_ROOT": str(output),
+                "BUILD_ROOT": str(private),
+                "SOURCE_ROOT": str(source_root),
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        if lock_descriptor >= 0:
+            os.close(lock_descriptor)
+
+    assert result.stdout == ""
+    if expected_error is None:
+        assert result.returncode == 0
+        assert result.stderr == ""
+        for component in COMPONENTS:
+            assert (output / component).read_bytes() == f"new:{component}\n".encode(
+                "ascii"
+            )
+            assert stat.S_IMODE((output / component).stat().st_mode) == 0o755
+    else:
+        assert result.returncode == 1
+        assert result.stderr == f"error: {expected_error}\n"
+        for component in COMPONENTS:
+            assert (output / component).read_bytes() == f"old:{component}\n".encode(
+                "ascii"
+            )
+    if blocker == "receipt":
+        assert receipt.read_text(encoding="ascii") == '{"status":"pass"}\n'
+
+
+@pytest.mark.parametrize(
+    ("repeated_signal", "expected_status"),
+    (
+        (signal.SIGHUP, 128 + signal.SIGHUP),
+        (signal.SIGINT, 128 + signal.SIGINT),
+        (signal.SIGTERM, 128 + signal.SIGTERM),
+    ),
+)
+@pytest.mark.parametrize("script_name", ("build.sh", "repro-build.sh"))
+def test_build_cleanup_ignores_repeated_signal_and_preserves_first_status(
+    tmp_path: Path,
+    script_name: str,
+    repeated_signal: signal.Signals,
+    expected_status: int,
+) -> None:
+    source = (NATIVE / "tools" / script_name).read_text(encoding="utf-8")
+    cleanup_match = re.search(r"(?ms)^cleanup\(\) \{\n.*?^\}\n", source)
+    assert cleanup_match is not None
+
+    marker = tmp_path / "cleanup-entered"
+    harness = f"""\
+set -eu
+{cleanup_match.group(0)}
+PRIVATE_ROOT=/tmp/propertyquarry-unused-private-root
+WORK_ROOT=/tmp/propertyquarry-unused-work-root
+rm() {{
+  printf '%s\\n' cleanup-entered
+  : >"$MARKER"
+  /usr/bin/sleep 0.25
+  printf '%s\\n' cleanup-finished
+}}
+cleanup "$EXPECTED_STATUS"
+"""
+    process = subprocess.Popen(
+        ["/bin/sh", "-c", harness],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "TZ": "UTC",
+            "MARKER": str(marker),
+            "EXPECTED_STATUS": str(expected_status),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 5
+    while not marker.exists():
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            pytest.fail(
+                "cleanup exited before the repeated signal could be exercised: "
+                f"stdout={stdout!r}, stderr={stderr!r}"
+            )
+        if time.monotonic() >= deadline:
+            process.kill()
+            process.wait(timeout=5)
+            pytest.fail("cleanup did not reach its protected removal phase")
+        time.sleep(0.001)
+
+    os.killpg(process.pid, repeated_signal)
+    stdout, stderr = process.communicate(timeout=5)
+    assert process.returncode == expected_status
+    assert stdout == "cleanup-entered\ncleanup-finished\n"
+    assert stderr == ""
 
 
 def test_go_unit_suite_passes_offline() -> None:
@@ -865,6 +1208,68 @@ def test_double_build_is_byte_identical_and_receipt_is_non_authoritative(
         assert json.loads(result.stdout)["source_manifest_digest"] == receipt[
             "source_manifest_sha256"
         ]
+
+
+def test_fresh_native_bundle_reaches_verified_authenticated_oci(
+    reproducible_native_bundle: Path,
+    tmp_path: Path,
+) -> None:
+    tmp_path.chmod(0o700)
+    native_receipt = reproducible_native_bundle / "build-receipt.json"
+    native_receipt_sha256 = _sha256(native_receipt)
+    authority = local_identity.bootstrap_local_identity(
+        state_root=str(tmp_path / "authority-state"),
+        candidate_sha="b" * 40,
+        workflow_sha="a" * 40,
+    )
+    payload_path = Path(
+        package_payload.assemble_payload(
+            native_bundle=str(reproducible_native_bundle),
+            private_bundle=authority.package_input,
+            service_gid=1999,
+            output=str(tmp_path / "payload"),
+        )
+    )
+    payload_receipt = json.loads(
+        (payload_path / "package-payload-receipt.v2.json").read_text(
+            encoding="ascii"
+        )
+    )
+    assert payload_receipt["input_integrity"][
+        "native_build_receipt_sha256"
+    ] == native_receipt_sha256
+
+    wrapper = Path(
+        authenticated.create_authenticated_wrapper(
+            payload=str(payload_path),
+            private_key=authority.package_private_key,
+            external_anchor=authority.package_external_anchor,
+            output=str(tmp_path / "authenticated-wrapper"),
+        )
+    )
+    wrapper_verification = authenticated.verify_wrapper(
+        wrapper=str(wrapper),
+        external_anchor=authority.package_external_anchor,
+    )
+    assert wrapper_verification["authentication"]["payload"][
+        "native_build_receipt_sha256"
+    ] == native_receipt_sha256
+
+    result = oci.materialize(
+        wrapper=str(wrapper),
+        external_anchor=authority.package_external_anchor,
+        output=str(tmp_path / "oci-image"),
+    )
+    receipt = oci.verify(
+        result.output,
+        wrapper=str(wrapper),
+        external_anchor=authority.package_external_anchor,
+    )
+    assert receipt["image_id"] == result.image_id
+    assert receipt["image_digest"] == result.image_digest
+    assert receipt["docker_archive_sha256"] == result.docker_archive_sha256
+    assert receipt["role_count"] == 19
+    assert receipt["independent_active_role_audit"] is True
 
 
 def test_staged_systemd_units_resolve_all_three_native_binaries(

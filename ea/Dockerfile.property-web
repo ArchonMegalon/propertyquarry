@@ -28,6 +28,7 @@ COPY ea/requirements.lock /app/requirements.lock
 COPY ea/requirements.wheelhouse.lock /app/requirements.wheelhouse.lock
 COPY vendor/propertyquarry-wheelhouse/cp312-linux-x86_64 /wheelhouse
 COPY --chmod=0555 scripts/verify_propertyquarry_python_wheelhouse.py /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py
+COPY --chmod=0555 scripts/property_web_entrypoint.py /usr/local/libexec/property_web_entrypoint.py
 
 RUN python /usr/local/libexec/verify_propertyquarry_python_wheelhouse.py \
         --requirements-lock /app/requirements.lock \
@@ -80,6 +81,7 @@ COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_recovery.py /app/scr
 COPY --chmod=0444 scripts/propertyquarry_prater_governed_volume_bootstrap.py /app/scripts/propertyquarry_prater_governed_volume_bootstrap.py
 COPY --chmod=0444 scripts/propertyquarry_prater_ai_panorama_closeout.py /app/scripts/propertyquarry_prater_ai_panorama_closeout.py
 COPY --chmod=0555 scripts/bind_property_search_candidate_tour.py /app/scripts/bind_property_search_candidate_tour.py
+COPY --chmod=0555 scripts/bind_property_tour_candidate.py /app/scripts/bind_property_tour_candidate.py
 COPY scripts/attach_provider_tour_layer.py /app/scripts/attach_provider_tour_layer.py
 COPY scripts/discover_property_tour_exports.py /app/scripts/discover_property_tour_exports.py
 COPY scripts/materialize_property_tour_export_manifest.py /app/scripts/materialize_property_tour_export_manifest.py
@@ -134,5 +136,7 @@ USER 10001:10001
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=5 \
   CMD ["python", "-c", "import os, urllib.request; role = os.environ.get('EA_ROLE', 'api'); role in {'worker', 'scheduler', 'render-tools'} or urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:8090/health/live', timeout=10).read(1)"]
+
+ENTRYPOINT ["/usr/local/bin/python", "-I", "-S", "/usr/local/libexec/property_web_entrypoint.py"]
 
 CMD ["python", "-m", "app.runner"]

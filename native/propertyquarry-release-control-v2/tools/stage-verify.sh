@@ -6,8 +6,8 @@ LC_ALL=C
 TZ=UTC
 export PATH LANG LC_ALL TZ
 
-SOURCE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-REPOSITORY_ROOT=$(CDPATH= cd -- "$SOURCE_ROOT/../.." && pwd)
+SOURCE_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+REPOSITORY_ROOT=$(CDPATH='' cd -- "$SOURCE_ROOT/../.." && pwd)
 DEFAULT_BINARY_ROOT="$REPOSITORY_ROOT/build/propertyquarry-release-control-v2/linux-amd64"
 BINARY_ROOT=${1:-"$DEFAULT_BINARY_ROOT"}
 PACKAGE_ROOT="$REPOSITORY_ROOT/packaging/propertyquarry-release-control-v2"
@@ -326,12 +326,14 @@ systemd-analyze verify \
   /etc/systemd/system/propertyquarry-release-watchdog-v2.service
 
 SYSTEMD_VERSION_OUTPUT=$(systemd-analyze --version) || fail "systemd-analyze version is unavailable"
-set -- $SYSTEMD_VERSION_OUTPUT
-[ "${1:-}" = systemd ] || fail "unexpected systemd-analyze version output"
-case "${2:-}" in
+IFS=' ' read -r SYSTEMD_NAME SYSTEMD_MAJOR _SYSTEMD_VERSION_REST <<EOF
+$SYSTEMD_VERSION_OUTPUT
+EOF
+[ "${SYSTEMD_NAME:-}" = systemd ] || fail "unexpected systemd-analyze version output"
+case "${SYSTEMD_MAJOR:-}" in
   ""|*[!0-9]*) fail "unexpected systemd-analyze major version" ;;
 esac
-SYSTEMD_VERSION="systemd $2"
+SYSTEMD_VERSION="systemd $SYSTEMD_MAJOR"
 CONTROLLER_SCHEMA_SHA=$(digest "$SCHEMA_TARGET/controller-v2.schema.json")
 WATCHDOG_SCHEMA_SHA=$(digest "$SCHEMA_TARGET/watchdog-v2.schema.json")
 SOCKET_SHA=$(digest "$UNIT_TARGET/propertyquarry-release-control-v2.socket")

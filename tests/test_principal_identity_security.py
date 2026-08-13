@@ -13,6 +13,7 @@ from app.propertyquarry_release_probe import (
     PROPERTYQUARRY_RELEASE_PROBE_NONCE_SHA256_RESPONSE_HEADER,
     PROPERTYQUARRY_RELEASE_PROBE_SIGNATURE_HEADER,
     PROPERTYQUARRY_RELEASE_PROBE_TIMESTAMP_HEADER,
+    PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH,
     propertyquarry_release_probe_signature,
 )
 from app.api.dependencies import RequestContext, get_request_context, require_runtime_metrics_auth
@@ -126,6 +127,7 @@ def _identity_app(
     @app.get("/who")
     @app.get(_RELEASE_PROBE_RESEARCH_PATH)
     @app.get(_RELEASE_PROBE_SHORTLIST_RUN_PATH)
+    @app.get(PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH)
     def who(
         request: Request,
         response: Response,
@@ -464,6 +466,49 @@ def test_release_probe_rejects_non_read_method_and_forbidden_path() -> None:
     assert post.json()["error"]["details"]["reason"] == "release_probe_read_only"
     assert forbidden.status_code == 401
     assert forbidden.json()["error"]["details"]["reason"] == "release_probe_path_forbidden"
+
+
+def test_release_probe_allows_only_canonical_read_only_provider_catalog_queries() -> None:
+    client = TestClient(
+        _identity_app(policy=_policy(release_probe_enabled=True)),
+        client=("127.0.0.1", 50000),
+    )
+    allowed_query = "country=AT"
+    allowed = client.get(
+        f"{PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH}?{allowed_query}",
+        headers=_release_probe_headers(
+            nonce="release-probe-provider-catalog-allowed-0001",
+            path=PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH,
+            query_string=allowed_query,
+        ),
+    )
+    lower_query = "country=at"
+    lower = client.get(
+        f"{PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH}?{lower_query}",
+        headers=_release_probe_headers(
+            nonce="release-probe-provider-catalog-lower-0001",
+            path=PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH,
+            query_string=lower_query,
+        ),
+    )
+    extra_query = "country=AT&include=secrets"
+    extra = client.get(
+        f"{PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH}?{extra_query}",
+        headers=_release_probe_headers(
+            nonce="release-probe-provider-catalog-extra-0001",
+            path=PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH,
+            query_string=extra_query,
+        ),
+    )
+
+    assert allowed.status_code == 200
+    assert allowed.json()["principal_id"] == _RELEASE_PROBE_PRINCIPAL_ID
+    assert allowed.json()["auth_source"] == "propertyquarry_release_probe"
+    assert allowed.headers["cache-control"] == "no-store"
+    assert lower.status_code == 401
+    assert lower.json()["error"]["details"]["reason"] == "release_probe_path_forbidden"
+    assert extra.status_code == 401
+    assert extra.json()["error"]["details"]["reason"] == "release_probe_path_forbidden"
 
 
 def test_release_probe_rejects_incomplete_duplicated_conflicting_and_unconfigured_headers() -> None:

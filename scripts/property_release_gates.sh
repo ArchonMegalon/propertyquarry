@@ -745,6 +745,8 @@ PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
 PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
   tests/test_product_api_contracts.py -k 'property_notification_preview or property_feedback'
 PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
+  tests/test_property_billing_checkout_fallback.py
+PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
   tests/test_product_api_contracts.py -k 'payfunnels'
 PYTHONPATH=ea "${PYTHON_BIN}" -m pytest -q \
   tests/test_product_api_contracts.py -k 'workspace_access'

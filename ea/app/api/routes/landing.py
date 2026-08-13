@@ -15,7 +15,7 @@ import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -58,6 +58,8 @@ from app.api.routes.landing_property_surface_contracts import PropertySurfaceSco
 from app.api.routes.landing_property_search_health import build_property_search_health_snapshot
 from app.api.routes.landing_property_workspace_payload import (
     _property_workbench_client_candidate_payload,
+    _property_workbench_client_image_url,
+    _property_workbench_client_preview_urls,
 )
 from app.api.routes.landing_property_workspace_helpers import (
     _compact_provider_label,
@@ -157,6 +159,10 @@ from app.product.service import (
 from app.services.cloudflare_access import CloudflareAccessIdentity
 from app.services import google_oauth as google_oauth_service
 from app.services import propertyquarry_google_identity
+from app.services import propertyquarry_play_review_access
+from app.services.propertyquarry_android_app_links import (
+    propertyquarry_android_app_link_statements,
+)
 from app.services import public_analytics_consent as analytics_consent
 from app.services.google_oauth import complete_google_oauth_callback
 from app.services.property_billing import payfunnels_configured, property_commercial_snapshot
@@ -236,6 +242,9 @@ _PROPERTY_BILLING_DIRECT_VERIFICATION_CACHE: dict[str, object] = {
 _PROPERTYQUARRY_EXAMPLE_SHORTLIST_DIORAMA_VERSION = "20260724d2"
 _PROPERTY_CURATED_DIORAMA_MANIFEST_PATH = Path(__file__).resolve().parents[2] / "data" / "property_diorama_previews.json"
 _PROPERTY_CURATED_DIORAMA_STATIC_ROOT = Path(__file__).resolve().parents[2] / "static"
+_PROPERTY_CURATED_HOSTED_TOUR_BINDING_CONTRACT = (
+    "propertyquarry.curated_hosted_tour_binding.v1"
+)
 _PROPERTY_ORIGINAL_TOUR_HANDOFF_PURPOSE = "property-original-tour-handoff-v1"
 _PROPERTY_ORIGINAL_TOUR_HANDOFF_TTL_SECONDS = 15 * 60
 _PROPERTY_ORIGINAL_TOUR_HANDOFF_MAX_TOKEN_CHARS = 1536
@@ -1493,6 +1502,36 @@ def _propertyquarry_prepare_run_payload(
                     derived_diorama_preview_url = _property_candidate_diorama_preview_image(normalized_candidate)
                     if derived_diorama_preview_url:
                         normalized_candidate["diorama_preview_url"] = derived_diorama_preview_url
+                safe_diorama_preview_url = _property_workbench_client_image_url(
+                    normalized_candidate.get("diorama_preview_url")
+                )
+                if safe_diorama_preview_url:
+                    normalized_candidate["diorama_preview_url"] = safe_diorama_preview_url
+                else:
+                    normalized_candidate.pop("diorama_preview_url", None)
+                safe_preview_url, safe_preview_fallback_urls = (
+                    _property_workbench_client_preview_urls(
+                        normalized_candidate,
+                        orientation_preview=_property_candidate_orientation_preview(
+                            normalized_candidate
+                        ),
+                        diorama_preview_url=safe_diorama_preview_url,
+                    )
+                )
+                if safe_preview_url:
+                    normalized_candidate["preview_image_url"] = safe_preview_url
+                else:
+                    normalized_candidate.pop("preview_image_url", None)
+                if safe_preview_fallback_urls:
+                    normalized_candidate["preview_image_fallback_url"] = (
+                        safe_preview_fallback_urls[0]
+                    )
+                    normalized_candidate["preview_image_fallback_urls"] = (
+                        safe_preview_fallback_urls
+                    )
+                else:
+                    normalized_candidate.pop("preview_image_fallback_url", None)
+                    normalized_candidate.pop("preview_image_fallback_urls", None)
             rows.append(normalized_candidate)
         return rows
 
@@ -1573,6 +1612,7 @@ def _propertyquarry_refresh_candidate_preview_if_needed(
     product: object,
     candidate: object,
     allow_network: bool = True,
+    force_network: bool = False,
 ) -> dict[str, object] | object:
     if not isinstance(candidate, dict):
         return candidate
@@ -1598,10 +1638,10 @@ def _propertyquarry_refresh_candidate_preview_if_needed(
             preview_cache_index=preview_cache_index,
             preview_lookup=preview_lookup_fn,
         )
-        if not _propertyquarry_candidate_needs_detailed_preview(candidate_row):
+        if not force_network and not _propertyquarry_candidate_needs_detailed_preview(candidate_row):
             return candidate_row
 
-    if not _propertyquarry_candidate_needs_detailed_preview(candidate_row):
+    if not force_network and not _propertyquarry_candidate_needs_detailed_preview(candidate_row):
         return candidate_row
 
     if not allow_network:
@@ -1625,6 +1665,7 @@ def _propertyquarry_refresh_run_candidate_preview_if_needed(
     run_payload: dict[str, object],
     candidate_ref: str,
     allow_network: bool = True,
+    force_network: bool = False,
     principal_id: str = "",
 ) -> dict[str, object]:
     normalized_candidate_ref = str(candidate_ref or "").strip()
@@ -1637,6 +1678,7 @@ def _propertyquarry_refresh_run_candidate_preview_if_needed(
         product=product,
         candidate=candidate,
         allow_network=allow_network,
+        force_network=force_network,
     )
     if refreshed_candidate == candidate or not isinstance(refreshed_candidate, dict):
         return run_payload
@@ -1931,6 +1973,21 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "walkthrough_label": (
                 example_media_targets.get("walkthrough_label", "") if example_media_targets.get("walkthrough_href", "") else ""
             ),
+            "conversation_facts": {
+                "price_eur": 895000,
+                "area_sqm": 118,
+                "rooms": 4,
+                "has_lift": True,
+                "has_floorplan": True,
+                "balcony": True,
+                "garage": True,
+                "has_360": True,
+                "nearest_subway_m": 260,
+            },
+            "conversation_assessment": {
+                "match_reasons_json": ["Bright layout, private outdoor space, and nearby transit fit the brief."],
+                "mismatch_reasons_json": ["The premium asking price still needs a careful value check."],
+            },
             "scope_preview": _propertyquarry_example_scope_preview(
                 "danube-flats-demo",
                 title="Danube Flats demo",
@@ -1950,6 +2007,20 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "detail_href": quiet_href,
             "action_href": quiet_href,
             "action_label": "Open property",
+            "conversation_facts": {
+                "total_rent_eur": 1950,
+                "area_sqm": 82,
+                "rooms": 3,
+                "has_lift": True,
+                "has_floorplan": True,
+                "balcony": True,
+                "nearest_subway_m": 320,
+                "require_parking_pressure_check": True,
+            },
+            "conversation_assessment": {
+                "match_reasons_json": ["The quiet street and nearby transit match the brief."],
+                "mismatch_reasons_json": ["Parking availability is still unclear."],
+            },
             "scope_preview": _propertyquarry_example_scope_preview(
                 "quiet-layout-near-transit",
                 title="Quiet layout near transit",
@@ -1968,6 +2039,17 @@ def _propertyquarry_example_shortlist_rows() -> list[dict[str, object]]:
             "detail_href": value_href,
             "action_href": value_href,
             "action_label": "Open property",
+            "conversation_facts": {
+                "price_eur": 329000,
+                "area_sqm": 76,
+                "rooms": 3,
+                "has_floorplan": False,
+                "nearest_subway_m": 610,
+            },
+            "conversation_assessment": {
+                "match_reasons_json": ["The asking price is strong for the sample search area."],
+                "mismatch_reasons_json": ["The energy certificate and renovation reserve are still unverified."],
+            },
             "scope_preview": _propertyquarry_example_scope_preview(
                 "strong-price-open-risk",
                 title="Strong price, open questions",
@@ -2221,6 +2303,176 @@ def _property_curated_diorama_preview_image(candidate: dict[str, object]) -> str
     return ""
 
 
+def _property_curated_diorama_candidate_refs(candidate_ref: object) -> tuple[str, ...]:
+    normalized_candidate_ref = str(candidate_ref or "").strip().lower()
+    if not normalized_candidate_ref:
+        return ()
+    entry = _property_curated_diorama_entry_index().get(
+        f"candidate:{normalized_candidate_ref}"
+    )
+    if not isinstance(entry, dict):
+        return ()
+    candidate_refs = entry.get("candidate_refs")
+    if not isinstance(candidate_refs, list):
+        return ()
+    normalized_refs: list[str] = []
+    for raw_candidate_ref in candidate_refs:
+        normalized = str(raw_candidate_ref or "").strip().lower()
+        if normalized and normalized not in normalized_refs:
+            normalized_refs.append(normalized)
+    if normalized_candidate_ref not in normalized_refs:
+        return ()
+    return tuple(normalized_refs)
+
+
+def _property_resolve_scoped_curated_candidate_ref(
+    *,
+    requested_candidate_ref: object,
+    property_context: dict[str, object],
+    product: Any | None = None,
+    principal_id: str = "",
+    access_email: str = "",
+) -> str:
+    """Resolve a governed legacy alias only within the principal-scoped payload."""
+
+    normalized_requested_ref = str(requested_candidate_ref or "").strip()
+    if not normalized_requested_ref:
+        return ""
+
+    def _scoped_candidate(candidate_ref: str) -> dict[str, object] | None:
+        source_candidate = _property_lookup_candidate(
+            property_context=property_context,
+            candidate_ref=candidate_ref,
+        )
+        if source_candidate is not None:
+            return dict(source_candidate)
+        run_payload = (
+            dict(property_context.get("run") or {})
+            if isinstance(property_context.get("run"), dict)
+            else {}
+        )
+        summary = (
+            dict(run_payload.get("summary") or {})
+            if isinstance(run_payload.get("summary"), dict)
+            else {}
+        )
+        for raw_candidate in list(summary.get("ranked_candidates") or []):
+            if not isinstance(raw_candidate, dict):
+                continue
+            candidate = dict(raw_candidate)
+            if _property_constant_text_equal(
+                _property_candidate_ref(candidate).lower(),
+                candidate_ref.lower(),
+            ):
+                return candidate
+        for raw_candidate in list(
+            property_context.get("saved_shortlist_candidates") or []
+        ):
+            if not isinstance(raw_candidate, dict):
+                continue
+            if _property_constant_text_equal(
+                _property_candidate_ref(dict(raw_candidate)).lower(),
+                candidate_ref.lower(),
+            ):
+                return dict(raw_candidate)
+        return None
+
+    def _restore_selected_candidate(
+        candidate_ref: str,
+        candidate: dict[str, object],
+    ) -> None:
+        recovered_candidate = dict(candidate)
+        # A deep link restores this owned historical row for direct review. It
+        # must remain distinguishable from the search ranking and must survive
+        # shortlist scope filters that apply to ordinary merged results.
+        recovered_candidate["_explicitly_selected_source_candidate"] = True
+        recovered_candidate["_selected_candidate_ref"] = candidate_ref
+        curated_entry = _property_curated_diorama_preview_entry(
+            recovered_candidate
+        )
+        if curated_entry:
+            _property_apply_curated_diorama_preview(
+                recovered_candidate,
+                entry=curated_entry,
+            )
+        run_payload = (
+            dict(property_context.get("run") or {})
+            if isinstance(property_context.get("run"), dict)
+            else {}
+        )
+        summary = (
+            dict(run_payload.get("summary") or {})
+            if isinstance(run_payload.get("summary"), dict)
+            else {}
+        )
+        ranked_candidates = [
+            dict(raw_candidate)
+            for raw_candidate in list(summary.get("ranked_candidates") or [])
+            if isinstance(raw_candidate, dict)
+        ]
+        replacement_index = next(
+            (
+                index
+                for index, raw_candidate in enumerate(ranked_candidates)
+                if _property_constant_text_equal(
+                    _property_candidate_ref(raw_candidate).lower(),
+                    candidate_ref.lower(),
+                )
+            ),
+            None,
+        )
+        if replacement_index is None:
+            ranked_candidates.append(recovered_candidate)
+        else:
+            ranked_candidates[replacement_index] = recovered_candidate
+        summary["ranked_candidates"] = ranked_candidates
+        run_payload["summary"] = summary
+        property_context["run"] = run_payload
+
+    requested_candidate = _scoped_candidate(normalized_requested_ref)
+    if requested_candidate is not None:
+        _restore_selected_candidate(
+            normalized_requested_ref,
+            requested_candidate,
+        )
+        return normalized_requested_ref
+    run_payload = (
+        dict(property_context.get("run") or {})
+        if isinstance(property_context.get("run"), dict)
+        else {}
+    )
+    scoped_run_id = str(run_payload.get("run_id") or "").strip()
+    for candidate_ref in _property_curated_diorama_candidate_refs(
+        normalized_requested_ref
+    ):
+        if _property_constant_text_equal(
+            candidate_ref.lower(),
+            normalized_requested_ref.lower(),
+        ):
+            continue
+        scoped_candidate = _scoped_candidate(candidate_ref)
+        if scoped_candidate is not None:
+            _restore_selected_candidate(candidate_ref, scoped_candidate)
+            return candidate_ref
+        if product is None or not scoped_run_id or not str(principal_id or "").strip():
+            continue
+        indexed_candidate, matched_run_id = _property_lookup_indexed_candidate(
+            product,
+            principal_id=str(principal_id or "").strip(),
+            access_email=str(access_email or "").strip(),
+            candidate_ref=candidate_ref,
+            run_id=scoped_run_id,
+        )
+        if indexed_candidate is None or not _property_constant_text_equal(
+            matched_run_id,
+            scoped_run_id,
+        ):
+            continue
+        _restore_selected_candidate(candidate_ref, dict(indexed_candidate))
+        return candidate_ref
+    return normalized_requested_ref
+
+
 def _property_apply_curated_diorama_preview(
     candidate: dict[str, object],
     *,
@@ -2260,6 +2512,145 @@ def _property_apply_curated_diorama_preview(
     candidate["diorama_alt"] = alt
     candidate["diorama_representation"] = representation
     candidate["diorama_scene"] = scene
+    hosted_tour = entry.get("hosted_tour")
+    if not isinstance(hosted_tour, dict):
+        return
+    binding_contract = str(hosted_tour.get("binding_contract") or "").strip()
+    slug = str(hosted_tour.get("slug") or "").strip().lower()
+    provider = str(hosted_tour.get("provider") or "").strip().lower()
+    default_mode = str(hosted_tour.get("default_mode") or "").strip().lower()
+    hosted_tour_url = str(hosted_tour.get("hosted_tour_url") or "").strip()
+    walkthrough_url = str(hosted_tour.get("walkthrough_url") or "").strip()
+    spatial_tour_url = str(hosted_tour.get("spatial_tour_url") or "").strip()
+    property_url_sha256 = str(
+        hosted_tour.get("property_url_sha256") or ""
+    ).strip().lower()
+    binding_sha256 = str(hosted_tour.get("binding_sha256") or "").strip().lower()
+    review = (
+        dict(hosted_tour.get("review") or {})
+        if isinstance(hosted_tour.get("review"), dict)
+        else {}
+    )
+    candidate_refs = sorted(
+        {
+            str(value or "").strip().lower()
+            for value in list(entry.get("candidate_refs") or [])
+            if str(value or "").strip()
+        }
+    )
+    raw_binding_listing_ids = entry.get("binding_listing_ids")
+    listing_ids = sorted(
+        {
+            str(value or "").strip().lower()
+            for value in list(
+                raw_binding_listing_ids
+                if isinstance(raw_binding_listing_ids, list)
+                else entry.get("listing_ids") or []
+            )
+            if str(value or "").strip()
+        }
+    )
+    expected_walkthrough_url = f"/tours/{slug}/walkthrough"
+    expected_hosted_tour_url = f"/tours/{slug}"
+    expected_spatial_tour_url = f"/tours/3dvista/{slug}/3dvista/index.htm"
+    binding_payload = {
+        "binding_contract": binding_contract,
+        "candidate_refs": candidate_refs,
+        "default_mode": default_mode,
+        "hosted_tour_url": hosted_tour_url,
+        "listing_ids": listing_ids,
+        "property_url_sha256": property_url_sha256,
+        "provider": provider,
+        "slug": slug,
+        "spatial_tour_url": spatial_tour_url,
+        "walkthrough_url": walkthrough_url,
+    }
+    expected_binding_sha256 = hashlib.sha256(
+        json.dumps(
+            binding_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    reviewed_at = str(review.get("reviewed_at") or "").strip()
+    try:
+        parsed_reviewed_at = datetime.fromisoformat(
+            reviewed_at.replace("Z", "+00:00")
+        )
+    except ValueError:
+        parsed_reviewed_at = None
+    if (
+        binding_contract != _PROPERTY_CURATED_HOSTED_TOUR_BINDING_CONTRACT
+        or not candidate_refs
+        or not listing_ids
+        or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug) is None
+        or provider != "3dvista"
+        or default_mode != "camera_walkthrough"
+        or hosted_tour_url != expected_hosted_tour_url
+        or walkthrough_url != expected_walkthrough_url
+        or spatial_tour_url != expected_spatial_tour_url
+        or re.fullmatch(r"[0-9a-f]{64}", property_url_sha256) is None
+        or re.fullmatch(r"[0-9a-f]{64}", binding_sha256) is None
+        or not hmac.compare_digest(binding_sha256, expected_binding_sha256)
+        or str(review.get("status") or "").strip().lower() != "approved"
+        or not str(review.get("reviewed_by") or "").strip()
+        or parsed_reviewed_at is None
+        or parsed_reviewed_at.tzinfo is None
+        or parsed_reviewed_at.astimezone(timezone.utc)
+        > datetime.now(timezone.utc) + timedelta(minutes=5)
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(review.get("evidence_sha256") or "").strip().lower(),
+        )
+        is None
+    ):
+        return
+    # Candidate readiness is resolved from the governed bundle root. The
+    # direct 3DVista path remains binding evidence, but cannot prove bundle
+    # ownership when used as the canonical candidate URL.
+    candidate["tour_url"] = hosted_tour_url
+    candidate["verified_tour_url"] = hosted_tour_url
+    candidate["open_tour_url"] = hosted_tour_url
+    candidate["tour_status"] = "ready"
+    candidate["tour_provider"] = provider
+    tour = (
+        dict(candidate.get("tour") or {})
+        if isinstance(candidate.get("tour"), dict)
+        else {}
+    )
+    tour.update(
+        {
+            "status": "ready",
+            "provider": provider,
+            "provider_key": provider,
+            "provider_label": "3D tour",
+            "label": "3D tour available",
+            "control_label": "Open 3D tour",
+            "url": hosted_tour_url,
+            "tour_url": hosted_tour_url,
+            "open_tour_url": hosted_tour_url,
+            "embed_url": hosted_tour_url,
+        }
+    )
+    candidate["tour"] = tour
+    candidate["flythrough_url"] = walkthrough_url
+    candidate["flythrough_status"] = "ready"
+    flythrough = (
+        dict(candidate.get("flythrough") or {})
+        if isinstance(candidate.get("flythrough"), dict)
+        else {}
+    )
+    flythrough.update(
+        {
+            "status": "ready",
+            "provider_label": "Camera walkthrough",
+            "label": "Camera walkthrough available",
+            "url": walkthrough_url,
+            "embed_url": walkthrough_url,
+            "customer_claim_ready": True,
+        }
+    )
+    candidate["flythrough"] = flythrough
 
 
 def _property_candidate_diorama_preview_image(candidate: dict[str, object]) -> str:
@@ -2586,6 +2977,14 @@ def _request_is_austrian_ip(request: Request) -> bool:
 
 def _id_austria_sign_in_enabled_for_request(request: Request) -> bool:
     return _id_austria_sign_in_enabled() and _request_is_austrian_ip(request)
+
+
+@router.get("/.well-known/assetlinks.json", response_class=JSONResponse, include_in_schema=False)
+def propertyquarry_android_asset_links() -> JSONResponse:
+    response = JSONResponse(propertyquarry_android_app_link_statements())
+    response.headers["Cache-Control"] = "public, max-age=300"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @router.get("/manifest.webmanifest", response_class=JSONResponse, include_in_schema=False)
@@ -3472,6 +3871,30 @@ def _property_lookup_candidate_across_runs(
         if candidate:
             return candidate, row_run_id
     return None, ""
+
+
+def _property_resolve_curated_candidate_run_id(
+    product: Any,
+    *,
+    principal_id: str,
+    access_email: str = "",
+    requested_candidate_ref: object,
+) -> str:
+    """Resolve a governed candidate deep link to its owned historical run."""
+
+    for candidate_ref in _property_curated_diorama_candidate_refs(
+        requested_candidate_ref
+    ):
+        matched_candidate, matched_run_id = _property_lookup_candidate_across_runs(
+            product,
+            principal_id=principal_id,
+            access_email=access_email,
+            candidate_ref=candidate_ref,
+            max_runs=12,
+        )
+        if matched_candidate is not None and matched_run_id:
+            return matched_run_id
+    return ""
 
 
 def _property_compact_preference_overlay(payload: dict[str, object]) -> dict[str, object]:
@@ -6002,6 +6425,7 @@ def propertyquarry_candidate_preview_refresh(
     context: RequestContext = Depends(get_request_context_if_available),
     access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
     run_id: str = Query(default=""),
+    thumbnail_failed: bool = Query(default=False),
 ) -> JSONResponse:
     brand = request_brand(request)
     if str(brand.get("key") or "").strip() != "propertyquarry":
@@ -6066,6 +6490,7 @@ def propertyquarry_candidate_preview_refresh(
         run_payload=run_payload,
         candidate_ref=normalized_candidate_ref,
         allow_network=True,
+        force_network=thumbnail_failed,
         principal_id=authenticated_principal,
     )
     candidate = _propertyquarry_find_run_candidate(
@@ -6872,6 +7297,7 @@ def sign_in_page(
     request: Request,
     container: AppContainer = Depends(get_container),
     access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
+    request_context: RequestContext = Depends(get_request_context_if_available),
 ) -> HTMLResponse:
     brand = request_brand(request)
     sign_in_return_to = _normalize_browser_return_to(
@@ -6884,6 +7310,20 @@ def sign_in_page(
         request=request,
         compact=brand["key"] == "propertyquarry",
     )
+    if (
+        not principal_id
+        and request_context.authenticated is True
+        and str(request_context.auth_source or "").strip()
+        == "propertyquarry_release_probe"
+    ):
+        principal_id = str(request_context.principal_id or "").strip()
+        if principal_id:
+            status = (
+                container.onboarding.compact_status(principal_id=principal_id)
+                if brand["key"] == "propertyquarry"
+                and hasattr(container.onboarding, "compact_status")
+                else container.onboarding.status(principal_id=principal_id)
+            )
     link_status = str(request.query_params.get("link_status") or "").strip()
     link_email = str(request.query_params.get("link_email") or "").strip()
     link_error = str(request.query_params.get("link_error") or "").strip()
@@ -6936,6 +7376,212 @@ def sign_in_page(
             },
         ),
     )
+
+
+def _play_review_access_config_or_404(
+    request: Request,
+) -> propertyquarry_play_review_access.PlayReviewAccessConfig:
+    if request_brand(request).get("key") != "propertyquarry":
+        raise HTTPException(status_code=404, detail="not_found")
+    config = propertyquarry_play_review_access.load_play_review_access_config()
+    if config is None:
+        raise HTTPException(status_code=404, detail="not_found")
+    return config
+
+
+def _render_play_review_sign_in(
+    request: Request,
+    *,
+    container: AppContainer,
+    access_identity: CloudflareAccessIdentity | None,
+    return_to: str,
+    error: str = "",
+    status_code: int = 200,
+) -> HTMLResponse:
+    principal_id, status = _load_status(
+        container=container,
+        access_identity=access_identity,
+        request=request,
+        compact=True,
+    )
+    response = _render_public_template(
+        request,
+        "play_review_sign_in.html",
+        **_public_context(
+            request=request,
+            current_nav="sign-in",
+            page_title="Secure review access · PropertyQuarry",
+            principal_id=principal_id,
+            status=status,
+            access_identity=access_identity,
+            extra={
+                "play_review_error": error,
+                "play_review_return_to": return_to,
+                "robots_directive": "noindex, nofollow, noarchive, nosnippet",
+            },
+        ),
+    )
+    response.status_code = int(status_code)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    return response
+
+
+@router.api_route(
+    "/sign-in/play-review",
+    methods=["GET", "HEAD"],
+    response_class=HTMLResponse,
+    include_in_schema=False,
+)
+def play_review_sign_in_page(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+    access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
+) -> HTMLResponse:
+    _play_review_access_config_or_404(request)
+    return_to = _normalize_browser_return_to(
+        request.query_params.get("return_to"),
+        default="/app/search",
+    )
+    return _render_play_review_sign_in(
+        request,
+        container=container,
+        access_identity=access_identity,
+        return_to=return_to,
+    )
+
+
+@router.post(
+    "/sign-in/play-review",
+    response_model=None,
+    include_in_schema=False,
+)
+async def play_review_sign_in(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+    access_identity: CloudflareAccessIdentity | None = Depends(get_cloudflare_access_identity),
+) -> HTMLResponse | RedirectResponse:
+    config = _play_review_access_config_or_404(request)
+    # BrowserAct and some app-review handoff contexts submit top-level forms
+    # from an opaque browser origin and therefore send the literal Origin:
+    # null. This endpoint has no ambient login authority: the isolated,
+    # rate-limited reviewer credential is still required. Preserve the normal
+    # exact-origin check for every named or missing origin.
+    if str(request.headers.get("origin") or "").strip().lower() != "null":
+        _require_same_origin_browser_post(
+            request,
+            detail="play_review_origin_invalid",
+        )
+    raw_body = await request.body()
+    form_data = (
+        urllib.parse.parse_qs(
+            raw_body.decode("utf-8", errors="ignore"),
+            keep_blank_values=True,
+        )
+        if len(raw_body) <= 8_192
+        else {}
+    )
+    username = _form_value(form_data, "username", "")
+    password = _form_value(form_data, "password", "")
+    return_to = _normalize_browser_return_to(
+        _form_value(form_data, "return_to", ""),
+        default="/app/search",
+    )
+    client_host = request.client.host if request.client is not None else ""
+    attempt_key = propertyquarry_play_review_access.attempt_key(
+        client_host=client_host,
+        username=username,
+    )
+    limiter = propertyquarry_play_review_access.PLAY_REVIEW_ATTEMPT_LIMITER
+    generic_error = "Those reviewer credentials could not be confirmed. Try again."
+    if limiter.blocked(attempt_key):
+        return _render_play_review_sign_in(
+            request,
+            container=container,
+            access_identity=access_identity,
+            return_to=return_to,
+            error=generic_error,
+            status_code=429,
+        )
+    if not propertyquarry_play_review_access.credentials_match(
+        config,
+        username=username,
+        password=password,
+    ):
+        limiter.record_failure(attempt_key)
+        return _render_play_review_sign_in(
+            request,
+            container=container,
+            access_identity=access_identity,
+            return_to=return_to,
+            error=generic_error,
+            status_code=401,
+        )
+
+    product = build_product_service(container)
+    try:
+        container.onboarding.start_workspace(
+            principal_id=config.principal_id,
+            workspace_name="PropertyQuarry Play review",
+            workspace_mode="personal",
+            region="AT",
+            language="en",
+            timezone="Europe/Vienna",
+            selected_channels=(),
+        )
+        issued = product.issue_workspace_access_session(
+            principal_id=config.principal_id,
+            email=config.username,
+            role="principal",
+            display_name="Google Play reviewer",
+            operator_id="google-play-review",
+            source_kind="google_play_review",
+            default_target="/app/search",
+            expires_in_hours=24,
+        )
+        opened = product.open_workspace_access_session(
+            token=str(issued.get("access_token") or "").strip(),
+            actor="google-play-review",
+        )
+        if opened is None or not str(opened.get("access_token") or "").strip():
+            raise RuntimeError("play_review_session_open_failed")
+        product.record_surface_event(
+            principal_id=config.principal_id,
+            event_type="play_review_session_opened",
+            surface="google_play_review",
+            actor="google-play-review",
+            metadata={
+                "session_id": str(opened.get("session_id") or "").strip(),
+                "source_kind": "google_play_review",
+            },
+        )
+    except Exception:
+        return _render_play_review_sign_in(
+            request,
+            container=container,
+            access_identity=access_identity,
+            return_to=return_to,
+            error="Secure review access is temporarily unavailable. Try again.",
+            status_code=503,
+        )
+
+    limiter.clear(attempt_key)
+    response = RedirectResponse(return_to, status_code=303)
+    response.set_cookie(
+        "ea_workspace_session",
+        str(opened.get("access_token") or "").strip(),
+        **_workspace_session_cookie_kwargs(
+            request,
+            expires_at=str(opened.get("expires_at") or "").strip(),
+        ),
+    )
+    _clear_signed_out_marker_cookie(response, request)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    return response
 
 
 @router.api_route("/sign-in/current-session", methods=["GET", "HEAD"], response_model=None, include_in_schema=False)
@@ -7018,6 +7664,9 @@ async def sign_in_google(
     identity_binding = str(
         request.query_params.get("identity_binding") or ""
     ).strip()
+    mobile_pkce_challenge = str(
+        request.query_params.get("mobile_challenge") or ""
+    ).strip()
     if request_brand(request).get("key") != "propertyquarry":
         return RedirectResponse(
             "/sign-in?"
@@ -7035,6 +7684,7 @@ async def sign_in_google(
             redirect_uri=identity_config.redirect_uri,
             return_to=return_to,
             expected_email_binding=identity_binding,
+            mobile_pkce_challenge=mobile_pkce_challenge,
         )
     except RuntimeError as exc:
         return RedirectResponse(
@@ -7333,9 +7983,45 @@ def _effective_request_origin(request: Request) -> tuple[str, str, int] | None:
     return scheme, hostname, int(port)
 
 
-def _require_same_origin_browser_post(request: Request) -> None:
-    if _browser_request_origin(request) != _effective_request_origin(request):
-        raise HTTPException(status_code=403, detail="sign_out_origin_invalid")
+def _require_same_origin_browser_post(
+    request: Request,
+    *,
+    detail: str = "sign_out_origin_invalid",
+) -> None:
+    browser_origin = _browser_request_origin(request)
+    effective_origin = _effective_request_origin(request)
+    if browser_origin is not None and browser_origin == effective_origin:
+        return
+
+    # Cloudflare terminates public HTTPS before forwarding to the local HTTP
+    # service and may rewrite both scheme and Host. Comparing only to
+    # request.url therefore rejects a genuine browser POST. The canonical
+    # public origin is operator-controlled, while Origin/Referer are the
+    # browser's CSRF signal; an internal tunnel hostname must not override that
+    # exact external-origin match.
+    public_base_url = str(request_brand(request).get("public_base_url") or "").strip()
+    parsed_public_base = urllib.parse.urlsplit(public_base_url)
+    public_scheme = str(parsed_public_base.scheme or "").strip().lower()
+    public_hostname = str(parsed_public_base.hostname or "").strip().lower().rstrip(".")
+    public_origin: tuple[str, str, int] | None = None
+    if (
+        public_scheme in {"http", "https"}
+        and public_hostname
+        and parsed_public_base.username is None
+        and parsed_public_base.password is None
+    ):
+        try:
+            public_port = parsed_public_base.port or (443 if public_scheme == "https" else 80)
+        except ValueError:
+            public_port = 0
+        if public_port:
+            public_origin = (public_scheme, public_hostname, int(public_port))
+    if (
+        public_origin is not None
+        and browser_origin == public_origin
+    ):
+        return
+    raise HTTPException(status_code=403, detail=detail)
 
 
 @router.post("/app/actions/sign-out", response_model=None, include_in_schema=False)
@@ -8592,6 +9278,82 @@ def property_research_packet(
             )
         )
     ooda_summary_rows.extend(_property_distance_ooda_rows_for_preferences(facts, preferences))
+    onemin_evaluation = (
+        dict(candidate.get("onemin_evaluation") or {})
+        if isinstance(candidate.get("onemin_evaluation"), dict)
+        else dict(fact_enrichment.get("onemin_evaluation") or {})
+        if isinstance(fact_enrichment.get("onemin_evaluation"), dict)
+        else {}
+    )
+    onemin_judgment = (
+        dict(onemin_evaluation.get("judgment") or {})
+        if isinstance(onemin_evaluation.get("judgment"), dict)
+        else {}
+    )
+    onemin_ooda = (
+        dict(onemin_evaluation.get("ooda") or {})
+        if isinstance(onemin_evaluation.get("ooda"), dict)
+        else {}
+    )
+    onemin_rows: list[dict[str, object]] = []
+    if (
+        str(onemin_evaluation.get("status") or "").strip().lower() == "succeeded"
+        and onemin_evaluation.get("manager_routed") is True
+    ):
+        recommendation = str(
+            onemin_judgment.get("recommendation") or "consider"
+        ).strip().replace("_", " ").title()
+        try:
+            confidence_percent = max(
+                0,
+                min(100, int(round(float(onemin_judgment.get("confidence") or 0) * 100))),
+            )
+        except (TypeError, ValueError):
+            confidence_percent = 0
+        summary_copy = str(onemin_judgment.get("summary") or "").strip()
+        if summary_copy:
+            onemin_rows.append(
+                _object_detail_row(
+                    "1minAI judgment",
+                    summary_copy,
+                    f"{recommendation} · {confidence_percent}% confidence",
+                )
+            )
+        for strength in list(onemin_judgment.get("strengths") or [])[:2]:
+            if str(strength or "").strip():
+                onemin_rows.append(
+                    _object_detail_row("Strength", str(strength).strip(), "1minAI")
+                )
+        for risk in list(onemin_judgment.get("risks") or [])[:2]:
+            if str(risk or "").strip():
+                onemin_rows.append(
+                    _object_detail_row("Watch-out", str(risk).strip(), "1minAI")
+                )
+        for action in list(onemin_ooda.get("actions") or [])[:2]:
+            if not isinstance(action, dict):
+                continue
+            action_status = str(action.get("status") or "planned").strip().lower()
+            distance = action.get("observed_distance_m")
+            place_name = str(action.get("place_name") or "").strip()
+            if action_status == "verified" and distance not in (None, ""):
+                action_detail = (
+                    f"Google Maps verified {place_name or 'the matching place'} "
+                    f"at {int(distance):,} m straight-line distance."
+                )
+            else:
+                blockers = ", ".join(
+                    str(item).replace("_", " ")
+                    for item in list(action.get("blockers") or [])[:2]
+                    if str(item or "").strip()
+                )
+                action_detail = blockers or str(action.get("reason") or "Research planned.").strip()
+            onemin_rows.append(
+                _object_detail_row(
+                    str(action.get("label") or action.get("fact_key") or "Maps research").strip(),
+                    action_detail,
+                    f"Google Maps · {action_status.replace('_', ' ').title()}",
+                )
+            )
     investment_run_target = run_target + ("&investment=1" if "?" in run_target else "?investment=1")
     try:
         feedback_suggestions = dict(product.property_feedback_suggestions(property_facts=facts, assessment=assessment or candidate))
@@ -9111,6 +9873,19 @@ def property_research_packet(
             "items": ooda_summary_rows[:6],
         },
     ]
+    if onemin_rows:
+        research_sections.insert(
+            0,
+            {
+                "eyebrow": "1minAI via EA 1min Manager",
+                "title": "AI property judgment",
+                "copy": (
+                    "A qualitative advisory read grounded in verified facts. "
+                    "The deterministic PropertyQuarry fit score remains authoritative."
+                ),
+                "items": onemin_rows[:7],
+            },
+        )
     if packet_score_rows:
         research_sections.append(
             {
@@ -9432,6 +10207,51 @@ def propertyquarry_example_shortlist_page(
                 "robots_directive": "noindex, follow",
             },
         ),
+    )
+
+
+@router.post("/app/api/property/example-conversation", include_in_schema=False)
+async def propertyquarry_example_conversation(
+    request: Request,
+    container: AppContainer = Depends(get_container),
+) -> JSONResponse:
+    brand = request_brand(request)
+    if str(brand.get("key") or "").strip() != "propertyquarry":
+        raise HTTPException(status_code=404, detail="example_conversation_not_found")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid_json") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="invalid_payload")
+    candidate_key = compact_text(payload.get("candidate_key"), fallback="", limit=80)
+    question = compact_text(payload.get("question"), fallback="", limit=500)
+    if not question:
+        raise HTTPException(status_code=422, detail="question_required")
+    selected = next(
+        (
+            dict(row)
+            for row in _propertyquarry_example_shortlist_rows()
+            if str(row.get("candidate_key") or "").strip() == candidate_key
+        ),
+        None,
+    )
+    if selected is None:
+        raise HTTPException(status_code=404, detail="example_candidate_not_found")
+    answer = build_product_service(container).property_decision_copilot(
+        question=question,
+        property_title=str(selected.get("title") or "Example home").strip(),
+        property_url=str(selected.get("href") or "").strip(),
+        property_facts=dict(selected.get("conversation_facts") or {}),
+        assessment=dict(selected.get("conversation_assessment") or {}),
+    )
+    return JSONResponse(
+        {
+            **dict(answer),
+            "candidate_key": candidate_key,
+            "question": question,
+        },
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -9964,6 +10784,18 @@ def app_shell(
         product = build_product_service(container)
         if (
             property_brand
+            and resolved_section in {"properties", "shortlist"}
+            and str(candidate or "").strip()
+            and not normalized_run_id
+        ):
+            normalized_run_id = _property_resolve_curated_candidate_run_id(
+                product,
+                principal_id=context.principal_id,
+                access_email=context.access_email,
+                requested_candidate_ref=candidate,
+            )
+        if (
+            property_brand
             and resolved_section == "properties"
             and not normalized_run_id
         ):
@@ -10020,7 +10852,7 @@ def app_shell(
                 principal_id=context.principal_id,
                 access_email=context.access_email,
                 status=status,
-                run_id=run_id,
+                run_id=normalized_run_id,
                 selected_candidate_ref=candidate,
                 selected_agent_id=requested_agent_id,
                 surface_mode=resolved_section,
@@ -10144,7 +10976,13 @@ def app_shell(
                 )
         if property_brand and resolved_section in property_sections:
             if property_context is not None and property_payload_section in {"properties", "shortlist"}:
-                property_context["selected_candidate_ref"] = str(candidate or "").strip()
+                property_context["selected_candidate_ref"] = _property_resolve_scoped_curated_candidate_ref(
+                    requested_candidate_ref=candidate,
+                    property_context=property_context,
+                    product=product,
+                    principal_id=context.principal_id,
+                    access_email=context.access_email,
+                )
             payload = _property_workspace_payload(
                 property_payload_section,
                 status=status,

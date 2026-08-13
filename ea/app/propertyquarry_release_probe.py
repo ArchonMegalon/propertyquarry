@@ -14,6 +14,7 @@ PROPERTYQUARRY_RELEASE_PROBE_NONCE_SHA256_RESPONSE_HEADER = (
     "x-propertyquarry-release-probe-nonce-sha256"
 )
 PROPERTYQUARRY_RELEASE_PROBE_AUDIENCE = "propertyquarry-release-probe-v1"
+PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH = "/app/api/property/providers"
 
 PROPERTYQUARRY_RELEASE_PROBE_STATIC_PATHS = frozenset(
     {
@@ -29,6 +30,7 @@ PROPERTYQUARRY_RELEASE_PROBE_STATIC_PATHS = frozenset(
         "/app/settings/access",
         "/app/settings/usage",
         "/app/settings/support",
+        "/app/support",
         "/app/settings/trust",
         "/app/settings/invitations",
         "/app/research",
@@ -129,6 +131,10 @@ def propertyquarry_release_probe_request_allowed(
 ) -> bool:
     normalized_path = str(path or "/")
     normalized_query = str(query_string or "")
+    if normalized_path == PROPERTYQUARRY_RELEASE_PROBE_PROVIDER_CATALOG_PATH:
+        # The provider release probe is intentionally limited to one canonical,
+        # read-only country-catalog query. Search-run dispatch remains forbidden.
+        return bool(re.fullmatch(r"country=[A-Z]{2}", normalized_query))
     if normalized_path in PROPERTYQUARRY_RELEASE_PROBE_STATIC_PATHS:
         if not normalized_query:
             return True

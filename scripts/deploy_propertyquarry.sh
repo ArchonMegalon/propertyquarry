@@ -11,6 +11,7 @@ cd "${APP_ROOT}"
 COMPOSE_PROJECT_NAME="${PROPERTYQUARRY_COMPOSE_PROJECT_NAME:-property}"
 LOCAL_RECEIPT="${PROPERTYQUARRY_LOCAL_DEPLOYMENT_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-local-deployment.v1.json}"
 ADMISSION_RECEIPT="${PROPERTYQUARRY_ADMISSION_DATABASE_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-admission-database.v1.json}"
+IMAGE_RETENTION_RECEIPT="${PROPERTYQUARRY_IMAGE_RETENTION_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-image-retention.v1.json}"
 PREFLIGHT_ONLY=0
 SKIP_BUILD=0
 
@@ -107,6 +108,18 @@ load_env_file "${APP_ROOT}/state/runtime/propertyquarry_render_bridge.env"
 load_env_file "${APP_ROOT}/state/runtime/propertyquarry_magicfit_reviewer.env"
 import_existing_runtime_environment
 
+requested_mode="${EA_RUNTIME_MODE:-prod}"
+requested_mode="${requested_mode,,}"
+case "${requested_mode}" in
+  prod|production)
+    ;;
+  *)
+    /usr/bin/printf '%s\n' \
+      "EA_RUNTIME_MODE must select production for the authoritative local deployment." >&2
+    exit 2
+    ;;
+esac
+
 : "${PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID:=${EA_GOOGLE_OAUTH_CLIENT_ID:-}}"
 : "${PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET:=${EA_GOOGLE_OAUTH_CLIENT_SECRET:-}}"
 : "${PROPERTYQUARRY_GOOGLE_OAUTH_STATE_SECRET:=${EA_GOOGLE_OAUTH_STATE_SECRET:-}}"
@@ -117,6 +130,8 @@ export \
 
 for required in \
   EA_SIGNING_SECRET \
+  EA_EDGE_PRINCIPAL_ASSERTION_SECRET \
+  EA_EDGE_PRINCIPAL_ASSERTION_AUDIENCE \
   POSTGRES_PASSWORD \
   PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_ID \
   PROPERTYQUARRY_GOOGLE_OAUTH_CLIENT_SECRET \
@@ -200,7 +215,7 @@ unexpected="$(
     /usr/bin/sort -u |
     while IFS= read -r service; do
       case "${service}" in
-        ""|propertyquarry-api|propertyquarry-migrate|propertyquarry-worker|propertyquarry-scheduler|propertyquarry-render-tools|propertyquarry-db|propertyquarry-cloudflared)
+        ""|propertyquarry-api|propertyquarry-migrate|propertyquarry-worker|propertyquarry-scheduler|propertyquarry-render-tools|propertyquarry-db|propertyquarry-backup|propertyquarry-cloudflared)
           ;;
         *)
           /usr/bin/printf '%s\n' "${service}"
@@ -332,6 +347,14 @@ python3 scripts/propertyquarry_local_deployment_receipt.py \
   --compose-project "${COMPOSE_PROJECT_NAME}" \
   --local-origin "http://127.0.0.1:${local_port}" \
   --write "${LOCAL_RECEIPT}"
+
+python3 scripts/propertyquarry_image_retention.py \
+  --apply \
+  --expected-web-image "${web_image}" \
+  --expected-render-image "${render_image}" \
+  --keep-previous 1 \
+  --write "${IMAGE_RETENTION_RECEIPT}" \
+  > /dev/null
 
 /usr/bin/printf 'DEPLOYED local Docker deployment runtime=%s envelope=%s receipt=%s\n' \
   "${runtime_sha}" "${head_sha}" "${LOCAL_RECEIPT}"

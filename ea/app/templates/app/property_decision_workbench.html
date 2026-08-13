@@ -444,7 +444,7 @@
   </div>
 		  <div class="pqx-source-progress" data-pqx-source-progress>
 		    <div class="pqx-source-progress-head">
-				      <strong data-pqx-radar-count>Search progress</strong>
+				      <strong data-pqx-radar-count>{{ source_check_label or scan_count_label }}</strong>
 							      <span class="pqx-small">{{ (summary.get('ranked_candidate_total') or summary.get('ranked_total') or (summary.get('ranked_candidates') or [])|length or 0) }} matching homes</span>
 					    </div>
 				    <div class="pqx-live-review-bars" aria-label="Search totals">
@@ -484,9 +484,10 @@
     {% if reliability_message_display %}<div class="pqx-note">{{ reliability_message_display }}</div>{% endif %}
 	  </div>
 	  {% endif %}
-	  <div class="pqx-route-preview-strip" data-pqx-route-preview-strip{% if not current_property_image and not route_previews %} hidden{% endif %}>
-	    {% if current_property and current_property_image %}
+	  <div class="pqx-route-preview-strip" data-pqx-route-preview-strip{% if not current_property and not route_previews %} hidden{% endif %}>
+	    {% if current_property %}
 	    <article class="pqx-current-property-card">
+	      {% if current_property_image %}
 	      <button
 	        class="pqx-current-property-diorama-button"
 	        type="button"
@@ -501,6 +502,9 @@
 	      >
 	        <img class="pqx-current-property-thumb" src="{{ current_property_image }}" alt="{{ current_property.get('diorama_alt') or current_property_diorama.get('alt') or current_property.get('title') or 'Illustrative property diorama' }}">
 	      </button>
+	      {% else %}
+	      <div class="pqx-current-property-diorama-button pqx-current-property-diorama-placeholder" role="img" aria-label="Diorama preview in progress"></div>
+	      {% endif %}
 	      {% if current_property_detail_url %}<a class="pqx-current-property-link" href="{{ current_property_detail_url }}">{% else %}<div class="pqx-current-property-link">{% endif %}
 	        <div class="pqx-current-property-copy">
 	          <span class="pqx-small">{{ current_property.get('status_label') or 'Current property' }}</span>
@@ -6717,6 +6721,35 @@
       filter: drop-shadow(0 8px 8px rgba(40, 48, 40, 0.16));
       transition: transform 170ms ease, filter 170ms ease;
     }
+    .pqx-current-property-diorama-placeholder {
+      isolation: isolate;
+      cursor: default;
+      background:
+        radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.98), rgba(239, 235, 224, 0.94));
+    }
+    .pqx-current-property-diorama-placeholder::before {
+      content: "";
+      width: 74px;
+      aspect-ratio: 1.28;
+      border: 1.5px solid color-mix(in srgb, var(--pq-blue) 54%, #3f4d45);
+      border-radius: 3px;
+      background:
+        linear-gradient(90deg, transparent 0 39%, color-mix(in srgb, var(--pq-blue) 42%, transparent) 39% 41%, transparent 41% 70%, color-mix(in srgb, var(--pq-blue) 42%, transparent) 70% 72%, transparent 72%),
+        linear-gradient(0deg, transparent 0 45%, color-mix(in srgb, var(--pq-blue) 42%, transparent) 45% 48%, transparent 48%);
+      box-shadow: 10px 12px 18px rgba(40, 48, 40, 0.16);
+      transform: rotateX(54deg) rotateZ(-28deg);
+      transform-origin: center;
+    }
+    .pqx-current-property-diorama-placeholder::after {
+      content: "PQ";
+      position: absolute;
+      right: 9px;
+      bottom: 7px;
+      color: color-mix(in srgb, var(--pq-blue) 64%, #536059);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+    }
     .pqx-current-property-diorama-button:hover .pqx-current-property-thumb,
     .pqx-current-property-diorama-button:focus-visible .pqx-current-property-thumb {
       transform: rotateX(1deg) rotateY(-4deg) translateY(-1px) scale(1.015);
@@ -6993,6 +7026,35 @@
       object-position: center center;
       display: block;
     }
+	    .pqx-thumb-placeholder {
+	      position: absolute;
+	      inset: 0;
+	      display: none;
+	      place-items: center;
+	      padding: 12px;
+	      color: var(--pq-muted);
+	      background:
+	        radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.72), transparent 34%),
+	        linear-gradient(145deg, #f2eadc, #fffdf8 58%, #e4ece5);
+	      font-size: 10px;
+	      font-weight: 760;
+	      letter-spacing: 0.02em;
+	      text-align: center;
+	      pointer-events: none;
+	    }
+	    .pqx-thumb.is-placeholder .pqx-thumb-placeholder,
+	    .pqx-thumb.is-unavailable .pqx-thumb-placeholder {
+	      display: grid;
+	    }
+	    .pqx-thumb.is-unavailable img {
+	      display: none;
+	    }
+	    html[data-pq-theme="dark"] .pqx-thumb-placeholder {
+	      color: #c8d2cc;
+	      background:
+	        radial-gradient(circle at 22% 18%, rgba(255, 255, 255, 0.08), transparent 34%),
+	        linear-gradient(145deg, #202723, #151a17 58%, #26312b);
+	    }
     .pqx-thumb-pin {
       position: absolute;
       left: 50%;
@@ -11119,12 +11181,20 @@
         hyphens: auto;
       }
       .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions [data-property-step-back],
-      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions [data-property-step-next] {
+      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions [data-property-step-next],
+      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions [data-property-start-top] {
         width: auto !important;
         min-width: 0 !important;
         flex: 1 1 0 !important;
       }
-      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions:has([data-property-step-back][hidden]) [data-property-step-next] {
+      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions [data-property-start-top] {
+        padding-inline: 8px;
+        line-height: 1.15;
+        text-align: center;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .pqx-shell[data-pqx-surface="search"] .pqx-step-head-actions:has([data-property-step-back][hidden]) :is([data-property-step-next], [data-property-start-top]) {
         width: 100% !important;
         flex-basis: 100% !important;
       }
@@ -11191,6 +11261,680 @@
   </style>
   PQ_WORKBENCH_CSS_END #}
   <link rel="stylesheet" href="{{ property_workbench_css_asset_url(static_surface=static_surface) }}">
+  {% if surface_mode == 'shortlist' %}
+  <style id="pqx-premium-shortlist-styles">
+    .pqx-shell[data-pqx-surface="shortlist"] {
+      --pqx-premium-cream: color-mix(in srgb, var(--pq-paper) 90%, var(--pq-gold) 10%);
+      --pqx-premium-line: color-mix(in srgb, var(--pq-line) 76%, var(--pq-gold) 24%);
+      --pqx-premium-ink: var(--pq-ink);
+      background:
+        radial-gradient(circle at 92% 2%, color-mix(in srgb, var(--pq-gold) 12%, transparent), transparent 31rem),
+        radial-gradient(circle at 5% 24%, color-mix(in srgb, var(--pq-green) 7%, transparent), transparent 27rem);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-main {
+      padding-top: clamp(18px, 3vw, 36px);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-panel {
+      min-width: 0;
+      container-name: pqx-premium-shortlist;
+      container-type: inline-size;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-panel-head {
+      margin: 0 0 18px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-results-headline {
+      display: grid;
+      gap: 12px;
+      width: 100%;
+    }
+    .pqx-shortlist-hero {
+      position: relative;
+      isolation: isolate;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: clamp(22px, 5vw, 72px);
+      align-items: end;
+      min-height: 214px;
+      overflow: hidden;
+      padding: clamp(26px, 4vw, 48px);
+      border: 1px solid color-mix(in srgb, var(--pq-gold) 28%, transparent);
+      border-radius: 32px;
+      background:
+        radial-gradient(circle at 88% 8%, rgba(219, 178, 93, 0.25), transparent 24rem),
+        radial-gradient(circle at 62% 110%, rgba(72, 111, 88, 0.30), transparent 24rem),
+        linear-gradient(132deg, #151b18 0%, #1d2721 52%, #2b3028 100%);
+      color: #fffaf0;
+      box-shadow: 0 28px 72px rgba(31, 28, 22, 0.16);
+    }
+    .pqx-shortlist-hero::before,
+    .pqx-shortlist-hero::after {
+      position: absolute;
+      z-index: -1;
+      border: 1px solid rgba(255, 250, 240, 0.11);
+      border-radius: 50%;
+      content: "";
+      pointer-events: none;
+    }
+    .pqx-shortlist-hero::before {
+      top: -128px;
+      right: -44px;
+      width: 320px;
+      height: 320px;
+    }
+    .pqx-shortlist-hero::after {
+      top: -82px;
+      right: 2px;
+      width: 226px;
+      height: 226px;
+    }
+    .pqx-shortlist-hero-copy {
+      max-width: 720px;
+    }
+    .pqx-shortlist-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 18px;
+      color: #e7c98e;
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    .pqx-shortlist-eyebrow i {
+      width: 22px;
+      height: 1px;
+      background: currentColor;
+    }
+    .pqx-shortlist-hero h1 {
+      max-width: 720px;
+      margin: 0;
+      font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+      font-size: clamp(42px, 6vw, 72px);
+      font-weight: 500;
+      line-height: 0.93;
+      letter-spacing: -0.055em;
+    }
+    .pqx-shortlist-hero p {
+      max-width: 600px;
+      margin: 20px 0 0;
+      color: rgba(255, 250, 240, 0.72);
+      font-size: clamp(14px, 1.6vw, 17px);
+      line-height: 1.55;
+    }
+    .pqx-shortlist-hero-actions {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .pqx-shortlist-count {
+      display: grid;
+      min-width: 86px;
+      place-content: center;
+      padding: 12px 16px;
+      border: 1px solid rgba(255, 250, 240, 0.16);
+      border-radius: 18px;
+      background: rgba(255, 250, 240, 0.07);
+      backdrop-filter: blur(12px);
+      text-align: center;
+    }
+    .pqx-shortlist-count strong {
+      font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+      font-size: 30px;
+      font-weight: 500;
+      line-height: 1;
+    }
+    .pqx-shortlist-count span {
+      margin-top: 5px;
+      color: rgba(255, 250, 240, 0.62);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .pqx-shortlist-refine {
+      display: inline-flex;
+      min-height: 64px;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 0 20px;
+      border: 1px solid #f0d39c;
+      border-radius: 18px;
+      background: #f0d39c;
+      color: #1b201c;
+      font-size: 13px;
+      font-weight: 850;
+      white-space: nowrap;
+      box-shadow: 0 14px 30px rgba(12, 14, 12, 0.22);
+      transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+    }
+    .pqx-shortlist-refine:hover {
+      background: #f7e1b7;
+      box-shadow: 0 18px 38px rgba(12, 14, 12, 0.28);
+      transform: translateY(-2px);
+    }
+    .pqx-shortlist-refine:focus-visible {
+      outline: 3px solid rgba(240, 211, 156, 0.42);
+      outline-offset: 4px;
+    }
+    .pqx-shortlist-refine > span {
+      font-size: 16px;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-results-summary-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 42px;
+      padding: 0 8px;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-results-summary-link {
+      min-height: 34px;
+      border-color: transparent;
+      background: transparent;
+      color: var(--pq-muted);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-results-summary-link:first-child {
+      color: var(--pq-ink);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-results-summary-link b {
+      color: var(--pq-gold-strong);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-route-preview-strip {
+      display: none;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-results-list {
+      display: grid;
+      gap: 16px;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card] {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(166px, auto);
+      gap: 22px;
+      align-items: stretch;
+      overflow: hidden;
+      padding: 14px;
+      border: 1px solid color-mix(in srgb, var(--pq-line) 88%, transparent);
+      border-radius: 26px;
+      background:
+        linear-gradient(112deg, color-mix(in srgb, var(--pq-paper) 96%, var(--pq-gold) 4%), var(--pq-paper) 58%);
+      box-shadow: 0 10px 34px rgba(40, 35, 25, 0.06);
+      transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card]:hover {
+      border-color: var(--pqx-premium-line);
+      box-shadow: 0 22px 54px rgba(40, 35, 25, 0.12);
+      transform: translateY(-2px);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card].is-top-ranked {
+      border-color: color-mix(in srgb, var(--pq-gold) 44%, var(--pq-line));
+      box-shadow: 0 18px 50px rgba(93, 69, 29, 0.11);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card].is-top-ranked::before {
+      position: absolute;
+      top: 0;
+      left: 26px;
+      width: 64px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--pq-gold), color-mix(in srgb, var(--pq-gold) 10%, transparent));
+      content: "";
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-main,
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-media,
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-summary,
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-aside {
+      min-width: 0;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-main {
+      position: static;
+      display: block;
+      width: auto;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-media.has-diorama {
+      display: grid;
+      grid-template-columns: minmax(224px, 296px) minmax(0, 1fr);
+      gap: clamp(18px, 2.2vw, 28px);
+      align-items: center;
+      height: 100%;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button {
+      position: relative;
+      width: 100%;
+      min-width: 0;
+      aspect-ratio: 4 / 3;
+      overflow: hidden;
+      padding: 0;
+      border: 1px solid color-mix(in srgb, var(--pq-line) 65%, var(--pq-gold) 35%);
+      border-radius: 19px;
+      background:
+        radial-gradient(circle at 72% 18%, color-mix(in srgb, var(--pq-gold) 18%, transparent), transparent 40%),
+        linear-gradient(145deg, var(--pq-panel), color-mix(in srgb, var(--pq-panel) 84%, var(--pq-green) 16%));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pq-paper) 72%, transparent), 0 10px 24px rgba(35, 30, 21, 0.10);
+      cursor: pointer;
+      transform: translateZ(0);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button::after {
+      position: absolute;
+      inset: 38% 0 0;
+      z-index: 1;
+      background: linear-gradient(180deg, transparent, rgba(13, 16, 14, 0.66));
+      content: "";
+      pointer-events: none;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: filter 280ms ease, transform 420ms cubic-bezier(.2,.75,.25,1);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button:hover img {
+      filter: saturate(1.04) contrast(1.025);
+      transform: scale(1.035);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--pq-gold) 44%, transparent);
+      outline-offset: 4px;
+    }
+    .pqx-shortlist-visual-chrome {
+      position: absolute;
+      right: 12px;
+      bottom: 11px;
+      left: 12px;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: #fffaf0;
+      pointer-events: none;
+    }
+    .pqx-shortlist-visual-label {
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .pqx-shortlist-visual-action {
+      display: inline-flex;
+      min-height: 28px;
+      align-items: center;
+      gap: 6px;
+      padding: 0 10px;
+      border: 1px solid rgba(255, 250, 240, 0.30);
+      border-radius: 999px;
+      background: rgba(14, 17, 15, 0.38);
+      font-size: 10px;
+      font-weight: 800;
+      backdrop-filter: blur(9px);
+    }
+    .pqx-shortlist-visual-action b {
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button.is-placeholder::after {
+      background: linear-gradient(180deg, transparent 12%, rgba(23, 28, 24, 0.54));
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button.is-placeholder .pqx-result-diorama-room {
+      filter: saturate(0.72);
+      opacity: 0.72;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-empty-label {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      z-index: 2;
+      width: max-content;
+      max-width: calc(100% - 28px);
+      padding: 8px 12px;
+      border: 1px solid color-mix(in srgb, var(--pq-line) 74%, transparent);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--pq-paper) 84%, transparent);
+      color: var(--pq-muted);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transform: translate(-50%, -58%);
+      backdrop-filter: blur(8px);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-summary {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 10px;
+      padding: 10px 0;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-kicker {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      color: var(--pq-muted);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+    .pqx-shortlist-top-label,
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-rank {
+      display: inline-flex;
+      min-height: 25px;
+      align-items: center;
+      padding: 0 9px;
+      border-radius: 999px;
+    }
+    .pqx-shortlist-top-label {
+      border: 1px solid color-mix(in srgb, var(--pq-gold) 42%, var(--pq-line));
+      background: color-mix(in srgb, var(--pq-gold) 13%, var(--pq-paper));
+      color: var(--pq-gold-strong);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-rank {
+      border: 1px solid var(--pq-line);
+      color: var(--pq-muted);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-title {
+      display: -webkit-box;
+      overflow: hidden;
+      color: var(--pqx-premium-ink);
+      font-family: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+      font-size: clamp(22px, 2.2vw, 31px);
+      font-weight: 550;
+      line-height: 1.06;
+      letter-spacing: -0.035em;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 3;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-fact {
+      min-height: 27px;
+      padding: 5px 9px;
+      border: 1px solid color-mix(in srgb, var(--pq-line) 82%, transparent);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--pq-panel) 74%, transparent);
+      color: var(--pq-muted);
+      font-size: 11px;
+      line-height: 1.25;
+    }
+    .pqx-shortlist-thesis {
+      display: -webkit-box;
+      max-width: 52ch;
+      overflow: hidden;
+      font-size: 13px;
+      line-height: 1.55;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-aside {
+      position: static;
+      display: flex;
+      width: auto;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 8px 8px 0;
+      text-align: right;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-value-row {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 9px;
+      width: auto;
+      max-width: 100%;
+      margin: 0;
+      padding: 0;
+      justify-self: start;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-price {
+      width: auto;
+      max-width: 100%;
+      margin: 0;
+      font-size: clamp(20px, 2vw, 28px);
+      line-height: 1;
+      letter-spacing: -0.035em;
+      overflow-wrap: anywhere;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-fit-score {
+      display: inline-flex;
+      min-height: 31px;
+      align-items: center;
+      gap: 5px;
+      padding: 0 10px;
+      border: 1px solid color-mix(in srgb, var(--pq-green) 26%, var(--pq-line));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--pq-green) 9%, var(--pq-paper));
+      color: var(--pq-green);
+      font-size: 11px;
+      font-weight: 850;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-secondary {
+      max-width: 22ch;
+      color: var(--pq-muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 7px;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open {
+      display: inline-flex;
+      min-height: 40px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 13px;
+      border: 1px solid var(--pq-line);
+      border-radius: 12px;
+      background: var(--pq-paper);
+      color: var(--pq-ink);
+      font-size: 11px;
+      font-weight: 850;
+      cursor: pointer;
+      transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open:hover {
+      border-color: var(--pq-line-strong);
+      transform: translateY(-1px);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open.is-primary {
+      border-color: var(--pq-ink);
+      background: var(--pq-ink);
+      color: var(--pq-paper);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open.is-primary:hover {
+      background: var(--pq-charcoal-soft);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open.is-remove {
+      border-color: transparent;
+      background: transparent;
+      color: var(--pq-faint);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open.is-remove:hover {
+      border-color: color-mix(in srgb, var(--pq-red) 24%, transparent);
+      background: color-mix(in srgb, var(--pq-red) 7%, transparent);
+      color: var(--pq-red);
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open:focus-visible {
+      outline: var(--pq-focus-ring);
+      outline-offset: 3px;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] .pqx-results-empty-state {
+      min-height: 260px;
+      place-content: center;
+      border: 1px dashed var(--pqx-premium-line);
+      border-radius: 28px;
+      background: linear-gradient(145deg, var(--pq-paper), var(--pqx-premium-cream));
+      text-align: center;
+    }
+    .pqx-shell[data-pqx-surface="shortlist"] [data-pqx-mobile-panel="property"] {
+      border-color: color-mix(in srgb, var(--pq-line) 82%, var(--pq-gold) 18%);
+      border-radius: 28px;
+      box-shadow: 0 18px 48px rgba(40, 35, 25, 0.07);
+    }
+    @media (min-width: 761px) and (max-width: 1600px) {
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-brand-copy,
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-primary-nav [data-pqx-nav-account],
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-top-actions > .pqx-link-button.subtle {
+        display: none;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-primary-nav {
+        overflow: visible;
+      }
+    }
+    @container pqx-premium-shortlist (max-width: 720px) {
+      .pqx-shortlist-hero {
+        grid-template-columns: minmax(0, 1fr);
+        min-height: 0;
+        padding: 30px;
+      }
+      .pqx-shortlist-hero h1 {
+        font-size: clamp(46px, 12cqw, 64px);
+      }
+      .pqx-shortlist-hero p {
+        max-width: 46ch;
+      }
+      .pqx-shortlist-hero-actions {
+        justify-content: flex-end;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card] {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-aside {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+        padding: 0 4px 4px;
+        text-align: left;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-value-row {
+        align-items: flex-start;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-secondary {
+        grid-column: 1;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-actions {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+        align-self: end;
+      }
+    }
+    @media (max-width: 1080px) {
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card] {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-aside {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+        padding: 0 4px 4px;
+        text-align: left;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-value-row {
+        align-items: flex-start;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-secondary {
+        grid-column: 1;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-actions {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+        align-self: end;
+      }
+    }
+    @media (max-width: 760px) {
+      .pqx-shortlist-hero {
+        grid-template-columns: minmax(0, 1fr);
+        min-height: 0;
+        padding: 26px 22px 22px;
+        border-radius: 26px;
+      }
+      .pqx-shortlist-hero h1 {
+        font-size: clamp(40px, 13vw, 58px);
+      }
+      .pqx-shortlist-hero-actions {
+        justify-content: space-between;
+      }
+      .pqx-shortlist-count {
+        min-width: 78px;
+      }
+      .pqx-shortlist-refine {
+        flex: 1;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card] {
+        gap: 15px;
+        padding: 10px;
+        border-radius: 23px;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-media.has-diorama {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 14px;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button {
+        aspect-ratio: 16 / 10;
+        border-radius: 17px;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-summary {
+        padding: 4px 6px 0;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-title {
+        font-size: clamp(24px, 7.5vw, 31px);
+      }
+      .pqx-shortlist-thesis {
+        -webkit-line-clamp: 3;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-aside {
+        display: flex;
+        align-items: stretch;
+        padding: 0 6px 6px;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-value-row {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open {
+        min-height: 46px;
+      }
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open.is-remove {
+        grid-column: 1 / -1;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .pqx-shortlist-refine,
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card],
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button img,
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open {
+        scroll-behavior: auto;
+        transition: none;
+      }
+      .pqx-shortlist-refine:hover,
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result[data-pqx-shortlist-card]:hover,
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-diorama-button:hover img,
+      .pqx-shell[data-pqx-surface="shortlist"] .pqx-result-open:hover {
+        transform: none;
+      }
+    }
+  </style>
+  {% endif %}
 </head>
 <body>
   <a class="pqx-skip-link" href="#pqx-main-content">Skip to content</a>
@@ -11275,83 +12019,6 @@
         <button class="pqx-button subtle" type="button" data-pqx-browser-alerts hidden>Browser alerts</button>
         {% endif %}
         <span class="pqx-context-actions" data-pw-top-actions></span>
-        {% if show_top_search_action %}
-        <span class="pqx-top-launch-status" data-property-top-launch-status role="status" aria-live="assertive" aria-atomic="true"></span>
-        <button class="pqx-button primary" type="button" data-property-start-top aria-label="{{ console_form.get('submit_label') or 'Launch search' }}">
-          <span class="pqx-top-start-label-full">{{ console_form.get('submit_label') or 'Launch search' }}</span>
-          <span class="pqx-top-start-label-short">Search</span>
-        </button>
-        <script>
-          /* PQ_SEARCH_LAUNCH_BOOT_GUARD_START */
-          (() => {
-            const script = document.currentScript;
-            const button = script?.previousElementSibling;
-            const root = button?.closest?.('[data-property-decision-workbench]');
-            const status = root?.querySelector?.('[data-property-top-launch-status]');
-            if (!(button instanceof HTMLButtonElement) || !(root instanceof HTMLElement)) return;
-            const idleLabel = String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search';
-            const idleMarkup = button.innerHTML;
-            let timeoutId = 0;
-            const setStatus = (message, tone = '') => {
-              if (!(status instanceof HTMLElement)) return;
-              status.textContent = String(message || '');
-              if (tone) status.dataset.pqTone = tone;
-              else delete status.dataset.pqTone;
-            };
-            const restoreButton = () => {
-              button.disabled = false;
-              button.setAttribute('aria-disabled', 'false');
-              button.setAttribute('aria-busy', 'false');
-              button.innerHTML = idleMarkup;
-              button.setAttribute('aria-label', idleLabel);
-            };
-            const releaseGuard = () => {
-              window.clearTimeout(timeoutId);
-              root.dataset.pqLaunchBootstrap = 'ready';
-              button.removeEventListener('click', guard, true);
-            };
-            const guard = (event) => {
-              if (
-                root.dataset.pqWorkbenchController === 'loaded'
-                || root.dataset.pqLaunchBootstrap === 'ready'
-              ) {
-                releaseGuard();
-                return;
-              }
-              event.preventDefault();
-              event.stopImmediatePropagation();
-              if (button.dataset.pqLaunchBootstrapTimedOut === 'true') {
-                setStatus('Reloading the search controls…', 'pending');
-                const retryUrl = new URL(window.location.href);
-                retryUrl.searchParams.set('launch_retry', String(Date.now()));
-                window.location.assign(retryUrl);
-                return;
-              }
-              if (button.dataset.pqLaunchQueued === 'true') return;
-              button.dataset.pqLaunchQueued = 'true';
-              button.disabled = true;
-              button.setAttribute('aria-disabled', 'true');
-              button.setAttribute('aria-busy', 'true');
-              button.textContent = 'Preparing…';
-              setStatus('Preparing search controls…', 'pending');
-              timeoutId = window.setTimeout(() => {
-                if (
-                  root.dataset.pqLaunchBootstrap === 'ready'
-                  || root.dataset.pqWorkbenchController === 'loaded'
-                ) return;
-                delete button.dataset.pqLaunchQueued;
-                button.dataset.pqLaunchBootstrapTimedOut = 'true';
-                restoreButton();
-                setStatus('Search controls took too long to load. Select Launch search to retry.', 'error');
-              }, 6000);
-            };
-            button.addEventListener('click', guard, true);
-            root.addEventListener('propertyquarry:launch-bootstrap-ready', releaseGuard, { once: true });
-            root.dataset.pqLaunchBootGuard = 'ready';
-          })();
-          /* PQ_SEARCH_LAUNCH_BOOT_GUARD_END */
-        </script>
-        {% endif %}
         {% if run_active and run.get('run_id') %}
         <button class="pqx-link-button subtle" type="button" data-pqx-delete-run="{{ run.get('run_id') }}" data-pqx-delete-run-label="Stop this live search?">Stop</button>
         {% elif run_terminal_no_results %}
@@ -11428,6 +12095,7 @@
               if (!(item instanceof HTMLElement)) return;
               item.style.setProperty('width', 'auto', 'important');
               item.style.setProperty('min-width', '44px', 'important');
+              item.style.setProperty('min-height', '44px', 'important');
               item.style.setProperty('justify-content', 'center', 'important');
               item.style.setProperty('flex', '0 0 auto', 'important');
             });
@@ -12021,6 +12689,82 @@
               {% if setup_mode and console_form and show_form_controls and surface_mode != 'agents' %}
               <button class="pqx-button subtle" type="button" data-property-step-back hidden>Back</button>
               <button class="pqx-button" type="button" data-property-step-next>Next</button>
+              {% if show_top_search_action %}
+              <span class="pqx-top-launch-status" data-property-top-launch-status role="status" aria-live="assertive" aria-atomic="true" hidden></span>
+              <button class="pqx-button primary" type="button" data-property-start-top aria-label="{{ console_form.get('submit_label') or 'Launch search' }}" hidden>
+                {{ console_form.get('submit_label') or 'Launch search' }}
+              </button>
+              <script>
+                /* PQ_SEARCH_LAUNCH_BOOT_GUARD_START */
+                (() => {
+                  const script = document.currentScript;
+                  const button = script?.previousElementSibling;
+                  const root = button?.closest?.('[data-property-decision-workbench]');
+                  const status = root?.querySelector?.('[data-property-top-launch-status]');
+                  if (!(button instanceof HTMLButtonElement) || !(root instanceof HTMLElement)) return;
+                  const idleLabel = String(button.getAttribute('aria-label') || button.textContent || '').trim() || 'Launch search';
+                  const idleMarkup = button.innerHTML;
+                  let timeoutId = 0;
+                  const setStatus = (message, tone = '') => {
+                    if (!(status instanceof HTMLElement)) return;
+                    status.textContent = String(message || '');
+                    if (tone) status.dataset.pqTone = tone;
+                    else delete status.dataset.pqTone;
+                  };
+                  const restoreButton = () => {
+                    button.disabled = false;
+                    button.setAttribute('aria-disabled', 'false');
+                    button.setAttribute('aria-busy', 'false');
+                    button.innerHTML = idleMarkup;
+                    button.setAttribute('aria-label', idleLabel);
+                  };
+                  const releaseGuard = () => {
+                    window.clearTimeout(timeoutId);
+                    root.dataset.pqLaunchBootstrap = 'ready';
+                    button.removeEventListener('click', guard, true);
+                  };
+                  const guard = (event) => {
+                    if (
+                      root.dataset.pqWorkbenchController === 'loaded'
+                      || root.dataset.pqLaunchBootstrap === 'ready'
+                    ) {
+                      releaseGuard();
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    if (button.dataset.pqLaunchBootstrapTimedOut === 'true') {
+                      setStatus('Reloading the search controls…', 'pending');
+                      const retryUrl = new URL(window.location.href);
+                      retryUrl.searchParams.set('launch_retry', String(Date.now()));
+                      window.location.assign(retryUrl);
+                      return;
+                    }
+                    if (button.dataset.pqLaunchQueued === 'true') return;
+                    button.dataset.pqLaunchQueued = 'true';
+                    button.disabled = true;
+                    button.setAttribute('aria-disabled', 'true');
+                    button.setAttribute('aria-busy', 'true');
+                    button.textContent = 'Preparing…';
+                    setStatus('Preparing search controls…', 'pending');
+                    timeoutId = window.setTimeout(() => {
+                      if (
+                        root.dataset.pqLaunchBootstrap === 'ready'
+                        || root.dataset.pqWorkbenchController === 'loaded'
+                      ) return;
+                      delete button.dataset.pqLaunchQueued;
+                      button.dataset.pqLaunchBootstrapTimedOut = 'true';
+                      restoreButton();
+                      setStatus('Search controls took too long to load. Select Launch search to retry.', 'error');
+                    }, 6000);
+                  };
+                  button.addEventListener('click', guard, true);
+                  root.addEventListener('propertyquarry:launch-bootstrap-ready', releaseGuard, { once: true });
+                  root.dataset.pqLaunchBootGuard = 'ready';
+                })();
+                /* PQ_SEARCH_LAUNCH_BOOT_GUARD_END */
+              </script>
+              {% endif %}
               <span hidden aria-hidden="true" data-property-localized-copy>
                 <span data-property-copy="wizard-market" aria-label="Market"></span>
                 <span data-property-copy="wizard-where" aria-label="Where"></span>
@@ -12045,8 +12789,7 @@
                 <span data-property-copy="wizard-research-depth-detail" aria-label="Risk, supply, and how much detail each strong match should carry."></span>
                 <span data-property-copy="wizard-providers-detail" aria-label="Choose providers."></span>
                 <span data-property-copy="step-next" aria-label="Next"></span>
-                <span data-property-copy="step-review" aria-label="Review"></span>
-                <span data-property-copy="step-search" aria-label="Search"></span>
+                <span data-property-copy="step-search" aria-label="Launch search"></span>
                 <span data-property-copy="launching" aria-label="Launching..."></span>
                 <span data-property-copy="preparing-search" aria-label="Preparing search..."></span>
                 <span data-property-copy="starting-search" aria-label="Starting search..."></span>
@@ -13004,12 +13747,13 @@
                   <td>{{ candidate.get('rank') or loop.index }}</td>
                   <td>
                     <div class="pqx-result-media">
-                      <span class="pqx-thumb">
                         {% set ranked_preview_url = candidate.get('preview_image_url') or '' %}
-                        {% if ranked_preview_url.startswith('/') %}
-                        <img src="{{ ranked_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low">
+                        {% set ranked_preview_usable = (ranked_preview_url.startswith('/') and not ranked_preview_url.startswith('//')) or ranked_preview_url.startswith('https://') %}
+                        <span class="pqx-thumb{% if not ranked_preview_usable %} is-placeholder{% endif %}" data-pqx-thumbnail data-candidate-ref="{{ candidate.get('candidate_ref') or '' }}" data-pqx-thumbnail-fallback="{{ candidate.get('preview_image_fallback_url') or '' }}" data-pqx-thumbnail-fallbacks='{{ (candidate.get("preview_image_fallback_urls") or [])|tojson|safe }}'{% if not ranked_preview_usable %} role="img" aria-label="Media preview not available."{% endif %}>
+                        {% if ranked_preview_usable %}
+                        <img src="{{ ranked_preview_url }}" alt="" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" data-pqx-thumbnail-image>
                         {% else %}
-                        HOME
+                        <span class="pqx-thumb-placeholder">Media preview not available.</span>
                         {% endif %}
                       </span>
                       <span>
@@ -13167,7 +13911,7 @@
         {% set mobile_is_shortlist_surface = surface_mode == 'shortlist' %}
         {% set selected_visual_property_url = selected.get('property_url') or selected.get('source_url') or selected.get('listing_url') %}
         {% set selected_tour = selected.get('tour', {}) %}
-        {% set selected_tour_url = selected.get('verified_tour_url') or selected.get('open_tour_url') or selected_tour.get('url') or selected.get('tour_url') or '' %}
+        {% set selected_tour_url = selected.get('verified_tour_url') or selected_tour.get('url') or selected.get('tour_url') or '' %}
         {% set selected_flythrough = selected.get('flythrough', {}) %}
         {%- set selected_flythrough_claim_ready = selected_flythrough.get('customer_claim_ready') == true -%}
         {% set selected_visual_media_ready = selected.get('floorplan_url') or selected.get('source_virtual_tour_url') or selected.get('vendor_tour_url') %}
@@ -13181,38 +13925,38 @@
         {% set selected_tour_progress = selected_tour.get('progress_pct') if selected_tour.get('progress_pct') is not none else (100 if selected_tour_url else 0) %}
         {% set selected_flythrough_progress = selected_flythrough.get('progress_pct') if selected_flythrough.get('progress_pct') is not none else (100 if selected_flythrough.get('url') else 0) %}
         {% set selected_visual_status = '' %}
-        {% if selected_tour_pending %}
+        {% if selected_flythrough_pending %}
+        {% set selected_visual_status = (selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or selected_flythrough.get('label') or 'Preparing camera walkthrough.') ~ ((' · ETA ' ~ selected_flythrough.get('eta_label')) if selected_flythrough.get('eta_label') else '') %}
+        {% elif selected_tour_pending %}
         {% set selected_visual_status = (selected_tour.get('status_detail') or selected_tour.get('detail') or selected_tour.get('label') or 'Preparing 3D tour.') ~ ((' · ETA ' ~ selected_tour.get('eta_label')) if selected_tour.get('eta_label') else '') %}
-        {% elif selected_flythrough_pending %}
-        {% set selected_visual_status = (selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or selected_flythrough.get('label') or 'Preparing walkthrough.') ~ ((' · ETA ' ~ selected_flythrough.get('eta_label')) if selected_flythrough.get('eta_label') else '') %}
+        {% elif selected_flythrough_terminal %}
+        {% set selected_visual_status = selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or 'Camera walkthrough not available yet.' %}
         {% elif selected_tour_terminal %}
         {% set selected_visual_status = selected_tour.get('status_detail') or selected_tour.get('detail') or selected_tour.get('eta_label') or '3D tour not available yet.' %}
-        {% elif selected_flythrough_terminal %}
-        {% set selected_visual_status = selected_flythrough.get('status_detail') or selected_flythrough.get('detail') or 'Walkthrough not available yet.' %}
         {% elif mobile_is_shortlist_surface and selected_tour_url and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
-        {% set selected_visual_status = '3D tour and walkthrough ready.' %}
+        {% set selected_visual_status = 'Camera walkthrough and 3D tour ready.' %}
         {% elif mobile_is_shortlist_surface and selected_tour_url %}
         {% set selected_visual_status = '3D tour ready.' %}
         {% elif mobile_is_shortlist_surface and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
-        {% set selected_visual_status = 'Walkthrough ready.' %}
+        {% set selected_visual_status = 'Camera walkthrough ready.' %}
         {% endif %}
         {% set mobile_visual_preview = '' %}
         {% if selected_tour_url and selected_flythrough_claim_ready and selected_flythrough.get('url') %}
-        {% set mobile_visual_preview = '3D tour and walkthrough available' %}
+        {% set mobile_visual_preview = 'Camera walkthrough and 3D tour available' %}
         {% elif selected_tour_url %}
         {% set mobile_visual_preview = '3D tour available' %}
         {% elif selected_flythrough_claim_ready and selected_flythrough.get('url') %}
-        {% set mobile_visual_preview = 'Walkthrough available' %}
+        {% set mobile_visual_preview = 'Camera walkthrough available' %}
         {% elif selected_tour_pending %}
         {% set mobile_visual_preview = selected_tour.get('label') or '3D tour in progress' %}
         {% elif selected_flythrough_pending %}
-        {% set mobile_visual_preview = selected_flythrough.get('label') or 'Walkthrough in progress' %}
+        {% set mobile_visual_preview = selected_flythrough.get('label') or 'Camera walkthrough in progress' %}
         {% elif selected_tour_terminal %}
         {% set mobile_visual_preview = selected_tour.get('label') or ('Retry 3D tour' if selected_tour_status in ['blocked', 'failed'] else 'Request 3D tour') %}
         {% elif selected_flythrough_terminal %}
-        {% set mobile_visual_preview = selected_flythrough.get('label') or ('Retry walkthrough' if selected_flythrough_status in ['blocked', 'failed'] else 'Request walkthrough') %}
+        {% set mobile_visual_preview = selected_flythrough.get('label') or ('Retry camera walkthrough' if selected_flythrough_status in ['blocked', 'failed'] else 'Request camera walkthrough') %}
         {% elif selected_visual_request_ready %}
-        {% set mobile_visual_preview = 'Request 3D tour or walkthrough' %}
+        {% set mobile_visual_preview = 'Request camera walkthrough or 3D tour' %}
         {% elif selected_visual_property_url %}
         {% set mobile_visual_preview = 'Visuals not published yet' %}
         {% endif %}

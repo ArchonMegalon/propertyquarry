@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import os
 import threading
 from typing import Callable
@@ -98,6 +99,57 @@ def property_search_work_idempotency_key(
     return "property-search:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
+PROPERTY_SEARCH_RUN_WORK_KIND = "property_search_run"
+PROPERTY_FACT_ENRICHMENT_WORK_KIND = "property_fact_enrichment"
+PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND = "property_opportunity_ltd_image"
+
+
+def property_fact_enrichment_work_idempotency_key(
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    fact_job_id: str,
+    attempt: int,
+) -> str:
+    """Return a tenant-scoped key for one durable fact-enrichment attempt."""
+
+    source = "\0".join(
+        (
+            "fact-enrichment",
+            str(principal_id or "").strip(),
+            str(run_id or "").strip(),
+            str(candidate_ref or "").strip(),
+            str(fact_job_id or "").strip(),
+            str(max(1, int(attempt or 1))),
+        )
+    )
+    return "property-fact:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def property_opportunity_ltd_image_work_idempotency_key(
+    *,
+    principal_id: str,
+    run_id: str,
+    candidate_ref: str,
+    opportunity_id: str,
+) -> str:
+    """Bind one private concept-cover generation to one durable opportunity."""
+
+    source = "\0".join(
+        (
+            "property-opportunity-ltd-image-v1",
+            str(principal_id or "").strip(),
+            str(run_id or "").strip(),
+            str(candidate_ref or "").strip(),
+            str(opportunity_id or "").strip(),
+        )
+    )
+    return "property-opportunity-ltd-image:" + hashlib.sha256(
+        source.encode("utf-8")
+    ).hexdigest()
+
+
 def validated_property_search_work_payload(
     payload_json: dict[str, object],
 ) -> dict[str, object]:
@@ -119,6 +171,18 @@ def validated_property_search_work_payload(
     except TraceContextError as exc:
         raise ValueError("property_search_trace_context_invalid") from exc
     return payload
+
+
+def validated_property_search_work_result(
+    result_json: dict[str, object] | None,
+) -> dict[str, object]:
+    result = dict(result_json or {})
+    if (
+        len(json.dumps(result, ensure_ascii=True, sort_keys=True).encode("utf-8"))
+        > 65536
+    ):
+        raise ValueError("property_search_work_result_too_large")
+    return result
 
 
 @dataclass(frozen=True)
@@ -210,6 +274,93 @@ class InMemoryPropertySearchWorkQueue:
             self._runs[(principal_id, run_id)] = job.job_id
             return PropertySearchWorkEnqueueResult(job=job, created=True)
 
+    def enqueue_fact_enrichment(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        payload_json: dict[str, object],
+        idempotency_key: str,
+        max_attempts: int = 3,
+    ) -> PropertySearchWorkEnqueueResult:
+        normalized_principal = str(principal_id or "").strip()
+        normalized_run = str(run_id or "").strip()
+        key = str(idempotency_key or "").strip()
+        if not normalized_principal or not normalized_run or not key:
+            raise ValueError("property_fact_work_identity_required")
+        payload = validated_property_search_work_payload(payload_json)
+        if str(payload.get("work_kind") or "").strip() != PROPERTY_FACT_ENRICHMENT_WORK_KIND:
+            raise ValueError("property_fact_work_kind_invalid")
+        now = self._now()
+        with self._lock:
+            existing_id = self._idempotency.get(key)
+            if existing_id:
+                return PropertySearchWorkEnqueueResult(
+                    job=self._jobs[existing_id],
+                    created=False,
+                )
+            job = PropertySearchWorkJob(
+                job_id=uuid4().hex,
+                principal_id=normalized_principal,
+                run_id=normalized_run,
+                idempotency_key=key,
+                payload_json=payload,
+                status="queued",
+                attempt_count=0,
+                max_attempts=max(1, int(max_attempts or 1)),
+                available_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            self._jobs[job.job_id] = job
+            self._idempotency[key] = job.job_id
+            return PropertySearchWorkEnqueueResult(job=job, created=True)
+
+    def enqueue_opportunity_ltd_image(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        payload_json: dict[str, object],
+        idempotency_key: str,
+        max_attempts: int = 2,
+    ) -> PropertySearchWorkEnqueueResult:
+        normalized_principal = str(principal_id or "").strip()
+        normalized_run = str(run_id or "").strip()
+        key = str(idempotency_key or "").strip()
+        if not normalized_principal or not normalized_run or not key:
+            raise ValueError("property_opportunity_ltd_work_identity_required")
+        payload = validated_property_search_work_payload(payload_json)
+        if (
+            str(payload.get("work_kind") or "").strip()
+            != PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
+        ):
+            raise ValueError("property_opportunity_ltd_work_kind_invalid")
+        now = self._now()
+        with self._lock:
+            existing_id = self._idempotency.get(key)
+            if existing_id:
+                return PropertySearchWorkEnqueueResult(
+                    job=self._jobs[existing_id],
+                    created=False,
+                )
+            job = PropertySearchWorkJob(
+                job_id=uuid4().hex,
+                principal_id=normalized_principal,
+                run_id=normalized_run,
+                idempotency_key=key,
+                payload_json=payload,
+                status="queued",
+                attempt_count=0,
+                max_attempts=max(1, min(int(max_attempts or 1), 3)),
+                available_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+            self._jobs[job.job_id] = job
+            self._idempotency[key] = job.job_id
+            return PropertySearchWorkEnqueueResult(job=job, created=True)
+
     def claim(self, *, lease_owner: str, lease_seconds: int) -> PropertySearchWorkJob | None:
         owner = str(lease_owner or "").strip()
         if not owner:
@@ -283,14 +434,26 @@ class InMemoryPropertySearchWorkQueue:
             )
             return True
 
-    def complete(self, *, job_id: str, lease_owner: str) -> PropertySearchWorkJob | None:
+    def complete(
+        self,
+        *,
+        job_id: str,
+        lease_owner: str,
+        result_json: dict[str, object] | None = None,
+    ) -> PropertySearchWorkJob | None:
         now = self._now()
+        result = validated_property_search_work_result(result_json)
         with self._lock:
             found = self._jobs.get(str(job_id or ""))
             if found is None or found.status != "leased" or found.lease_owner != str(lease_owner or "").strip():
                 return None
             completed = replace(
                 found,
+                payload_json=(
+                    {**found.payload_json, "result_json": result}
+                    if result
+                    else found.payload_json
+                ),
                 status="completed",
                 lease_owner="",
                 lease_expires_at=None,
@@ -300,6 +463,40 @@ class InMemoryPropertySearchWorkQueue:
             )
             self._jobs[completed.job_id] = completed
             return completed
+
+    def replace_completed_result(
+        self,
+        *,
+        job_id: str,
+        principal_id: str,
+        expected_result_json: dict[str, object],
+        result_json: dict[str, object],
+    ) -> PropertySearchWorkJob | None:
+        """Atomically sanitize one completed result without reopening its work."""
+
+        normalized_job_id = str(job_id or "").strip()
+        normalized_principal = str(principal_id or "").strip()
+        expected = validated_property_search_work_result(expected_result_json)
+        result = validated_property_search_work_result(result_json)
+        if not normalized_job_id or not normalized_principal or not expected or not result:
+            raise ValueError("property_search_completed_result_identity_required")
+        now = self._now()
+        with self._lock:
+            found = self._jobs.get(normalized_job_id)
+            if (
+                found is None
+                or found.principal_id != normalized_principal
+                or found.status != "completed"
+                or found.payload_json.get("result_json") != expected
+            ):
+                return None
+            updated = replace(
+                found,
+                payload_json={**found.payload_json, "result_json": result},
+                updated_at=now,
+            )
+            self._jobs[updated.job_id] = updated
+            return updated
 
     def fail(self, *, job_id: str, lease_owner: str, error: str) -> PropertySearchWorkJob | None:
         now = self._now()
@@ -572,7 +769,14 @@ class PostgresPropertySearchWorkQueue:
                         f"""
                         SELECT {self._RETURNING_COLUMNS}
                         FROM property_search_work_jobs
-                        WHERE idempotency_key = %s OR (principal_id = %s AND run_id = %s)
+                        WHERE idempotency_key = %s OR (
+                            principal_id = %s
+                            AND run_id = %s
+                            AND COALESCE(
+                                payload_json->>'work_kind',
+                                '{PROPERTY_SEARCH_RUN_WORK_KIND}'
+                            ) = '{PROPERTY_SEARCH_RUN_WORK_KIND}'
+                        )
                         ORDER BY (idempotency_key = %s) DESC
                         LIMIT 1
                         """,
@@ -602,6 +806,151 @@ class PostgresPropertySearchWorkQueue:
                                 principal_id=principal_id,
                                 candidate_refs=affected_refs,
                             )
+                conn.commit()
+        return PropertySearchWorkEnqueueResult(job=self._from_row(row), created=created)
+
+    def enqueue_opportunity_ltd_image(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        payload_json: dict[str, object],
+        idempotency_key: str,
+        max_attempts: int = 2,
+    ) -> PropertySearchWorkEnqueueResult:
+        from psycopg.types.json import Json
+
+        from app.product.property_search_storage import _property_search_principal_key
+
+        normalized_principal = str(principal_id or "").strip()
+        normalized_run = str(run_id or "").strip()
+        key = str(idempotency_key or "").strip()
+        if not normalized_principal or not normalized_run or not key:
+            raise ValueError("property_opportunity_ltd_work_identity_required")
+        principal_key = _property_search_principal_key(normalized_principal)
+        if not principal_key:
+            raise ValueError("property_search_principal_key_required")
+        payload = validated_property_search_work_payload(payload_json)
+        if (
+            str(payload.get("work_kind") or "").strip()
+            != PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
+        ):
+            raise ValueError("property_opportunity_ltd_work_kind_invalid")
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_writer_contract(cur)
+                self._acquire_write_authority(
+                    cur,
+                    principal_key=principal_key,
+                    run_id=normalized_run,
+                )
+                cur.execute(
+                    f"""
+                    INSERT INTO property_search_work_jobs
+                        (job_id, principal_id, run_id, principal_key, idempotency_key,
+                         payload_json, status, attempt_count, max_attempts, available_at,
+                         created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW())
+                    ON CONFLICT DO NOTHING
+                    RETURNING {self._RETURNING_COLUMNS}
+                    """,
+                    (
+                        uuid4().hex,
+                        normalized_principal,
+                        normalized_run,
+                        principal_key,
+                        key,
+                        Json(payload),
+                        max(1, min(int(max_attempts or 1), 3)),
+                    ),
+                )
+                row = cur.fetchone()
+                created = row is not None
+                if row is None:
+                    cur.execute(
+                        f"""
+                        SELECT {self._RETURNING_COLUMNS}
+                        FROM property_search_work_jobs
+                        WHERE idempotency_key = %s
+                        LIMIT 1
+                        """,
+                        (key,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise RuntimeError(
+                            "property_opportunity_ltd_work_enqueue_conflict_unresolved"
+                        )
+                conn.commit()
+        return PropertySearchWorkEnqueueResult(job=self._from_row(row), created=created)
+
+    def enqueue_fact_enrichment(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        payload_json: dict[str, object],
+        idempotency_key: str,
+        max_attempts: int = 3,
+    ) -> PropertySearchWorkEnqueueResult:
+        from psycopg.types.json import Json
+
+        from app.product.property_search_storage import _property_search_principal_key
+
+        normalized_principal = str(principal_id or "").strip()
+        normalized_run = str(run_id or "").strip()
+        key = str(idempotency_key or "").strip()
+        if not normalized_principal or not normalized_run or not key:
+            raise ValueError("property_fact_work_identity_required")
+        principal_key = _property_search_principal_key(normalized_principal)
+        if not principal_key:
+            raise ValueError("property_search_principal_key_required")
+        payload = validated_property_search_work_payload(payload_json)
+        if str(payload.get("work_kind") or "").strip() != PROPERTY_FACT_ENRICHMENT_WORK_KIND:
+            raise ValueError("property_fact_work_kind_invalid")
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_writer_contract(cur)
+                self._acquire_write_authority(
+                    cur,
+                    principal_key=principal_key,
+                    run_id=normalized_run,
+                )
+                cur.execute(
+                    f"""
+                    INSERT INTO property_search_work_jobs
+                        (job_id, principal_id, run_id, principal_key, idempotency_key,
+                         payload_json, status, attempt_count, max_attempts, available_at,
+                         created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW())
+                    ON CONFLICT DO NOTHING
+                    RETURNING {self._RETURNING_COLUMNS}
+                    """,
+                    (
+                        uuid4().hex,
+                        normalized_principal,
+                        normalized_run,
+                        principal_key,
+                        key,
+                        Json(payload),
+                        max(1, int(max_attempts or 1)),
+                    ),
+                )
+                row = cur.fetchone()
+                created = row is not None
+                if row is None:
+                    cur.execute(
+                        f"""
+                        SELECT {self._RETURNING_COLUMNS}
+                        FROM property_search_work_jobs
+                        WHERE idempotency_key = %s
+                        LIMIT 1
+                        """,
+                        (key,),
+                    )
+                    row = cur.fetchone()
+                    if row is None:
+                        raise RuntimeError("property_fact_work_enqueue_conflict_unresolved")
                 conn.commit()
         return PropertySearchWorkEnqueueResult(job=self._from_row(row), created=created)
 
@@ -824,19 +1173,14 @@ class PostgresPropertySearchWorkQueue:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._set_writer_contract(cur)
-                identity = self._nonlocking_job_identity(
-                    cur,
-                    job_id=normalized_job_id,
-                )
-                if identity is None:
-                    conn.commit()
-                    return False
-                principal_id, run_id = identity
-                self._acquire_principal_write_authority(
-                    cur,
-                    principal_id=principal_id,
-                    run_id=run_id,
-                )
+                # A heartbeat only extends an existing exact lease.  It cannot
+                # insert or recreate work, so joining the principal erasure
+                # advisory lock is both unnecessary and dangerous: a long
+                # erasure-ordered publication can otherwise stall the worker
+                # healthcheck until Docker restarts the process.  PostgreSQL's
+                # row lock still orders this UPDATE with a concurrent DELETE;
+                # once deletion commits the conditional update affects zero
+                # rows and cannot resurrect the job.
                 cur.execute(
                     """
                     UPDATE property_search_work_jobs
@@ -844,8 +1188,6 @@ class PostgresPropertySearchWorkQueue:
                         lease_expires_at = NOW() + (%s * INTERVAL '1 second'),
                         updated_at = NOW()
                     WHERE job_id = %s
-                      AND principal_id = %s
-                      AND run_id = %s
                       AND status = 'leased'
                       AND lease_owner = %s
                       AND lease_expires_at > NOW()
@@ -853,8 +1195,6 @@ class PostgresPropertySearchWorkQueue:
                     (
                         max(1, int(lease_seconds or 1)),
                         normalized_job_id,
-                        principal_id,
-                        run_id,
                         owner,
                     ),
                 )
@@ -862,55 +1202,17 @@ class PostgresPropertySearchWorkQueue:
                 conn.commit()
         return changed
 
-    def complete(self, *, job_id: str, lease_owner: str) -> PropertySearchWorkJob | None:
+    def complete(
+        self,
+        *,
+        job_id: str,
+        lease_owner: str,
+        result_json: dict[str, object] | None = None,
+    ) -> PropertySearchWorkJob | None:
         normalized_job_id = str(job_id or "")
         owner = str(lease_owner or "").strip()
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                self._set_writer_contract(cur)
-                identity = self._nonlocking_job_identity(
-                    cur,
-                    job_id=normalized_job_id,
-                )
-                if identity is None:
-                    conn.commit()
-                    return None
-                principal_id, run_id = identity
-                self._acquire_principal_write_authority(
-                    cur,
-                    principal_id=principal_id,
-                    run_id=run_id,
-                )
-                cur.execute(
-                    """
-                    SELECT COUNT(*)::bigint,
-                           COALESCE(
-                               GREATEST(
-                                   EXTRACT(
-                                       EPOCH FROM (
-                                           clock_timestamp() - MIN(created_at)
-                                       )
-                                   ),
-                                   0
-                               ),
-                               0
-                           )::double precision
-                    FROM property_search_work_jobs
-                    WHERE status IN ('queued', 'leased')
-                    """
-                )
-                row = cur.fetchone()
-                conn.commit()
-        if row is None:
-            raise RuntimeError("property_search_work_queue_snapshot_missing")
-        return PropertySearchWorkQueueSnapshot(
-            depth=max(0, int(row[0] or 0)),
-            oldest_item_age_seconds=max(0.0, float(row[1] or 0.0)),
-        )
-
-    def complete(self, *, job_id: str, lease_owner: str) -> PropertySearchWorkJob | None:
-        normalized_job_id = str(job_id or "")
-        owner = str(lease_owner or "").strip()
+        result = validated_property_search_work_result(result_json)
+        from psycopg.types.json import Json
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._set_writer_contract(cur)
@@ -931,6 +1233,10 @@ class PostgresPropertySearchWorkQueue:
                     f"""
                     UPDATE property_search_work_jobs
                     SET status = 'completed',
+                        payload_json = CASE
+                            WHEN %s THEN payload_json
+                            ELSE payload_json || jsonb_build_object('result_json', %s::jsonb)
+                        END,
                         lease_owner = NULL,
                         lease_expires_at = NULL,
                         heartbeat_at = NOW(),
@@ -943,7 +1249,73 @@ class PostgresPropertySearchWorkQueue:
                       AND lease_owner = %s
                     RETURNING {self._RETURNING_COLUMNS}
                     """,
-                    (normalized_job_id, principal_id, run_id, owner),
+                    (
+                        not bool(result),
+                        Json(result),
+                        normalized_job_id,
+                        principal_id,
+                        run_id,
+                        owner,
+                    ),
+                )
+                row = cur.fetchone()
+                conn.commit()
+        return self._from_row(row) if row is not None else None
+
+    def replace_completed_result(
+        self,
+        *,
+        job_id: str,
+        principal_id: str,
+        expected_result_json: dict[str, object],
+        result_json: dict[str, object],
+    ) -> PropertySearchWorkJob | None:
+        """Compare-and-swap a completed result under its principal authority."""
+
+        from psycopg.types.json import Json
+
+        normalized_job_id = str(job_id or "").strip()
+        normalized_principal = str(principal_id or "").strip()
+        expected = validated_property_search_work_result(expected_result_json)
+        result = validated_property_search_work_result(result_json)
+        if not normalized_job_id or not normalized_principal or not expected or not result:
+            raise ValueError("property_search_completed_result_identity_required")
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                self._set_writer_contract(cur)
+                identity = self._nonlocking_job_identity(
+                    cur,
+                    job_id=normalized_job_id,
+                )
+                if identity is None or identity[0] != normalized_principal:
+                    conn.commit()
+                    return None
+                principal, run_id = identity
+                self._acquire_principal_write_authority(
+                    cur,
+                    principal_id=principal,
+                    run_id=run_id,
+                )
+                cur.execute(
+                    f"""
+                    UPDATE property_search_work_jobs
+                    SET payload_json = payload_json ||
+                            jsonb_build_object('result_json', %s::jsonb),
+                        updated_at = NOW()
+                    WHERE job_id = %s
+                      AND principal_id = %s
+                      AND run_id = %s
+                      AND status = 'completed'
+                      AND payload_json->'result_json' = %s::jsonb
+                    RETURNING {self._RETURNING_COLUMNS}
+                    """,
+                    (
+                        Json(result),
+                        normalized_job_id,
+                        principal,
+                        run_id,
+                        Json(expected),
+                    ),
                 )
                 row = cur.fetchone()
                 conn.commit()

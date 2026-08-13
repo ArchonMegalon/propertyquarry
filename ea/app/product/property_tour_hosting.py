@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable, Iterator, Mapping
 from uuid import uuid4
@@ -58,9 +58,12 @@ except ModuleNotFoundError:
     )
 
 try:
-    from scripts.property_tour_layout_contract import room_ids_in_walk_order
+    from scripts.property_tour_layout_contract import room_ids_in_walk_order, source_portal_projection
 except ModuleNotFoundError:
-    from property_tour_layout_contract import room_ids_in_walk_order  # type: ignore[no-redef]
+    from property_tour_layout_contract import (  # type: ignore[no-redef]
+        room_ids_in_walk_order,
+        source_portal_projection,
+    )
 
 _PROPERTY_SCOUT_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0 Safari/537.36"
 _PROPERTY_SCOUT_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
@@ -102,6 +105,8 @@ _KRPANO_PANORAMA_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 _KRPANO_FORBIDDEN_SCENE_STRATEGIES = {"generated_listing_summary", "photo_gallery_hosted", "floorplan_hosted", "pure_360_cube"}
 _KRPANO_FORBIDDEN_CREATION_MODES = {"hosted_listing_fallback", "hosted_photo_gallery_tour"}
 _CUSTOMER_FACING_TOUR_PROVIDERS = ("3dvista",)
+_MATTERPORT_MODEL_PUBLICATION_CONTRACT = "propertyquarry.matterport_model_publication.v1"
+_MATTERPORT_PUBLICATION_PROOF_MAX_AGE = timedelta(days=30)
 _HOSTED_PROPERTY_TOUR_SLUG_MAX_LENGTH = 120
 _PROPERTY_PUBLIC_TOUR_SLUG_RE = re.compile(
     rf"[A-Za-z0-9][A-Za-z0-9._-]{{0,{_HOSTED_PROPERTY_TOUR_SLUG_MAX_LENGTH - 1}}}"
@@ -1904,6 +1909,96 @@ def _hosted_property_tour_has_matterport_export(tour_url: object) -> bool:
     return False
 
 
+def _hosted_property_tour_timestamp(value: object) -> datetime | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _hosted_property_tour_matterport_publication_ready(payload: Mapping[str, object]) -> bool:
+    """Require current topology proof before exposing a Matterport control."""
+
+    matterport_url = ""
+    for key in ("matterport_url", "source_virtual_tour_url"):
+        candidate_url = str(payload.get(key) or "").strip()
+        if (
+            _property_tour_provider_host_kind(candidate_url) == "matterport"
+            and _property_tour_provider_url_shape_valid(candidate_url)
+        ):
+            matterport_url = candidate_url
+            break
+    if not matterport_url:
+        return False
+    try:
+        model_values = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(matterport_url).query,
+            keep_blank_values=True,
+        ).get("m", [])
+    except (TypeError, ValueError):
+        return False
+    if len(model_values) != 1:
+        return False
+    model_sid = str(model_values[0] or "").strip()
+
+    raw_publication = payload.get("matterport_model_publication")
+    if not isinstance(raw_publication, Mapping):
+        return False
+    publication = dict(raw_publication)
+    if (
+        str(publication.get("contract_name") or "").strip()
+        != _MATTERPORT_MODEL_PUBLICATION_CONTRACT
+        or str(publication.get("status") or "").strip().lower() != "pass"
+        or publication.get("model_available") is not True
+        or str(publication.get("model_sid") or "").strip() != model_sid
+    ):
+        return False
+
+    checked_at = _hosted_property_tour_timestamp(publication.get("checked_at"))
+    asset_valid_until = _hosted_property_tour_timestamp(publication.get("asset_valid_until"))
+    proof_valid_until = _hosted_property_tour_timestamp(publication.get("proof_valid_until"))
+    now = datetime.now(timezone.utc)
+    if (
+        checked_at is None
+        or checked_at < now - _MATTERPORT_PUBLICATION_PROOF_MAX_AGE
+        or checked_at > now + timedelta(minutes=5)
+        or asset_valid_until is None
+        or asset_valid_until <= now
+        or proof_valid_until is None
+        or proof_valid_until <= now
+    ):
+        return False
+
+    try:
+        enabled_sweep_count = int(publication.get("enabled_sweep_count") or 0)
+        available_sweep_count = int(publication.get("available_sweep_count") or 0)
+        connected_component_count = int(publication.get("connected_component_count") or 0)
+        room_count = int(publication.get("room_count") or 0)
+        navigation_edge_count = int(publication.get("navigation_edge_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    if (
+        enabled_sweep_count < 3
+        or available_sweep_count < 3
+        or connected_component_count != 1
+        or room_count < 2
+        or navigation_edge_count < enabled_sweep_count - 1
+    ):
+        return False
+    return bool(
+        re.fullmatch(
+            r"[a-f0-9]{64}",
+            str(publication.get("source_sha256") or "").strip().lower(),
+        )
+    )
+
+
 def _hosted_property_tour_entry_has_marker(bundle_dir: Path, relpath: object, *, markers: tuple[str, ...]) -> bool:
     raw_relpath = str(relpath or "").strip().replace("\\", "/")
     if not raw_relpath or raw_relpath.startswith("/") or "://" in raw_relpath or "\x00" in raw_relpath:
@@ -2097,6 +2192,8 @@ def _hosted_property_tour_verified_provider(
     # verified provider control. Provider evidence must win over fallback shape.
     if _hosted_property_tour_has_3dvista_export(normalized_url, principal_id=principal_id):
         return "3dvista"
+    if _hosted_property_tour_matterport_publication_ready(payload):
+        return "matterport"
     if _property_tour_payload_is_disabled_fallback(payload):
         return ""
     return ""
@@ -2113,11 +2210,8 @@ def _hosted_property_tour_verified_open_url(
     provider = _hosted_property_tour_verified_provider(normalized_url, principal_id=principal_id)
     if not provider:
         return ""
-    if (
-        _property_tour_provider_host_kind(normalized_url) == provider
-        and _property_tour_provider_url_shape_valid(normalized_url)
-    ):
-        return normalized_url
+    # Provider URLs stay inside the hosted manifest. The browser receives only
+    # the first-party dispatch route after the provider proof has passed.
     return _hosted_property_tour_control_url(normalized_url, viewer=provider)
 
 
@@ -3282,7 +3376,11 @@ def _hosted_property_tour_first_party_open_url(
     return ""
 
 
-def _hosted_property_tour_walkthrough_asset_url(tour_url: object) -> str:
+def _hosted_property_tour_walkthrough_asset_url(
+    tour_url: object,
+    *,
+    principal_id: object = "",
+) -> str:
     normalized_url = str(tour_url or "").strip()
     reference = _hosted_property_tour_reference_parts(normalized_url)
     if reference is None:
@@ -3292,7 +3390,10 @@ def _hosted_property_tour_walkthrough_asset_url(tour_url: object) -> str:
     manifest_path = bundle_dir / "tour.json"
     if not manifest_path.exists():
         return ""
-    payload = _load_hosted_property_tour_payload(bundle_dir)
+    payload = _load_hosted_property_tour_payload(
+        bundle_dir,
+        principal_id=str(principal_id or "").strip(),
+    )
     if not payload or not isinstance(payload, dict):
         return ""
     magicfit_footprint = bool(
@@ -3347,7 +3448,12 @@ def _hosted_property_tour_walkthrough_asset_url(tour_url: object) -> str:
     return ""
 
 
-def _hosted_property_tour_walkthrough_open_url(tour_url: object, walkthrough_url: object = "") -> str:
+def _hosted_property_tour_walkthrough_open_url(
+    tour_url: object,
+    walkthrough_url: object = "",
+    *,
+    principal_id: object = "",
+) -> str:
     normalized_tour_url = str(tour_url or "").strip()
     normalized_walkthrough_url = str(walkthrough_url or "").strip()
     verified_tour_source = normalized_tour_url
@@ -3377,37 +3483,32 @@ def _hosted_property_tour_walkthrough_open_url(tour_url: object, walkthrough_url
     # come from the exact hosted bundle, whose provider receipt, playable asset,
     # coverage proof, and publication posture are revalidated above.
     canonical_walkthrough_url = (
-        _hosted_property_tour_walkthrough_asset_url(verified_tour_source)
+        _hosted_property_tour_walkthrough_asset_url(
+            verified_tour_source,
+            principal_id=principal_id,
+        )
         if verified_tour_source
         else ""
     )
     if not canonical_walkthrough_url:
         return ""
-    slug = _hosted_property_tour_slug_from_url(verified_tour_source) or _hosted_property_tour_slug_from_url(canonical_walkthrough_url)
+    # The default walkthrough is the verified normal-camera clip itself. Keep
+    # the interactive 3D tour (and its optional 3D-glasses mode) on the separate
+    # tour control so the primary walkthrough action never opens a spatial pane.
+    # Do not expose the verified raw asset path: route it through the branded
+    # public walkthrough endpoint after the owner-scoped readiness check above.
+    slug = _hosted_property_tour_slug_from_url(verified_tour_source)
     if not slug:
-        return canonical_walkthrough_url
-    for source_url in (verified_tour_source, canonical_walkthrough_url):
-        normalized_source = str(source_url or "").strip()
-        if not normalized_source:
-            continue
-        parsed = urllib.parse.urlparse(normalized_source)
-        if not parsed.scheme and not parsed.netloc and str(parsed.path or "").startswith("/tours/"):
-            return f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
-        if not parsed.scheme or not parsed.netloc:
-            continue
-        branded_tour_url = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, f"/tours/{slug}", "", "", ""))
-        if _is_branded_public_tour_url(branded_tour_url):
-            return urllib.parse.urlunparse(
-                (
-                    parsed.scheme,
-                    parsed.netloc,
-                    f"/tours/{slug}",
-                    "",
-                    "pane=flythrough-pane&autoplay=1",
-                    "",
-                )
-            )
-    return canonical_walkthrough_url
+        slug = _hosted_property_tour_slug_from_url(canonical_walkthrough_url)
+    if not slug:
+        return ""
+    route_path = f"/tours/{urllib.parse.quote(slug, safe='')}/walkthrough"
+    parsed_source = urllib.parse.urlparse(verified_tour_source)
+    if parsed_source.scheme and parsed_source.netloc:
+        return urllib.parse.urlunparse(
+            (parsed_source.scheme, parsed_source.netloc, route_path, "", "", "")
+        )
+    return route_path
 
 
 def _generated_reconstruction_relpath_file(bundle_dir: Path, relpath: object) -> Path | None:
@@ -3439,11 +3540,24 @@ def _hosted_property_tour_source_geometry_lock_ready(
     publish-time check, so no private floorplan artifact is needed here.
     """
 
+    layout_contract_status = str(
+        generated_reconstruction.get("layout_contract_status") or ""
+    ).strip().lower()
+    projection_hash = str(
+        generated_reconstruction.get("source_geometry_projection_sha256") or ""
+    ).strip().lower()
+    requires_source_lock = layout_contract_status == "source_locked" or bool(
+        projection_hash
+    )
     floorplan_analysis = receipt.get("floorplan_analysis")
     if not isinstance(floorplan_analysis, dict):
-        return True
-    if str(floorplan_analysis.get("status") or "").strip().lower() != "source_locked":
-        return True
+        # Inferred planning previews remain publishable as explicitly
+        # non-source-locked output.  A bundle that claims the reviewed layout
+        # contract, however, must carry the complete analysis receipt.
+        return not requires_source_lock
+    analysis_status = str(floorplan_analysis.get("status") or "").strip().lower()
+    if analysis_status != "source_locked":
+        return not requires_source_lock and analysis_status == "not_supplied"
     projection = floorplan_analysis.get("source_geometry_projection")
     if not isinstance(projection, dict):
         return False
@@ -3547,17 +3661,20 @@ def _hosted_property_tour_source_geometry_lock_ready(
                 return False
             if actual_bounds != expected_bounds:
                 return False
-    expected_portal_ids = {
-        str(portal.get("id") or "").strip()
+    expected_portals = [
+        source_portal_projection(portal)
         for portal in list(projection.get("portals") or [])
-        if isinstance(portal, dict) and str(portal.get("id") or "").strip()
-    }
-    actual_portal_ids = {
-        str(portal.get("id") or "").strip()
+        if isinstance(portal, dict)
+    ]
+    actual_portals = [
+        source_portal_projection(portal)
         for portal in list(walkable_scene.get("portals") or [])
-        if isinstance(portal, dict) and str(portal.get("id") or "").strip()
-    }
-    return expected_portal_ids.issubset(actual_portal_ids)
+        if isinstance(portal, dict)
+    ]
+    # Compare the complete measured portal records, not just ids.  This
+    # catches a moved doorway, a swapped wall side, a changed width, or an
+    # altered entrance/exit gate while preserving source ordering.
+    return actual_portals == expected_portals
 
 
 def _hosted_property_tour_generated_reconstruction_contract(

@@ -347,7 +347,21 @@
         <h1>{% if brand.key == 'propertyquarry' %}Continue your property search.{% else %}Sign in if you already have account access.{% endif %}</h1>
         <p class="lead">Use a secure email link if your address already has access. You can also continue with an available provider.{% if show_google_provider %} Google only verifies your identity for a PropertyQuarry-local session.{% endif %}</p>
       </div>
-      <div class="access-entry" id="sign-in-options" role="region" aria-label="Sign-in options" tabindex="-1">
+      <div
+        class="access-entry"
+        id="sign-in-options"
+        role="region"
+        aria-label="Sign-in options"
+        tabindex="-1"
+        data-auth-copy-opening="Opening..."
+        data-auth-copy-provider="Sign-in provider"
+        data-auth-copy-if-nothing-opens-email="If nothing opens, use email instead."
+        data-auth-copy-if-nothing-opens-other="If nothing opens, choose another available sign-in option."
+        data-auth-copy-if-nothing-opens-contact="If nothing opens, try again or contact support."
+        data-auth-copy-still-here-email="Still here. Try again or use email instead."
+        data-auth-copy-still-here-other="Still here. Try again or choose another available sign-in option."
+        data-auth-copy-still-here-contact="Still here. Try again or contact support."
+      >
         {% if public_signed_in %}
         <div class="access-entry-block access-entry-block-cta">
           <div class="cta-row">
@@ -557,6 +571,17 @@
     facebook: 'Facebook',
     'id-austria': 'ID Austria',
   };
+  const signInOptions = document.getElementById('sign-in-options');
+  const authCopy = {
+    opening: signInOptions?.dataset.authCopyOpening || 'Opening...',
+    provider: signInOptions?.dataset.authCopyProvider || 'Sign-in provider',
+    ifNothingOpensEmail: signInOptions?.dataset.authCopyIfNothingOpensEmail || 'If nothing opens, use email instead.',
+    ifNothingOpensOther: signInOptions?.dataset.authCopyIfNothingOpensOther || 'If nothing opens, choose another available sign-in option.',
+    ifNothingOpensContact: signInOptions?.dataset.authCopyIfNothingOpensContact || 'If nothing opens, try again or contact support.',
+    stillHereEmail: signInOptions?.dataset.authCopyStillHereEmail || 'Still here. Try again or use email instead.',
+    stillHereOther: signInOptions?.dataset.authCopyStillHereOther || 'Still here. Try again or choose another available sign-in option.',
+    stillHereContact: signInOptions?.dataset.authCopyStillHereContact || 'Still here. Try again or contact support.',
+  };
   document.querySelectorAll('[data-auth-provider-link]').forEach((link) => {
     link.addEventListener('click', (event) => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target && link.target !== '_self') return;
@@ -567,22 +592,22 @@
       const card = link.closest('[data-auth-provider-card]') || link.closest('.access-feedback');
       if (card) card.classList.add('is-submitting');
       link.dataset.originalLabel = link.textContent || '';
-      link.textContent = link.dataset.submittingLabel || 'Opening...';
+      link.textContent = link.dataset.submittingLabel || authCopy.opening;
       link.setAttribute('aria-busy', 'true');
       const providerKind = String(
         link.dataset.authProviderKind
         || link.closest('[data-auth-provider-card]')?.dataset.authProvider
         || '',
       ).trim();
-      const provider = signInProviderLabels[providerKind] || 'Sign-in provider';
+      const provider = signInProviderLabels[providerKind] || authCopy.provider;
       const hasOtherProvider = [...enabledSignInProviders].some((kind) => kind !== providerKind);
       const status = document.querySelector('[data-auth-provider-status]');
       if (status) {
         status.textContent = emailSignInAvailable
-          ? `${provider}. If nothing opens, use email instead.`
+          ? `${provider}. ${authCopy.ifNothingOpensEmail}`
           : (hasOtherProvider
-            ? `${provider}. If nothing opens, choose another available sign-in option.`
-            : `${provider}. If nothing opens, try again or contact support.`);
+            ? `${provider}. ${authCopy.ifNothingOpensOther}`
+            : `${provider}. ${authCopy.ifNothingOpensContact}`);
       }
       window.setTimeout(() => {
         if (document.visibilityState === 'visible' && link.getAttribute('aria-busy') === 'true') {
@@ -591,10 +616,10 @@
           if (card) card.classList.remove('is-submitting');
           if (status) {
             status.textContent = emailSignInAvailable
-              ? 'Still here. Try again or use email instead.'
+              ? authCopy.stillHereEmail
               : (hasOtherProvider
-                ? 'Still here. Try again or choose another available sign-in option.'
-                : 'Still here. Try again or contact support.');
+                ? authCopy.stillHereOther
+                : authCopy.stillHereContact);
           }
         }
       }, 3500);

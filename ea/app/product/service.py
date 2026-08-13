@@ -36,6 +36,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from html import escape as html_escape
+from html import unescape as _html_unescape
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping
@@ -89,6 +90,9 @@ from app.services.property_media_factory import (
     route_property_media_task,
 )
 from app.services.property_customer_copy import normalize_property_fit_note
+from app.services.property_search_visibility import (
+    property_search_candidate_is_suppressed,
+)
 from app.product import property_search_storage as _property_search_storage
 from app.product.property_diorama_preview import (
     DIORAMA_PREVIEW_RENDERER_VERSION,
@@ -172,6 +176,23 @@ from app.product.property_fact_enrichment import (
     property_fact_source_fingerprint,
     property_fact_value,
 )
+from app.product.property_opportunities import (
+    find_property_search_candidate,
+    materialize_property_search_opportunities,
+    property_opportunity_public_projection,
+)
+from app.product.property_opportunity_ltd_generation import (
+    execute_property_opportunity_concept_cover,
+    property_opportunity_concept_cover_asset_descriptor,
+    property_opportunity_concept_cover_materialized_result,
+    property_opportunity_concept_cover_public_projection,
+)
+from app.product.property_onemin_evaluation import (
+    property_onemin_evaluation_needs_refresh,
+    property_onemin_safe_public_packet,
+    run_property_google_maps_ooda,
+    run_property_onemin_evaluation,
+)
 from app.product.property_tour_hosting import (
     _assert_governed_property_tour_slug_not_reserved,
     _configured_public_tour_hosts,
@@ -231,8 +252,11 @@ from app.product.property_tour_hosting import (
     _write_hosted_property_tour_payload_with_slug_lock_held,
 )
 from app.product.property_search_storage import (
+    _bounded_property_scout_completion_observation,
+    _bounded_property_search_run_payload,
     _compare_and_swap_property_search_run_record,
     _compact_pruned_property_search_run_record,
+    _compact_property_scout_completion_observations,
     _delete_property_search_run_record as _delete_property_search_run_record_storage,
     _erase_property_search_account_data as _erase_property_search_account_data_storage,
     _export_property_research_packet_data_for_principal as _export_property_research_packet_data_storage,
@@ -250,10 +274,16 @@ from app.product.property_search_storage import (
     _prune_property_search_run_records,
     _store_property_search_run_compact_record,
     _store_property_search_run_record,
+    _terminalize_orphaned_property_search_run_records,
 )
 from app.product.property_search_work_queue import (
+    PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+    PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+    PROPERTY_SEARCH_RUN_WORK_KIND,
     PostgresPropertySearchWorkQueue,
     PropertySearchWorkJob,
+    property_fact_enrichment_work_idempotency_key,
+    property_opportunity_ltd_image_work_idempotency_key,
     property_search_work_idempotency_key,
     property_search_work_max_attempts,
 )
@@ -738,7 +768,7 @@ _PROPERTY_SCOUT_FLOORPLAN_ARCHIVE_HOST_MARKERS = (
     "justimmo.at",
     "immobilien.derstandard.at",
 )
-_PROPERTY_SEARCH_RUN_TTL_SECONDS = 90 * 24 * 60 * 60
+_PROPERTY_SEARCH_RUN_TTL_SECONDS = 30 * 24 * 60 * 60
 _PROPERTY_SEARCH_RUN_STALE_DEFAULT_SECONDS = 20 * 60
 _PROPERTY_SEARCH_RUN_STAGES = 8
 _PROPERTY_SEARCH_RUN_REGISTRY: dict[str, dict[str, object]] = {}
@@ -2719,14 +2749,7 @@ def _property_search_run_expired(at_iso: str, *, ttl_seconds: int = _PROPERTY_SE
 
 
 def _property_search_run_retention_seconds() -> int:
-    raw_value = str(os.getenv("EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS") or "").strip()
-    if not raw_value:
-        return _PROPERTY_SEARCH_RUN_TTL_SECONDS
-    try:
-        parsed = int(raw_value)
-    except Exception:
-        return _PROPERTY_SEARCH_RUN_TTL_SECONDS
-    return max(0, min(parsed, 10 * 365 * 24 * 60 * 60))
+    return _property_search_storage._property_search_run_retention_seconds()  # type: ignore[attr-defined]
 
 
 def _property_search_run_stale_seconds() -> int:
@@ -3989,6 +4012,22 @@ def _property_search_provider_worker_concurrency_for_plan(plan_key: object) -> i
     return max(1, min(desired, configured if configured > 0 else desired))
 
 
+def _property_search_preview_worker_concurrency_for_plan(
+    plan_key: object,
+    *,
+    exact_scope: bool,
+) -> int:
+    provider_cap = _property_search_provider_worker_concurrency_for_plan(plan_key)
+    if not exact_scope:
+        return provider_cap
+    configured = _property_search_provider_worker_concurrency()
+    # A provider cap limits how many distinct sources run at once. Exact-scope
+    # recovery still needs a small candidate-preview pool inside that source;
+    # otherwise a moved target near the end of a page serializes dozens of
+    # bounded detail requests and consumes the whole run timeout.
+    return max(provider_cap, min(3, configured if configured > 0 else provider_cap))
+
+
 def _property_search_provider_worker_warm_limit() -> int:
     raw_value = str(os.getenv("PROPERTYQUARRY_SEARCH_PROVIDER_WORKER_WARM_LIMIT") or "").strip()
     if not raw_value:
@@ -4879,14 +4918,19 @@ def _list_property_search_run_records(
         rows = [row for row in rows if str(row.get("status") or "").strip().lower() in normalized_statuses]
     rows.sort(key=lambda row: str(row.get("updated_at") or row.get("created_at") or ""), reverse=True)
     if lightweight:
-        rows = [_property_search_storage._compact_property_search_run_record(row) for row in rows]  # type: ignore[attr-defined]
+        lightweight_rows: list[dict[str, object]] = []
+        for row in rows:
+            compact = _property_search_storage._compact_property_search_run_record(row)  # type: ignore[attr-defined]
+            delivery_checked_at = str(row.get("delivery_checked_at") or "").strip()
+            if delivery_checked_at:
+                compact["delivery_checked_at"] = delivery_checked_at
+            lightweight_rows.append(compact)
+        rows = lightweight_rows
     if delivery_work_only:
         rows = [
             row
             for row in rows
-            if str(row.get("compact_schema_version") or "")
-            != str(_property_search_storage._PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION)  # type: ignore[attr-defined]
-            or bool(row.get("delivery_pending", True))
+            if _property_search_storage._property_search_delivery_work_due(row)  # type: ignore[attr-defined]
         ]
     return tuple(rows[:normalized_limit])
 
@@ -5055,6 +5099,49 @@ def _property_fact_request_binding(
         "requirement_digest": requirement_digest,
         "request_digest": request_digest,
     }
+
+
+def _property_fact_rebind_job_inputs(
+    *,
+    job: dict[str, object],
+    binding: Mapping[str, object],
+) -> bool:
+    """Adopt current candidate facts after durable run canonicalization.
+
+    Terminal search runs are projected again when a nested fact job is stored.
+    That projection may replace the candidate packet with an equivalent bounded
+    representation before the worker claims the job. The source, preferences,
+    and requirement contract remain the authority boundary; facts and the
+    derived request digest are safely rebound inside the same atomic mutation.
+    """
+
+    for job_key, binding_key in (
+        ("source_fingerprint", "source_fingerprint"),
+        ("preference_digest", "preference_digest"),
+        ("requirement_digest", "requirement_digest"),
+    ):
+        if not hmac.compare_digest(
+            str(job.get(job_key) or ""),
+            str(binding.get(binding_key) or ""),
+        ):
+            return False
+    facts_digest = str(binding.get("facts_digest") or "").strip()
+    request_digest = str(binding.get("request_digest") or "").strip()
+    if not facts_digest or not request_digest:
+        return False
+    previous_request_digest = str(job.get("request_digest") or "").strip()
+    job["facts_digest"] = facts_digest
+    job["request_digest"] = request_digest
+    if previous_request_digest and not hmac.compare_digest(
+        previous_request_digest,
+        request_digest,
+    ):
+        job["input_binding_rebased"] = True
+        job.setdefault(
+            "input_binding_original_request_digest",
+            previous_request_digest,
+        )
+    return True
 
 
 def _property_fact_execution_plan(
@@ -5640,9 +5727,15 @@ def _property_fact_merge_geo_research(
         )
         if not coordinate_exact or not provider_evidence:
             continue
+        evidence_provider = str(
+            provider_evidence.get("provider") or "openstreetmap_overpass"
+        ).strip()
+        evidence_method = str(
+            provider_evidence.get("method") or "straight_line_osm"
+        ).strip()
         field_evidence = {
-            "provider": "openstreetmap_overpass",
-            "method": "straight_line_osm",
+            "provider": evidence_provider,
+            "method": evidence_method,
             "observed_at": str(
                 provider_evidence.get("provider_observed_at") or ""
             ).strip(),
@@ -5677,6 +5770,9 @@ def _property_fact_merge_geo_research(
             ).strip(),
             "query_endpoint_url": str(
                 provider_evidence.get("query_endpoint_url") or ""
+            ).strip(),
+            "query_url": str(
+                provider_evidence.get("query_url") or ""
             ).strip(),
             "query_digest": str(
                 provider_evidence.get("query_digest") or ""
@@ -5989,10 +6085,84 @@ def _property_fact_find_candidate(
                 row = dict(raw)
                 row.setdefault("source_label", source_label)
                 candidates.append(row)
+    embedded_candidate: dict[str, object] | None = None
     for candidate in candidates:
         if hmac.compare_digest(property_fact_candidate_ref(candidate), normalized_ref):
-            return candidate
-    return None
+            embedded_candidate = candidate
+            break
+    # Durable run rows deliberately omit large candidate arrays after their
+    # bounded research packets have been indexed. Fact enrichment is a
+    # one-candidate partial mutation, so hydrate only the exact run membership
+    # instead of expanding the full run or treating omitted packets as deleted.
+    principal_id = str(record.get("principal_id") or "").strip()
+    run_id = str(record.get("run_id") or "").strip()
+    durable_packet_authoritative = bool(
+        principal_id
+        and run_id
+        and _property_search_run_database_url()
+        and str(record.get("payload_retention_status") or "").strip().lower()
+        in {"bounded_projection", "compact_only"}
+    )
+    if isinstance(embedded_candidate, dict) and not durable_packet_authoritative:
+        return embedded_candidate
+    if not principal_id or not run_id or not _property_search_run_database_url():
+        return embedded_candidate
+    try:
+        indexed_link = (
+            _property_search_storage._load_property_research_packet_link_for_run(
+                principal_id=principal_id,
+                run_id=run_id,
+                candidate_ref=normalized_ref,
+            )
+        )
+        # A partial writer from an older runtime may already have removed this
+        # exact membership before the preservation contract was introduced.
+        # Recover only when the run still carries the fact-job binding that
+        # could have been created solely from that candidate, then reinsert the
+        # membership on the next partial CAS.
+        summary_jobs = (
+            dict(dict(record.get("summary") or {}).get("fact_enrichment_jobs") or {})
+            if isinstance(record.get("summary"), dict)
+            else {}
+        )
+        job_binds_candidate = any(
+            isinstance(job, dict)
+            and hmac.compare_digest(
+                str(job.get("candidate_ref") or "").strip(),
+                normalized_ref,
+            )
+            for job in summary_jobs.values()
+        )
+        if not isinstance(indexed_link, dict) and job_binds_candidate:
+            indexed_link = _load_property_research_packet_link_storage(
+                principal_id=principal_id,
+                candidate_ref=normalized_ref,
+            )
+    except Exception:
+        indexed_link = None
+    indexed_candidate = (
+        dict(indexed_link.get("candidate") or {})
+        if isinstance(indexed_link, dict)
+        and isinstance(indexed_link.get("candidate"), dict)
+        else {}
+    )
+    if (
+        not indexed_candidate
+        or not hmac.compare_digest(
+            property_fact_candidate_ref(indexed_candidate),
+            normalized_ref,
+        )
+    ):
+        return embedded_candidate
+    if isinstance(record, dict):
+        hydrated_summary = dict(record.get("summary") or {})
+        # Keep the partial run row bounded to this exact packet. Other
+        # candidates remain in their indexed memberships and are hydrated on
+        # demand; sequential enrichments therefore cannot rebuild the large
+        # candidate array that compaction intentionally removed.
+        hydrated_summary["research_candidates"] = [indexed_candidate]
+        record["summary"] = hydrated_summary
+    return indexed_candidate
 
 
 def _property_fact_update_candidate_copies(
@@ -6137,6 +6307,7 @@ def _property_fact_mutate_run_record(
                 run_id=normalized_run_id,
                 expected_record_sha256=property_search_run_record_sha256(current),
                 updated_record=working,
+                preserve_unprojected_packet_memberships=True,
             )
             status = str(stored.get("status") or "").strip().lower()
             if status == "record_changed":
@@ -6401,7 +6572,7 @@ def _property_fact_safe_job_payload(job: Mapping[str, object]) -> dict[str, obje
         if isinstance(value, float) and not math.isfinite(value):
             value = None
         method = str(provenance.get("method") or "").strip()
-        if method not in {"", "straight_line_osm"}:
+        if method not in {"", "straight_line_osm", "straight_line_google_maps"}:
             method = ""
         freshness = str(provenance.get("freshness") or "").strip().lower()
         if freshness not in {"", "fresh", "stale", "unknown"}:
@@ -6698,6 +6869,9 @@ def _property_fact_safe_job_payload(job: Mapping[str, object]) -> dict[str, obje
             for row in list(job.get("provider_receipts") or [])[:32]
             if isinstance(row, Mapping)
         ],
+        "onemin_evaluation": property_onemin_safe_public_packet(
+            job.get("onemin_evaluation")
+        ),
         "retryable": bool(job.get("retryable"))
         and attempt < _PROPERTY_FACT_ENRICHMENT_MAX_ATTEMPTS
         and status != "terminal_error",
@@ -9118,7 +9292,7 @@ def _property_realestate_international_preview_facts(source_url: str, source_htm
         source_html,
         flags=re.IGNORECASE | re.DOTALL,
     ):
-        raw_json = html.unescape(match.group(1).strip())
+        raw_json = _html_unescape(match.group(1).strip())
         try:
             payload = json.loads(raw_json)
         except Exception:
@@ -9326,7 +9500,11 @@ def _property_scout_page_preview(property_url: str, *, prefer_fast: bool = False
             }
     html = _property_scout_fetch_html_compat(normalized, timeout_seconds=4.0)
     title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-    title = compact_text(title_match.group(1) if title_match else "", fallback="", limit=160)
+    title = compact_text(
+        _html_unescape(title_match.group(1) if title_match else ""),
+        fallback="",
+        limit=160,
+    )
     og_title = _property_scout_extract_meta_content(html, "og:title")
     og_description = _property_scout_extract_meta_content(html, "og:description")
     meta_description = _property_scout_extract_meta_content(html, "description")
@@ -9421,21 +9599,53 @@ def _property_scout_page_preview(property_url: str, *, prefer_fast: bool = False
         property_facts["floorplan_recovery_diagnostics"] = floorplan_recovery_diagnostics
     if gallery_floorplan_diagnostics:
         property_facts["gallery_floorplan_diagnostics"] = gallery_floorplan_diagnostics
+    resolved_title = (
+        og_title
+        or title
+        or str(willhaben_packet_preview.get("title") or "")
+        or normalized
+    )
+    base_summary = og_description or meta_description
+    listing_mode_evidence = _property_candidate_listing_mode_evidence(
+        property_url=normalized,
+        title=resolved_title,
+        summary=base_summary,
+        property_facts=property_facts,
+    )
+    listing_mode = (
+        "rent"
+        if (
+            listing_mode_evidence.get("rent_text_signal")
+            or listing_mode_evidence.get("rent_fact_signal")
+        )
+        and not (
+            listing_mode_evidence.get("buy_text_signal")
+            or listing_mode_evidence.get("buy_fact_signal")
+        )
+        else "buy"
+    )
+    property_facts = _property_enrich_facts_from_listing_text(
+        facts=property_facts,
+        title=resolved_title,
+        summary=base_summary,
+        listing_mode=listing_mode,
+        property_url=normalized,
+    )
     summary = _property_preview_summary_from_facts(
-        base_summary=og_description or meta_description,
+        base_summary=base_summary,
         property_facts=property_facts,
     )
     property_facts = _property_enrich_missing_fact_research(
         facts=property_facts,
         property_url=normalized,
-        title=og_title or title or normalized,
+        title=resolved_title,
         summary=summary,
         source_label=urllib.parse.urlparse(normalized).netloc.lower(),
         floorplan_urls=tuple(floorplan_urls[:6]),
     )
     quiet_signal = _property_quiet_signal_from_floorplan(
         property_facts=property_facts,
-        title=og_title or title or normalized,
+        title=resolved_title,
         summary=summary,
     )
     if str(quiet_signal.get("signal") or "").strip().lower() not in {"", "none"}:
@@ -9448,7 +9658,7 @@ def _property_scout_page_preview(property_url: str, *, prefer_fast: bool = False
     return {
         "property_url": normalized,
         "listing_id": normalized,
-        "title": og_title or title or str(willhaben_packet_preview.get("title") or "") or normalized,
+        "title": resolved_title,
         "summary": summary or str(willhaben_packet_preview.get("summary") or ""),
         "property_facts_json": property_facts,
         "media_urls_json": media_urls[:12],
@@ -9761,14 +9971,30 @@ def _property_scout_floorplan_media_urls(
 
 
 @lru_cache(maxsize=256)
-def _property_source_research_snapshot(property_url: str, image_urls: tuple[str, ...] = ()) -> dict[str, object]:
+def _property_source_research_snapshot(
+    property_url: str,
+    image_urls: tuple[str, ...] = (),
+    source_preview_json: str = "",
+) -> dict[str, object]:
     normalized = urllib.parse.urldefrag(str(property_url or "").strip())[0]
     if not normalized:
         return {}
-    try:
-        preview = _property_scout_page_preview(normalized, prefer_fast=True)
-    except Exception:
-        preview = {}
+    preview: dict[str, object] = {}
+    if source_preview_json:
+        try:
+            decoded_preview = json.loads(source_preview_json)
+            if isinstance(decoded_preview, dict):
+                preview = dict(decoded_preview)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            preview = {}
+    else:
+        try:
+            preview = _property_scout_page_preview_with_timeout(
+                normalized,
+                prefer_fast=True,
+            )
+        except Exception:
+            preview = {}
     facts = dict(preview.get("property_facts_json") or {}) if isinstance(preview, dict) else {}
     title = str(preview.get("title") or "").strip() if isinstance(preview, dict) else ""
     summary = str(preview.get("summary") or "").strip() if isinstance(preview, dict) else ""
@@ -9786,13 +10012,19 @@ def _property_source_research_snapshot(property_url: str, image_urls: tuple[str,
     labelled_floorplan_urls = _property_scout_floorplan_media_urls(image_urls)
     if labelled_floorplan_urls and "floorplan_urls_json" not in facts:
         facts["floorplan_urls_json"] = list(labelled_floorplan_urls)
-    try:
-        source_html = _property_scout_fetch_html_compat(normalized, timeout_seconds=4.0)
-    except Exception:
-        source_html = ""
+    provider_group = str(facts.get("provider_group") or "").strip().lower()
+    source_html = ""
+    if provider_group == "genossenschaften_at":
+        try:
+            source_html = _property_scout_fetch_html_compat(
+                normalized,
+                timeout_seconds=4.0,
+            )
+        except Exception:
+            source_html = ""
     plain_text = _property_html_fragment_text(source_html)
     lowered_text = plain_text.lower()
-    if "genossenschaften_at" == str(facts.get("provider_group") or "").strip().lower():
+    if provider_group == "genossenschaften_at":
         amount_match = re.search(r"finanzierungsbeitrag[^0-9]*([0-9][0-9\.\, ]+)", plain_text, flags=re.IGNORECASE)
         if amount_match:
             try:
@@ -9960,9 +10192,29 @@ def _merge_property_facts_with_source_research(
     property_url: str,
     property_facts: dict[str, object],
     image_urls: tuple[str, ...] = (),
+    source_preview: dict[str, object] | None = None,
 ) -> dict[str, object]:
     merged = dict(property_facts or {})
-    research = _property_source_research_snapshot(property_url, image_urls)
+    source_preview_json = (
+        json.dumps(
+            source_preview,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+            default=str,
+        )
+        if source_preview
+        else ""
+    )
+    research = (
+        _property_source_research_snapshot(
+            property_url,
+            image_urls,
+            source_preview_json,
+        )
+        if source_preview_json
+        else _property_source_research_snapshot(property_url, image_urls)
+    )
     if research:
         for key, value in research.items():
             existing = merged.get(key)
@@ -10110,7 +10362,7 @@ def _property_untrusted_listing_text_for_extraction(*parts: object) -> tuple[str
         for key, pattern in _PROPERTY_UNTRUSTED_INSTRUCTION_PATTERNS
         if pattern.search(raw_text)
     )
-    text = html.unescape(raw_text)
+    text = _html_unescape(raw_text)
     text = _PROPERTY_UNTRUSTED_LISTING_BLOCK_RE.sub(" ", text)
     text = _PROPERTY_UNTRUSTED_LISTING_TAG_RE.sub(" ", text)
     text = " ".join(text.split())
@@ -11023,8 +11275,28 @@ def _property_scout_rank_score(
     ordinal: int,
 ) -> float:
     fit_score = _property_alert_fit_score(assessment)
+    objective_review_boost = _property_scout_objective_review_boost(
+        property_url=property_url,
+        preview=preview,
+    )
     if fit_score > 0.0:
-        return max(0.0, min(100.0, fit_score + _property_scout_objective_review_boost(property_url=property_url, preview=preview)))
+        # Source order is a bounded relevance prior for neutral discovery.
+        # Decay only the non-personalized review-readiness bonus; never
+        # subtract from the assessment itself, so a strong personal match can
+        # still outrank an early provider result.
+        neutral_fallback_fit = abs(float(fit_score) - 50.0) <= 0.01
+        review_decay = (
+            min(
+                objective_review_boost,
+                max(0.0, float(max(1, int(ordinal)) - 1) * 3.0),
+            )
+            if neutral_fallback_fit
+            else 0.0
+        )
+        return max(
+            0.0,
+            min(100.0, fit_score + objective_review_boost - review_decay),
+        )
     text = " ".join(
         part
         for part in (
@@ -11041,7 +11313,7 @@ def _property_scout_rank_score(
         heuristic += 8.0
     if any(token in text for token in ("lift", "aufzug", "terrasse", "balkon")):
         heuristic += 4.0
-    return max(0.0, min(100.0, heuristic + _property_scout_objective_review_boost(property_url=property_url, preview=preview)))
+    return max(0.0, min(100.0, heuristic + objective_review_boost))
 
 
 def _property_search_source_scope_location(*, source_url: str = "", source_label: str = "") -> str:
@@ -11161,7 +11433,7 @@ def _property_postal_code_core(value: object) -> str:
 
 
 def _property_postal_location_evidence(value: object) -> tuple[dict[str, str], ...]:
-    raw_text = html.unescape(str(value or ""))
+    raw_text = _html_unescape(str(value or ""))
     if not raw_text.strip():
         return ()
     slug_expanded_text = re.sub(
@@ -11177,6 +11449,16 @@ def _property_postal_location_evidence(value: object) -> tuple[dict[str, str], .
         locality = compact_text(str(match.group("locality") or ""), fallback="", limit=80)
         locality = re.split(r"[/#?&=]", locality, maxsplit=1)[0]
         locality = re.split(r"\s+https?\b", locality, maxsplit=1, flags=re.IGNORECASE)[0]
+        # Portals frequently append an action label to otherwise useful
+        # postal evidence (for example "2700 Wiener Neustadt HIER" or
+        # "1020 Wien zu kaufen"). Keep that marketing copy out of provider
+        # queries and persisted location facts.
+        locality = re.sub(
+            r"\s+(?:hier|jetzt|zu\s+(?:kaufen|mieten)|zum\s+(?:kauf|mieten?))\b.*$",
+            "",
+            locality,
+            flags=re.IGNORECASE,
+        )
         locality = re.sub(
             r"\s+(?:m(?:²|2)|sqm|zimmer|rooms?|eur|€|usd|der\s+standard|willhaben|immobilien)\b.*$",
             "",
@@ -12161,7 +12443,9 @@ def _property_candidate_matches_requested_location(
 
     hint_text = " ".join(hints).lower()
     explicit_hint_postal_codes = frozenset(re.findall(r"\b\d{4,5}\b", hint_text))
-    wants_vienna = "wien" in hint_text or "vienna" in hint_text or any(str(code).startswith("1") for code in explicit_hint_postal_codes)
+    wants_vienna = bool(re.search(r"\b(?:wien|vienna)\b", hint_text)) or any(
+        str(code).startswith("1") for code in explicit_hint_postal_codes
+    )
     observed_listing_postal_codes = _property_listing_observed_postal_codes(
         title=title,
         summary=summary,
@@ -12751,7 +13035,7 @@ def _property_candidate_listing_mode_evidence(
         for key in ("listing_mode", "transaction_type", "marketing_type", "offer_type", "deal_type")
         if str(facts.get(key) or "").strip()
     )
-    text = html.unescape(
+    text = _html_unescape(
         " ".join(
             part
             for part in (
@@ -12981,11 +13265,13 @@ def _property_candidate_is_generic_listing_page(
         "/angebote",
         "/ausschreibungen",
         "/wettbewerbe",
-        "/immobilien/",
-        "/immobilien",
         "/overview",
         "/bestandsobjekte",
         "/gemeindewohnungen",
+    )
+    generic_url_marker_hit = bool(
+        path == "/immobilien"
+        or any(marker in path for marker in generic_url_markers)
     )
     generic_marker_hits = sum(1 for marker in generic_title_markers if marker in text)
     has_area_signal = any(str(facts.get(key) or "").strip() for key in ("area_sqm", "living_area_sqm", "usable_area_sqm", "area_m2", "living_area_m2"))
@@ -13017,7 +13303,7 @@ def _property_candidate_is_generic_listing_page(
         "garten",
     )
     return bool(
-        any(marker in url for marker in generic_url_markers)
+        generic_url_marker_hit
         or (
             any(marker in text for marker in non_listing_page_markers)
             and not any(signal in text for signal in residential_listing_signals)
@@ -13418,12 +13704,6 @@ def _property_search_ranked_candidates_from_sources(sources: object, *, limit: i
 _PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF = "karl-czerny-gasse-2-private-showcase"
 _PROPERTY_PRIVATE_SHOWCASE_SOURCE_REF = f"propertyquarry-private-showcase:{_PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF}"
 _PROPERTY_PRIVATE_SHOWCASE_TOUR_SLUG = "karl-czerny-gasse-2-urban-jungle"
-_PROPERTY_PRIVATE_SHOWCASE_DEFAULT_ALLOWED_EMAILS = frozenset(
-    {
-        "tibor.girschele@gmail.com",
-        "elisabeth.girschele@gmail.com",
-    }
-)
 
 
 def _property_private_showcase_allowed_emails() -> frozenset[str]:
@@ -13433,7 +13713,7 @@ def _property_private_showcase_allowed_emails() -> frozenset[str]:
         for value in raw_value.split(",")
         if value.strip() and "@" in value
     )
-    return frozenset((*_PROPERTY_PRIVATE_SHOWCASE_DEFAULT_ALLOWED_EMAILS, *configured))
+    return configured
 
 
 def _property_private_showcase_env_bool(name: str) -> bool:
@@ -13709,6 +13989,13 @@ def _property_search_snapshot_with_private_showcase(
         principal_id=principal_id,
     )
     if not candidate:
+        return snapshot
+    # An owner suppression must stop the synthetic candidate before it can
+    # rebuild the source-derived ranking.  Filtering it only after injection
+    # is too late for compact in-progress runs: their source rows may no longer
+    # carry candidates, so the synthetic row would temporarily replace the
+    # real ranked candidates before being filtered itself.
+    if property_search_candidate_is_suppressed(candidate):
         return snapshot
     sources = [dict(row) for row in list(summary.get("sources") or []) if isinstance(row, dict)]
     for source in sources:
@@ -14661,7 +14948,7 @@ def _property_distance_preference_score_adjustment(
     return adjustment, tuple(notes[:8])
 
 
-_PROPERTY_SEARCH_SCORE_ALGORITHM_VERSION = "propertyquarry.search-score.v1"
+_PROPERTY_SEARCH_SCORE_ALGORITHM_VERSION = "propertyquarry.search-score.v2"
 
 
 def _property_search_score_context(
@@ -14801,6 +15088,18 @@ def _property_search_score_candidate(
         preview=scoring_preview,
         ordinal=resolved_ordinal,
     )
+    objective_review_boost = _property_scout_objective_review_boost(
+        property_url=property_url,
+        preview=scoring_preview,
+    )
+    source_order_review_decay = (
+        min(
+            objective_review_boost,
+            max(0.0, float(resolved_ordinal - 1) * 3.0),
+        )
+        if abs(float(assessment_fit_score) - 50.0) <= 0.01
+        else 0.0
+    )
     ranked_fit_score = max(0.0, base_rank_score - resolved_location_penalty)
     unknowns_penalty_points = 0.0
     if resolved_unknowns_penalty:
@@ -14852,6 +15151,14 @@ def _property_search_score_candidate(
         "facts_digest": property_fact_input_digest(score_input_facts),
         "components": {
             "base_rank_score": round(float(base_rank_score), 2),
+            "objective_review_boost_points": round(
+                float(objective_review_boost),
+                2,
+            ),
+            "source_order_review_decay_points": round(
+                float(source_order_review_decay),
+                2,
+            ),
             "location_penalty_points": round(resolved_location_penalty, 2),
             "unknowns_penalty_points": round(float(unknowns_penalty_points), 2),
             "distance_adjustment_points": round(float(distance_adjustment), 2),
@@ -17733,17 +18040,43 @@ def _property_feedback_decision_consequences() -> list[str]:
 
 def _property_decision_copilot_mode(question: str) -> str:
     normalized = str(question or "").strip().lower()
-    if any(token in normalized for token in ("what changed", "changed", "last time", "new since", "update")):
+    if any(
+        token in normalized
+        for token in ("what changed", "changed", "last time", "new since", "update", "was hat sich", "geändert", "neu seit")
+    ):
         return "change_log"
-    if any(token in normalized for token in ("ask agent", "agent", "follow up", "follow-up", "question")):
+    if any(
+        token in normalized
+        for token in (
+            "ask agent",
+            "agent",
+            "follow up",
+            "follow-up",
+            "question",
+            "what should i ask",
+            "before the viewing",
+            "makler",
+            "fragen",
+            "klären",
+            "klaeren",
+            "besichtigung",
+            "sollte ich",
+        )
+    ):
         return "ask_agent"
-    if any(token in normalized for token in ("investment", "yield", "underwriting", "capex", "risk", "return")):
+    if any(token in normalized for token in ("investment", "yield", "underwriting", "capex", "return", "rendite", "anlage")):
         return "investment"
-    if any(token in normalized for token in ("reject", "rejected", "why no", "why did", "jonas", "anna", "household", "family")):
+    if any(
+        token in normalized
+        for token in ("reject", "rejected", "why no", "why did", "jonas", "anna", "household", "family", "familie", "haushalt", "abgelehnt")
+    ):
         return "household"
-    if any(token in normalized for token in ("pass the brief", "unlock", "make this pass", "what would help", "counterfactual")):
+    if any(
+        token in normalized
+        for token in ("pass the brief", "unlock", "make this pass", "what would help", "counterfactual", "was würde helfen", "was wuerde helfen")
+    ):
         return "unlock"
-    if any(token in normalized for token in ("why", "maybe", "only maybe", "not yes", "not shortlisted")):
+    if any(token in normalized for token in ("why", "maybe", "only maybe", "not yes", "not shortlisted", "warum", "vielleicht", "nicht ja")):
         return "decision"
     return "decision"
 
@@ -17778,6 +18111,11 @@ def _property_decision_copilot_answer(
     mismatch_reasons = [compact_text(item, fallback="", limit=220) for item in list(assessment_json.get("mismatch_reasons_json") or [])]
     mismatch_reasons = [item for item in mismatch_reasons if item]
     property_label = compact_text(property_title, fallback="", limit=120) or compact_text(facts.get("headline") or facts.get("title"), fallback="this property", limit=120)
+    normalized_question = str(question or "").strip().lower()
+    answer_in_german = any(
+        token in normalized_question
+        for token in (" was ", "was ", "warum", "welche", "sollte", "klären", "klaeren", "besichtigung", "makler", "rendite", "risiko")
+    )
 
     if mode == "change_log":
         answer = "The latest visible change is the packet and feedback state, not a fresh ranking shift yet."
@@ -17802,7 +18140,11 @@ def _property_decision_copilot_answer(
         actions.append({"label": "Open property", "action": "open_packet", "href": compact_text(property_url, fallback="", limit=2000)})
     elif mode == "ask_agent":
         primary = agent_questions[:3]
-        answer = "The next strongest agent brief is driven by your blockers and the missing facts still open on this property."
+        answer = (
+            f"Für {property_label} sollten die nächsten Fragen den wichtigsten offenen Punkt und die noch fehlenden Fakten klären."
+            if answer_in_german
+            else f"For {property_label}, the next agent brief should verify the main blocker and the missing facts that are still open."
+        )
         if mismatch_reasons:
             evidence.append(
                 {
@@ -17918,10 +18260,16 @@ def _property_decision_copilot_answer(
     else:
         best_positive = positive[0] if positive else {}
         main_negative = negative[0] if negative else {}
+        strongest_fit = (
+            fit_reasons[0] if fit_reasons else compact_text(best_positive.get("label"), fallback="the available fit evidence", limit=160)
+        ).rstrip(" .;")
+        main_issue = (
+            mismatch_reasons[0] if mismatch_reasons else compact_text(main_negative.get("label"), fallback="an unresolved fact", limit=160)
+        ).rstrip(" .;")
         answer = (
-            f"{property_label} is still closer to Maybe than Yes because the best fit signal is "
-            f"{compact_text(best_positive.get('label'), fallback='still generic', limit=80).lower()}, "
-            f"while the main issue is {compact_text(main_negative.get('label'), fallback='still unresolved evidence', limit=80).lower()}."
+            f"{property_label} bleibt eher Vielleicht als Ja. Dafür spricht: {strongest_fit}. Offen bleibt: {main_issue}."
+            if answer_in_german
+            else f"{property_label} is still closer to Maybe than Yes. The strongest fit is {strongest_fit.lower()}; the main open issue is {main_issue.lower()}."
         )
         if fit_reasons:
             evidence.append({"title": "Why it survived", "detail": fit_reasons[0], "confidence": "High", "source": "ranking"})
@@ -17980,12 +18328,28 @@ def _property_feedback_suggestion_groups(
     suggestions: list[str] = []
     positives: list[str] = []
 
+    def _known_fact_is_truthy(value: object) -> bool:
+        if isinstance(value, (list, tuple, dict, set)):
+            return bool(value)
+        return _property_truthy_flag(value)
+
     total_rent = _float_or_none(facts.get("total_rent_eur"))
     area_sqm = _float_or_none(facts.get("area_sqm"))
     heating = str(facts.get("heating") or facts.get("heating_type") or "").strip().lower()
-    has_lift = bool(facts.get("lift"))
-    has_floorplan = bool(facts.get("has_floorplan") or facts.get("floorplan_count") or facts.get("floorplan_urls_json"))
-    has_balcony = bool(facts.get("balcony") or facts.get("terrace") or facts.get("terrace_area_sqm"))
+    lift_is_known = "lift" in facts or "has_lift" in facts
+    has_lift = _known_fact_is_truthy(facts.get("lift") if "lift" in facts else facts.get("has_lift"))
+    floorplan_is_known = any(key in facts for key in ("has_floorplan", "floorplan_count", "floorplan_urls_json"))
+    has_floorplan = any(
+        _known_fact_is_truthy(facts.get(key))
+        for key in ("has_floorplan", "floorplan_count", "floorplan_urls_json")
+        if key in facts
+    )
+    outdoor_space_is_known = any(key in facts for key in ("balcony", "terrace", "terrace_area_sqm"))
+    has_balcony = any(
+        _known_fact_is_truthy(facts.get(key))
+        for key in ("balcony", "terrace", "terrace_area_sqm")
+        if key in facts
+    )
     nearest_subway = _float_or_none(facts.get("nearest_subway_m"))
     nearest_supermarket = _float_or_none(facts.get("nearest_supermarket_m"))
     nearest_pharmacy = _float_or_none(facts.get("nearest_pharmacy_m"))
@@ -18005,21 +18369,24 @@ def _property_feedback_suggestion_groups(
     nearest_running = _float_or_none(facts.get("nearest_running_m"))
     lease_years = _float_or_none(facts.get("lease_term_years_max"))
 
-    if isinstance(total_rent, float) and total_rent >= 2000.0:
-        suggestions.append("price_too_high")
-    else:
-        positives.append("price_good_value")
+    if isinstance(total_rent, float):
+        if total_rent >= 2000.0:
+            suggestions.append("price_too_high")
+        else:
+            positives.append("price_good_value")
     if "gas" in heating:
         suggestions.append("gas_heating")
-    if not has_lift:
-        suggestions.append("no_lift")
-    else:
-        positives.append("lift_good")
-    if not has_floorplan:
-        suggestions.append("weak_floorplan")
-    else:
-        positives.append("floorplan_good")
-        positives.append("layout_strong")
+    if lift_is_known:
+        if not has_lift:
+            suggestions.append("no_lift")
+        else:
+            positives.append("lift_good")
+    if floorplan_is_known:
+        if not has_floorplan:
+            suggestions.append("weak_floorplan")
+        else:
+            positives.append("floorplan_good")
+            positives.append("layout_strong")
     if isinstance(area_sqm, float) and area_sqm < 70.0:
         suggestions.append("too_small")
     if isinstance(nearest_subway, float) and nearest_subway > 900.0:
@@ -18064,10 +18431,11 @@ def _property_feedback_suggestion_groups(
         suggestions.append("green_access_weak")
     if isinstance(lease_years, float) and lease_years > 0.0 and lease_years <= 5.0:
         suggestions.append("lease_too_short")
-    if not has_balcony:
-        suggestions.append("outdoor_space_weak")
-    else:
-        positives.append("outdoor_space_strong")
+    if outdoor_space_is_known:
+        if not has_balcony:
+            suggestions.append("outdoor_space_weak")
+        else:
+            positives.append("outdoor_space_strong")
     if bool(facts.get("has_360")) or bool(facts.get("source_virtual_tour_url")):
         positives.append("tour_helpful")
     if bool(facts.get("air_quality_risk")) or bool(facts.get("prefer_good_air_quality")):
@@ -29393,6 +29761,7 @@ class ProductService:
         object_type: str,
         object_id: str,
         object_payload: dict[str, object],
+        assessment_id: str | None = None,
     ) -> dict[str, object] | None:
         normalized_person_id = str(person_id or "").strip() or "self"
         return self._preference_profiles.assess_candidate(
@@ -29402,6 +29771,7 @@ class ProductService:
             object_type=object_type,
             object_id=object_id,
             object_payload=object_payload,
+            assessment_id=assessment_id,
             persist=True,
             require_existing_profile=False,
         )
@@ -29427,6 +29797,24 @@ class ProductService:
             object_payload=object_payload,
             persist=False,
             require_existing_profile=require_existing_profile,
+        )
+
+    def _materialize_property_search_opportunities(
+        self,
+        *,
+        principal_id: str,
+        person_id: str,
+        run_id: str,
+        sources: list[dict[str, object]],
+        search_preferences: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        return materialize_property_search_opportunities(
+            sources,
+            principal_id=principal_id,
+            person_id=person_id,
+            run_id=run_id,
+            assess=self.assess_preference_candidate,
+            search_preferences=search_preferences,
         )
 
     def get_property_candidate_fact_enrichment(
@@ -30024,6 +30412,16 @@ class ProductService:
                 ).strip().lower()
                 == "evaluating"
             )
+            assessment_only = assessment_only or bool(
+                not requested_plan
+                and property_onemin_evaluation_needs_refresh(
+                    candidate=candidate,
+                    facts=_property_fact_candidate_facts(candidate),
+                    preferences=preferences,
+                    plan=plan,
+                    score=zero_work_score,
+                )
+            )
             if not requested_plan and unsupported_missing:
                 terminal_status = "terminal_error" if required_only else "succeeded"
                 terminal = {
@@ -30163,12 +30561,20 @@ class ProductService:
             raise RuntimeError("property_fact_job_state_invalid")
         if bool(outcome.get("launch")) and launch_worker:
             launch_job_id = str(outcome.get("job_id") or dict(outcome.get("job") or {}).get("job_id") or "").strip()
-            self._launch_property_candidate_fact_enrichment(
-                principal_id=normalized_principal,
-                run_id=normalized_run_id,
-                candidate_ref=normalized_candidate_ref,
-                job_id=launch_job_id,
-            )
+            if _property_search_durable_work_required():
+                self._enqueue_property_candidate_fact_enrichment(
+                    principal_id=normalized_principal,
+                    run_id=normalized_run_id,
+                    candidate_ref=normalized_candidate_ref,
+                    job=dict(outcome.get("job") or {}),
+                )
+            else:
+                self._launch_property_candidate_fact_enrichment(
+                    principal_id=normalized_principal,
+                    run_id=normalized_run_id,
+                    candidate_ref=normalized_candidate_ref,
+                    job_id=launch_job_id,
+                )
         companion_job: dict[str, object] | None = None
         if not required_only:
             latest_record = _load_property_search_run_record(
@@ -30209,6 +30615,52 @@ class ProductService:
             }
         )
         return payload
+
+    def _enqueue_property_candidate_fact_enrichment(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        candidate_ref: str,
+        job: dict[str, object],
+    ) -> bool:
+        """Dispatch provider-backed fact work without exposing keys to the API."""
+
+        fact_job_id = str(job.get("job_id") or "").strip()
+        attempt = max(1, int(job.get("attempt") or 1))
+        if not fact_job_id:
+            raise RuntimeError("property_fact_work_job_id_required")
+        from app.telemetry import TELEMETRY_PARENT_KEY, serialize_current_trace_parent
+
+        work_payload: dict[str, object] = {
+            "work_kind": PROPERTY_FACT_ENRICHMENT_WORK_KIND,
+            "principal_id": principal_id,
+            "run_id": run_id,
+            "candidate_ref": candidate_ref,
+            "fact_job_id": fact_job_id,
+            "fact_attempt": attempt,
+        }
+        telemetry_parent = serialize_current_trace_parent()
+        if telemetry_parent:
+            work_payload[TELEMETRY_PARENT_KEY] = telemetry_parent
+        queue_key = property_fact_enrichment_work_idempotency_key(
+            principal_id=principal_id,
+            run_id=run_id,
+            candidate_ref=candidate_ref,
+            fact_job_id=fact_job_id,
+            attempt=attempt,
+        )
+        enqueue_result = _property_search_work_queue_repository().enqueue_fact_enrichment(
+            principal_id=principal_id,
+            run_id=run_id,
+            payload_json=work_payload,
+            idempotency_key=queue_key,
+            max_attempts=property_search_work_max_attempts(),
+        )
+        queued = enqueue_result.job
+        if queued.principal_id != principal_id or queued.run_id != run_id:
+            raise RuntimeError("property_fact_work_queue_identity_mismatch")
+        return bool(enqueue_result.created)
 
     def _launch_property_candidate_fact_enrichment(
         self,
@@ -30301,15 +30753,9 @@ class ProductService:
                     source_fingerprint=current_source_fingerprint,
                     required_only=bool(job.get("required_only")),
                 )
-                if any(
-                    not hmac.compare_digest(str(job.get(key) or ""), binding[binding_key])
-                    for key, binding_key in (
-                        ("source_fingerprint", "source_fingerprint"),
-                        ("facts_digest", "facts_digest"),
-                        ("preference_digest", "preference_digest"),
-                        ("requirement_digest", "requirement_digest"),
-                        ("request_digest", "request_digest"),
-                    )
+                if not _property_fact_rebind_job_inputs(
+                    job=job,
+                    binding=binding,
                 ):
                     return {"claimed": False}
                 status = str(job.get("status") or "").strip().lower()
@@ -30407,6 +30853,84 @@ class ProductService:
                 include_resolved=True,
                 property_url=property_url,
             )
+            onemin_score = property_fact_score_projection(
+                candidate={**dict(candidate), "property_facts": merged_facts},
+                plan=plan_after,
+                preferences=preferences,
+            )
+            existing_onemin_evaluation = (
+                dict(candidate.get("onemin_evaluation") or {})
+                if isinstance(candidate.get("onemin_evaluation"), Mapping)
+                else {}
+            )
+            onemin_evaluation = run_property_onemin_evaluation(
+                tool_execution=self._container.tool_execution,
+                principal_id=principal_id,
+                run_id=run_id,
+                candidate_ref=candidate_ref,
+                candidate=candidate,
+                facts=merged_facts,
+                preferences=preferences,
+                plan=plan_after,
+                score=onemin_score,
+                existing=existing_onemin_evaluation,
+            )
+            google_research, onemin_evaluation = run_property_google_maps_ooda(
+                tool_execution=self._container.tool_execution,
+                principal_id=principal_id,
+                run_id=run_id,
+                candidate_ref=candidate_ref,
+                property_url=property_url,
+                facts=merged_facts,
+                plan=plan_after,
+                specs=property_fact_distance_specs(),
+                evaluation=onemin_evaluation,
+            )
+            google_observed_keys: set[str] = set()
+            if google_research:
+                google_action_keys = {
+                    str(row.get("fact_key") or "").strip()
+                    for row in list(
+                        dict(onemin_evaluation.get("ooda") or {}).get("actions")
+                        or []
+                    )
+                    if isinstance(row, Mapping)
+                    and str(row.get("status") or "").strip().lower()
+                    == "verified"
+                }
+                google_requested_plan = [
+                    dict(row)
+                    for row in plan_after
+                    if str(row.get("key") or "").strip() in google_action_keys
+                ]
+                (
+                    merged_facts,
+                    google_changed_labels,
+                    google_observed_keys,
+                ) = _property_fact_merge_geo_research(
+                    property_url=property_url,
+                    facts=merged_facts,
+                    requested_plan=google_requested_plan,
+                    research=google_research,
+                    geo_source_meta=geo_source_meta,
+                )
+                changed_labels = list(
+                    dict.fromkeys([*changed_labels, *google_changed_labels])
+                )
+                observed_keys = set(observed_keys).union(google_observed_keys)
+                plan_after = property_fact_requirement_plan(
+                    facts=merged_facts,
+                    preferences=preferences,
+                    include_resolved=True,
+                    property_url=property_url,
+                )
+                evidence = (
+                    dict(merged_facts.get("property_fact_evidence") or {})
+                    if isinstance(
+                        merged_facts.get("property_fact_evidence"), dict
+                    )
+                    else {}
+                )
             requested_keys = {
                 str(row.get("key") or "").strip()
                 for row in requested_fields
@@ -30469,6 +30993,7 @@ class ProductService:
                     previous_score = None
             updated_candidate = dict(candidate)
             updated_candidate["property_facts"] = merged_facts
+            updated_candidate["onemin_evaluation"] = onemin_evaluation
             if "property_facts_json" in updated_candidate:
                 updated_candidate["property_facts_json"] = merged_facts
             if assessment:
@@ -30610,15 +31135,9 @@ class ProductService:
                     source_fingerprint=latest_source_fingerprint,
                     required_only=bool(job.get("required_only")),
                 )
-                input_binding_matches = all(
-                    hmac.compare_digest(str(job.get(job_key) or ""), latest_binding[binding_key])
-                    for job_key, binding_key in (
-                        ("source_fingerprint", "source_fingerprint"),
-                        ("facts_digest", "facts_digest"),
-                        ("preference_digest", "preference_digest"),
-                        ("requirement_digest", "requirement_digest"),
-                        ("request_digest", "request_digest"),
-                    )
+                input_binding_matches = _property_fact_rebind_job_inputs(
+                    job=job,
+                    binding=latest_binding,
                 )
                 if not input_binding_matches:
                     retryable = claimed_attempt < _PROPERTY_FACT_ENRICHMENT_MAX_ATTEMPTS
@@ -30672,7 +31191,15 @@ class ProductService:
                             rebased_facts[coordinate_key] = _property_fact_json_copy(
                                 coordinate_value
                             )
-                for field in response_fields:
+                google_fields_to_rebase = [
+                    dict(row)
+                    for row in plan_after
+                    if str(row.get("key") or "").strip()
+                    in google_observed_keys
+                    and str(row.get("state") or "").strip().lower()
+                    == "resolved"
+                ]
+                for field in [*response_fields, *google_fields_to_rebase]:
                     if str(field.get("state") or "") != "resolved":
                         continue
                     key = str(field.get("key") or "").strip()
@@ -30688,6 +31215,7 @@ class ProductService:
                     rebased_facts["property_fact_evidence"] = rebased_evidence
                 rebased_candidate = dict(latest_candidate)
                 rebased_candidate["property_facts"] = rebased_facts
+                rebased_candidate["onemin_evaluation"] = onemin_evaluation
                 if "property_facts_json" in rebased_candidate:
                     rebased_candidate["property_facts_json"] = rebased_facts
                 if assessment:
@@ -30811,8 +31339,9 @@ class ProductService:
                         "result_facts_digest": property_fact_input_digest(rebased_facts),
                         "poll_after_ms": 1500,
                         "provider_receipts": _property_fact_provider_receipts(
-                            final_fields
+                            [*final_fields, *google_fields_to_rebase]
                         ),
+                        "onemin_evaluation": onemin_evaluation,
                     }
                 )
                 jobs[job_id] = job
@@ -31761,6 +32290,295 @@ class ProductService:
             row["property_ref"] = property_ref
             visible.append(row)
         return visible[:200]
+
+    @staticmethod
+    def _bounded_mobile_property_urls(
+        values: object,
+        *,
+        limit: int,
+    ) -> list[str]:
+        bounded: list[str] = []
+        seen: set[str] = set()
+        for value in list(values or []):
+            normalized = urllib.parse.urldefrag(str(value or "").strip())[0]
+            if (
+                not normalized.startswith("https://")
+                or len(normalized) > 2048
+                or normalized in seen
+            ):
+                continue
+            seen.add(normalized)
+            bounded.append(normalized)
+            if len(bounded) >= max(1, int(limit or 1)):
+                break
+        return bounded
+
+    @staticmethod
+    def _bounded_mobile_property_fact_value(
+        value: object,
+        *,
+        depth: int = 0,
+    ) -> object:
+        if value is None or isinstance(value, (bool, int, float)):
+            return value
+        if isinstance(value, str):
+            return compact_text(value, fallback="", limit=2000)
+        if depth >= 3:
+            return compact_text(str(value), fallback="", limit=1000)
+        if isinstance(value, dict):
+            result: dict[str, object] = {}
+            for raw_key, nested in list(value.items())[:48]:
+                key = compact_text(str(raw_key or ""), fallback="", limit=120)
+                if key and key not in result:
+                    result[key] = ProductService._bounded_mobile_property_fact_value(
+                        nested,
+                        depth=depth + 1,
+                    )
+            return result
+        if isinstance(value, (list, tuple, set)):
+            return [
+                ProductService._bounded_mobile_property_fact_value(
+                    nested,
+                    depth=depth + 1,
+                )
+                for nested in list(value)[:24]
+            ]
+        return compact_text(str(value), fallback="", limit=1000)
+
+    @staticmethod
+    def _bounded_mobile_property_facts(
+        facts: dict[str, object],
+        *,
+        max_bytes: int = 48000,
+    ) -> dict[str, object]:
+        priority = (
+            "listing_id",
+            "address",
+            "street",
+            "postal_code",
+            "city",
+            "price",
+            "purchase_price",
+            "living_area_m2",
+            "rooms",
+            "property_type",
+            "latitude",
+            "longitude",
+            "source_virtual_tour_url",
+        )
+        keys = [key for key in priority if key in facts]
+        keys.extend(str(key) for key in facts if str(key) not in keys)
+        bounded: dict[str, object] = {}
+        for raw_key in keys[:128]:
+            key = compact_text(str(raw_key or ""), fallback="", limit=120)
+            if not key or key in bounded:
+                continue
+            value = ProductService._bounded_mobile_property_fact_value(
+                facts.get(raw_key),
+            )
+            candidate = {**bounded, key: value}
+            encoded = json.dumps(
+                candidate,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            if len(encoded) <= max(1024, int(max_bytes or 0)):
+                bounded = candidate
+        if len(bounded) < len(facts):
+            bounded["mobile_storage_truncated"] = True
+        return bounded
+
+    def import_mobile_property_link(
+        self,
+        *,
+        principal_id: str,
+        property_url: str,
+        actor: str = "",
+        preference_person_id: str = "self",
+        idempotency_key: str = "",
+    ) -> dict[str, object]:
+        """Evaluate one explicitly confirmed Android share and save it once.
+
+        The native client is intentionally thin: URL allow-listing, fact
+        research, preference scoring, shortlist identity, and deduplication all
+        remain server authoritative. Tour rendering stays lazy so accepting a
+        share never blocks the user on a media provider.
+        """
+
+        normalized_principal = str(principal_id or "").strip()
+        normalized_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
+        if not normalized_principal:
+            return {"status": "unauthorized", "reason": "principal_required"}
+        if not normalized_url or not _property_scout_is_supported_listing_url(normalized_url):
+            return {"status": "invalid", "reason": "property_url_invalid"}
+
+        title = normalized_url
+        summary = ""
+        property_facts: dict[str, object] = {}
+        media_urls: list[str] = []
+        floorplan_urls: list[str] = []
+        panorama_urls: list[str] = []
+        source_virtual_tour_url = ""
+        try:
+            if _is_willhaben_property_url(normalized_url):
+                raw_packet = _load_willhaben_property_packet_compat(normalized_url)
+                packet = _validated_willhaben_captured_packet(
+                    property_url=normalized_url,
+                    packet=raw_packet,
+                )
+                if not packet:
+                    raise RuntimeError("willhaben_property_packet_invalid")
+                title = compact_text(
+                    str(packet.get("title") or normalized_url).strip(),
+                    fallback=normalized_url,
+                    limit=220,
+                )
+                summary = compact_text(
+                    str(raw_packet.get("description") or raw_packet.get("summary") or "").strip(),
+                    fallback="",
+                    limit=900,
+                )
+                raw_facts = packet.get("property_facts_json")
+                property_facts = dict(raw_facts) if isinstance(raw_facts, dict) else {}
+                media_urls = self._bounded_mobile_property_urls(
+                    packet.get("media_urls_json"), limit=16
+                )
+                floorplan_urls = self._bounded_mobile_property_urls(
+                    packet.get("floorplan_urls_json"), limit=6
+                )
+                panorama_urls = self._bounded_mobile_property_urls(
+                    packet.get("panorama_media_urls_json"), limit=8
+                )
+                source_virtual_tour_url = str(
+                    packet.get("source_virtual_tour_url")
+                    or property_facts.get("source_virtual_tour_url")
+                    or ""
+                ).strip()
+            else:
+                preview = _property_scout_page_preview(normalized_url)
+                title = compact_text(
+                    str(preview.get("title") or normalized_url).strip(),
+                    fallback=normalized_url,
+                    limit=220,
+                )
+                summary = compact_text(
+                    str(preview.get("description") or preview.get("summary") or "").strip(),
+                    fallback="",
+                    limit=900,
+                )
+                property_facts = _property_scout_candidate_payload_from_preview(
+                    property_url=normalized_url,
+                    preview=preview,
+                )
+                media_urls = self._bounded_mobile_property_urls(
+                    preview.get("media_urls_json"), limit=16
+                )
+                floorplan_urls = self._bounded_mobile_property_urls(
+                    preview.get("floorplan_urls_json"), limit=6
+                )
+                panorama_urls = self._bounded_mobile_property_urls(
+                    preview.get("panorama_media_urls_json"), limit=8
+                )
+                source_virtual_tour_url = _first_non_empty_text(
+                    preview.get("source_virtual_tour_url"),
+                    property_facts.get("source_virtual_tour_url"),
+                )
+        except Exception as exc:
+            diagnostic = _property_tour_execution_diagnostic(exc)
+            return {
+                "status": "blocked",
+                "reason": str(diagnostic.get("blocked_reason") or "property_preview_unavailable"),
+            }
+
+        property_facts = _merge_property_facts_with_source_research(
+            property_url=normalized_url,
+            property_facts=dict(property_facts),
+            image_urls=tuple(media_urls),
+        )
+        domain = "willhaben" if _is_willhaben_property_url(normalized_url) else "property_scout"
+        try:
+            assessment = self._preference_profiles.assess_candidate(
+                principal_id=normalized_principal,
+                person_id=str(preference_person_id or "").strip() or "self",
+                domain=domain,
+                object_type="listing",
+                object_id=str(
+                    property_facts.get("listing_id")
+                    or _saved_link_fallback_id(normalized_url)
+                ).strip(),
+                object_payload=property_facts,
+                persist=True,
+                require_existing_profile=True,
+            )
+        except Exception:
+            assessment = None
+        stored_property_facts = self._bounded_mobile_property_facts(property_facts)
+
+        candidate: dict[str, object] = {
+            "listing_title": title,
+            "title": title,
+            "summary": summary,
+            "property_url": normalized_url,
+            "source_url": normalized_url,
+            "property_facts_json": dict(stored_property_facts),
+            "property_facts": dict(stored_property_facts),
+            "assessment": dict(assessment or {}) if isinstance(assessment, dict) else {},
+            "recommendation": (
+                str(dict(assessment or {}).get("recommendation") or "").strip()
+                if isinstance(assessment, dict)
+                else ""
+            ),
+            "fit_score": _property_alert_fit_score(
+                dict(assessment or {}) if isinstance(assessment, dict) else None
+            ),
+            "media_urls_json": media_urls,
+            "floorplan_urls_json": floorplan_urls,
+            "panorama_media_urls_json": panorama_urls,
+            "source_virtual_tour_url": source_virtual_tour_url,
+            "mobile_share_import": True,
+        }
+        candidate["property_ref"] = self._property_saved_shortlist_property_ref(candidate)
+        saved = self.persist_property_saved_shortlist_candidates(
+            principal_id=normalized_principal,
+            candidates=[candidate],
+        )
+        property_ref = str(candidate.get("property_ref") or "").strip()
+        saved_candidate = next(
+            (
+                dict(row)
+                for row in saved
+                if isinstance(row, dict)
+                and str(row.get("property_ref") or "").strip() == property_ref
+            ),
+            candidate,
+        )
+        resolved_actor = str(actor or "").strip() or "android_share_import"
+        self._record_product_event(
+            principal_id=normalized_principal,
+            event_type="property_mobile_share_imported",
+            payload={
+                "property_ref": property_ref,
+                "property_url": normalized_url,
+                "actor": resolved_actor,
+                "idempotency_key": compact_text(
+                    str(idempotency_key or "").strip(),
+                    fallback="",
+                    limit=128,
+                ),
+            },
+            source_id=f"mobile-share:{property_ref}",
+            dedupe_key=(
+                f"{normalized_principal}|mobile-share|"
+                f"{str(idempotency_key or property_ref).strip()}"
+            ),
+        )
+        return {
+            "status": "saved",
+            "property_ref": property_ref,
+            "candidate": saved_candidate,
+            "shortlist_url": f"/app/shortlist?candidate={urllib.parse.quote(property_ref, safe='')}",
+        }
 
     def persist_property_saved_shortlist_candidates(
         self,
@@ -34212,6 +35030,7 @@ class ProductService:
         for job in _property_search_interleave_by_provider_group(source_jobs):
             source_url = urllib.parse.urldefrag(str(job.get("url") or job.get("__source_url__") or "").strip())[0]
             platform = str(job.get("platform") or "").strip().lower()
+            prefer_fast = bool(job.get("__prefer_fast__", True))
             listing_urls: list[str] = []
             for property_url in list(job.get("__listing_urls__") or []):
                 normalized_property_url = urllib.parse.urldefrag(str(property_url or "").strip())[0]
@@ -34224,6 +35043,7 @@ class ProductService:
                     **dict(job),
                     "__source_url__": source_url,
                     "__platform__": platform,
+                    "__prefer_fast__": prefer_fast,
                     "__listing_urls__": listing_urls,
                 }
             )
@@ -34255,6 +35075,7 @@ class ProductService:
 
         def _task(job_index: int, property_url: str) -> tuple[int, str, dict[str, object] | None, str, str]:
             try:
+                prefer_fast = bool(normalized_jobs[job_index].get("__prefer_fast__", True))
                 cached_preview: dict[str, object] | None = None
                 if not force_refresh:
                     with cache_lock:
@@ -34262,9 +35083,15 @@ class ProductService:
                             cache_index=cache_index,
                             property_url=property_url,
                         )
-                if cached_preview:
+                if cached_preview and (
+                    prefer_fast
+                    or str(cached_preview.get("title_full") or "").strip()
+                ):
                     return job_index, property_url, dict(cached_preview), "hit", ""
-                preview = _property_scout_page_preview_with_timeout(property_url, prefer_fast=True)
+                preview = _property_scout_page_preview_with_timeout(
+                    property_url,
+                    prefer_fast=prefer_fast,
+                )
                 with cache_lock:
                     self._property_public_preview_cache_store(
                         cache_index=cache_index,
@@ -40221,7 +41048,7 @@ class ProductService:
         text = re.sub(r"<script[\s\S]*?</script>", " ", html_text, flags=re.IGNORECASE)
         text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
         text = re.sub(r"<[^>]+>", " ", text)
-        text = html.unescape(text)
+        text = _html_unescape(text)
         text = " ".join(text.split())
         postal_evidence = _property_postal_location_evidence(text)
         location_match = re.search(
@@ -45017,10 +45844,10 @@ class ProductService:
             )
         except LookupError:
             return False
-        except Exception:
-            if _property_search_durable_work_required():
-                raise
-            return False
+        except RuntimeError as exc:
+            if exc.args == ("property_fact_run_store_rejected",):
+                return False
+            raise
         return applied is True
 
     def _open_property_search_run_interruption_repair(
@@ -45748,6 +46575,56 @@ class ProductService:
             else self._property_search_tour_events_by_source(principal_id=principal_id)
         )
 
+        def _delivery_datetime(value: object) -> datetime | None:
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            try:
+                parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except (OverflowError, TypeError, ValueError):
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+
+        try:
+            tour_verification_max_pending_seconds = int(
+                str(
+                    os.getenv(
+                        "EA_PROPERTY_SEARCH_RESULTS_TOUR_VERIFICATION_MAX_PENDING_SECONDS"
+                    )
+                    or 72 * 60 * 60
+                ).strip()
+            )
+        except (TypeError, ValueError):
+            tour_verification_max_pending_seconds = 72 * 60 * 60
+        tour_verification_max_pending_seconds = max(
+            15 * 60,
+            min(tour_verification_max_pending_seconds, 30 * 24 * 60 * 60),
+        )
+        timing_receipts = (
+            dict(refreshed.get("timing_receipts") or {})
+            if isinstance(refreshed.get("timing_receipts"), dict)
+            else {}
+        )
+        delivery_reference_candidates = [
+            _delivery_datetime(refreshed.get("updated_at")),
+            _delivery_datetime(timing_receipts.get("completed_at")),
+            _delivery_datetime(timing_receipts.get("results_compiled_at")),
+            _delivery_datetime(timing_receipts.get("results_delivery_ready_at")),
+        ]
+        delivery_reference_at = max(
+            (
+                value
+                for value in delivery_reference_candidates
+                if value is not None
+            ),
+            default=None,
+        )
+        verification_expiry_cutoff = datetime.now(timezone.utc) - timedelta(
+            seconds=tour_verification_max_pending_seconds
+        )
+
         def _latest_tour_event_for_candidate(source_ref: str, property_url: str) -> dict[str, object] | None:
             wanted_source = str(source_ref or "").strip()
             if not wanted_source:
@@ -45786,12 +46663,21 @@ class ProductService:
                 existing_tour_url = str(candidate_row.get("tour_url") or "").strip()
                 existing_status = str(candidate_row.get("tour_status") or "").strip().lower()
                 blocked_reason = str(candidate_row.get("blocked_reason") or "").strip()
+                candidate_verification_reference_at = delivery_reference_at
                 if supports_tour and source_ref:
                     latest_event = _latest_tour_event_for_candidate(
                         source_ref=source_ref,
                         property_url=candidate_property_url,
                     )
                     if latest_event is not None:
+                        latest_event_at = _delivery_datetime(
+                            latest_event.get("created_at")
+                        )
+                        if latest_event_at is not None and (
+                            candidate_verification_reference_at is None
+                            or latest_event_at > candidate_verification_reference_at
+                        ):
+                            candidate_verification_reference_at = latest_event_at
                         payload = dict(latest_event.get("payload") or {})
                         event_type = str(latest_event.get("event_type") or "").strip().lower()
                         latest_tour_url = str(payload.get("tour_url") or "").strip()
@@ -45818,6 +46704,19 @@ class ProductService:
                         ready_total += 1
                         candidate_row["tour_status"] = "ready"
                         candidate_row["blocked_reason"] = ""
+                    elif blocked_reason or tour_status in {"blocked", "failed", "skipped"}:
+                        blocked_total += 1
+                    elif (
+                        supports_tour
+                        and candidate_verification_reference_at is not None
+                        and candidate_verification_reference_at
+                        <= verification_expiry_cutoff
+                    ):
+                        blocked_total += 1
+                        candidate_row["tour_status"] = "blocked"
+                        candidate_row["blocked_reason"] = (
+                            "hosted_tour_verification_expired"
+                        )
                     else:
                         candidate_row["tour_status"] = str(candidate_row.get("tour_status") or "created").strip() or "created"
                 elif supports_tour and _property_tour_status_is_pending(tour_status):
@@ -52062,12 +52961,256 @@ class ProductService:
             "parent_run_ids": list(parent_refs),
         }
 
+    @staticmethod
+    def _property_opportunity_ltd_job_projection(
+        job: PropertySearchWorkJob,
+    ) -> dict[str, object]:
+        persisted_result = (
+            dict(job.payload_json.get("result_json") or {})
+            if isinstance(job.payload_json.get("result_json"), dict)
+            else {}
+        )
+        result = property_opportunity_concept_cover_public_projection(
+            persisted_result,
+            generation_id=job.job_id,
+            opportunity_id=str(job.payload_json.get("opportunity_id") or "").strip(),
+        )
+        if job.status == "completed" and result:
+            status = "ready"
+        elif job.status in {"completed", "failed"}:
+            status = "unavailable"
+        else:
+            status = str(job.status or "queued")
+        projection: dict[str, object] = {
+            "generation_id": job.job_id,
+            "status": status,
+            "created": False,
+            "attempt_count": max(0, int(job.attempt_count or 0)),
+        }
+        if status == "ready":
+            projection["result"] = result
+        elif status == "unavailable":
+            projection["message"] = "Concept-cover generation is temporarily unavailable."
+        return projection
+
+    def enqueue_property_opportunity_concept_cover(
+        self,
+        *,
+        principal_id: str,
+        run_id: str,
+        candidate_ref: str,
+        opportunity_id: str,
+        actor: str,
+    ) -> dict[str, object]:
+        normalized_principal = str(principal_id or "").strip()
+        normalized_run = str(run_id or "").strip()
+        normalized_candidate = str(candidate_ref or "").strip()
+        normalized_opportunity = str(opportunity_id or "").strip()
+        if not all(
+            (
+                normalized_principal,
+                normalized_run,
+                normalized_candidate,
+                normalized_opportunity,
+            )
+        ):
+            raise ValueError("property_opportunity_ltd_generation_identity_invalid")
+        record = _load_property_search_run_record(
+            run_id=normalized_run,
+            principal_id=normalized_principal,
+        )
+        candidate = (
+            find_property_search_candidate(record, candidate_ref=normalized_candidate)
+            if isinstance(record, dict)
+            else None
+        )
+        opportunity = (
+            property_opportunity_public_projection(candidate.get("opportunity"))
+            if isinstance(candidate, dict)
+            else {}
+        )
+        if (
+            str(opportunity.get("status") or "") != "ready"
+            or str(opportunity.get("opportunity_id") or "") != normalized_opportunity
+        ):
+            raise ValueError("property_opportunity_ltd_generation_opportunity_invalid")
+        idempotency_key = property_opportunity_ltd_image_work_idempotency_key(
+            principal_id=normalized_principal,
+            run_id=normalized_run,
+            candidate_ref=normalized_candidate,
+            opportunity_id=normalized_opportunity,
+        )
+        enqueue = _property_search_work_queue_repository().enqueue_opportunity_ltd_image(
+            principal_id=normalized_principal,
+            run_id=normalized_run,
+            payload_json={
+                "work_kind": PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+                "candidate_ref": normalized_candidate,
+                "opportunity_id": normalized_opportunity,
+                "actor": str(actor or "browser").strip()[:200] or "browser",
+            },
+            idempotency_key=idempotency_key,
+            max_attempts=2,
+        )
+        projection = self._property_opportunity_ltd_job_projection(enqueue.job)
+        projection["created"] = bool(enqueue.created)
+        return projection
+
+    def get_property_opportunity_concept_cover(
+        self,
+        *,
+        principal_id: str,
+        generation_id: str,
+    ) -> dict[str, object] | None:
+        job = _property_search_work_queue_repository().get(
+            str(generation_id or "").strip()
+        )
+        if job is None or job.principal_id != str(principal_id or "").strip():
+            return None
+        if (
+            str(job.payload_json.get("work_kind") or "")
+            != PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
+        ):
+            return None
+        return self._property_opportunity_ltd_job_projection(job)
+
+    def get_property_opportunity_concept_cover_asset(
+        self,
+        *,
+        principal_id: str,
+        generation_id: str,
+    ) -> dict[str, object] | None:
+        repository = _property_search_work_queue_repository()
+        job = repository.get(
+            str(generation_id or "").strip()
+        )
+        if job is None or job.principal_id != str(principal_id or "").strip():
+            return None
+        if (
+            job.status != "completed"
+            or str(job.payload_json.get("work_kind") or "")
+            != PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
+        ):
+            return None
+        result = job.payload_json.get("result_json")
+        if not isinstance(result, dict):
+            return None
+        opportunity_id = str(job.payload_json.get("opportunity_id") or "").strip()
+        descriptor = property_opportunity_concept_cover_asset_descriptor(
+            result,
+            generation_id=job.job_id,
+            opportunity_id=opportunity_id,
+        )
+        projection = property_opportunity_concept_cover_public_projection(
+            result,
+            generation_id=job.job_id,
+            opportunity_id=opportunity_id,
+        )
+        receipt = (
+            dict(projection.get("receipt"))
+            if isinstance(projection.get("receipt"), dict)
+            else {}
+        )
+        if receipt.get("asset_materialized") is not True:
+            migrated = property_opportunity_concept_cover_materialized_result(
+                result,
+                generation_id=job.job_id,
+                opportunity_id=opportunity_id,
+                descriptor=descriptor,
+            )
+            replaced = repository.replace_completed_result(
+                job_id=job.job_id,
+                principal_id=job.principal_id,
+                expected_result_json=result,
+                result_json=migrated,
+            )
+            if replaced is None:
+                current = repository.get(job.job_id)
+                current_result = (
+                    dict(current.payload_json.get("result_json") or {})
+                    if current is not None
+                    and current.principal_id == job.principal_id
+                    and isinstance(current.payload_json.get("result_json"), dict)
+                    else {}
+                )
+                current_projection = property_opportunity_concept_cover_public_projection(
+                    current_result,
+                    generation_id=job.job_id,
+                    opportunity_id=opportunity_id,
+                )
+                current_artifact = (
+                    dict(current_projection.get("artifact"))
+                    if isinstance(current_projection.get("artifact"), dict)
+                    else {}
+                )
+                if (
+                    current_artifact.get("sha256") != descriptor.get("sha256")
+                    or current_artifact.get("byte_length")
+                    != descriptor.get("byte_length")
+                    or dict(current_projection.get("receipt") or {}).get(
+                        "asset_materialized"
+                    )
+                    is not True
+                ):
+                    raise RuntimeError(
+                        "property_opportunity_ltd_asset_receipt_persistence_failed"
+                    )
+        return descriptor
+
     def execute_property_search_work_job(self, job: PropertySearchWorkJob) -> dict[str, object]:
         principal_id = str(job.principal_id or "").strip()
         run_id = str(job.run_id or "").strip()
         record = _load_property_search_run_record(run_id=run_id, principal_id=principal_id)
         if not isinstance(record, dict):
             raise RuntimeError("property_search_work_run_missing")
+        work_kind = str(
+            job.payload_json.get("work_kind") or PROPERTY_SEARCH_RUN_WORK_KIND
+        ).strip()
+        if work_kind == PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND:
+            candidate_ref = str(job.payload_json.get("candidate_ref") or "").strip()
+            opportunity_id = str(job.payload_json.get("opportunity_id") or "").strip()
+            candidate = find_property_search_candidate(
+                record,
+                candidate_ref=candidate_ref,
+            )
+            opportunity = (
+                property_opportunity_public_projection(candidate.get("opportunity"))
+                if isinstance(candidate, dict)
+                else {}
+            )
+            if (
+                not candidate_ref
+                or not opportunity_id
+                or str(opportunity.get("status") or "") != "ready"
+                or str(opportunity.get("opportunity_id") or "") != opportunity_id
+            ):
+                raise RuntimeError("property_opportunity_ltd_work_payload_invalid")
+            return execute_property_opportunity_concept_cover(
+                tool_execution=self._container.tool_execution,
+                principal_id=principal_id,
+                job_id=job.job_id,
+                opportunity=opportunity,
+            )
+        if work_kind == PROPERTY_FACT_ENRICHMENT_WORK_KIND:
+            candidate_ref = str(job.payload_json.get("candidate_ref") or "").strip()
+            fact_job_id = str(job.payload_json.get("fact_job_id") or "").strip()
+            if not candidate_ref or not fact_job_id:
+                raise RuntimeError("property_fact_work_payload_invalid")
+            if len(candidate_ref) > 512 or len(fact_job_id) > 128:
+                raise RuntimeError("property_fact_work_payload_invalid")
+            self._run_property_candidate_fact_enrichment(
+                principal_id=principal_id,
+                run_id=run_id,
+                candidate_ref=candidate_ref,
+                job_id=fact_job_id,
+            )
+            return {
+                "status": "fact_enrichment_consumed",
+                "run_id": run_id,
+                "principal_id": principal_id,
+            }
+        if work_kind != PROPERTY_SEARCH_RUN_WORK_KIND:
+            raise RuntimeError("property_search_work_kind_invalid")
         status = str(record.get("status") or "").strip().lower()
         if status in (_PROPERTY_SEARCH_TERMINAL_STATUSES - {"failed"}):
             return {
@@ -52088,6 +53231,42 @@ class ProductService:
         if str(result.get("status") or "").strip().lower() == "skipped":
             raise RuntimeError(str(result.get("reason") or "property_search_work_skipped"))
         return result
+
+    def maintain_bounded_property_search_storage(
+        self,
+        *,
+        limit: int = 80,
+        dry_run: bool = False,
+    ) -> dict[str, object]:
+        """Bound legacy duplicated observations and orphaned queued runs."""
+
+        bounded_limit = max(1, min(int(limit or 0), 500))
+        orphaned = _terminalize_orphaned_property_search_run_records(
+            limit=bounded_limit,
+            dry_run=dry_run,
+        )
+        observations = _compact_property_scout_completion_observations(
+            limit=min(bounded_limit, 25),
+            dry_run=dry_run,
+        )
+        return {
+            "generated_at": _now_iso(),
+            "dry_run": bool(dry_run),
+            "orphaned_queued_runs": orphaned,
+            "scout_completion_observations": observations,
+            "terminalized": int(orphaned.get("terminalized") or 0),
+            "observations_compacted": int(observations.get("compacted") or 0),
+            "payload_bytes_reclaimed": max(
+                0,
+                int(orphaned.get("payload_bytes_before") or 0)
+                - int(orphaned.get("payload_bytes_after") or 0),
+            )
+            + max(
+                0,
+                int(observations.get("payload_bytes_before") or 0)
+                - int(observations.get("payload_bytes_after") or 0),
+            ),
+        }
 
     def reconcile_stale_property_search_runs(
         self,
@@ -52149,7 +53328,9 @@ class ProductService:
                     )
                     pickup_status = str(pickup.get("status") or "").strip()
                     if pickup_status in {"started", "queued"}:
-                        repaired += 1
+                        pickup_created = bool(pickup.get("job_created"))
+                        if pickup_status == "started" or pickup_created:
+                            repaired += 1
                         recovered.append(
                             {
                                 "run_id": run_id,
@@ -52158,12 +53339,14 @@ class ProductService:
                                 "repair_status": "",
                                 "replacement_run_id": "",
                                 "execution_pickup_status": pickup_status,
+                                "execution_pickup_created": pickup_created,
                                 "execution_pickup_reason": pickup_reason,
                                 "parent_run_ids": list(parent_run_ids),
                             }
                         )
                         continue
                 before_summary = dict(record.get("summary") or {}) if isinstance(record.get("summary"), dict) else {}
+                before_repair_status = str(before_summary.get("repair_status") or "").strip()
                 before_replacement = str(before_summary.get("repair_replacement_run_id") or "").strip()
                 snapshot = self.get_property_search_run_status(
                     principal_id=state_principal,
@@ -52176,8 +53359,9 @@ class ProductService:
                     if isinstance(snapshot.get("summary"), dict)
                     else {}
                 )
+                after_repair_status = str(after_summary.get("repair_status") or "").strip()
                 after_replacement = str(after_summary.get("repair_replacement_run_id") or "").strip()
-                if str(after_summary.get("repair_status") or "").strip():
+                if after_repair_status != before_repair_status:
                     repaired += 1
                 if after_replacement and after_replacement != before_replacement:
                     replacement_started += 1
@@ -52186,7 +53370,7 @@ class ProductService:
                         "run_id": run_id,
                         "principal_id": state_principal,
                         "status": str(snapshot.get("status") or "").strip(),
-                        "repair_status": str(after_summary.get("repair_status") or "").strip(),
+                        "repair_status": after_repair_status,
                         "replacement_run_id": after_replacement,
                     }
                 )
@@ -52784,19 +53968,23 @@ class ProductService:
         allow_soft_property_type_filter = "property_type" in discovery_relaxed_filter_keys
         allow_soft_area_filter = "min_area_m2" in discovery_relaxed_filter_keys
         allow_soft_availability_filter = "available_within_years" in discovery_relaxed_filter_keys
+        exact_scope_preview_requested = _property_search_has_exact_scope(
+            request_preferences=request_preferences,
+            location_hints=location_hints,
+        )
         provider_preview_worker_cap = max(
             1,
-            int(
-                dict(provider_worker_state or {}).get("worker_concurrency")
-                or _property_search_provider_worker_concurrency_for_plan(plan_key)
-                or 1
+            int(dict(provider_worker_state or {}).get("worker_concurrency") or 1),
+            _property_search_preview_worker_concurrency_for_plan(
+                plan_key,
+                exact_scope=exact_scope_preview_requested,
             ),
         )
-        preview_scan_cap = (
-            0
-            if unlimited_provider_results
-            else _property_search_scan_cap_per_source()
-        )
+        # Commercially unlimited results remove the shortlist entitlement
+        # limit, not the host's bounded scan/ingest safety limit. Respect an
+        # explicit zero as unlimited, but never bypass a positive operator cap
+        # merely because the account is on the Agent plan.
+        preview_scan_cap = _property_search_scan_cap_per_source()
         source_preview_jobs: list[dict[str, object]] = []
         for source_spec in specs:
             source_url = urllib.parse.urldefrag(str(source_spec.get("url") or "").strip())[0]
@@ -52807,10 +53995,7 @@ class ProductService:
                 source_url=source_url,
                 source_label=raw_source_label,
             )
-            source_exact_scope_requested = _property_search_has_exact_scope(
-                request_preferences=request_preferences,
-                location_hints=location_hints,
-            )
+            source_exact_scope_requested = exact_scope_preview_requested
             source_location_hints = (
                 source_scope_location_hints
                 if source_scope_location_hints and (source_exact_scope_requested or not location_hints)
@@ -52850,6 +54035,11 @@ class ProductService:
                     "__source_url__": source_url,
                     "__source_label__": source_label,
                     "__source_scope_label__": raw_source_label,
+                    # Exact-scope matching needs detail fields such as
+                    # ``title_full``. Fetch them in the bounded parallel lane
+                    # so the source loop does not repeat every detail request
+                    # sequentially while the run timeout keeps ticking.
+                    "__prefer_fast__": not source_exact_scope_requested,
                     "__listing_urls__": preview_listing_urls,
                 }
             )
@@ -53449,11 +54639,7 @@ class ProductService:
                 continue
 
             raw_listing_count = len(listing_urls)
-            scan_cap = (
-                0
-                if unlimited_provider_results
-                else _property_search_scan_cap_per_source()
-            )
+            scan_cap = _property_search_scan_cap_per_source()
             scan_truncated = bool(scan_cap and len(listing_urls) > scan_cap)
             if scan_cap:
                 listing_urls = listing_urls[:scan_cap]
@@ -54531,10 +55717,26 @@ class ProductService:
                     investment_research_mode=investment_research_mode,
                     available_within_years=available_within_years,
                 )
+                source_research_kwargs: dict[str, object] = {
+                    "property_url": property_url,
+                    "property_facts": detailed_facts,
+                    "image_urls": tuple(
+                        _property_nonempty_sequence(preview.get("media_urls_json"))
+                    ),
+                }
+                try:
+                    source_research_parameters = inspect.signature(
+                        _merge_property_facts_with_source_research
+                    ).parameters
+                except (TypeError, ValueError):
+                    source_research_parameters = {}
+                if "source_preview" in source_research_parameters or any(
+                    parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in source_research_parameters.values()
+                ):
+                    source_research_kwargs["source_preview"] = preview
                 detailed_facts = _merge_property_facts_with_source_research(
-                    property_url=property_url,
-                    property_facts=detailed_facts,
-                    image_urls=tuple(_property_nonempty_sequence(preview.get("media_urls_json"))),
+                    **source_research_kwargs,
                 )
                 preview["property_facts_json"] = detailed_facts
                 detailed_title = str(preview.get("title") or property_url).strip() or property_url
@@ -56288,6 +57490,13 @@ class ProductService:
             for source in source_summaries
             if isinstance(source, dict)
         )
+        opportunity_projection = self._materialize_property_search_opportunities(
+            principal_id=principal_id,
+            person_id=preference_person_id,
+            run_id=property_search_run_id,
+            sources=source_summaries,
+            search_preferences=request_preferences,
+        )
         payload = {
             "generated_at": _now_iso(),
             "status": "processed",
@@ -56383,6 +57592,7 @@ class ProductService:
             "watch_notified_total": watch_notified_total,
             "filter_near_miss_notified_total": filter_near_miss_notified_total,
             "failed_total": failed_total,
+            **opportunity_projection,
             "sources": source_summaries,
             "timing_ms": {
                 **timing_ms,
@@ -56490,10 +57700,15 @@ class ProductService:
         )
         if lifecycle:
             payload["search_agent_lifecycle"] = lifecycle
+        completion_observation = _bounded_property_scout_completion_observation(
+            payload,
+            run_id=property_search_run_id,
+            actor=str(actor or "").strip() or "property_scout",
+        )
         self._record_product_event(
             principal_id=principal_id,
             event_type="property_scout_sync_completed",
-            payload={**payload, "actor": str(actor or "").strip() or "property_scout"},
+            payload=completion_observation,
             source_id=f"property-scout-sync:{principal_id}",
             dedupe_key=f"{principal_id}|property-scout-sync|{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}",
         )

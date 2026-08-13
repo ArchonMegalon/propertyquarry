@@ -1,0 +1,11 @@
+[Unit]
+Description=Check PropertyQuarry storage high-water thresholds hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=10m
+Persistent=true
+Unit=propertyquarry-storage-high-water.service
+
+[Install]
+WantedBy=timers.target

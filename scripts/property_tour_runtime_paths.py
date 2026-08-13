@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -52,9 +53,15 @@ def best_tour_root(candidates: Iterable[Path]) -> Path | None:
     return max(scored)[3]
 
 
-def running_container_public_tour_dir(container_name: str = "") -> Path | None:
+def running_container_mount_dir(
+    destination: str,
+    container_name: str = "",
+) -> Path | None:
     docker_bin = shutil.which("docker")
     if not docker_bin:
+        return None
+    normalized_destination = str(destination or "").strip()
+    if not normalized_destination.startswith("/"):
         return None
     normalized_container = str(
         container_name or os.getenv("PROPERTYQUARRY_RUNTIME_CONTAINER") or DEFAULT_RUNTIME_CONTAINER
@@ -68,7 +75,7 @@ def running_container_public_tour_dir(container_name: str = "") -> Path | None:
                 "inspect",
                 normalized_container,
                 "--format",
-                '{{range .Mounts}}{{if eq .Destination "/data/public_property_tours"}}{{println .Source}}{{end}}{{end}}',
+                f'{{{{range .Mounts}}}}{{{{if eq .Destination "{normalized_destination}"}}}}{{{{println .Source}}}}{{{{end}}}}{{{{end}}}}',
             ],
             check=False,
             capture_output=True,
@@ -87,6 +94,48 @@ def running_container_public_tour_dir(container_name: str = "") -> Path | None:
         return candidate if candidate.exists() else None
     except OSError:
         return None
+
+
+def running_container_public_tour_dir(container_name: str = "") -> Path | None:
+    return running_container_mount_dir("/data/public_property_tours", container_name)
+
+
+def running_container_incoming_tour_dir(container_name: str = "") -> Path | None:
+    return running_container_mount_dir("/data/incoming_property_tours", container_name)
+
+
+def snapshot_running_container_public_tours(
+    container_name: str = "",
+) -> tuple[Path | None, tempfile.TemporaryDirectory[str] | None]:
+    docker_bin = shutil.which("docker")
+    if not docker_bin:
+        return None, None
+    normalized_container = str(
+        container_name or os.getenv("PROPERTYQUARRY_RUNTIME_CONTAINER") or DEFAULT_RUNTIME_CONTAINER
+    ).strip()
+    if not normalized_container:
+        return None, None
+    temp_dir = tempfile.TemporaryDirectory(prefix="propertyquarry-public-tours-")
+    try:
+        completed = subprocess.run(
+            [
+                docker_bin,
+                "cp",
+                f"{normalized_container}:/data/public_property_tours/.",
+                temp_dir.name,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception:
+        temp_dir.cleanup()
+        return None, None
+    if completed.returncode != 0:
+        temp_dir.cleanup()
+        return None, None
+    return Path(temp_dir.name).resolve(), temp_dir
 
 
 def preferred_public_tour_root(

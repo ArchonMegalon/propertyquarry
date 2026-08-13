@@ -6,11 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+from ea.app.product.property_diorama_preview import render_bright_apartment_diorama
 
 try:
     from scripts.propertyquarry_floorplan_analyzer import (
@@ -53,8 +54,13 @@ DISCLOSURE = (
     "source-linked room dimensions and a derived-plan round-trip check; not a "
     "captured 360 or measured survey."
 )
+DIORAMA_PALETTE = {
+    "accent": (79, 126, 103),
+    "floorplan_wash": (235, 229, 216),
+    "wash": (239, 234, 224),
+}
 SCENES = (
-    ("hall", "Entrance vestibule · 18.80 m²", 52.0, 81.5),
+    ("vorraum", "VR / Vorraum · 18.80 m²", 52.0, 81.5),
     ("bedroom-primary", "Bedroom · 16.86 m²", 36.5, 60.0),
     ("terrace", "Terrace · 7.78 m²", 24.5, 59.0),
     ("bedroom-guest", "Bedroom · 15.24 m²", 78.0, 42.0),
@@ -63,7 +69,7 @@ SCENES = (
     ("living-kitchen", "Wohnküche · 30.33 m²", 53.0, 68.0),
 )
 SCENE_INPUT_NAMES = {
-    "hall": "karl-czerny-hall.png",
+    "vorraum": "karl-czerny-hall.png",
     "bedroom-primary": "karl-czerny-bedroom-16-86.png",
     "terrace": "karl-czerny-terrace.png",
     "bedroom-guest": "karl-czerny-bedroom-15-24.png",
@@ -72,7 +78,7 @@ SCENE_INPUT_NAMES = {
     "living-kitchen": "karl-czerny-living-kitchen.png",
 }
 HOTSPOTS = {
-    "hall": (("Continue to Wohnküche", "living-kitchen", 154, ()),),
+    "vorraum": (("Continue from VR / Vorraum to Wohnküche", "living-kitchen", 154, ()),),
     "bedroom-primary": (
         ("Return to Wohnküche", "living-kitchen", 112, ()),
         ("Step onto terrace", "terrace", -76, ()),
@@ -96,7 +102,7 @@ HOTSPOTS = {
         ),
     ),
     "living-kitchen": (
-        ("Return to entrance vestibule", "hall", -154, ()),
+        ("Return to VR / Vorraum", "vorraum", -154, ()),
         ("Enter primary bedroom", "bedroom-primary", -92, ()),
         (
             "Through internal hall to second bedroom",
@@ -156,7 +162,7 @@ for _room in _ANALYSIS_ROOMS:
         "components": _components,
     }
 WALKTHROUGH_CHAPTERS = (
-    ("Entrance hall", 0.0),
+    ("VR / Vorraum · apartment entrance", 0.0),
     ("Primary bedroom", 5.0),
     ("Terrace", 16.0),
     ("Return via primary bedroom", 23.0),
@@ -263,6 +269,276 @@ def _save_floorplan_fidelity_overlay(source: Path, target: Path) -> None:
     image.convert("RGB").save(target, format="PNG", optimize=True)
 
 
+def _showcase_portal_topology() -> dict[str, object]:
+    source_geometry = dict(_ANALYSIS_SPEC.get("source_geometry") or {})
+    portals = {
+        str(portal.get("id") or ""): dict(portal)
+        for portal in list(source_geometry.get("portals") or [])
+        if isinstance(portal, dict)
+    }
+    exit_gate = portals.get("entrance-exit-gate")
+    balcony_door = portals.get("living-to-balcony-loggia")
+    if exit_gate is None or balcony_door is None:
+        raise RuntimeError("showcase_required_portal_missing")
+    if (
+        str(exit_gate.get("kind") or "") != "exit_gate"
+        or list(exit_gate.get("room_ids") or [])
+        != ["vorraum", "outside"]
+        or str(exit_gate.get("target_room_id") or "") != "outside"
+    ):
+        raise RuntimeError("showcase_stairwell_exit_topology_invalid")
+    if (
+        str(balcony_door.get("kind") or "") != "door"
+        or set(balcony_door.get("room_ids") or ())
+        != {"living-kitchen", "balcony-loggia"}
+        or str(balcony_door.get("target_room_id") or "") != "balcony-loggia"
+    ):
+        raise RuntimeError("showcase_balcony_door_topology_invalid")
+    exit_center = dict(exit_gate.get("center_px") or {})
+    balcony_center = dict(balcony_door.get("center_px") or {})
+    separation_px = abs(int(balcony_center.get("x") or 0) - int(exit_center.get("x") or 0))
+    canvas_width = int(dict(source_geometry.get("canvas_size_px") or {}).get("width") or 0)
+    if canvas_width <= 0 or separation_px < round(canvas_width * 0.25):
+        raise RuntimeError("showcase_stairwell_balcony_separation_invalid")
+    forbidden_pairs = {
+        frozenset(str(room_id) for room_id in pair)
+        for pair in list(dict(_ANALYSIS_SPEC.get("boundary_adjacency") or {}).get("forbidden") or [])
+        if isinstance(pair, (list, tuple)) and len(pair) == 2
+    }
+    if frozenset(("vorraum", "balcony-loggia")) not in forbidden_pairs:
+        raise RuntimeError("showcase_stairwell_balcony_adjacency_not_forbidden")
+    return {
+        "balcony_portal_id": "living-to-balcony-loggia",
+        "exit_portal_id": "entrance-exit-gate",
+        "source_pixel_separation": separation_px,
+        "status": "pass",
+    }
+
+
+def _save_source_locked_diorama(
+    *,
+    floorplan_source: Path,
+    floorplan_analysis: dict[str, object],
+    source_crop_target: Path,
+    target: Path,
+) -> dict[str, object]:
+    source_geometry = dict(floorplan_analysis.get("source_geometry") or {})
+    source_rooms = [
+        dict(room)
+        for room in list(source_geometry.get("rooms") or [])
+        if isinstance(room, dict)
+    ]
+    if not source_rooms:
+        raise RuntimeError("showcase_diorama_source_geometry_missing")
+    component_rows = [
+        dict(component)
+        for room in source_rooms
+        for component in list(room.get("components_px") or [])
+        if isinstance(component, dict)
+    ]
+    if not component_rows:
+        raise RuntimeError("showcase_diorama_source_components_missing")
+    with Image.open(floorplan_source) as opened:
+        source_width, source_height = opened.size
+    padding = max(56, round(min(source_width, source_height) * 0.055))
+    crop_left = max(0, min(int(row["x"]) for row in component_rows) - padding)
+    crop_top = max(0, min(int(row["y"]) for row in component_rows) - padding)
+    crop_right = min(
+        source_width,
+        max(int(row["x"]) + int(row["width"]) for row in component_rows) + padding,
+    )
+    crop_bottom = min(
+        source_height,
+        max(int(row["y"]) + int(row["height"]) for row in component_rows) + padding,
+    )
+    crop_width = max(1, crop_right - crop_left)
+    crop_height = max(1, crop_bottom - crop_top)
+    analysis_rooms = {
+        str(room.get("id") or ""): dict(room)
+        for room in list(floorplan_analysis.get("rooms") or [])
+        if isinstance(room, dict)
+    }
+    clean_plan = Image.new("RGB", (crop_width, crop_height), (248, 246, 240))
+    plan_draw = ImageDraw.Draw(clean_plan)
+    wall_color = (69, 74, 70)
+    room_fills = (
+        (231, 223, 207),
+        (219, 229, 221),
+        (226, 222, 232),
+        (232, 224, 218),
+    )
+    exterior_fill = (196, 216, 199)
+    labels: list[tuple[str, tuple[int, int]]] = []
+    for room_index, source_room in enumerate(source_rooms):
+        room_id = str(source_room.get("id") or "")
+        room = analysis_rooms.get(room_id, {})
+        fill = (
+            exterior_fill
+            if str(room.get("kind") or "") == "exterior" or room_id == "balcony-loggia"
+            else room_fills[room_index % len(room_fills)]
+        )
+        components = [
+            dict(component)
+            for component in list(source_room.get("components_px") or [])
+            if isinstance(component, dict)
+        ]
+        for component in components:
+            left = int(component["x"]) - crop_left
+            top = int(component["y"]) - crop_top
+            right = left + int(component["width"])
+            bottom = top + int(component["height"])
+            plan_draw.rectangle(
+                (left, top, right, bottom),
+                fill=fill,
+                outline=wall_color,
+                width=9,
+            )
+        left = min(int(component["x"]) for component in components) - crop_left
+        top = min(int(component["y"]) for component in components) - crop_top
+        right = max(int(component["x"]) + int(component["width"]) for component in components) - crop_left
+        bottom = max(int(component["y"]) + int(component["height"]) for component in components) - crop_top
+        labels.append(
+            (
+                str(room.get("label") or room_id).split(" · ", 1)[0],
+                (round((left + right) / 2), round((top + bottom) / 2)),
+            )
+        )
+
+    source_portals = [
+        dict(portal)
+        for portal in list(source_geometry.get("portals") or [])
+        if isinstance(portal, dict)
+    ]
+    exit_gate = next(
+        portal
+        for portal in source_portals
+        if str(portal.get("id") or "") == "entrance-exit-gate"
+    )
+    exit_center = dict(exit_gate.get("center_px") or {})
+    exit_x = int(exit_center["x"]) - crop_left
+    exit_y = int(exit_center["y"]) - crop_top
+    stair_box = (
+        max(6, exit_x - 190),
+        max(6, exit_y - 104),
+        max(24, exit_x - 16),
+        min(crop_height - 6, exit_y + 104),
+    )
+    plan_draw.rectangle(stair_box, fill=(213, 214, 210), outline=wall_color, width=9)
+    for step_index in range(1, 8):
+        step_y = round(
+            stair_box[1]
+            + ((stair_box[3] - stair_box[1]) * step_index / 8)
+        )
+        plan_draw.line(
+            (stair_box[0] + 10, step_y, stair_box[2] - 10, step_y),
+            fill=(128, 132, 128),
+            width=4,
+        )
+    labels.append(("Stiegenhaus 3", (round((stair_box[0] + stair_box[2]) / 2), stair_box[1] + 20)))
+
+    for portal in source_portals:
+        center = dict(portal.get("center_px") or {})
+        center_x = int(center["x"]) - crop_left
+        center_y = int(center["y"]) - crop_top
+        width_px = max(24, int(portal.get("width_px") or 0))
+        sides = dict(portal.get("room_sides") or {})
+        side = next(iter(sides.values()), "north")
+        if side in {"north", "south"}:
+            segment = (
+                center_x - (width_px // 2),
+                center_y,
+                center_x + (width_px // 2),
+                center_y,
+            )
+        else:
+            segment = (
+                center_x,
+                center_y - (width_px // 2),
+                center_x,
+                center_y + (width_px // 2),
+            )
+        plan_draw.line(segment, fill=(248, 246, 240), width=15)
+        plan_draw.line(segment, fill=(167, 112, 61), width=5)
+
+    try:
+        label_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 19)
+    except OSError:
+        label_font = ImageFont.load_default()
+    for label, center in labels:
+        text_box = plan_draw.textbbox((0, 0), label, font=label_font)
+        text_width = text_box[2] - text_box[0]
+        text_height = text_box[3] - text_box[1]
+        plan_draw.rounded_rectangle(
+            (
+                center[0] - (text_width // 2) - 5,
+                center[1] - (text_height // 2) - 4,
+                center[0] + (text_width // 2) + 5,
+                center[1] + (text_height // 2) + 4,
+            ),
+            radius=5,
+            fill=(255, 253, 247),
+        )
+        plan_draw.text(
+            (center[0] - (text_width / 2), center[1] - (text_height / 2) - text_box[1]),
+            label,
+            font=label_font,
+            fill=(49, 55, 51),
+        )
+    source_crop_target.parent.mkdir(parents=True, exist_ok=True)
+    clean_plan.save(source_crop_target, format="PNG", optimize=True)
+    route = []
+    for source_room in source_rooms:
+        room_id = str(source_room.get("id") or "")
+        components = [
+            dict(component)
+            for component in list(source_room.get("components_px") or [])
+            if isinstance(component, dict)
+        ]
+        left = min(int(component["x"]) for component in components)
+        top = min(int(component["y"]) for component in components)
+        right = max(int(component["x"]) + int(component["width"]) for component in components)
+        bottom = max(int(component["y"]) + int(component["height"]) for component in components)
+        room = analysis_rooms.get(room_id, {})
+        route.append(
+            {
+                "focus": {
+                    "x": round(((left + right) / 2) - crop_left - (crop_width / 2), 4),
+                    "z": round(((top + bottom) / 2) - crop_top - (crop_height / 2), 4),
+                },
+                "kind": "outdoor" if str(room.get("kind") or "") == "exterior" else "",
+                "label": str(room.get("label") or room_id),
+                "source_room_id": room_id,
+            }
+        )
+    rendered = render_bright_apartment_diorama(
+        floorplan_path=source_crop_target,
+        walkable_scene={
+            "bounds": {"depth_m": float(crop_height), "width_m": float(crop_width)},
+            "route": route,
+        },
+        palette=DIORAMA_PALETTE,
+        source_photo_count=0,
+    )
+    if rendered is None:
+        raise RuntimeError("showcase_diorama_renderer_unavailable")
+    image, metadata = rendered
+    checks = dict(metadata.get("checks") or {})
+    if not checks or not all(value is True for value in checks.values()):
+        raise RuntimeError("showcase_diorama_layout_gate_failed")
+    if int(metadata.get("displayed_route_stop_count") or 0) != len(source_rooms):
+        raise RuntimeError("showcase_diorama_room_coverage_failed")
+    image.save(target, format="PNG", optimize=True)
+    return {
+        **metadata,
+        "preview_sha256": _sha256(target),
+        "source_projection_relpath": "proof/diorama-source-floorplan.png",
+        "source_projection_sha256": _sha256(source_crop_target),
+        "source_projection_kind": "source_pixel_geometry_with_verified_portals",
+        "source_geometry_contract_name": str(source_geometry.get("contract_name") or ""),
+        "status": "pass",
+    }
+
+
 def _scene_payload(
     scene_id: str,
     label: str,
@@ -301,14 +577,12 @@ def _scene_payload(
 def build(args: argparse.Namespace) -> Path:
     input_dir = args.input_dir.expanduser().resolve()
     floorplan_source = args.floorplan.expanduser().resolve()
-    diorama_source = args.diorama.expanduser().resolve()
     output_root = args.output_root.expanduser().resolve()
     bundle = output_root / SLUG
     if bundle.exists():
         raise RuntimeError("target_bundle_exists")
     for path in (
         floorplan_source,
-        diorama_source,
         *(input_dir / name for name in SCENE_INPUT_NAMES.values()),
     ):
         if not path.is_file() or path.stat().st_size <= 0:
@@ -330,6 +604,13 @@ def build(args: argparse.Namespace) -> Path:
         bundle / "floorplan.webp",
         bundle / "proof" / "floorplan-fidelity-overlay.png",
     )
+    portal_topology = _showcase_portal_topology()
+    diorama_layout = _save_source_locked_diorama(
+        floorplan_source=floorplan_source,
+        floorplan_analysis=floorplan_analysis,
+        source_crop_target=bundle / "proof" / "diorama-source-floorplan.png",
+        target=bundle / "diorama-preview.png",
+    )
     derived_floorplan = render_derived_floorplan(
         floorplan_analysis,
         bundle / "derived-floorplan.png",
@@ -342,8 +623,6 @@ def build(args: argparse.Namespace) -> Path:
             format="PNG",
             optimize=True,
         )
-    shutil.copyfile(diorama_source, bundle / "diorama-preview.png")
-
     raw_asset_hashes: dict[str, str] = {}
     panorama_hashes: dict[str, str] = {}
     for scene_id, _label, _x, _y in SCENES:
@@ -412,8 +691,10 @@ def build(args: argparse.Namespace) -> Path:
     )
     layout_fidelity = {
         "contract_name": "propertyquarry.floorplan_spatial_fidelity.v1",
+        "entry_room_id": str(floorplan_analysis.get("entry_room_id") or ""),
         "boundary_adjacency": dict(floorplan_analysis.get("boundary_adjacency") or {}),
         "doorway_edges": [list(edge) for edge in list(floorplan_analysis.get("doorway_edges") or [])],
+        "diorama_layout": diorama_layout,
         "floorplan_sha256": floorplan_sha256,
         "source_floorplan_sha256": str(dict(floorplan_analysis.get("source") or {}).get("sha256") or ""),
         "analyzer_contract_name": ANALYZER_CONTRACT,
@@ -431,6 +712,7 @@ def build(args: argparse.Namespace) -> Path:
         "overlay_sha256": _sha256(bundle / "proof" / "floorplan-fidelity-overlay.png"),
         "review_method": "floorplan_analyzer_round_trip",
         "review_status": "pass",
+        "portal_topology": portal_topology,
         "source_room_count": len(spatial_rooms),
         "source_geometry_contract_name": str(
             dict(floorplan_analysis.get("source_geometry") or {}).get("contract_name") or ""
@@ -462,6 +744,8 @@ def build(args: argparse.Namespace) -> Path:
         "floorplan_analysis_sha256": str(floorplan_analysis.get("analysis_sha256") or ""),
         "floorplan_round_trip_sha256": str(round_trip.get("receipt_sha256") or ""),
         "derived_floorplan_sha256": str(derived_floorplan.get("sha256") or ""),
+        "diorama_preview_sha256": _sha256(bundle / "diorama-preview.png"),
+        "diorama_renderer_version": str(diorama_layout.get("renderer_version") or ""),
         "spatial_model_basis": "floorplan_analyzer_reviewed_dimensions",
         "spatial_model_measured": True,
         "spatial_scene_ids": [scene_id for scene_id, *_rest in SCENES],
@@ -484,7 +768,7 @@ def build(args: argparse.Namespace) -> Path:
         },
         "source_scope": {
             "supported_space": (
-                "Wohnküche, both bedrooms, entrance vestibule, internal hall, "
+                "Wohnküche, both bedrooms, VR / Vorraum with the apartment entrance, internal hall, "
                 "separate WC, bathroom, terrace, and the balcony/loggia as exterior rooms"
             ),
             "unsupported_rooms_omitted": False,
@@ -537,13 +821,14 @@ def build(args: argparse.Namespace) -> Path:
             "expected_scene_count": len(SCENES),
             "floorplan_relpath": "floorplan.webp",
             "derived_floorplan_relpath": "derived-floorplan.png",
-            "initial_scene_id": "hall",
+            "initial_scene_id": "vorraum",
             "representation_disclosure": DISCLOSURE,
             "representation_kind": "ai_reconstruction",
             "scenes": [_scene_payload(*scene) for scene in SCENES],
             "spatial_model": {
                 "layout_fidelity": layout_fidelity,
                 "analyzer_contract_name": ANALYZER_CONTRACT,
+                "entry_room_id": str(floorplan_analysis.get("entry_room_id") or ""),
                 "measured": True,
                 "rooms": spatial_rooms,
                 "source_geometry": dict(floorplan_analysis.get("source_geometry") or {}),
@@ -559,7 +844,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--floorplan", type=Path, required=True)
-    parser.add_argument("--diorama", type=Path, required=True)
+    parser.add_argument(
+        "--diorama",
+        type=Path,
+        help="Deprecated compatibility input; the preview is rendered from the reviewed floorplan.",
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     args = parser.parse_args()
     bundle = build(args)

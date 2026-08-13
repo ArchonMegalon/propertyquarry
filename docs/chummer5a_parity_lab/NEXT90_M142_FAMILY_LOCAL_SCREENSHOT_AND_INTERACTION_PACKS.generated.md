@@ -5,8 +5,8 @@
 - canonical queue frontier: `5399660048`
 
 ## Desktop readiness
-- `desktop_client`: `missing`
-- summary: Desktop flagship proof is still incomplete.
+- `desktop_client`: `warning`
+- summary: Desktop flagship proof is waiting on external host-proof capture.
 
 ## Family summary
 - `dense_builder_and_career_workflows`: pass
@@ -76,5 +76,5 @@
 
 ## Closeout blockers
 - dice_initiative_and_table_utilities: missing interaction receipts: workflow:initiative
-- published readiness still reports desktop_client as missing: Desktop flagship proof is still incomplete.
+- published readiness still reports desktop_client as warning: Desktop flagship proof is waiting on external host-proof capture.
 - canonical design/queue rows are not marked complete yet

@@ -239,3 +239,4 @@ def test_postgres_prune_strips_sources_from_retained_compaction_snapshot(
     assert "SET compact_json = stale_runs.compacted" in update_query
     assert "#- '{summary,sources}') AS compacted" in update_query
     assert "payload_json = stale_runs.compacted ||" in update_query
+    assert "links.retention_state = 'legal_hold'" in update_query

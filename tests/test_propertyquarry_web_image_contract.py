@@ -47,7 +47,11 @@ def test_web_image_uses_two_immutable_stages_and_a_distroless_runtime() -> None:
 
     runtime = dockerfile.split(from_lines[1], 1)[1]
     assert "\nRUN " not in runtime
-    assert "\nENTRYPOINT " not in runtime
+    assert (
+        'ENTRYPOINT ["/usr/local/bin/python", "-I", "-S", '
+        '"/usr/local/libexec/property_web_entrypoint.py"]'
+        in runtime
+    )
     assert "/bin/sh" not in runtime
     assert "curl" not in runtime
     assert "apt-get" not in runtime
@@ -91,11 +95,20 @@ def test_web_runtime_excludes_package_managers_and_shell_entrypoint() -> None:
     assert "COPY --from=build /usr/local /usr/local" in dockerfile
 
 
-def test_compose_command_override_remains_compatible_without_entrypoint() -> None:
+def test_compose_command_override_remains_compatible_with_exec_entrypoint() -> None:
     dockerfile = _dockerfile()
     compose = COMPOSE_FILE.read_text(encoding="utf-8")
 
-    assert "\nENTRYPOINT " not in dockerfile
+    assert (
+        'COPY --chmod=0555 scripts/property_web_entrypoint.py '
+        '/usr/local/libexec/property_web_entrypoint.py'
+        in dockerfile
+    )
+    assert (
+        'ENTRYPOINT ["/usr/local/bin/python", "-I", "-S", '
+        '"/usr/local/libexec/property_web_entrypoint.py"]'
+        in dockerfile
+    )
     assert 'CMD ["python", "-m", "app.runner"]' in dockerfile
     assert (
         'command: ["/usr/local/bin/python", "-m", "app.product.propertyquarry_schema", "migrate"]'

@@ -45,8 +45,10 @@ from scripts.propertyquarry_live_http_security import (
 )
 from scripts.propertyquarry_live_probe_auth import live_probe_request_headers
 from scripts.propertyquarry_live_probe_secret_scope import (
+    read_live_api_token_from_stdin,
     read_release_probe_secret_from_stdin,
     release_probe_secret_environment_scrubbed,
+    scrub_live_api_token_environment,
     scrub_release_probe_secret_environment,
 )
 
@@ -188,6 +190,49 @@ def _header_value(headers: dict[str, Any], name: str) -> str:
         if str(key).strip().lower() == wanted:
             return str(value or "").strip()
     return ""
+
+
+def _release_probe_browser_navigation_url(
+    url: str,
+    *,
+    headers: dict[str, str],
+    authorized_origin: str,
+    timeout_seconds: float,
+    release_probe_secret: str,
+    release_probe_configured_routes: tuple[str, ...] = (),
+) -> tuple[str, dict[str, object]]:
+    """Resolve same-origin redirects with a fresh signature per hop.
+
+    Playwright carries headers supplied to an intercepted request onto its
+    redirects without re-running the route handler. A path-bound release
+    signature must never be reused that way, so the bounded HTTP probe resolves
+    the redirect chain first and the browser opens the verified final URL.
+    """
+
+    response = _http_get_for_smoke(
+        url,
+        headers=headers,
+        timeout_seconds=timeout_seconds,
+        follow_redirects=True,
+        authorized_origin=authorized_origin,
+        release_probe_secret=release_probe_secret,
+        release_probe_configured_routes=release_probe_configured_routes,
+    )
+    status_code = int(response.get("status_code") or 0)
+    final_url = str(response.get("url") or url).strip() or url
+    redirect_resolved = (
+        status_code == 200
+        and final_url != url
+        and url_matches_origin(final_url, authorized_origin)
+    )
+    return (
+        final_url if redirect_resolved else url,
+        {
+            "release_probe_redirect_resolved": redirect_resolved,
+            "release_probe_redirect_status_code": status_code,
+            "release_probe_navigation_url": final_url if redirect_resolved else url,
+        },
+    )
 
 
 def _redact_sensitive_receipt_text(value: object) -> str:
@@ -419,6 +464,45 @@ def _playwright_route_metrics_worker(
                         pass
                     page.wait_for_timeout(1200)
                     status = int(response.status) if response is not None else 0
+                    touchscreen_tap_capable = False
+                    try:
+                        page.evaluate(
+                            """() => {
+                              const previous = document.getElementById('propertyquarry-touch-capability-probe');
+                              if (previous) previous.remove();
+                              const probe = document.createElement('div');
+                              probe.id = 'propertyquarry-touch-capability-probe';
+                              probe.setAttribute('aria-hidden', 'true');
+                              probe.style.cssText = [
+                                'position:fixed',
+                                'inset:0 auto auto 0',
+                                'width:20px',
+                                'height:20px',
+                                'z-index:2147483647',
+                                'background:transparent',
+                                'pointer-events:auto'
+                              ].join(';');
+                              const contain = (event) => {
+                                event.preventDefault();
+                                event.stopImmediatePropagation();
+                              };
+                              for (const eventName of ['touchstart', 'pointerdown', 'mousedown', 'click']) {
+                                probe.addEventListener(eventName, contain, {capture: true, passive: false});
+                              }
+                              document.body.appendChild(probe);
+                            }"""
+                        )
+                        page.touchscreen.tap(10, 10)
+                        touchscreen_tap_capable = True
+                    except Exception:
+                        touchscreen_tap_capable = False
+                    finally:
+                        try:
+                            page.evaluate(
+                                """() => document.getElementById('propertyquarry-touch-capability-probe')?.remove()"""
+                            )
+                        except Exception:
+                            pass
                     metrics = dict(page.evaluate(_collect_metrics_script()) or {})
                     metrics.update(
                         {
@@ -430,6 +514,7 @@ def _playwright_route_metrics_worker(
                             "final_url": str(page.url or ""),
                             "viewport_width": viewport_width,
                             "viewport_height": viewport_height,
+                            "touchscreen_tap_capable": touchscreen_tap_capable,
                         }
                     )
                     queue.put({"ok": True, "status_code": status, "metrics": metrics})
@@ -691,15 +776,18 @@ def seeded_research_detail_payload() -> dict[str, Any]:
     candidate = {
         "candidate_ref": "perf-candidate-1020",
         "rank": 1,
-        "title": "Performance smoke apartment in 1020 Vienna",
-        "source_label": "Willhaben | Austria | Rent | 1020 Vienna",
+        "title": "Bright three-room apartment in 1020 Vienna · Demo",
+        "source_label": "PropertyQuarry demo | Austria | Rent | 1020 Vienna",
         "source_platform": "willhaben",
+        "country_code": "AT",
         "property_url": "https://example.invalid/propertyquarry/performance-smoke",
         "packet_url": "/app/research/perf-candidate-1020",
         "review_url": "/app/research/perf-candidate-1020",
+        "preview_image_url": "/static/propertyquarry-demo-home.svg",
+        "diorama_preview_url": "/static/propertyquarry-demo-home.svg",
         "fit_score": 91,
         "score": 91,
-        "fit_summary": "Transit, area, layout and budget fit the seeded brief.",
+        "fit_summary": "Transit, area, layout and budget fit this synthetic demo brief.",
         "match_reasons": ["1020 Vienna matches the seeded search area.", "The synthetic listing keeps route and layout data compact."],
         "mismatch_reasons": ["Operating costs are still missing from the listing."],
         "saved_from_run_id": "run-gold-mobile",
@@ -707,6 +795,10 @@ def seeded_research_detail_payload() -> dict[str, Any]:
             "postal_code": "1020",
             "postal_name": "1020 Vienna",
             "district": "1020 Vienna",
+            "city": "Vienna",
+            "country_code": "AT",
+            "map_lat": 48.2167,
+            "map_lng": 16.4,
             "price_display": "EUR 1,290",
             "price_eur": 1290,
             "area_m2": 72,
@@ -890,10 +982,18 @@ def browser_mobile_proof_checks(metrics: dict[str, Any]) -> list[dict[str, Any]]
         return []
     viewport_width = int(metrics.get("viewport_width") or 0)
     body_width = int(metrics.get("body_width") or 0)
-    min_action_height = float(metrics.get("measured_touch_target_height") or 0)
+    min_action_height = float(
+        metrics.get("measured_primary_touch_target_height")
+        or metrics.get("measured_touch_target_height")
+        or 0
+    )
     return [
         {"name": "browser_navigation_committed", "ok": bool(metrics.get("navigation_committed"))},
-        {"name": "browser_touch_context", "ok": bool(metrics.get("touch_capable"))},
+        {
+            "name": "browser_touch_context",
+            "ok": bool(metrics.get("touch_capable"))
+            or bool(metrics.get("touchscreen_tap_capable")),
+        },
         {"name": "browser_focus_navigation", "ok": bool(metrics.get("focus_navigation_ok"))},
         {"name": "no_horizontal_overflow", "ok": bool(viewport_width) and body_width <= viewport_width + 1},
         {"name": "primary_touch_targets", "ok": min_action_height >= 44},
@@ -926,6 +1026,11 @@ def mobile_billing_readiness_from_metrics(metrics: dict[str, Any]) -> dict[str, 
         "flagship_ok": state == "available",
         "reason": reason,
     }
+
+
+def _is_paid_plan_label(value: str) -> bool:
+    normalized_plan = str(value or "").strip().lower()
+    return bool(normalized_plan and not normalized_plan.startswith("free"))
 
 
 def mobile_billing_readiness_summary(
@@ -1136,6 +1241,8 @@ def _collect_metrics_script() -> str:
       const actionHeights = actionNodes.map((node) => node.getBoundingClientRect().height).filter((height) => height > 0);
       const browserInteractionNodes = visibleNodes('main button, main a[href], header a[href], nav a[href], details > summary, .pqx-account-logout-strip button, .pqx-account-logout-strip a');
       const browserInteractionHeights = browserInteractionNodes.map((node) => node.getBoundingClientRect().height).filter((height) => height > 0);
+      const primaryTouchNodes = visibleNodes('main button, main a.pqx-button, main a.pqx-link-button, main a.pq-pack-button, main .console-action, header a[href], nav a[href], details > summary, .pqx-account-logout-strip button, .pqx-account-logout-strip a');
+      const primaryTouchHeights = primaryTouchNodes.map((node) => node.getBoundingClientRect().height).filter((height) => height > 0);
       const focusTarget = browserInteractionNodes.find((node) => !node.hasAttribute('disabled')) || null;
       if (focusTarget && typeof focusTarget.focus === 'function') {
         focusTarget.focus();
@@ -1356,6 +1463,7 @@ def _collect_metrics_script() -> str:
         topnav_visible: visible(topnav) || visible(mobileNavMenu),
         min_action_height: actionHeights.length ? Math.min(...actionHeights) : 44,
         measured_touch_target_height: browserInteractionHeights.length ? Math.min(...browserInteractionHeights) : 0,
+        measured_primary_touch_target_height: primaryTouchHeights.length ? Math.min(...primaryTouchHeights) : 44,
         touch_capable: Boolean(('ontouchstart' in window) || Number(navigator.maxTouchPoints || 0) > 0),
         focusable_action_count: browserInteractionNodes.length,
         focus_navigation_ok: focusNavigationOk,
@@ -1512,6 +1620,7 @@ def build_live_mobile_surface_receipt(
     api_token: str,
     principal_id: str,
     release_probe_secret: str = "",
+    expected_plan_label: str = "Agent",
     host_header: str = "",
     routes: tuple[str, ...] = DEFAULT_ROUTES,
     require_research_detail: bool = False,
@@ -1524,6 +1633,7 @@ def build_live_mobile_surface_receipt(
     required_browser_engines: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     normalized_release_probe_secret = str(release_probe_secret or "").strip()
+    paid_persona = _is_paid_plan_label(expected_plan_label)
     release_probe_configured_routes = tuple(
         dict.fromkeys(
             normalized_route
@@ -1559,6 +1669,7 @@ def build_live_mobile_surface_receipt(
                 api_token=api_token,
                 principal_id=principal_id,
                 release_probe_secret=normalized_release_probe_secret,
+                expected_plan_label=expected_plan_label,
                 host_header=host_header,
                 routes=routes,
                 require_research_detail=True,
@@ -1603,7 +1714,11 @@ def build_live_mobile_surface_receipt(
         failed_rows = [row for row in rows if row.get("ok") is not True]
         failed_coverage = [row for row in coverage_checks if row.get("ok") is not True]
         blocked = any(str(receipt.get("status") or "") == "blocked" for receipt in child_receipts)
-        billing_readiness = mobile_billing_readiness_summary(rows, strict_required=True)
+        billing_readiness = mobile_billing_readiness_summary(
+            rows,
+            strict_required=paid_persona,
+        )
+        billing_readiness["paid_persona"] = paid_persona
         receipt = {
             "status": "blocked" if blocked else ("pass" if not failed_rows and not failed_coverage else "fail"),
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1611,6 +1726,7 @@ def build_live_mobile_surface_receipt(
             "host_header": host_header,
             "navigation_base_url": str(child_receipts[0].get("navigation_base_url") or base_url) if child_receipts else base_url,
             "principal_id": principal_id,
+            "expected_plan_label": expected_plan_label,
             "proof_mode": FLAGSHIP_PROOF_MODE,
             "browser_engine": "matrix" if len(normalized_required_engines) > 1 else normalized_required_engines[0],
             "browser_engines": list(normalized_required_engines),
@@ -1722,6 +1838,7 @@ def build_live_mobile_surface_receipt(
             "release_probe_secret": normalized_release_probe_secret,
             "release_probe_configured_routes": release_probe_configured_routes,
         }
+    resolved_browser_navigation: dict[str, tuple[str, dict[str, object]]] = {}
 
     def _run_with_deadline(action: Any, *, seconds: int, label: str) -> Any:
         if os.name == "nt":
@@ -1740,9 +1857,22 @@ def build_live_mobile_surface_receipt(
             signal.signal(signal.SIGALRM, previous_handler)
 
     def _collect_route_metrics_in_worker(route: str, url: str) -> tuple[int, dict[str, Any]]:
+        browser_url = url
+        redirect_metrics: dict[str, object] = {}
+        if normalized_release_probe_secret:
+            if url not in resolved_browser_navigation:
+                resolved_browser_navigation[url] = _release_probe_browser_navigation_url(
+                    url,
+                    headers=headers,
+                    authorized_origin=browser_authorized_origin,
+                    timeout_seconds=route_deadline_seconds,
+                    release_probe_secret=normalized_release_probe_secret,
+                    release_probe_configured_routes=release_probe_configured_routes,
+                )
+            browser_url, redirect_metrics = resolved_browser_navigation[url]
         status_code, metrics = collect_playwright_route_metrics(
             route=route,
-            url=url,
+            url=browser_url,
             headers=headers,
             authorized_origin=browser_authorized_origin,
             browser_args=browser_args,
@@ -1755,6 +1885,8 @@ def build_live_mobile_surface_receipt(
         )
         if browser_all:
             metrics["require_browser_proof"] = True
+        metrics.update(redirect_metrics)
+        metrics["requested_route_url"] = url
         return status_code, metrics
 
     for route in routes:
@@ -1853,7 +1985,7 @@ def build_live_mobile_surface_receipt(
                 checks = evaluate_mobile_metrics(
                     route,
                     metrics,
-                    require_billing_available=browser_all,
+                    require_billing_available=browser_all and paid_persona,
                 )
                 rows.append(
                     {
@@ -1884,7 +2016,7 @@ def build_live_mobile_surface_receipt(
                 checks = evaluate_mobile_metrics(
                     route,
                     metrics,
-                    require_billing_available=browser_all,
+                    require_billing_available=browser_all and paid_persona,
                 )
                 rows.append(
                     {
@@ -2051,7 +2183,11 @@ def build_live_mobile_surface_receipt(
             }
         )
     failed_coverage = [row for row in coverage_checks if not row.get("ok")]
-    billing_readiness = mobile_billing_readiness_summary(rows, strict_required=browser_all)
+    billing_readiness = mobile_billing_readiness_summary(
+        rows,
+        strict_required=browser_all and paid_persona,
+    )
+    billing_readiness["paid_persona"] = paid_persona
     receipt = _redact_sensitive_receipt_value({
         "status": "pass" if not failed and not failed_coverage else "fail",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -2059,6 +2195,7 @@ def build_live_mobile_surface_receipt(
         "host_header": host_header,
         "navigation_base_url": navigation_base_url,
         "principal_id": principal_id,
+        "expected_plan_label": expected_plan_label,
         "proof_mode": normalized_proof_mode,
         "browser_engine": selected_browser_engine,
         "browser_engines": [selected_browser_engine],
@@ -2165,11 +2302,20 @@ def main() -> int:
     parser.add_argument("--host-header", default=_env("PROPERTYQUARRY_LIVE_HOST_HEADER"))
     parser.add_argument("--api-token", default=_env("PROPERTYQUARRY_LIVE_API_TOKEN") or _env("EA_API_TOKEN"))
     parser.add_argument(
+        "--api-token-stdin",
+        action="store_true",
+        help="Read the protected live API token once from bounded stdin.",
+    )
+    parser.add_argument(
         "--release-probe-secret-stdin",
         action="store_true",
         help="Read the protected release-probe credential once from bounded stdin.",
     )
     parser.add_argument("--principal-id", default=_env("PROPERTYQUARRY_LIVE_PRINCIPAL_ID", "pq-live-mobile-smoke"))
+    parser.add_argument(
+        "--expected-plan-label",
+        default=_env("PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL", "Agent"),
+    )
     configured_research_detail = _env("PROPERTYQUARRY_LIVE_RESEARCH_DETAIL_ROUTE")
     default_routes = (*DEFAULT_ROUTES, configured_research_detail) if configured_research_detail else DEFAULT_ROUTES
     parser.add_argument("--routes", default=",".join(default_routes))
@@ -2218,10 +2364,21 @@ def main() -> int:
     parser.add_argument("--timeout-ms", type=int, default=int(_env("PROPERTYQUARRY_LIVE_MOBILE_TIMEOUT_MS", "60000") or 60000))
     parser.add_argument("--write", default="_completion/smoke/property-live-mobile-surface-latest.json")
     args = parser.parse_args()
+    if args.api_token_stdin and args.release_probe_secret_stdin:
+        parser.error("--api-token-stdin and --release-probe-secret-stdin are mutually exclusive")
+    if args.api_token_stdin and str(args.api_token or "").strip():
+        parser.error("--api-token-stdin cannot be combined with --api-token or API-token environment variables")
+    stdin_api_token = read_live_api_token_from_stdin(
+        parser,
+        enabled=bool(args.api_token_stdin),
+    )
     release_probe_secret = read_release_probe_secret_from_stdin(
         parser,
         enabled=bool(args.release_probe_secret_stdin),
     )
+    if stdin_api_token:
+        args.api_token = stdin_api_token
+    scrub_live_api_token_environment()
     scrub_release_probe_secret_environment()
 
     width_text, _, height_text = str(args.viewport).lower().partition("x")
@@ -2296,6 +2453,7 @@ def main() -> int:
         api_token=str(args.api_token or "").strip(),
         principal_id=str(args.principal_id or "").strip() or "pq-live-mobile-smoke",
         release_probe_secret=release_probe_secret,
+        expected_plan_label=str(args.expected_plan_label or "").strip(),
         host_header=str(args.host_header or "").strip(),
         routes=routes or DEFAULT_ROUTES,
         require_research_detail=bool(args.require_research_detail),

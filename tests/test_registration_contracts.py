@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -847,6 +848,62 @@ def test_sign_in_page_offers_google_return_path(monkeypatch: pytest.MonkeyPatch)
     assert "grid-template-columns: 28px minmax(0, 1fr) max-content;" in response.text
     assert "background: transparent;" in response.text
     assert "Choose the narrowest sign-in path" not in response.text
+
+
+def test_sign_in_page_recognizes_verified_release_probe_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.propertyquarry_release_probe import (
+        PROPERTYQUARRY_RELEASE_PROBE_NONCE_HEADER,
+        PROPERTYQUARRY_RELEASE_PROBE_SIGNATURE_HEADER,
+        PROPERTYQUARRY_RELEASE_PROBE_TIMESTAMP_HEADER,
+        propertyquarry_release_probe_signature,
+    )
+
+    origin = "https://propertyquarry.com"
+    secret = "propertyquarry-release-probe-test-secret-0123456789abcdef"
+    principal_id = "propertyquarry-release-probe"
+    research_route = "/app/research/probe-candidate?run_id=probe-run"
+    shortlist_path = "/app/shortlist/run/probe-run"
+    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_PROBE_SECRET", secret)
+    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID", principal_id)
+    monkeypatch.setenv("PROPERTYQUARRY_RELEASE_PROBE_ORIGIN", origin)
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_RELEASE_PROBE_RESEARCH_DETAIL_ROUTE",
+        research_route,
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_RELEASE_PROBE_SHORTLIST_RUN_PATH",
+        shortlist_path,
+    )
+    _configure_google_sign_in(monkeypatch)
+    client = _client(monkeypatch)
+    timestamp = int(time.time())
+    nonce = "release-probe-sign-in-session-test-0001"
+    signature = propertyquarry_release_probe_signature(
+        secret=secret,
+        origin=origin,
+        method="GET",
+        path="/sign-in",
+        query_string="",
+        timestamp=timestamp,
+        nonce=nonce,
+    )
+
+    response = client.get(
+        f"{origin}/sign-in",
+        headers={
+            PROPERTYQUARRY_RELEASE_PROBE_TIMESTAMP_HEADER: str(timestamp),
+            PROPERTYQUARRY_RELEASE_PROBE_NONCE_HEADER: nonce,
+            PROPERTYQUARRY_RELEASE_PROBE_SIGNATURE_HEADER: signature,
+        },
+    )
+
+    assert response.status_code == 200
+    assert ">Open search<" in response.text
+    assert response.text.count(">Log out<") == 1
+    assert "Continue with Google" not in response.text
+    assert "First sign-in" not in response.text
 
 
 def test_sign_in_page_uses_one_real_email_action_and_compact_provider_cards(

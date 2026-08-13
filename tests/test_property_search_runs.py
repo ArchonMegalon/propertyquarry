@@ -13,6 +13,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+from contextlib import nullcontext
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -62,6 +63,126 @@ _TEST_DISTANCE_CLASSIFICATION_TAGS = {
     "nearest_theatre_m": {"amenity": "theatre"},
     "nearest_supermarket_m": {"shop": "supermarket"},
 }
+
+
+def test_property_scout_completion_observation_is_small_and_evidence_linked() -> None:
+    payload = {
+        "generated_at": "2026-08-04T01:02:03+00:00",
+        "status": "completed_partial",
+        "provider_total": 27,
+        "listing_total": 412,
+        "reviewed_listing_total": 93,
+        "required_fact_research_pending_total": 7,
+        "required_fact_resolution_pending": True,
+        "repair_status": "degraded",
+        "timing_ms": {"run_total": 1234.5, "provider_fetch_total": 987.6},
+        "sources": [
+            {
+                "source_label": f"provider-{index}",
+                "ranked_candidates": [
+                    {"title": "large duplicated candidate", "body": "x" * 20_000}
+                ],
+            }
+            for index in range(40)
+        ],
+        "ranked_candidates": [{"title": "x" * 10_000} for _ in range(40)],
+    }
+
+    projected = property_search_storage._bounded_property_scout_completion_observation(
+        payload,
+        run_id="run-audit-1",
+        actor="scheduler",
+    )
+
+    serialized = property_search_storage._property_search_json_bytes(projected)
+    source_bytes = property_search_storage._property_search_json_bytes(payload)
+    assert len(serialized) < 8 * 1024
+    assert projected["audit_schema"] == "propertyquarry.property_scout_completion_observation.v1"
+    assert projected["payload_retention_status"] == "bounded_completion_observation"
+    assert projected["run_id"] == "run-audit-1"
+    assert projected["provider_total"] == 27
+    assert projected["listing_total"] == 412
+    assert projected["required_fact_resolution_pending"] is True
+    assert projected["run_total_ms"] == 1234.5
+    assert projected["source_payload_bytes"] == len(source_bytes)
+    assert projected["source_payload_sha256"] == hashlib.sha256(source_bytes).hexdigest()
+    assert "sources" not in projected
+    assert "ranked_candidates" not in projected
+
+
+def test_orphaned_queued_property_search_run_terminal_projection_is_compact() -> None:
+    source = {
+        "run_id": "orphaned-run-1",
+        "principal_id": "principal-orphaned-1",
+        "status": "queued",
+        "current_step": "queued",
+        "created_at": "2026-07-01T00:00:00+00:00",
+        "updated_at": "2026-07-01T00:00:00+00:00",
+        "events": [
+            {
+                "at": "2026-07-01T00:00:00+00:00",
+                "step": "queued",
+                "status": "queued",
+                "message": "Queued.",
+            }
+        ],
+        "summary": {
+            "status": "queued",
+            "sources": [
+                {"source_label": f"provider-{index}", "body": "x" * 50_000}
+                for index in range(30)
+            ],
+        },
+    }
+    source_bytes = property_search_storage._property_search_json_bytes(source)
+
+    terminal = property_search_storage._orphaned_property_search_run_terminal_record(
+        source,
+        recovered_at="2026-08-04T01:02:03+00:00",
+    )
+
+    summary = dict(terminal.get("summary") or {})
+    assert terminal["status"] == "failed"
+    assert terminal["payload_retention_status"] == "compact_only"
+    assert len(property_search_storage._property_search_json_bytes(terminal)) <= 512 * 1024
+    assert "sources" not in summary
+    assert summary["execution_pickup_status"] == "expired_without_durable_job"
+    assert summary["execution_pickup_reason"] == "orphaned_queued_run_expired"
+    assert summary["orphaned_payload_original_bytes"] == len(source_bytes)
+    assert summary["orphaned_payload_original_sha256"] == hashlib.sha256(source_bytes).hexdigest()
+
+
+def test_bounded_property_search_storage_maintenance_aggregates_reclaimed_bytes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        product_service,
+        "_terminalize_orphaned_property_search_run_records",
+        lambda **kwargs: {
+            "candidates": 3,
+            "terminalized": 3,
+            "payload_bytes_before": 30_000,
+            "payload_bytes_after": 3_000,
+        },
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_compact_property_scout_completion_observations",
+        lambda **kwargs: {
+            "candidates": 5,
+            "compacted": 5,
+            "payload_bytes_before": 50_000,
+            "payload_bytes_after": 5_000,
+        },
+    )
+
+    service = object.__new__(ProductService)
+    summary = service.maintain_bounded_property_search_storage(
+        limit=80,
+        dry_run=False,
+    )
+
+    assert summary["terminalized"] == 3
+    assert summary["observations_compacted"] == 5
+    assert summary["payload_bytes_reclaimed"] == 72_000
 
 
 def test_property_search_durable_write_merge_never_regresses_query_progress() -> None:
@@ -865,6 +986,43 @@ def test_property_search_delivery_work_filter_runs_before_limit(monkeypatch: pyt
     assert [row["run_id"] for row in rows] == ["older-pending"]
 
 
+def test_property_search_delivery_work_filter_defers_recent_pending_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_RESULTS_DELIVERY_RETRY_SECONDS", "300")
+    now = datetime.now(timezone.utc)
+    registry = {
+        "recent-pending": {
+            "run_id": "recent-pending",
+            "principal_id": "principal-delivery-cooldown",
+            "status": "processed",
+            "updated_at": (now - timedelta(hours=1)).isoformat(),
+            "delivery_checked_at": (now - timedelta(seconds=60)).isoformat(),
+            "summary": {"eligible_tour_total": 1, "pending_tour_total": 1},
+        },
+        "due-pending": {
+            "run_id": "due-pending",
+            "principal_id": "principal-delivery-cooldown",
+            "status": "processed",
+            "updated_at": (now - timedelta(hours=1)).isoformat(),
+            "delivery_checked_at": (now - timedelta(seconds=301)).isoformat(),
+            "summary": {"eligible_tour_total": 1, "pending_tour_total": 1},
+        },
+    }
+
+    rows = property_search_storage._list_property_search_run_records(
+        limit=10,
+        statuses=("processed",),
+        principal_id="principal-delivery-cooldown",
+        lightweight=True,
+        delivery_work_only=True,
+        registry=registry,
+    )
+
+    assert [row["run_id"] for row in rows] == ["due-pending"]
+
+
 def test_property_search_delivery_work_query_prioritizes_schema_then_durable_cursor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -917,8 +1075,10 @@ def test_property_search_delivery_work_query_prioritizes_schema_then_durable_cur
     assert observed["params"] == [
         ["processed"],
         property_search_storage._PROPERTY_SEARCH_RUN_COMPACT_SCHEMA_VERSION,
+        property_search_storage._PROPERTY_SEARCH_RESULTS_DELIVERY_DEFAULT_RETRY_SECONDS,
         40,
     ]
+    assert "delivery_checked_at <= CURRENT_TIMESTAMP" in normalized_query
 
 
 def test_property_search_compact_backfill_uses_updated_at_compare_and_swap(
@@ -2064,6 +2224,11 @@ def test_private_brigittenau_showcase_injects_verified_first_party_tour(monkeypa
     )
     monkeypatch.setenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS", "property-showcase-owner@example.test")
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        product_service,
+        "property_search_candidate_is_suppressed",
+        lambda _candidate: False,
+    )
 
     snapshot = product_service._property_search_snapshot_with_private_showcase(  # type: ignore[attr-defined]
         {
@@ -2105,6 +2270,60 @@ def test_private_brigittenau_showcase_injects_verified_first_party_tour(monkeypa
     assert facts["has_floorplan"] is False
     assert facts["floorplan_urls_json"] == []
     assert ranked[1]["candidate_ref"] == "public-hit"
+
+
+def test_suppressed_private_showcase_cannot_replace_compact_live_ranking(monkeypatch) -> None:
+    ranked_candidates = [
+        {
+            "candidate_ref": "visible-best-so-far",
+            "source_ref": "property-scout:visible-best-so-far",
+            "title": "Visible best so far",
+            "fit_score": 81,
+            "ranking_score": 81,
+        }
+    ]
+    snapshot = {
+        "run_id": "run-private-suppressed",
+        "property_search_preferences": {
+            "country_code": "AT",
+            "location_query": "1200 Vienna",
+        },
+        "summary": {
+            # Compact live source rows intentionally omit top_candidates.
+            "sources": [{"source_label": "Willhaben", "status": "completed"}],
+            "ranked_candidates": ranked_candidates,
+            "ranked_candidate_total": 1,
+        },
+    }
+    monkeypatch.setattr(
+        product_service,
+        "_property_private_showcase_allowed",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        product_service,
+        "_property_private_showcase_candidate",
+        lambda **_kwargs: {
+            "candidate_ref": product_service._PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF,
+            "title": "Suppressed Karl showcase",
+        },
+    )
+    monkeypatch.setattr(
+        product_service,
+        "property_search_candidate_is_suppressed",
+        lambda candidate: candidate.get("candidate_ref")
+        == product_service._PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF,
+    )
+
+    result = product_service._property_search_snapshot_with_private_showcase(
+        snapshot,
+        principal_id="cf-email:tibor.girschele@gmail.com",
+    )
+
+    summary = dict(result["summary"])
+    assert summary["ranked_candidates"] == ranked_candidates
+    assert summary["ranked_candidate_total"] == 1
+    assert summary.get("private_showcase_candidate_ref") is None
 
 
 def test_private_brigittenau_showcase_does_not_inject_for_other_users() -> None:
@@ -8257,6 +8476,66 @@ def test_property_search_recovery_picks_up_stale_replacement_run(monkeypatch) ->
     assert replacement_calls == []
 
 
+def test_property_search_recovery_counts_only_new_repair_work(monkeypatch) -> None:
+    principal_id = "principal-recovery-idempotency"
+    service = ProductService(SimpleNamespace(preference_profiles=SimpleNamespace()))
+    records = (
+        {
+            "run_id": "run-existing-queue-job",
+            "principal_id": principal_id,
+            "status": "queued",
+            "current_step": "queued",
+            "summary": {},
+        },
+        {
+            "run_id": "run-unchanged-repair",
+            "principal_id": principal_id,
+            "status": "in_progress",
+            "current_step": "source_previewing",
+            "summary": {
+                "repair_status": "repairing",
+                "repair_replacement_run_id": "replacement-existing",
+            },
+        },
+    )
+    monkeypatch.setattr(product_service, "_list_property_search_run_records", lambda **_kwargs: records)
+    monkeypatch.setattr(product_service, "_property_search_run_is_stale", lambda _record: True)
+    monkeypatch.setattr(product_service, "_property_search_active_run_is_stale", lambda _record: True)
+    monkeypatch.setattr(
+        ProductService,
+        "_property_search_run_should_pick_up_execution",
+        lambda _self, record: (
+            (True, (), "startup_checkpoint_stale")
+            if record["run_id"] == "run-existing-queue-job"
+            else (False, (), "")
+        ),
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "_pick_up_property_search_run_execution",
+        lambda _self, **_kwargs: {
+            "status": "queued",
+            "job_created": False,
+        },
+    )
+    monkeypatch.setattr(
+        ProductService,
+        "get_property_search_run_status",
+        lambda _self, **_kwargs: dict(records[1]),
+    )
+
+    summary = service.reconcile_stale_property_search_runs(
+        principal_id=principal_id,
+        limit=20,
+    )
+
+    assert summary["stale_total"] == 2
+    assert summary["repaired"] == 0
+    assert summary["replacement_started"] == 0
+    assert summary["recovered"][0]["execution_pickup_status"] == "queued"
+    assert summary["recovered"][0]["execution_pickup_created"] is False
+
+
 def test_property_search_status_picks_up_stale_replacement_run_from_lightweight_poll(monkeypatch) -> None:
     principal_id = "exec-property-search-status-recovery-replacement"
     client = build_property_client(principal_id=principal_id)
@@ -9877,6 +10156,7 @@ def test_agent_property_search_keeps_all_ranked_results_per_provider(monkeypatch
     client = build_property_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Agent Unlimited Provider Results")
     service = ProductService(client.app.state.container)
+    monkeypatch.setenv("EA_PROPERTY_SEARCH_SCAN_CAP_PER_SOURCE", "6")
 
     source_url = "https://www.willhaben.at/iad/immobilien/mietwohnungen/wien/wien-1020-leopoldstadt"
     listing_urls = [
@@ -9969,11 +10249,16 @@ def test_agent_property_search_keeps_all_ranked_results_per_provider(monkeypatch
     )
 
     source = dict(result["sources"][0])
-    assert result["listing_total"] == len(listing_urls)
-    assert source["listing_total"] == len(listing_urls)
-    assert len(source["top_candidates"]) == len(listing_urls)
-    assert len(source["research_candidates"]) == len(listing_urls)
-    assert {row["property_url"] for row in source["top_candidates"]} == set(listing_urls)
+    assert result["listing_total"] == 6
+    assert source["raw_listing_total"] == len(listing_urls)
+    assert source["scanned_listing_total"] == 6
+    assert source["scan_truncated"] is True
+    assert source["listing_total"] == 6
+    assert len(source["top_candidates"]) == 6
+    assert len(source["research_candidates"]) == 6
+    assert {row["property_url"] for row in source["top_candidates"]} == set(
+        listing_urls[:6]
+    )
 
 
 def test_property_search_soft_filters_do_not_change_discovered_hit_set(monkeypatch) -> None:
@@ -14227,18 +14512,31 @@ def test_property_search_runs_can_be_cleared_for_current_principal_only() -> Non
 
 def test_property_search_runs_keep_recent_history_but_prune_stale_payloads_by_default(monkeypatch) -> None:
     monkeypatch.delenv("EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS", raising=False)
-    assert product_service._property_search_run_retention_seconds() == 90 * 24 * 60 * 60
+    monkeypatch.delenv("EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS", raising=False)
+    assert product_service._property_search_run_retention_seconds() == 30 * 24 * 60 * 60
     assert property_search_storage.property_search_run_retention_policy() == {
         "property_search_run_retention_status": "enabled",
-        "property_search_run_retention_seconds": "7776000",
-        "property_search_run_retention_days": "90.0",
+        "property_search_run_retention_seconds": "2592000",
+        "property_search_run_retention_days": "30.0",
         "property_search_run_retention_env": "EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS",
-        "property_search_run_retention_default_seconds": "7776000",
+        "property_search_run_retention_default_seconds": "2592000",
+        "property_search_membership_retention_status": "enabled",
+        "property_search_membership_retention_seconds": "1209600",
+        "property_search_membership_retention_days": "14.0",
+        "property_search_membership_retention_env": "EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS",
+        "property_search_membership_retention_default_seconds": "1209600",
+        "property_search_run_max_payload_bytes": "524288",
+        "property_search_run_max_payload_env": "EA_PROPERTY_SEARCH_RUN_MAX_PAYLOAD_BYTES",
+        "property_search_run_max_rows_per_principal": "100",
+        "property_search_run_max_rows_per_principal_env": "EA_PROPERTY_SEARCH_RUN_MAX_ROWS_PER_PRINCIPAL",
+        "property_search_retention_batch_size": "250",
+        "property_search_retention_batch_size_env": "EA_PROPERTY_SEARCH_RETENTION_BATCH_SIZE",
+        "property_search_legal_hold_policy": "preserve_and_backpressure",
     }
     run_id = "retained-recent-run"
     stale_run_id = "pruned-stale-run"
     principal_id = "exec-property-search-run-retained"
-    old_timestamp = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    old_timestamp = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
     stale_timestamp = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
     old_record = product_service._new_property_search_run_record(
         run_id=run_id,
@@ -19348,6 +19646,85 @@ def test_property_search_run_postgres_retention_compacts_without_deleting_saved_
     assert loaded["summary"]["ranked_candidates"] == [{"candidate_ref": "saved-result", "title": "Saved result"}]
     assert "sources" not in loaded["summary"]
     assert any(row.get("run_id") == run_id for row in listed)
+
+
+def test_property_search_global_quota_converges_inactive_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Cursor:
+        def __init__(self, rows: tuple[tuple[str], ...] = ()) -> None:
+            self.rows = rows
+            self.executed: list[tuple[str, tuple[object, ...]]] = []
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args):  # type: ignore[no-untyped-def]
+            return False
+
+        def execute(self, query: str, params: tuple[object, ...] = ()) -> None:
+            self.executed.append((query, params))
+
+        def fetchall(self) -> tuple[tuple[str], ...]:
+            return self.rows
+
+    class _Connection:
+        def __init__(self, cursor: _Cursor) -> None:
+            self._cursor = cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def cursor(self) -> _Cursor:
+            return self._cursor
+
+    discovery_cursor = _Cursor((("inactive-principal",),))
+    maintenance_cursor = _Cursor()
+    connections = iter(
+        (_Connection(discovery_cursor), _Connection(maintenance_cursor))
+    )
+    enforced: list[str] = []
+    monkeypatch.setattr(
+        property_search_storage,
+        "_property_search_run_database_url",
+        lambda: "postgresql://configured",
+    )
+    monkeypatch.setattr(
+        property_search_storage,
+        "_property_search_run_connect",
+        lambda: next(connections),
+    )
+    monkeypatch.setattr(
+        property_search_storage,
+        "_property_search_run_transaction",
+        lambda _conn: nullcontext(),
+    )
+    monkeypatch.setattr(
+        property_search_storage,
+        "_set_property_search_writer_contract",
+        lambda _cur: None,
+    )
+    monkeypatch.setattr(
+        property_search_storage,
+        "_enforce_property_search_principal_run_quota",
+        lambda _cur, *, principal_id: (
+            enforced.append(principal_id) or {"compacted": 7, "deleted": 5}
+        ),
+    )
+
+    result = property_search_storage._enforce_property_search_global_run_quotas()
+
+    assert enforced == ["inactive-principal"]
+    assert result == {
+        "quota_principals_processed": 1,
+        "quota_principals_blocked": 0,
+        "quota_runs_compacted": 7,
+        "quota_runs_deleted": 5,
+    }
+    assert "HAVING COUNT(*) > %s" in discovery_cursor.executed[0][0]
 
 
 def test_property_search_run_listing_requires_principal_unless_admin(monkeypatch: pytest.MonkeyPatch) -> None:

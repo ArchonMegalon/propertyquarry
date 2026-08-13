@@ -935,12 +935,78 @@ def test_property_tour_control_verifier_accepts_private_receipt_3dvista_without_
     assert receipt["status"] == "pass"
     assert receipt["provider_counts"]["3dvista"] == 1
     assert receipt["ready_provider_modes"] == ["3dvista"]
-    assert receipt["core_required_provider_modes"] == ["matterport"]
+    assert receipt["core_required_provider_modes"] == ["matterport", "3dvista"]
+    assert receipt["core_required_provider_mode_groups"] == [
+        ["matterport", "3dvista"]
+    ]
+    assert receipt["core_requirement_satisfied"] is True
     assert receipt["advanced_visual_required_provider_modes"] == ["magicfit"]
-    assert receipt["core_missing_provider_modes"] == ["matterport"]
+    assert receipt["core_missing_provider_modes"] == []
     assert receipt["advanced_visual_missing_provider_modes"] == ["magicfit"]
-    assert receipt["operator_missing_provider_modes"] == ["matterport", "magicfit"]
+    assert receipt["operator_missing_provider_modes"] == ["magicfit"]
     assert "PRIVATE3D" not in json.dumps(receipt)
+
+
+def test_core_gold_accepts_verified_3dvista_when_matterport_probe_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    slug = "licensed-3dvista-core"
+    model_sid = "ALTERNATIVE1"
+    provider_url = "https://example.3dvista.com/tours/COREALT/index.html"
+    _write_tour(tmp_path, slug, _clean_3dvista_proof())
+    (tmp_path / slug / "tour.private.json").write_text(
+        json.dumps(
+            {
+                "matterport_url": (
+                    f"https://my.matterport.com/show/?m={model_sid}"
+                ),
+                "matterport_model_publication": _matterport_publication(
+                    model_sid
+                ),
+                "three_d_vista_url": provider_url,
+                "three_d_vista_target_provenance": (
+                    _clean_3dvista_target_provenance(
+                        slug,
+                        sha256=sha256_text(provider_url),
+                        kind="hosted_url",
+                    )
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def _probe(*_args, provider: str = "", **_kwargs) -> dict[str, object]:
+        if provider == "matterport":
+            return {"http_status": 503, "error": "matterport unavailable"}
+        return {
+            "http_status": 200,
+            "body_markers": {"matterport": False, "3dvista": True},
+        }
+
+    monkeypatch.setattr(
+        "scripts.verify_property_tour_controls._probe_url",
+        _probe,
+    )
+
+    receipt = build_property_tour_control_receipt(
+        tour_root=tmp_path,
+        base_url="https://propertyquarry.example",
+        live_probe=True,
+        require_all_provider_modes=True,
+        gold_scope="core",
+    )
+
+    assert receipt["status"] == "pass"
+    assert receipt["ready_provider_modes"] == ["3dvista"]
+    assert receipt["core_missing_provider_modes"] == []
+    assert receipt["selected_missing_provider_modes"] == []
+    assert receipt["provider_probe_failures"] == {
+        "global_count": 1,
+        "selected_fatal_count": 0,
+        "by_provider": {"matterport": 1, "3dvista": 0, "magicfit": 0},
+    }
 
 
 def test_property_tour_control_verifier_selects_required_modes_by_gold_scope(
@@ -976,13 +1042,14 @@ def test_property_tour_control_verifier_selects_required_modes_by_gold_scope(
 
     assert core["status"] == "pass"
     assert core["gold_scope"] == "core"
-    assert core["selected_required_provider_modes"] == ["matterport"]
+    assert core["selected_required_provider_modes"] == ["matterport", "3dvista"]
     assert core["selected_missing_provider_modes"] == []
     assert core["operator_missing_provider_modes"] == ["magicfit"]
     assert advanced["status"] == "blocked_missing_provider_modes"
     assert advanced["gold_scope"] == "advanced_visual"
     assert advanced["selected_required_provider_modes"] == [
         "matterport",
+        "3dvista",
         "magicfit",
     ]
     assert advanced["selected_missing_provider_modes"] == ["magicfit"]
@@ -1069,7 +1136,7 @@ def test_property_tour_control_verifier_scopes_broken_magicfit_probe_failure(
     assert receipt["provider_probe_failures"] == {
         "global_count": 0,
         "selected_fatal_count": expected_selected_failures,
-        "by_provider": {"matterport": 0, "magicfit": 0},
+        "by_provider": {"matterport": 0, "3dvista": 0, "magicfit": 0},
     }
     assert controls["matterport"]["status"] == "ready"
     assert controls["3dvista"]["status"] == "ready"
@@ -1133,11 +1200,16 @@ def test_property_tour_control_verifier_next_actions_only_include_globally_missi
     receipt = build_property_tour_control_receipt(tour_root=tmp_path)
 
     assert receipt["ready_provider_modes"] == []
-    assert set(receipt["missing_provider_modes"]) == {"matterport", "magicfit"}
-    assert receipt["core_missing_provider_modes"] == ["matterport"]
+    assert set(receipt["missing_provider_modes"]) == {
+        "matterport",
+        "3dvista",
+        "magicfit",
+    }
+    assert receipt["core_missing_provider_modes"] == ["matterport", "3dvista"]
     assert receipt["advanced_visual_missing_provider_modes"] == ["magicfit"]
     assert {row["provider"] for row in receipt["next_required_actions"]} == {
         "matterport",
+        "3dvista",
         "magicfit",
     }
 
@@ -1152,13 +1224,18 @@ def test_property_tour_control_verifier_can_require_all_provider_modes_for_gold_
     assert receipt["require_all_provider_modes"] is True
     assert summary["require_all_provider_modes"] is True
     assert receipt["ready_provider_modes"] == []
-    assert set(receipt["missing_provider_modes"]) == {"matterport", "magicfit"}
-    assert receipt["core_missing_provider_modes"] == ["matterport"]
+    assert set(receipt["missing_provider_modes"]) == {
+        "matterport",
+        "3dvista",
+        "magicfit",
+    }
+    assert receipt["core_missing_provider_modes"] == ["matterport", "3dvista"]
     assert receipt["advanced_visual_missing_provider_modes"] == ["magicfit"]
-    assert summary["core_missing_provider_modes"] == ["matterport"]
+    assert summary["core_missing_provider_modes"] == ["matterport", "3dvista"]
     assert summary["advanced_visual_missing_provider_modes"] == ["magicfit"]
     assert {row["provider"] for row in receipt["next_required_actions"]} == {
         "matterport",
+        "3dvista",
         "magicfit",
     }
     assert summary["provider_blockers"]["3dvista"]["blocked_count"] == 1
@@ -1341,8 +1418,12 @@ def test_property_tour_control_verifier_counts_provider_gaps_on_unproven_matterp
     missing = {row["provider"]: row for row in receipt["tours"][0]["missing_evidence"]}
     assert receipt["status"] == "blocked_missing_provider_modes"
     assert receipt["tours"][0]["status"] == "blocked_missing_verified_controls"
-    assert set(receipt["required_provider_modes"]) == {"matterport", "magicfit"}
-    assert set(missing) == {"matterport", "magicfit"}
+    assert set(receipt["required_provider_modes"]) == {
+        "matterport",
+        "3dvista",
+        "magicfit",
+    }
+    assert set(missing) == {"matterport", "3dvista", "magicfit"}
     assert (
         missing["matterport"]["reason"]
         == "matterport_model_publication_missing_or_invalid"
@@ -1350,9 +1431,11 @@ def test_property_tour_control_verifier_counts_provider_gaps_on_unproven_matterp
     assert missing["magicfit"]["reason"] == "missing_magicfit_walkthrough"
     assert set(receipt["tours"][0]["missing_provider_modes"]) == {
         "matterport",
+        "3dvista",
         "magicfit",
     }
     assert actions["matterport"]["blocked_tour_count"] == 1
+    assert actions["3dvista"]["blocked_tour_count"] == 1
     assert actions["magicfit"]["blocked_tour_count"] == 1
 
 
@@ -1511,7 +1594,7 @@ def test_property_tour_control_verifier_does_not_count_failed_live_probe_as_read
     assert receipt["provider_probe_failures"] == {
         "global_count": 1,
         "selected_fatal_count": 1,
-        "by_provider": {"matterport": 1, "magicfit": 0},
+        "by_provider": {"matterport": 1, "3dvista": 0, "magicfit": 0},
     }
     assert receipt["tours"][0]["controls"][0]["status"] == "probe_failed"
 
@@ -2472,7 +2555,11 @@ def test_property_tour_control_verifier_blocks_when_no_verified_controls(tmp_pat
     assert receipt["ready_provider_modes"] == []
     assert receipt["tours"][0]["status"] == "blocked_missing_verified_controls"
     assert receipt["tours"][0]["blocked_reason"] == "generated_cube_not_verified_3d"
-    assert set(receipt["missing_provider_modes"]) == {"matterport", "magicfit"}
+    assert set(receipt["missing_provider_modes"]) == {
+        "matterport",
+        "3dvista",
+        "magicfit",
+    }
 
 
 def test_matterport_delivery_contract_reports_dominant_missing_evidence_for_mixed_tour_set(
@@ -2528,6 +2615,7 @@ def test_property_tour_control_verifier_marks_photo_gallery_as_not_3d(tmp_path: 
     assert receipt["tours"][0]["missing_evidence"] == []
     assert {row["provider"] for row in receipt["next_required_actions"]} == {
         "matterport",
+        "3dvista",
         "magicfit",
     }
 
@@ -2558,7 +2646,7 @@ def test_property_tour_control_verifier_reports_actionable_missing_evidence(tmp_
     missing = {row["provider"]: row for row in receipt["tours"][0]["missing_evidence"]}
     assert missing["matterport"]["reason"] == "matterport_url_not_allowlisted_or_invalid"
     assert receipt["provider_blockers"]["matterport"]["reasons"][0]["reason"] == "matterport_url_not_allowlisted_or_invalid"
-    assert "3dvista" not in missing
+    assert missing["3dvista"]["reason"] == "3dvista_entry_missing_or_not_verified"
     assert (
         receipt["provider_blockers"]["3dvista"]["reasons"][0]["reason"]
         == "3dvista_entry_missing_or_not_verified"

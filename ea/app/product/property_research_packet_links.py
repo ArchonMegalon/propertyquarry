@@ -21,6 +21,7 @@ _RUN_CANDIDATE_KEYS = (
     "ranked_candidates",
     "results",
     "top_candidates",
+    "research_candidates",
     "_delivery_candidates",
 )
 _SOURCE_CANDIDATE_KEYS = (
@@ -204,7 +205,19 @@ def _merge_packet_candidate_values(current: object, incoming: object) -> object:
 def _candidate_occurrences(record: Mapping[str, object]) -> Iterable[tuple[dict[str, object], int]]:
     summary = dict(record.get("summary") or {}) if isinstance(record.get("summary"), dict) else {}
     rank = 0
-    for key in _RUN_CANDIDATE_KEYS:
+    run_candidate_keys = _RUN_CANDIDATE_KEYS
+    if str(record.get("payload_retention_status") or "").strip().lower() in {
+        "bounded_projection",
+        "compact_only",
+    }:
+        # Fact enrichment hydrates one exact packet into this root list. Read
+        # it before lossy UI previews so merge precedence cannot replace full
+        # evidence strings or nested receipts with their compact projections.
+        run_candidate_keys = (
+            "research_candidates",
+            *(key for key in _RUN_CANDIDATE_KEYS if key != "research_candidates"),
+        )
+    for key in run_candidate_keys:
         rows = summary.get(key)
         if not isinstance(rows, (list, tuple)):
             continue
@@ -829,8 +842,15 @@ def sync_property_research_packet_run_memberships(
     principal_id: str,
     run_id: str,
     links: Iterable[Mapping[str, object]],
+    prune_missing: bool = True,
 ) -> int:
-    """Make one run's membership set exact and reselect links removed from that run."""
+    """Upsert run memberships and optionally make the projected set exact.
+
+    Full run writers use the default exact-set behavior. Bounded partial
+    writers, such as one-candidate fact enrichment, pass ``prune_missing=False``
+    so candidates intentionally removed from the compact run payload are not
+    mistaken for deletions.
+    """
 
     from psycopg.types.json import Json
 
@@ -855,16 +875,21 @@ def sync_property_research_packet_run_memberships(
         cursor,
         ((normalized_principal, normalized_run_id),),
     )
-    cursor.execute(
-        """
-        SELECT candidate_ref
-        FROM property_research_packet_run_memberships
-        WHERE principal_id = %s AND run_id = %s
-        FOR UPDATE
-        """,
-        (normalized_principal, normalized_run_id),
-    )
-    existing_refs = {str(row[0] or "").strip() for row in list(cursor.fetchall() or [])}
+    existing_refs: set[str] = set()
+    if prune_missing:
+        cursor.execute(
+            """
+            SELECT candidate_ref
+            FROM property_research_packet_run_memberships
+            WHERE principal_id = %s AND run_id = %s
+            FOR UPDATE
+            """,
+            (normalized_principal, normalized_run_id),
+        )
+        existing_refs = {
+            str(row[0] or "").strip()
+            for row in list(cursor.fetchall() or [])
+        }
     incoming_refs: set[str] = set()
     written = 0
     for link in normalized_links:
@@ -893,6 +918,8 @@ def sync_property_research_packet_run_memberships(
                 f"candidate_ref_membership_conflict:{candidate_ref}"
             )
         written += 1
+    if not prune_missing:
+        return written
     if incoming_refs:
         cursor.execute(
             """

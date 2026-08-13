@@ -313,6 +313,123 @@ def test_request_cardinality_fails_missing_or_duplicate_posts(
     assert result["ok"] is False
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://propertyquarry.com/app/search?run_id=run-42",
+            "run-42",
+        ),
+        (
+            "https://propertyquarry.com/app/properties?run_id=legacy-run",
+            "legacy-run",
+        ),
+        ("https://propertyquarry.com/app/search", ""),
+        (
+            "https://propertyquarry.com/app/search?run_id=run-42&extra=1",
+            "",
+        ),
+        (
+            "https://propertyquarry.com/app/search?run_id=run-42#fragment",
+            "",
+        ),
+        (
+            "https://evil.example/app/search?run_id=run-42",
+            "",
+        ),
+        (
+            "https://propertyquarry.com/app/shortlist?run_id=run-42",
+            "",
+        ),
+    ],
+)
+def test_search_run_navigation_accepts_canonical_and_legacy_workbench_routes(
+    url: str,
+    expected: str,
+) -> None:
+    assert gate._search_run_navigation_id(
+        url,
+        origin=gate.PRODUCTION_ORIGIN,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://propertyquarry.com/tours/viewer/demo-tour/"
+            "generated-reconstruction/viewer.html",
+            True,
+        ),
+        (
+            "https://propertyquarry.com/tours/files/demo-tour/"
+            "generated-reconstruction/viewer.html",
+            True,
+        ),
+        (
+            "https://propertyquarry.com/tours/viewer/other-tour/"
+            "generated-reconstruction/viewer.html",
+            False,
+        ),
+        (
+            "https://evil.example/tours/viewer/demo-tour/"
+            "generated-reconstruction/viewer.html",
+            False,
+        ),
+        (
+            "https://propertyquarry.com/tours/viewer/demo-tour/"
+            "generated-reconstruction/viewer.html?embed=1",
+            False,
+        ),
+    ],
+)
+def test_generated_reconstruction_checkpoint_requires_exact_same_origin_viewer_path(
+    url: str,
+    expected: bool,
+) -> None:
+    assert gate._generated_reconstruction_viewer_path_ok(
+        url,
+        origin=gate.PRODUCTION_ORIGIN,
+        slug="demo-tour",
+    ) is expected
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://propertyquarry.com/tours/karl-czerny-gasse-2-urban-jungle/control",
+            True,
+        ),
+        (
+            "https://propertyquarry.com/tours/karl-czerny-gasse-2-urban-jungle",
+            False,
+        ),
+        (
+            "https://propertyquarry.com/tours/karl-czerny-gasse-2-urban-jungle/control?fullscreen=1",
+            False,
+        ),
+        (
+            "https://evil.example/tours/karl-czerny-gasse-2-urban-jungle/control",
+            False,
+        ),
+    ],
+)
+def test_ai_panorama_checkpoint_requires_exact_same_origin_control_path(
+    url: str,
+    expected: bool,
+) -> None:
+    assert gate._ai_panorama_control_path_ok(
+        url,
+        origin=gate.PRODUCTION_ORIGIN,
+        slug="karl-czerny-gasse-2-urban-jungle",
+    ) is expected
+
+
+def test_default_three_d_checkpoint_targets_current_ai_panorama_flagship() -> None:
+    assert gate.DEFAULT_THREE_D_SLUG == "karl-czerny-gasse-2-urban-jungle"
+
+
 def test_unique_launch_accounting_requires_sequence_modes_runs_and_cardinality() -> None:
     launches = [
         {
@@ -335,6 +452,10 @@ def test_unique_launch_accounting_requires_sequence_modes_runs_and_cardinality()
         "ok": True,
         "launch_count": 2,
         "unique_run_count": 2,
+        "created_run_count": 2,
+        "active_run_reuse_count": 0,
+        "run_dispositions": ["new_run", "new_run"],
+        "run_accounting_ok": True,
         "iteration_sequence_ok": True,
         "mode_sequence_ok": True,
         "all_request_cardinalities_ok": True,
@@ -348,6 +469,54 @@ def test_unique_launch_accounting_requires_sequence_modes_runs_and_cardinality()
         )["ok"]
         is False
     )
+
+
+def test_launch_accounting_accepts_only_explicitly_active_run_reuse() -> None:
+    active_poll = {
+        "terminal": False,
+        "successful_terminal": False,
+        "final_status": "in_progress",
+    }
+    launches = [
+        {
+            "iteration": 1,
+            "mode": "immediate",
+            "run_id_sha256": "a" * 64,
+            "request_cardinality": {"ok": True},
+            "poll": active_poll,
+        },
+        {
+            "iteration": 2,
+            "mode": "hydrated",
+            "run_id_sha256": "a" * 64,
+            "request_cardinality": {"ok": True},
+            "poll": active_poll,
+        },
+    ]
+
+    result = gate.evaluate_unique_launch_accounting(
+        launches,
+        expected_iterations=2,
+    )
+
+    assert result["ok"] is True
+    assert result["unique_run_count"] == 1
+    assert result["created_run_count"] == 1
+    assert result["active_run_reuse_count"] == 1
+    assert result["run_dispositions"] == ["new_run", "active_run_reused"]
+
+    terminal_reuse = [dict(launches[0]), dict(launches[1])]
+    terminal_reuse[0]["poll"] = {
+        "terminal": True,
+        "successful_terminal": True,
+        "final_status": "processed",
+    }
+    rejected = gate.evaluate_unique_launch_accounting(
+        terminal_reuse,
+        expected_iterations=2,
+    )
+    assert rejected["ok"] is False
+    assert rejected["run_dispositions"] == ["new_run", "invalid_run_reuse"]
 
 
 def test_poll_history_accepts_tolerated_jitter_and_success_terminal() -> None:

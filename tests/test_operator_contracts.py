@@ -868,6 +868,7 @@ def test_db_visibility_and_retention_help_contracts_cover_release_baseline_flags
     assert "EA_RETENTION_PROFILE" in db_retention_help
     assert "EA_RETENTION_TABLES" in db_retention_help
     assert "EA_RETENTION_SKIP_TABLES" in db_retention_help
+    assert "EA_RETENTION_WORKSPACE_ACCESS_SESSIONS_DAYS" in db_retention_help
 
     assert "SUPPORT_INCLUDE_DB_SIZE=0|1" in support_bundle_help
     assert "SUPPORT_DB_SIZE_LIMIT=<n>" in support_bundle_help
@@ -895,11 +896,17 @@ def test_db_operator_scripts_support_propertyquarry_service_aliases() -> None:
     assert "PROPERTYQUARRY_DB_SERVICE" in runbook
     assert 'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"' in db_bootstrap
     assert '"${DC[@]}" up -d "${DB_SERVICE}"' in db_bootstrap
-    assert 'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"' in db_status
+    assert (
+        'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-propertyquarry-db}}"'
+        in db_status
+    )
     assert '"${DC[@]}" up -d "${DB_SERVICE}"' in db_status
     assert 'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"' in db_retention
     assert '"${DC[@]}" up -d "${DB_SERVICE}"' in db_retention
-    assert 'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-ea-db}}"' in db_size
+    assert (
+        'DB_SERVICE="${PROPERTYQUARRY_DB_SERVICE:-${EA_DB_SERVICE:-propertyquarry-db}}"'
+        in db_size
+    )
     assert '"${DC[@]}" up -d "${DB_SERVICE}"' in db_size
 
 

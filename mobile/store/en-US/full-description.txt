@@ -1,0 +1,17 @@
+PropertyQuarry turns a scattered property search into one calm, private decision workspace.
+
+Bring listings together from supported property sites, compare the facts that matter, and keep every serious candidate in a visual shortlist. PropertyQuarry helps you understand the home, the location and the missing information before you decide what deserves your time.
+
+Designed for thoughtful property decisions:
+
+• Share a listing directly from another Android app and confirm before it is added
+• Review a premium, image-led shortlist with diorama previews where available
+• Compare price, space, location evidence, soft filters and open questions
+• Watch a normal camera walkthrough as the default property video
+• Open a 3DVista or Matterport experience when an immersive 3D tour is available
+• Choose VR or 3D-glasses viewing only when you want it and the tour supports it
+• Keep research, evidence and decisions tied to the correct property
+
+Your PropertyQuarry account remains the authority. Sign-in happens in your trusted browser and returns through a short-lived, one-time secure handoff. Shared links are validated by the PropertyQuarry service before they enter your private shortlist.
+
+An internet connection is required for live property data, research and tours. When the service cannot be verified, the app stays on a clear retry screen instead of loading an untrusted or stale workspace.

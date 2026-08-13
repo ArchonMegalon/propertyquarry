@@ -2635,7 +2635,8 @@ def test_telegram_local_assistant_can_answer_named_ltd_request(monkeypatch: pyte
         principal_id="exec-telegram-ltd-request",
         text="Use MarkupGo for this.",
     )
-    assert "MarkupGo is available in PropertyQuarry" in reply
+    assert "MarkupGo is cataloged in PropertyQuarry" in reply
+    assert "does not prove credentials, provider health, or a live call" in reply
     assert "inspect_workspace" in reply
 
 
@@ -2870,9 +2871,10 @@ def test_telegram_local_assistant_resolves_named_ltd_request_to_best_action(monk
         principal_id="exec-telegram-ltd-action",
         text="Use MarkupGo for this PDF.",
     )
-    assert "For MarkupGo, I would use inspect_workspace." in reply
+    assert "For MarkupGo, the catalog route is inspect_workspace." in reply
     assert "/v1/ltds/runtime-catalog/MarkupGo/inspect-workspace" in reply
-    assert "Executable now." in reply
+    assert "Live execution is unverified" in reply
+    assert "Executable now." not in reply
 
 
 def test_telegram_local_assistant_executes_safe_onemin_ltd_action(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2920,9 +2922,20 @@ def test_telegram_local_assistant_executes_safe_onemin_ltd_action(monkeypatch: p
         return ToolInvocationResult(
             tool_name=request.tool_name,
             action_kind=request.action_kind,
-            target_ref="provider://onemin/background-remove",
-            output_json={"ok": True},
-            receipt_json={"principal_id": request.context_json["principal_id"]},
+            target_ref="onemin:background-remove-receipt",
+            output_json={
+                "provider_backend": "1min",
+                "asset_urls": ["https://media.example.invalid/result.png"],
+            },
+            receipt_json={
+                "principal_id": request.context_json["principal_id"],
+                "handler_key": request.tool_name,
+                "invocation_contract": "tool.v1",
+                "provider_key": "onemin",
+                "provider_backend": "1min",
+                "feature_type": "BACKGROUND_REMOVER",
+                "model": "image-model",
+            },
         )
 
     client = _client(principal_id="exec-telegram-ltd-exec", operator=False)
@@ -2932,11 +2945,62 @@ def test_telegram_local_assistant_executes_safe_onemin_ltd_action(monkeypatch: p
         principal_id="exec-telegram-ltd-exec",
         text="Use 1min.AI to remove the background from https://example.invalid/cat.png",
     )
-    assert "Executed 1min.AI background_remove." in reply
-    assert "provider://onemin/background-remove" in reply
+    assert "Executed 1min.AI background_remove with a principal-bound provider receipt." in reply
+    assert "onemin:background-remove-receipt" in reply
     assert captured[0].payload_json["feature_type"] == "BACKGROUND_REMOVER"
     assert captured[0].payload_json["image_url"] == "https://example.invalid/cat.png"
     assert captured[0].context_json["principal_id"] == "exec-telegram-ltd-exec"
+
+
+def test_telegram_ltd_execution_rejects_unbound_provider_receipt(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api.routes import channels as channels_route
+    from app.domain.models import ToolInvocationResult
+    from types import SimpleNamespace
+
+    captured = []
+
+    def _fake_execute(request):  # noqa: ANN001
+        captured.append(request)
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="onemin:unbound-background-remove",
+            output_json={
+                "provider_backend": "1min",
+                "asset_urls": ["https://media.example.invalid/result.png"],
+            },
+            receipt_json={
+                "principal_id": "another-principal",
+                "handler_key": request.tool_name,
+                "invocation_contract": "tool.v1",
+                "provider_key": "onemin",
+                "provider_backend": "1min",
+                "feature_type": "BACKGROUND_REMOVER",
+                "model": "image-model",
+            },
+        )
+
+    container = SimpleNamespace(
+        tool_execution=SimpleNamespace(execute_invocation=_fake_execute),
+    )
+    action = SimpleNamespace(
+        action_key="background_remove",
+        route_path="/v1/ltds/runtime-catalog/1min.AI/actions/background_remove",
+        tool_name="provider.onemin.media_transform",
+        action_kind="media_transform",
+    )
+
+    reply = channels_route._telegram_try_execute_ltd_action(
+        container,
+        principal_id="exec-telegram-ltd-unbound",
+        service_name="1min.AI",
+        action=action,
+        text="Remove the background from https://example.invalid/cat.png",
+    )
+
+    assert "execution is not proven" in reply
+    assert "Executed" not in reply
+    assert captured[0].context_json["principal_id"] == "exec-telegram-ltd-unbound"
 
 
 def test_telegram_office_grounding_includes_ltd_runtime_lanes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4466,7 +4530,10 @@ def test_browser_landing_exposes_google_onboarding_and_html_callback(monkeypatch
         resolved = owner.get(href, follow_redirects=False)
         assert resolved.status_code in {200, 303, 307}, href
 
-    setup = owner.get("/register")
+    # The link crawl above deliberately visits localized public URLs and may
+    # update the client's locale cookie. Pin English for this English-copy
+    # identity contract instead of depending on traversal order.
+    setup = owner.get("/register?lang=en")
     assert setup.status_code == 200
     _assert_no_product_drift(setup.text)
     assert "Set up your property search." in setup.text
@@ -7652,6 +7719,15 @@ def test_public_tour_routes_serve_provider_neutral_responsive_walkthrough_varian
     mobile_bytes = b"mobile-720p60-video"
     (bundle_dir / "walkthrough-desktop.mp4").write_bytes(desktop_bytes)
     (bundle_dir / "walkthrough-mobile.mp4").write_bytes(mobile_bytes)
+    (bundle_dir / "walkthrough-review.json").write_text(
+        json.dumps(
+            {
+                "acceptance_status": "accepted",
+                "launch_eligible": True,
+            }
+        ),
+        encoding="utf-8",
+    )
     (bundle_dir / "tour.json").write_text(
         json.dumps(
             {
@@ -7660,6 +7736,7 @@ def test_public_tour_routes_serve_provider_neutral_responsive_walkthrough_varian
                     "display_title": "Danube Flats",
                     "video_relpath": "walkthrough-desktop.mp4",
                     "video_mobile_relpath": "walkthrough-mobile.mp4",
+                    "video_sidecar_relpath": "walkthrough-review.json",
                     "scenes": [
                     {
                         "name": "Living room",
@@ -8865,6 +8942,8 @@ def test_public_tour_routes_expose_propertyquarry_3dvista_private_viewer_proof(
     (vista_dir / "locale").mkdir()
     (vista_dir / "locale" / "en.txt").write_text("#: locale=en\n", encoding="utf-8")
     (vista_dir / "runtime.wasm").write_bytes(b"\0asm\x01\0\0\0")
+    (vista_dir / "media" / "panorama_living_room").mkdir(parents=True)
+    (vista_dir / "media" / "panorama_kitchen").mkdir(parents=True)
     (bundle_dir / "walkthrough.mp4").write_bytes(b"video")
     (bundle_dir / "scene-01.jpg").write_bytes(b"fake-jpeg-data")
     (bundle_dir / "tour.private.json").write_text(
@@ -8987,6 +9066,7 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
     vista_dir.mkdir(parents=True)
     (vista_dir / "index.htm").write_text("<html><script src='tdvplayer.js'></script><div>tourviewer</div></html>", encoding="utf-8")
     (vista_dir / "tdvplayer.js").write_text("window.TDVPlayer = true;", encoding="utf-8")
+    (vista_dir / "viewer.woff2").write_bytes(b"font-data")
     (bundle_dir / "scene-01.jpg").write_bytes(b"fake-jpeg-data")
     (bundle_dir / "tour.private.json").write_text(
         json.dumps(
@@ -9008,6 +9088,7 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
                 "title": "Unrendered 3DVista",
                 "display_title": "Unrendered 3DVista",
                 "hosted_url": f"https://propertyquarry.com/tours/{slug}",
+                "walkable_scene": {"representation_kind": "ai_reconstruction"},
                 "scenes": [
                     {
                         "name": "Panorama",
@@ -9033,6 +9114,7 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
     page = client.get(f"/tours/{slug}", headers={"host": "propertyquarry.com"})
     control = client.get(f"/tours/{slug}/control/3dvista", headers={"host": "propertyquarry.com"})
     asset = client.get(f"/tours/3dvista/{slug}/3dvista/index.htm", headers={"host": "propertyquarry.com"})
+    font = client.get(f"/tours/3dvista/{slug}/3dvista/viewer.woff2", headers={"host": "propertyquarry.com"})
 
     assert page.status_code == 200
     assert "Open 3D tour" not in page.text
@@ -9040,6 +9122,24 @@ def test_public_tour_hides_3dvista_link_without_browser_render_proof_but_keeps_p
     assert control.status_code == 200
     assert f"/tours/3dvista/{slug}/3dvista/index.htm" in control.text
     assert asset.status_code == 200
+    assert font.status_code == 200
+
+
+def test_public_tour_fullscreen_provider_shell_has_accessible_main_and_frame() -> None:
+    from app.api.routes.public_tours import _tour_control_external_iframe_html
+
+    body = _tour_control_external_iframe_html(
+        title="Accessible 3DVista",
+        iframe_src="/tours/3dvista/accessible-tour/3dvista/index.htm",
+        badge="3D Tour",
+        payload={"slug": "accessible-tour"},
+        nonce="test-nonce",
+    )
+
+    assert '<main class="provider-frame-wrap"' in body
+    assert '<iframe class="provider-frame"' in body
+    assert 'title="Accessible 3DVista"' in body
+    assert 'aria-label="3D Tour: Accessible 3DVista"' in body
 
 
 def test_public_tour_hides_external_3dvista_without_browser_render_proof_but_keeps_probe_control(

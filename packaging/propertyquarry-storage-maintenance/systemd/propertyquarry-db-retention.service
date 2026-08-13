@@ -1,0 +1,22 @@
+[Unit]
+Description=PropertyQuarry bounded PostgreSQL retention
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/docker/property
+Environment=PROPERTYQUARRY_DB_SERVICE=propertyquarry-db
+Environment=PROPERTYQUARRY_DB_CONTAINER_NAME=propertyquarry-db-live
+Environment=POSTGRES_DB=propertyquarry
+Environment=POSTGRES_USER=postgres
+EnvironmentFile=-/etc/propertyquarry/storage-retention.env
+ExecStart=/usr/bin/bash /docker/property/scripts/db_retention.sh --apply
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=45min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/run /var/run

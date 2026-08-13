@@ -3385,6 +3385,14 @@ def test_generated_reconstruction_publish_recheck_rejects_source_geometry_drift(
         walkable_scene=scene,
     ) is False
 
+    missing_analysis_receipt = dict(receipt)
+    missing_analysis_receipt.pop("floorplan_analysis", None)
+    assert property_tour_hosting._hosted_property_tour_source_geometry_lock_ready(
+        receipt=missing_analysis_receipt,
+        generated_reconstruction=generated_reconstruction,
+        walkable_scene=scene,
+    ) is False
+
 
 def test_generated_reconstruction_route_sampling_is_deterministic_spread_and_wall_safe() -> None:
     rows = 21
@@ -3934,8 +3942,22 @@ def test_generated_reconstruction_does_not_satisfy_verified_provider_gate(tmp_pa
     assert receipt["provider_counts"]["pano2vr"] == 0
     assert receipt["provider_counts"]["krpano"] == 0
     assert receipt["provider_counts"]["magicfit"] == 0
-    assert set(receipt["missing_provider_modes"]) == {"matterport", "magicfit"}
-    assert receipt["optional_provider_modes"] == ["3dvista", "pano2vr", "krpano"]
+    assert set(receipt["missing_provider_modes"]) == {
+        "matterport",
+        "3dvista",
+        "magicfit",
+    }
+    assert set(receipt["core_missing_provider_modes"]) == {
+        "matterport",
+        "3dvista",
+    }
+    assert set(receipt["selected_missing_provider_modes"]) == {
+        "matterport",
+        "3dvista",
+    }
+    assert receipt["core_requirement_satisfied"] is False
+    assert receipt["advanced_visual_missing_provider_modes"] == ["magicfit"]
+    assert receipt["optional_provider_modes"] == ["pano2vr", "krpano"]
 
 
 def test_generated_reconstruction_can_disclose_inferred_floorplan_from_photos(tmp_path: Path) -> None:

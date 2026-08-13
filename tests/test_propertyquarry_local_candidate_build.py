@@ -58,6 +58,40 @@ def test_built_image_smoke_resolves_routes_through_fastapi_public_api() -> None:
     assert "app.router.startup()" not in build.BUILT_IMAGE_SMOKE_SCRIPT
 
 
+def test_web_image_declares_the_smoke_enforced_entrypoint() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    dockerfile = (repository_root / build.DOCKERFILE_PATH).read_text(encoding="utf-8")
+    entrypoint = json.dumps(list(build.BUILT_IMAGE_SMOKE_ENTRYPOINT))
+
+    assert (
+        "COPY --chmod=0555 scripts/property_web_entrypoint.py "
+        "/usr/local/libexec/property_web_entrypoint.py"
+    ) in dockerfile
+    assert f"ENTRYPOINT {entrypoint}" in dockerfile
+
+
+def test_web_image_entrypoint_execs_the_command_without_a_shell() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    entrypoint = repository_root / "scripts" / "property_web_entrypoint.py"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(entrypoint),
+            sys.executable,
+            "-c",
+            "print('property-web-entrypoint-ok')",
+        ],
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "property-web-entrypoint-ok"
+
+
 def digest(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 

@@ -30,6 +30,21 @@ _PROVIDER_NAME_ALIASES: dict[str, str] = {
     "prompting_systems": "prompting_systems",
     "unmixr_ai": "unmixr",
 }
+_LIVE_EVIDENCE_PAIRS = {
+    ("live_provider_call_verified", "worker_health_probe + principal_bound_provider_receipt"),
+    ("complete", "browseract_live"),
+    ("complete", "clickrank_live"),
+    ("manual_seeded", "emailit_api_live"),
+    ("live_account_pool_verified", "live_unmixr_account_probes"),
+    ("live_storage_principal_verified", "live_rclone_about"),
+}
+_PROPERTYQUARRY_CUSTOMER_LIVE_EVIDENCE = {
+    (
+        "1min_ai",
+        "live_provider_call_verified",
+        "worker_health_probe + principal_bound_provider_receipt",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -42,6 +57,14 @@ class LtdInventoryRow:
     workspace_integration_tier: str
     local_integration: str
     notes: str
+
+
+@dataclass(frozen=True)
+class LtdDiscoveryEvidence:
+    service_name: str
+    discovery_status: str
+    verification_source: str
+    last_verified: str
 
 
 def _inventory_markdown_path(*, module_path: Path | None = None) -> Path:
@@ -107,6 +130,11 @@ class LtdRuntimeProfile:
     local_integration: str
     notes: str
     runtime_state: str
+    evidence_status: str
+    verification_source: str
+    last_verified: str
+    live_evidence_verified: bool
+    propertyquarry_customer_integration_verified: bool
     aliases: tuple[str, ...]
     matched_provider_key: str
     matched_provider_display_name: str
@@ -124,6 +152,13 @@ class LtdRuntimeProfile:
             "local_integration": self.local_integration,
             "notes": self.notes,
             "runtime_state": self.runtime_state,
+            "evidence_status": self.evidence_status,
+            "verification_source": self.verification_source,
+            "last_verified": self.last_verified,
+            "live_evidence_verified": self.live_evidence_verified,
+            "propertyquarry_customer_integration_verified": (
+                self.propertyquarry_customer_integration_verified
+            ),
             "aliases": list(self.aliases),
             "matched_provider_key": self.matched_provider_key,
             "matched_provider_display_name": self.matched_provider_display_name,
@@ -203,6 +238,9 @@ def parse_ltd_inventory_markdown(markdown_text: str) -> tuple[LtdInventoryRow, .
             parts = _parse_table_row(line)
             if parts is None:
                 continue
+            workspace_tier = str(parts[5]).strip().strip("`")
+            if workspace_tier.lower().startswith("excluded"):
+                continue
             rows.append(
                 LtdInventoryRow(
                     service_name=str(parts[0]).strip().strip("`"),
@@ -210,7 +248,7 @@ def parse_ltd_inventory_markdown(markdown_text: str) -> tuple[LtdInventoryRow, .
                     holding=str(parts[2]).strip(),
                     status=str(parts[3]).strip(),
                     redeem_by=str(parts[4]).strip(),
-                    workspace_integration_tier=str(parts[5]).strip().strip("`"),
+                    workspace_integration_tier=workspace_tier,
                     local_integration=str(parts[6]).strip(),
                     notes=str(parts[7]).strip(),
                 )
@@ -221,6 +259,66 @@ def parse_ltd_inventory_markdown(markdown_text: str) -> tuple[LtdInventoryRow, .
 def load_ltd_inventory_rows(markdown_path: Path | None = None) -> tuple[LtdInventoryRow, ...]:
     path = markdown_path or _inventory_markdown_path()
     return parse_ltd_inventory_markdown(path.read_text(encoding="utf-8"))
+
+
+def parse_ltd_discovery_evidence(
+    markdown_text: str,
+) -> tuple[LtdDiscoveryEvidence, ...]:
+    rows: list[LtdDiscoveryEvidence] = []
+    in_section = False
+    for raw_line in markdown_text.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("## Discovery Tracking"):
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if not in_section or not line.startswith("|") or line.startswith("|---"):
+            continue
+        parts = [part.strip() for part in line.strip().strip("|").split("|")]
+        if len(parts) != 6 or parts[0] == "Service":
+            continue
+        rows.append(
+            LtdDiscoveryEvidence(
+                service_name=parts[0].strip("`"),
+                discovery_status=parts[2].strip("`"),
+                verification_source=parts[3].strip("`"),
+                last_verified=parts[4].strip(),
+            )
+        )
+    return tuple(rows)
+
+
+def _discovery_index(
+    evidence: tuple[LtdDiscoveryEvidence, ...],
+) -> dict[str, LtdDiscoveryEvidence]:
+    return {
+        _normalize_lookup(row.service_name): row
+        for row in evidence
+        if _normalize_lookup(row.service_name)
+    }
+
+
+def _live_evidence_verified(evidence: LtdDiscoveryEvidence | None) -> bool:
+    if evidence is None:
+        return False
+    return (
+        evidence.discovery_status,
+        evidence.verification_source,
+    ) in _LIVE_EVIDENCE_PAIRS
+
+
+def _propertyquarry_customer_integration_verified(
+    row: LtdInventoryRow,
+    evidence: LtdDiscoveryEvidence | None,
+) -> bool:
+    if evidence is None:
+        return False
+    return (
+        _normalize_lookup(row.service_name),
+        evidence.discovery_status,
+        evidence.verification_source,
+    ) in _PROPERTYQUARRY_CUSTOMER_LIVE_EVIDENCE
 
 
 def _provider_aliases(binding: ProviderBinding) -> tuple[str, ...]:
@@ -273,7 +371,7 @@ def _discover_account_action(row: LtdInventoryRow) -> LtdRuntimeAction:
         label="Discover Account Facts",
         description=f"Use BrowserAct account discovery to refresh facts for {row.service_name}.",
         execution_mode="tool_execution",
-        executable=True,
+        executable=False,
         tool_name="browseract.extract_account_facts",
         action_kind="account.extract",
         route_path=f"/v1/ltds/runtime-catalog/{encoded_service}/discover-account",
@@ -288,7 +386,10 @@ def _discover_account_action(row: LtdInventoryRow) -> LtdRuntimeAction:
                 "run_url": {"type": "string"},
             },
         },
-        notes="Requires an enabled BrowserAct connector binding for the target principal.",
+        notes=(
+            "Contract only. The principal-specific API projection marks this executable only "
+            "when an enabled BrowserAct binding explicitly includes this service."
+        ),
     )
 
 
@@ -313,13 +414,16 @@ def _browseract_ui_action(row: LtdInventoryRow, service: BrowserActUiServiceDefi
         label=service.name,
         description=service.description,
         execution_mode="tool_execution",
-        executable=True,
+        executable=False,
         tool_name=service.tool_name,
         action_kind=service.action_kind,
         route_path=route_path,
         provider_key="browseract",
         input_schema_json=service.input_schema_json(),
-        notes=f"BrowserAct template-backed lane via {service.service_key}.",
+        notes=(
+            f"Template-backed lane via {service.service_key}. Principal-specific execution "
+            "requires an enabled BrowserAct binding explicitly scoped to this service."
+        ),
     )
 
 
@@ -332,7 +436,7 @@ def _crezlo_property_tour_action(row: LtdInventoryRow) -> LtdRuntimeAction | Non
         label="Create Property Tour",
         description="Run the BrowserAct-backed Crezlo property-tour pipeline.",
         execution_mode="tool_execution",
-        executable=True,
+        executable=False,
         tool_name="browseract.crezlo_property_tour",
         action_kind="property_tour.create",
         route_path=f"/v1/ltds/runtime-catalog/{encoded_service}/actions/create_property_tour",
@@ -376,7 +480,10 @@ def _crezlo_property_tour_action(row: LtdInventoryRow) -> LtdRuntimeAction | Non
                 "login_password": {"type": "string"},
             },
         },
-        notes="Requires the Crezlo BrowserAct workflow metadata on the binding or an explicit run target.",
+        notes=(
+            "Blocked until a principal-bound, customer-visible completion receipt proves the "
+            "Crezlo tour lane. Workflow metadata alone is not release evidence."
+        ),
     )
 
 
@@ -538,17 +645,46 @@ def _runtime_state(
     actions: tuple[LtdRuntimeAction, ...],
     provider_binding: ProviderBinding | None,
     browseract_ui_service: BrowserActUiServiceDefinition | None,
+    live_evidence_verified: bool,
 ) -> str:
     if any(action.execution_mode == "runtime_lane" for action in actions):
         specific_executable_actions = [action for action in actions if action.executable and action.action_key != "discover_account"]
         if not specific_executable_actions:
-            return "runtime_managed"
+            return (
+                "live_runtime_evidence"
+                if live_evidence_verified
+                else "runtime_contract_available"
+            )
     if any(action.executable for action in actions):
         if provider_binding is not None and provider_binding.executable:
-            return "provider_executable"
+            return (
+                "live_provider_evidence"
+                if live_evidence_verified
+                else "provider_contract_available"
+            )
         if browseract_ui_service is not None:
-            return "browseract_ui_ready"
-        return "browseract_discoverable"
+            return (
+                "live_account_evidence"
+                if live_evidence_verified
+                else "browseract_template_available"
+            )
+        return (
+            "live_account_evidence"
+            if live_evidence_verified
+            else "account_discovery_contract_available"
+        )
+    if browseract_ui_service is not None:
+        return (
+            "live_account_evidence"
+            if live_evidence_verified
+            else "browseract_template_available"
+        )
+    if any(action.action_key == "discover_account" for action in actions):
+        return (
+            "live_account_evidence"
+            if live_evidence_verified
+            else "account_discovery_contract_available"
+        )
     tier_key = str(row.workspace_integration_tier or "").strip().lower()
     if tier_key == "tier 4":
         return "credentials_only"
@@ -570,10 +706,16 @@ class LtdRuntimeCatalogService:
         self._markdown_path = markdown_path or _LTDS_PATH
 
     def list_profiles(self) -> tuple[LtdRuntimeProfile, ...]:
-        rows = load_ltd_inventory_rows(self._markdown_path)
+        markdown_text = self._markdown_path.read_text(encoding="utf-8")
+        rows = parse_ltd_inventory_markdown(markdown_text)
+        discovery_index = _discovery_index(
+            parse_ltd_discovery_evidence(markdown_text)
+        )
         provider_index = _provider_index(self._provider_registry)
         profiles: list[LtdRuntimeProfile] = []
         for row in rows:
+            evidence = discovery_index.get(_normalize_lookup(row.service_name))
+            live_evidence_verified = _live_evidence_verified(evidence)
             provider_binding = _matched_provider(row, provider_index=provider_index)
             browseract_ui_service = _matched_browseract_ui_service(row)
             actions = _unique_actions(
@@ -609,6 +751,20 @@ class LtdRuntimeCatalogService:
                         actions=actions,
                         provider_binding=provider_binding,
                         browseract_ui_service=browseract_ui_service,
+                        live_evidence_verified=live_evidence_verified,
+                    ),
+                    evidence_status=str(
+                        evidence.discovery_status if evidence is not None else "missing"
+                    ),
+                    verification_source=str(
+                        evidence.verification_source if evidence is not None else ""
+                    ),
+                    last_verified=str(
+                        evidence.last_verified if evidence is not None else ""
+                    ),
+                    live_evidence_verified=live_evidence_verified,
+                    propertyquarry_customer_integration_verified=(
+                        _propertyquarry_customer_integration_verified(row, evidence)
                     ),
                     aliases=aliases,
                     matched_provider_key=str(provider_binding.provider_key if provider_binding is not None else ""),

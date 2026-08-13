@@ -5,7 +5,7 @@
   "proof_target": "propertyquarry",
   "version": 1,
   "kind": "proof_receipt",
-  "generated_at": "2026-07-31T04:28:26Z",
+  "generated_at": "2026-08-13T06:17:04Z",
   "generated_by": "scripts/materialize_ea_browser_workflow_proof.py",
   "status": "pass",
   "operator_summary": "PropertyQuarry browser workflow proof is published and green across the required journey matrix, source-backed contracts, and real-browser E2E.",
@@ -22,31 +22,31 @@
     "failed PropertyQuarry runs remain visible on the activity surface with an actionable recovery state"
   ],
   "approved_baseline": {
-    "id": "propertyquarry.release-proof.v1",
-    "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
+    "id": "propertyquarry.release-proof.v2",
+    "sha256": "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
   },
   "source_binding": {
     "version": 1,
     "approved_baseline": {
-      "id": "propertyquarry.release-proof.v1",
-      "sha256": "c9403bfba909e95ef8e0ded9c2c915c586e448db55f0e98f466d3ba3a166dcc9"
+      "id": "propertyquarry.release-proof.v2",
+      "sha256": "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
     },
-    "code_commit": "54ec8bcefecd1beee9c8c64d168561da4d3e2be1",
+    "code_commit": "290e4e7efb473f0602ab29f2a34e85c616e3e331",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
-      "sha256": "0221c24194de3b63ee42ce5ae77424183794da9cc8a08d0b38690cfaf5087d8f",
-      "git_blob_oid": "f268edbb601f409bfb306295d7367f61581e0581"
+      "sha256": "7f8bbd29c31b9ebe32692b0befcafd312f2fa19e600131d10a6c9788302eb40a",
+      "git_blob_oid": "14583d46fa64ef1c6ee17afa0036006eaedd3e7c"
     },
     "required_test_sources": [
       {
         "path": "tests/test_propertyquarry_workspace_redesign.py",
-        "sha256": "ab2442f166e57ee45bc0159932929ef435c03890c6601d50038a5912356bb5cd",
-        "git_blob_oid": "14dae6b24b6ba7d7774b4a6a0bfd2111143e64cd"
+        "sha256": "78dd1489dabe6c3d4f9243b322ba3b21b9d457bb2bcc94286fe57a03d9a2c50a",
+        "git_blob_oid": "643d5d44cd117518562b207f8ab7a4302c417b73"
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
-        "sha256": "bd91d60791bbb65ab752127211c29ed5329c6e31e02a1bdf60ed23dcc3a682d9",
-        "git_blob_oid": "c33dc419a36e50be71b6c85639d88b850a11e1cd"
+        "sha256": "0ed13ad8c44b88d6fb0c293614da7c81409f9a52df56bc34946c23f7a647ce98",
+        "git_blob_oid": "ceca4806e33af8ce8a61432d152e98fb62ee17e2"
       },
       {
         "path": "tests/test_property_evidence_overlays.py",
@@ -57,9 +57,9 @@
   },
   "source_backed_journey_proof": {
     "status": "pass",
-    "command": "/docker/property/.propertyquarry_release_tools/release-venv/bin/python -m pytest -q tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_workspace_routes_render_greenfield_surfaces tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_failed_run_stays_on_activity_surface tests/test_propertyquarry_workspace_redesign.py::test_property_workspace_sign_out_clears_workspace_session_cookie tests/test_propertyquarry_workspace_redesign.py::test_property_saved_shortlist_candidates_persist_across_runs tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_account_exposes_working_lifecycle_controls tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_pricing_checkout_failure_copy_is_safe_and_accessible tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_public_home_survives_unreadable_optional_tour_media",
+    "command": "/docker/property/.venv/bin/python -m pytest -q tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_workspace_routes_render_greenfield_surfaces tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_failed_run_stays_on_activity_surface tests/test_propertyquarry_workspace_redesign.py::test_property_workspace_sign_out_clears_workspace_session_cookie tests/test_propertyquarry_workspace_redesign.py::test_property_saved_shortlist_candidates_persist_across_runs tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_account_exposes_working_lifecycle_controls tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_pricing_checkout_failure_copy_is_safe_and_accessible tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_public_home_survives_unreadable_optional_tour_media",
     "cwd": "/docker/property",
-    "python_bin": "/docker/property/.propertyquarry_release_tools/release-venv/bin/python",
+    "python_bin": "/docker/property/.venv/bin/python",
     "test_file": "tests/test_propertyquarry_workspace_redesign.py",
     "cases": [
       "test_propertyquarry_workspace_routes_render_greenfield_surfaces",
@@ -71,15 +71,10 @@
       "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
     ],
     "exit_code": 0,
-    "duration_seconds": 22.618,
+    "duration_seconds": 27.888,
     "output_excerpt": [
       ".......                                                                  [100%]",
-      "=============================== warnings summary ===============================",
-      ".propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/fastapi/testclient.py:1",
-      "  /docker/property/.propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.",
-      "    from starlette.testclient import TestClient as TestClient  # noqa",
-      "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
-      "7 passed, 1 warning in 20.50s"
+      "7 passed in 25.15s"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -97,9 +92,9 @@
   "source_backed_journey_proofs": [
     {
       "status": "pass",
-      "command": "/docker/property/.propertyquarry_release_tools/release-venv/bin/python -m pytest -q tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_workspace_routes_render_greenfield_surfaces tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_failed_run_stays_on_activity_surface tests/test_propertyquarry_workspace_redesign.py::test_property_workspace_sign_out_clears_workspace_session_cookie tests/test_propertyquarry_workspace_redesign.py::test_property_saved_shortlist_candidates_persist_across_runs tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_account_exposes_working_lifecycle_controls tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_pricing_checkout_failure_copy_is_safe_and_accessible tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_public_home_survives_unreadable_optional_tour_media",
+      "command": "/docker/property/.venv/bin/python -m pytest -q tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_workspace_routes_render_greenfield_surfaces tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_failed_run_stays_on_activity_surface tests/test_propertyquarry_workspace_redesign.py::test_property_workspace_sign_out_clears_workspace_session_cookie tests/test_propertyquarry_workspace_redesign.py::test_property_saved_shortlist_candidates_persist_across_runs tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_account_exposes_working_lifecycle_controls tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_pricing_checkout_failure_copy_is_safe_and_accessible tests/test_propertyquarry_workspace_redesign.py::test_propertyquarry_public_home_survives_unreadable_optional_tour_media",
       "cwd": "/docker/property",
-      "python_bin": "/docker/property/.propertyquarry_release_tools/release-venv/bin/python",
+      "python_bin": "/docker/property/.venv/bin/python",
       "test_file": "tests/test_propertyquarry_workspace_redesign.py",
       "cases": [
         "test_propertyquarry_workspace_routes_render_greenfield_surfaces",
@@ -111,15 +106,10 @@
         "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
       ],
       "exit_code": 0,
-      "duration_seconds": 22.618,
+      "duration_seconds": 27.888,
       "output_excerpt": [
         ".......                                                                  [100%]",
-        "=============================== warnings summary ===============================",
-        ".propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/fastapi/testclient.py:1",
-        "  /docker/property/.propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.",
-        "    from starlette.testclient import TestClient as TestClient  # noqa",
-        "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
-        "7 passed, 1 warning in 20.50s"
+        "7 passed in 25.15s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -136,18 +126,18 @@
     },
     {
       "status": "pass",
-      "command": "/docker/property/.propertyquarry_release_tools/release-venv/bin/python -m pytest -q tests/test_property_evidence_overlays.py::test_property_research_rows_preserve_evidence_states_and_original_article_link",
+      "command": "/docker/property/.venv/bin/python -m pytest -q tests/test_property_evidence_overlays.py::test_property_research_rows_preserve_evidence_states_and_original_article_link",
       "cwd": "/docker/property",
-      "python_bin": "/docker/property/.propertyquarry_release_tools/release-venv/bin/python",
+      "python_bin": "/docker/property/.venv/bin/python",
       "test_file": "tests/test_property_evidence_overlays.py",
       "cases": [
         "test_property_research_rows_preserve_evidence_states_and_original_article_link"
       ],
       "exit_code": 0,
-      "duration_seconds": 2.63,
+      "duration_seconds": 2.121,
       "output_excerpt": [
         ".                                                                        [100%]",
-        "1 passed in 1.46s"
+        "1 passed in 1.10s"
       ],
       "limitations": [],
       "outcome_counts": {
@@ -165,9 +155,9 @@
   ],
   "real_browser_e2e_proof": {
     "status": "pass",
-    "command": "/docker/property/.propertyquarry_release_tools/release-venv/bin/python -m pytest -q tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_greenfield_workspace_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_greenfield_workspace_is_mobile_usable tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_expired_session_next_action_moves_keyboard_focus_to_sign_in_options tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_workbench_candidate_history_stays_in_place tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_flagship_operating_loop_in_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_best_match_opens_hosted_3d_tour_and_flythrough_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_blocked_3d_tour_can_be_retried_from_research_packet_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_research_detail_never_shows_fake_open_tour_for_generated_reconstruction_status tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_generated_reconstruction_public_launch_renders_honest_shell_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_packet_tracks_followup_state_in_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_browser_alert_button_toggles_enabled_state tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_research_evidence_states_and_links_render_in_real_browser -rs",
+    "command": "/docker/property/.venv/bin/python -m pytest -q tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_greenfield_workspace_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_greenfield_workspace_is_mobile_usable tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_expired_session_next_action_moves_keyboard_focus_to_sign_in_options tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_workbench_candidate_history_stays_in_place tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_flagship_operating_loop_in_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_best_match_opens_hosted_3d_tour_and_flythrough_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_blocked_3d_tour_can_be_retried_from_research_packet_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_research_detail_never_shows_fake_open_tour_for_generated_reconstruction_status tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_generated_reconstruction_public_launch_renders_honest_shell_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_generates_private_opportunity_brief_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_packet_tracks_followup_state_in_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_browser_alert_button_toggles_enabled_state tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_research_evidence_states_and_links_render_in_real_browser -rs",
     "cwd": "/docker/property",
-    "python_bin": "/docker/property/.propertyquarry_release_tools/release-venv/bin/python",
+    "python_bin": "/docker/property/.venv/bin/python",
     "test_file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
     "cases": [
       "test_propertyquarry_greenfield_workspace_in_real_browser",
@@ -181,28 +171,17 @@
       "test_propertyquarry_generated_reconstruction_public_launch_renders_honest_shell_in_real_browser",
       "test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe",
       "test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser",
-      "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+      "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
       "test_propertyquarry_packet_tracks_followup_state_in_browser",
       "test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser",
       "test_propertyquarry_browser_alert_button_toggles_enabled_state",
       "test_propertyquarry_research_evidence_states_and_links_render_in_real_browser"
     ],
     "exit_code": 0,
-    "duration_seconds": 97.687,
+    "duration_seconds": 97.039,
     "output_excerpt": [
       "................                                                         [100%]",
-      "=============================== warnings summary ===============================",
-      ".propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/fastapi/testclient.py:1",
-      "  /docker/property/.propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.",
-      "    from starlette.testclient import TestClient as TestClient  # noqa",
-      "tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_greenfield_workspace_in_real_browser",
-      "  /docker/property/.propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions",
-      "    warnings.warn(  # deprecated in 14.0 - 2024-11-09",
-      "tests/e2e/test_propertyquarry_greenfield_browser.py::test_propertyquarry_greenfield_workspace_in_real_browser",
-      "  /docker/property/.propertyquarry_release_tools/release-venv/lib/python3.12/site-packages/uvicorn/protocols/websockets/websockets_impl.py:17: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated",
-      "    from websockets.server import WebSocketServerProtocol",
-      "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html",
-      "16 passed, 3 warnings in 95.14s (0:01:35)"
+      "16 passed in 94.66s (0:01:34)"
     ],
     "limitations": [],
     "outcome_counts": {
@@ -221,7 +200,7 @@
     "version": 1,
     "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "54ec8bcefecd1beee9c8c64d168561da4d3e2be1",
+    "runtime_commit_sha": "290e4e7efb473f0602ab29f2a34e85c616e3e331",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
@@ -399,7 +378,7 @@
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
             "cases": [
-              "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+              "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
               "test_propertyquarry_packet_tracks_followup_state_in_browser"
             ],
             "lane_status": "pass"

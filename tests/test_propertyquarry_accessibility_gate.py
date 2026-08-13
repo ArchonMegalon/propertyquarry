@@ -288,6 +288,19 @@ def test_research_detail_reflow_tracks_its_containing_block_not_viewport_units()
     assert "width: min(1180px, calc(100vw - 32px));" not in source
 
 
+def test_research_detail_mobile_topbar_keeps_primary_navigation_visible() -> None:
+    source = (
+        ROOT / "ea" / "app" / "templates" / "app" / "property_research_detail.html"
+    ).read_text(encoding="utf-8")
+
+    assert '.prd-top-actions [data-pq-localization-slot]' in source
+    assert '.prd-top-actions .pq-locale-panel' in source
+    assert '.prd-primary-nav [data-prd-nav-key="account"]' in source
+    assert source.count('data-prd-nav-key="{{ item.key }}"') == 2
+    assert 'content: "A";' in source
+    assert 'content: "Me";' not in source
+
+
 def test_accessibility_gate_builds_engine_route_receipt_from_pinned_local_axe(tmp_path: Path) -> None:
     routes = _flagship_routes()
 

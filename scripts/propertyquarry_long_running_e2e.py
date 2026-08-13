@@ -47,7 +47,7 @@ SESSION_COOKIE_NAME = "ea_workspace_session"
 SEARCH_ROUTE = "/app/search"
 RUN_STATUS_ROUTE_TEMPLATE = "/app/api/property/search-runs/{run_id}"
 DEFAULT_THREE_D_SLUG = (
-    "danubeflats-urban-jungle-layout-first-a43055be7b58de51447e"
+    "karl-czerny-gasse-2-urban-jungle"
 )
 MAX_SESSION_RECEIPT_BYTES = 64 * 1024
 MAX_THREE_D_RECEIPT_BYTES = 2 * 1024 * 1024
@@ -550,17 +550,51 @@ def evaluate_unique_launch_accounting(
         and dict(row.get("request_cardinality") or {}).get("ok") is True
         for row in launches
     )
+    seen_run_digests: dict[str, int] = {}
+    run_dispositions: list[str] = []
+    active_reuse_count = 0
+    run_accounting_ok = True
+    for index, (row, run_digest) in enumerate(zip(launches, run_digests)):
+        if not run_digest:
+            run_dispositions.append("missing_run")
+            run_accounting_ok = False
+            continue
+        prior_index = seen_run_digests.get(run_digest)
+        if prior_index is None:
+            seen_run_digests[run_digest] = index
+            run_dispositions.append("new_run")
+            continue
+        prior_poll = dict(launches[prior_index].get("poll") or {})
+        current_poll = dict(row.get("poll") or {})
+        prior_status = str(prior_poll.get("final_status") or "").strip().lower()
+        current_status = str(current_poll.get("final_status") or "").strip().lower()
+        active_reuse = bool(
+            prior_poll.get("terminal") is False
+            and current_poll.get("terminal") is False
+            and prior_status in ACTIVE_STATUSES
+            and current_status in ACTIVE_STATUSES
+        )
+        if active_reuse:
+            run_dispositions.append("active_run_reused")
+            active_reuse_count += 1
+        else:
+            run_dispositions.append("invalid_run_reuse")
+            run_accounting_ok = False
     return {
         "ok": bool(
             len(launches) == expected_iterations
             and iterations == expected_sequence
             and modes == expected_modes
             and all(run_digests)
-            and len(set(run_digests)) == expected_iterations
+            and run_accounting_ok
             and cardinalities_ok
         ),
         "launch_count": len(launches),
         "unique_run_count": len({value for value in run_digests if value}),
+        "created_run_count": run_dispositions.count("new_run"),
+        "active_run_reuse_count": active_reuse_count,
+        "run_dispositions": run_dispositions,
+        "run_accounting_ok": run_accounting_ok,
         "iteration_sequence_ok": iterations == expected_sequence,
         "mode_sequence_ok": modes == expected_modes,
         "all_request_cardinalities_ok": cardinalities_ok,
@@ -1010,6 +1044,39 @@ def _extract_run_id(url: object) -> str:
     return run_id if RUN_ID_PATTERN.fullmatch(run_id) else ""
 
 
+def _search_run_navigation_id(value: object, *, origin: str) -> str:
+    """Return the run id only for an exact, same-origin workbench result URL."""
+
+    try:
+        parsed = urllib.parse.urlsplit(str(value or ""))
+        parsed_origin = urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, "", "", "")
+        ).rstrip("/")
+        query_pairs = urllib.parse.parse_qsl(
+            parsed.query,
+            keep_blank_values=True,
+            strict_parsing=True,
+        )
+    except (TypeError, ValueError):
+        return ""
+    if (
+        parsed_origin != origin
+        or parsed.username
+        or parsed.password
+        or parsed.fragment
+        or parsed.path.rstrip("/") not in {"/app/search", "/app/properties"}
+        or len(query_pairs) != 1
+        or query_pairs[0][0] != "run_id"
+    ):
+        return ""
+    run_id = str(query_pairs[0][1] or "").strip()
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        return ""
+    if parsed.query != urllib.parse.urlencode({"run_id": run_id}):
+        return ""
+    return run_id
+
+
 def _poll_search_run(
     *,
     context: Any,
@@ -1145,14 +1212,16 @@ def _exercise_launch(
         _install_launch_state_monitor(page, storage_key=storage_key)
         button.click(timeout=config.browser_timeout_ms, no_wait_after=True)
         page.wait_for_url(
-            "**/app/properties?*run_id=*",
+            lambda value: bool(
+                _search_run_navigation_id(value, origin=config.origin)
+            ),
             wait_until="domcontentloaded",
             timeout=min(
                 config.run_timeout_seconds * 1_000,
                 max(config.browser_timeout_ms, 180_000),
             ),
         )
-        run_id = _extract_run_id(page.url)
+        run_id = _search_run_navigation_id(page.url, origin=config.origin)
         launch_state = _read_launch_state(page, storage_key=storage_key)
         cardinality = evaluate_launch_cardinality(
             journal.requests,
@@ -1715,6 +1784,292 @@ def _load_three_d_checkpoint(
     }
 
 
+def _generated_reconstruction_viewer_path_ok(
+    value: object,
+    *,
+    origin: str,
+    slug: str,
+) -> bool:
+    try:
+        parsed = urllib.parse.urlsplit(str(value or ""))
+        expected_origin = urllib.parse.urlsplit(origin)
+    except (TypeError, ValueError):
+        return False
+    if (
+        parsed.scheme != expected_origin.scheme
+        or parsed.netloc != expected_origin.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        return False
+    quoted_slug = urllib.parse.quote(str(slug or "").strip(), safe="")
+    return parsed.path in {
+        f"/tours/viewer/{quoted_slug}/generated-reconstruction/viewer.html",
+        f"/tours/files/{quoted_slug}/generated-reconstruction/viewer.html",
+    }
+
+
+def _generated_reconstruction_viewer_checkpoint(
+    page: Any,
+    *,
+    origin: str,
+    slug: str,
+    timeout_ms: int,
+) -> dict[str, object]:
+    preview_kind = str(
+        page.locator("html").get_attribute("data-pq-preview-kind") or ""
+    ).strip().lower()
+    detected = preview_kind == "styled-3d-reconstruction"
+    path_ok = detected and _generated_reconstruction_viewer_path_ok(
+        page.url,
+        origin=origin,
+        slug=slug,
+    )
+    if not detected:
+        return {
+            "detected": False,
+            "path_ok": False,
+            "rendered": False,
+            "cutaway_rendered": False,
+            "truthful_disclosure": False,
+            "cutaway_wall_count": 0,
+            "wall_mesh_count": 0,
+            "visible_wall_count": 0,
+            "render_calls": 0,
+            "render_triangles": 0,
+            "view_mode": "",
+        }
+
+    provider_capture = str(
+        page.locator("html").get_attribute(
+            "data-pq-verified-provider-capture"
+        )
+        or ""
+    ).strip().lower()
+    verified_tour_gate = str(
+        page.locator("html").get_attribute("data-pq-verified-tour-gate")
+        or ""
+    ).strip().lower()
+    truthful_disclosure = (
+        provider_capture == "false" and verified_tour_gate in {"", "false"}
+    )
+    try:
+        page.wait_for_function(
+            """() => {
+              const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.();
+              return Boolean(
+                metrics?.ready
+                && Number(metrics?.frameCount || 0) >= 2
+                && Number(metrics?.renderCalls || 0) > 0
+                && Number(metrics?.renderTriangles || 0) > 0
+              );
+            }""",
+            timeout=timeout_ms,
+        )
+        overview = page.locator("#view-overview")
+        if overview.count() == 1:
+            overview.click(timeout=timeout_ms)
+            page.wait_for_function(
+                """() => {
+                  const metrics = window.__pqReconstructionDebug?.getRenderMetrics?.();
+                  return Boolean(
+                    metrics?.ready
+                    && metrics?.viewMode === 'overview'
+                    && !metrics?.isTransitioning
+                  );
+                }""",
+                timeout=timeout_ms,
+            )
+        metrics = dict(
+            page.evaluate(
+                "() => window.__pqReconstructionDebug?.getRenderMetrics?.() || {}"
+            )
+            or {}
+        )
+    except Exception:
+        metrics = {}
+
+    cutaway_wall_count = int(metrics.get("cutawayWallCount") or 0)
+    wall_mesh_count = int(metrics.get("wallMeshCount") or 0)
+    visible_wall_count = int(metrics.get("visibleWallCount") or 0)
+    render_calls = int(metrics.get("renderCalls") or 0)
+    render_triangles = int(metrics.get("renderTriangles") or 0)
+    view_mode = str(metrics.get("viewMode") or "").strip().lower()
+    rendered = bool(
+        path_ok
+        and metrics.get("ready") is True
+        and render_calls > 0
+        and render_triangles > 0
+        and page.locator("#viewport canvas, canvas").count() == 1
+    )
+    cutaway_rendered = bool(
+        rendered
+        and view_mode == "overview"
+        and cutaway_wall_count >= 1
+        and wall_mesh_count > visible_wall_count >= 1
+    )
+    return {
+        "detected": True,
+        "path_ok": path_ok,
+        "rendered": rendered,
+        "cutaway_rendered": cutaway_rendered,
+        "truthful_disclosure": truthful_disclosure,
+        "cutaway_wall_count": cutaway_wall_count,
+        "wall_mesh_count": wall_mesh_count,
+        "visible_wall_count": visible_wall_count,
+        "render_calls": render_calls,
+        "render_triangles": render_triangles,
+        "view_mode": view_mode,
+    }
+
+
+def _ai_panorama_control_path_ok(
+    value: object,
+    *,
+    origin: str,
+    slug: str,
+) -> bool:
+    try:
+        parsed = urllib.parse.urlsplit(str(value or ""))
+        expected_origin = urllib.parse.urlsplit(origin)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        parsed.scheme == expected_origin.scheme
+        and parsed.netloc == expected_origin.netloc
+        and not parsed.username
+        and not parsed.password
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.path
+        == f"/tours/{urllib.parse.quote(str(slug or '').strip(), safe='')}/control"
+    )
+
+
+def _ai_panorama_cutaway_checkpoint(
+    page: Any,
+    *,
+    origin: str,
+    slug: str,
+    timeout_ms: int,
+) -> dict[str, object]:
+    body = page.locator("body")
+    viewer_kind = str(body.get_attribute("data-viewer") or "").strip().lower()
+    detected = viewer_kind == "propertyquarry-ai-panorama"
+    path_ok = detected and _ai_panorama_control_path_ok(
+        page.url,
+        origin=origin,
+        slug=slug,
+    )
+    if not detected:
+        return {
+            "detected": False,
+            "path_ok": False,
+            "rendered": False,
+            "cutaway_rendered": False,
+            "truthful_disclosure": False,
+            "initial_mode": "",
+            "final_mode": "",
+            "dollhouse_node_count": 0,
+            "floorplan_pin_count": 0,
+            "visual_changed": False,
+        }
+
+    initial_mode = str(body.get_attribute("data-mode") or "").strip().lower()
+    truthful_disclosure = "not a captured 360 or measured survey" in str(
+        body.inner_text(timeout=timeout_ms) or ""
+    ).lower()
+    canvas = page.locator("#viewer canvas, canvas")
+    canvas_count = canvas.count()
+    canvas_state = (
+        dict(
+            canvas.first.evaluate(
+                """(node) => ({
+                  width: Number(node.width || 0),
+                  height: Number(node.height || 0),
+                  rendered_width: Number(node.getBoundingClientRect().width || 0),
+                  rendered_height: Number(node.getBoundingClientRect().height || 0),
+                })"""
+            )
+            or {}
+        )
+        if canvas_count == 1
+        else {}
+    )
+    rendered = bool(
+        path_ok
+        and initial_mode == "panorama"
+        and canvas_count == 1
+        and int(canvas_state.get("width") or 0) > 0
+        and int(canvas_state.get("height") or 0) > 0
+        and float(canvas_state.get("rendered_width") or 0) > 0
+        and float(canvas_state.get("rendered_height") or 0) > 0
+    )
+    final_mode = initial_mode
+    dollhouse_node_count = 0
+    floorplan_pin_count = 0
+    visual_changed = False
+    if rendered:
+        try:
+            before = canvas.first.screenshot(
+                caret="hide",
+                animations="disabled",
+                timeout=timeout_ms,
+            )
+            toggle = page.locator("#dollhouse-toggle")
+            if toggle.count() != 1 or not toggle.is_visible():
+                raise RuntimeError("dollhouse_toggle_missing")
+            toggle.click(timeout=timeout_ms)
+            page.wait_for_function(
+                "() => document.body?.dataset.mode === 'dollhouse'",
+                timeout=timeout_ms,
+            )
+            page.wait_for_timeout(500)
+            final_mode = str(body.get_attribute("data-mode") or "").strip().lower()
+            dollhouse_node_count = page.locator(
+                "#dollhouse-nodes [data-scene-id]"
+            ).count()
+            floorplan_pin_count = page.locator(
+                "#floorplan-pins [data-scene-id]"
+            ).count()
+            note_visible = bool(
+                page.locator("#dollhouse-note").count() == 1
+                and page.locator("#dollhouse-note").is_visible()
+            )
+            after = canvas.first.screenshot(
+                caret="hide",
+                animations="disabled",
+                timeout=timeout_ms,
+            )
+            visual_changed = before != after
+        except Exception:
+            note_visible = False
+    else:
+        note_visible = False
+    cutaway_rendered = bool(
+        rendered
+        and final_mode == "dollhouse"
+        and dollhouse_node_count >= 3
+        and floorplan_pin_count >= 3
+        and note_visible
+        and visual_changed
+    )
+    return {
+        "detected": True,
+        "path_ok": path_ok,
+        "rendered": rendered,
+        "cutaway_rendered": cutaway_rendered,
+        "truthful_disclosure": truthful_disclosure,
+        "initial_mode": initial_mode,
+        "final_mode": final_mode,
+        "dollhouse_node_count": dollhouse_node_count,
+        "floorplan_pin_count": floorplan_pin_count,
+        "visual_changed": visual_changed,
+    }
+
+
 def _exercise_three_d_cutaway_checkpoint(
     *,
     browser: Any,
@@ -1756,31 +2111,56 @@ def _exercise_three_d_cutaway_checkpoint(
             wait_until="networkidle",
             timeout=config.browser_timeout_ms,
         )
-        provider_hook = page.locator(
-            "#load-provider, .provider-frame, iframe:not([src*='generated-reconstruction']), "
-            "[data-provider-status]"
-        ).count() > 0
-        viewer_hook = page.locator(
-            "iframe[src*='/generated-reconstruction/viewer.html'], "
-            "a[href*='/generated-reconstruction/viewer.html'], "
-            "[data-generated-reconstruction-viewer], "
-            "[data-pq-reconstruction-viewer]"
-        ).count() > 0
+        generated_viewer = _generated_reconstruction_viewer_checkpoint(
+            page,
+            origin=config.origin,
+            slug=config.three_d_slug,
+            timeout_ms=config.browser_timeout_ms,
+        )
+        ai_panorama = _ai_panorama_cutaway_checkpoint(
+            page,
+            origin=config.origin,
+            slug=config.three_d_slug,
+            timeout_ms=config.browser_timeout_ms,
+        )
+        provider_hook = bool(
+            ai_panorama["detected"]
+            or page.locator(
+                "#load-provider, .provider-frame, iframe:not([src*='generated-reconstruction']), "
+                "[data-provider-status]"
+            ).count()
+        )
+        viewer_hook = bool(
+            generated_viewer["detected"]
+            or ai_panorama["rendered"]
+            or page.locator(
+                "iframe[src*='/generated-reconstruction/viewer.html'], "
+                "a[href*='/generated-reconstruction/viewer.html'], "
+                "[data-generated-reconstruction-viewer], "
+                "[data-pq-reconstruction-viewer]"
+            ).count()
+        )
         cutaway_hook = bool(
-            page.locator(
+            generated_viewer["cutaway_rendered"]
+            or ai_panorama["cutaway_rendered"]
+            or page.locator(
                 'img[src*="diorama"], img[alt*="cutaway" i], '
                 '[data-diorama], [data-cutaway], a[href*="diorama"]'
             ).count()
         )
         body_text = page.locator("body").inner_text(timeout=config.browser_timeout_ms)
-        truthful_disclosure = any(
-            phrase in body_text.lower()
-            for phrase in (
-                "layout aid",
-                "not a captured tour",
-                "not a captured or measured tour",
-                "planning reconstruction",
-                "planning preview",
+        truthful_disclosure = bool(
+            generated_viewer["truthful_disclosure"]
+            or ai_panorama["truthful_disclosure"]
+            or any(
+                phrase in body_text.lower()
+                for phrase in (
+                    "layout aid",
+                    "not a captured tour",
+                    "not a captured or measured tour",
+                    "planning reconstruction",
+                    "planning preview",
+                )
             )
         )
         page.wait_for_function(
@@ -1818,10 +2198,15 @@ def _exercise_three_d_cutaway_checkpoint(
             )
             or {}
         )
-        asset_health_ok = bool(
+        image_asset_health_ok = bool(
             int(asset_health.get("image_count") or 0) > 0
             and int(asset_health.get("unavailable_count") or 0) == 0
             and int(asset_health.get("broken_count") or 0) == 0
+        )
+        asset_health_ok = bool(
+            image_asset_health_ok
+            or generated_viewer["rendered"]
+            or ai_panorama["rendered"]
         )
         network = evaluate_network_blockers(
             journal,
@@ -1849,6 +2234,19 @@ def _exercise_three_d_cutaway_checkpoint(
                 viewer_hook=viewer_hook,
                 cutaway_hook=cutaway_hook,
                 truthful_disclosure=truthful_disclosure,
+                generated_viewer_detected=generated_viewer["detected"],
+                generated_viewer_rendered=generated_viewer["rendered"],
+                generated_viewer_path_ok=generated_viewer["path_ok"],
+                generated_viewer_cutaway_wall_count=generated_viewer[
+                    "cutaway_wall_count"
+                ],
+                ai_panorama_detected=ai_panorama["detected"],
+                ai_panorama_rendered=ai_panorama["rendered"],
+                ai_panorama_path_ok=ai_panorama["path_ok"],
+                ai_panorama_dollhouse_node_count=ai_panorama[
+                    "dollhouse_node_count"
+                ],
+                ai_panorama_visual_changed=ai_panorama["visual_changed"],
                 asset_health_ok=asset_health_ok,
                 recovered_asset_count=int(asset_health.get("recovered_count") or 0),
                 unavailable_asset_count=int(asset_health.get("unavailable_count") or 0),
@@ -1869,6 +2267,8 @@ def _exercise_three_d_cutaway_checkpoint(
             "viewer_hook": viewer_hook,
             "cutaway_hook": cutaway_hook,
             "truthful_disclosure": truthful_disclosure,
+            "generated_viewer": generated_viewer,
+            "ai_panorama": ai_panorama,
             "asset_health": asset_health,
             "composed_checkpoint": composed,
             "network": network,

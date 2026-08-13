@@ -135,7 +135,7 @@ def test_fixed_controller_flock_serializes_distinct_deployments(tmp_path: Path) 
     holder.wait(timeout=10)
 
 
-def test_candidate_wrapper_has_no_journal_or_promotion_mutation_surface() -> None:
+def test_local_deploy_wrapper_has_no_retired_external_controller_surface() -> None:
     source = (Path(__file__).resolve().parents[1] / "scripts/deploy_propertyquarry.sh").read_text(
         encoding="utf-8"
     )
@@ -144,23 +144,29 @@ def test_candidate_wrapper_has_no_journal_or_promotion_mutation_surface() -> Non
         "propertyquarry_finish_schema_quiesce",
         "propertyquarry_deploy_journal.py",
         "flock -n",
-        "docker compose",
+        "--controller-owns-all-privileged-actions",
+        "--contain-before-candidate-validation",
+        "--require-external-monotonic-cas",
+        "--forbid-candidate-output-authority",
     ):
         assert forbidden not in source
-    assert "--controller-owns-all-privileged-actions" in source
-    assert "--forbid-candidate-output-authority" in source
+    assert "Authoritative local-Docker PropertyQuarry deployment." in source
+    assert "/usr/bin/docker compose" in source
+    assert "scripts/propertyquarry_local_deployment_receipt.py" in source
 
 
-def test_wrapper_requests_controller_containment_before_candidate_validation() -> None:
+def test_local_wrapper_validates_candidate_before_runtime_mutation_and_receipt() -> None:
     source = (Path(__file__).resolve().parents[1] / "scripts/deploy_propertyquarry.sh").read_text(
         encoding="utf-8"
     )
-    controller_ownership = source.index("--controller-owns-all-privileged-actions")
-    containment = source.index("--contain-before-candidate-validation")
-    controller_exec = source.index('"/proc/self/fd/${controller_fd}" "${operation}"')
+    repository_validation = source.index("python3 scripts/check_property_repository_role.py")
+    manifest_validation = source.index("manifest_authority=")
+    compose_validation = source.index("config --quiet")
+    preflight_exit = source.index("if ((PREFLIGHT_ONLY == 1))")
+    runtime_mutation = source.index("up --detach --wait --wait-timeout 120 propertyquarry-db")
+    admission_provisioning = source.index("python3 scripts/provision_propertyquarry_admission_database.py")
+    deployment_receipt = source.index("python3 scripts/propertyquarry_local_deployment_receipt.py")
 
-    assert controller_ownership < containment < controller_exec
-    assert "--require-external-monotonic-cas" in source[controller_exec:]
-    assert "--forbid-candidate-output-authority" in source[controller_exec:]
-    # This tests the requested argv contract only. With the tracked controller
-    # UNCONFIGURED, containment semantics remain an operational blocker.
+    assert repository_validation < manifest_validation < compose_validation
+    assert compose_validation < preflight_exit < runtime_mutation
+    assert runtime_mutation < admission_provisioning < deployment_receipt

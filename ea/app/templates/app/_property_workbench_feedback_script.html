@@ -178,7 +178,6 @@
     ).trim();
     const selectedTourUrlForCandidate = (candidate) => String(
       candidate?.verified_tour_url
-      || candidate?.open_tour_url
       || candidate?.tour?.url
       || candidate?.tour_url
       || ''
@@ -197,21 +196,21 @@
       const resolvedFlythroughUrl = selectedWalkthroughUrlForCandidate(candidate);
       const tourStatus = String(candidate?.tour_status || tour.status || '').trim().toLowerCase();
       const flythroughStatus = String(candidate?.flythrough_status || flythrough.status || '').trim().toLowerCase();
+      if (candidateVisualPendingStates.has(flythroughStatus)) {
+        return [String(flythrough.detail || flythrough.label || 'Preparing camera walkthrough.').trim(), String(flythrough.eta_label || '').trim() ? `ETA ${String(flythrough.eta_label || '').trim()}` : '']
+          .filter(Boolean)
+          .join(' · ');
+      }
       if (candidateVisualPendingStates.has(tourStatus)) {
         return [String(tour.detail || tour.label || 'Preparing 3D tour.').trim(), String(tour.eta_label || '').trim() ? `ETA ${String(tour.eta_label || '').trim()}` : '']
           .filter(Boolean)
           .join(' · ');
       }
-      if (candidateVisualPendingStates.has(flythroughStatus)) {
-        return [String(flythrough.detail || flythrough.label || 'Preparing walkthrough.').trim(), String(flythrough.eta_label || '').trim() ? `ETA ${String(flythrough.eta_label || '').trim()}` : '']
-          .filter(Boolean)
-          .join(' · ');
+      if (candidateVisualTerminalStates.has(flythroughStatus)) {
+        return String(flythrough.detail || 'Camera walkthrough not available yet.').trim();
       }
       if (candidateVisualTerminalStates.has(tourStatus)) {
         return String(tour.detail || tour.eta_label || '3D tour not available yet.').trim();
-      }
-      if (candidateVisualTerminalStates.has(flythroughStatus)) {
-        return String(flythrough.detail || 'Walkthrough not available yet.').trim();
       }
       const visualPropertyUrl = String(candidate?.property_url || candidate?.source_url || candidate?.listing_url || '').trim();
       const visualMediaReady = Boolean(String(candidate?.floorplan_url || candidate?.source_virtual_tour_url || candidate?.vendor_tour_url || tour.provider_url || '').trim());
@@ -223,7 +222,6 @@
     const embeddedTourUrlForCandidate = (candidate) => {
       for (const value of [
         candidate?.verified_tour_url,
-        candidate?.open_tour_url,
         candidate?.tour?.embed_url,
         candidate?.tour?.url,
         candidate?.tour_url,
@@ -305,12 +303,62 @@
       };
       const visualPropertyUrl = String(candidate.property_url || candidate.source_url || candidate.listing_url || '').trim();
       const visualMediaReady = Boolean(String(candidate.floorplan_url || candidate.source_virtual_tour_url || candidate.vendor_tour_url || tour.provider_url || '').trim());
-      if (resolvedTourUrl) {
+      if (resolvedFlythroughUrl) {
         appendActionControl(node, {
-          label: String(tour.control_label || tour.label || 'Open 3D tour').trim() || 'Open 3D tour',
-          href: resolvedTourUrl,
+          label: 'Open camera walkthrough',
+          href: resolvedFlythroughUrl,
           link: true,
           primary: true,
+          attributes: {
+            'data-rybbit-event': 'pq.flythrough.opened',
+            'data-rybbit-prop-surface': 'research',
+          },
+        });
+      } else if (flythroughPending && visualMediaReady && visualPropertyUrl) {
+        appendVisualStateButton({
+          label: String(flythrough.label || 'Camera walkthrough queued').trim() || 'Camera walkthrough queued',
+          requestKind: 'flythrough',
+          state: flythroughStatus || 'queued',
+          progress: flythroughProgress,
+          detail: String(flythrough.detail || flythrough.label || 'Preparing camera walkthrough.').trim(),
+          eta: String(flythrough.eta_label || '').trim(),
+          pollSeconds: Math.max(0, Number(flythrough.poll_after_seconds || 0) || 0),
+          walkthroughProvider: 'default',
+          disabled: true,
+        });
+      } else if (flythroughTerminal && visualMediaReady && visualPropertyUrl) {
+        appendVisualStateButton({
+          label: String(flythrough.label || (['blocked', 'failed'].includes(flythroughStatus) ? 'Retry camera walkthrough' : 'Request camera walkthrough')).trim(),
+          requestKind: 'flythrough',
+          state: flythroughStatus || 'blocked',
+          detail: String(flythrough.detail || '').trim(),
+          eta: '',
+          pollSeconds: 0,
+          walkthroughProvider: 'default',
+        });
+      } else if (visualMediaReady && visualPropertyUrl) {
+        appendActionControl(node, {
+          label: 'Request camera walkthrough',
+          attributes: {
+            'data-pw-visual-request': 'flythrough',
+            'data-pw-visual-style-required': '1',
+            'data-pw-walkthrough-provider': 'default',
+            'data-property-url': visualPropertyUrl,
+            'data-source-ref': String(candidate.source_ref || ''),
+            'data-candidate-ref': candidateRef,
+            'data-run-id': runId,
+            'data-rybbit-event': 'pq.flythrough.opened',
+            'data-rybbit-prop-cta-key': 'request_flythrough',
+            'data-rybbit-prop-surface': 'research',
+          },
+        });
+      }
+      if (resolvedTourUrl) {
+        appendActionControl(node, {
+          label: 'Open 3D tour',
+          href: resolvedTourUrl,
+          link: true,
+          primary: false,
           attributes: {
             'data-rybbit-event': 'pq.tour.opened',
             'data-rybbit-prop-surface': 'research',
@@ -342,7 +390,7 @@
           label: 'Open property',
           href: String(candidate.packet_url || ''),
           link: true,
-          primary: !resolvedTourUrl,
+          primary: !resolvedFlythroughUrl && !resolvedTourUrl && !(visualMediaReady && visualPropertyUrl),
           attributes: {
             'data-rybbit-event': 'pq.property.opened',
             'data-rybbit-prop-surface': 'research',
@@ -350,14 +398,40 @@
         });
       }
       bindFlipLinkPacketButton(appendActionControl(node, {
-        label: 'Share this home',
+        label: 'Save review packet',
         attributes: {
           'data-fliplink-packet': '',
           'data-candidate-ref': candidateRef,
-          'data-rybbit-event': 'pq.packet.shared',
+          'data-rybbit-event': 'pq.packet.saved',
           'data-rybbit-prop-surface': 'research',
         },
       }));
+      const viewingButton = appendActionControl(node, {
+        label: 'Mark viewing requested',
+        attributes: {
+          'data-pw-decision-state': 'viewing_requested',
+          'data-candidate-ref': candidateRef,
+          'data-rybbit-event': 'pq.decision.saved',
+          'data-rybbit-prop-cta-key': 'viewing_requested',
+          'data-rybbit-prop-surface': 'research',
+        },
+      });
+      viewingButton?.addEventListener('click', () => {
+        recordDecisionState(candidate, 'viewing_requested', decisionStateStatusNode);
+      });
+      const askAgentButton = appendActionControl(node, {
+        label: 'Ask the agent',
+        attributes: {
+          'data-pw-ask-agent': '',
+          'data-rybbit-event': 'pq.decision.saved',
+          'data-rybbit-prop-cta-key': 'ask_agent',
+          'data-rybbit-prop-surface': 'research',
+        },
+      });
+      askAgentButton?.addEventListener('click', () => {
+        if (clippyPanel?.hidden) clippyToggle?.click();
+        window.setTimeout(() => clippyQuestionNode?.focus(), 0);
+      });
       const details = document.createElement('details');
       details.className = 'pqx-decision-advanced';
       details.style.marginTop = '12px';
@@ -366,7 +440,7 @@
       summaryTitle.textContent = 'More';
       const summaryNote = document.createElement('span');
       summaryNote.className = 'pqx-note';
-      summaryNote.textContent = 'Open the listing, share it, or request visuals.';
+      summaryNote.textContent = 'Open the listing, save a packet, or request visuals.';
       summary.append(summaryTitle, summaryNote);
       details.appendChild(summary);
       const actions = document.createElement('div');
@@ -402,59 +476,11 @@
           },
         });
       }
-      if (resolvedFlythroughUrl) {
-        appendActionControl(actions, {
-          label: String(flythrough.label || 'Open walkthrough').trim() || 'Open walkthrough',
-          href: resolvedFlythroughUrl,
-          link: true,
-          attributes: {
-            'data-rybbit-prop-surface': 'research',
-          },
-        });
-      } else if (flythroughPending && visualMediaReady && visualPropertyUrl) {
-        appendVisualStateButton({
-          label: String(flythrough.label || 'Walkthrough queued').trim() || 'Walkthrough queued',
-          requestKind: 'flythrough',
-          state: flythroughStatus || 'queued',
-          progress: flythroughProgress,
-          detail: String(flythrough.detail || flythrough.label || 'Preparing walkthrough.').trim(),
-          eta: String(flythrough.eta_label || '').trim(),
-          pollSeconds: Math.max(0, Number(flythrough.poll_after_seconds || 0) || 0),
-          walkthroughProvider: 'default',
-          disabled: true,
-        });
-      } else if (flythroughTerminal && visualMediaReady && visualPropertyUrl) {
-        appendVisualStateButton({
-          label: String(flythrough.label || (['blocked', 'failed'].includes(flythroughStatus) ? 'Retry walkthrough' : 'Request walkthrough')).trim(),
-          requestKind: 'flythrough',
-          state: flythroughStatus || 'blocked',
-          detail: String(flythrough.detail || '').trim(),
-          eta: '',
-          pollSeconds: 0,
-          walkthroughProvider: 'default',
-        });
-      } else if (visualMediaReady && visualPropertyUrl) {
-        appendActionControl(actions, {
-          label: 'Request walkthrough',
-          attributes: {
-            'data-pw-visual-request': 'flythrough',
-            'data-pw-visual-style-required': '1',
-            'data-pw-walkthrough-provider': 'default',
-            'data-property-url': visualPropertyUrl,
-            'data-source-ref': String(candidate.source_ref || ''),
-            'data-candidate-ref': candidateRef,
-            'data-run-id': runId,
-            'data-rybbit-event': 'pq.flythrough.opened',
-            'data-rybbit-prop-cta-key': 'request_flythrough',
-            'data-rybbit-prop-surface': 'research',
-          },
-        });
-      }
       bindShortlistShareButton(appendActionControl(actions, {
-        label: 'Share results',
+        label: 'Save shortlist packet',
         attributes: {
           'data-fliplink-shortlist-share': '',
-          'data-rybbit-event': 'pq.packet.shared',
+          'data-rybbit-event': 'pq.packet.saved',
           'data-rybbit-prop-surface': 'research',
         },
       }));
@@ -1032,6 +1058,24 @@
         : {};
       window.history.pushState({ ...currentState, propertyquarryCandidate: normalizedRef }, '', url);
     };
+    const replaceCandidateQueryParam = (candidateRef = '') => {
+      const normalizedRef = String(candidateRef || '').trim();
+      const url = new URL(window.location.href);
+      if (String(url.searchParams.get('candidate') || '').trim() === normalizedRef) return;
+      if (normalizedRef) url.searchParams.set('candidate', normalizedRef);
+      else url.searchParams.delete('candidate');
+      const currentState = window.history.state && typeof window.history.state === 'object'
+        ? window.history.state
+        : {};
+      window.history.replaceState({ ...currentState, propertyquarryCandidate: normalizedRef }, '', url);
+    };
+    const canonicalBrowserCandidateRef = (candidateRef = '') => {
+      const requestedRef = String(candidateRef || '').trim();
+      if (requestedRef && candidateByRef.has(requestedRef)) return requestedRef;
+      const selectedPayloadRef = String(selectedCandidatePayload?.candidate_ref || '').trim();
+      if (selectedPayloadRef && candidateByRef.has(selectedPayloadRef)) return selectedPayloadRef;
+      return String(candidates[0]?.candidate_ref || '').trim();
+    };
     const selectCandidate = (candidateRef, { updateUrl = true } = {}) => {
       const candidate = candidateByRef.get(String(candidateRef || '')) || candidates[0];
       if (!candidate) return;
@@ -1253,7 +1297,7 @@
     bindWorkbenchRows(root);
     window.addEventListener('popstate', () => {
       const candidateRef = String(new URL(window.location.href).searchParams.get('candidate') || '').trim();
-      selectCandidate(candidateRef || candidates[0]?.candidate_ref || '', { updateUrl: false });
+      selectCandidate(canonicalBrowserCandidateRef(candidateRef), { updateUrl: false });
     });
     const initialRowsPanel = root.querySelector('[data-workbench-row]')?.closest('[data-pqx-mobile-panel]');
     if (initialRowsPanel) {
@@ -1324,8 +1368,12 @@
         );
       }
     });
-    const urlCandidate = new URL(window.location.href).searchParams.get('candidate');
-    if (urlCandidate) selectCandidate(urlCandidate, { updateUrl: false });
+    const urlCandidate = String(new URL(window.location.href).searchParams.get('candidate') || '').trim();
+    if (urlCandidate) {
+      const initialCandidateRef = canonicalBrowserCandidateRef(urlCandidate);
+      selectCandidate(initialCandidateRef, { updateUrl: false });
+      if (initialCandidateRef && initialCandidateRef !== urlCandidate) replaceCandidateQueryParam(initialCandidateRef);
+    }
     else if (typeof refreshSelectedCandidatePreview === 'function') {
       const initialSelectedRef = String(root.querySelector('[data-workbench-row][aria-current="true"]')?.getAttribute('data-candidate-ref') || candidates[0]?.candidate_ref || '').trim();
       if (initialSelectedRef) {

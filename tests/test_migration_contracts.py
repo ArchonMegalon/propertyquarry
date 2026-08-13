@@ -339,9 +339,38 @@ def test_hard_exit_gate_targets_and_runtime_gate_scripts_are_wired() -> None:
 
     assert "bash scripts/smoke_help.sh" in runtime_gate
     assert "env -u EA_API_TOKEN bash scripts/smoke_api.sh" in runtime_gate
+    assert (
+        'if [[ "${propertyquarry_runtime_gates_enabled}" == "0" ]]; then\n'
+        "  env -u EA_API_TOKEN bash scripts/smoke_api.sh"
+    ) in runtime_gate
+    assert runtime_gate.startswith("#!/bin/bash -p\nset -euo pipefail\nset +x\n")
+    assert 'release_probe_secret="${PROPERTYQUARRY_LIVE_PROBE_SECRET:-${PROPERTYQUARRY_PERFORMANCE_RELEASE_PROBE_SECRET:-}}"' in runtime_gate
+    assert "unset PROPERTYQUARRY_LIVE_PROBE_SECRET PROPERTYQUARRY_PERFORMANCE_RELEASE_PROBE_SECRET" in runtime_gate
+    assert "unset PROPERTYQUARRY_RELEASE_PROBE_SECRET PROPERTYQUARRY_RELEASE_PROBE_PRINCIPAL_ID" in runtime_gate
+    assert "release-probe credential must be one line of at most 4096 bytes" in runtime_gate
+    assert "PROPERTYQUARRY_RUNTIME_GATES=1 requires PROPERTYQUARRY_LIVE_PROBE_SECRET" in runtime_gate
+    assert "skipping authenticated/mobile/provider" not in runtime_gate
+    assert (
+        'env -u EA_API_TOKEN PYTHONPATH=ea "${PYTHON_BIN}" '
+        "scripts/propertyquarry_live_public_smoke.py"
+    ) in runtime_gate
     assert "smoke_api_tibor.sh` stays in the full hard-exit bundle" in runtime_gate
     assert 'PYTHON_BIN="${PYTHON_BIN:-}"' in runtime_gate
     assert '"${PYTHON_BIN}" scripts/verify_pocket_audio_archive.py' in runtime_gate
+    assert runtime_gate.count("--release-probe-secret-stdin") == 3
+    assert runtime_gate.count('<<<"${release_probe_secret}"') == 3
+    assert runtime_gate.count("env -u EA_API_TOKEN -u PROPERTYQUARRY_LIVE_API_TOKEN") == 3
+    assert '--api-token "${EA_API_TOKEN}"' not in runtime_gate
+    assert "--seed-research-detail-fixture" not in runtime_gate
+    assert 'propertyquarry_probe_principal_id="propertyquarry-release-probe"' in runtime_gate
+    assert "PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_PRINCIPAL_ID" not in runtime_gate
+    assert 'propertyquarry_probe_plan_label="${PROPERTYQUARRY_LIVE_SMOKE_PLAN_LABEL:-Free}"' in runtime_gate
+    assert 'propertyquarry_base_url="${PROPERTYQUARRY_LIVE_SMOKE_BASE_URL:-https://propertyquarry.com}"' in runtime_gate
+    assert "--no-execute-search-matrix" in runtime_gate
+    assert "--no-cross-country-sanitization" in runtime_gate
+    assert runtime_gate.rindex("unset release_probe_secret") > runtime_gate.index(
+        "PROPERTYQUARRY_LIVE_PROVIDER_SMOKE=1"
+    )
 
     assert '"${RELEASE_PYTHON}" -m pytest -q' in full_gate
     assert '"${RELEASE_DISPATCH}" release-preflight' in full_gate

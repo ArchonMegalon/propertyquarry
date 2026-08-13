@@ -152,7 +152,7 @@ def test_property_walkthrough_scene_video_context_uses_generated_reconstruction_
                 "creation_mode": "generated_reconstruction_tour",
                 "generated_reconstruction": {
                     "provider": "propertyquarry_generated_reconstruction",
-                    "viewer_version": "propertyquarry_3d_tour_viewer_v4",
+                    "viewer_version": product_service._PROPERTY_RECONSTRUCTION_VIEWER_VERSION,
                     "viewer_relpath": "generated-reconstruction/viewer.html",
                     "glb_model_relpath": "generated-reconstruction/model.glb",
                     "route_labels": ["Entry", "Living room", "Balcony"],

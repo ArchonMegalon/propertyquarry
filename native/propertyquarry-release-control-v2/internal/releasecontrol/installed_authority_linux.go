@@ -36,6 +36,8 @@ const (
 	localHealthSchema         = "propertyquarry.release-control.local-runtime-health.v2"
 	installedRoleCount        = 19
 	installedPayloadFiles     = 21
+	installedAuthorityUID     = 65532
+	installedCallerUID        = 65534
 )
 
 type installedRuntimePaths struct {
@@ -49,13 +51,19 @@ type installedRuntimePaths struct {
 	RequestSocket     string
 	Controller        string
 	RunningExecutable string
-	RootUID           uint32
-	RootGID           uint32
-	RuntimeUID        uint32
-	RuntimeGID        uint32
+	PackageUID        uint32
+	PackageGID        uint32
+	PrivateConfigGID  uint32
+	AuthorityUID      uint32
+	AuthorityGID      uint32
+	SocketUID         uint32
+	SocketGID         uint32
+	CallerUID         uint32
+	CallerGID         uint32
 }
 
 func defaultInstalledRuntimePaths() installedRuntimePaths {
+	serviceGID := uint32(os.Getegid())
 	return installedRuntimePaths{
 		Root:              "/",
 		Authentication:    InstalledAuthenticationJSON,
@@ -67,11 +75,56 @@ func defaultInstalledRuntimePaths() installedRuntimePaths {
 		RequestSocket:     InstalledRequestSocket,
 		Controller:        ControllerExecutable,
 		RunningExecutable: "/proc/self/exe",
-		RootUID:           0,
-		RootGID:           0,
-		RuntimeUID:        uint32(os.Geteuid()),
-		RuntimeGID:        uint32(os.Getegid()),
+		PackageUID:        0,
+		PackageGID:        0,
+		PrivateConfigGID:  serviceGID,
+		AuthorityUID:      installedAuthorityUID,
+		AuthorityGID:      serviceGID,
+		SocketUID:         installedAuthorityUID,
+		SocketGID:         serviceGID,
+		CallerUID:         installedCallerUID,
+		CallerGID:         serviceGID,
 	}
+}
+
+func validateInstalledPrincipalContract(paths installedRuntimePaths) error {
+	if paths.Root == "" ||
+		paths.SocketUID != paths.AuthorityUID ||
+		paths.SocketGID != paths.AuthorityGID ||
+		paths.PrivateConfigGID != paths.AuthorityGID ||
+		paths.CallerGID != paths.AuthorityGID {
+		return fmt.Errorf("installed principal contract invalid")
+	}
+	// A non-root prefix is used only by native fixtures, which must project
+	// ownership to the unprivileged test process. Installed production paths
+	// are rooted at "/" and have one exact, non-collapsible principal split.
+	if paths.Root != "/" {
+		return nil
+	}
+	if paths.PackageUID != 0 ||
+		paths.PackageGID != 0 ||
+		paths.AuthorityUID != installedAuthorityUID ||
+		paths.CallerUID != installedCallerUID ||
+		paths.AuthorityUID == paths.CallerUID {
+		return fmt.Errorf("installed principal contract invalid")
+	}
+	return nil
+}
+
+func validateEmptyInstalledAuthorityState(paths installedRuntimePaths) (stableIdentity, error) {
+	if err := validateInstalledPrincipalContract(paths); err != nil {
+		return stableIdentity{}, err
+	}
+	return inspectStableRootedDirectory(
+		paths.Root,
+		paths.StateRoot,
+		expectedFileMetadata{
+			Mode: 0o700,
+			UID:  paths.AuthorityUID,
+			GID:  paths.AuthorityGID,
+		},
+		true,
+	)
 }
 
 type authenticatedPayloadClaim struct {
@@ -152,15 +205,23 @@ func validateInstalledLocalAuthority(
 	component Component,
 	paths installedRuntimePaths,
 ) (*installedAuthorityVerification, error) {
-	if !validComponent(component) || paths.Root == "" {
+	if !validComponent(component) || validateInstalledPrincipalContract(paths) != nil {
 		return nil, fmt.Errorf("installed authority invocation invalid")
 	}
-	rootMetadata := expectedFileMetadata{Mode: 0o644, UID: paths.RootUID, GID: paths.RootGID}
+	rootMetadata := expectedFileMetadata{
+		Mode: 0o644,
+		UID:  paths.PackageUID,
+		GID:  paths.PackageGID,
+	}
 	anchorBytes, _, err := readStableRootedFile(
 		paths.Root,
 		paths.ExternalAnchor,
 		4096,
-		expectedFileMetadata{Mode: 0o444, UID: paths.RootUID, GID: paths.RootGID},
+		expectedFileMetadata{
+			Mode: 0o444,
+			UID:  paths.PackageUID,
+			GID:  paths.PackageGID,
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -212,7 +273,11 @@ func validateInstalledLocalAuthority(
 	tree, err := collectPayloadTree(
 		paths.Root,
 		paths.PayloadRoot,
-		expectedFileMetadata{Mode: 0o755, UID: paths.RootUID, GID: paths.RootGID},
+		expectedFileMetadata{
+			Mode: 0o755,
+			UID:  paths.PackageUID,
+			GID:  paths.PackageGID,
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -261,14 +326,6 @@ func validateInstalledLocalAuthority(
 	zero(packageAnchor)
 	if err != nil || packageKeyID != externalKeyID {
 		return nil, fmt.Errorf("installed package authority key mismatch")
-	}
-	if _, err := inspectStableRootedDirectory(
-		paths.Root,
-		paths.StateRoot,
-		expectedFileMetadata{Mode: 0o700, UID: paths.RuntimeUID, GID: paths.RuntimeGID},
-		true,
-	); err != nil {
-		return nil, err
 	}
 	if paths.RunningExecutable != "" {
 		roleName := map[Component]string{
@@ -522,13 +579,13 @@ func parseAndAuditInstalledRoles(
 			return nil, fmt.Errorf("installation manifest role mode invalid")
 		}
 		uid, ok := exactBoundedInt(object["uid"], 0)
-		if !ok || uint64(uid) != uint64(paths.RootUID) {
+		if !ok || uint64(uid) != uint64(paths.PackageUID) {
 			return nil, fmt.Errorf("installation manifest role uid invalid")
 		}
 		gid, ok := exactBoundedInt(object["gid"], 0)
-		expectedGID := paths.RootGID
+		expectedGID := paths.PackageGID
 		if contract.Private {
-			expectedGID = paths.RuntimeGID
+			expectedGID = paths.PrivateConfigGID
 		}
 		if !ok || uint64(gid) != uint64(expectedGID) {
 			return nil, fmt.Errorf("installation manifest role gid invalid")
@@ -619,7 +676,7 @@ func openPinnedInstalledController(
 }
 
 func closeInstalledExecutableFD(args []string) bool {
-	if len(args) != 12 || args[10] != "--installed-local-authority-executable-fd" {
+	if len(args) < 12 || args[10] != "--installed-local-authority-executable-fd" {
 		return false
 	}
 	fd, err := strconv.Atoi(args[11])

@@ -15,10 +15,55 @@ RELEASE_PROBE_SECRET_ENV_NAMES = (
     "PROPERTYQUARRY_LIVE_PROBE_SECRET",
     "PROPERTYQUARRY_PERFORMANCE_RELEASE_PROBE_SECRET",
 )
+MAX_EDGE_ASSERTION_SECRET_BYTES = 4_096
+EDGE_ASSERTION_SECRET_ENV_NAMES = (
+    "EA_EDGE_PRINCIPAL_ASSERTION_SECRET",
+    "PROPERTYQUARRY_LIVE_EDGE_PRINCIPAL_ASSERTION_SECRET",
+)
+MAX_LIVE_API_TOKEN_BYTES = 4_096
+LIVE_API_TOKEN_ENV_NAMES = (
+    "PROPERTYQUARRY_LIVE_API_TOKEN",
+    "EA_API_TOKEN",
+)
 
 
 def release_probe_secret_environment_configured() -> bool:
     return any(os.environ.get(name) for name in RELEASE_PROBE_SECRET_ENV_NAMES)
+
+
+def edge_assertion_secret_environment_configured() -> bool:
+    return any(os.environ.get(name) for name in EDGE_ASSERTION_SECRET_ENV_NAMES)
+
+
+def live_api_token_environment_configured() -> bool:
+    return any(os.environ.get(name) for name in LIVE_API_TOKEN_ENV_NAMES)
+
+
+def _read_bounded_secret_from_stdin(
+    parser: argparse.ArgumentParser,
+    *,
+    label: str,
+    max_bytes: int,
+) -> str:
+    raw = sys.stdin.buffer.read(max_bytes + 2)
+    if len(raw) > max_bytes + 1:
+        parser.error(f"{label} credential stdin exceeds {max_bytes} bytes")
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        parser.error(f"{label} credential stdin must be UTF-8")
+    secret = decoded[:-1] if decoded.endswith("\n") else decoded
+    if secret.endswith("\r"):
+        secret = secret[:-1]
+    if (
+        not secret
+        or "\x00" in secret
+        or "\r" in secret
+        or "\n" in secret
+        or len(secret.encode("utf-8")) > max_bytes
+    ):
+        parser.error(f"{label} credential stdin is malformed")
+    return secret
 
 
 def read_release_probe_secret_from_stdin(
@@ -35,28 +80,56 @@ def read_release_probe_secret_from_stdin(
         )
     if not enabled:
         return ""
-    # A shell here-string contributes one trailing newline.  Read enough to
-    # accept a 4096-byte credential plus that delimiter, but reject any larger
+    # A shell here-string contributes one trailing newline. Read enough to
+    # accept the bounded credential plus that delimiter, but reject any larger
     # stream before the credential is used.
-    raw = sys.stdin.buffer.read(MAX_RELEASE_PROBE_SECRET_BYTES + 2)
-    if len(raw) > MAX_RELEASE_PROBE_SECRET_BYTES + 1:
-        parser.error("release-probe credential stdin exceeds 4096 bytes")
-    try:
-        decoded = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        parser.error("release-probe credential stdin must be UTF-8")
-    secret = decoded[:-1] if decoded.endswith("\n") else decoded
-    if secret.endswith("\r"):
-        secret = secret[:-1]
-    if (
-        not secret
-        or "\x00" in secret
-        or "\r" in secret
-        or "\n" in secret
-        or len(secret.encode("utf-8")) > MAX_RELEASE_PROBE_SECRET_BYTES
-    ):
-        parser.error("release-probe credential stdin is malformed")
-    return secret
+    return _read_bounded_secret_from_stdin(
+        parser,
+        label="release-probe",
+        max_bytes=MAX_RELEASE_PROBE_SECRET_BYTES,
+    )
+
+
+def read_edge_assertion_secret_from_stdin(
+    parser: argparse.ArgumentParser,
+    *,
+    enabled: bool,
+) -> str:
+    """Read one edge assertion secret without accepting it in argv or env."""
+
+    if edge_assertion_secret_environment_configured():
+        parser.error(
+            "edge-assertion credentials must not be supplied in the process environment; "
+            "use --edge-assertion-secret-stdin"
+        )
+    if not enabled:
+        return ""
+    return _read_bounded_secret_from_stdin(
+        parser,
+        label="edge-assertion",
+        max_bytes=MAX_EDGE_ASSERTION_SECRET_BYTES,
+    )
+
+
+def read_live_api_token_from_stdin(
+    parser: argparse.ArgumentParser,
+    *,
+    enabled: bool,
+) -> str:
+    """Read one live API token without accepting it in argv or the environment."""
+
+    if not enabled:
+        return ""
+    if live_api_token_environment_configured():
+        parser.error(
+            "live API credentials must not be supplied in the process environment; "
+            "use --api-token-stdin"
+        )
+    return _read_bounded_secret_from_stdin(
+        parser,
+        label="live API",
+        max_bytes=MAX_LIVE_API_TOKEN_BYTES,
+    )
 
 
 @contextlib.contextmanager
@@ -80,4 +153,18 @@ def scrub_release_probe_secret_environment() -> None:
     """Permanently remove probe credentials before any subprocess is started."""
 
     for name in RELEASE_PROBE_SECRET_ENV_NAMES:
+        os.environ.pop(name, None)
+
+
+def scrub_edge_assertion_secret_environment() -> None:
+    """Permanently remove edge assertion credentials before child processes."""
+
+    for name in EDGE_ASSERTION_SECRET_ENV_NAMES:
+        os.environ.pop(name, None)
+
+
+def scrub_live_api_token_environment() -> None:
+    """Permanently remove live API tokens before any child process starts."""
+
+    for name in LIVE_API_TOKEN_ENV_NAMES:
         os.environ.pop(name, None)
