@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 09:50 CEST
+Updated: 2026-08-13 10:05 CEST
 
 ## Mission
 
@@ -17,6 +17,48 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 Play Open-testing lock and public Austria enrollment path
+
+A fresh authenticated Play Console audit confirmed the exact current launch
+boundary without changing any release or track setting. Production is inactive,
+Closed testing - Alpha is active on the existing signed release `5 (1.1.3)`,
+the track targets Austria only, and the production-access dashboard still shows
+`6/12` testers opted in. The continuous 14-day requirement has not started at
+the required tester count.
+
+Google exposes the Open testing page, but the live page is locked and states
+that Open testing is available only after production access. It therefore
+cannot be used to bypass the personal-account requirement for 12 opted-in
+closed testers over 14 days. Private screenshot
+`state/qa/propertyquarry-play-open-testing-locked-20260813.png` is mode `0600`
+and has SHA-256
+`c155a3c151d0353ec9ea645b8ee9360e859ff7356fe2a800efeb7c314c593252`.
+
+The broadest currently legal Austria enrollment path is already configured and
+was reverified both authenticated and anonymously:
+
+1. Join the public tester group:
+   https://groups.google.com/g/propertyquarry-austria-testers/about
+2. After joining with the same Google account, opt in to the Play test:
+   https://play.google.com/apps/testing/com.myexternalbrain.propertyquarry
+
+The Google Group has six current members and explicitly permits `Anyone on the
+web` to see and join it. Play still requires actual group membership before the
+second link admits the account, and group membership alone does not count until
+that account opts in. The track's Android store link remains
+https://play.google.com/store/apps/details?id=com.myexternalbrain.propertyquarry.
+Private screenshots of the tester-track and public-group states have SHA-256
+`c4d06a63e9c5087a445aefe708fffebc7887283a19f0fa8c45eb9d2f32db13a2`
+and
+`f6ad5b2c70e8679d44e85e987cd9c0def586fee5a1712e0870d3e42f6e26b441`
+respectively.
+
+No Production, Open testing, Closed Alpha, signed artifact, country, tester,
+group, or publication setting changed during this audit. Six additional
+distinct real testers must complete both links; after the dashboard reaches 12,
+the 14-day closed-test clock and later production-access application remain
+external Google Play prerequisites.
 
 ## 2026-08-13 real PayPal sandbox order canary
 
