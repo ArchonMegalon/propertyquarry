@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 09:40 CEST
+Updated: 2026-08-13 09:50 CEST
 
 ## Mission
 
@@ -17,6 +17,49 @@ out a production release.
 The repository audit and repair pass is represented by the published commit
 that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
+
+## 2026-08-13 real PayPal sandbox order canary
+
+The sandbox credential classification now has real, bounded order evidence.
+`scripts/propertyquarry_paypal_sandbox_canary.py` keeps credentials and access
+tokens inside `ea-api`, binds orders to a hashed synthetic canary principal,
+uses deterministic PayPal request IDs, and emits only a secret-safe receipt.
+It has no code path for approval or capture.
+
+At `2026-08-13T07:48:15Z`, PayPal Sandbox issued a token and created both exact
+PropertyQuarry paid-plan orders:
+
+- Agent: EUR 99.00, create HTTP 201, read-back HTTP 200, status `CREATED`;
+- Plus: EUR 3.00, create HTTP 201, read-back HTTP 200, status `CREATED`.
+
+Both read-backs matched the expected currency, amount, plan reference, hashed
+synthetic principal binding, and sandbox approval-link contract. The receipt is
+`state/qa/propertyquarry-paypal-sandbox-canary-20260813.json`, mode `0600`,
+SHA-256
+`48d0d2098e17241fcb6f5257fe39bca952022b59cd2ec211ddc2d78a222c2012`.
+
+The exact canary was repeated at `2026-08-13T07:49:25Z`. PayPal returned HTTP
+200 for both creates with the same order-reference hashes and same idempotency-
+key hashes, then returned HTTP 200 for both independent read-backs. This proves
+the create path is replay-safe rather than merely carrying an idempotency
+header. Repeat receipt
+`state/qa/propertyquarry-paypal-sandbox-canary-20260813-repeat.json` has
+SHA-256 `80699bb4f6a37ace67344cbf880c2375fa173c4bd9f15a776898c2407ac88625`.
+
+The two sandbox orders remain unapproved and uncaptured in PayPal's `CREATED`
+state and will expire under the provider's normal sandbox lifecycle. No money,
+customer identity, webhook, entitlement, cancellation, or production setting
+was touched. Both receipts record `approval_attempted=false`,
+`capture_attempted=false`, `entitlement_mutated=false`,
+`webhook_claimed=false`, `production_billing_enabled=false`, and
+`secret_values_recorded=false`. The focused live-ops and DR suites pass
+`115/115`, including an exact assertion that both canary prices match the
+customer-visible billing catalog.
+
+This advances the billing lane but does not satisfy the production gate. A
+real same-principal sandbox approval/capture/webhook/entitlement/cancellation
+canary, followed by separately authorized live credentials and a fresh live
+canary, is still required before PropertyQuarry checkout may be enabled.
 
 ## 2026-08-13 live external billing and FlipLink candidate proof
 
