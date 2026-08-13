@@ -3,13 +3,13 @@
   "surface": "propertyquarry_flagship_release_control",
   "version": 2,
   "kind": "release_receipt",
-  "generated_at": "2026-08-13T03:51:06Z",
+  "generated_at": "2026-08-13T04:46:02Z",
   "generated_by": "scripts/materialize_ea_flagship_release_gate.py",
   "approved_baseline": {
     "id": "propertyquarry.release-proof.v2",
     "sha256": "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
   },
-  "status": "blocked",
+  "status": "pass",
   "readiness_scope": "source_and_browser_proof",
   "live_readiness": {
     "status": "not_evaluated",
@@ -28,7 +28,7 @@
       "id": "propertyquarry.release-proof.v2",
       "sha256": "9ba1ca801fbe687b4e26a5d64716f9ff18cf42acedad6aeded2f8352d60d4620"
     },
-    "code_commit": "8d962091570819c4746b6c6c2816642dde5f1c6c",
+    "code_commit": "0a44ea202695163cf00dc8807c69d55dd0a561fc",
     "seed": {
       "path": ".codex-design/repo/EA_FLAGSHIP_RELEASE_GATE.json",
       "sha256": "7f8bbd29c31b9ebe32692b0befcafd312f2fa19e600131d10a6c9788302eb40a",
@@ -42,8 +42,8 @@
       },
       {
         "path": "tests/e2e/test_propertyquarry_greenfield_browser.py",
-        "sha256": "a3b8e8fa26b59b739444edc42c4728f82f6f8cce83414062c1528e9c4420dd52",
-        "git_blob_oid": "328ebc671aa314a67348134a4f212966cd6980e0"
+        "sha256": "0ed13ad8c44b88d6fb0c293614da7c81409f9a52df56bc34946c23f7a647ce98",
+        "git_blob_oid": "ceca4806e33af8ce8a61432d152e98fb62ee17e2"
       },
       {
         "path": "tests/test_property_evidence_overlays.py",
@@ -54,10 +54,10 @@
   },
   "browser_receipt_binding": {
     "path": ".codex-studio/published/EA_BROWSER_WORKFLOW_PROOF.generated.json",
-    "sha256": "ed5ba6585447b99a3cd3f98337c72a993e57695c128fc9f99e859ed911a03167",
-    "git_blob_oid": "4031921e0ccf42b0a37e75575bf1110de00e7e70"
+    "sha256": "58586e0b131be007a82f2dbb5e505b5f6002f2228bee5c65e2349018001ca91e",
+    "git_blob_oid": "18054339446877745e692e7b4d80fa8ea2fd59e6"
   },
-  "operator_summary": "PropertyQuarry source/browser flagship proof is materialized, but the current browser-proof or release-doc state still blocks the claim; this does not establish global launch authority, and final live readiness is not evaluated by this receipt.",
+  "operator_summary": "PropertyQuarry source/browser checkpoint is published and green; this does not establish global launch authority, and final live readiness is not evaluated by this receipt.",
   "truth_plane": {
     "source": ".codex-design/repo/EA_FLAGSHIP_TRUTH_PLANE.md",
     "present": true,
@@ -305,9 +305,9 @@
   },
   "journey_evidence_matrix": {
     "version": 1,
-    "status": "not_evaluated",
+    "status": "pass",
     "readiness_scope": "candidate_source_and_browser_proof",
-    "runtime_commit_sha": "8d962091570819c4746b6c6c2816642dde5f1c6c",
+    "runtime_commit_sha": "0a44ea202695163cf00dc8807c69d55dd0a561fc",
     "required_journey_ids": [
       "public_entry",
       "onboarding_auth",
@@ -322,14 +322,14 @@
       {
         "journey_id": "public_entry",
         "label": "Public entry and optional media recovery",
-        "proof_status": "not_evaluated",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/test_propertyquarry_workspace_redesign.py",
             "cases": [
               "test_propertyquarry_public_home_survives_unreadable_optional_tour_media"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -342,21 +342,21 @@
       {
         "journey_id": "onboarding_auth",
         "label": "Onboarding, authentication, session return, and sign-out",
-        "proof_status": "not_evaluated",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/test_propertyquarry_workspace_redesign.py",
             "cases": [
               "test_property_workspace_sign_out_clears_workspace_session_cookie"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           },
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
             "cases": [
               "test_propertyquarry_expired_session_next_action_moves_keyboard_focus_to_sign_in_options"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -369,7 +369,7 @@
       {
         "journey_id": "search_ranking",
         "label": "Search setup, ranked results, and failed-run recovery",
-        "proof_status": "not_evaluated",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/test_propertyquarry_workspace_redesign.py",
@@ -377,14 +377,14 @@
               "test_propertyquarry_workspace_routes_render_greenfield_surfaces",
               "test_propertyquarry_failed_run_stays_on_activity_surface"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           },
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
             "cases": [
               "test_propertyquarry_greenfield_workspace_in_real_browser"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -397,14 +397,14 @@
       {
         "journey_id": "shortlist_research_revisit",
         "label": "Shortlist, research detail, persistence, and revisit",
-        "proof_status": "not_evaluated",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/test_propertyquarry_workspace_redesign.py",
             "cases": [
               "test_property_saved_shortlist_candidates_persist_across_runs"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           },
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -413,14 +413,14 @@
               "test_propertyquarry_workbench_candidate_history_stays_in_place",
               "test_propertyquarry_research_evidence_states_and_links_render_in_real_browser"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           },
           {
             "file": "tests/test_property_evidence_overlays.py",
             "cases": [
               "test_property_research_rows_preserve_evidence_states_and_original_article_link"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -433,7 +433,7 @@
       {
         "journey_id": "account_pricing_privacy_recovery",
         "label": "Account, pricing, privacy lifecycle, and recovery",
-        "proof_status": "not_evaluated",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/test_propertyquarry_workspace_redesign.py",
@@ -441,7 +441,7 @@
               "test_propertyquarry_account_exposes_working_lifecycle_controls",
               "test_propertyquarry_pricing_checkout_failure_copy_is_safe_and_accessible"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -454,7 +454,7 @@
       {
         "journey_id": "packets_tours",
         "label": "Decision packets, sharing, tours, and recovery",
-        "proof_status": "not_evaluated",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -467,7 +467,7 @@
               "test_propertyquarry_generated_reconstruction_public_launch_is_mobile_safe",
               "test_propertyquarry_expired_flat_preview_explains_3d_unavailable_in_real_browser"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -480,7 +480,7 @@
       {
         "journey_id": "feedback",
         "label": "Decision feedback and packet follow-up",
-        "proof_status": "not_evaluated",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -488,7 +488,7 @@
               "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
               "test_propertyquarry_packet_tracks_followup_state_in_browser"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -501,7 +501,7 @@
       {
         "journey_id": "notifications",
         "label": "Alert controls, channel preferences, and external Telegram delivery",
-        "proof_status": "not_evaluated",
+        "proof_status": "pass",
         "evidence_sources": [
           {
             "file": "tests/e2e/test_propertyquarry_greenfield_browser.py",
@@ -509,7 +509,7 @@
               "test_propertyquarry_account_notifications_save_multi_channel_preferences_in_real_browser",
               "test_propertyquarry_browser_alert_button_toggles_enabled_state"
             ],
-            "lane_status": "not_evaluated"
+            "lane_status": "pass"
           }
         ],
         "live_requirement": {
@@ -566,24 +566,7 @@
       "present": true
     }
   ],
-  "blocking_reasons": [
-    "browser workflow proof: real browser E2E proof is not passing",
-    "browser workflow proof: published pass still reports browser blockers: real browser E2E proof is not passing",
-    "browser workflow proof: published pass journey matrix is not passing",
-    "browser workflow proof: published pass journey onboarding_auth has an incomplete evidence lane",
-    "browser workflow proof: published pass journey onboarding_auth did not complete",
-    "browser workflow proof: published pass journey search_ranking has an incomplete evidence lane",
-    "browser workflow proof: published pass journey search_ranking did not complete",
-    "browser workflow proof: published pass journey shortlist_research_revisit has an incomplete evidence lane",
-    "browser workflow proof: published pass journey shortlist_research_revisit did not complete",
-    "browser workflow proof: published pass journey packets_tours has an incomplete evidence lane",
-    "browser workflow proof: published pass journey packets_tours did not complete",
-    "browser workflow proof: published pass journey feedback has an incomplete evidence lane",
-    "browser workflow proof: published pass journey feedback did not complete",
-    "browser workflow proof: published pass journey notifications has an incomplete evidence lane",
-    "browser workflow proof: published pass journey notifications did not complete",
-    "browser workflow proof: published pass lacks completed real browser E2E proof"
-  ],
+  "blocking_reasons": [],
   "current_limitations": [],
   "release_truth": {
     "oracle": ".codex-design/repo/EA_FLAGSHIP_TRUTH_PLANE.md",
