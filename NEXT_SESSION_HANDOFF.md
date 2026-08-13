@@ -1,6 +1,6 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 10:25 CEST
+Updated: 2026-08-13 10:48 CEST
 
 ## Mission
 
@@ -19,6 +19,18 @@ that contains this handoff. Start from that commit and preserve its clean signed
 release evidence.
 
 ## 2026-08-13 principal-bound PayPal capture hardening
+
+The authenticated release materializer has now bound this source change to
+runtime candidate `15c684a7f6520d4a37aba308b67ce2553f306755`. The generated
+flagship gate and browser-workflow proof pass, all eight required browser
+journey rows are present, and the governed release artifact-set identity is
+`propertyquarry-generated-release-artifacts-v1@sha256:00c60e2489e931532cf90b1665a242d1805d0b24770a2b12240a43b8a5857d9f`.
+The release manifest names deployment
+`propertyquarry-governed-deploy-15c684a7f652` and label
+`propertyquarry-source-browser-candidate-15c684a7f652`. This is source and
+release-envelope evidence only until that exact candidate is deployed and the
+live API and browser matrices are repeated; it must not be described as live
+yet.
 
 The disabled PayPal checkout path had a real pre-launch safety gap: its capture
 route accepted the caller's order ID and plan, called PayPal capture, and then
