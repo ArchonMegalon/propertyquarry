@@ -52,19 +52,19 @@ The marked JSON object is the single canonical release authority consumed by the
 <!-- propertyquarry-release-manifest-json:start -->
 ```json
 {
-  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:c405783744cc2a1f48f1488c671262ce232597d6d543b4cc1e3fa48d8263ee9f",
-  "release_branch": "main",
-  "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
-  "release_commit_sha": "44cfe5c3b6ccd69849c336ea5e25df453e15214c",
-  "release_deployment_id": "propertyquarry-governed-deploy-44cfe5c3b6cc",
-  "release_generated_at": "2026-08-16T14:40:19Z",
-  "release_label": "propertyquarry-source-browser-candidate-44cfe5c3b6cc",
   "release_manifest_schema": "propertyquarry.release_manifest.v1",
   "release_product": "PropertyQuarry",
-  "release_public_origin": "https://propertyquarry.com",
+  "release_candidate_status": "source-browser-candidate-pending-local-docker-receipt",
   "release_repository": "ArchonMegalon/propertyquarry",
   "release_repository_origin": "https://github.com/ArchonMegalon/propertyquarry.git",
-  "release_verification_commands": "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight"
+  "release_branch": "main",
+  "release_public_origin": "https://propertyquarry.com",
+  "release_verification_commands": "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight",
+  "release_commit_sha": "bf7ae9e6cc917e5f5e9f05bcc0eaf4938b7b4ade",
+  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:5025c72ea60f885123e46e27cd40e3ba3494d2cf7f969272e14ab0b776576855",
+  "release_label": "propertyquarry-source-browser-candidate-bf7ae9e6cc91",
+  "release_deployment_id": "propertyquarry-governed-deploy-bf7ae9e6cc91",
+  "release_generated_at": "2026-08-16T16:07:31Z"
 }
 ```
 <!-- propertyquarry-release-manifest-json:end -->
