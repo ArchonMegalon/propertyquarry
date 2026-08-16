@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import urllib.parse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -678,7 +679,7 @@ def _complete_propertyquarry_google_identity_sign_in(
                 )
             )
         response = RedirectResponse(
-            "propertyquarry://auth/callback?"
+            "/mobile/auth/complete?"
             + urllib.parse.urlencode({"code": handoff.code}),
             status_code=303,
         )
@@ -830,6 +831,37 @@ _PROPERTYQUARRY_MOBILE_BRIDGE_COPY = {
     },
 }
 
+_MOBILE_AUTH_COMPLETE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{32,160}$")
+_MOBILE_AUTH_COMPLETE_COPY = {
+    "en": {
+        "title": "Finish sign-in",
+        "opening": "Opening PropertyQuarry…",
+        "button": "Open PropertyQuarry",
+        "fallback": "If the app did not open",
+        "hint": "If the app does not open, tap the button. Keep PropertyQuarry installed, then return here.",
+        "missing": "This sign-in handoff is missing or no longer valid.",
+        "again": "Start sign-in again",
+    },
+    "de": {
+        "title": "Anmeldung abschließen",
+        "opening": "PropertyQuarry wird geöffnet…",
+        "button": "PropertyQuarry öffnen",
+        "fallback": "Falls die App nicht geöffnet wurde",
+        "hint": "Wenn die App nicht öffnet, tippen Sie auf die Schaltfläche. Lassen Sie PropertyQuarry installiert und kehren Sie hierher zurück.",
+        "missing": "Diese Anmeldeübergabe fehlt oder ist nicht mehr gültig.",
+        "again": "Anmeldung erneut starten",
+    },
+    "es": {
+        "title": "Finalizar acceso",
+        "opening": "Abriendo PropertyQuarry…",
+        "button": "Abrir PropertyQuarry",
+        "fallback": "Si la app no se abrió",
+        "hint": "Si la app no se abre, pulse el botón. Mantenga PropertyQuarry instalada y vuelva aquí.",
+        "missing": "Esta entrega de acceso falta o ya no es válida.",
+        "again": "Iniciar el acceso de nuevo",
+    },
+}
+
 
 def _propertyquarry_mobile_bridge_locale(request: Request) -> str:
     preferred = str(request.headers.get("accept-language") or "").strip().lower()
@@ -854,7 +886,7 @@ def _propertyquarry_mobile_bridge_document(*, request: Request, mode: str) -> HT
         f"<!doctype html><html lang=\"{locale}\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
         "<meta name=\"theme-color\" content=\"#101814\">"
-        "<link rel=\"stylesheet\" href=\"/mobile/bridge.css?v=3\">"
+        "<link rel=\"stylesheet\" href=\"/mobile/bridge.css?v=4\">"
         f"<title>{copy['label']} · PropertyQuarry</title></head>"
         f"<body data-mobile-bridge=\"{mode}\" data-state=\"working\"><main id=\"bridge-card\" aria-busy=\"true\">"
         "<div id=\"mark\" class=\"mark\" data-state=\"working\" aria-hidden=\"true\"></div>"
@@ -875,6 +907,74 @@ def _propertyquarry_mobile_bridge_document(*, request: Request, mode: str) -> HT
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
     return response
+
+
+def _propertyquarry_mobile_auth_complete_document(*, request: Request) -> HTMLResponse:
+    locale = _propertyquarry_mobile_bridge_locale(request)
+    copy = _MOBILE_AUTH_COMPLETE_COPY[locale]
+    code = str(request.query_params.get("code") or "")
+    valid = bool(_MOBILE_AUTH_COMPLETE_CODE_RE.fullmatch(code))
+    app_href = (
+        "propertyquarry://auth/callback?" + urllib.parse.urlencode({"code": code})
+        if valid
+        else ""
+    )
+    intent_href = (
+        "intent://auth/callback?"
+        + urllib.parse.urlencode({"code": code})
+        + "#Intent;scheme=propertyquarry;package=com.myexternalbrain.propertyquarry;end"
+        if valid
+        else ""
+    )
+    if valid:
+        status = copy["opening"]
+        hint = copy["hint"]
+        action = (
+            f'<a id="open-app" class="cta" href="{app_href}">{copy["button"]}</a>'
+            f'<a class="secondary" href="{intent_href}">{copy["fallback"]}</a>'
+        )
+        refresh = f'<meta http-equiv="refresh" content="0;url={app_href}">'
+        state = "ready"
+    else:
+        status = copy["missing"]
+        hint = copy["again"]
+        action = f'<a class="cta" href="/sign-in">{copy["again"]}</a>'
+        refresh = ""
+        state = "missing"
+    response = HTMLResponse(
+        "<!doctype html>"
+        f'<html lang="{locale}"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+        '<meta name="theme-color" content="#101814">'
+        '<meta name="referrer" content="no-referrer">'
+        f"{refresh}"
+        '<link rel="stylesheet" href="/mobile/bridge.css?v=4">'
+        f"<title>{copy['title']} · PropertyQuarry</title></head>"
+        f'<body data-mobile-complete="{state}"><main id="bridge-card">'
+        f'<p class="eyebrow">PropertyQuarry <span>· {copy["title"]}</span></p>'
+        f"<h1>{copy['title']}</h1>"
+        f'<p id="status" role="status" aria-live="polite" aria-atomic="true">{status}</p>'
+        f'<p id="hint" class="hint">{hint}</p>'
+        f"{action}"
+        "</main></body></html>"
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; style-src 'self'; img-src 'self'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    return response
+
+
+@router.get("/mobile/auth/complete", include_in_schema=False)
+def propertyquarry_mobile_auth_complete(request: Request) -> HTMLResponse:
+    if not propertyquarry_google_identity.propertyquarry_identity_host_allowed(
+        request.url.hostname
+    ):
+        raise HTTPException(status_code=400, detail="propertyquarry_host_required")
+    return _propertyquarry_mobile_auth_complete_document(request=request)
 
 
 @router.get("/mobile/auth/bridge", include_in_schema=False)
@@ -908,7 +1008,9 @@ h1{max-width:17ch;margin:0;font:400 clamp(2.05rem,8vw,3.05rem)/1.02 Georgia,seri
 .steps li[data-state="current"] .step-dot{border-color:#d8bd80;background:#d8bd80;box-shadow:0 0 0 .22rem rgba(216,189,128,.1)}
 .steps li[data-state="complete"] .step-dot{border-color:#739a7e;background:#739a7e}.steps li[data-state="complete"]::after{background:#607c68}
 .hint{margin:.8rem 0 0;color:#7f8d84;font-size:.78rem;line-height:1.45}
-button{width:100%;margin-top:1rem;padding:.82rem 1rem;border:1px solid #d8bd80;border-radius:999px;background:#d8bd80;color:#111914;font:inherit;font-size:.9rem;font-weight:800;cursor:pointer;box-shadow:0 .45rem 1.25rem rgba(0,0,0,.18)}button:hover{background:#ead397}button:focus-visible{outline:3px solid #f7f3ea;outline-offset:3px}
+button,a.cta,a.secondary{display:block;width:100%;margin-top:1rem;padding:.82rem 1rem;border-radius:999px;font:inherit;font-size:.9rem;font-weight:800;text-align:center;text-decoration:none;cursor:pointer}
+button,a.cta{border:1px solid #d8bd80;background:#d8bd80;color:#111914;box-shadow:0 .45rem 1.25rem rgba(0,0,0,.18)}button:hover,a.cta:hover{background:#ead397}button:focus-visible,a.cta:focus-visible,a.secondary:focus-visible{outline:3px solid #f7f3ea;outline-offset:3px}
+a.secondary{border:1px solid rgba(255,255,255,.16);background:transparent;color:#c7d0c9}
 .privacy-note{display:flex;align-items:flex-start;gap:.5rem;margin:1.1rem 0 0;color:#6f7e74;font-size:.7rem;line-height:1.45}.privacy-note span{color:#83a18c;font-weight:900}
 body[data-state="failed"] #status{color:#f0c0b2}body[data-state="failed"] .hint{color:#b7c1b9}
 body[data-state="failed"] .steps li[data-state="current"] .step-dot{border-color:#e39a86;background:#e39a86;box-shadow:0 0 0 .25rem rgba(227,154,134,.12)}
