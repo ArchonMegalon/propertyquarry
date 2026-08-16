@@ -1,8 +1,8 @@
 {
   "contract_name": "ea.weekly_product_pulse",
   "contract_version": 2,
-  "generated_at": "2026-08-13T08:59:03Z",
-  "as_of": "2026-08-13",
+  "generated_at": "2026-08-16T14:33:03Z",
+  "as_of": "2026-08-16",
   "scorecard_source": ".codex-design/product/PRODUCT_HEALTH_SCORECARD.yaml",
   "release_truth_source": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
   "release_truth_provenance": {
@@ -10,11 +10,11 @@
     "resolved_path": "/docker/property/.codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
     "present": true,
     "size_bytes": 23522,
-    "mtime_utc": "2026-08-13T08:58:59Z",
-    "sha256": "122bb3d6dbc09acff6ba831112fcb408d03cb38dbe2ff5ca8d51641ff8e790a1",
+    "mtime_utc": "2026-08-16T14:32:59Z",
+    "sha256": "9221aa6e97af5b4701cbb28fd64f4bbaba5ea78d4364b3e009547ee55b543b71",
     "git_repo_root": "/docker/property",
-    "git_head": "5b78f4f99f706da73391b29dc5be3cff7e6dc2df",
-    "git_branch": "codex/propertyquarry-billing-off-release-envelope-20260813",
+    "git_head": "b12e28b95bd82488ddf7a66e0d3edb9e23bb9ee7",
+    "git_branch": "main",
     "repo_relative_path": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json"
   },
   "readiness_scope": "source_and_browser_proof",
@@ -155,13 +155,13 @@
     "provider_route_stewardship": {
       "default_status": "PropertyQuarry routes are governed by local truth surfaces.",
       "canary_status": "Browser execution proof is published for the source/browser candidate; protected live evidence remains separate.",
-      "review_due": "2026-08-20T08:59:03Z",
+      "review_due": "2026-08-23T14:33:03Z",
       "next_decision": "Complete the protected launch profile and live receipts, then re-materialize this pulse."
     },
     "journey_gate_source": "/docker/fleet/.codex-studio/published/JOURNEY_GATES.generated.json",
     "journey_gate_git_head": "99f7fc42bac6a172d4ec2c02ed59807461d10038",
     "flagship_release_receipt_source": ".codex-design/product/EA_FLAGSHIP_RELEASE_GATE.generated.json",
-    "flagship_release_receipt_git_head": "5b78f4f99f706da73391b29dc5be3cff7e6dc2df",
+    "flagship_release_receipt_git_head": "b12e28b95bd82488ddf7a66e0d3edb9e23bb9ee7",
     "scorecard_source": ".codex-design/product/PRODUCT_HEALTH_SCORECARD.yaml",
     "release_pipeline_source": ".codex-design/product/RELEASE_PIPELINE.md",
     "governor_loop_source": ".codex-design/product/PRODUCT_GOVERNOR_AND_AUTOPILOT_LOOP.md",
