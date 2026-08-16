@@ -1065,16 +1065,26 @@ def test_mobile_external_login_callback_redeems_into_an_httponly_webview_cookie(
     )
     assert callback.status_code == 303
     callback_uri = urllib.parse.urlparse(callback.headers["location"])
-    assert (callback_uri.scheme, callback_uri.netloc, callback_uri.path) == (
-        "propertyquarry",
-        "auth",
-        "/callback",
-    )
+    assert callback_uri.path == "/mobile/auth/complete"
     assert not any(
         header.startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
         for header in callback.headers.get_list("set-cookie")
     )
     handoff_code = urllib.parse.parse_qs(callback_uri.query)["code"][0]
+    complete = client.get(callback.headers["location"], follow_redirects=False)
+    assert complete.status_code == 200
+    assert complete.headers["referrer-policy"] == "no-referrer"
+    assert "noindex" in complete.headers["x-robots-tag"]
+    assert f'href="propertyquarry://auth/callback?code={handoff_code}"' in complete.text
+    assert (
+        "intent://auth/callback?"
+        f"code={handoff_code}"
+        "#Intent;scheme=propertyquarry;package=com.myexternalbrain.propertyquarry;end"
+    ) in complete.text
+    assert not any(
+        header.startswith(f"{identity.GOOGLE_IDENTITY_COOKIE_NAME}=")
+        for header in complete.headers.get_list("set-cookie")
+    )
 
     redeemed = client.post(
         "/mobile/auth/redeem",

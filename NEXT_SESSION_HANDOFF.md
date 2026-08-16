@@ -2,6 +2,125 @@
 
 Updated: 2026-08-16
 
+## 2026-08-16 finish native sign-in return (source only, not deployed)
+
+`/mobile/auth/complete` was advertised on the runtime contract and used as
+`MOBILE_IDENTITY_RETURN_TO`, but the PropertyQuarry profile had no page and
+did not allowlist the path. Live `GET /mobile/auth/complete` was `404`. After
+Google, the server 303'd only to `propertyquarry://auth/callback`, which
+Chrome often does not follow. That matches a tester starting Google many
+times and never reaching `/google/callback` **or** dying after a custom-scheme
+redirect the browser swallowed.
+
+Source now:
+
+- Serves `GET /mobile/auth/complete` (en/de/es, no-store, noindex, no cookie).
+- Valid handoff codes render `propertyquarry://auth/callback?code=` plus an
+  Android `intent://` fallback. Invalid/missing codes offer Start sign-in
+  again and never echo the query.
+- Mobile Google callback 303s to `/mobile/auth/complete?code=…`.
+- `/mobile/auth/complete` is on `_PROPERTYQUARRY_ALLOWED_ROUTE_PATHS`.
+
+Existing installed `1.1.3`/`1.1.4` still consume `propertyquarry://`. No new
+AAB. This is **not** live until a governed image rebuild and deploy of a new
+runtime candidate. Do not describe current `HEAD` as deployed.
+
+Proof: `12 passed` for mobile app contract, runtime boundary, and
+`test_mobile_external_login_callback_redeems_into_an_httponly_webview_cookie`.
+
+Play review, tester count, billing, and DR are unchanged.
+
+## 2026-08-16 Android / Play observe-and-prove (authoritative for Play and native auth)
+
+This section updates only Play observation, local readiness, and exact-candidate
+native-auth telemetry. Artifact identities in the following 2026-08-16 release
+section remain the accepted AAB and runtime candidate. This is not a new
+deployed candidate and not Production.
+
+### Local readiness
+
+- Current `HEAD` / `origin/main` is
+  `9fb922b7ebf4368705a903d760fcf1e2687afedc` (PR #23 evidence merge).
+- The signed AAB is still present and still
+  `sha256:6e26f18ee0b80c16806f9ad0687be3e85b3b51a7c97d7b08660cba11e43606f8`.
+- Local release evidence remains bound to
+  `52e0b157e3e5f9c915040c85157d20213b604e09`.
+- `npm run android:release:readiness` at `2026-08-16T15:46:16Z` is `failed`
+  for exactly one check: `source_commit_mismatch`. Every other check passed,
+  including AAB digest, Play test-track receipt, live runtime contract, App
+  Links, Asset Links Play-signer, and `/privacy`.
+- No rebuild, key change, or new Play upload was performed. The mismatch is
+  the later documentation/evidence commit, not a broken artifact.
+- Mobile web contracts remain `11/11`.
+
+### Play Console
+
+- The Play Console was **not** re-opened this session. There is no new
+  authenticated publishing-overview screenshot.
+- Last Play receipt remains
+  `mobile/build/propertyquarry-google-play-evidence.json` at
+  `2026-08-16T14:57:12Z`: Closed Alpha `6 (1.1.4)` / release ID `2`,
+  `submission_status: changes_in_review`, Austria only, managed publishing
+  off, `production_rollout_started: false`.
+- No Google Play developer mail after `2026-08-15` reported that the update
+  is live.
+- Anonymous `https://play.google.com/store/apps/details?id=com.myexternalbrain.propertyquarry`
+  is still `Not Found` (expected while Production is unpublished).
+- The public tester group is still joinable:
+  https://groups.google.com/g/propertyquarry-austria-testers
+  Visibility remains “Anyone on the web can see/join.” Anonymous view does
+  not show member count. Last Console read is still `6/12` opted in.
+- Do not tell testers to update to `1.1.4` until Play is re-read as available
+  to the closed cohort.
+
+### Exact-candidate native-auth telemetry
+
+Live origin still reports runtime `44cfe5c3b6ccd69849c336ea5e25df453e15214c`,
+image `sha256:3f0087bfa0babc1e5322b0be715c68c87cd75d8f1ddd903e3c54155c64762b70`,
+and `/health/ready` `postgres_ready:property_search_schema_v20`.
+
+API logs from deploy `2026-08-16T14:47:02Z` through `2026-08-16T15:47:26Z`
+on that exact candidate:
+
+| Route | Count |
+|---|---|
+| `GET /mobile/runtime-contract` 200 | 8 (includes this session's readiness/curl probes) |
+| `GET /sign-in/google` 303 | 7 |
+| `/google/callback` | 0 |
+| `/mobile/auth/bridge` | 0 |
+| `POST /mobile/auth/redeem` | 0 |
+| `GET /app/search` 303 | 5 |
+| `GET /app/search` 200 | 2 (web `/sign-in/play-review`, not native redeem) |
+
+An installed Android WebView client **did** hit this candidate starting
+`2026-08-16T14:57:33Z`: runtime-contract 200, unauthenticated `/app/search`
+303, then repeated `/sign-in/google` 303. The first missing step is
+`/google/callback`. This is a partial native attempt, not “no attempt,” and
+not a completed redeem. Do not weaken PKCE, origin, or session checks.
+
+The two authenticated `/app/search` 200 responses followed
+`POST /sign-in/play-review` and are reviewer-web, not device redeem. Logs do
+not prove whether the installed package was `1.1.3` or `1.1.4`.
+
+Private receipt:
+`state/qa/propertyquarry-android-telemetry-44cfe5c3-20260816.json`, SHA-256
+`5a66acc10b80bcd33a1f05aed859bf7c8f1ec40f4e57decab4548b7a2659b90a`,
+mode `0600`, `secret_values_recorded=false`.
+
+### Next actions
+
+1. Re-read Play Console publishing overview for `6 (1.1.4)` before any
+   tester “update to 1.1.4” instruction. If still in review, leave receipts
+   as-is.
+2. On the invited device, complete Google sign-in until `/google/callback`
+   → bridge 200 → redeem 200 → authenticated Search. Correlate device time
+   with the missing callback step.
+3. Keep the public join path. Do not change the group, country list, or
+   tracks. Still need six more distinct opted-in testers for the 12/14-day
+   clock.
+4. Do not rebuild the AAB, do not upload another bundle, and do not start
+   Production.
+
 ## 2026-08-16 final source, web, and Android release handoff (authoritative)
 
 This section supersedes older repository heads, deployment identities, Android

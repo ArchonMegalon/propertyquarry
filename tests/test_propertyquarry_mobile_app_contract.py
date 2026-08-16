@@ -118,7 +118,7 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert 'aria-live="polite"' in auth.text
     assert 'aria-busy="true"' in auth.text
     assert 'class="steps"' in auth.text
-    assert '/mobile/bridge.css?v=3' in auth.text
+    assert '/mobile/bridge.css?v=4' in auth.text
     assert "Your Google password never enters PropertyQuarry." in auth.text
     assert '<html lang="de">' in auth_de.text
     assert "Sichere Anmeldung abschließen" in auth_de.text
@@ -171,7 +171,44 @@ def test_mobile_bridge_gets_are_side_effect_free_and_posts_mutations(
     assert "clip:rect(0,0,0,0)" in styles.text
     assert "main::after" not in styles.text
     assert 'body[data-state="failed"]' in styles.text
+    assert "a.cta" in styles.text
     assert styles.headers["content-type"] == "text/css; charset=utf-8"
+
+
+def test_mobile_auth_complete_page_opens_the_installed_app_without_setting_a_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(monkeypatch)
+    code = "abcdefghijklmnopqrstuvwxyzABCDEFG_123456"
+    ready = client.get("/mobile/auth/complete", params={"code": code})
+    missing = client.get("/mobile/auth/complete")
+    injected = client.get(
+        "/mobile/auth/complete",
+        params={"code": '<img src=x onerror=alert(1)>'},
+    )
+    from app.api.app import create_app
+
+    foreign = TestClient(create_app(), base_url="https://example.com").get(
+        "/mobile/auth/complete",
+        params={"code": code},
+    )
+
+    assert ready.status_code == 200
+    assert ready.headers["referrer-policy"] == "no-referrer"
+    assert "noindex" in ready.headers["x-robots-tag"]
+    assert "default-src 'none'" in ready.headers["content-security-policy"]
+    assert 'data-mobile-complete="ready"' in ready.text
+    assert f'href="propertyquarry://auth/callback?code={code}"' in ready.text
+    assert "package=com.myexternalbrain.propertyquarry" in ready.text
+    assert "<img" not in ready.text
+    assert missing.status_code == 200
+    assert 'data-mobile-complete="missing"' in missing.text
+    assert "propertyquarry://auth/callback" not in missing.text
+    assert 'href="/sign-in"' in missing.text
+    assert injected.status_code == 200
+    assert "<img" not in injected.text
+    assert "onerror" not in injected.text
+    assert foreign.status_code == 400
 
 
 def test_mobile_share_import_requires_auth_and_explicit_confirmation(

@@ -100,6 +100,7 @@ _PROPERTYQUARRY_ALLOWED_ROUTE_PATHS = frozenset(
         "/manifest.webmanifest",
         "/markets/vienna",
         "/mobile/auth/bridge",
+        "/mobile/auth/complete",
         "/mobile/auth/redeem",
         "/mobile/bridge.css",
         "/mobile/bridge.js",

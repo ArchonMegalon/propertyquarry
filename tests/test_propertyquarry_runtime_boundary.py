@@ -64,6 +64,7 @@ def test_propertyquarry_runtime_profile_mounts_only_property_product_surface(
         "/app/api/mobile/property-links",
         "/app/api/property/governed-spatial/tours/{slug}/status",
         "/mobile/auth/bridge",
+        "/mobile/auth/complete",
         "/mobile/auth/redeem",
         "/mobile/bridge.css",
         "/mobile/bridge.js",
