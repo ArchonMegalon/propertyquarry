@@ -2,6 +2,84 @@
 
 Updated: 2026-08-16
 
+## 2026-08-16 final source, web, and Android release handoff (authoritative)
+
+This section supersedes older repository heads, deployment identities, Android
+builds, and Play release states below.
+
+### Canonical source and governed web deployment
+
+- Protected `main` and `origin/main` are
+  `52e0b157e3e5f9c915040c85157d20213b604e09` before this evidence-only handoff
+  update. Source repairs were merged through PR #19; release-envelope bindings
+  were merged through PRs #20, #21, and #22.
+- The audited runtime candidate is
+  `44cfe5c3b6ccd69849c336ea5e25df453e15214c`; its envelope head is
+  `52e0b157e3e5f9c915040c85157d20213b604e09`.
+- Governed local Docker deployment completed at `2026-08-16T14:47:02Z` with
+  all services healthy. The launch room reports
+  `healthy_exact_candidate_local_docker` and local runtime `READY`.
+- Release image digest:
+  `sha256:3f0087bfa0babc1e5322b0be715c68c87cd75d8f1ddd903e3c54155c64762b70`.
+- Deployment receipt:
+  `state/release/propertyquarry-local-deployment.v1.json`, SHA-256
+  `421eb4dba699e25ab19db16ab5e4117896b4a840b1dc451a611416145e1c5010`.
+- The unfiltered Python suite passed `11179 passed, 145 skipped`; the Android
+  web contracts passed `11/11`; authenticated release preflight and exact-byte
+  release-envelope verification passed.
+- Customer billing remains disabled. Public production launch remains
+  fail-closed pending external paid-billing, encrypted off-host restore, and
+  public Google Play authority receipts. Do not reinterpret the healthy local
+  deployment or the closed test as production-launch authority.
+
+### Android 1.1.4 / build 6
+
+- Signed AAB:
+  `mobile/android/app/build/outputs/bundle/release/app-release.aab`.
+- Package `com.myexternalbrain.propertyquarry`, version name `1.1.4`, version
+  code `6`, min SDK `24`, target SDK `36`.
+- AAB SHA-256:
+  `6e26f18ee0b80c16806f9ad0687be3e85b3b51a7c97d7b08660cba11e43606f8`.
+- The containerized release completed 232 Gradle tasks. Web contracts, release
+  unit tests, lint, Bundletool 1.18.3 validation, JAR signature validation, and
+  exact upload-certificate comparison passed.
+- The existing Play-approved upload identity was reused; no key reset or
+  security change occurred. Signing material remains outside Git at
+  `/home/tibor/.local/share/propertyquarry/android-signing-v2/`.
+- `npm run android:release:readiness` is `ready` with zero failed and zero
+  blocked checks, including the live runtime contract, App Links, Play signing
+  fingerprint, and privacy page.
+
+### Google Play Closed Alpha publication
+
+- Developer account `9007890349240845326`, Play app `4976153363318887490`,
+  track `4701087863545965393` (`Closed testing - Alpha`).
+- Play accepted `6 (1.1.4)` as release ID `2` and the exact AAB above.
+- Scope was reverified before submission: Austria is the only targeted
+  country/region; the existing
+  `propertyquarry-austria-testers@googlegroups.com` cohort is unchanged; Play
+  still shows `6/12` opted-in testers; rollout is 100% of that closed cohort.
+- At `2026-08-16T14:57:12Z`, Publishing overview showed the sole change as
+  `Changes in review`, `6 (1.1.4)`, `Start full rollout`. Managed publishing is
+  off, so Google will make it available to the closed testers after successful
+  checks/review. This is submitted, not yet evidence of tester availability.
+- Production and open testing were untouched. No billing, account-security, or
+  unrelated-app changes were made.
+- Secret-free local receipts remain ignored under `mobile/build/`; the Play
+  receipt is `propertyquarry-google-play-evidence.json` and its screenshot is
+  `propertyquarry-google-play-closed-v6-20260816.png`.
+
+### Remaining external boundaries
+
+- Wait for Google to move build 6 from review to available for selected
+  testers, then record that observed state without claiming Production.
+- Six additional distinct real testers must join and opt in before Google's
+  12-tester/14-day production-access clock can be satisfied.
+- Keep checkout disabled until the complete same-principal Live billing
+  authority exists. Keep public launch blocked until the signed external
+  authority receipt also covers immutable off-host DR and true public Play
+  availability.
+
 ## 2026-08-15 local repo audit repairs
 
 Source-tree honesty repairs on published `main` `b926ff256b91c6bc3fd62365fbf8591f1740764b`. This is not a new deployed candidate. Do not describe this dirty worktree as the live envelope.
