@@ -349,7 +349,9 @@ def test_propertyquarry_public_templates_do_not_keep_memo_anchors() -> None:
     assert 'id="sample-shortlist"' in marketing
 
 
-def test_pricing_surfaces_payfunnels_checkout_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pricing_keeps_payfunnels_checkout_closed_while_billing_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "https://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_AGENT_CHECKOUT_URL", "https://checkout.payfunnels.example/agent")
@@ -358,14 +360,14 @@ def test_pricing_surfaces_payfunnels_checkout_when_configured(monkeypatch: pytes
     pricing = client.get("/pricing")
 
     assert pricing.status_code == 200
-    assert "Secure checkout." in pricing.text
+    assert "Opens here when ready." in pricing.text
     assert "PayFunnels" not in pricing.text
     assert "payfunnels/order" not in pricing.text.lower()
     assert "data-pricing-provider" not in pricing.text
     assert "Checkout uses PayFunnels" not in pricing.text
     assert "Checkout pending" not in pricing.text
-    assert "Start checkout" in pricing.text
-    assert "Secure checkout." in pricing.text
+    assert "Start checkout" not in pricing.text
+    assert "Secure checkout." not in pricing.text
 
 
 def test_propertyquarry_exposes_privacy_safe_pwa_shell() -> None:

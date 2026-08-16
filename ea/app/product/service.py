@@ -12872,10 +12872,14 @@ def _property_candidate_url_has_exact_location_probe(property_url: str) -> bool:
     path = urllib.parse.unquote(str(parsed.path or "").strip().lower())
     if not path:
         return False
+    locality_marker = (
+        r"(?:wien|vienna|salzburg|steiermark|oberoesterreich|oberösterreich|"
+        r"niederoesterreich|niederösterreich|burgenland|kaernten|kärnten|"
+        r"tirol|vorarlberg)"
+    )
     return bool(
-        re.search(r"\b\d{4,5}\b", path)
-        or re.search(r"\bwien-\d{4}\b", path)
-        or re.search(r"\bvienna-\d{4}\b", path)
+        re.search(rf"\b{locality_marker}[-_/]\d{{4,5}}\b", path)
+        or re.search(rf"\b\d{{4,5}}[-_/]{locality_marker}\b", path)
     )
 
 
@@ -13303,7 +13307,7 @@ def _property_candidate_is_generic_listing_page(
         "garten",
     )
     return bool(
-        generic_url_marker_hit
+        (generic_url_marker_hit and not has_detail_signal and not title_has_concrete_listing_signal)
         or (
             any(marker in text for marker in non_listing_page_markers)
             and not any(signal in text for signal in residential_listing_signals)

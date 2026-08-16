@@ -23,6 +23,7 @@ from app.product.service import ProductService
 
 
 def test_telegram_outbound_workflow_property_tour_sent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BROWSERACT_API_KEY", "test-browseract-api-key")
     monkeypatch.setenv("EA_WILLHABEN_PROPERTY_TOUR_REQUIRE_360", "0")
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
     principal_id = "cf-email:tibor.girschele@gmail.com"
@@ -115,6 +116,16 @@ def test_telegram_outbound_workflow_property_tour_sent(monkeypatch: pytest.Monke
             },
         )
 
+    original_get_contract = client.app.state.container.task_contracts.get_contract
+    monkeypatch.setattr(
+        client.app.state.container.task_contracts,
+        "get_contract",
+        lambda task_key: (
+            SimpleNamespace(task_key=task_key)
+            if task_key == "create_property_tour"
+            else original_get_contract(task_key)
+        ),
+    )
     client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
     bundle_dir = tmp_path / "brigittenau-apartment-a"
     bundle_dir.mkdir(parents=True)
@@ -155,7 +166,7 @@ def test_telegram_outbound_workflow_property_tour_sent(monkeypatch: pytest.Monke
     )
     assert created.status_code == 200
     body = created.json()
-    assert body["status"] == "ready"
+    assert body["status"] == "ready", body
     assert body["telegram_delivery_status"] == "sent"
     assert body["telegram_chat_ref"] == "1354554303"
     assert body["telegram_message_ids"] == ["tg-1"]

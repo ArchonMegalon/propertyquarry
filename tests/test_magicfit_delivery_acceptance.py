@@ -131,7 +131,10 @@ def _run(
         env=env,
         capture_output=True,
         text=True,
-        timeout=30,
+        # The acceptor performs bounded media probes in a child process. Give
+        # those probes enough headroom when the full browser/media suite is
+        # concurrently releasing host resources, while keeping a hard bound.
+        timeout=60,
         check=False,
     )
 
@@ -159,6 +162,11 @@ def _write_playable_mp4(path: Path, *, color: str = "black") -> None:
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def _video_probe_without_ambient_event_loop(path: Path) -> dict[str, object]:
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(_video_probe, path).result()
 
 
 def _materialize_pending(
@@ -212,7 +220,7 @@ def _materialize_pending(
     final_video = bundle / pending["video_relpath"]
     accepted_sidecar = bundle / pending["accepted_sidecar_relpath"]
     delivery_digest = Path(pending["accepted_sidecar_relpath"]).stem
-    probe = _video_probe(staged_video)
+    probe = _video_probe_without_ambient_event_loop(staged_video)
     contact_sheet = root / f"contact-sheet-{color}.png"
     Image.new("RGB", (96, 54), color=(28, 36, 42)).save(contact_sheet, format="PNG")
     browser_receipt = root / f"browser-receipt-{color}.json"

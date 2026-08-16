@@ -1145,10 +1145,10 @@ def test_product_api_projects_real_runtime_objects() -> None:
     assert diagnostics.status_code == 200
     diagnostics_body = diagnostics.json()
     assert diagnostics_body["workspace"]["mode"] == "personal"
-    assert diagnostics_body["plan"]["plan_key"] == "pilot"
-    assert diagnostics_body["billing"]["billing_state"] == "trial"
+    assert diagnostics_body["plan"]["plan_key"] == "workspace_personal"
+    assert diagnostics_body["billing"]["billing_state"] == "non_authoritative_workspace_mode"
     assert diagnostics_body["billing"]["support_tier"] == "guided"
-    assert diagnostics_body["billing"]["invoice_status"] in {"trial_active", "current", "upgrade_required"}
+    assert diagnostics_body["billing"]["invoice_status"] == "property_billing_authoritative"
     assert diagnostics_body["billing"]["billing_portal_path"]
     assert diagnostics_body["entitlements"]["principal_seats"] == 1
     assert "warnings" in diagnostics_body["commercial"]
@@ -1177,7 +1177,7 @@ def test_product_api_projects_real_runtime_objects() -> None:
     plan = client.get("/app/api/plan")
     assert plan.status_code == 200
     plan_body = plan.json()
-    assert plan_body["plan"]["plan_key"] == "pilot"
+    assert plan_body["plan"]["plan_key"] == "workspace_personal"
     assert plan_body["billing"]["support_tier"] == "guided"
     assert plan_body["billing"]["invoice_window_label"]
     assert plan_body["billing"]["billing_portal_state"]
@@ -1224,8 +1224,8 @@ def test_product_api_projects_real_runtime_objects() -> None:
     support = operator_client.get("/app/api/support")
     assert support.status_code == 200
     support_body = support.json()
-    assert support_body["plan"]["display_name"] == "Pilot"
-    assert support_body["billing"]["invoice_status"] in {"trial_active", "current", "upgrade_required"}
+    assert support_body["plan"]["display_name"] == "Personal workspace"
+    assert support_body["billing"]["invoice_status"] == "property_billing_authoritative"
     assert "pending" in support_body["approvals"]
     assert isinstance(support_body["human_tasks"], list)
     assert "risk_state" in support_body["providers"]
@@ -6286,7 +6286,8 @@ def test_property_scout_require_floorplan_filters_before_shortlist_and_prebuilds
     assert result["sources"][0]["top_candidates"][0]["title"] == "Wohnung mit Grundriss und Balkon"
     assert result["sources"][0]["top_candidates"][0]["tour_url"] == ""
     assert result["sources"][0]["top_candidates"][0]["tour_status"] == "skipped"
-    assert assessed == ["with-plan"]
+    assert assessed == ["with-plan", "property-scout:with-plan"]
+    assert all("no-plan" not in object_id for object_id in assessed)
     assert len(tour_calls) == 0
 
 
@@ -6516,7 +6517,8 @@ def test_property_scout_min_area_filters_before_scoring(monkeypatch) -> None:
     assert result["filtered_area_total"] == 1
     assert result["sources"][0]["filtered_area_total"] == 1
     assert result["sources"][0]["top_candidates"][0]["title"] == "Familienwohnung mit Grundriss"
-    assert assessed == ["large"]
+    assert assessed == ["large", "property-scout:large"]
+    assert all("small" not in object_id for object_id in assessed)
 
 
 def test_property_scout_near_miss_does_not_fire_for_outside_vienna_area_failures(monkeypatch) -> None:
@@ -8333,7 +8335,8 @@ def test_property_scout_move_in_horizon_filters_before_scoring(monkeypatch) -> N
     assert result["filtered_availability_total"] == 1
     assert result["sources"][0]["filtered_availability_total"] == 1
     assert result["sources"][0]["top_candidates"][0]["title"] == "Genossenschaft almost ready"
-    assert assessed == ["near-future"]
+    assert assessed == ["near-future", "property-scout:near-future"]
+    assert all("far-future" not in object_id for object_id in assessed)
 
 
 def test_property_scout_move_in_horizon_keeps_unknown_availability(monkeypatch) -> None:
@@ -11401,7 +11404,6 @@ def test_profile_followup_resolution_suppression_expires(monkeypatch) -> None:
 
 
 def test_signal_ingest_willhaben_search_agent_mail_can_auto_create_and_send_to_tibor(monkeypatch, tmp_path: Path) -> None:
-    from app.domain.models import Artifact
     from app.services.registration_email import RegistrationEmailReceipt
 
     monkeypatch.setenv("EA_WILLHABEN_SEARCH_AGENT_AUTO_CREATE_PROPERTY_TOUR", "1")
@@ -11417,6 +11419,18 @@ def test_signal_ingest_willhaben_search_agent_mail_can_auto_create_and_send_to_t
     principal_id = "cf-email:scout@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Willhaben Auto Tour Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-auto-agent",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-auto-agent",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     panorama_url = "https://cache.willhaben.at/mmo/1/1739164555.jpg"
     monkeypatch.setattr(
@@ -11474,21 +11488,25 @@ def test_signal_ingest_willhaben_search_agent_mail_can_auto_create_and_send_to_t
         principal_id=principal_id,
     )
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        assert request.input_json["binding_id"] == "browseract-binding-auto-agent"
-        return Artifact(
-            artifact_id="artifact-property-tour-auto-agent",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-auto-agent",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:auto-agent",
+            output_json={
                 "public_url": "https://propertyquarry.com/tours/search-agent-apartment",
                 "crezlo_public_url": "https://vendor.example.com/tours/search-agent-apartment",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
 
     signal = client.post(
         "/app/api/signals/ingest",
@@ -11509,7 +11527,7 @@ def test_signal_ingest_willhaben_search_agent_mail_can_auto_create_and_send_to_t
                     "Neue Anzeige gefunden. "
                     "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/search-agent-apartment-1739164555"
                 ),
-                "binding_id": "browseract-binding-auto-agent",
+                "binding_id": crezlo_binding.binding_id,
                 "labels": ["CATEGORY_UPDATES", "INBOX"],
             },
         },
@@ -11543,7 +11561,6 @@ def test_signal_ingest_willhaben_search_agent_mail_can_auto_create_and_send_to_t
 
 
 def test_willhaben_property_tour_route_generates_tour_and_sends_email(monkeypatch, tmp_path: Path) -> None:
-    from app.domain.models import Artifact
     from app.services.registration_email import RegistrationEmailReceipt
 
     monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
@@ -11552,6 +11569,18 @@ def test_willhaben_property_tour_route_generates_tour_and_sends_email(monkeypatc
     principal_id = "cf-email:owner@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Executive Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-route-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-route-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     packet = {
         "property_url": "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/wien-1200-brigittenau/apartment-a-123",
@@ -11630,31 +11659,31 @@ def test_willhaben_property_tour_route_generates_tour_and_sends_email(monkeypatc
         ),
     )
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        assert request.task_key in {
-            "create_property_tour",
-            "ltd_runtime__crezlo_tours__create_property_tour",
-        }
-        assert request.input_json["binding_id"] == "browseract-binding-1"
-        assert request.input_json["force_ui_worker"] is False
-        assert request.input_json["proxy_result"] is True
-        assert request.input_json["property_url"] == packet["property_url"]
-        return Artifact(
-            artifact_id="artifact-property-tour-1",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-1",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        assert request.payload_json["force_ui_worker"] is False
+        assert request.payload_json["proxy_result"] is True
+        assert request.payload_json["property_url"] == packet["property_url"]
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-1",
+            output_json={
                 "hosted_url": "https://propertyquarry.com/tours/brigittenau-apartment-a",
                 "public_url": "https://propertyquarry.com/tours/brigittenau-apartment-a",
                 "crezlo_public_url": "https://vendor.example.com/tours/brigittenau-apartment-a",
                 "editor_url": "https://vendor.example.com/editor/brigittenau-apartment-a",
                 "tour_id": "tour-123",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
     bundle_dir = _write_owned_verified_3dvista_tour(
         tmp_path,
         slug="brigittenau-apartment-a",
@@ -11671,7 +11700,7 @@ def test_willhaben_property_tour_route_generates_tour_and_sends_email(monkeypatc
         "/app/api/signals/willhaben/property-tour",
         json={
             "property_url": packet["property_url"],
-            "binding_id": "browseract-binding-1",
+            "binding_id": crezlo_binding.binding_id,
             "auto_deliver": True,
         },
     )
@@ -11682,8 +11711,8 @@ def test_willhaben_property_tour_route_generates_tour_and_sends_email(monkeypatc
     assert body["tour_url"] == "https://propertyquarry.com/tours/brigittenau-apartment-a"
     assert body["vendor_tour_url"] == ""
     assert body["editor_url"] == "https://vendor.example.com/editor/brigittenau-apartment-a"
-    assert body["artifact_id"] == "artifact-property-tour-1"
-    assert body["execution_session_id"] == "session-property-tour-1"
+    assert body["artifact_id"] == ""
+    assert body["execution_session_id"] == "browseract:crezlo:session-property-tour-1"
     assert body["delivery_email"] == "owner@example.test"
     assert body["delivery_status"] == "sent"
     assert body["telegram_delivery_status"] == "sent"
@@ -14193,7 +14222,6 @@ def test_preference_profile_node_api_rejects_unsupported_or_malformed_nodes() ->
 
 
 def test_willhaben_property_tour_route_uses_personal_fit_assessment_when_profile_exists(monkeypatch, tmp_path: Path) -> None:
-    from app.domain.models import Artifact
     from app.services.registration_email import RegistrationEmailReceipt
 
     monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
@@ -14202,6 +14230,18 @@ def test_willhaben_property_tour_route_uses_personal_fit_assessment_when_profile
     principal_id = "cf-email:owner@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Executive Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-fit-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-fit-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
     client.post(
         "/app/api/people/self/preference-profile",
         json={
@@ -14271,23 +14311,28 @@ def test_willhaben_property_tour_route_uses_personal_fit_assessment_when_profile
 
     monkeypatch.setattr(product_service, "send_property_tour_email", _fake_send_property_tour_email)
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        return Artifact(
-            artifact_id="artifact-property-tour-2",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-2",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-2",
+            output_json={
                 "hosted_url": "https://propertyquarry.com/tours/waehring-apartment-a",
                 "public_url": "https://propertyquarry.com/tours/waehring-apartment-a",
                 "crezlo_public_url": "https://vendor.example.com/tours/waehring-apartment-a",
                 "editor_url": "https://vendor.example.com/editor/waehring-apartment-a",
                 "tour_id": "tour-456",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
     _write_owned_verified_3dvista_tour(
         tmp_path,
         slug="waehring-apartment-a",
@@ -14298,7 +14343,7 @@ def test_willhaben_property_tour_route_uses_personal_fit_assessment_when_profile
         "/app/api/signals/willhaben/property-tour",
         json={
             "property_url": packet["property_url"],
-            "binding_id": "browseract-binding-1",
+            "binding_id": crezlo_binding.binding_id,
             "auto_deliver": True,
         },
     )
@@ -14312,7 +14357,6 @@ def test_willhaben_property_tour_route_uses_personal_fit_assessment_when_profile
 
 
 def test_willhaben_property_tour_records_video_followup_when_telegram_video_delivery_fails(monkeypatch, tmp_path) -> None:
-    from app.domain.models import Artifact
     from app.services.registration_email import RegistrationEmailReceipt
 
     monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
@@ -14321,6 +14365,18 @@ def test_willhaben_property_tour_records_video_followup_when_telegram_video_deli
     principal_id = "cf-email:owner@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Property Video Followup Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-video-followup-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-video-followup-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     packet = {
         "property_url": "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/wien-1180-waehring/video-fail-123",
@@ -14355,7 +14411,9 @@ def test_willhaben_property_tour_records_video_followup_when_telegram_video_deli
         ),
     )
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
         bundle_dir = _write_owned_verified_3dvista_tour(
             tmp_path,
             slug="video-fail-123",
@@ -14367,22 +14425,25 @@ def test_willhaben_property_tour_records_video_followup_when_telegram_video_deli
         )
         (bundle_dir / "tour.mp4").write_bytes(b"fake-video")
         (bundle_dir / "scene-01.jpg").write_bytes(b"scene")
-        return Artifact(
-            artifact_id="artifact-property-tour-video-fail",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-video-fail",
-            principal_id=principal_id,
-            structured_output_json={
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-video-fail",
+            output_json={
                 "hosted_url": "https://propertyquarry.com/tours/video-fail-123",
                 "public_url": "https://propertyquarry.com/tours/video-fail-123",
                 "crezlo_public_url": "https://vendor.example.com/tours/video-fail-123",
                 "editor_url": "https://vendor.example.com/editor/video-fail-123",
                 "tour_id": "tour-video-fail-123",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
 
     class _TelegramTextReceipt:
         chat_id = "1354554303"
@@ -14393,7 +14454,7 @@ def test_willhaben_property_tour_records_video_followup_when_telegram_video_deli
 
     created = client.post(
         "/app/api/signals/willhaben/property-tour",
-        json={"property_url": packet["property_url"], "binding_id": "browseract-binding-1", "auto_deliver": True},
+        json={"property_url": packet["property_url"], "binding_id": crezlo_binding.binding_id, "auto_deliver": True},
     )
     assert created.status_code == 200
     body = created.json()
@@ -15098,11 +15159,21 @@ def test_preference_profile_teable_sync_preview_blocks_when_runtime_is_unreachab
 
 
 def test_willhaben_property_tour_route_prefers_panorama_media_and_disables_floorplan_scene_in_360_mode(monkeypatch) -> None:
-    from app.domain.models import Artifact
-
     principal_id = "cf-email:owner@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Executive Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-panorama-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-panorama-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     packet = {
         "property_url": "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/panorama-apartment-123",
@@ -15140,31 +15211,36 @@ def test_willhaben_property_tour_route_prefers_panorama_media_and_disables_floor
     }
     monkeypatch.setattr(product_service, "_load_willhaben_property_packet", lambda url: dict(packet))
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        assert request.input_json["media_urls_json"] == ["https://cache.willhaben.at/apartment-panorama/room-360.jpg"]
-        assert request.input_json["floorplan_urls_json"] == []
-        assert request.input_json["scene_strategy"] == "photo_only"
-        assert request.input_json["scene_selection_json"]["include_floorplans"] is False
-        assert request.input_json["property_facts_json"]["tour_media_mode"] == "panorama_360"
-        assert request.input_json["runtime_inputs_json"]["tour_media_mode"] == "panorama_360"
-        return Artifact(
-            artifact_id="artifact-property-tour-panorama-1",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-panorama-1",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        assert request.payload_json["media_urls_json"] == ["https://cache.willhaben.at/apartment-panorama/room-360.jpg"]
+        assert request.payload_json["floorplan_urls_json"] == []
+        assert request.payload_json["scene_strategy"] == "photo_only"
+        assert request.payload_json["scene_selection_json"]["include_floorplans"] is False
+        assert request.payload_json["property_facts_json"]["tour_media_mode"] == "panorama_360"
+        assert request.payload_json["runtime_inputs_json"]["tour_media_mode"] == "panorama_360"
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-panorama-1",
+            output_json={
                 "public_url": "https://client.3dvista.com/tour/panorama-apartment",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
 
     created = client.post(
         "/app/api/signals/willhaben/property-tour",
         json={
             "property_url": packet["property_url"],
-            "binding_id": "browseract-binding-panorama-1",
+            "binding_id": crezlo_binding.binding_id,
             "auto_deliver": False,
         },
     )
@@ -15176,18 +15252,32 @@ def test_willhaben_property_tour_route_prefers_panorama_media_and_disables_floor
 
 
 def test_willhaben_property_tour_route_accepts_external_live_360_source_when_panorama_images_are_absent(monkeypatch) -> None:
-    from app.domain.models import Artifact
-
     principal_id = "cf-email:owner@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Executive Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-external-360-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-external-360-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     packet = {
         "property_url": "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/external-360-apartment-123",
         "listing_id": "listing-external-360-123",
         "listing_uuid": "listing-uuid-external-360-123",
         "title": "External 360 apartment",
-        "property_facts_json": {},
+        "property_facts_json": {
+            "attribute_map": {
+                "VIRTUAL_VIEW_LINK/URL": ["https://my.matterport.com/show/?m=BmVWxvZQZLq"],
+            }
+        },
         "media_urls_json": ["https://cache.willhaben.at/apartment/photo-1.jpg"],
         "panorama_media_urls_json": [],
         "floorplan_urls_json": ["https://cache.willhaben.at/apartment/floorplan-1.jpg"],
@@ -15212,31 +15302,36 @@ def test_willhaben_property_tour_route_accepts_external_live_360_source_when_pan
     }
     monkeypatch.setattr(product_service, "_load_willhaben_property_packet", lambda url: dict(packet))
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        assert request.input_json["media_urls_json"] == ["https://cache.willhaben.at/apartment/photo-1.jpg"]
-        assert request.input_json["floorplan_urls_json"] == ["https://cache.willhaben.at/apartment/floorplan-1.jpg"]
-        assert request.input_json["source_virtual_tour_url"] == "https://my.matterport.com/show/?m=BmVWxvZQZLq"
-        assert request.input_json["panorama_source"] == "my.matterport.com"
-        assert request.input_json["property_facts_json"]["tour_media_mode"] == "panorama_360"
-        assert request.input_json["runtime_inputs_json"]["tour_media_mode"] == "panorama_360"
-        return Artifact(
-            artifact_id="artifact-property-tour-external-360-1",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-external-360-1",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        assert request.payload_json["media_urls_json"] == ["https://cache.willhaben.at/apartment/photo-1.jpg"]
+        assert request.payload_json["floorplan_urls_json"] == ["https://cache.willhaben.at/apartment/floorplan-1.jpg"]
+        assert request.payload_json["source_virtual_tour_url"] == "https://my.matterport.com/show/?m=BmVWxvZQZLq"
+        assert request.payload_json["panorama_source"] == "my.matterport.com"
+        assert request.payload_json["property_facts_json"]["tour_media_mode"] == "panorama_360"
+        assert request.payload_json["runtime_inputs_json"]["tour_media_mode"] == "panorama_360"
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-external-360-1",
+            output_json={
                 "public_url": "https://client.3dvista.com/tour/external-360-apartment",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
 
     created = client.post(
         "/app/api/signals/willhaben/property-tour",
         json={
             "property_url": packet["property_url"],
-            "binding_id": "browseract-binding-external-360-1",
+            "binding_id": crezlo_binding.binding_id,
             "auto_deliver": False,
         },
     )
@@ -15733,6 +15828,20 @@ def test_projected_crezlo_property_tour_task_forwards_full_media_payload(monkeyp
     principal_id = "cf-email:projected-crezlo-media-forwarding@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Projected Crezlo Office")
+    client.app.state.container.task_contracts.upsert_contract(
+        task_key="ltd_runtime__crezlo_tours__create_property_tour",
+        deliverable_type="ltd_runtime_crezlo_tours_create_property_tour_packet",
+        default_risk_class="medium",
+        default_approval_class="none",
+        allowed_tools=("browseract.crezlo_property_tour", "artifact_repository"),
+        evidence_requirements=("property_listing", "tour_brief", "property_media"),
+        memory_write_policy="none",
+        budget_policy_json={
+            "class": "medium",
+            "workflow_template": "tool_then_artifact",
+            "pre_artifact_capability_key": "crezlo_property_tour",
+        },
+    )
     observed_payload: dict[str, object] = {}
     original_execute_invocation = client.app.state.container.tool_execution.execute_invocation
 
@@ -21883,7 +21992,6 @@ def test_request_property_visual_asset_keeps_current_visual_state_generated_reco
 
 
 def test_willhaben_property_tour_followup_can_be_recreated_once_connector_is_available(monkeypatch, tmp_path: Path) -> None:
-    from app.domain.models import Artifact
     from app.services.registration_email import RegistrationEmailReceipt
 
     monkeypatch.delenv("BROWSERACT_API_KEY", raising=False)
@@ -21933,6 +22041,18 @@ def test_willhaben_property_tour_followup_can_be_recreated_once_connector_is_ava
     assert blocked_body["status"] == "blocked"
     assert blocked_body["blocked_reason"] == "browseract_connector_unconfigured"
     handoff_id = blocked_body["human_task_id"]
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-recreate-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-recreate-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     send_calls: list[dict[str, object]] = []
     hosted_tour_dir = tmp_path / "recreated-apartment"
@@ -21947,22 +22067,19 @@ def test_willhaben_property_tour_followup_can_be_recreated_once_connector_is_ava
         encoding="utf-8",
     )
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        assert request.task_key in {
-            "create_property_tour",
-            "ltd_runtime__crezlo_tours__create_property_tour",
-        }
-        return Artifact(
-            artifact_id="artifact-property-tour-recreated-1",
-            kind="property_tour_packet",
-            content="Property tour recreated.",
-            execution_session_id="session-property-tour-recreated-1",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-recreated-1",
+            output_json={
                 "public_url": "https://propertyquarry.com/tours/recreated-apartment",
                 "crezlo_public_url": "https://vendor.example.com/tours/recreated-apartment",
                 "editor_url": "https://vendor.example.com/editor/recreated-apartment",
             },
+            receipt_json={"status": "verified"},
         )
 
     def _fake_send_property_tour_email(**kwargs: object) -> RegistrationEmailReceipt:
@@ -21973,9 +22090,12 @@ def test_willhaben_property_tour_followup_can_be_recreated_once_connector_is_ava
             accepted_at="2026-05-02T00:00:00+00:00",
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
     monkeypatch.setattr(product_service, "send_property_tour_email", _fake_send_property_tour_email)
-    monkeypatch.setenv("BROWSERACT_API_KEY", "browseract-key")
 
     recreated = client.post(
         f"/app/api/handoffs/{handoff_id}/recreate",
@@ -22234,7 +22354,6 @@ def test_willhaben_property_tour_without_browseract_binding_uses_hosted_floorpla
 
 
 def test_office_signal_can_auto_create_willhaben_property_tour(monkeypatch, tmp_path: Path) -> None:
-    from app.domain.models import Artifact
     from app.services.registration_email import RegistrationEmailReceipt
 
     monkeypatch.setenv("EMAILIT_API_KEY", "test-emailit-key")
@@ -22243,6 +22362,18 @@ def test_office_signal_can_auto_create_willhaben_property_tour(monkeypatch, tmp_
     principal_id = "cf-email:owner@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Executive Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-office-signal-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-office-signal-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     monkeypatch.setattr(
         product_service,
@@ -22282,21 +22413,26 @@ def test_office_signal_can_auto_create_willhaben_property_tour(monkeypatch, tmp_
         ),
     )
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        return Artifact(
-            artifact_id="artifact-property-tour-2",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-2",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-2",
+            output_json={
                 "hosted_url": "https://propertyquarry.com/tours/garden-apartment",
                 "public_url": "https://propertyquarry.com/tours/garden-apartment",
                 "crezlo_public_url": "https://client.3dvista.com/tour/garden-apartment",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
     _write_owned_verified_3dvista_tour(
         tmp_path,
         slug="garden-apartment",
@@ -22316,7 +22452,7 @@ def test_office_signal_can_auto_create_willhaben_property_tour(monkeypatch, tmp_
             "payload": {
                 "captured_url": "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/garden-apartment-789",
                 "auto_create_property_tour": True,
-                "binding_id": "browseract-binding-2",
+                "binding_id": crezlo_binding.binding_id,
             },
         },
     )
@@ -26285,8 +26421,6 @@ def test_google_signal_sync_marks_pdf_attachment_pending_when_answerly_training_
 
 
 def test_google_willhaben_signal_sync_targets_secondary_account_and_auto_sends_to_tibor(monkeypatch, tmp_path: Path) -> None:
-    from app.domain.models import Artifact
-
     monkeypatch.setenv("EA_WILLHABEN_SEARCH_AGENT_AUTO_CREATE_PROPERTY_TOUR", "1")
     monkeypatch.setenv("EA_WILLHABEN_PROPERTY_TOUR_REQUIRE_360", "0")
     monkeypatch.setenv("EA_WILLHABEN_PROPERTY_TOUR_DEFAULT_RECIPIENT_EMAIL", "owner@example.test")
@@ -26300,6 +26434,18 @@ def test_google_willhaben_signal_sync_targets_secondary_account_and_auto_sends_t
     principal_id = "cf-email:owner@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Willhaben Google Sync Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-google-sync-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-google-sync-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     observed_sync_kwargs: dict[str, object] = {}
 
@@ -26328,7 +26474,7 @@ def test_google_willhaben_signal_sync_targets_secondary_account_and_auto_sends_t
                             "Neue Anzeige gefunden. "
                             "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/google-sync-apartment-1739164777"
                         ),
-                        "binding_id": "browseract-binding-google-sync",
+                        "binding_id": crezlo_binding.binding_id,
                         "labels": ["CATEGORY_UPDATES", "INBOX"],
                     },
                 ),
@@ -26406,21 +26552,25 @@ def test_google_willhaben_signal_sync_targets_secondary_account_and_auto_sends_t
         principal_id=principal_id,
     )
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        assert request.input_json["binding_id"] == "browseract-binding-google-sync"
-        return Artifact(
-            artifact_id="artifact-property-tour-google-sync",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-google-sync",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-google-sync",
+            output_json={
                 "public_url": "https://propertyquarry.com/tours/google-sync-apartment",
                 "crezlo_public_url": "https://vendor.example.com/tours/google-sync-apartment",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
 
     synced = client.post(
         "/app/api/signals/google/willhaben-sync",
@@ -27132,13 +27282,23 @@ def test_willhaben_property_tour_route_retries_gmail_delivery_with_fallback_bind
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from app.domain.models import Artifact
-
     monkeypatch.setenv("EA_WILLHABEN_PROPERTY_TOUR_REQUIRE_360", "0")
     monkeypatch.setenv("EA_PUBLIC_TOUR_DIR", str(tmp_path))
     principal_id = "cf-email:owner@example.test"
     client = build_product_client(principal_id=principal_id)
     start_workspace(client, mode="personal", workspace_name="Executive Office")
+    crezlo_binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref="crezlo-gmail-fallback-test",
+        scope_json={"services": ["Crezlo Tours", "Crezlo"]},
+        auth_metadata_json={
+            "service_name": "Crezlo Tours",
+            "browseract_crezlo_property_tour_workflow_id": "workflow-crezlo-gmail-fallback-test",
+            "service_accounts_json": {"Crezlo Tours": {"status": "configured"}},
+        },
+        status="enabled",
+    )
 
     packet = {
         "property_url": "https://www.willhaben.at/iad/immobilien/d/mietwohnungen/wien/live-apartment-fallback-1",
@@ -27167,23 +27327,28 @@ def test_willhaben_property_tour_route_retries_gmail_delivery_with_fallback_bind
     }
     monkeypatch.setattr(product_service, "_load_willhaben_property_packet", lambda url: dict(packet))
 
-    def _fake_execute_task_artifact(request):  # type: ignore[no-untyped-def]
-        return Artifact(
-            artifact_id="artifact-property-tour-fallback-1",
-            kind="property_tour_packet",
-            content="Property tour created.",
-            execution_session_id="session-property-tour-fallback-1",
-            principal_id=principal_id,
-            structured_output_json={
+    def _fake_execute_invocation(request):  # type: ignore[no-untyped-def]
+        assert request.tool_name == "browseract.crezlo_property_tour"
+        assert request.payload_json["binding_id"] == crezlo_binding.binding_id
+        return ToolInvocationResult(
+            tool_name=request.tool_name,
+            action_kind=request.action_kind,
+            target_ref="browseract:crezlo:session-property-tour-fallback-1",
+            output_json={
                 "hosted_url": "https://propertyquarry.com/tours/fallback-gmail-apartment",
                 "public_url": "https://propertyquarry.com/tours/fallback-gmail-apartment",
                 "crezlo_public_url": "https://client.3dvista.com/tour/fallback-gmail-apartment",
                 "editor_url": "https://vendor.example.com/editor/fallback-gmail-apartment",
                 "tour_id": "tour-fallback-1",
             },
+            receipt_json={"status": "verified"},
         )
 
-    client.app.state.container.orchestrator.execute_task_artifact = _fake_execute_task_artifact
+    monkeypatch.setattr(
+        client.app.state.container.tool_execution,
+        "execute_invocation",
+        _fake_execute_invocation,
+    )
     _write_owned_verified_3dvista_tour(
         tmp_path,
         slug="fallback-gmail-apartment",
@@ -27233,7 +27398,7 @@ def test_willhaben_property_tour_route_retries_gmail_delivery_with_fallback_bind
         "/app/api/signals/willhaben/property-tour",
         json={
             "property_url": packet["property_url"],
-            "binding_id": "browseract-binding-fallback-1",
+            "binding_id": crezlo_binding.binding_id,
             "auto_deliver": True,
         },
     )
@@ -28968,8 +29133,9 @@ def test_product_diagnostics_include_value_events() -> None:
     assert bundle.status_code == 200
     body = bundle.json()
     assert body["workspace"]["mode"] == "personal"
-    assert body["plan"]["plan_key"] == "pilot"
-    assert body["billing"]["billing_state"] == "trial"
+    assert body["plan"]["plan_key"] == "workspace_personal"
+    assert body["billing"]["billing_state"] == "non_authoritative_workspace_mode"
+    assert body["billing"]["invoice_status"] == "property_billing_authoritative"
     assert body["billing"]["renewal_owner_role"] == "principal"
     assert "pending" in body["approvals"]
     assert isinstance(body["human_tasks"], list)
@@ -30415,6 +30581,7 @@ def test_property_payfunnels_checkout_and_webhook_activate_plus_plan(
 
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "https://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/checkout/order",
@@ -30555,6 +30722,7 @@ def test_property_payfunnels_checkout_uses_api_created_link_when_api_key_is_pres
     monkeypatch.delenv("PAYFUNNELS_PLUS_CHECKOUT_URL", raising=False)
     monkeypatch.setenv("PAYFUNNELS_API_KEY", "pf-api-key")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     from app.services import property_billing as billing_service
 
@@ -30605,6 +30773,7 @@ def test_property_payfunnels_checkout_requires_https_checkout_url(
 
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "http://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/payfunnels/order",
@@ -30626,6 +30795,7 @@ def test_property_payfunnels_api_base_requires_https(
     monkeypatch.setenv("PAYFUNNELS_API_KEY", "pf-api-key")
     monkeypatch.setenv("PAYFUNNELS_API_BASE", "http://api.payfunnels.example")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/payfunnels/order",
@@ -30646,6 +30816,7 @@ def test_property_payfunnels_api_link_creation_blocks_redirects(
     monkeypatch.delenv("PAYFUNNELS_PLUS_CHECKOUT_URL", raising=False)
     monkeypatch.setenv("PAYFUNNELS_API_KEY", "pf-api-key")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     from app.services import property_billing as billing_service
 
@@ -30682,6 +30853,7 @@ def test_property_payfunnels_webhook_accepts_documented_callback_shape(
     start_workspace(client, mode="personal", workspace_name="PropertyQuarry Office")
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "https://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/payfunnels/order",
@@ -30745,6 +30917,7 @@ def test_property_payfunnels_webhook_accepts_hidden_additional_fields_shape(
     start_workspace(client, mode="personal", workspace_name="PropertyQuarry Office")
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "https://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/payfunnels/order",
@@ -30792,6 +30965,7 @@ def test_property_payfunnels_webhook_accepts_sha256_signature_prefix(
     start_workspace(client, mode="personal", workspace_name="PropertyQuarry Office")
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "https://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/payfunnels/order",
@@ -30829,6 +31003,7 @@ def test_property_payfunnels_failed_webhook_clears_pending_checkout_and_records_
     start_workspace(client, mode="personal", workspace_name="PropertyQuarry Office")
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "https://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/payfunnels/order",
@@ -30886,6 +31061,7 @@ def test_property_payfunnels_refund_webhook_records_lifecycle_without_pending_ch
     start_workspace(client, mode="personal", workspace_name="PropertyQuarry Office")
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "https://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/payfunnels/order",
@@ -31298,6 +31474,7 @@ def test_property_payfunnels_webhook_rejects_pending_order_mismatch(
     start_workspace(client, mode="personal", workspace_name="PropertyQuarry Office")
     monkeypatch.setenv("PAYFUNNELS_PLUS_CHECKOUT_URL", "https://checkout.payfunnels.example/plus")
     monkeypatch.setenv("PAYFUNNELS_WEBHOOK_SECRET", "pf-secret")
+    monkeypatch.setattr(product_api_delivery_routes, "payfunnels_configured", lambda **_: True)
 
     created = client.post(
         "/app/api/signals/property/billing/payfunnels/order",
@@ -35466,7 +35643,7 @@ def test_hosted_property_tour_walkthrough_asset_url_requires_verified_published_
     ) == ""
 
 
-def test_hosted_property_tour_walkthrough_open_url_prefers_branded_autoplay_entry(monkeypatch, tmp_path: Path) -> None:
+def test_hosted_property_tour_walkthrough_open_url_prefers_branded_walkthrough_route(monkeypatch, tmp_path: Path) -> None:
     slug = "verified-walkthrough-open"
     bundle_dir = tmp_path / slug
     bundle_dir.mkdir(parents=True)
@@ -35490,15 +35667,15 @@ def test_hosted_property_tour_walkthrough_open_url_prefers_branded_autoplay_entr
 
     assert property_tour_hosting._hosted_property_tour_walkthrough_open_url(
         branded_tour_url
-    ) == f"https://propertyquarry.com/tours/{slug}?pane=flythrough-pane&autoplay=1"
+    ) == f"https://propertyquarry.com/tours/{slug}/walkthrough"
     assert property_tour_hosting._hosted_property_tour_walkthrough_open_url(
         "",
         branded_asset_url,
-    ) == f"https://propertyquarry.com/tours/{slug}?pane=flythrough-pane&autoplay=1"
+    ) == f"https://propertyquarry.com/tours/{slug}/walkthrough"
     assert property_tour_hosting._hosted_property_tour_walkthrough_open_url(
         "",
         relative_asset_url,
-    ) == f"/tours/{slug}?pane=flythrough-pane&autoplay=1"
+    ) == f"/tours/{slug}/walkthrough"
 
 
 def test_hosted_property_tour_generated_reconstruction_asset_url_is_separate_from_verified_provider(
@@ -37536,18 +37713,7 @@ def test_official_risk_posture_keeps_unverified_sources_open(
         }
     )
 
-    assert rows[0] == {
-        "title": "Public sources identified, checks still open",
-        "detail": "1 check(s) still need a clear answer.",
-        "tag": "Open",
-    }
-    assert rows[1]["detail"].startswith("1 public source identified")
-    assert rows[2]["tag"] == "Open"
-    assert rows[3] == {
-        "title": "Next check",
-        "detail": "Check the current district dataset.",
-        "tag": "Open",
-    }
+    assert rows == []
 
 
 def test_official_risk_posture_is_ready_only_when_every_source_is_verified() -> None:
@@ -37579,3 +37745,36 @@ def test_official_risk_posture_is_ready_only_when_every_source_is_verified() -> 
     assert rows[2]["detail"] == "2 checked | 0 flagged | 0 still open"
     assert rows[2]["tag"] == "Ready"
     assert rows[3]["tag"] == "Snapshot"
+
+
+def test_official_risk_posture_stays_open_when_verified_and_unverified_sources_mix() -> None:
+    rows = property_workspace_helpers._official_risk_posture_rows(
+        {
+            "country_code": "AT",
+            "sources": [
+                {
+                    "availability": "official_dataset",
+                    "verification_state": "verified",
+                    "confidence": "high",
+                },
+                {
+                    "availability": "official_dataset",
+                    "verification_state": "needs_review",
+                    "required_next_step": "Check the current district dataset.",
+                },
+            ],
+        }
+    )
+
+    assert rows[0] == {
+        "title": "Public sources identified, checks still open",
+        "detail": "1 check(s) still need a clear answer.",
+        "tag": "Open",
+    }
+    assert rows[1]["detail"].startswith("2 public sources identified")
+    assert rows[2]["tag"] == "Open"
+    assert rows[3] == {
+        "title": "Next check",
+        "detail": "Check the current district dataset.",
+        "tag": "Open",
+    }

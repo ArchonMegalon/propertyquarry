@@ -33,7 +33,6 @@ def property_opportunity_public_projection(value: object) -> dict[str, object]:
         "domain": text("domain", limit=80),
         "object_type": text("object_type", limit=80),
         "object_id": text("object_id"),
-        "person_id": text("person_id", limit=200),
         "run_id": text("run_id", limit=200),
         "predicted_reaction": text("predicted_reaction", limit=1200),
         "recommendation": text("recommendation", limit=200),

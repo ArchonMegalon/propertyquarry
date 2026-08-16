@@ -137,9 +137,21 @@ def test_telegram_bot_workflow_routes_documents_photos_and_ltd_actions(monkeypat
         return ToolInvocationResult(
             tool_name=request.tool_name,
             action_kind=request.action_kind,
-            target_ref="provider://onemin/background-remove",
-            output_json={"ok": True},
-            receipt_json={"principal_id": request.context_json["principal_id"]},
+            target_ref="onemin:background-remove:test-asset-1",
+            output_json={
+                "ok": True,
+                "provider_backend": "1min",
+                "asset_urls": ["https://example.invalid/output/cat-no-background.png"],
+            },
+            receipt_json={
+                "principal_id": request.context_json["principal_id"],
+                "handler_key": request.tool_name,
+                "invocation_contract": "tool.v1",
+                "provider_key": "onemin",
+                "provider_backend": "1min",
+                "feature_type": request.payload_json["feature_type"],
+                "model": "test-background-remover-v1",
+            },
         )
 
     monkeypatch.setattr(channels_route.urllib.request, "urlopen", _fake_urlopen)
@@ -235,7 +247,7 @@ def test_telegram_bot_workflow_routes_documents_photos_and_ltd_actions(monkeypat
 
     image = agent.ask("Use 1min.AI to remove the background from https://example.invalid/cat.png")
     assert image["reply_sent"] is True
-    assert "Executed 1min.AI background_remove." in image["reply_text"]
+    assert "Executed 1min.AI background_remove with a principal-bound provider receipt." in image["reply_text"]
     assert executed_requests[-1].payload_json["image_url"] == "https://example.invalid/cat.png"
     assert len(sent) >= 5
 

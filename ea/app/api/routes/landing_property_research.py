@@ -10,6 +10,7 @@ from typing import Any
 from app.api.routes.landing_property_workspace_helpers import (
     _candidate_detail_sections,
     _official_risk_posture_rows,
+    _verified_official_source_rows,
     _property_candidate_display_facts,
     _property_candidate_orientation_preview,
     _property_candidate_preview_image,
@@ -1738,9 +1739,7 @@ def _property_packet_provenance_rows(facts: dict[str, object]) -> list[dict[str,
 def _property_packet_official_evidence_rows(facts: dict[str, object]) -> list[dict[str, str]]:
     official = dict(facts.get("official_risk_evidence") or {}) if isinstance(facts.get("official_risk_evidence"), dict) else {}
     rows: list[dict[str, str]] = []
-    for row in list(official.get("sources") or [])[:6]:
-        if not isinstance(row, dict):
-            continue
+    for row in _verified_official_source_rows(official)[:6]:
         title = str(row.get("label") or row.get("risk_key") or "Local data").strip()
         source_label = str(row.get("source_label") or row.get("provider") or "Local dataset").strip()
         authority = str(row.get("authority_label") or row.get("provider") or "").strip()

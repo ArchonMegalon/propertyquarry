@@ -268,7 +268,7 @@
           <div class="pqx-actions">
             {% if (access_links.get('active_total') or 0) > 0 %}<span class="pqx-pill">{{ access_links.get('active_total') }} active</span>{% endif %}
             <a class="pqx-link-button" href="{{ access_return_to }}">Manage</a>
-            <a class="pqx-link-button" href="/app/properties/packets{{ query_suffix }}">Shared pages</a>
+            <a class="pqx-link-button" href="/app/properties/packets{{ query_suffix }}">Saved packets</a>
           </div>
         </div>
         {% if settings_view == 'google' or settings_view == 'access' or google_status_note or access_status_note %}

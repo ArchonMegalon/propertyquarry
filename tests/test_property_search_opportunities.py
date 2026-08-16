@@ -114,7 +114,7 @@ def test_public_opportunity_projection_allowlists_customer_safe_fields() -> None
         }
     )
 
-    assert projection["person_id"] == "elisabeth"
+    assert "person_id" not in projection
     assert projection["fit_score"] == 88.0
     assert projection["unknowns"] == ["heating_type"]
     assert "private_prompt" not in projection

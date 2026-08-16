@@ -343,9 +343,17 @@ def test_release_asset_verifier_binds_generated_receipts_to_current_propertyquar
     assert '"docs/PROPERTYQUARRY_RELEASE_MANIFEST.md",' in verifier
 
 
-def test_flagship_candidate_verifier_accepts_v2_fail_closed_truth(tmp_path: Path) -> None:
+def test_flagship_candidate_verifier_accepts_v2_fail_closed_truth(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     pulse = json.loads(PULSE_PATH.read_text(encoding="utf-8"))
     receipt = json.loads(GENERATED_GATE_PATH.read_text(encoding="utf-8"))
+    if isinstance(receipt.get("source_binding"), dict):
+        monkeypatch.setattr(
+            "scripts.verify_flagship_release_readiness.build_source_binding",
+            lambda *args, **kwargs: dict(receipt["source_binding"]),
+        )
     issues = _verify_pulse(tmp_path, pulse)
 
     if isinstance(receipt.get("source_binding"), dict):

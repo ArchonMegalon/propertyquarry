@@ -479,9 +479,24 @@ def test_pack_proof_guardrails_track_queue_and_registry_authority() -> None:
         source_rule = dict(projection.get(projection_key) or {})
         assert source_rule.get("source_anchor_id") == source_name
         payload = source_payloads[source_name]
-        _field(payload, "generated_at")
         for required_field in source_rule.get("required_fields") or []:
             _field(payload, str(required_field))
+
+    release_truth_rule = dict(projection.get("release_truth_live_source") or {})
+    release_truth_payload = source_payloads["registry_release_channel"]
+    assert release_truth_payload.get("contractName") == "chummer.registry.repository-release-projection-pointer/v1"
+    assert release_truth_payload.get("status") == "not_runtime_authority"
+    assert release_truth_payload.get("runtimeAuthoritySource") == "CHUMMER_RELEASE_AUTHORITY_ROOT/CURRENT.json"
+    assert set(release_truth_payload.get("doesNotAssert") or []) == {
+        "current_release_version",
+        "artifact_availability",
+        "desktop_delivery_readiness",
+        "product_preview_readiness",
+    }
+    authority_rule = str(release_truth_rule.get("authority_rule") or "")
+    assert "not_runtime_authority" in authority_rule
+    assert "historical pointer only" in authority_rule
+    assert "fail closed" in authority_rule
 
 
 def test_successor_frontier_closeout_prevents_reopening_completed_ea_slice() -> None:
@@ -1321,7 +1336,8 @@ def test_pack_source_truth_files_exist_and_share_evidence_anchors() -> None:
     assert "design-owned successor queue source" in str(source_truth["design_successor_queue"].get("use_rule") or "")
     assert "live Fleet operator packet projection" in str(source_truth["fleet_weekly_governor_packet"].get("use_rule") or "")
     assert "live followthrough gate and support-closure source" in str(source_truth["fleet_support_packets"].get("use_rule") or "")
-    assert "canonical release-channel truth source" in str(source_truth["registry_release_channel"].get("use_rule") or "")
+    assert "release-authority pointer" in str(source_truth["registry_release_channel"].get("use_rule") or "")
+    assert "fail closed" in str(source_truth["registry_release_channel"].get("use_rule") or "")
     for key, row in source_truth.items():
         if row.get("required") is True:
             assert _source_path(row).exists(), key
@@ -1331,7 +1347,8 @@ def test_pack_source_truth_files_exist_and_share_evidence_anchors() -> None:
     assert materialized_truth_projection["release_truth_live_source"]["source_anchor_id"] == "registry_release_channel"
     assert "decision_board.current_launch_action" in materialized_truth_projection["operator_packet_live_source"]["required_fields"]
     assert "reporter_followthrough_plan.ready_count" in materialized_truth_projection["reporter_followthrough_live_source"]["required_fields"]
-    assert "rolloutState" in materialized_truth_projection["release_truth_live_source"]["required_fields"]
+    assert "runtimeAuthoritySource" in materialized_truth_projection["release_truth_live_source"]["required_fields"]
+    assert "doesNotAssert" in materialized_truth_projection["release_truth_live_source"]["required_fields"]
     assert "measured_rollout_loop.decision_action_routes.status" in materialized_truth_projection["operator_packet_live_source"][
         "required_fields"
     ]
@@ -1370,10 +1387,12 @@ def test_pack_source_truth_files_exist_and_share_evidence_anchors() -> None:
         "followthrough_receipt_gates.source_rule",
     ]
     assert reporter_projection_contract.get("release_truth_source_fields") == [
+        "contractName",
         "status",
-        "rolloutState",
-        "supportabilityState",
-        "fixAvailabilitySummary",
+        "runtimeAuthoritySource",
+        "historicalReleaseVersion",
+        "historicalProjectionPath",
+        "doesNotAssert",
     ]
     assert "same live-source fields" in str(projection_contract.get("projection_guard_rule") or "")
     for field_name in materialized_truth_projection["operator_packet_live_source"]["required_fields"]:
@@ -1626,10 +1645,11 @@ def test_specimens_project_operator_and_reporter_packets_from_same_anchors() -> 
         f"registry_release_channel.{item}"
         for item in reporter_pack_projection_contract.get("release_truth_source_fields") or []
     ]
-    assert "same support packet and release-channel truth window" in str(
+    assert "same support packet and Registry authority-pointer window" in str(
         reporter_projection_bindings.get("use_rule") or ""
     )
-    assert "one live truth window" in str(projection_bindings.get("same_window_rule") or "")
+    assert "one authority window" in str(projection_bindings.get("same_window_rule") or "")
+    assert "not_runtime_authority" in str(projection_bindings.get("same_window_rule") or "")
 
 
 def _assert_specimens_match_packet_contract_fields_and_posture_coverage() -> None:
@@ -1687,10 +1707,12 @@ def _assert_specimens_match_packet_contract_fields_and_posture_coverage() -> Non
         "focus_shift",
     }
     assert reporter_projection_bindings.get("release_truth_source_fields") == [
+        "registry_release_channel.contractName",
         "registry_release_channel.status",
-        "registry_release_channel.rolloutState",
-        "registry_release_channel.supportabilityState",
-        "registry_release_channel.fixAvailabilitySummary",
+        "registry_release_channel.runtimeAuthoritySource",
+        "registry_release_channel.historicalReleaseVersion",
+        "registry_release_channel.historicalProjectionPath",
+        "registry_release_channel.doesNotAssert",
     ]
 
     assert list(reporter_specimen.get("required_stage_sequence") or []) == list(

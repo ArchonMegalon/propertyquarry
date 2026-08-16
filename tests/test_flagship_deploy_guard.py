@@ -259,7 +259,7 @@ def _seed() -> dict[str, Any]:
                         {
                             "file": BROWSER_FILE,
                             "cases": [
-                                "test_propertyquarry_decision_to_clippy_to_packet_followup_flow_in_browser",
+                                "test_propertyquarry_generates_private_opportunity_brief_in_real_browser",
                                 "test_propertyquarry_packet_tracks_followup_state_in_browser",
                             ],
                         }

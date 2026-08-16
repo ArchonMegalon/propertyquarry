@@ -568,7 +568,9 @@ def test_property_shortlist_templates_expose_visual_actions_without_hidden_agent
     assert "<summary><strong>More</strong></summary>" in review
     assert "data-pw-visual-poll-seconds=\"10\"" in review
     assert "pqx-progress-button is-processing" in review
-    assert "Share results" in review
+    assert "Save shortlist packet" in review
+    assert "Before you visit" in review
+    assert "Ask the agent" in review
     assert 'data-pw-shortlist-empty-state-template' in review
     assert 'data-pw-shortlist-empty-state' in review
     assert 'data-pw-shortlist-empty-cta' in review
@@ -2903,11 +2905,15 @@ def test_propertyquarry_plan_page_uses_property_plan_language() -> None:
     assert "Collaborator seats" in page.text
     assert "market update, review queue, follow-up ledger, review workflow" in page.text
     assert "draft review" not in page.text
-    assert "PropertyQuarry pilot with one account owner and one collaborator." in page.text
+    assert (
+        "Personal workspace mode; this object does not grant a paid "
+        "PropertyQuarry plan."
+    ) in page.text
     forbidden_copy = (
         "morning memo",
         "commitment ledger",
         "Google-first pilot with one executive and one operator.",
+        "PropertyQuarry pilot with one account owner and one collaborator.",
         "Operator seats",
     )
     for marker in forbidden_copy:
@@ -19881,8 +19887,8 @@ def test_propertyquarry_search_surface_hides_out_of_scope_country_currency() -> 
     assert "GBP 2M" not in response.text
     assert 'value="rightmove"' not in response.text
     assert 'value="AT"' in response.text
-    assert 'value="DE"' in response.text
-    assert 'value="CR"' in response.text
+    assert 'value="DE"' not in response.text
+    assert 'value="CR"' not in response.text
 
 
 def test_propertyquarry_search_surface_localizes_heat_resilience_copy() -> None:
@@ -19970,14 +19976,16 @@ def test_property_packets_dashboard_uses_customer_facing_language() -> None:
     template_path = Path(__file__).resolve().parents[1] / "ea/app/templates/app/property_packets.html"
     body = template_path.read_text(encoding="utf-8")
 
-    assert "Share property pages and keep the replies together." in body
-    assert "<title>PropertyQuarry Shared Pages</title>" in body
+    assert "Save local review packets and keep the replies together." in body
+    assert "<title>PropertyQuarry Saved Packets</title>" in body
     assert "Packet sharing" not in body
     assert "PropertyQuarry Packets" not in body
-    assert "Shared pages" in body
+    assert "Saved packets" in body
+    assert "Shared pages" not in body
     assert "Local PDF ready" in body
     assert "Ready to share · PDF ready · sharing active" not in body
-    assert "Paste shared link" in body
+    assert "Paste external link" in body
+    assert "Paste shared link" not in body
     assert "Copy reply link" in body
     assert "Private PDFs and manually linked pages" in body
     assert "Read replies here before they change the search" in body
@@ -19990,13 +19998,14 @@ def test_property_packets_dashboard_uses_customer_facing_language() -> None:
     assert "Publication queue" not in body
     assert "source_pdf_sha256" not in body
     assert "renderer_version" not in body
-    assert ">Share</button>" in body
+    assert ">Save recipient</button>" in body
+    assert ">Share</button>" not in body
     assert "Share packet" not in body
     assert "Back to run" not in body
     assert "Back to search" in body
     assert "No property packet is ready" not in body
-    assert "No shared home is ready yet." in body
-    assert "{{ item.property_ref }} · Shared page · {{ item.created_at[:19] }}" in body
+    assert "No saved packet is ready yet." in body
+    assert "{{ item.property_ref }} · Saved packet · {{ item.created_at[:19] }}" in body
     assert "Reactions" in body
     assert "Household reactions" not in body
     assert 'aria-label="PropertyQuarry sections"' in body
@@ -20179,7 +20188,9 @@ def test_property_workbench_evidence_atlas_avoids_internal_storage_language() ->
     assert "Teable" not in template
     assert "Postgres" not in template
     assert "Open the tour or walkthrough for a closer look." in script
-    assert "Fiber is reported nearby. Final availability still depends on the exact address." in script
+    assert "No fiber layer is available for this address yet." in script
+    assert "candidate.evidence_overlays" in script
+    assert "Fiber is reported nearby. Final availability still depends on the exact address." not in script
     assert "Teable" not in script
     assert "Postgres" not in script
 
@@ -24413,32 +24424,32 @@ def test_propertyquarry_completed_empty_results_hide_run_updates(monkeypatch) ->
     assert "Fetched listings from Willhaben." not in rendered_html
 
 
-def test_propertyquarry_completed_costa_rica_run_labels_equal_site_and_listing_counts(monkeypatch) -> None:
-    principal_id = "pq-completed-cr-equal-counts"
+def test_propertyquarry_completed_austria_run_labels_equal_site_and_listing_counts(monkeypatch) -> None:
+    principal_id = "pq-completed-at-equal-counts"
     client = build_property_client(principal_id=principal_id)
     headers = {"host": "propertyquarry.com"}
-    start_workspace(client, mode="personal", workspace_name="Costa Rica Equal Counts")
+    start_workspace(client, mode="personal", workspace_name="Austria Equal Counts")
     selected_platforms = [
-        "encuentra24_cr",
-        "re_cr_mls",
-        "realtor_cr",
-        "properstar_cr",
-        "coldwellbanker_cr",
-        "century21_cr",
-        "remax_cr",
-        "theagency_cr",
-        "krain_cr",
-        "desarrollos_cr",
+        "willhaben",
+        "immmo",
+        "immoscout_at",
+        "immobilien_net_at",
+        "ohne_makler_at",
+        "sreal_at",
+        "raiffeisen_immobilien_at",
+        "wohnnet_at",
+        "keinmakler_at",
+        "immowelt_at",
     ]
     stored = client.post(
         "/v1/onboarding/property-search/preferences",
         json={
-            "country_code": "CR",
-            "language_code": "es",
+            "country_code": "AT",
+            "language_code": "de",
             "listing_mode": "buy",
             "property_type": "apartment",
-            "region_code": "costa_rica",
-            "location_query": "Costa Rica",
+            "region_code": "austria",
+            "location_query": "Austria",
             "selected_platforms": selected_platforms,
             "property_commercial": {
                 "active_plan_key": "agent",
@@ -24450,8 +24461,8 @@ def test_propertyquarry_completed_costa_rica_run_labels_equal_site_and_listing_c
     assert stored.status_code == 200, stored.text
 
     def _fake_run_status(self, *, principal_id: str, run_id: str, **_kwargs):
-        assert principal_id == "pq-completed-cr-equal-counts"
-        assert run_id == "run-cr-equal-counts"
+        assert principal_id == "pq-completed-at-equal-counts"
+        assert run_id == "run-at-equal-counts"
         return {
             "run_id": run_id,
             "principal_id": principal_id,
@@ -24460,11 +24471,11 @@ def test_propertyquarry_completed_costa_rica_run_labels_equal_site_and_listing_c
             "progress": 100,
             "message": "Property scouting run completed.",
             "property_search_preferences": {
-                "country_code": "CR",
+                "country_code": "AT",
                 "listing_mode": "buy",
                 "property_type": "apartment",
-                "region_code": "costa_rica",
-                "location_query": "Costa Rica",
+                "region_code": "austria",
+                "location_query": "Austria",
                 "selected_platforms": selected_platforms,
             },
             "summary": {
@@ -24482,14 +24493,14 @@ def test_propertyquarry_completed_costa_rica_run_labels_equal_site_and_listing_c
 
     monkeypatch.setattr(ProductService, "get_property_search_run_status", _fake_run_status)
 
-    response = client.get("/app/search", params={"run_id": "run-cr-equal-counts"}, headers=headers)
+    response = client.get("/app/search", params={"run_id": "run-at-equal-counts"}, headers=headers)
 
     assert response.status_code == 200
     assert 'data-pqx-state="empty_results"' in response.text
     assert re.search(r"<span>Search status</span><strong>\s*Finished\s*</strong>", response.text)
     assert re.search(r"<span>Sites checked</span><strong>\s*10\s*</strong>", response.text)
     assert re.search(r"<span>Listings checked</span><strong>\s*10\s*</strong>", response.text)
-    assert '<span class="pqx-run-chip is-market">Costa Rica' in response.text
+    assert '<span class="pqx-run-chip is-market">Austria' in response.text
     assert "10 / 10" not in response.text
 
 
@@ -31569,7 +31580,8 @@ def test_propertyquarry_account_exposes_working_lifecycle_controls(monkeypatch) 
     assert 'action="/app/api/property/search-runs/clear"' in account.text
     assert "Access links" in account.text
     assert '/app/account?settings_view=access#connected-services' in account.text
-    assert "Shared pages" in account.text
+    assert "Saved packets" in account.text
+    assert "Shared pages" not in account.text
     assert 'href="/app/properties/packets"' in account.text
     account_with_run = client.get("/app/account", params={"run_id": "run-account-shares"}, headers={"host": "propertyquarry.com"})
     assert 'href="/app/properties/packets?run_id=run-account-shares"' in account_with_run.text

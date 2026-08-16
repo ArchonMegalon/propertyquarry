@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 
 uvicorn = pytest.importorskip("uvicorn")
 pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Browser, BrowserContext, Request, expect, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Playwright, Request, expect
 
 Config = uvicorn.Config
 Server = uvicorn.Server
@@ -3018,8 +3018,8 @@ def generated_reconstruction_expanded_walkthrough_server(
 
 
 @pytest.fixture()
-def browser() -> Iterator[Browser]:
-    with sync_playwright() as playwright:
+def browser(playwright: Playwright) -> Iterator[Browser]:
+    with nullcontext(playwright):
         engine = normalize_playwright_engine(os.environ.get("PROPERTYQUARRY_CORE_BROWSER_ENGINE", "chromium"))
         browser_args = [
             "--no-sandbox",

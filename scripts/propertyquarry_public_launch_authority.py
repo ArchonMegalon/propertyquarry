@@ -11,15 +11,7 @@ from pathlib import Path
 import re
 from typing import Mapping
 
-try:
-    from propertyquarry_global_governance_attestation import (
-        GLOBAL_MARKET_GATE_ID,
-        TRUST_STORE_ENV,
-        GlobalGovernanceAttestationError,
-        verify_global_governance_attestation,
-    )
-    import propertyquarry_global_governance_attestation as governance
-except ModuleNotFoundError:
+if __package__:
     from scripts.propertyquarry_global_governance_attestation import (
         GLOBAL_MARKET_GATE_ID,
         TRUST_STORE_ENV,
@@ -27,6 +19,14 @@ except ModuleNotFoundError:
         verify_global_governance_attestation,
     )
     from scripts import propertyquarry_global_governance_attestation as governance
+else:
+    from propertyquarry_global_governance_attestation import (
+        GLOBAL_MARKET_GATE_ID,
+        TRUST_STORE_ENV,
+        GlobalGovernanceAttestationError,
+        verify_global_governance_attestation,
+    )
+    import propertyquarry_global_governance_attestation as governance
 
 
 PUBLIC_LAUNCH_RECEIPT_CONTRACT = "propertyquarry.public_launch_authority.v2"

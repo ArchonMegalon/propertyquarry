@@ -2291,9 +2291,24 @@ def _artifact_receipt_rows(run_summary: dict[str, object]) -> list[dict[str, str
     return rows
 
 
+_VERIFIED_OFFICIAL_SOURCE_STATES = {"verified", "confirmed", "cleared"}
+
+
+def _verified_official_source_rows(official: dict[str, object]) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in list(official.get("sources") or [])
+        if isinstance(row, dict)
+        and str(row.get("verification_state") or "").strip().lower()
+        in _VERIFIED_OFFICIAL_SOURCE_STATES
+    ]
+
+
 def _official_risk_posture_rows(official: dict[str, object]) -> list[dict[str, str]]:
     rows = [dict(row) for row in list(official.get("sources") or []) if isinstance(row, dict)]
     if not rows:
+        return []
+    if not _verified_official_source_rows({"sources": rows}):
         return []
     total = len(rows)
     official_total = 0

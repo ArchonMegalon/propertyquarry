@@ -310,9 +310,10 @@ def test_local_docker_release_bundle_uses_repository_role_not_self_mirror() -> N
     assert "scripts/propertyquarry_local_deployment_receipt.py" in deploy
     assert "docker compose" in deploy
     assert "GitHub Actions and remote runners are not used." in deploy
-    assert not any(
+    workflows_dir = ROOT / ".github/workflows"
+    assert not workflows_dir.exists() or not any(
         path.suffix in {".yml", ".yaml"}
-        for path in (ROOT / ".github/workflows").iterdir()
+        for path in workflows_dir.iterdir()
     )
 
     isolation = (ROOT / "docs/REPO_ISOLATION.md").read_text(encoding="utf-8")

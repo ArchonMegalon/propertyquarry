@@ -53,6 +53,24 @@ def _policy(**overrides: object) -> IngressPolicy:
     return replace(base, **overrides)
 
 
+def _run_async(coroutine):  # type: ignore[no-untyped-def]
+    result: list[object] = []
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(asyncio.run(coroutine))
+        except BaseException as exc:  # pragma: no cover - re-raised on the test thread
+            errors.append(exc)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join()
+    if errors:
+        raise errors[0]
+    return result[0]
+
+
 def _app_with_ingress(
     *,
     policy: IngressPolicy,
@@ -178,7 +196,7 @@ def test_ingress_rejects_declared_and_streamed_oversized_bodies() -> None:
         body = b"".join(bytes(message.get("body") or b"") for message in sent if message["type"] == "http.response.body")
         return status, json.loads(body.decode("utf-8"))
 
-    status, payload = asyncio.run(_streamed_request())
+    status, payload = _run_async(_streamed_request())
     assert status == 413
     assert payload["error"]["code"] == "request_body_too_large"  # type: ignore[index]
 
@@ -290,16 +308,16 @@ async def _raw_metered_body_request(
 
 
 def test_metered_body_requires_exact_non_streaming_content_length() -> None:
-    missing_status, missing = asyncio.run(
+    missing_status, missing = _run_async(
         _raw_metered_body_request(headers=[], body=b"1234")
     )
-    understated_status, understated = asyncio.run(
+    understated_status, understated = _run_async(
         _raw_metered_body_request(
             headers=[(b"content-length", b"1")],
             body=b"1234",
         )
     )
-    transfer_status, transfer = asyncio.run(
+    transfer_status, transfer = _run_async(
         _raw_metered_body_request(
             headers=[
                 (b"content-length", b"4"),
@@ -321,7 +339,7 @@ def test_metered_body_requires_exact_non_streaming_content_length() -> None:
 
 
 def test_metered_body_is_reconciled_before_a_no_read_endpoint_responds() -> None:
-    status, payload = asyncio.run(
+    status, payload = _run_async(
         _raw_metered_body_request(
             headers=[(b"content-length", b"1")],
             body=b"x" * 64,
@@ -334,7 +352,7 @@ def test_metered_body_is_reconciled_before_a_no_read_endpoint_responds() -> None
 
 
 def test_metered_delete_body_is_reconciled_before_route_dispatch() -> None:
-    status, payload = asyncio.run(
+    status, payload = _run_async(
         _raw_metered_body_request(
             headers=[(b"content-length", b"1")],
             body=b"x" * 64,
@@ -349,7 +367,7 @@ def test_metered_delete_body_is_reconciled_before_route_dispatch() -> None:
 
 def test_body_is_buffered_only_after_distributed_ip_admission() -> None:
     events: list[str] = []
-    status, payload = asyncio.run(
+    status, payload = _run_async(
         _raw_metered_body_request(
             headers=[(b"content-length", b"64")],
             body=b"x" * 64,

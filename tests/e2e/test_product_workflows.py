@@ -1216,6 +1216,10 @@ def test_operator_runtime_catalog_and_ltd_compile_flow_over_http(
             },
             receipt_json={
                 "principal_id": request.context_json["principal_id"],
+                "handler_key": request.tool_name,
+                "invocation_contract": "tool.v1",
+                "provider_key": "onemin",
+                "provider_backend": "1min",
                 "feature_type": request.payload_json["feature_type"],
             },
         )

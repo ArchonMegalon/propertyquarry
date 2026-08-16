@@ -115,8 +115,8 @@
           <summary><strong>More</strong></summary>
           <div class="pqx-context-tool-list">
             {% if selected.get('source_url') %}<a class="pqx-link-button" href="{{ selected.get('source_url') }}" target="_blank" rel="noreferrer" data-rybbit-event="pq.property.opened" data-rybbit-prop-cta-key="open_listing" data-rybbit-prop-surface="selected_review">Open listing</a>{% endif %}
-            <button class="pqx-button" type="button" data-fliplink-packet data-candidate-ref="{{ selected.get('candidate_ref') }}" data-rybbit-event="pq.packet.shared" data-rybbit-prop-surface="selected_review">Share this home</button>
-            <button class="pqx-button" type="button" data-fliplink-shortlist-share data-rybbit-event="pq.packet.shared" data-rybbit-prop-surface="selected_review">Share results</button>
+            <button class="pqx-button" type="button" data-fliplink-packet data-candidate-ref="{{ selected.get('candidate_ref') }}" data-rybbit-event="pq.packet.saved" data-rybbit-prop-surface="selected_review">Save review packet</button>
+            <button class="pqx-button" type="button" data-fliplink-shortlist-share data-rybbit-event="pq.packet.saved" data-rybbit-prop-surface="selected_review">Save shortlist packet</button>
           </div>
         </details>
         {% endif %}
@@ -155,6 +155,46 @@
           <strong data-pw-investment>{% if brief.get('search_goal') == 'investment' %}{{ selected.get('investment', {}).get('net_yield_display') or selected.get('investment', {}).get('cap_rate_display') or selected.get('investment', {}).get('gross_yield_display') or selected.get('investment', {}).get('market_delta_display') or selected.get('investment', {}).get('price_per_sqm') or selected.get('investment', {}).get('headline') or 'Not available yet.' }}{% else %}{{ selected.get('investment', {}).get('price_per_sqm') or selected.get('investment', {}).get('headline') or 'Not available yet.' }}{% endif %}</strong>
         </article>
       </div>
+      {% set opportunity = selected.get('opportunity') or {} %}
+      {% set opportunity_ready = (opportunity.get('status') or '')|lower in ['ready', 'preview'] %}
+      {% set visit_unknowns = opportunity.get('unknowns') or [] %}
+      {% set visit_tradeoffs = opportunity.get('mismatch_reasons') or [] %}
+      {% set visit_blockers = opportunity.get('blocking_constraints') or [] %}
+      {% set visit_has_sheet = opportunity_ready and (opportunity.get('recommendation') or visit_unknowns or visit_tradeoffs or visit_blockers) %}
+      {% set visit_confidence = opportunity.get('confidence') or 0 %}
+      {% set visit_confidence_percent = (visit_confidence * 100) if visit_confidence <= 1 else visit_confidence %}
+      <section class="pqx-card pqx-reading-shell" data-pw-visit-sheet{% if not visit_has_sheet %} hidden{% endif %}>
+        <div class="pqx-section-head pqx-reading-section-head">
+          <div>
+            <h2>Before you visit</h2>
+          </div>
+        </div>
+        <div class="pqx-reading-board">
+          <article class="pqx-reading-card">
+            <span class="pqx-small">Recommendation</span>
+            <strong data-pw-visit-recommendation>{{ (opportunity.get('recommendation') or 'Review')|replace('_', ' ')|capitalize }}</strong>
+          </article>
+          <article class="pqx-reading-card">
+            <span class="pqx-small">Predicted reaction</span>
+            <strong data-pw-visit-reaction>{{ (opportunity.get('predicted_reaction') or 'Consider')|replace('_', ' ')|capitalize }}</strong>
+          </article>
+          <article class="pqx-reading-card">
+            <span class="pqx-small">Fit</span>
+            <strong data-pw-visit-fit>{% if opportunity.get('fit_score') %}{{ '%.0f'|format(opportunity.get('fit_score')) }} fit{% if visit_confidence_percent %} · {{ '%.0f'|format(visit_confidence_percent) }}% confidence{% endif %}{% else %}Not scored yet.{% endif %}</strong>
+          </article>
+        </div>
+        <div class="pqx-event-list" data-pw-visit-checks style="margin-top:12px;">
+          {% for item in visit_unknowns[:5] %}
+          <div class="pqx-event-card"><strong>Still unknown</strong><span class="pqx-note">{{ item|replace('_', ' ')|capitalize }}</span></div>
+          {% endfor %}
+          {% for item in visit_tradeoffs[:3] %}
+          <div class="pqx-event-card"><strong>Trade-off</strong><span class="pqx-note">{{ item|replace('_', ' ')|capitalize }}</span></div>
+          {% endfor %}
+          {% for item in visit_blockers[:3] %}
+          <div class="pqx-event-card"><strong>Blocker</strong><span class="pqx-note">{{ item|replace('_', ' ')|capitalize }}</span></div>
+          {% endfor %}
+        </div>
+      </section>
       {% if brief.get('search_goal') == 'investment' or selected.get('review_page_neuronwriter', {}).get('questions') %}
       <details class="pqx-reading-more pqx-mobile-fold" data-pw-reading-more>
         <summary><strong>More</strong></summary>
@@ -202,6 +242,7 @@
       </div>
       <div class="pqx-actions pqx-decision-state-grid">
         <button class="pqx-button" type="button" data-pw-decision-state="viewing_requested">Viewing requested</button>
+        <button class="pqx-button" type="button" data-pw-ask-agent>Ask the agent</button>
         <button class="pqx-button" type="button" data-pw-decision-state="documents_requested">Documents requested</button>
         <button class="pqx-button" type="button" data-pw-decision-state="offer_candidate">Offer candidate</button>
         <button class="pqx-button" type="button" data-pw-decision-state="archived">Archived</button>

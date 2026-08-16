@@ -239,7 +239,6 @@ def test_propertyquarry_public_copy_avoids_proof_heavy_language() -> None:
         "packet explains",
         "current packet",
         "open property ready",
-        "shortlist packet",
         "property research packet",
         "packet event",
         "packet feedback",

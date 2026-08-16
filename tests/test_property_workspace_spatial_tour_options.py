@@ -3,9 +3,176 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from app.api.routes import landing_property_research
+from app.api.routes import landing_property_workspace_helpers as workspace_helpers
 from app.api.routes import landing_property_workspace_payload as workspace_payload
 from app.api.routes import product_api_delivery
 from app.product import property_tour_hosting
+
+
+def test_client_payload_preserves_only_customer_safe_opportunity_assessment() -> None:
+    payload = workspace_payload._property_workbench_client_candidate_payload(
+        {
+            "candidate_ref": "family-tiergarten",
+            "title": "Family flat near Tiergarten",
+            "opportunity": {
+                "opportunity_id": "assessment:family-tiergarten",
+                "status": "ready",
+                "domain": "property",
+                "object_type": "listing",
+                "object_id": "family-tiergarten",
+                "person_id": "elisabeth",
+                "run_id": "run-42",
+                "fit_score": 87.0,
+                "confidence": 0.76,
+                "predicted_reaction": "curious_with_caveats",
+                "recommendation": "investigate_further",
+                "match_reasons": ["Larger layout and quieter block."],
+                "mismatch_reasons": ["No captured tour yet."],
+                "unknowns": ["operating_costs"],
+                "blocking_constraints": ["street_noise_unverified"],
+                "private_prompt": "must never reach the browser",
+                "provider_account": "must never reach the browser",
+            },
+        }
+    )
+
+    opportunity = payload["opportunity"]
+    assert opportunity["status"] == "ready"
+    assert opportunity["fit_score"] == 87.0
+    assert opportunity["confidence"] == 0.76
+    assert opportunity["predicted_reaction"] == "curious_with_caveats"
+    assert opportunity["recommendation"] == "investigate_further"
+    assert opportunity["unknowns"] == ["operating_costs"]
+    assert opportunity["blocking_constraints"] == ["street_noise_unverified"]
+    assert "person_id" not in opportunity
+    assert "private_prompt" not in opportunity
+    assert "provider_account" not in opportunity
+
+
+def test_client_overlay_cards_stay_unavailable_without_rollup_receipt(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("EA_RUNTIME_MODE", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("PROPERTYQUARRY_EVIDENCE_OVERLAY_READ_MODEL", "file")
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_EVIDENCE_OVERLAY_ROLLUP_PATH",
+        str(tmp_path / "missing-rollups.json"),
+    )
+    cards = workspace_payload._property_workbench_client_overlay_cards(
+        {
+            "nearest_subway_m": 120,
+            "traffic_density_label": "Moderate traffic",
+            "noise_level_label": "Calm side street",
+            "school_atlas_progression_summary": "Nearby schools connect well to Gymnasium.",
+            "official_risk_evidence": {
+                "sources": [
+                    {
+                        "risk_key": "fiber_coverage",
+                        "source_label": "Breitbandatlas",
+                        "title": "Fiber coverage",
+                        "url": "https://example.test/berlin-fiber",
+                    },
+                    {
+                        "risk_key": "heat_resilience",
+                        "source_label": "Berlin climate map",
+                        "verification_state": "needs_review",
+                    },
+                ]
+            },
+            "media_attention": [
+                {
+                    "source_label": "Tagesspiegel",
+                    "title": "U6 station upgrade",
+                    "url": "https://example.test/u6-upgrade",
+                }
+            ],
+        },
+        {"candidate_ref": "altbau-u6"},
+    )
+
+    assert [card["key"] for card in cards] == [
+        "environment",
+        "mobility",
+        "schools",
+        "safety",
+        "media",
+        "fiber",
+    ]
+    assert {card["state"] for card in cards} == {"unavailable"}
+    assert all("url" not in card for card in cards)
+    assert all("teable" not in str(card).lower() for card in cards)
+    assert all("postgres" not in str(card).lower() for card in cards)
+
+
+def test_client_overlay_cards_use_rollup_state_not_listing_adjectives(tmp_path, monkeypatch) -> None:
+    rollup_path = tmp_path / "rollups.json"
+    rollup_path.write_text(
+        (
+            '{"rows":[{"layer_key":"fiber_broadband","match":{"candidate_ref":"altbau-u6"},'
+            '"ui_state":"stale","summary":"Official grid snapshot is waiting for an update.",'
+            '"source_name":"Official broadband grid","source_url":"https://data.example.test/fiber",'
+            '"cache_updated_at":"2025-01-01T08:00:00+00:00","source_updated_at":"2024-12-01T08:00:00+00:00",'
+            '"source_temporality":"reference","reference_period":"2024","uncertainty_label":"area grid"}]}'
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("EA_RUNTIME_MODE", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("PROPERTYQUARRY_EVIDENCE_OVERLAY_READ_MODEL", "file")
+    monkeypatch.setenv("PROPERTYQUARRY_EVIDENCE_OVERLAY_ROLLUP_PATH", str(rollup_path))
+
+    payload = workspace_payload._property_workbench_client_candidate_payload(
+        {
+            "candidate_ref": "altbau-u6",
+            "property_facts": {
+                "nearest_subway_m": 120,
+                "school_atlas_progression_summary": "Nearby schools connect well to Gymnasium.",
+            },
+        }
+    )
+    overlays = {row["key"]: row for row in payload["evidence_overlays"]}
+
+    assert overlays["fiber"]["state"] == "stale"
+    assert overlays["fiber"]["url"] == "https://data.example.test/fiber"
+    assert overlays["mobility"]["state"] == "unavailable"
+    assert overlays["schools"]["state"] == "unavailable"
+    assert "teable" not in str(payload["evidence_overlays"]).lower()
+
+
+def test_customer_official_evidence_rows_require_verified_source_state() -> None:
+    official = {
+        "sources": [
+            {
+                "risk_key": "fiber_coverage",
+                "source_label": "Breitbandatlas",
+                "verification_state": "needs_review",
+                "summary": "Catalog hint only.",
+            },
+            {
+                "risk_key": "heat_resilience",
+                "label": "Summer heat",
+                "source_label": "Vienna climate analysis",
+                "verification_state": "verified",
+                "summary": "Checked block-level climate layer.",
+                "source_url": "https://data.example.test/heat",
+            },
+        ]
+    }
+
+    verified = workspace_helpers._verified_official_source_rows(official)
+    assert [row["risk_key"] for row in verified] == ["heat_resilience"]
+
+    research_rows = landing_property_research._property_packet_official_evidence_rows(
+        {"official_risk_evidence": official}
+    )
+    assert len(research_rows) == 1
+    assert research_rows[0]["title"] == "Summer heat"
+    assert "Checked block-level climate layer." in research_rows[0]["detail"]
+
+    assert workspace_helpers._official_risk_posture_rows(official)
+    assert workspace_helpers._official_risk_posture_rows(
+        {"sources": [official["sources"][0]]}
+    ) == []
 
 
 def _matterport_payload() -> dict[str, object]:

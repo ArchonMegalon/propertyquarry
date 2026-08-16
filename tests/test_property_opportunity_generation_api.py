@@ -35,7 +35,7 @@ def test_property_opportunity_generation_is_principal_scoped_and_truthfully_prov
     body = response.json()
     assert body["status"] == "ready"
     assert body["opportunity"]["opportunity_id"]
-    assert body["opportunity"]["person_id"] == "elisabeth"
+    assert "person_id" not in body["opportunity"]
     assert body["artifact"]["opportunity_id"] == body["opportunity"]["opportunity_id"]
     assert body["artifact"]["generation_provider"] == "PropertyQuarry"
     assert body["artifact"]["generation_mode"] == "local_opportunity_brief"
@@ -84,7 +84,7 @@ def test_property_opportunity_generation_refreshes_durable_assessment_from_run_b
         "title": "Existing opportunity",
         "opportunity": {
             "opportunity_id": "assessment:existing",
-            "status": "ready",
+            "status": "pending",
             "person_id": "elisabeth",
             "run_id": "run-existing",
             "match_reasons": ["The layout matches."],
@@ -109,6 +109,7 @@ def test_property_opportunity_generation_refreshes_durable_assessment_from_run_b
         refreshed = kwargs["sources"][0]["top_candidates"][0]
         refreshed["opportunity"] = {
             **candidate["opportunity"],
+            "status": "ready",
             "fit_score": 74.0,
             "confidence": 0.68,
             "recommendation": "shortlist",

@@ -1147,6 +1147,64 @@
           ? 'Start with the tour, then check the facts below before deciding.'
           : 'No 3D tour is attached yet.');
       });
+      const visitSheet = root.querySelector('[data-pw-visit-sheet]');
+      if (visitSheet) {
+        const opportunity = candidate.opportunity && typeof candidate.opportunity === 'object'
+          ? candidate.opportunity
+          : {};
+        const opportunityReady = ['ready', 'preview'].includes(String(opportunity.status || '').trim().toLowerCase());
+        const unknowns = Array.isArray(opportunity.unknowns)
+          ? opportunity.unknowns.map((item) => String(item || '').trim()).filter(Boolean)
+          : [];
+        const tradeoffs = Array.isArray(opportunity.mismatch_reasons)
+          ? opportunity.mismatch_reasons.map((item) => String(item || '').trim()).filter(Boolean)
+          : [];
+        const blockers = Array.isArray(opportunity.blocking_constraints)
+          ? opportunity.blocking_constraints.map((item) => String(item || '').trim()).filter(Boolean)
+          : [];
+        const humanizeOpportunityValue = (value) => {
+          const normalized = String(value || '').trim().replaceAll('_', ' ');
+          return normalized ? `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}` : '';
+        };
+        const recommendation = humanizeOpportunityValue(opportunity.recommendation);
+        const reaction = humanizeOpportunityValue(opportunity.predicted_reaction);
+        const fitScore = Number(opportunity.fit_score);
+        const confidence = Number(opportunity.confidence);
+        const confidencePercent = Number.isFinite(confidence) && confidence > 0
+          ? (confidence <= 1 ? confidence * 100 : confidence)
+          : 0;
+        const hasSheet = opportunityReady && Boolean(recommendation || unknowns.length || tradeoffs.length || blockers.length);
+        visitSheet.hidden = !hasSheet;
+        const liveCopy = (value) => (typeof localizeLiveCopy === 'function' ? localizeLiveCopy(value) : value);
+        const recommendationNode = visitSheet.querySelector('[data-pw-visit-recommendation]');
+        if (recommendationNode) recommendationNode.textContent = liveCopy(recommendation || 'Review');
+        const reactionNode = visitSheet.querySelector('[data-pw-visit-reaction]');
+        if (reactionNode) reactionNode.textContent = liveCopy(reaction || 'Consider');
+        const fitNode = visitSheet.querySelector('[data-pw-visit-fit]');
+        if (fitNode) {
+          fitNode.textContent = Number.isFinite(fitScore) && fitScore > 0
+            ? `${Math.round(fitScore)} fit${confidencePercent > 0 ? ` · ${Math.round(confidencePercent)}% confidence` : ''}`
+            : liveCopy('Not scored yet.');
+        }
+        const checksNode = visitSheet.querySelector('[data-pw-visit-checks]');
+        if (checksNode) {
+          clearNode(checksNode);
+          const appendVisitCard = (title, detail) => {
+            const card = document.createElement('div');
+            card.className = 'pqx-event-card';
+            const heading = document.createElement('strong');
+            heading.textContent = title;
+            const note = document.createElement('span');
+            note.className = 'pqx-note';
+            note.textContent = detail;
+            card.append(heading, note);
+            checksNode.appendChild(card);
+          };
+          unknowns.slice(0, 5).forEach((item) => appendVisitCard(liveCopy('Still unknown'), humanizeOpportunityValue(item)));
+          tradeoffs.slice(0, 3).forEach((item) => appendVisitCard(liveCopy('Trade-off'), humanizeOpportunityValue(item)));
+          blockers.slice(0, 3).forEach((item) => appendVisitCard(liveCopy('Blocker'), humanizeOpportunityValue(item)));
+        }
+      }
       root.querySelectorAll('[data-pw-match]').forEach((match) => {
         renderReasonCards(match, candidate.match_reasons, { emptyTitle: 'No match notes yet.', defaultTitle: 'Fit' });
       });
