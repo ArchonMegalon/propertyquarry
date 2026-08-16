@@ -48,7 +48,7 @@ source_truth:
     id: registry_release_channel
     path: /docker/chummercomplete/chummer-hub-registry/.codex-studio/published/RELEASE_CHANNEL.generated.json
     required: true
-    use_rule: Use as the canonical release-channel truth source for reporter fix-available mail and for any operator posture that cites promoted-channel or rollback state.
+    use_rule: Treat this Registry artifact as a release-authority pointer. When it declares not_runtime_authority, use its runtimeAuthoritySource only to identify the missing live authority and fail closed before reporter fix-available mail or any current rollout claim.
   feedback_release_gate:
     id: feedback_release_gate
     path: .codex-design/product/FEEDBACK_LOOP_RELEASE_GATE.yaml
@@ -121,11 +121,13 @@ materialized_truth_projection:
   release_truth_live_source:
     source_anchor_id: registry_release_channel
     required_fields:
-      - generated_at
+      - contractName
       - status
-      - rolloutState
-      - supportabilityState
-      - fixAvailabilitySummary
+      - runtimeAuthoritySource
+      - historicalReleaseVersion
+      - historicalProjectionPath
+      - doesNotAssert
+    authority_rule: A registry projection whose status is not_runtime_authority is a historical pointer only; EA must fail closed and must not assert current release, artifact, desktop-delivery, or product-preview readiness from it.
   projection_contract:
     operator_packet:
       decision_source_fields:
@@ -152,12 +154,14 @@ materialized_truth_projection:
         - followthrough_receipt_gates.required_gates
         - followthrough_receipt_gates.source_rule
       release_truth_source_fields:
+        - contractName
         - status
-        - rolloutState
-        - supportabilityState
-        - fixAvailabilitySummary
+        - runtimeAuthoritySource
+        - historicalReleaseVersion
+        - historicalProjectionPath
+        - doesNotAssert
     projection_guard_rule: Operator recommendation and reporter followthrough readiness must both project from these same live-source fields, not from independent EA-local summaries.
-  same_window_rule: EA output must treat these live sources plus the mirrored pulse and workflow anchors as one truth window; if the operator packet, support followthrough packet, or release-channel source is missing, stale, or points at a different packet family, EA must fail closed instead of synthesizing packet copy from partial truth.
+  same_window_rule: EA output must treat these sources plus the mirrored pulse and workflow anchors as one truth window; if the operator packet or support followthrough packet is missing or stale, or the Registry projection is missing, points at a different packet family, or declares itself not_runtime_authority, EA must fail closed instead of synthesizing packet copy or current release truth from partial or historical truth.
 proof_guardrails:
   successor_frontier:
     frontier_id: 1758984842

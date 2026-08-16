@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PropertyQuarry Shared Pages</title>
+  <title>PropertyQuarry Saved Packets</title>
   <script>
     (function () {
       try {
@@ -483,9 +483,9 @@
 
     <section class="pq-pack-hero">
       <div class="pq-pack-panel">
-        <div class="pq-pack-kicker">Shared pages</div>
-        <h1>Share property pages and keep the replies together.</h1>
-        <p class="pq-pack-copy">Send only pages that are ready to be seen. Replies stay here before they change the search.</p>
+        <div class="pq-pack-kicker">Saved packets</div>
+        <h1>Save local review packets and keep the replies together.</h1>
+        <p class="pq-pack-copy">Keep only packets that are ready to review. Replies stay here before they change the search.</p>
       </div>
       <div class="pq-pack-panel">
         <div class="pq-pack-stat-grid">
@@ -502,12 +502,12 @@
       </div>
     </section>
 
-    <section class="pq-pack-summary-grid" aria-label="Property sharing summary">
+    <section class="pq-pack-summary-grid" aria-label="Saved packet summary">
       <article class="pq-pack-summary-card">
         <div class="pq-pack-kicker">Local packets</div>
         <strong>Private PDFs and manually linked pages</strong>
         <ul>
-          <li>{{ dashboard_summary.published_total }} page(s) have a manually recorded external link and {{ dashboard_summary.share_total }} were shared.</li>
+          <li>{{ dashboard_summary.published_total }} page(s) have a manually recorded external link and {{ dashboard_summary.share_total }} have saved recipient notes.</li>
           <li>{{ fliplink_capacity.principal_remaining }} local packet slot(s) remain under the repository limit.</li>
           <li>Use this page instead of forwarding loose PDFs or scattered links.</li>
         </ul>
@@ -517,7 +517,7 @@
         <strong>Read replies here before they change the search</strong>
         <ul>
           <li>{{ dashboard_summary.feedback_pending_total }} viewer response(s) still need your review.</li>
-          <li>{{ dashboard_summary.followup_open_total }} follow-up step(s) are still open across shared homes.</li>
+          <li>{{ dashboard_summary.followup_open_total }} follow-up step(s) are still open across saved packets.</li>
           <li>Outside reactions stay here before they change preferences or requirements.</li>
         </ul>
       </article>
@@ -534,7 +534,7 @@
 
     <section class="pq-pack-panel">
       <div class="pq-pack-kicker">Homes</div>
-      <h2>Shared pages</h2>
+      <h2>Saved packets</h2>
       {% if publications %}
       <div class="pq-pack-card-list">
         {% for row in publications %}
@@ -558,7 +558,7 @@
               Replies: {{ row.engagement.summary.opened or 0 }} opened · {{ row.engagement.summary.responded or 0 }} responded
             </div>
             <div class="pq-pack-muted">
-              Next step: {{ (row.engagement.summary.next_best_action or 'share page')|replace("_", " ") }} · {{ (row.share_journey.state or 'drafted')|replace("_", " ") }}
+              Next step: {{ (row.engagement.summary.next_best_action or 'save packet')|replace("_", " ") }} · {{ (row.share_journey.state or 'drafted')|replace("_", " ") }}
             </div>
             <div class="pq-pack-muted">
               Status:
@@ -630,18 +630,18 @@
                   <option value="investor">Investor</option>
                 </select>
                 <input class="pq-pack-input" type="text" name="variant_key" placeholder="family-v1" value="default" autocomplete="off">
-                <button class="pq-pack-button small" type="submit">Share</button>
+                <button class="pq-pack-button small" type="submit">Save recipient</button>
               </div>
             </form>
             <form class="pq-pack-form" data-fliplink-manual-form data-publication-id="{{ row.publication_id }}">
-              <input class="pq-pack-input" type="url" name="fliplink_url" placeholder="Paste shared link" value="{{ row.fliplink_url }}" autocomplete="off">
+              <input class="pq-pack-input" type="url" name="fliplink_url" placeholder="Paste external link" value="{{ row.fliplink_url }}" autocomplete="off">
               <input type="hidden" name="fliplink_format" value="{{ row.fliplink_format }}">
               <div class="pq-pack-inline">
                 <label class="pq-pack-check"><input type="checkbox" name="lead_capture_enabled" {% if row.lead_capture_enabled %}checked{% endif %}> Responses</label>
                 <label class="pq-pack-check"><input type="checkbox" name="password_required" {% if row.password_required %}checked{% endif %}> Password</label>
                 <label class="pq-pack-check"><input type="checkbox" name="sale_mode_enabled" {% if row.sale_mode_enabled %}checked{% endif %}> Sale</label>
               </div>
-              <button class="pq-pack-button small" type="submit">Save shared link</button>
+              <button class="pq-pack-button small" type="submit">Save external link</button>
             </form>
             <form class="pq-pack-form" data-fliplink-analytics-form data-publication-id="{{ row.publication_id }}">
               <div class="pq-pack-inline">
@@ -671,7 +671,7 @@
                 <div>{{ recipient.name or recipient.email }} · {{ share.audience_type }} · {{ share.channel }}</div>
                 {% endfor %}
               {% else %}
-                <div>Not shared yet.</div>
+                <div>No recipients yet.</div>
               {% endfor %}
             </div>
             <div class="pq-pack-muted">
@@ -712,7 +712,7 @@
         {% endfor %}
       </div>
       {% else %}
-        <div class="pq-pack-empty">No shared home is ready yet. Finish a search, open a strong home, and create the first shared page.</div>
+        <div class="pq-pack-empty">No saved packet is ready yet. Finish a search, open a strong home, and save the first local packet.</div>
       {% endif %}
     </section>
 
@@ -724,7 +724,7 @@
         <article class="pq-pack-feedback">
           <div>
             <strong>{{ item.reviewer.name or item.reviewer.email_masked or 'External reviewer' }}</strong>
-            <small>{{ item.property_ref }} · Shared page · {{ item.created_at[:19] }}</small>
+            <small>{{ item.property_ref }} · Saved packet · {{ item.created_at[:19] }}</small>
             <small>
               {% if item.custom_fields.reaction %}Reaction: {{ item.custom_fields.reaction }} · {% endif %}
               {% if item.custom_fields.intent %}Intent: {{ item.custom_fields.intent }} · {% endif %}

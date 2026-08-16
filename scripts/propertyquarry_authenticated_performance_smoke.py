@@ -285,6 +285,7 @@ ALLOWED_RYBBIT_APP_EVENTS = {
     "pq.reason.selected",
     "pq.agent_question.created",
     "pq.document.requested",
+    "pq.packet.saved",
     "pq.packet.shared",
     "pq.email.clicked",
 }

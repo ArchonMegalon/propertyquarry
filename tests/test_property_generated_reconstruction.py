@@ -2494,13 +2494,16 @@ def _viewer_accessibility_receipt(page) -> dict[str, object]:
     )
 
 
-def _expected_default_walkthrough_contract() -> tuple[str, str, str]:
-    if reconstruction_script._playwright_chromium_capture_available():
+def _expected_default_walkthrough_contract(
+    composition: str,
+) -> tuple[str, str, str]:
+    if composition == "viewer_route_storyboard":
         return (
             "viewer_route_storyboard",
             "threejs_layout_flythrough",
             "viewer_capture_floorplan_inset_active_stop",
         )
+    assert composition == "route_focused_stop_cards"
     return (
         "route_focused_stop_cards",
         "ken_burns_route_cards",
@@ -3815,7 +3818,9 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     _read_glb_document(output_dir / "model.glb")
     assert receipt["walkthrough"]["status"] in {"generated", "failed", "skipped"}
     if receipt["walkthrough"]["status"] == "generated":
-        expected_composition, expected_motion_style, expected_route_context_mode = _expected_default_walkthrough_contract()
+        expected_composition, expected_motion_style, expected_route_context_mode = _expected_default_walkthrough_contract(
+            str(receipt["walkthrough"]["composition"])
+        )
         assert (output_dir / "generated-walkthrough.mp4").is_file()
         assert (output_dir / "generated-walkthrough.quality.json").is_file()
         walkthrough_sidecar = json.loads((output_dir / "generated-walkthrough.quality.json").read_text(encoding="utf-8"))
@@ -3862,7 +3867,9 @@ def test_generated_reconstruction_materializes_model_viewer_receipt_and_walkthro
     assert generated_reconstruction["walkable_scene"]["kind"] == "generated_reconstruction_layout"
     assert len(generated_reconstruction["walkable_scene"]["route"]) >= 1
     if receipt["walkthrough"]["status"] == "generated":
-        expected_composition, expected_motion_style, _expected_route_context_mode = _expected_default_walkthrough_contract()
+        expected_composition, expected_motion_style, _expected_route_context_mode = _expected_default_walkthrough_contract(
+            str(receipt["walkthrough"]["composition"])
+        )
         assert generated_reconstruction["walkthrough_sidecar_relpath"] == "generated-reconstruction/generated-walkthrough.quality.json"
         assert generated_reconstruction["walkthrough_composition"] == expected_composition
         assert generated_reconstruction["walkthrough_motion_style"] == expected_motion_style
@@ -5036,7 +5043,9 @@ def test_generated_reconstruction_walkthrough_uses_explicit_room_labels_for_dura
     if receipt["walkthrough"]["status"] != "generated":
         return
 
-    expected_composition, expected_motion_style, expected_route_context_mode = _expected_default_walkthrough_contract()
+    expected_composition, expected_motion_style, expected_route_context_mode = _expected_default_walkthrough_contract(
+        str(receipt["walkthrough"]["composition"])
+    )
     assert receipt["walkthrough"]["composition"] == expected_composition
     assert receipt["walkthrough"]["motion_style"] == expected_motion_style
     sidecar = json.loads((output_dir / "generated-walkthrough.quality.json").read_text(encoding="utf-8"))

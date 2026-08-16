@@ -285,6 +285,8 @@ def test_fliplink_browseract_publish_request_is_guarded_and_audited(monkeypatch,
     assert disabled.status_code == 409
 
     monkeypatch.setenv("FLIPLINK_BROWSERACT_ENABLED", "1")
+    monkeypatch.setenv("FLIPLINK_LOGIN_EMAIL", "fliplink-browseract@example.test")
+    monkeypatch.setenv("FLIPLINK_LOGIN_PASSWORD", "test-only-password")
     queued = client.post(
         f"/app/api/properties/packets/{publication_id}/fliplink/browseract-publish",
         json={"lead_capture_enabled": True, "password_required": False},
@@ -566,8 +568,8 @@ def test_fliplink_packet_dashboard_and_property_actions_render(monkeypatch, tmp_
     assert "data-property-packets-dashboard" in dashboard.text
     assert "data-property-research-topnav" in dashboard.text
     assert 'aria-label="Account navigation"' in dashboard.text
-    assert "Shared pages" in dashboard.text
-    assert "Share property pages and keep the replies together." in dashboard.text
+    assert "Saved packets" in dashboard.text
+    assert "Save local review packets and keep the replies together." in dashboard.text
     assert "Viewer responses" in dashboard.text
     assert "FlipLink leads" not in dashboard.text
     assert "Leads" not in dashboard.text

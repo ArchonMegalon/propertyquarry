@@ -13992,8 +13992,8 @@
                     <summary><strong>More</strong></summary>
                     <div class="pqx-context-tool-list">
                       {% if selected.get('source_url') and selected.get('packet_url') %}<a class="pqx-link-button" href="{{ selected.get('source_url') }}" target="_blank" rel="noreferrer">Open listing</a>{% endif %}
-                      {% if selected.get('candidate_ref') %}<button class="pqx-button" type="button" data-fliplink-packet data-candidate-ref="{{ selected.get('candidate_ref') }}">Share this home</button>{% endif %}
-                      <button class="pqx-button" type="button" data-fliplink-shortlist-share>Share results</button>
+                      {% if selected.get('candidate_ref') %}<button class="pqx-button" type="button" data-fliplink-packet data-candidate-ref="{{ selected.get('candidate_ref') }}" data-rybbit-event="pq.packet.saved" data-rybbit-prop-surface="selected_review">Save review packet</button>{% endif %}
+                      <button class="pqx-button" type="button" data-fliplink-shortlist-share data-rybbit-event="pq.packet.saved" data-rybbit-prop-surface="selected_review">Save shortlist packet</button>
                     </div>
                   </details>
                   {% endif %}

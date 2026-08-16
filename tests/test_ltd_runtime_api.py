@@ -74,6 +74,22 @@ def _verified_tool_receipt(request, **extra: object) -> dict[str, object]:  # no
     }
 
 
+def _seed_browseract_binding(
+    client: TestClient,
+    *,
+    principal_id: str,
+    service_name: str,
+) -> str:
+    binding = client.app.state.container.tool_runtime.upsert_connector_binding(
+        principal_id=principal_id,
+        connector_name="browseract",
+        external_account_ref=f"test-{service_name.lower()}-account",
+        scope_json={"services": [service_name]},
+        status="enabled",
+    )
+    return binding.binding_id
+
+
 def test_ltd_runtime_catalog_route_lists_profiles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client = _client()
     _patch_catalog(monkeypatch, client, tmp_path)
@@ -110,6 +126,11 @@ def test_ltd_runtime_discover_account_executes_browseract_extract(
 ) -> None:
     client = _client(principal_id="ops-discover")
     _patch_catalog(monkeypatch, client, tmp_path)
+    binding_id = _seed_browseract_binding(
+        client,
+        principal_id="ops-discover",
+        service_name="MarkupGo",
+    )
 
     captured: list[object] = []
 
@@ -128,7 +149,7 @@ def test_ltd_runtime_discover_account_executes_browseract_extract(
     response = client.post(
         "/v1/ltds/runtime-catalog/MarkupGo/discover-account",
         json={
-            "binding_id": "binding-browseract-1",
+            "binding_id": binding_id,
             "requested_fields": ["tier", "account_email"],
             "instructions": "Verify account facts",
         },
@@ -142,10 +163,10 @@ def test_ltd_runtime_discover_account_executes_browseract_extract(
     assert body["receipt_json"]["proof_scope"] == "principal_bound_tool_invocation"
     assert "principal_id" not in body["receipt_json"]
     assert body["target_ref"] == "browseract:discover_account"
-    assert "binding-browseract-1" not in body["target_ref"]
+    assert binding_id not in body["target_ref"]
     request = captured[0]
     assert request.tool_name == "browseract.extract_account_facts"
-    assert request.payload_json["binding_id"] == "binding-browseract-1"
+    assert request.payload_json["binding_id"] == binding_id
     assert request.payload_json["requested_fields"] == ["tier", "account_email"]
     assert request.payload_json["service_name"] == "MarkupGo"
     assert request.context_json["principal_id"] == "ops-discover"
@@ -157,6 +178,11 @@ def test_ltd_runtime_inspect_workspace_executes_browseract_ui_reader(
 ) -> None:
     client = _client(principal_id="ops-inspect")
     _patch_catalog(monkeypatch, client, tmp_path)
+    binding_id = _seed_browseract_binding(
+        client,
+        principal_id="ops-inspect",
+        service_name="Documentation.AI",
+    )
 
     captured: list[object] = []
 
@@ -179,7 +205,7 @@ def test_ltd_runtime_inspect_workspace_executes_browseract_ui_reader(
     response = client.post(
         "/v1/ltds/runtime-catalog/Documentation.AI/inspect-workspace",
         json={
-            "binding_id": "binding-browseract-2",
+            "binding_id": binding_id,
             "page_url": "https://docs.example/workspace",
             "result_title": "Documentation AI Workspace",
         },

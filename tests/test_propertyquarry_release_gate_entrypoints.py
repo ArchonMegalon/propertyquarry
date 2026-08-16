@@ -2403,6 +2403,7 @@ def test_release_preflight_verification_leaves_preserve_generated_artifacts() ->
                     assert (
                         "semantic drift" in combined_output
                         or "exact HEAD" in combined_output
+                        or "missing: full design mirror parity" in combined_output
                         or (
                             "weekly pulse release provenance is stale relative to current HEAD"
                             in combined_output

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,6 +17,76 @@ for _candidate in (str(_ROOT), str(_EA_ROOT)):
         sys.path.insert(0, _candidate)
 
 os.environ.setdefault("EA_INLINE_SYNC_HANDLERS", "1")
+
+
+# pytest-playwright's upstream fixtures keep one sync Playwright runtime alive
+# for the full pytest session.  This repository intentionally mixes browser
+# tests with tests that call asyncio.run() and sync_playwright() directly; a
+# session-long sync runtime leaves its asyncio loop active on the test thread
+# and makes those later tests order-dependent.  Mirror the upstream fixture
+# contract at function scope so every test has one coherent runtime that is
+# fully stopped before the next test starts.
+@pytest.fixture()
+def playwright() -> Iterator[Any]:
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as runtime:
+        yield runtime
+
+
+@pytest.fixture()
+def browser_type(playwright: Any, browser_name: str) -> Any:
+    return getattr(playwright, browser_name)
+
+
+@pytest.fixture()
+def launch_browser(
+    browser_type_launch_args: dict[str, object],
+    browser_type: Any,
+    connect_options: dict[str, object] | None,
+) -> Callable[..., Any]:
+    def launch(**kwargs: object) -> Any:
+        launch_options = {**browser_type_launch_args, **kwargs}
+        if connect_options:
+            return browser_type.connect(
+                **{
+                    **connect_options,
+                    "headers": {
+                        "x-playwright-launch-options": json.dumps(launch_options),
+                        **(connect_options.get("headers") or {}),
+                    },
+                }
+            )
+        return browser_type.launch(**launch_options)
+
+    return launch
+
+
+@pytest.fixture()
+def browser(launch_browser: Callable[..., Any]) -> Iterator[Any]:
+    runtime_browser = launch_browser()
+    try:
+        yield runtime_browser
+    finally:
+        runtime_browser.close()
+
+
+@pytest.fixture()
+def browser_context_args(
+    pytestconfig: pytest.Config,
+    playwright: Any,
+    device: str | None,
+    base_url: str | None,
+    _pw_artifacts_folder: Any,
+) -> dict[str, object]:
+    context_args: dict[str, object] = {}
+    if device:
+        context_args.update(playwright.devices[device])
+    if base_url:
+        context_args["base_url"] = base_url
+    if pytestconfig.getoption("--video") in {"on", "retain-on-failure"}:
+        context_args["record_video_dir"] = _pw_artifacts_folder.name
+    return context_args
 
 
 @pytest.fixture(scope="session", autouse=True)

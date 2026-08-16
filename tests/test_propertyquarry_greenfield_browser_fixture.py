@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from types import SimpleNamespace
-from typing import Iterator
 
 import pytest
 
@@ -45,10 +43,6 @@ def test_greenfield_browser_fixture_honors_configured_engine(
     fake_browser = _FakeBrowser()
     observed: dict[str, object] = {}
 
-    @contextmanager
-    def _sync_playwright() -> Iterator[object]:
-        yield fake_playwright
-
     def _launch_browser(
         playwright: object,
         *,
@@ -58,14 +52,13 @@ def test_greenfield_browser_fixture_honors_configured_engine(
         observed.update(playwright=playwright, engine=engine, args=args)
         return fake_browser
 
-    monkeypatch.setattr(greenfield, "sync_playwright", _sync_playwright)
     monkeypatch.setattr(
         greenfield,
         "playwright_engine_launch_browser",
         _launch_browser,
     )
 
-    fixture = greenfield.browser.__wrapped__()
+    fixture = greenfield.browser.__wrapped__(fake_playwright)
     assert next(fixture) is fake_browser
     with pytest.raises(StopIteration):
         next(fixture)

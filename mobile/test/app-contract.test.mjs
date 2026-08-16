@@ -56,10 +56,10 @@ test('native runtime and signing contracts fail closed', () => {
 
   assert.match(appGradle, /verifyPropertyQuarryReleaseSigning/);
   assert.match(appGradle, /PROPERTYQUARRY_ANDROID_KEYSTORE_PATH/);
-  assert.match(appGradle, /versionCode 5/);
-  assert.match(appGradle, /versionName "1\.1\.3"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_code="5"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.3"/);
+  assert.match(appGradle, /versionCode 6/);
+  assert.match(appGradle, /versionName "1\.1\.4"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_code="6"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.4"/);
   assert.match(lintConfig, /src\/main\/res\/xml\/config\.xml/);
   assert.match(previewBuilder, /propertyquarry_release_bundle_backup="\$\(mktemp -d\)"/);
   assert.match(previewBuilder, /trap propertyquarry_restore_release_bundle EXIT/);

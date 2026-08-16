@@ -291,7 +291,9 @@ def test_live_provider_smoke_can_probe_catalog_without_dispatching_searches(monk
     assert receipt["checks"][0]["status"] == "pass"
     assert receipt["targeted_search_matrix_executed"] is False
     assert receipt["cross_country_sanitization_executed"] is False
-    assert receipt["cross_country_sanitization_summary"]["status_counts"] == {"skipped": 1}
+    assert receipt["cross_country_sanitization_summary"]["status_counts"] == {
+        "skipped_no_cross_country_case": 1
+    }
 
 
 def test_live_provider_smoke_rejects_same_count_provider_substitution(monkeypatch) -> None:
@@ -551,7 +553,7 @@ def test_live_provider_smoke_can_execute_targeted_search_matrix(monkeypatch, tmp
         checkpoint_path=checkpoint_path,
     )
 
-    assert receipt["status"] == "pass"
+    assert receipt["status"] == "ready_for_live_probe"
     assert receipt["targeted_search_matrix_status"] == "pass"
     assert receipt["targeted_search_matrix_executed"] is True
     summary = receipt["targeted_search_matrix_summary"]
@@ -596,11 +598,13 @@ def test_live_provider_smoke_can_execute_targeted_search_matrix(monkeypatch, tmp
     )
     sanitization_summary = receipt["cross_country_sanitization_summary"]
     assert sanitization_summary["sanitization_ok"] is True
-    assert sanitization_summary["status_counts"] == {"pass": 1}
+    assert sanitization_summary["status_counts"] == {
+        "skipped_no_cross_country_case": 1
+    }
     sanitization_row = receipt["cross_country_sanitization_checks"][0]
-    assert sanitization_row["status"] == "pass"
-    assert sanitization_row["foreign_provider"] not in sanitization_row["sanitized_platforms"]
-    assert sanitization_row["foreign_provider"] in sanitization_row["removed_platforms"]
+    assert sanitization_row["status"] == "skipped_no_cross_country_case"
+    assert sanitization_row["foreign_provider"] == ""
+    assert sanitization_row["sanitization_ok"] is True
 
 
 def test_live_provider_smoke_can_use_explicit_search_run_timeout(monkeypatch) -> None:
@@ -645,7 +649,7 @@ def test_live_provider_smoke_can_use_explicit_search_run_timeout(monkeypatch) ->
         status_fetcher=_status_fetcher,
     )
 
-    assert receipt["status"] == "pass"
+    assert receipt["status"] == "ready_for_live_probe"
     assert receipt["provider_catalog_timeout_seconds"] == 20
     assert receipt["search_run_timeout_seconds"] == 60
     assert set(observed_search_timeouts) == {60}
@@ -696,7 +700,7 @@ def test_live_provider_smoke_executes_filtered_provider_scope(monkeypatch) -> No
         status_fetcher=lambda run_id, status_url, _timeout: {"run_id": run_id, "status_url": status_url, "status": "queued"},
     )
 
-    assert receipt["status"] == "pass"
+    assert receipt["status"] == "ready_for_live_probe"
     assert len(observed_payloads) == 2
     assert {tuple(payload.get("selected_platforms") or []) for payload in observed_payloads} == {("willhaben",)}
     summary = receipt["targeted_search_matrix_summary"]
@@ -711,14 +715,6 @@ def test_live_provider_smoke_executes_filtered_provider_scope(monkeypatch) -> No
 def test_live_provider_smoke_fails_when_cross_country_sanitization_does_not_remove_foreign_provider(monkeypatch) -> None:
     monkeypatch.setenv("PROPERTYQUARRY_LIVE_PROVIDER_SMOKE", "1")
     monkeypatch.setenv("PROPERTYQUARRY_LIVE_PROVIDER_SMOKE_DRY_RUN", "0")
-
-    catalog_payload = {
-        "country_code": "AT",
-        "listing_mode": "rent",
-        "property_type": "apartment",
-        "default_platforms": list(default_platforms_for_country_listing_mode("AT", "rent")),
-        "providers": [{"value": row.get("value")} for row in provider_options(country_code="AT")],
-    }
 
     def _search_executor(payload: dict[str, object], _timeout: float) -> dict[str, object]:
         requested = [
@@ -738,14 +734,24 @@ def test_live_provider_smoke_fails_when_cross_country_sanitization_does_not_remo
         }
 
     receipt = build_live_provider_smoke_receipt(
-        countries=("AT",),
-        fetcher=lambda _country, _timeout: catalog_payload,
+        countries=("AT", "CR"),
+        fetcher=lambda country, _timeout: {
+            "country_code": country,
+            "listing_mode": "rent",
+            "property_type": "apartment",
+            "default_platforms": list(default_platforms_for_country_listing_mode(country, "rent")),
+            "providers": [{"value": row.get("value")} for row in provider_options(country_code=country)],
+        },
         search_executor=_search_executor,
     )
 
     assert receipt["status"] == "fail"
     assert receipt["cross_country_sanitization_summary"]["sanitization_ok"] is False
-    row = receipt["cross_country_sanitization_checks"][0]
+    row = next(
+        item
+        for item in receipt["cross_country_sanitization_checks"]
+        if item["status"] == "fail"
+    )
     assert row["status"] == "fail"
     assert row["foreign_provider"] in row["sanitized_platforms"]
     assert row["summary_filter_applied"] is False
@@ -812,7 +818,7 @@ def test_live_provider_smoke_can_resume_passed_targeted_search_cases(monkeypatch
 
     expected_case_count = 2 * _search_ready_provider_count("AT")
     summary = receipt["targeted_search_matrix_summary"]
-    assert receipt["status"] == "pass"
+    assert receipt["status"] == "ready_for_live_probe"
     assert receipt["resume_source"] == str(resume_path)
     assert summary["executed_case_count"] == expected_case_count
     assert summary["resumed_case_count"] == 1

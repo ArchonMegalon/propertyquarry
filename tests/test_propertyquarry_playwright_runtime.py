@@ -445,13 +445,6 @@ def test_greenfield_browser_fixture_honors_requested_core_engine(monkeypatch) ->
     browser = SimpleNamespace(close=lambda: observed.__setitem__("closed", True))
     playwright = SimpleNamespace()
 
-    class _PlaywrightContext:
-        def __enter__(self) -> object:
-            return playwright
-
-        def __exit__(self, *_args: object) -> None:
-            return None
-
     def _launch(
         observed_playwright: object,
         *,
@@ -464,10 +457,9 @@ def test_greenfield_browser_fixture_honors_requested_core_engine(monkeypatch) ->
         return browser
 
     monkeypatch.setenv("PROPERTYQUARRY_CORE_BROWSER_ENGINE", " Firefox ")
-    monkeypatch.setattr(greenfield, "sync_playwright", _PlaywrightContext)
     monkeypatch.setattr(greenfield, "playwright_engine_launch_browser", _launch)
 
-    fixture = greenfield.browser.__wrapped__()
+    fixture = greenfield.browser.__wrapped__(playwright)
     assert next(fixture) is browser
     fixture.close()
 

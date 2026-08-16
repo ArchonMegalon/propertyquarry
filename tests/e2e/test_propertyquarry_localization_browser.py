@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import os
 import re
 
 import pytest
 
 pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, Playwright
 
 from app.api.propertyquarry_localization import PROPERTYQUARRY_PSEUDO_LOCALE, localize_propertyquarry_html
 from scripts.propertyquarry_playwright_runtime import (
@@ -46,7 +47,9 @@ def _locale_panel_metrics(page: Page) -> dict[str, float]:
     return {str(key): float(value) for key, value in metrics.items()}
 
 
-def test_localized_route_and_pseudo_expansion_are_mobile_safe_in_real_browser() -> None:
+def test_localized_route_and_pseudo_expansion_are_mobile_safe_in_real_browser(
+    playwright: Playwright,
+) -> None:
     client = build_property_client(principal_id="pq-localization-browser")
     start_workspace(client, mode="personal", workspace_name="Localization Browser Office")
     route = client.get("/app/search?lang=de-DE")
@@ -56,7 +59,7 @@ def test_localized_route_and_pseudo_expansion_are_mobile_safe_in_real_browser() 
     localized_document = _browser_safe_document(route.text, localization_css=css.text)
 
     engine = normalize_playwright_engine(os.getenv("PROPERTYQUARRY_CORE_BROWSER_ENGINE", "chromium"))
-    with sync_playwright() as playwright:
+    with nullcontext(playwright):
         browser = playwright_engine_launch_browser(playwright, engine=engine)
         try:
             context = browser.new_context(viewport={"width": 320, "height": 800})

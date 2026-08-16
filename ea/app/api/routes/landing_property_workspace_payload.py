@@ -22,6 +22,7 @@ from app.api.routes.landing_property_workspace_helpers import (
     _delivery_proof_rows,
     _group_property_provider_options,
     _official_risk_posture_rows,
+    _verified_official_source_rows,
     _property_candidate_directions_url,
     _property_candidate_maps_url,
     _property_candidate_orientation_preview,
@@ -60,6 +61,7 @@ from app.product.property_surface_state import (
     property_run_public_eta_label,
 )
 from app.product.property_score_methodology import build_property_score_methodology
+from app.product.property_evidence_overlays import build_property_evidence_overlay_rows
 from app.product.property_opportunities import property_opportunity_public_projection
 from app.product.property_onemin_evaluation import (
     property_onemin_customer_assessment,
@@ -280,9 +282,9 @@ def _property_workbench_client_asset_url(value: object, *, kind: str) -> str:
         marker in path_and_query
         for marker in _PROPERTY_WORKBENCH_CLIENT_NON_LISTING_IMAGE_MARKERS
     ):
-        # Provider chrome is not listing evidence. Present the next real media
-        # candidate (or the honest unavailable state) instead of rendering an
-        # upsell/locked-content badge as though it were a property photo.
+        # Ignore provider chrome. Use the next real media URL (or the honest
+        # unavailable state) instead of rendering an upsell/locked-content
+        # badge as though it were a property photo.
         return ""
     extensions = (
         _PROPERTY_WORKBENCH_CLIENT_VIDEO_EXTENSIONS
@@ -820,6 +822,75 @@ def _property_workbench_client_facts(value: object) -> dict[str, object]:
     return compact
 
 
+_PROPERTY_WORKBENCH_OVERLAY_ATLAS_KEYS = {
+    "environmental_quality": "environment",
+    "summer_heat": "environment",
+    "traffic_noise": "mobility",
+    "public_mobility": "mobility",
+    "school_context": "schools",
+    "official_safety_context": "safety",
+    "media_attention": "media",
+    "fiber_broadband": "fiber",
+}
+_PROPERTY_WORKBENCH_OVERLAY_STATE_RANK = {
+    "verified": 3,
+    "stale": 2,
+    "unavailable": 1,
+}
+
+
+def _property_workbench_client_overlay_cards(
+    facts: dict[str, object],
+    candidate: dict[str, object],
+) -> list[dict[str, object]]:
+    """Project Teable/rollup overlay states for the customer atlas.
+
+    Thin listing adjectives and OSM hints never become ``verified``. Derived
+    file-mode heat rows stay unavailable on this customer surface.
+    """
+
+    merged: dict[str, dict[str, object]] = {
+        key: {"key": key, "state": "unavailable"}
+        for key in ("environment", "mobility", "schools", "safety", "media", "fiber")
+    }
+    for row in build_property_evidence_overlay_rows(
+        facts=dict(facts or {}),
+        candidate=dict(candidate or {}),
+    ):
+        if not isinstance(row, dict):
+            continue
+        atlas_key = _PROPERTY_WORKBENCH_OVERLAY_ATLAS_KEYS.get(
+            str(row.get("layer_key") or "").strip()
+        )
+        if not atlas_key:
+            continue
+        read_source = str(row.get("read_model_source") or "").strip().lower()
+        state = str(row.get("ui_state") or "unavailable").strip().lower()
+        if "derived" in read_source or state not in {"verified", "stale"}:
+            state = "unavailable"
+        current = merged[atlas_key]
+        if _PROPERTY_WORKBENCH_OVERLAY_STATE_RANK[str(current.get("state") or "unavailable")] >= (
+            _PROPERTY_WORKBENCH_OVERLAY_STATE_RANK[state]
+        ):
+            continue
+        source = str(row.get("source_name") or "").strip()
+        summary = str(row.get("detail") or "").strip()
+        if re.search(r"teable|postgres", f"{source} {summary}", flags=re.IGNORECASE):
+            source = ""
+            summary = ""
+        card: dict[str, object] = {"key": atlas_key, "state": state}
+        if state != "unavailable":
+            if source:
+                card["source"] = source[:120]
+            if summary:
+                card["summary"] = summary[:400]
+            url = str(row.get("article_url") or row.get("source_url") or "").strip()
+            if url:
+                card["url"] = url
+        merged[atlas_key] = card
+    return [merged[key] for key in ("environment", "mobility", "schools", "safety", "media", "fiber")]
+
+
 def _property_workbench_client_tour_payload(
     value: object,
     *,
@@ -1185,9 +1256,13 @@ def _property_workbench_client_candidate_payload(
         compact["flythrough"] = flythrough_payload
     if facts:
         compact["property_facts"] = facts
+    compact["evidence_overlays"] = _property_workbench_client_overlay_cards(raw_facts, raw)
     match_reasons = [str(item).strip() for item in list(raw.get("match_reasons") or []) if str(item).strip()]
     if match_reasons:
         compact["match_reasons"] = match_reasons[:3]
+    opportunity = property_opportunity_public_projection(raw.get("opportunity"))
+    if opportunity:
+        compact["opportunity"] = opportunity
     ai_assessment = property_onemin_customer_assessment(
         raw.get("onemin_evaluation")
     )
@@ -4717,8 +4792,11 @@ def property_workspace_payload(
                             if part
                         ),
                     }
-                    for row in list(dict(facts.get("official_risk_evidence") or {}).get("sources") or [])[:4]
-                    if isinstance(row, dict)
+                    for row in _verified_official_source_rows(
+                        dict(facts.get("official_risk_evidence") or {})
+                        if isinstance(facts.get("official_risk_evidence"), dict)
+                        else {}
+                    )[:4]
                 ],
                 official_posture_rows=_official_risk_posture_rows(
                     dict(facts.get("official_risk_evidence") or {})

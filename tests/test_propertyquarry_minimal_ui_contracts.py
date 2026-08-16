@@ -66,7 +66,7 @@ def test_propertyquarry_shortlist_keeps_direct_tour_actions_and_compact_empty_me
     assert 'data-rybbit-event="pq.tour.opened"' in results
     assert 'data-rybbit-event="pq.flythrough.opened"' in results
     assert 'class="pqx-result-diorama-empty-label"' in results
-    assert "Diorama not ready" in results
+    assert "Preview not available" in results
 
 
 def test_propertyquarry_minimal_layer_preserves_route_and_runtime_hooks() -> None:

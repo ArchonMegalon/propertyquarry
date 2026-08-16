@@ -44,7 +44,7 @@ def test_surface_open_events_flow_into_workspace_diagnostics() -> None:
     assert counts.get("support_opened", 0) >= 1
     assert counts.get("channel_digest_opened", 0) >= 2
     assert counts.get("channel_digest_plain_opened", 0) >= 1
-    assert payload["billing"]["invoice_status"] in {"trial_active", "current", "upgrade_required"}
+    assert payload["billing"]["invoice_status"] == "property_billing_authoritative"
     assert "risk_state" in payload["providers"]
     assert "blocked_actions" in payload["commercial"]
     assert "blocked_action_message" in payload["commercial"]
@@ -78,9 +78,9 @@ def test_support_bundle_export_includes_commercial_state_and_records_event() -> 
     export = client.get("/app/api/diagnostics/export")
     assert export.status_code == 200
     body = export.json()
-    assert body["plan"]["display_name"] == "Concierge"
+    assert body["plan"]["display_name"] == "Managed workspace"
     assert body["billing"]["support_tier"] == "priority"
-    assert body["billing"]["billing_portal_state"] in {"guided", "self_serve", "account_managed"}
+    assert body["billing"]["billing_portal_state"] == "property_billing_authoritative"
     assert body["entitlements"]["operator_seats"] >= 1
     assert body["analytics"]["counts"].get("support_bundle_opened", 0) >= 1
     assert "queue_health" in body

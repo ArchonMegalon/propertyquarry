@@ -19,14 +19,16 @@ def _markdown(
 PROMPTING_SYSTEMS_API_KEY
 Prompt Foundry
 | `1min.AI` | `Advanced Business Plan` |
-scripts/resolve_onemin_ai_key.sh
-remaining credits
+Worker-owned credential pool
+principal-bound provider receipts
+exactly one real `1min` image call
 
 ## Discovery Tracking
 | Service | Account | Discovery Status | Verification Source | Last Verified | Notes |
 |---|---|---|---|---|---|
 | `BrowserAct` | {browseract_account} | `{browseract_status}` | `{browseract_source}` | now | verified |
 | `Teable` | {teable_account} | `{teable_status}` | `{teable_source}` | now | verified |
+| `1min.AI` | [redacted] | `live_provider_call_verified` | `worker_health_probe + principal_bound_provider_receipt` | now | verified |
 """
 
 

@@ -677,3 +677,204 @@ itself does not keep launching 2.2.1.
 
 This session’s audit used grep/read because MCP was unavailable. The
 index was queryable from the CLI the whole time.
+
+## Current re-audit and repairs — 2026-08-13 evening
+
+Re-checked after the other agent stopped. Checkout is now `main` at
+`b926ff256b91c6bc3fd62365fbf8591f1740764b`, tracking `origin/main`.
+The other agent's authoritative handoff is
+`NEXT_SESSION_HANDOFF.md` (updated 15:14 CEST, still uncommitted).
+Deployed runtime remains `89fcb04f`. Isolation still passes. The
+clean-worktree role gate fails because the worktree is dirty.
+
+### Already repaired before this pass
+
+- Compile-time private-showcase emails are gone from
+  `ea/app/product/service.py`.
+- The 289 MiB Postgres dump is mode `0600`.
+- LTD `discover_account` and Crezlo tour actions are
+  `executable=False` unless a principal-scoped binding exists.
+- `commercial.py` no longer pretends Pilot/Core/Concierge are
+  PropertyQuarry paid plans.
+- Heyy WhatsApp is in `LTDs.md`.
+- `.grok/config.toml` is tracked and proxies the Property daemon.
+
+### Fixed in this pass
+
+Customer packet actions still claimed external sharing on two HTML
+surfaces after the JS workbench was made honest.
+
+- `_property_selected_review_panel.html` and
+  `property_decision_workbench.html` now say **Save review packet**
+  and **Save shortlist packet**, and emit `pq.packet.saved`.
+- Packets dashboard H1 is **Save local review packets and keep the
+  replies together.**
+- de-AT and es-CR localization keys match those labels.
+- `tests/test_propertyquarry_packet_copy.py` now covers the HTML
+  templates and localization file so this cannot regress on one
+  surface only.
+
+Focused tests passed: packet-copy (2), the two updated workspace
+redesign contracts, and the FlipLink dashboard webhook contract.
+
+### Still open — do not weaken
+
+- External launch blockers from the other agent's handoff: physical
+  Android pass, Play 6/12 testers, dedicated Live billing, encrypted
+  off-host DR.
+- `NEXT_SESSION_HANDOFF.md` is the other agent's uncommitted
+  handoff. This pass did not edit or commit it.
+- Empty `state/propertyquarry-dr/backups/connectivity-test.dump` is
+  still mode `0644`; chmod was not permitted. It is zero bytes.
+- Operator scripts and tests still default to personal Gmail
+  principals. That is fixture debt, not a customer backdoor.
+- Host disk, leftover worktrees, EA/Property vexp indexer collision,
+  and the stale Claude 2.2.1 MCP path remain host issues.
+
+### Product gap closed in this pass
+
+The durable opportunity assessment (recommendation, predicted
+reaction, fit/confidence, unknowns, trade-offs, blockers) was already
+on every ranked candidate and never appeared on the selected-home
+review. That is now a **Before you visit** sheet on first paint and
+on candidate switch. **Ask the agent** is on the same Next-step row
+as Viewing requested.
+
+### Remaining design gaps
+
+These are still true on current `main`. Earlier contradictions about
+nine flagship countries, Free showing only 1–2 homes, and Pilot/Core
+billing have already been corrected in `PRODUCT_BRIEF.md`,
+`ROADMAP.md`, `PRICING.md`, and `commercial.py`.
+
+- Whole-project gold still asks for eight Teable-backed evidence
+  overlays, change intelligence, Rybbit dashboard receipts, and WCAG
+  certified coverage. The shipped product is an Austria closed-test
+  loop. Keep gold as backlog.
+- The market envelope file is still bound to July candidate
+  `fa7d2194`. Customer search is now AT-only. Rebind or retire the
+  envelope.
+- Dark mode is still only on admin content-studio templates.
+- Packets nav/title still said **Shared pages** after the first
+  honesty pass. Repaired on 2026-08-15: account, dashboard H2,
+  empty state, and reply rows now say **Saved packets**.
+- `service.py` remains ~70k lines. New visit-sheet work stayed in
+  templates on purpose.
+
+### Remaining implementation gaps
+
+- Evidence overlay cards no longer look verified from OSM distances
+  or listing adjectives. The customer atlas now reads
+  `evidence_overlays` and stays **Not yet** until a rollup/Teable
+  receipt exists.
+- Emailit is proven for `chummer.run`, not
+  `property@propertyquarry.com`. Saved-search alerts cannot be an
+  honest customer feature until that domain is verified.
+- ClickRank is live on other domains. Rybbit is disabled. Public
+  conversion proof for propertyquarry.com is missing.
+- Heyy WhatsApp is in `LTDs.md` and has product routes, but it is
+  not a customer integration until dedicated credentials and a
+  delivery receipt exist.
+- Provider rows still default to `terms/robots need_review` and
+  `maximum_concurrency=1`. Do not advertise four parallel portal
+  crawls.
+- 1min evaluation and image mutation stay off. Keep them off until
+  slot health and rights receipts exist.
+
+### Remaining missed opportunities
+
+Do these only after the external launch blockers move. Do not invent
+live integrations.
+
+| Order | Opportunity | Why | Honest current state |
+| --- | --- | --- | --- |
+| 1 | Saved-search digest from the visit sheet | The brief/visit checks are now on the home; email them when Emailit is on this domain | Emailit not proven for propertyquarry.com |
+| 2 | FlipLink one redacted family packet | The generator and local packet exist | No PropertyQuarry FlipLink credentials |
+| 3 | Rybbit + ClickRank on this domain | Public Austria tester conversion | Slots exist; not evidenced here |
+| 4 | Lunacal after in-app viewing_requested | The decision state is now a first-class button | Lane disabled, credentials only |
+| 5 | MetaSurvey post-viewing / rejection | Feeds ranking after a real viewing | BrowserAct reader only |
+| 6 | Unmixr audio of the redacted brief | Credits and safe-input contract already exist | Catalog-only for PropertyQuarry |
+| 7 | Internxt crypt / locked S3 | Unblocks the DR launch gate | Plain rclone is not DR |
+| 8 | Invoiless | Only after Plus exists | Billing is 503 |
+
+Do not start ChatPlayground, MagicFit, Jogg, Sendr, or Poppy as
+PropertyQuarry customer features.
+
+## Current re-audit and repairs — 2026-08-15
+
+Independent re-audit of `/docker/property` on `main`
+`b926ff256b91c6bc3fd62365fbf8591f1740764b` with a dirty worktree
+left by the previous evening pass.
+
+### Verdict
+
+The previous pass closed the FlipLink share-CTA lie on the JS
+workbench but left mixed chrome, a failing packet-copy contract,
+and a visit-sheet first-paint/JS mismatch. Those are now repaired
+in the source tree. Public launch is still blocked by the same
+four external authorities. This is not a new release candidate.
+
+### Fixed in this pass
+
+- Packet chrome is consistently local: dashboard title/H1/H2,
+  account **Saved packets** link, empty state, reply row label,
+  and the default next-step fallback `save packet`.
+- `pq.packet.saved` is the documented analytics event. The
+  performance-smoke allowlist accepts it and still tolerates the
+  legacy `pq.packet.shared` name.
+- Visit-sheet unknowns/trade-offs/blockers are humanized on first
+  paint and after switch. Labels are **Still unknown**,
+  **Trade-off**, and **Blocker**. JS no longer falls back to
+  lowercase `consider`.
+- **Ask the agent** now prefills the first unknown when the
+  question box is empty.
+- `property_opportunity_public_projection()` no longer emits
+  `person_id`.
+- Emailit notes now say `property@propertyquarry.com` is
+  unverified. Tough Tongue AI is catalog-only Tier 3.
+- de-AT and es-CR catalogs cover the new packet and visit-sheet
+  strings. Live JS copy maps match.
+- `git worktree prune` removed 62 stale missing-worktree records.
+  Isolation still passes. Role gate still names
+  `ArchonMegalon/propertyquarry` as canonical.
+- Evidence atlas cards no longer flip to **Ready** from OSM
+  distances, school-atlas adjectives, or unverified official-risk
+  rows. The workbench now carries `evidence_overlays` from the
+  rollup read model; without a current receipt the layers stay
+  **Not yet**. Derived file-mode heat rows stay off this customer
+  surface.
+
+Focused tests passed: packet-copy, public opportunity projection,
+workspace packet/account contracts, FlipLink dashboard copy,
+localization coverage, LTD catalog, and the greenfield desktop
+selection/visit-sheet browser test.
+
+### Still open — do not weaken
+
+- Physical Android pass for the exact deployed candidate,
+  Play `6/12` testers, dedicated Live billing, encrypted off-host
+  DR.
+- Host disk is still about 93% full (52 GiB free after dangling-image
+  prune). Do not delete the current PropertyQuarry web or render images.
+- `state/propertyquarry-dr/backups/connectivity-test.dump` is
+  still mode `0644` and root-owned; chmod is not permitted. It is
+  zero bytes.
+- Evidence overlays stay unavailable without a rollup receipt.
+  Unverified official-risk catalog rows no longer appear as customer
+  evidence cards, and official posture is hidden until at least one
+  source is verified.
+- Emailit, ClickRank, Rybbit, FlipLink, Lunacal, and Unmixr remain
+  non-customer or unproven on this domain.
+- `service.py` is still ~70k lines. Customer dark mode already exists
+  on the workbench, shortlist, and public shells.
+- Local `:8090/health/ready` is `postgres_ready` only.
+  `/app/properties/packets` on that listener returns
+  `property_search_not_available`. That is the running process
+  boundary, not these source edits.
+
+### What was not done
+
+- No deploy, no release envelope, no billing enablement, no
+  FlipLink credentialing, no Emailit domain verification, and no
+  `service.py`
+  split. Those stay fail-closed or backlog.

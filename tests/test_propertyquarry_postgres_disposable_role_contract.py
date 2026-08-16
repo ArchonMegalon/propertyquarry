@@ -238,8 +238,7 @@ def test_local_test_dependencies_use_the_fully_constrained_jsonschema_closure() 
 
 def test_local_verification_has_no_hosted_workflow_authority() -> None:
     workflows = ROOT / ".github" / "workflows"
-    assert workflows.is_dir()
-    assert not any(workflows.iterdir())
+    assert not workflows.exists() or not any(workflows.iterdir())
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     production_image_lock = (ROOT / "ea" / "requirements.lock").read_text(
         encoding="utf-8"

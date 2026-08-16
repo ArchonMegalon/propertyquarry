@@ -1,6 +1,192 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-13 10:48 CEST
+Updated: 2026-08-16
+
+## 2026-08-15 local repo audit repairs
+
+Source-tree honesty repairs on published `main` `b926ff256b91c6bc3fd62365fbf8591f1740764b`. This is not a new deployed candidate. Do not describe this dirty worktree as the live envelope.
+
+Completed in this pass:
+
+- Finished the unfinished packet-copy honesty work. Customer chrome now says **Saved packets** on the dashboard, account link, empty state, and reply rows. Analytics taxonomy and the smoke allowlist accept `pq.packet.saved`.
+- The selected-home **Before you visit** sheet now humanizes checks on first paint and after candidate switch, uses **Still unknown** instead of a generic Check label, and **Ask the agent** prefills the first unknown.
+- Customer opportunity JSON no longer includes `person_id`.
+- `LTDs.md` now records Tough Tongue AI as Tier 3 / unverified and states that Emailit is not a PropertyQuarry customer-mail proof.
+- Isolated repo role still passes. Stale missing git worktree metadata was pruned (`66` -> `4` attached worktrees). Isolation still `ok`.
+- Evidence atlas cards stay **Not yet** unless a rollup/Teable receipt exists. OSM distances and listing adjectives no longer count as verified heat, traffic, school, safety, media, or fiber.
+- Unverified official-risk catalog rows no longer render as customer evidence cards. Official posture is omitted until at least one source is verified.
+- Packet dashboard recipient/external-link copy is local: **Save recipient**, **Paste external link**, **No recipients yet.**
+
+Do not treat these edits as launch authority. The 2026-08-13 live-candidate section below remains the deployed identity.
+
+## 2026-08-13 final live-candidate handoff (authoritative)
+
+Start here. This section supersedes older candidate identities, tester counts,
+and blocker summaries later in this historical handoff.
+
+### Exact repository and deployment state
+
+- Canonical repository: `ArchonMegalon/propertyquarry`.
+- Local `main`, `origin/main`, and the GitHub `main` ref were reverified at
+  `b926ff256b91c6bc3fd62365fbf8591f1740764b`.
+- The tracked worktree was clean before this handoff edit. Private evidence
+  under `state/` is ignored and must not be committed or exposed.
+- Deployed runtime source:
+  `89fcb04f9dc49e896c3b5e7ed81c61a0702dc8bf`.
+- Deployed envelope head:
+  `b926ff256b91c6bc3fd62365fbf8591f1740764b`.
+- Web image:
+  `sha256:e872fcc0807bf46057f4e0ba29fa0fc675a6a7c1806ec0b30148d09b7d95c4f6`.
+- Render image:
+  `sha256:82e1faab3608ab337c88fd1a68aa52ce994c964797c7384b5fd1809cbeb01f1c`.
+- Release artifact set:
+  `propertyquarry-generated-release-artifacts-v1@sha256:9313e28212f97930db5dc805e72f8e12016e8f6c577aadaf6f0ee4eba412e4ed`.
+- `https://propertyquarry.com/health/ready` was healthy with
+  `postgres_ready:property_search_schema_v20`.
+- Deployment receipt:
+  `state/release/propertyquarry-local-deployment.v1.json`, SHA-256
+  `1b0492e555d819764f751069dbda629dd154585b155ca0b72130235a0252f986`.
+
+Do not make a documentation-only commit and then describe the new Git head as
+the deployed candidate. If this handoff is committed, regenerate the governed
+release envelope and redeploy only when a real source/release change warrants
+moving the candidate.
+
+### Live-product requirements already proved
+
+- The exact final candidate passed `96/96` real live-browser samples: 16
+  protected routes in Chromium, Firefox, and WebKit at 390x844 and 412x915,
+  with zero failures. Receipt:
+  `state/qa/propertyquarry-live-browser-all-20260813-exact-89fcb04f.json`,
+  SHA-256
+  `12ec22a34b02452eb01f4f1876f7771bff3f5280159c1e1750fc6c40fe7e550d`.
+- Authenticated reviewer `play-reviewer@propertyquarry.com` executed the rendered
+  six-step search flow. Steps 1-5 exposed `Next`; step 6 exposed `Launch
+  search` in the same primary-action position.
+- Search run `f88125e5f1944e9d93ce00fe75ff52dc` processed all three Austrian
+  sources in one durable attempt: 32 raw listings, 8 reviewed listings, 7
+  results, 7 persisted opportunities, and zero opportunity-persistence
+  failures. The first shortlist was ready in 12,267.47 ms and the run completed
+  in 19,341.97 ms.
+- Top opportunity
+  `property_opportunity:613f49e079645ea5754badcb7023f675281043833bcd5a16983934fcb983232c`
+  retained numeric fit/confidence, recommendation, predicted reaction, and
+  explicit unknowns.
+- Private brief `sum_88bf20fce5a0478a92a79cc1214ff5f4` was generated and read
+  back from the deployed event repository. It includes recommendation, fit,
+  confidence, predicted reaction, fit reasons, trade-offs, verification steps,
+  and a validated HTTPS listing link. It remains honestly `local_only` and
+  `not_published`.
+- Private LTD generation `a26b53b7f4604c1394fc76dde299965e` made a real
+  principal-bound 1min.AI `image_generate` call through the durable worker.
+  Its provider receipt is `verified`; the 1024x1024 PNG is 1,284,653 bytes with
+  SHA-256
+  `45d691d1b65a4c01cb3642c0abb6f34263b3279ac89097987d4ed39965254c12`
+  and rendered on the authenticated customer surface.
+- A fresh worker-side health probe reported 70 configured 1min.AI slots and 2
+  ready slots. Credentials correctly remain worker-only; zero slots in the API
+  process is intentional least privilege, not an outage.
+- Combined signed-in search/brief/LTD receipt:
+  `state/qa/propertyquarry-real-signed-in-search-89fcb04f-20260813.json`,
+  SHA-256
+  `4c6c2ac363375c8b0c7215d8cd789c3425060b051b5fe0ca909befe24a0fbc00`.
+- The final focused billing, durable-worker/LTD, external-authority, and DR
+  suite passed `129/129`.
+
+### Honest provider and publication posture
+
+- Customer billing is disabled with
+  `PROPERTYQUARRY_ENABLE_PAYPAL_CHECKOUT=0`.
+- PayPal is pinned to the official Live origin, but there is no dedicated,
+  principal-authorized PropertyQuarry Live credential or exact-release safe
+  handoff. The only available external credential candidate was re-probed and
+  classified as Sandbox. PayFunnels is also unconfigured. Never enable
+  checkout from environment presence or Sandbox order evidence.
+- Checkout may be admitted only after a same-principal Live checkout proves
+  signed/idempotent webhook handling, entitlement grant, cancellation, both
+  paid plans, and exact commit/image binding through the external authority
+  receipt.
+- FlipLink has zero PropertyQuarry-scoped credentials. The customer generator
+  is therefore correctly labeled `local_only` / `not_published`; this satisfies
+  the objective's honest-local branch. Do not reuse the Memorial FlipLink
+  secret or claim external publication.
+- Final external-authority receipt:
+  `state/qa/propertyquarry-live-external-authority-20260813-final.json`,
+  SHA-256
+  `efa80dabda3fdb8d7d0b3381b9e8ce34cea9c876b1943dfd586944f772f040bb`.
+
+### Austria and physical Android boundary
+
+- Google Play release `5 (1.1.3)` remains active on **Closed testing - Alpha**
+  with Austria as the only country/region.
+- The default store listing is active, App Content has nothing needing
+  attention, Policy Status reports no issues, and Publishing Overview has no
+  unpublished changes.
+- The public group
+  `propertyquarry-austria-testers@googlegroups.com` has six members and allows
+  anyone on the web to join.
+- Play still reports `6/12` opted-in testers. Six additional distinct real
+  accounts must join the group and opt in. Only then can Google's continuous
+  14-day closed-test requirement run. Open testing is locked until Production
+  access; do not attempt to bypass this rule.
+- Public enrollment sequence:
+
+  1. https://groups.google.com/g/propertyquarry-austria-testers
+  2. https://play.google.com/apps/testing/com.myexternalbrain.propertyquarry
+
+- Play audit receipt:
+  `state/qa/propertyquarry-play-austria-public-launch-audit-20260813.json`,
+  SHA-256
+  `547dbb241672a293b51a41d1f7efa4ed62a3a075a37f9e9ded5263fc4cdf97b1`.
+- From deployment at `2026-08-13T09:01:09Z` through the final blocker audit at
+  `2026-08-13T09:38:36Z`, the API saw zero `/mobile/runtime-contract`,
+  `/sign-in/google`, `/google/callback`, `/mobile/auth/bridge`, or
+  `/mobile/auth/redeem` events. This proves no fresh installed-app attempt
+  reached the exact candidate; it does not prove a failed redeem.
+- A physical tester must open the installed current app, complete Google
+  sign-in, and reach Search once. Close this gate only from the ordered
+  runtime-contract -> Google callback -> ready bridge -> one-time redeem ->
+  authenticated Search telemetry for the exact deployed candidate.
+
+### Disaster-recovery boundary
+
+- A final live read-only PostgreSQL probe created a full custom-format archive,
+  validated all 543 entries, and deleted the plaintext immediately. The archive
+  was 42,286,213 bytes with SHA-256
+  `b6da91f288b201412cf0c7952c5fdb9c9e2feef5da83061c7242fe631a064665`.
+- This is database/toolchain proof only, not off-host DR. The remaining external
+  requirements are an approved external encryption recipient, a scoped AWS
+  identity, a versioned S3 target with COMPLIANCE Object Lock, exact-version
+  provider read-back, and an authorized disposable restore target.
+- Do not upload plaintext to a generic rclone remote or weaken the immutable
+  off-host contract.
+
+### Goal state and next-session restart order
+
+The long-running goal was marked `blocked` after the same external conditions
+recurred across three consecutive goal turns. It is not complete. Resume it only
+after the user or an external system changes one of the required authorities.
+
+1. Check exact-candidate Android telemetry first. If a fresh attempt exists,
+   prove the ordered native sequence and investigate only a concrete failing
+   step.
+2. Read the Play dashboard. If it is still below 12, preserve the public join
+   path and report the exact deficit. If it reaches 12, record the authoritative
+   threshold timestamp and wait for Play's 14-day gate; do not infer elapsed
+   eligibility.
+3. Keep billing disabled unless dedicated Live credentials and the complete
+   same-principal authority receipt arrive.
+4. Run the encrypted off-host DR workflow only after all four external DR
+   authorities are present. Never substitute local archive validation.
+5. Re-run the external launch authority and deployment bindings before any
+   production claim.
+
+Final consolidated blocker receipt:
+`state/qa/propertyquarry-final-external-gap-audit-89fcb04f-20260813.json`,
+SHA-256
+`c1abbea06a6847892962e6724b3828c48c050ac6bfa2b1333ac3cc131f853ee6`.
+It is mode `0600`, records no secrets, and names every remaining external
+authority precisely.
 
 ## Mission
 
@@ -14,9 +200,10 @@ Android pass for the current exact web head is still required. Preserve the
 closed release and its signed evidence; do not create, edit, promote, or roll
 out a production release.
 
-The repository audit and repair pass is represented by the published commit
-that contains this handoff. Start from that commit and preserve its clean signed
-release evidence.
+The repository audit and repair pass is represented by published `main` at
+`b926ff256b91c6bc3fd62365fbf8591f1740764b`. Preserve its clean signed release
+evidence and treat the authoritative section above as the current operational
+state.
 
 ## 2026-08-13 principal-bound PayPal capture hardening
 

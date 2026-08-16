@@ -71,11 +71,12 @@ shared_evidence_bindings:
   registry_release_channel:
     path: /docker/chummercomplete/chummer-hub-registry/.codex-studio/published/RELEASE_CHANNEL.generated.json
     projected_fields:
-      - generated_at
+      - contractName
       - status
-      - rolloutState
-      - supportabilityState
-      - fixAvailabilitySummary
+      - runtimeAuthoritySource
+      - historicalReleaseVersion
+      - historicalProjectionPath
+      - doesNotAssert
   feedback_release_gate:
     path: .codex-design/product/FEEDBACK_LOOP_RELEASE_GATE.yaml
     projected_fields:
@@ -115,12 +116,14 @@ packet_projection_bindings:
       - fleet_support_packets.followthrough_receipt_gates.required_gates
       - fleet_support_packets.followthrough_receipt_gates.source_rule
     release_truth_source_fields:
+      - registry_release_channel.contractName
       - registry_release_channel.status
-      - registry_release_channel.rolloutState
-      - registry_release_channel.supportabilityState
-      - registry_release_channel.fixAvailabilitySummary
-    use_rule: Reporter followthrough must use the same support packet and release-channel truth window as the operator packet, especially before fix_available is permitted.
-  same_window_rule: Operator and reporter specimens must bind to one live truth window even when the specimen payloads show illustrative posture or workflow examples.
+      - registry_release_channel.runtimeAuthoritySource
+      - registry_release_channel.historicalReleaseVersion
+      - registry_release_channel.historicalProjectionPath
+      - registry_release_channel.doesNotAssert
+    use_rule: Reporter followthrough must use the same support packet and Registry authority-pointer window as the operator packet; a not_runtime_authority pointer fails closed before fix_available is permitted.
+  same_window_rule: Operator and reporter specimens must bind to one authority window even when the specimen payloads show illustrative posture or workflow examples; a Registry not_runtime_authority pointer cannot establish current release truth.
 operator_packet_specimen:
   packet_kind: operator_packets:weekly_governor
   packet_id_template: ea-weekly-governor-synthesis-{yyyy-mm-dd}

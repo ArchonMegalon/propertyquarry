@@ -2343,7 +2343,10 @@ def test_private_brigittenau_showcase_does_not_inject_for_other_users() -> None:
 
 
 def test_private_brigittenau_showcase_is_scoped_to_named_users_and_austria(monkeypatch) -> None:
-    monkeypatch.delenv("PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS", raising=False)
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_PRIVATE_SHOWCASE_ALLOWED_EMAILS",
+        "tibor.girschele@gmail.com,elisabeth.girschele@gmail.com",
+    )
 
     assert product_service._property_private_showcase_allowed(  # type: ignore[attr-defined]
         principal_id="cf-email:tibor.girschele@gmail.com"
@@ -4717,22 +4720,9 @@ def test_property_search_location_matching_rejects_source_scope_only_for_exact_p
 
 def test_property_provider_greenfield_api_returns_country_scoped_catalog_with_austria_and_cr_regression_coverage() -> None:
     client = build_property_client(principal_id="exec-provider-catalog-germany")
-    de_body = client.get("/app/api/property/providers?country=DE").json()
-
-    assert any(row["value"] == "core_portals_de" and row["family"] == "core_portal" for row in de_body["providers"])
-    assert any(row["value"] == "shared_housing_de" and row["family"] == "shared_housing" for row in de_body["providers"])
-    assert any(row["value"] == "corporate_landlords_de" and row["family"] == "corporate_landlord" for row in de_body["providers"])
-    assert any(row["value"] == "municipal_housing_de" and row["family"] == "municipal_housing" for row in de_body["providers"])
-    assert any(row["value"] == "immoscout_de" for row in de_body["providers"])
-    assert any(row["value"] == "wg_gesucht_de" and row["family"] == "shared_housing" for row in de_body["providers"])
-    assert any(row["value"] == "vonovia_de" and row["family"] == "corporate_landlord" for row in de_body["providers"])
-    assert any(row["value"] == "neubaukompass_de" and row["family"] == "developer_projects" for row in de_body["providers"])
-    assert any(row["value"] == "auctions_de" and row["family"] == "distressed_sales" for row in de_body["providers"])
-    assert any(row["value"] == "broker_direct_de" and row["family"] == "broker_direct" for row in de_body["providers"])
-    assert any(row["value"] == "furnished_relocation_de" and row["family"] == "furnished_relocation" for row in de_body["providers"])
-    assert any(row["value"] == "ohne_makler_de" and row["family"] == "broker_direct" for row in de_body["providers"])
-    assert any(row["value"] == "von_poll_de" and row["family"] == "broker_direct" for row in de_body["providers"])
-    assert any(row["value"] == "wohnungsboerse_de" and row["family"] == "core_portal" for row in de_body["providers"])
+    de_response = client.get("/app/api/property/providers?country=DE")
+    assert de_response.status_code == 400
+    assert de_response.json()["error"]["code"] == "unsupported_property_market"
 
     at_body = client.get("/app/api/property/providers?country=AT").json()
 
@@ -4749,14 +4739,11 @@ def test_property_provider_greenfield_api_returns_country_scoped_catalog_with_au
     assert any(row["value"] == "wohnnet_at" and row["family"] == "marketplace" for row in at_body["providers"])
     assert any(row["value"] == "keinmakler_at" and row["family"] == "broker_direct" for row in at_body["providers"])
     assert any(row["value"] == "zvginfo_at" and row["family"] == "distressed_sales" for row in at_body["providers"])
-    assert any(row["value"] == "school_directories_de" for row in de_body["evidence_sources"])
     assert any(row["value"] == "statatlas_schulen_at" for row in at_body["evidence_sources"])
 
-    cr_body = client.get("/app/api/property/providers?country=CR").json()
-
-    assert any(row["value"] == "properstar_cr" and row["family"] == "marketplace" for row in cr_body["providers"])
-    assert any(row["value"] == "century21_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
-    assert any(row["value"] == "remax_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
+    cr_response = client.get("/app/api/property/providers?country=CR")
+    assert cr_response.status_code == 400
+    assert cr_response.json()["error"]["code"] == "unsupported_property_market"
 
 
 def test_property_provider_greenfield_api_returns_mode_aware_default_platforms() -> None:
@@ -4770,18 +4757,18 @@ def test_property_provider_greenfield_api_returns_mode_aware_default_platforms()
         "/app/api/property/providers",
         params={"country": "AT", "listing_mode": "buy", "property_type": "land"},
     ).json()
-    de_buy_body = client.get(
+    de_buy_response = client.get(
         "/app/api/property/providers",
         params={"country": "DE", "listing_mode": "buy", "property_type": "apartment"},
-    ).json()
-    cr_rent_body = client.get(
+    )
+    cr_rent_response = client.get(
         "/app/api/property/providers",
         params={"country": "CR", "listing_mode": "rent", "property_type": "apartment"},
-    ).json()
-    cr_buy_body = client.get(
+    )
+    cr_buy_response = client.get(
         "/app/api/property/providers",
         params={"country": "CR", "listing_mode": "buy", "property_type": "apartment"},
-    ).json()
+    )
 
     assert at_buy_body["listing_mode"] == "buy"
     assert at_buy_body["property_type"] == "apartment"
@@ -4805,19 +4792,12 @@ def test_property_provider_greenfield_api_returns_mode_aware_default_platforms()
         "immoscout_at",
         "broker_direct_at",
     ]
-    assert de_buy_body["default_platforms"] == [
-        "core_portals_de",
-        "wohnungsboerse_de",
-        "new_build_de",
-        "broker_direct_de",
-    ]
-    assert cr_rent_body["default_platforms"] == [
-        "encuentra24_cr",
-        "re_cr_mls",
-        "properstar_cr",
-    ]
-    assert "century21_cr" in cr_buy_body["default_platforms"]
-    assert "remax_cr" in cr_buy_body["default_platforms"]
+    assert de_buy_response.status_code == 400
+    assert de_buy_response.json()["error"]["code"] == "unsupported_property_market"
+    assert cr_rent_response.status_code == 400
+    assert cr_rent_response.json()["error"]["code"] == "unsupported_property_market"
+    assert cr_buy_response.status_code == 400
+    assert cr_buy_response.json()["error"]["code"] == "unsupported_property_market"
 
 
 def test_austria_generated_source_defaults_use_public_and_cooperative_lanes_for_rent() -> None:
@@ -6218,6 +6198,21 @@ def test_property_url_location_probe_rejects_off_scope_willhaben_detail_paths() 
     )
 
 
+def test_property_url_location_probe_does_not_treat_egw_listing_id_as_postal_code() -> None:
+    property_url = "https://www.egw.at/suche/11351-45-m-lager-top-1-3"
+
+    assert not _property_candidate_url_has_exact_location_probe(property_url)
+    assert _property_candidate_matches_requested_location(
+        location_hints=("1020 Wien",),
+        property_url=property_url,
+        title="45 m² Lager in 1020 Wien",
+        summary="45 m² Lager, 1 Zimmer, Miete, Bruno-Marek-Allee 6 in 1020 Wien",
+        property_facts={"postal_name": "1020 Wien", "address": "1020 Wien"},
+        country_code="AT",
+        region_code="vienna",
+    )
+
+
 def test_property_scout_hit_sender_suppresses_dirty_source_scope_when_listing_postal_conflicts(monkeypatch) -> None:
     principal_id = "exec-property-hit-dirty-postal-gate"
     client = build_property_client(principal_id=principal_id)
@@ -6579,6 +6574,13 @@ def test_property_generic_listing_page_detector_overrides_detail_shaped_url_for_
         ),
         summary=generic_footer,
         property_facts={"rooms": 3, "has_floorplan": True},
+    )
+
+    assert not _property_candidate_is_generic_listing_page(
+        property_url="https://www.egw.at/suche/11351-45-m-lager-top-1-3",
+        title="45 m² Lager in 1020 Wien",
+        summary="45 m² Lager, 1 Zimmer, Miete, Bruno-Marek-Allee 6 in 1020 Wien",
+        property_facts={"postal_name": "1020 Wien", "area_m2": 45.0, "rooms": 1},
     )
 
 
@@ -13814,14 +13816,14 @@ def test_property_search_run_preferences_strip_workspace_state_and_keep_active_a
 
 def test_property_search_run_snapshot_projection_strips_historical_workspace_state() -> None:
     snapshot = {
-        "run_id": "historical-costa-rica-run",
+        "run_id": "historical-austria-run",
         "property_search_preferences": {
-            "country_code": "CR",
-            "region_code": "G",
+            "country_code": "AT",
+            "region_code": "salzburg",
             "listing_mode": "buy",
-            "location_query": "Tamarindo, Costa Rica",
-            "selected_platforms": ["re_cr_mls", "encuentra24_cr"],
-            "active_search_agent_id": "costa-rica-agent",
+            "location_query": "Salzburg, Austria",
+            "selected_platforms": ["willhaben", "immmo"],
+            "active_search_agent_id": "salzburg-agent",
             "raw_preferences": {
                 "country_code": "CR",
                 "contact_email": "historical-secret@example.test",
@@ -13829,15 +13831,15 @@ def test_property_search_run_snapshot_projection_strips_historical_workspace_sta
             "contact_email": "historical-secret@example.test",
             "search_agents": [
                 {
-                    "agent_id": "stale-vienna-agent",
-                    "location_query": "1010 Vienna",
-                    "selected_platforms": ["willhaben"],
+                    "agent_id": "stale-costa-rica-agent",
+                    "location_query": "Tamarindo, Costa Rica",
+                    "selected_platforms": ["re_cr_mls"],
                 }
             ],
             "saved_shortlist_candidates": [
                 {
-                    "title": "Stale Vienna shortlist listing",
-                    "property_url": "https://stale-vienna.example.test/listing",
+                    "title": "Stale Costa Rica shortlist listing",
+                    "property_url": "https://stale-costa-rica.example.test/listing",
                 }
             ],
             "saved_shortlist_share_slug": "stale-private-share-slug",
@@ -13854,12 +13856,12 @@ def test_property_search_run_snapshot_projection_strips_historical_workspace_sta
     projected = product_service._property_search_run_snapshot_projection(snapshot)
 
     preferences = dict(projected["property_search_preferences"])
-    assert preferences["country_code"] == "CR"
-    assert preferences["region_code"] == "G"
+    assert preferences["country_code"] == "AT"
+    assert preferences["region_code"] == "salzburg"
     assert preferences["listing_mode"] == "buy"
-    assert preferences["location_query"] == "Tamarindo, Costa Rica"
-    assert preferences["selected_platforms"] == ["re_cr_mls", "encuentra24_cr"]
-    assert preferences["active_search_agent_id"] == "costa-rica-agent"
+    assert preferences["location_query"] == "Salzburg, Austria"
+    assert preferences["selected_platforms"] == ["willhaben", "immmo"]
+    assert preferences["active_search_agent_id"] == "salzburg-agent"
     assert preferences["property_commercial"] == {
         "active_plan_key": "agent",
         "status": "active",
@@ -13868,9 +13870,9 @@ def test_property_search_run_snapshot_projection_strips_historical_workspace_sta
     serialized = json.dumps(projected, ensure_ascii=False)
     for excluded_value in (
         "historical-secret@example.test",
-        "1010 Vienna",
-        "stale-vienna-agent",
-        "https://stale-vienna.example.test/listing",
+        "Tamarindo, Costa Rica",
+        "stale-costa-rica-agent",
+        "https://stale-costa-rica.example.test/listing",
         "stale-private-share-slug",
         "cus_historical_secret",
         "pi_historical_secret",
@@ -14379,11 +14381,9 @@ def test_property_provider_greenfield_api_returns_country_scoped_catalog() -> No
 
     assert at_response.status_code == 200, at_response.text
     assert uk_response.status_code == 400, uk_response.text
-    assert cr_response.status_code == 200, cr_response.text
+    assert cr_response.status_code == 400, cr_response.text
     at_body = at_response.json()
-    cr_body = cr_response.json()
     assert at_body["country_code"] == "AT"
-    assert cr_body["country_code"] == "CR"
     assert any(row["value"] == "willhaben" for row in at_body["providers"])
     assert any(row["value"] == "immowelt_at" and "immowelt" in row["label"].lower() for row in at_body["providers"])
     assert any(row["value"] == "findmyhome_at" and "FindMyHome" in row["label"] for row in at_body["providers"])
@@ -14401,18 +14401,7 @@ def test_property_provider_greenfield_api_returns_country_scoped_catalog() -> No
     assert any(row["value"] == "wohnnet_at" and row["family"] == "marketplace" for row in at_body["providers"])
     assert any(row["value"] == "keinmakler_at" and row["family"] == "broker_direct" for row in at_body["providers"])
     assert uk_response.json()["error"]["code"] == "unsupported_property_market"
-    assert any(row["value"] == "encuentra24_cr" for row in cr_body["providers"])
-    assert any(row["value"] == "re_cr_mls" for row in cr_body["providers"])
-    assert any(row["value"] == "properstar_cr" and row["family"] == "marketplace" for row in cr_body["providers"])
-    assert any(row["value"] == "century21_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
-    assert any(row["value"] == "remax_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
-    assert any(row["value"] == "theagency_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
-    assert any(row["value"] == "krain_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
-    assert any(row["value"] == "desarrollos_cr" and row["family"] == "developer_projects" for row in cr_body["providers"])
-    assert any(row["value"] == "tierraverde_cr" and row["family"] == "developer_projects" for row in cr_body["providers"])
-    assert any(row["value"] == "propertiesincostarica_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
-    assert any(row["value"] == "costaricarealestateservice_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
-    assert any(row["value"] == "twocostaricarealestate_cr" and row["family"] == "broker_direct" for row in cr_body["providers"])
+    assert cr_response.json()["error"]["code"] == "unsupported_property_market"
 
 
 def test_property_search_run_can_be_deleted_from_api(monkeypatch) -> None:
@@ -17387,29 +17376,29 @@ def test_property_search_run_does_not_reapply_stale_saved_agent_area_filter(monk
     stored = client.post(
         "/v1/onboarding/property-search/preferences",
         json={
-            "country_code": "CR",
+            "country_code": "AT",
             "listing_mode": "buy",
             "property_type": "house",
-            "location_query": "Monteverde",
+            "location_query": "Salzburg",
             "min_area_m2": 80,
             "require_floorplan": True,
             "min_match_score": 40,
-            "selected_platforms": ["re_cr_mls", "realtor_com_cr"],
+            "selected_platforms": ["willhaben", "immmo"],
             "search_agents": [
                 {
-                    "agent_id": "agent-monteverde-buy",
-                    "name": "Monteverde buy",
-                    "country_code": "CR",
+                    "agent_id": "agent-salzburg-buy",
+                    "name": "Salzburg buy",
+                    "country_code": "AT",
                     "listing_mode": "buy",
                     "property_type": "house",
-                    "location_query": "Monteverde",
+                    "location_query": "Salzburg",
                     "min_area_m2": 80,
                     "require_floorplan": True,
                     "min_match_score": 40,
-                    "selected_platforms": ["re_cr_mls", "realtor_com_cr"],
+                    "selected_platforms": ["willhaben", "immmo"],
                 }
             ],
-            "active_search_agent_id": "agent-monteverde-buy",
+            "active_search_agent_id": "agent-salzburg-buy",
             "property_commercial": {
                 "active_plan_key": "agent",
                 "status": "active",
@@ -17454,17 +17443,17 @@ def test_property_search_run_does_not_reapply_stale_saved_agent_area_filter(monk
     started = client.post(
         "/app/api/signals/property/search/run",
         json={
-            "selected_platforms": ["re_cr_mls", "realtor_com_cr"],
+            "selected_platforms": ["willhaben", "immmo"],
             "property_preferences": {
-                "country_code": "CR",
+                "country_code": "AT",
                 "listing_mode": "buy",
                 "property_type": "house",
-                "location_query": "Monteverde",
+                "location_query": "Salzburg",
                 "min_area_m2": 0,
                 "require_floorplan": False,
                 "min_match_score": 25,
                 "search_agents": stored.json()["property_search_preferences"]["search_agents"],
-                "active_search_agent_id": "agent-monteverde-buy",
+                "active_search_agent_id": "agent-salzburg-buy",
                 "raw_preferences": {"min_area_m2": 80},
             },
         },
@@ -17473,7 +17462,7 @@ def test_property_search_run_does_not_reapply_stale_saved_agent_area_filter(monk
     _poll_property_search_run_status(client, started.json()["run_id"])
 
     preferences = dict(observed["property_search_preferences"])
-    assert "re_cr_mls" in tuple(observed["selected_platforms"] or ())
+    assert "willhaben" in tuple(observed["selected_platforms"] or ())
     assert preferences.get("min_area_m2") not in {80, "80"}
     assert preferences["require_floorplan"] is False
     assert preferences["min_match_score"] == 0.0
@@ -18473,11 +18462,11 @@ def test_property_search_run_drops_saved_unready_and_mode_mismatched_providers(m
     stored = client.post(
         "/v1/onboarding/property-search/preferences",
         json={
-            "country_code": "DE",
+            "country_code": "AT",
             "language_code": "de",
-            "listing_mode": "buy",
-            "location_query": "Berlin",
-            "selected_platforms": ["core_portals_de", "corporate_landlords_de", "community_signals_at"],
+            "listing_mode": "rent",
+            "location_query": "Vienna",
+            "selected_platforms": ["willhaben", "justiz_edikte_at", "community_signals_at"],
             "property_commercial": {"active_plan_key": "agent", "status": "active", "active_until": "2999-01-01T00:00:00+00:00"},
         },
     )
@@ -18517,14 +18506,14 @@ def test_property_search_run_drops_saved_unready_and_mode_mismatched_providers(m
 
     started = client.post("/app/api/signals/property/search/run", json={"property_preferences": {}})
     assert started.status_code == 202, started.text
-    assert observed["selected_platforms"] == ("core_portals_de",)
+    assert observed["selected_platforms"] == ("willhaben",)
     preferences = observed["property_search_preferences"]
     assert preferences["provider_selection_filter_applied"] is True
-    assert set(preferences["provider_selection_filter_removed"]) == {"corporate_landlords_de", "community_signals_at"}
+    assert set(preferences["provider_selection_filter_removed"]) == {"justiz_edikte_at", "community_signals_at"}
     removed_details = {row["platform"]: row for row in preferences["provider_selection_filter_removed_details"]}
-    assert removed_details["corporate_landlords_de"]["reason"] == "listing_mode_unsupported"
-    assert removed_details["corporate_landlords_de"]["requested_listing_mode"] == "buy"
-    assert removed_details["community_signals_at"]["reason"] == "wrong_country"
+    assert removed_details["justiz_edikte_at"]["reason"] == "listing_mode_unsupported"
+    assert removed_details["justiz_edikte_at"]["requested_listing_mode"] == "rent"
+    assert removed_details["community_signals_at"]["reason"] == "not_search_ready"
 
 
 def test_property_search_run_status_does_not_send_results_ready_email(monkeypatch) -> None:

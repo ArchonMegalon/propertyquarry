@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 
 uvicorn = pytest.importorskip("uvicorn")
 pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import Browser, BrowserContext, Locator, Page, TimeoutError as PlaywrightTimeoutError, expect, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Locator, Page, Playwright, TimeoutError as PlaywrightTimeoutError, expect
 
 Config = uvicorn.Config
 Server = uvicorn.Server
@@ -960,10 +960,28 @@ def propertyquarry_browser_server(
                                 },
                             },
                             {
+                                "candidate_ref": "family-tiergarten",
                                 "title": "Family flat near Tiergarten",
                                 "property_url": "https://www.immobilienscout24.de/expose/family-tiergarten",
                                 "fit_summary": "Personal fit 87/100 · shortlist · Larger layout and quieter block.",
                                 "recommendation": "shortlist",
+                                "opportunity": {
+                                    "opportunity_id": "assessment:family-tiergarten",
+                                    "status": "ready",
+                                    "domain": "property",
+                                    "object_type": "listing",
+                                    "object_id": "family-tiergarten",
+                                    "person_id": "elisabeth",
+                                    "run_id": run_id,
+                                    "fit_score": 87.0,
+                                    "confidence": 0.76,
+                                    "predicted_reaction": "curious_with_caveats",
+                                    "recommendation": "investigate_further",
+                                    "match_reasons": ["Larger layout and quieter block."],
+                                    "mismatch_reasons": ["No captured tour yet."],
+                                    "unknowns": ["operating_costs"],
+                                    "blocking_constraints": ["street_noise_unverified"],
+                                },
                                 "review_url": "/app/handoffs/human_task:review-2",
                                 "tour_url": "",
                                 "match_reasons": ["Larger layout and quieter block."],
@@ -1061,21 +1079,20 @@ def propertyquarry_browser_server(
 
 
 @pytest.fixture()
-def browser() -> Iterator[Browser]:
-    with sync_playwright() as playwright:
-        engine = _configured_propertyquarry_browser_engine()
-        try:
-            browser = playwright_engine_launch_browser(
-                playwright,
-                engine=engine,
-                args=list(_PROPERTYQUARRY_CHROMIUM_LAUNCH_ARGS),
-            )
-        except Exception as exc:
-            raise RuntimeError(f"playwright_browser_engine_unavailable:{engine}:{type(exc).__name__}: {exc}") from exc
-        try:
-            yield browser
-        finally:
-            browser.close()
+def browser(playwright: Playwright) -> Iterator[Browser]:
+    engine = _configured_propertyquarry_browser_engine()
+    try:
+        browser = playwright_engine_launch_browser(
+            playwright,
+            engine=engine,
+            args=list(_PROPERTYQUARRY_CHROMIUM_LAUNCH_ARGS),
+        )
+    except Exception as exc:
+        raise RuntimeError(f"playwright_browser_engine_unavailable:{engine}:{type(exc).__name__}: {exc}") from exc
+    try:
+        yield browser
+    finally:
+        browser.close()
 
 
 def _new_context(
@@ -2712,6 +2729,9 @@ def _visible_button_action_keys(page: Page) -> set[str]:
                     'data-pqx-scope-lightbox-bound',
                     'data-pqx-deferred-preview-host',
                     'data-pqx-shortlist-diorama',
+                    'data-pqx-thumbnail',
+                    'data-pqx-thumbnail-fallback',
+                    'data-pqx-thumbnail-fallbacks',
                     'data-prd-map-overlay',
                     'data-prd-map-src',
                     'data-prd-map-title',
@@ -2822,6 +2842,7 @@ def test_propertyquarry_every_results_and_research_button_works_in_real_browser(
         fine_tune = page.locator("[data-pw-finetune-toggle]")
         fine_tune.click()
         expect(fine_tune).to_have_attribute("aria-expanded", "true")
+        expect(page.locator("[data-pw-ask-agent]")).to_be_hidden()
 
         decision_buttons = page.locator(
             "[data-pw-decision-state]:visible:not([data-pw-remove-row])"
@@ -5159,13 +5180,17 @@ def test_propertyquarry_result_thumbnail_opens_lazy_evidence_atlas(
         atlas.get_by_role("button", name="Media").click()
         media_card = atlas.locator("[data-pqx-evidence-card='media']")
         expect(media_card).to_be_visible()
-        expect(media_card.get_by_text("1 local article mention.")).to_be_visible()
-        expect(media_card.get_by_role("link", name="Open page")).to_be_visible()
+        expect(media_card).to_have_attribute("data-state", "unavailable")
+        expect(media_card.get_by_text("Not yet")).to_be_visible()
+        expect(media_card.get_by_text("No local media layer is available for this area yet.")).to_be_visible()
+        expect(media_card.get_by_role("link", name="Open page")).to_have_count(0)
         atlas.get_by_role("button", name="Fiber").click()
         fiber_card = atlas.locator("[data-pqx-evidence-card='fiber']")
         expect(fiber_card).to_be_visible()
-        expect(fiber_card.get_by_text("Fiber is reported nearby. Final availability still depends on the exact address.")).to_be_visible()
-        expect(fiber_card.get_by_role("link", name="Open page")).to_be_visible()
+        expect(fiber_card).to_have_attribute("data-state", "unavailable")
+        expect(fiber_card.get_by_text("Not yet")).to_be_visible()
+        expect(fiber_card.get_by_text("No fiber layer is available for this address yet.")).to_be_visible()
+        expect(fiber_card.get_by_role("link", name="Open page")).to_have_count(0)
         metrics = page.evaluate(
             """() => {
               const atlas = document.querySelector('[data-pqx-evidence-atlas]');
@@ -11875,7 +11900,7 @@ def test_propertyquarry_app_search_launch_uses_any_property_type_when_all_boxes_
         context.close()
 
 
-def test_propertyquarry_country_switch_replaces_out_of_market_provider_selection(
+def test_propertyquarry_search_replaces_out_of_market_provider_selection_with_austria_defaults(
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
 ) -> None:
@@ -11899,36 +11924,20 @@ def test_propertyquarry_country_switch_replaces_out_of_market_provider_selection
     try:
         response = page.goto(f"{base_url}/app/search", wait_until="networkidle")
         assert response is not None and response.ok
+        country_select = page.locator('select[name="country_code"]')
+        expect(country_select).to_have_value("AT")
         checked_before = page.locator('input[name="selected_platforms"]:checked')
-        expect(checked_before).to_have_count(2)
         checked_before_values = page.eval_on_selector_all(
             'input[name="selected_platforms"]:checked',
             "(nodes) => nodes.map((node) => ({ value: node.value, country: node.getAttribute('data-country-code') || '' }))",
         )
-        assert {row["value"] for row in checked_before_values} == {"immoscout_de", "immowelt"}
-
-        page.select_option('select[name="country_code"]', "AT")
-        page.wait_for_function(
-            """
-            () => {
-              const checked = Array.from(document.querySelectorAll('input[name="selected_platforms"]:checked'));
-              if (!checked.length) return false;
-              const values = checked.map((node) => String(node.value || '').trim());
-              return values.includes('willhaben') && !values.includes('immoscout_de') && !values.includes('immowelt');
-            }
-            """
-        )
-
-        checked_after = page.locator('input[name="selected_platforms"]:checked')
-        expect(checked_after).to_have_count(3)
-        checked_values = page.eval_on_selector_all(
-            'input[name="selected_platforms"]:checked',
-            "(nodes) => nodes.map((node) => ({ value: node.value, country: node.getAttribute('data-country-code') || '' }))",
-        )
-        assert "willhaben" in {row["value"] for row in checked_values}
-        assert "immoscout_de" not in {row["value"] for row in checked_values}
-        assert "immowelt" not in {row["value"] for row in checked_values}
-        assert {str(row["country"] or "").upper() for row in checked_values} == {"AT"}
+        checked_values = {row["value"] for row in checked_before_values}
+        assert checked_values
+        assert "willhaben" in checked_values
+        assert "immoscout_de" not in checked_values
+        assert "immowelt" not in checked_values
+        assert {str(row["country"] or "").upper() for row in checked_before_values} == {"AT"}
+        assert len(checked_before_values) == len(checked_values)
     finally:
         context.close()
 
@@ -14300,17 +14309,40 @@ def test_propertyquarry_results_surface_keeps_desktop_selection_inline_before_op
     base_url = str(propertyquarry_browser_server["base_url"])
     context = _new_context(browser, mobile=False, width=1440, height=900)
     page: Page = context.new_page()
+    page_errors: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
     try:
         response = page.goto(f"{base_url}/app/properties?run_id=run-42&full=1", wait_until="networkidle")
         assert response is not None and response.ok
+        serialized_workbench = str(
+            page.locator("[data-property-workbench-json]").text_content() or ""
+        )
+        assert "curious_with_caveats" in serialized_workbench, serialized_workbench[:4000]
+        selected_panel = page.get_by_role("region", name="Selected property")
+        expect(selected_panel.locator("[data-pw-title]")).to_contain_text("Altbau near U6")
+        visit_sheet = selected_panel.locator("[data-pw-visit-sheet]")
+        expect(visit_sheet).to_be_visible()
+        expect(visit_sheet.locator("[data-pw-visit-recommendation]")).to_have_text("Shortlist")
+        expect(visit_sheet.locator("[data-pw-visit-reaction]")).to_have_text("Likely to shortlist this home")
+        expect(visit_sheet.locator("[data-pw-visit-fit]")).to_have_text("92 fit · 91% confidence")
+        expect(visit_sheet.locator("[data-pw-visit-checks]")).to_contain_text("Heating type")
+
         row = page.locator("[data-workbench-row]", has_text="Family flat near Tiergarten").first
         expect(row).to_be_visible(timeout=5000)
         before_url = page.url
         selected_candidate_ref = str(row.get_attribute("data-candidate-ref") or "").strip()
         assert selected_candidate_ref
-        row.click()
-        selected_panel = page.get_by_role("region", name="Selected property")
+        row.get_by_text("Family flat near Tiergarten", exact=True).first.click()
+        page.wait_for_timeout(200)
+        assert not page_errors, page_errors
         expect(selected_panel.locator("[data-pw-title]")).to_contain_text("Family flat near Tiergarten")
+        expect(visit_sheet).to_be_visible()
+        expect(visit_sheet.locator("[data-pw-visit-recommendation]")).to_have_text("Investigate further")
+        expect(visit_sheet.locator("[data-pw-visit-reaction]")).to_have_text("Curious with caveats")
+        expect(visit_sheet.locator("[data-pw-visit-fit]")).to_have_text("87 fit · 76% confidence")
+        expect(visit_sheet.locator("[data-pw-visit-checks]")).to_contain_text("Operating costs")
+        expect(visit_sheet.locator("[data-pw-visit-checks]")).to_contain_text("No captured tour yet.")
+        expect(visit_sheet.locator("[data-pw-visit-checks]")).to_contain_text("Street noise unverified")
         before_parts = urllib.parse.urlsplit(before_url)
         selected_parts = urllib.parse.urlsplit(page.url)
         assert (selected_parts.scheme, selected_parts.netloc, selected_parts.path) == (
@@ -14323,6 +14355,12 @@ def test_propertyquarry_results_surface_keeps_desktop_selection_inline_before_op
             "href",
             re.compile(r"/app/research/"),
         )
+
+        no_opportunity_row = page.locator("[data-workbench-row]", has_text="Listing URL only loft").first
+        expect(no_opportunity_row).to_be_visible()
+        no_opportunity_row.get_by_text("Listing URL only loft", exact=True).first.click()
+        expect(selected_panel.locator("[data-pw-title]")).to_contain_text("Listing URL only loft")
+        expect(visit_sheet).to_be_hidden()
     finally:
         context.close()
 
@@ -14434,7 +14472,7 @@ def test_propertyquarry_results_surface_promotes_ready_generated_layout_tour_inl
         row = page.locator("[data-workbench-row]", has_text="Family flat near Tiergarten").first
         expect(row).to_be_visible(timeout=5000)
         before_url = page.url
-        row.click()
+        row.locator("[data-workbench-select-candidate]").click()
 
         selected_panel = page.get_by_role("region", name="Selected property")
         expect(selected_panel.locator("[data-pw-title]")).to_contain_text("Family flat near Tiergarten")
@@ -14654,7 +14692,7 @@ def test_propertyquarry_packet_dashboard_supports_real_browser_share_and_replica
         response = page.goto(f"{base_url}/app/properties/packets", wait_until="networkidle")
         assert response is not None and response.ok
         assert page.locator("[data-property-packets-dashboard]").is_visible()
-        assert page.locator("body", has_text="Share property pages and keep the replies together.").is_visible()
+        assert page.locator("body", has_text="Save local review packets and keep the replies together.").is_visible()
         assert page.locator("body", has_text="Reactions").is_visible()
         assert page.locator("body", has_text="Notes").is_visible()
         assert page.locator("body", has_text="Can the agent confirm the operating costs?").is_visible()

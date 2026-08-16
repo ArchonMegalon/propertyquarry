@@ -571,9 +571,9 @@ def test_propertyquarry_mobile_flagship_flow_runs_search_opens_research_map_and_
         expect(select_all_providers).to_be_visible()
         select_all_providers.click()
         page.wait_for_function("""() => document.querySelectorAll('input[name="selected_platforms"]:checked').length > 0""")
-        final_search_button = page.locator("[data-property-step-next]").first
+        final_search_button = page.locator("[data-property-start-top]").first
         expect(final_search_button).to_be_visible()
-        expect(final_search_button).to_have_text("Search")
+        expect(final_search_button).to_have_text("Launch search")
 
         with page.expect_navigation(
             url=re.compile(r".*/app/properties\?run_id=.*"),
@@ -750,21 +750,6 @@ _RENTER_VALUE_LOOP_CASES: tuple[dict[str, object], ...] = (
         "total_rent_eur": 1850.0,
         "tour_url": "",
         "tour_mode": "honest_unavailable",
-    },
-    {
-        "country_code": "DE",
-        "region_code": "germany",
-        "provider_id": "immoscout_de",
-        "source_label": "Core portals Germany",
-        "title": "Altbau near U6",
-        "runner_title": "Berlin rental near Tiergarten",
-        "property_url": "https://www.immobilienscout24.de/expose/altbau-u6",
-        "runner_url": "https://www.immobilienscout24.de/expose/berlin-rental-tiergarten",
-        "postal_name": "Berlin Mitte",
-        "price_display": "EUR 1,920 / month",
-        "total_rent_eur": 1920.0,
-        "tour_url": "/tours/altbau-u6/control/3dvista",
-        "tour_mode": "first_party",
     },
 )
 

@@ -58,7 +58,7 @@
           const parsed = JSON.parse(rawList);
           if (Array.isArray(parsed)) rawFallbacks.push(...parsed.slice(0, 4));
         } catch (_error) {
-          // A malformed optional fallback list must not break the result card.
+      // Malformed alternate media must not break the result card.
         }
       }
       rawFallbacks.push(
@@ -213,6 +213,18 @@
           'Sites': 'Portale',
           'Providers': 'Portale',
           'Saved pages': 'Gespeicherte Seiten',
+          'Saved packets': 'Gespeicherte Pakete',
+          'Save review packet': 'Prüfpaket speichern',
+          'Save shortlist packet': 'Auswahllisten-Paket speichern',
+          'Before you visit': 'Vor der Besichtigung',
+          'Recommendation': 'Empfehlung',
+          'Predicted reaction': 'Vorhergesagte Reaktion',
+          'Not scored yet.': 'Noch nicht bewertet.',
+          'Still unknown': 'Noch unbekannt',
+          'Trade-off': 'Abwägung',
+          'Blocker': 'Ausschluss',
+          'Ask the agent': 'Den Berater fragen',
+          'Consider': 'Prüfen',
           'Edit search': 'Suche bearbeiten',
           'It is meaningfully cheaper.': 'Deutlich günstiger.',
           'Tour not available yet.': '3D-Tour noch nicht verfügbar.',
@@ -317,6 +329,18 @@
                 'Sites': 'Portales',
                 'Providers': 'Portales',
                 'Saved pages': 'Páginas guardadas',
+                'Saved packets': 'Paquetes guardados',
+                'Save review packet': 'Guardar paquete de revisión',
+                'Save shortlist packet': 'Guardar paquete de preselección',
+                'Before you visit': 'Antes de visitar',
+                'Recommendation': 'Recomendación',
+                'Predicted reaction': 'Reacción prevista',
+                'Not scored yet.': 'Aún sin puntuación.',
+                'Still unknown': 'Aún desconocido',
+                'Trade-off': 'Compensación',
+                'Blocker': 'Bloqueo',
+                'Ask the agent': 'Preguntar al asesor',
+                'Consider': 'Considerar',
                 'Edit search': 'Editar búsqueda',
                 'It is meaningfully cheaper.': 'Es considerablemente más económica.',
                 'Tour not available yet.': 'El recorrido 3D aún no está disponible.',
@@ -8378,26 +8402,6 @@
     filteredDialog?.addEventListener('click', (event) => {
       if (event.target === filteredDialog) closeFilteredDialog();
     });
-    const evidenceFactsForCandidate = (candidate) => {
-      const facts = candidate?.property_facts && typeof candidate.property_facts === 'object' ? candidate.property_facts : {};
-      const snapshot = facts?.listing_research_snapshot && typeof facts.listing_research_snapshot === 'object'
-        ? facts.listing_research_snapshot
-        : {};
-      return {
-        ...facts,
-        ...snapshot,
-      };
-    };
-    const officialRiskSourcesForCandidate = (candidate, riskKeys = []) => {
-      const facts = evidenceFactsForCandidate(candidate);
-      const evidence = facts?.official_risk_evidence && typeof facts.official_risk_evidence === 'object'
-        ? facts.official_risk_evidence
-        : {};
-      const keys = new Set(riskKeys.map((key) => String(key || '').trim().toLowerCase()).filter(Boolean));
-      return (Array.isArray(evidence.sources) ? evidence.sources : [])
-        .filter((row) => row && typeof row === 'object')
-        .filter((row) => !keys.size || keys.has(String(row.risk_key || row.key || '').trim().toLowerCase()));
-    };
     const firstEvidenceUrl = (...rows) => {
       for (const row of rows.flat()) {
         if (!row || typeof row !== 'object') continue;
@@ -8422,35 +8426,36 @@
       }
       return '';
     };
-    const mediaRowsForCandidate = (candidate) => {
-      const facts = evidenceFactsForCandidate(candidate);
-      const media = facts.media_attention || facts.newspaper_mentions || facts.news_mentions || facts.local_news_mentions || facts.media_mentions || {};
-      if (Array.isArray(media)) return media.filter((row) => row && typeof row === 'object');
-      if (media && typeof media === 'object') {
-        for (const key of ['mentions', 'articles', 'items', 'rows']) {
-          if (Array.isArray(media[key])) return media[key].filter((row) => row && typeof row === 'object');
-        }
-      }
-      return [];
-    };
     const evidenceLayerCards = (candidate) => {
-      const facts = evidenceFactsForCandidate(candidate);
       const visualRows = [
         candidate?.tour?.url ? { source_label: visualProviderLabel(candidate?.tour?.provider_label, '3D tour'), url: candidate.tour.url, freshness_label: 'ready' } : null,
         candidate?.flythrough?.url ? { source_label: visualProviderLabel(candidate?.flythrough?.provider_label, 'Walkthrough'), url: candidate.flythrough.url, freshness_label: 'ready' } : null,
       ].filter(Boolean);
-      const environmentRows = officialRiskSourcesForCandidate(candidate, ['air_quality_risk', 'noise_risk', 'heat_risk', 'heat_resilience', 'cooling_corridor', 'flood_risk']);
-      const mobilityValues = [
-        facts.nearest_subway_m ? `Subway ${Math.round(Number(facts.nearest_subway_m))} m` : '',
-        facts.nearest_tram_bus_m ? `Transit ${Math.round(Number(facts.nearest_tram_bus_m))} m` : '',
-        facts.traffic_density_label || facts.noise_level_label || '',
-      ].filter(Boolean);
-      const schoolRows = officialRiskSourcesForCandidate(candidate, ['school_evidence', 'school_context']);
-      const safetyRows = officialRiskSourcesForCandidate(candidate, ['crime_risk', 'safety_context']);
-      const mediaRows = mediaRowsForCandidate(candidate);
-      const fiberRows = officialRiskSourcesForCandidate(candidate, ['broadband_availability', 'fiber_coverage']);
-      const sourceChip = (rows, fallback = '') => firstEvidenceLabel(rows) || fallback;
-      const freshness = (rows) => firstEvidenceFreshness(rows) || '';
+      const overlayByKey = Object.fromEntries(
+        (Array.isArray(candidate?.evidence_overlays) ? candidate.evidence_overlays : [])
+          .filter((row) => row && typeof row === 'object' && String(row.key || '').trim())
+          .map((row) => [String(row.key || '').trim(), row])
+      );
+      const overlayCard = (key, { label, readyTitle, emptyTitle, readySummary, emptySummary }) => {
+        const overlay = overlayByKey[key] || {};
+        const state = ['verified', 'stale'].includes(String(overlay.state || '').trim().toLowerCase())
+          ? String(overlay.state || '').trim().toLowerCase()
+          : 'unavailable';
+        const ready = state !== 'unavailable';
+        const url = ready ? String(overlay.url || '').trim() : '';
+        return {
+          key,
+          label,
+          state,
+          title: ready ? readyTitle : emptyTitle,
+          summary: ready
+            ? (String(overlay.summary || '').trim() || readySummary)
+            : emptySummary,
+          rows: url ? [{ url, source_label: String(overlay.source || '').trim() }] : [],
+          source: ready ? String(overlay.source || '').trim() : '',
+          freshness: '',
+        };
+      };
       return [
         {
           key: 'visual',
@@ -8461,86 +8466,58 @@
             ? 'Open the tour or walkthrough for a closer look.'
             : 'No tour is attached to this property yet.',
           rows: visualRows,
-          source: sourceChip(visualRows),
-          freshness: freshness(visualRows),
+          source: firstEvidenceLabel(visualRows),
+          freshness: firstEvidenceFreshness(visualRows) || '',
         },
-        {
-          key: 'environment',
+        overlayCard('environment', {
           label: 'Environment',
-          state: environmentRows.length ? 'verified' : 'unavailable',
-          title: environmentRows.length ? 'Local climate' : 'No climate layer yet',
-          summary: environmentRows.length
-            ? 'Heat, air, flood, and summer-cooling context around this address.'
-            : 'No local climate layer is available for this address yet.',
-          rows: environmentRows,
-          source: sourceChip(environmentRows),
-          freshness: freshness(environmentRows),
-        },
-        {
-          key: 'mobility',
+          readyTitle: 'Local climate',
+          emptyTitle: 'No climate layer yet',
+          readySummary: 'Heat, air, flood, and summer-cooling context around this address.',
+          emptySummary: 'No local climate layer is available for this address yet.',
+        }),
+        overlayCard('mobility', {
           label: 'Traffic',
-          state: mobilityValues.length ? 'verified' : 'unavailable',
-          title: mobilityValues.length ? 'Traffic and transit' : 'No traffic layer yet',
-          summary: mobilityValues.length
-            ? mobilityValues.join(' · ')
-            : 'No traffic or noise layer is available for this address yet.',
-          rows: [],
-          source: '',
-          freshness: '',
-        },
-        {
-          key: 'schools',
+          readyTitle: 'Traffic and transit',
+          emptyTitle: 'No traffic layer yet',
+          readySummary: 'Traffic and transit context for this address.',
+          emptySummary: 'No traffic or noise layer is available for this address yet.',
+        }),
+        overlayCard('schools', {
           label: 'Schools',
-          state: schoolRows.length || facts.school_atlas_progression_summary ? 'verified' : 'unavailable',
-          title: schoolRows.length || facts.school_atlas_progression_summary ? 'Schools nearby' : 'No school layer yet',
-          summary: String(facts.school_atlas_progression_summary || facts.school_context_summary || '').trim()
-            || 'No school layer is available for this area yet.',
-          rows: schoolRows,
-          source: sourceChip(schoolRows),
-          freshness: freshness(schoolRows),
-        },
-        {
-          key: 'safety',
+          readyTitle: 'Schools nearby',
+          emptyTitle: 'No school layer yet',
+          readySummary: 'School context for this area.',
+          emptySummary: 'No school layer is available for this area yet.',
+        }),
+        overlayCard('safety', {
           label: 'Safety',
-          state: safetyRows.length ? 'verified' : 'unavailable',
-          title: safetyRows.length ? 'Area safety' : 'No safety layer yet',
-          summary: safetyRows.length
-            ? 'Nearby street and area context for this address.'
-            : 'No safety layer is available for this area yet.',
-          rows: safetyRows,
-          source: sourceChip(safetyRows),
-          freshness: freshness(safetyRows),
-        },
-        {
-          key: 'media',
+          readyTitle: 'Area safety',
+          emptyTitle: 'No safety layer yet',
+          readySummary: 'Nearby street and area context for this address.',
+          emptySummary: 'No safety layer is available for this area yet.',
+        }),
+        overlayCard('media', {
           label: 'Media',
-          state: mediaRows.length ? 'verified' : 'unavailable',
-          title: mediaRows.length ? 'Local media' : 'No media layer yet',
-          summary: mediaRows.length
-            ? `${mediaRows.length} local article mention${mediaRows.length === 1 ? '' : 's'}.`
-            : 'No local media layer is available for this area yet.',
-          rows: mediaRows,
-          source: sourceChip(mediaRows),
-          freshness: freshness(mediaRows),
-        },
-        {
-          key: 'fiber',
+          readyTitle: 'Local media',
+          emptyTitle: 'No media layer yet',
+          readySummary: 'Local media context for this area.',
+          emptySummary: 'No local media layer is available for this area yet.',
+        }),
+        overlayCard('fiber', {
           label: 'Fiber',
-          state: fiberRows.length ? 'verified' : 'unavailable',
-          title: fiberRows.length ? 'Fiber coverage' : 'No fiber layer yet',
-          summary: fiberRows.length
-            ? 'Fiber is reported nearby. Final availability still depends on the exact address.'
-            : 'No fiber layer is available for this address yet.',
-          rows: fiberRows,
-          source: sourceChip(fiberRows),
-          freshness: freshness(fiberRows),
-        },
+          readyTitle: 'Fiber coverage',
+          emptyTitle: 'No fiber layer yet',
+          readySummary: 'Fiber coverage for this address.',
+          emptySummary: 'No fiber layer is available for this address yet.',
+        }),
       ];
     };
     const renderEvidenceCard = (card) => {
       const evidenceStateLabel = (state) => {
         const normalized = String(state || '').trim().toLowerCase();
         if (normalized === 'verified') return 'Ready';
+        if (normalized === 'stale') return 'Stale';
         if (normalized === 'unavailable') return 'Not yet';
         return normalized ? normalized.replaceAll('_', ' ') : 'Not yet';
       };
@@ -9092,6 +9069,30 @@
     });
     root.querySelectorAll('[data-fliplink-shortlist-share]').forEach((button) => {
       bindShortlistShareButton(button);
+    });
+    root.querySelectorAll('[data-pw-ask-agent]').forEach((button) => {
+      if (!clippyQuestionNode) {
+        button.hidden = true;
+        return;
+      }
+      button.addEventListener('click', () => {
+        const selectedRef = String(
+          root.querySelector('[data-workbench-row][aria-current="true"]')?.getAttribute('data-candidate-ref') || ''
+        ).trim();
+        const candidate = resolveCandidate(selectedRef);
+        const opportunity = candidate?.opportunity && typeof candidate.opportunity === 'object'
+          ? candidate.opportunity
+          : {};
+        const firstUnknown = Array.isArray(opportunity.unknowns)
+          ? String(opportunity.unknowns[0] || '').trim().replaceAll('_', ' ')
+          : '';
+        if (clippyQuestionNode && firstUnknown && !String(clippyQuestionNode.value || '').trim()) {
+          const prompt = `Can you confirm the ${firstUnknown}?`;
+          clippyQuestionNode.value = typeof localizeLiveCopy === 'function' ? localizeLiveCopy(prompt) : prompt;
+        }
+        if (clippyPanel?.hidden) clippyToggle?.click();
+        window.setTimeout(() => clippyQuestionNode?.focus(), 0);
+      });
     });
     root.querySelectorAll('[data-pw-decision-state]').forEach((button) => {
       button.addEventListener('click', async () => {
