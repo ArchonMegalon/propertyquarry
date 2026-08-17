@@ -16,6 +16,7 @@ test('the shell is local, accessible, and motion-safe', () => {
   assert.match(html, /aria-live="polite"/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
   assert.match(script, /propertyquarry:runtime-error/);
+  assert.match(script, /too old/);
   assert.doesNotMatch(`${html}\n${css}\n${script}`, /https?:\/\//);
 });
 
@@ -56,10 +57,13 @@ test('native runtime and signing contracts fail closed', () => {
 
   assert.match(appGradle, /verifyPropertyQuarryReleaseSigning/);
   assert.match(appGradle, /PROPERTYQUARRY_ANDROID_KEYSTORE_PATH/);
-  assert.match(appGradle, /versionCode 6/);
-  assert.match(appGradle, /versionName "1\.1\.4"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_code="6"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.4"/);
+  assert.match(appGradle, /com\.google\.android\.play:app-update:/);
+  assert.doesNotMatch(read('android', 'app', 'src', 'main', 'AndroidManifest.xml'), /REQUEST_INSTALL_PACKAGES/);
+  assert.match(mainActivity, /PropertyQuarryAppUpdate/);
+  assert.match(appGradle, /versionCode 7/);
+  assert.match(appGradle, /versionName "1\.1\.5"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_code="7"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.5"/);
   assert.match(lintConfig, /src\/main\/res\/xml\/config\.xml/);
   assert.match(previewBuilder, /propertyquarry_release_bundle_backup="\$\(mktemp -d\)"/);
   assert.match(previewBuilder, /trap propertyquarry_restore_release_bundle EXIT/);

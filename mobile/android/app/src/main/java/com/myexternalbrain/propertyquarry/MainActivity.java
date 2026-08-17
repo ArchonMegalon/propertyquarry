@@ -13,6 +13,9 @@ import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.JSExport;
 import com.getcapacitor.PluginHandle;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.IntentSenderRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
 
@@ -41,11 +44,19 @@ public final class MainActivity extends BridgeActivity {
     private int nativeSharePayloadGeneration = 0;
     private Intent pendingIntent;
     private PropertyQuarryRuntimeContract.Verified verifiedRuntime;
+    private final PropertyQuarryAppUpdate appUpdate = new PropertyQuarryAppUpdate();
+    private ActivityResultLauncher<IntentSenderRequest> appUpdateLauncher;
+    private boolean requiredUpdatePending;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        appUpdateLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartIntentSenderForResult(),
+            result -> appUpdate.onFlowResult(this, result.getResultCode(), requiredUpdatePending)
+        );
         registerPlugin(PropertyQuarryNativePlugin.class);
         super.onCreate(savedInstanceState);
+        appUpdate.attach(this, appUpdateLauncher);
         hardenWebView();
         pendingIntent = getIntent();
         verifyRuntimeAndContinue();
@@ -63,6 +74,7 @@ public final class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         activityResumed = true;
+        appUpdate.onResume(this);
         continueWhenReady();
     }
 
@@ -78,6 +90,7 @@ public final class MainActivity extends BridgeActivity {
         nativeSharePayloadGeneration++;
         nativeAuthPayloadDeliveryScheduled = false;
         nativeSharePayloadDeliveryScheduled = false;
+        appUpdate.detach();
         runtimeExecutor.shutdownNow();
         super.onDestroy();
     }
@@ -129,6 +142,8 @@ public final class MainActivity extends BridgeActivity {
                 runOnUiThread(() -> {
                     verifiedRuntime = verified;
                     runtimeReady = true;
+                    requiredUpdatePending = false;
+                    appUpdate.onRuntimeReady(this);
                     continueWhenReady();
                 });
             } catch (Exception exception) {
@@ -403,6 +418,25 @@ public final class MainActivity extends BridgeActivity {
 
     private void showRuntimeFailure(String reason) {
         String safeReason = reason == null || reason.isBlank() ? "runtime_contract_unavailable" : reason;
+        if (PropertyQuarryAppUpdate.isRequiredUpdateReason(safeReason)) {
+            requiredUpdatePending = true;
+            bridge.getWebView().evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('propertyquarry:runtime-error',{detail:"
+                    + JSONObject.quote(
+                        "This app version is too old. Update PropertyQuarry from Google Play."
+                    ) + "}));",
+                null
+            );
+            new AlertDialog.Builder(this)
+                .setTitle("Update required")
+                .setMessage("This PropertyQuarry app is too old for the current service. Update the official build from Google Play.")
+                .setNegativeButton("Close", (dialog, which) -> finish())
+                .setPositiveButton("Update", (dialog, which) -> appUpdate.onRequiredUpdate(this))
+                .setCancelable(false)
+                .show();
+            return;
+        }
+        requiredUpdatePending = false;
         bridge.getWebView().evaluateJavascript(
             "window.dispatchEvent(new CustomEvent('propertyquarry:runtime-error',{detail:"
                 + JSONObject.quote("Secure connection unavailable (" + safeReason + ")") + "}));",
