@@ -15,7 +15,14 @@ const UPLOAD_KEY_ACTIVATION_CONTRACT = "propertyquarry.google_play.upload_key_ac
 const PLAY_DEVELOPER_ACCOUNT_ID = "9007890349240845326";
 const PLAY_APP_ID = "4976153363318887490";
 const INTERNAL_TRACK_ID = "4701487190338825843";
+const CLOSED_TRACK_ID = "4701087863545965393";
+const CLOSED_TRACK_NAME = "Closed testing - Alpha";
+const CLOSED_TESTER_GROUP = "propertyquarry-austria-testers@googlegroups.com";
 const ALLOWED_TEST_TRACKS = new Set(["internal", "closed"]);
+const ALLOWED_SUBMISSION_STATUSES = new Set([
+  "changes_in_review",
+  "available_to_selected_testers",
+]);
 
 function check(id, state, detail) {
   return { id, state, detail };
@@ -27,6 +34,23 @@ function normalizeFingerprint(value) {
 
 function validFingerprint(value) {
   return /^[0-9a-f]{64}$/.test(normalizeFingerprint(value));
+}
+
+function exactPlayScope(evidence) {
+  if (evidence.release_track === "internal") {
+    return evidence.release_track_id === INTERNAL_TRACK_ID;
+  }
+  if (evidence.release_track === "closed") {
+    return evidence.release_track_id === CLOSED_TRACK_ID &&
+      evidence.release_track_name === CLOSED_TRACK_NAME &&
+      JSON.stringify(evidence.target_country_regions) === JSON.stringify(["Austria"]) &&
+      evidence.tester_group === CLOSED_TESTER_GROUP &&
+      evidence.required_opted_in_testers === 12 &&
+      Number.isInteger(evidence.opted_in_testers) &&
+      evidence.opted_in_testers >= 0 &&
+      evidence.rollout_percentage === 100;
+  }
+  return false;
 }
 
 async function readJson(pathname) {
@@ -154,12 +178,21 @@ export async function auditAndroidRelease({
     const exactPlayContract =
       playEvidence.contract_name === PLAY_CONTRACT &&
       playEvidence.application_id === APP_ID &&
+      playEvidence.developer_account_id === PLAY_DEVELOPER_ACCOUNT_ID &&
+      playEvidence.play_app_id === PLAY_APP_ID &&
       playEvidence.app_created === true &&
       playEvidence.play_app_signing_enabled === true &&
       validFingerprint(playFingerprint) &&
       ALLOWED_TEST_TRACKS.has(playEvidence.release_track) &&
+      exactPlayScope(playEvidence) &&
+      playEvidence.release_name === `${localEvidence.version_code} (${localEvidence.version_name})` &&
+      playEvidence.version_code === localEvidence.version_code &&
+      playEvidence.version_name === localEvidence.version_name &&
       playEvidence.upload_status === "completed" &&
+      ALLOWED_SUBMISSION_STATUSES.has(playEvidence.submission_status) &&
       playEvidence.artifact_sha256 === localEvidence.artifact_sha256 &&
+      playEvidence.managed_publishing === false &&
+      playEvidence.production_status === "inactive" &&
       playEvidence.production_rollout_started === false;
     if (exactPlayContract) {
       checks.push(check(
