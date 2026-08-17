@@ -333,6 +333,22 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
         / "propertyquarry"
         / "PropertyQuarryNativePlugin.java"
     ).read_text(encoding="utf-8")
+    app_update = (
+        ROOT
+        / "mobile"
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "java"
+        / "com"
+        / "myexternalbrain"
+        / "propertyquarry"
+        / "PropertyQuarryAppUpdate.java"
+    ).read_text(encoding="utf-8")
+    app_gradle = (ROOT / "mobile" / "android" / "app" / "build.gradle").read_text(
+        encoding="utf-8"
+    )
     all_mobile_text = "\n".join((manifest, runtime, json.dumps(package), json.dumps(capacitor)))
 
     assert capacitor["appId"] == "com.myexternalbrain.propertyquarry"
@@ -341,12 +357,15 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
     assert capacitor["android"]["allowMixedContent"] is False
     assert 'android:allowBackup="false"' in manifest
     assert 'android:usesCleartextTraffic="false"' in manifest
+    assert "REQUEST_INSTALL_PACKAGES" not in manifest
     assert 'android:name="android.intent.action.SEND"' in manifest
     assert 'android:autoVerify="true"' in manifest
     assert 'android:scheme="propertyquarry"' in manifest
     assert 'requireExact(payload, "walkthrough_default", "camera")' in runtime
     assert 'List.of("3dvista", "matterport")' not in runtime
     assert "activityResumed = true;" in main_activity
+    assert "appUpdate.onRuntimeReady(this)" in main_activity
+    assert "appUpdate.onRequiredUpdate(this)" in main_activity
     assert "pendingIntent = intent;" in main_activity
     assert "private void continueWhenReady()" in main_activity
     assert "if (!runtimeReady || !activityResumed) return;" in main_activity
@@ -378,3 +397,7 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
     assert 'call.reject("native_auth_cleanup_failed")' in native_plugin
     assert 'call.reject("native_share_cleanup_failed")' in native_plugin
     assert "memorial" not in all_mobile_text.lower()
+    assert "com.google.android.play:app-update:" in app_gradle
+    assert "AppUpdateManagerFactory" in app_update
+    assert "REQUEST_INSTALL_PACKAGES" not in app_update
+    assert "PackageInstaller" not in app_update
