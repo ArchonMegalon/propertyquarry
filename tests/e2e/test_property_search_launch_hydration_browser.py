@@ -35,7 +35,7 @@ def test_wizard_keeps_next_copy_and_replaces_it_with_launch_in_the_same_slot() -
 
     step_actions = template.index('<div class="pqx-step-head-actions">')
     launch_markup = (
-        '<button class="pqx-button primary" type="button" '
+        '<button class="pqx-button primary pqx-provider-launch" type="button" '
         "data-property-start-top"
     )
     launch_action = template.index(launch_markup)
@@ -47,7 +47,9 @@ def test_wizard_keeps_next_copy_and_replaces_it_with_launch_in_the_same_slot() -
     assert "localizedWorkbenchCopy('step-review'" not in controller
     assert "next.hidden = isFinalStep;" in controller
     assert "next.textContent = localizedWorkbenchCopy('step-next', 'Next');" in controller
-    assert "launch.hidden = !isFinalStep;" in controller
+    assert "const isProviderStep = stepKey === 'providers';" in controller
+    assert "const launchVisible = isFinalStep || isProviderStep;" in controller
+    assert "launch.hidden = !launchVisible;" in controller
 
 
 def _workbench_fixture_script() -> str:

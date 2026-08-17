@@ -2112,7 +2112,7 @@ def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_br
 ) -> None:
     """The final-step Launch search CTA must survive hydration and navigate."""
     base_url = str(propertyquarry_browser_server["base_url"])
-    context = _new_context(browser, mobile=False, width=1440, height=900)
+    context = _new_context(browser, mobile=True, width=390, height=844)
     page = context.new_page()
     page_errors: list[str] = []
     launch_requests: list[dict[str, object]] = []
@@ -2146,6 +2146,13 @@ def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_br
         expect(launch).to_be_visible()
         expect(launch).to_be_enabled()
         expect(next_button).to_be_hidden()
+        launch_box = launch.bounding_box()
+        assert launch_box is not None
+        assert launch_box["height"] >= 52
+        assert launch_box["x"] >= 0
+        assert launch_box["x"] + launch_box["width"] <= 390
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        expect(launch).to_be_in_viewport()
         launch.click()
         page.wait_for_url(re.compile(r"/app/properties\?run_id=[^&]+$"), timeout=10000)
         assert launch_requests and all(row["method"] == "POST" for row in launch_requests)

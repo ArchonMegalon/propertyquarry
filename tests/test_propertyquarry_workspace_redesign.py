@@ -338,7 +338,11 @@ def test_property_mobile_search_header_and_district_picker_stay_compact() -> Non
     assert "progress.hidden = isMobileSearch;" in workbench_script
     assert "const saveHidden = isMobileSearch;" in workbench_script
     assert "next.dataset.pqxStepMode = 'advance';" in workbench_script
-    assert "launch.hidden = !isFinalStep;" in workbench_script
+    assert "const isProviderStep = stepKey === 'providers';" in workbench_script
+    assert "const launchVisible = isFinalStep || isProviderStep;" in workbench_script
+    assert "launch.hidden = !launchVisible;" in workbench_script
+    assert 'class="pqx-button primary pqx-provider-launch"' in workbench
+    assert 'min-height: 52px !important;' in workbench
     assert "launch.dataset.pqxStepMode = 'launch';" in workbench_script
     assert "localizedWorkbenchCopy('step-next', 'Next')" in workbench_script
 
