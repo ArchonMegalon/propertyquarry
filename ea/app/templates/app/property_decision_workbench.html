@@ -11258,6 +11258,39 @@
         min-height: 40px !important;
       }
     }
+    .pqx-shell[data-pqx-surface="search"]:has(.pqx-form[data-property-active-step="providers"])
+      .pqx-brief-drawer-panel > .pqx-section-head {
+      position: sticky;
+      top: 0;
+      z-index: 28;
+      padding-block: 8px;
+      background: color-mix(in srgb, var(--pq-paper) 96%, transparent);
+      backdrop-filter: blur(16px);
+    }
+    .pqx-shell[data-pqx-surface="search"]:has(.pqx-form[data-property-active-step="providers"])
+      [data-property-start-top].pqx-provider-launch {
+      min-width: 164px;
+      min-height: 50px;
+      padding-inline: 22px;
+      flex: 0 0 auto;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    @media (max-width: 760px) {
+      .pqx-shell[data-pqx-surface="search"]:has(.pqx-form[data-property-active-step="providers"])
+        .pqx-brief-drawer-panel > .pqx-section-head {
+        padding-block: 6px 8px;
+      }
+      .pqx-shell[data-pqx-surface="search"]:has(.pqx-form[data-property-active-step="providers"])
+        .pqx-step-head-actions [data-property-start-top].pqx-provider-launch {
+        min-width: min(190px, calc(100vw - 132px)) !important;
+        min-height: 52px !important;
+        padding-inline: 18px;
+        flex: 1 1 auto !important;
+        font-size: 14px;
+        white-space: nowrap;
+      }
+    }
   </style>
   PQ_WORKBENCH_CSS_END #}
   <link rel="stylesheet" href="{{ property_workbench_css_asset_url(static_surface=static_surface) }}">
@@ -12691,7 +12724,7 @@
               <button class="pqx-button" type="button" data-property-step-next>Next</button>
               {% if show_top_search_action %}
               <span class="pqx-top-launch-status" data-property-top-launch-status role="status" aria-live="assertive" aria-atomic="true" hidden></span>
-              <button class="pqx-button primary" type="button" data-property-start-top aria-label="{{ console_form.get('submit_label') or 'Launch search' }}" hidden>
+              <button class="pqx-button primary pqx-provider-launch" type="button" data-property-start-top aria-label="{{ console_form.get('submit_label') or 'Launch search' }}" hidden>
                 {{ console_form.get('submit_label') or 'Launch search' }}
               </button>
               <script>

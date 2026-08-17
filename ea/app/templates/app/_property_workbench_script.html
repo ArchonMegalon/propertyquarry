@@ -5406,14 +5406,16 @@
           saveTop.setAttribute('aria-hidden', saveHidden ? 'true' : 'false');
         }
         const isFinalStep = current >= visibleSteps.length - 1;
+        const isProviderStep = stepKey === 'providers';
         if (next) {
           next.hidden = isFinalStep;
           next.dataset.pqxStepMode = 'advance';
           next.textContent = localizedWorkbenchCopy('step-next', 'Next');
         }
         if (launch) {
-          launch.hidden = !isFinalStep;
-          launch.setAttribute('aria-hidden', isFinalStep ? 'false' : 'true');
+          const launchVisible = isFinalStep || isProviderStep;
+          launch.hidden = !launchVisible;
+          launch.setAttribute('aria-hidden', launchVisible ? 'false' : 'true');
           launch.dataset.pqxStepMode = 'launch';
         }
         if (actions) actions.hidden = current !== visibleSteps.length - 1;
