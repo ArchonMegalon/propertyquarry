@@ -60,11 +60,11 @@ The marked JSON object is the single canonical release authority consumed by the
   "release_branch": "main",
   "release_public_origin": "https://propertyquarry.com",
   "release_verification_commands": "./scripts/propertyquarry_release_python.sh scripts/propertyquarry_release_make_dispatch.py release-preflight",
-  "release_commit_sha": "bf7ae9e6cc917e5f5e9f05bcc0eaf4938b7b4ade",
-  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:5025c72ea60f885123e46e27cd40e3ba3494d2cf7f969272e14ab0b776576855",
-  "release_label": "propertyquarry-source-browser-candidate-bf7ae9e6cc91",
-  "release_deployment_id": "propertyquarry-governed-deploy-bf7ae9e6cc91",
-  "release_generated_at": "2026-08-16T16:07:31Z"
+  "release_commit_sha": "be4d010829012453f49f66404662ba881fea052f",
+  "release_artifact_set": "propertyquarry-generated-release-artifacts-v1@sha256:f4f4e4fa807a6c145c18f280e1ec885ae0cc211048ab1e10b92f47ee73a7cc25",
+  "release_label": "propertyquarry-source-browser-candidate-be4d01082901",
+  "release_deployment_id": "propertyquarry-governed-deploy-be4d01082901",
+  "release_generated_at": "2026-08-17T15:47:54Z"
 }
 ```
 <!-- propertyquarry-release-manifest-json:end -->
