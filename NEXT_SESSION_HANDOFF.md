@@ -1,6 +1,59 @@
 # PropertyQuarry next-session handoff
 
-Updated: 2026-08-16
+Updated: 2026-08-17
+
+## 2026-08-17 Android 1.1.6 localized polish release (authoritative)
+
+This section supersedes older Android build, Play release, and local-readiness
+states below. It does not supersede the governed web runtime identity, which was
+not rebuilt or redeployed for this native-only release.
+
+### Source, verification, and signed artifact
+
+- Android release source was merged through PR #26 at
+  `b382202a53c0b7849054787d56a42fc4a54f0a3e`.
+- Package `com.myexternalbrain.propertyquarry`, version name `1.1.6`, version
+  code `8`, min SDK `24`, target SDK `36`.
+- Signed AAB:
+  `mobile/android/app/build/outputs/bundle/release/app-release.aab`.
+- AAB SHA-256:
+  `8e9286e8efda3502120c4ed76fdc07e2fdeaabd8bdfe5b1299c69c6e73e5498d`.
+- The containerized release ran 232 Gradle tasks and passed web contracts
+  (`11/11`), release unit tests, release lint, Bundletool 1.18.3 validation,
+  JAR signature validation, and exact upload-certificate comparison. The
+  focused PropertyQuarry Python contracts also passed (`35 passed`).
+- `npm run android:release:readiness` at `2026-08-17T13:17:21Z` was `ready`
+  with zero failed and zero blocked checks, including exact source and AAB
+  binding, Closed Alpha evidence, live runtime contract, App Links, Play
+  signer, and privacy page.
+- Native recovery, connection, sharing, required-update, and downloaded-update
+  dialogs are localized in English, German, and Spanish. Deterministic tests
+  cover required-update fallback, cancelled flows, downloaded-update prompts,
+  and duplicate-prompt suppression.
+
+### Google Play Closed Alpha
+
+- Play release ID `4`, release name `8 (1.1.6)`, was submitted at 100% to the
+  existing `Closed testing - Alpha` track (`4701087863545965393`).
+- Play status at `2026-08-17T13:17:01Z`: `changes_in_review`; quick checks were
+  running and Play had not yet made build 8 available to testers.
+- Release notes were supplied in `en-GB`, `de-DE`, and `es-ES`.
+- Austria remains the only targeted country/region. The existing
+  `propertyquarry-austria-testers@googlegroups.com` cohort is unchanged, with
+  `6/12` testers opted in at the pre-submission check.
+- Managed publishing remains off. Production remains inactive; open testing,
+  billing, account/security settings, authentication boundaries, and signing
+  identity were not changed.
+- Local Play evidence:
+  `mobile/build/propertyquarry-google-play-evidence.json`; screenshot:
+  `mobile/build/propertyquarry-play-build8-submitted.png` (both intentionally
+  ignored by Git).
+
+### Follow-up boundary
+
+Re-read Play Console before telling testers that `1.1.6` is available. Continue
+the existing Closed Alpha only. Do not start Production, alter the tester group
+or country list, enable billing, or weaken authentication/security controls.
 
 ## 2026-08-16 finish native sign-in return (source only, not deployed)
 
