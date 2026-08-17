@@ -35,8 +35,8 @@ not rebuilt or redeployed for this native-only release.
 
 - Play release ID `4`, release name `8 (1.1.6)`, was submitted at 100% to the
   existing `Closed testing - Alpha` track (`4701087863545965393`).
-- Play status at `2026-08-17T13:17:01Z`: `changes_in_review`; quick checks were
-  running and Play had not yet made build 8 available to testers.
+- Play status at `2026-08-17T13:43:40Z`: `available_to_selected_testers`.
+  Play reports build 8 released on `17 Aug 15:38` (Console-local time).
 - Release notes were supplied in `en-GB`, `de-DE`, and `es-ES`.
 - Austria remains the only targeted country/region. The existing
   `propertyquarry-austria-testers@googlegroups.com` cohort is unchanged, with
@@ -46,14 +46,33 @@ not rebuilt or redeployed for this native-only release.
   identity were not changed.
 - Local Play evidence:
   `mobile/build/propertyquarry-google-play-evidence.json`; screenshot:
-  `mobile/build/propertyquarry-play-build8-submitted.png` (both intentionally
+  `mobile/build/propertyquarry-play-build8-available.png` (both intentionally
   ignored by Git).
+
+### Post-release source-only guardrails
+
+- The release-readiness verifier now requires the Play receipt to match the
+  exact version code/name, release name, developer/app/track identity,
+  submission status, managed-publishing state, and inactive Production state.
+- Closed-test evidence additionally fails closed unless it names the existing
+  Austria-only Alpha track, the existing Google Group, the 12-tester threshold,
+  and a 100% rollout within that closed cohort.
+- Android localization contracts now require complete key parity and matching
+  format arguments across English, German, and Spanish.
+- These verifier/test/documentation changes are source-only. They do not alter
+  the already published build-8 AAB or justify a replacement binary.
+- Running readiness from the later source-only `main` correctly reports only
+  `source_commit_mismatch`: the published AAB remains immutably bound to
+  `b382202a53c0b7849054787d56a42fc4a54f0a3e`. All artifact, Play, runtime,
+  App Links, signer, and privacy checks still pass. A future AAB must bind its
+  own then-current clean source commit.
 
 ### Follow-up boundary
 
-Re-read Play Console before telling testers that `1.1.6` is available. Continue
-the existing Closed Alpha only. Do not start Production, alter the tester group
-or country list, enable billing, or weaken authentication/security controls.
+Build `1.1.6` is available to the selected testers. Continue the existing
+Closed Alpha and recruit six more opted-in testers for the `12/12` eligibility
+threshold. Do not start Production, alter the tester group or country list,
+enable billing, or weaken authentication/security controls.
 
 ## 2026-08-16 finish native sign-in return (source only, not deployed)
 

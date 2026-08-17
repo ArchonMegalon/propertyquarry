@@ -62,7 +62,14 @@ After Play Console setup, save a redacted `propertyquarry.android.play_evidence.
 npm run android:release:readiness
 ```
 
-The verifier cross-checks both receipts, the exact AAB digest and current Git commit against the live runtime contract, privacy page and Digital Asset Links. Exit `0` means release-ready, exit `2` means only external Play/App-Link proof is pending, and exit `1` means local evidence is invalid. An internal or closed test upload is sufficient for readiness; a production rollout remains a separate irreversible approval.
+The verifier cross-checks both receipts, exact version and release name, AAB digest,
+current Git commit, developer/app/track identity, submission status, managed-publishing
+state, and the live runtime contract, privacy page, and Digital Asset Links. Closed
+test evidence must remain scoped to the known Austria track, Google Group, and 100%
+closed-cohort rollout. Exit `0` means release-ready, exit `2` means only external
+Play/App-Link proof is pending, and exit `1` means local evidence is invalid. An
+internal or closed test upload is sufficient for readiness; a production rollout
+remains a separate irreversible approval.
 
 ## Push posture
 

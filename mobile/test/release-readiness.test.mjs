@@ -56,7 +56,11 @@ function liveFetch({ linksReady }) {
   };
 }
 
-async function fixture({ withPlayEvidence = false, withCooldownEvidence = false } = {}) {
+async function fixture({
+  withPlayEvidence = false,
+  withCooldownEvidence = false,
+  playEvidenceOverrides = {},
+} = {}) {
   const mobileRoot = await mkdtemp(path.join(os.tmpdir(), "propertyquarry-android-readiness-"));
   const artifactRelative = "android/app/build/outputs/bundle/release/app-release.aab";
   const artifactPath = path.join(mobileRoot, artifactRelative);
@@ -90,13 +94,24 @@ async function fixture({ withPlayEvidence = false, withCooldownEvidence = false 
     await writeFile(playEvidencePath, JSON.stringify({
       contract_name: "propertyquarry.android.play_evidence.v1",
       application_id: APP_ID,
+      developer_account_id: "9007890349240845326",
+      play_app_id: "4976153363318887490",
       app_created: true,
       play_app_signing_enabled: true,
       app_signing_certificate_sha256: FINGERPRINT,
       release_track: "internal",
+      release_track_name: "Internal testing",
+      release_track_id: "4701487190338825843",
+      release_name: "1 (1.1.0)",
+      version_code: 1,
+      version_name: "1.1.0",
       upload_status: "completed",
+      submission_status: "available_to_selected_testers",
       artifact_sha256: withCooldownEvidence ? "historical-version-one-artifact" : artifactSha256,
+      managed_publishing: false,
+      production_status: "inactive",
       production_rollout_started: false,
+      ...playEvidenceOverrides,
     }));
   }
   if (withCooldownEvidence) {
@@ -222,6 +237,49 @@ test("release readiness fails when the signed AAB no longer matches its receipt"
   });
   assert.equal(report.status, "failed");
   assert.equal(report.checks.find((row) => row.id === "aab_sha256").state, "fail");
+});
+
+test("release readiness rejects Play evidence for a different app version", async (context) => {
+  const paths = await fixture({
+    withPlayEvidence: true,
+    playEvidenceOverrides: {
+      release_name: "2 (1.1.1)",
+      version_code: 2,
+      version_name: "1.1.1",
+    },
+  });
+  context.after(() => rm(paths.mobileRoot, { recursive: true, force: true }));
+  const report = await auditAndroidRelease({
+    ...paths,
+    gitHead: GIT_HEAD,
+    fetchImpl: liveFetch({ linksReady: true }),
+  });
+  assert.equal(report.status, "failed");
+  assert.equal(report.checks.find((row) => row.id === "play_evidence_contract").state, "fail");
+});
+
+test("release readiness rejects a closed test outside the governed Austria scope", async (context) => {
+  const paths = await fixture({
+    withPlayEvidence: true,
+    playEvidenceOverrides: {
+      release_track: "closed",
+      release_track_name: "Closed testing - Alpha",
+      release_track_id: "4701087863545965393",
+      target_country_regions: ["Austria", "Germany"],
+      tester_group: "propertyquarry-austria-testers@googlegroups.com",
+      opted_in_testers: 6,
+      required_opted_in_testers: 12,
+      rollout_percentage: 100,
+    },
+  });
+  context.after(() => rm(paths.mobileRoot, { recursive: true, force: true }));
+  const report = await auditAndroidRelease({
+    ...paths,
+    gitHead: GIT_HEAD,
+    fetchImpl: liveFetch({ linksReady: true }),
+  });
+  assert.equal(report.status, "failed");
+  assert.equal(report.checks.find((row) => row.id === "play_evidence_contract").state, "fail");
 });
 
 test("release readiness never fetches a caller-supplied origin", async (context) => {

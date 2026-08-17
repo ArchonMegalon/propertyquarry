@@ -7,6 +7,17 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 
+const translatedStrings = (xml) => {
+  const entries = new Map();
+  for (const match of xml.matchAll(/<string\s+name="([^"]+)"([^>]*)>([\s\S]*?)<\/string>/g)) {
+    const [, name, attributes, value] = match;
+    if (!/translatable="false"/.test(attributes)) entries.set(name, value);
+  }
+  return entries;
+};
+
+const formatArguments = (value) => (value.match(/%\d+\$[a-z]/gi) || []).sort();
+
 test('the shell is local, accessible, and motion-safe', () => {
   const html = read('www', 'index.html');
   const css = read('www', 'shell.css');
@@ -64,12 +75,6 @@ test('native runtime and signing contracts fail closed', () => {
   assert.match(appGradle, /versionName "1\.1\.6"/);
   assert.match(releaseBuilder, /propertyquarry_expected_version_code="8"/);
   assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.6"/);
-  for (const localeDir of ['values', 'values-de', 'values-es']) {
-    const strings = read('android', 'app', 'src', 'main', 'res', localeDir, 'strings.xml');
-    assert.match(strings, /native_update_required_title/);
-    assert.match(strings, /native_update_ready_title/);
-    assert.match(strings, /native_secure_connection_title/);
-  }
   assert.doesNotMatch(mainActivity, /setTitle\("|setMessage\("|setPositiveButton\("|setNegativeButton\("/);
   assert.match(webViewClient, /R\.string\.native_secure_browser_title/);
   assert.match(lintConfig, /src\/main\/res\/xml\/config\.xml/);
@@ -102,6 +107,20 @@ test('native runtime and signing contracts fail closed', () => {
   assert.match(nativePlugin, /remove\(SHARED_IDEMPOTENCY\)[\s\S]{0,80}\.commit\(\)/);
   assert.match(nativePlugin, /native_auth_cleanup_failed/);
   assert.match(nativePlugin, /native_share_cleanup_failed/);
+});
+
+test('native translations have complete keys and matching format arguments', () => {
+  const base = translatedStrings(read('android', 'app', 'src', 'main', 'res', 'values', 'strings.xml'));
+  assert.ok(base.size > 0);
+  for (const localeDir of ['values-de', 'values-es']) {
+    const localized = translatedStrings(
+      read('android', 'app', 'src', 'main', 'res', localeDir, 'strings.xml'),
+    );
+    assert.deepEqual([...localized.keys()].sort(), [...base.keys()].sort());
+    for (const [name, value] of base) {
+      assert.deepEqual(formatArguments(localized.get(name)), formatArguments(value), `${localeDir}:${name}`);
+    }
+  }
 });
 
 test('Play listing copy and graphics satisfy exact size limits', () => {
