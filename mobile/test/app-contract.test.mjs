@@ -60,10 +60,18 @@ test('native runtime and signing contracts fail closed', () => {
   assert.match(appGradle, /com\.google\.android\.play:app-update:/);
   assert.doesNotMatch(read('android', 'app', 'src', 'main', 'AndroidManifest.xml'), /REQUEST_INSTALL_PACKAGES/);
   assert.match(mainActivity, /PropertyQuarryAppUpdate/);
-  assert.match(appGradle, /versionCode 7/);
-  assert.match(appGradle, /versionName "1\.1\.5"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_code="7"/);
-  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.5"/);
+  assert.match(appGradle, /versionCode 8/);
+  assert.match(appGradle, /versionName "1\.1\.6"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_code="8"/);
+  assert.match(releaseBuilder, /propertyquarry_expected_version_name="1\.1\.6"/);
+  for (const localeDir of ['values', 'values-de', 'values-es']) {
+    const strings = read('android', 'app', 'src', 'main', 'res', localeDir, 'strings.xml');
+    assert.match(strings, /native_update_required_title/);
+    assert.match(strings, /native_update_ready_title/);
+    assert.match(strings, /native_secure_connection_title/);
+  }
+  assert.doesNotMatch(mainActivity, /setTitle\("|setMessage\("|setPositiveButton\("|setNegativeButton\("/);
+  assert.match(webViewClient, /R\.string\.native_secure_browser_title/);
   assert.match(lintConfig, /src\/main\/res\/xml\/config\.xml/);
   assert.match(previewBuilder, /propertyquarry_release_bundle_backup="\$\(mktemp -d\)"/);
   assert.match(previewBuilder, /trap propertyquarry_restore_release_bundle EXIT/);

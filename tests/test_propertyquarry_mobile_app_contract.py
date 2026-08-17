@@ -366,6 +366,12 @@ def test_android_source_is_isolated_secure_and_preserves_tour_hierarchy() -> Non
     assert "activityResumed = true;" in main_activity
     assert "appUpdate.onRuntimeReady(this)" in main_activity
     assert "appUpdate.onRequiredUpdate(this)" in main_activity
+    assert "R.string.native_update_required_title" in main_activity
+    assert "R.string.native_secure_connection_title" in main_activity
+    assert 'setTitle("' not in main_activity
+    assert 'setMessage("' not in main_activity
+    assert "restartPromptVisible" in app_update
+    assert "shouldPromptToRestart" in app_update
     assert "pendingIntent = intent;" in main_activity
     assert "private void continueWhenReady()" in main_activity
     assert "if (!runtimeReady || !activityResumed) return;" in main_activity
