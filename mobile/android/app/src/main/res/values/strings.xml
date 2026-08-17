@@ -1,5 +1,33 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">PropertyQuarry</string>
-    <string name="title_activity_main">PropertyQuarry</string>
+    <string name="app_name" translatable="false">PropertyQuarry</string>
+    <string name="title_activity_main" translatable="false">PropertyQuarry</string>
+    <string name="native_sign_in_failed_title">Sign-in could not be completed</string>
+    <string name="native_sign_in_invalid_handoff">The secure handoff was invalid. Please start sign-in again.</string>
+    <string name="native_no_property_link_title">No property link found</string>
+    <string name="native_no_property_link_message">Share a secure HTTPS listing link from a supported property site.</string>
+    <string name="native_add_property_title">Add to PropertyQuarry?</string>
+    <string name="native_add_property_message">Evaluate this listing and add it to your private shortlist?\n\n%1$s</string>
+    <string name="native_cancel">Cancel</string>
+    <string name="native_add_property">Add property</string>
+    <string name="native_auth_page_not_ready">The secure page did not become ready. Start sign-in again.</string>
+    <string name="native_property_add_failed_title">Property could not be added</string>
+    <string name="native_share_page_not_ready">The secure page did not become ready. Share the listing again.</string>
+    <string name="native_auth_cleanup_failed">The secure handoff could not be cleared. Start sign-in again.</string>
+    <string name="native_share_cleanup_failed">The approved listing handoff could not be cleared. Share it again.</string>
+    <string name="native_update_required_runtime_message">This app version is too old. Update PropertyQuarry from Google Play.</string>
+    <string name="native_update_required_title">Update required</string>
+    <string name="native_update_required_message">This PropertyQuarry app is too old for the current service. Update the official build from Google Play.</string>
+    <string name="native_update">Update</string>
+    <string name="native_close">Close</string>
+    <string name="native_secure_connection_title">Secure connection unavailable</string>
+    <string name="native_secure_connection_message">PropertyQuarry could not verify the app service. Check your connection and try again.</string>
+    <string name="native_secure_browser_title">Secure browser unavailable</string>
+    <string name="native_secure_browser_message">PropertyQuarry could not open the trusted browser. Check your browser settings and try again.</string>
+    <string name="native_try_again">Try again</string>
+    <string name="native_update_ready_title">Update ready</string>
+    <string name="native_update_ready_message">PropertyQuarry downloaded an official Google Play update. Restart to install it.</string>
+    <string name="native_restart">Restart</string>
+    <string name="native_later">Later</string>
+    <string name="native_ok">OK</string>
 </resources>

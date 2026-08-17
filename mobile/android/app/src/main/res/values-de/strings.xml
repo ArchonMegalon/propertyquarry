@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="native_sign_in_failed_title">Anmeldung konnte nicht abgeschlossen werden</string>
+    <string name="native_sign_in_invalid_handoff">Die sichere Übergabe war ungültig. Bitte starte die Anmeldung erneut.</string>
+    <string name="native_no_property_link_title">Kein Immobilienlink gefunden</string>
+    <string name="native_no_property_link_message">Teile einen sicheren HTTPS-Inseratslink von einer unterstützten Immobilienseite.</string>
+    <string name="native_add_property_title">Zu PropertyQuarry hinzufügen?</string>
+    <string name="native_add_property_message">Dieses Inserat prüfen und zu deiner privaten Merkliste hinzufügen?\n\n%1$s</string>
+    <string name="native_cancel">Abbrechen</string>
+    <string name="native_add_property">Immobilie hinzufügen</string>
+    <string name="native_auth_page_not_ready">Die sichere Seite wurde nicht rechtzeitig bereit. Starte die Anmeldung erneut.</string>
+    <string name="native_property_add_failed_title">Immobilie konnte nicht hinzugefügt werden</string>
+    <string name="native_share_page_not_ready">Die sichere Seite wurde nicht rechtzeitig bereit. Teile das Inserat erneut.</string>
+    <string name="native_auth_cleanup_failed">Die sichere Übergabe konnte nicht gelöscht werden. Starte die Anmeldung erneut.</string>
+    <string name="native_share_cleanup_failed">Die bestätigte Inseratsübergabe konnte nicht gelöscht werden. Teile das Inserat erneut.</string>
+    <string name="native_update_required_runtime_message">Diese App-Version ist zu alt. Aktualisiere PropertyQuarry über Google Play.</string>
+    <string name="native_update_required_title">Aktualisierung erforderlich</string>
+    <string name="native_update_required_message">Diese PropertyQuarry-App ist für den aktuellen Dienst zu alt. Aktualisiere den offiziellen Build über Google Play.</string>
+    <string name="native_update">Aktualisieren</string>
+    <string name="native_close">Schließen</string>
+    <string name="native_secure_connection_title">Sichere Verbindung nicht verfügbar</string>
+    <string name="native_secure_connection_message">PropertyQuarry konnte den App-Dienst nicht verifizieren. Prüfe deine Verbindung und versuche es erneut.</string>
+    <string name="native_secure_browser_title">Sicherer Browser nicht verfügbar</string>
+    <string name="native_secure_browser_message">PropertyQuarry konnte den vertrauenswürdigen Browser nicht öffnen. Prüfe deine Browsereinstellungen und versuche es erneut.</string>
+    <string name="native_try_again">Erneut versuchen</string>
+    <string name="native_update_ready_title">Aktualisierung bereit</string>
+    <string name="native_update_ready_message">PropertyQuarry hat eine offizielle Google-Play-Aktualisierung heruntergeladen. Starte die App neu, um sie zu installieren.</string>
+    <string name="native_restart">Neu starten</string>
+    <string name="native_later">Später</string>
+    <string name="native_ok">OK</string>
+</resources>

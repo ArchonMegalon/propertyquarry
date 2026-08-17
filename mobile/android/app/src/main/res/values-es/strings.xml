@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="native_sign_in_failed_title">No se pudo completar el inicio de sesión</string>
+    <string name="native_sign_in_invalid_handoff">La transferencia segura no era válida. Vuelve a iniciar sesión.</string>
+    <string name="native_no_property_link_title">No se encontró ningún enlace de inmueble</string>
+    <string name="native_no_property_link_message">Comparte un enlace HTTPS seguro de un portal inmobiliario compatible.</string>
+    <string name="native_add_property_title">¿Añadir a PropertyQuarry?</string>
+    <string name="native_add_property_message">¿Evaluar este anuncio y añadirlo a tu lista privada?\n\n%1$s</string>
+    <string name="native_cancel">Cancelar</string>
+    <string name="native_add_property">Añadir inmueble</string>
+    <string name="native_auth_page_not_ready">La página segura no estuvo lista a tiempo. Vuelve a iniciar sesión.</string>
+    <string name="native_property_add_failed_title">No se pudo añadir el inmueble</string>
+    <string name="native_share_page_not_ready">La página segura no estuvo lista a tiempo. Vuelve a compartir el anuncio.</string>
+    <string name="native_auth_cleanup_failed">No se pudo borrar la transferencia segura. Vuelve a iniciar sesión.</string>
+    <string name="native_share_cleanup_failed">No se pudo borrar la transferencia aprobada del anuncio. Vuelve a compartirlo.</string>
+    <string name="native_update_required_runtime_message">Esta versión de la aplicación es demasiado antigua. Actualiza PropertyQuarry desde Google Play.</string>
+    <string name="native_update_required_title">Actualización necesaria</string>
+    <string name="native_update_required_message">Esta aplicación de PropertyQuarry es demasiado antigua para el servicio actual. Actualiza la versión oficial desde Google Play.</string>
+    <string name="native_update">Actualizar</string>
+    <string name="native_close">Cerrar</string>
+    <string name="native_secure_connection_title">Conexión segura no disponible</string>
+    <string name="native_secure_connection_message">PropertyQuarry no pudo verificar el servicio de la aplicación. Comprueba tu conexión e inténtalo de nuevo.</string>
+    <string name="native_secure_browser_title">Navegador seguro no disponible</string>
+    <string name="native_secure_browser_message">PropertyQuarry no pudo abrir el navegador de confianza. Comprueba la configuración del navegador e inténtalo de nuevo.</string>
+    <string name="native_try_again">Intentar de nuevo</string>
+    <string name="native_update_ready_title">Actualización lista</string>
+    <string name="native_update_ready_message">PropertyQuarry descargó una actualización oficial de Google Play. Reinicia la aplicación para instalarla.</string>
+    <string name="native_restart">Reiniciar</string>
+    <string name="native_later">Más tarde</string>
+    <string name="native_ok">Aceptar</string>
+</resources>

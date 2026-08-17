@@ -31,10 +31,21 @@ final class PropertyQuarryAppUpdate {
         IMMEDIATE
     }
 
+    enum RequiredAction {
+        START_IMMEDIATE,
+        OPEN_PLAY_STORE
+    }
+
+    enum FlowResultAction {
+        NONE,
+        OPEN_PLAY_STORE
+    }
+
     private AppUpdateManager manager;
     private InstallStateUpdatedListener listener;
     private ActivityResultLauncher<IntentSenderRequest> launcher;
     private boolean flexibleStarted;
+    private boolean restartPromptVisible;
 
     static boolean isRequiredUpdateReason(String reason) {
         return "android_build_below_minimum".equals(reason);
@@ -53,6 +64,28 @@ final class PropertyQuarryAppUpdate {
             return Policy.FLEXIBLE;
         }
         return Policy.NONE;
+    }
+
+    static RequiredAction requiredAction(boolean updateAvailable, boolean immediateAllowed) {
+        return updateAvailable && immediateAllowed
+            ? RequiredAction.START_IMMEDIATE
+            : RequiredAction.OPEN_PLAY_STORE;
+    }
+
+    static FlowResultAction flowResultAction(int resultCode, boolean required) {
+        return resultCode != Activity.RESULT_OK && required
+            ? FlowResultAction.OPEN_PLAY_STORE
+            : FlowResultAction.NONE;
+    }
+
+    static boolean shouldPromptToRestart(
+        boolean activityFinishing,
+        boolean promptVisible,
+        int installStatus
+    ) {
+        return !activityFinishing
+            && !promptVisible
+            && installStatus == InstallStatus.DOWNLOADED;
     }
 
     static Uri playStoreMarketUri() {
@@ -100,6 +133,7 @@ final class PropertyQuarryAppUpdate {
         manager = null;
         launcher = null;
         flexibleStarted = false;
+        restartPromptVisible = false;
     }
 
     void onRuntimeReady(Activity activity) {
@@ -126,10 +160,7 @@ final class PropertyQuarryAppUpdate {
     }
 
     void onFlowResult(Activity activity, int resultCode, boolean required) {
-        if (resultCode == Activity.RESULT_OK) {
-            return;
-        }
-        if (required) {
+        if (flowResultAction(resultCode, required) == FlowResultAction.OPEN_PLAY_STORE) {
             openPlayStore(activity);
         }
     }
@@ -162,7 +193,11 @@ final class PropertyQuarryAppUpdate {
         boolean available = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE;
         int availableCode = available ? info.availableVersionCode() : BuildConfig.VERSION_CODE;
         if (required) {
-            if (available && info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
+            RequiredAction action = requiredAction(
+                available,
+                info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)
+            );
+            if (action == RequiredAction.START_IMMEDIATE) {
                 start(activity, info, AppUpdateType.IMMEDIATE);
                 return;
             }
@@ -201,15 +236,21 @@ final class PropertyQuarryAppUpdate {
     }
 
     private void promptToRestart(Activity activity) {
-        if (activity.isFinishing()) {
+        if (!shouldPromptToRestart(
+            activity.isFinishing(),
+            restartPromptVisible,
+            InstallStatus.DOWNLOADED
+        )) {
             return;
         }
+        restartPromptVisible = true;
         new AlertDialog.Builder(activity)
-            .setTitle("Update ready")
-            .setMessage("PropertyQuarry downloaded an official Google Play update. Restart to install it.")
-            .setPositiveButton("Restart", (dialog, which) -> completeUpdate())
-            .setNegativeButton("Later", null)
+            .setTitle(R.string.native_update_ready_title)
+            .setMessage(R.string.native_update_ready_message)
+            .setPositiveButton(R.string.native_restart, (dialog, which) -> completeUpdate())
+            .setNegativeButton(R.string.native_later, null)
             .setCancelable(true)
+            .setOnDismissListener(dialog -> restartPromptVisible = false)
             .show();
     }
 

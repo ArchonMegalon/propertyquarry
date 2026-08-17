@@ -184,7 +184,10 @@ public final class MainActivity extends BridgeActivity {
             if (isAuthCallback(data)) {
                 String code = String.valueOf(data.getQueryParameter("code"));
                 if (!code.matches("[A-Za-z0-9_-]{32,160}")) {
-                    showMessage("Sign-in could not be completed", "The secure handoff was invalid. Please start sign-in again.");
+                    showMessage(
+                        R.string.native_sign_in_failed_title,
+                        R.string.native_sign_in_invalid_handoff
+                    );
                     return true;
                 }
                 PropertyQuarryNativePlugin.acceptAuthCode(this, code);
@@ -208,8 +211,8 @@ public final class MainActivity extends BridgeActivity {
             );
             if (parsed.isEmpty()) {
                 showMessage(
-                    "No property link found",
-                    "Share a secure HTTPS listing link from a supported property site."
+                    R.string.native_no_property_link_title,
+                    R.string.native_no_property_link_message
                 );
                 return true;
             }
@@ -221,10 +224,10 @@ public final class MainActivity extends BridgeActivity {
 
     private void confirmSharedProperty(SharedPropertyUrl.Value property) {
         new AlertDialog.Builder(this)
-            .setTitle("Add to PropertyQuarry?")
-            .setMessage("Evaluate this listing and add it to your private shortlist?\n\n" + property.host())
-            .setNegativeButton("Cancel", (dialog, which) -> resumePendingFlowOrStart())
-            .setPositiveButton("Add property", (dialog, which) -> {
+            .setTitle(R.string.native_add_property_title)
+            .setMessage(getString(R.string.native_add_property_message, property.host()))
+            .setNegativeButton(R.string.native_cancel, (dialog, which) -> resumePendingFlowOrStart())
+            .setPositiveButton(R.string.native_add_property, (dialog, which) -> {
                 PropertyQuarryNativePlugin.acceptSharedProperty(
                     this,
                     property.url(),
@@ -347,14 +350,14 @@ public final class MainActivity extends BridgeActivity {
                 if (authMode) {
                     nativeAuthPayloadDeliveryScheduled = false;
                     showMessage(
-                        "Sign-in could not be completed",
-                        "The secure page did not become ready. Start sign-in again."
+                        R.string.native_sign_in_failed_title,
+                        R.string.native_auth_page_not_ready
                     );
                 } else {
                     nativeSharePayloadDeliveryScheduled = false;
                     showMessage(
-                        "Property could not be added",
-                        "The secure page did not become ready. Share the listing again."
+                        R.string.native_property_add_failed_title,
+                        R.string.native_share_page_not_ready
                     );
                 }
             }
@@ -368,7 +371,10 @@ public final class MainActivity extends BridgeActivity {
                 pending = PropertyQuarryNativePlugin.consumePendingAuth(this);
             } catch (Exception exception) {
                 nativeAuthPayloadDeliveryScheduled = false;
-                showMessage("Sign-in could not be completed", "The secure handoff could not be cleared. Start sign-in again.");
+                showMessage(
+                    R.string.native_sign_in_failed_title,
+                    R.string.native_auth_cleanup_failed
+                );
                 return;
             }
             if (pending.isEmpty()) return;
@@ -389,7 +395,10 @@ public final class MainActivity extends BridgeActivity {
                 pending = PropertyQuarryNativePlugin.consumePendingShare(this);
             } catch (Exception exception) {
                 nativeSharePayloadDeliveryScheduled = false;
-                showMessage("Property could not be added", "The approved listing handoff could not be cleared. Share it again.");
+                showMessage(
+                    R.string.native_property_add_failed_title,
+                    R.string.native_share_cleanup_failed
+                );
                 return;
             }
             if (pending.isEmpty()) return;
@@ -423,15 +432,15 @@ public final class MainActivity extends BridgeActivity {
             bridge.getWebView().evaluateJavascript(
                 "window.dispatchEvent(new CustomEvent('propertyquarry:runtime-error',{detail:"
                     + JSONObject.quote(
-                        "This app version is too old. Update PropertyQuarry from Google Play."
+                        getString(R.string.native_update_required_runtime_message)
                     ) + "}));",
                 null
             );
             new AlertDialog.Builder(this)
-                .setTitle("Update required")
-                .setMessage("This PropertyQuarry app is too old for the current service. Update the official build from Google Play.")
-                .setNegativeButton("Close", (dialog, which) -> finish())
-                .setPositiveButton("Update", (dialog, which) -> appUpdate.onRequiredUpdate(this))
+                .setTitle(R.string.native_update_required_title)
+                .setMessage(R.string.native_update_required_message)
+                .setNegativeButton(R.string.native_close, (dialog, which) -> finish())
+                .setPositiveButton(R.string.native_update, (dialog, which) -> appUpdate.onRequiredUpdate(this))
                 .setCancelable(false)
                 .show();
             return;
@@ -439,23 +448,23 @@ public final class MainActivity extends BridgeActivity {
         requiredUpdatePending = false;
         bridge.getWebView().evaluateJavascript(
             "window.dispatchEvent(new CustomEvent('propertyquarry:runtime-error',{detail:"
-                + JSONObject.quote("Secure connection unavailable (" + safeReason + ")") + "}));",
+                + JSONObject.quote(getString(R.string.native_secure_connection_message)) + "}));",
             null
         );
         new AlertDialog.Builder(this)
-            .setTitle("Secure connection unavailable")
-            .setMessage("PropertyQuarry could not verify the app service. Check your connection and try again.")
-            .setNegativeButton("Close", (dialog, which) -> finish())
-            .setPositiveButton("Try again", (dialog, which) -> verifyRuntimeAndContinue())
+            .setTitle(R.string.native_secure_connection_title)
+            .setMessage(R.string.native_secure_connection_message)
+            .setNegativeButton(R.string.native_close, (dialog, which) -> finish())
+            .setPositiveButton(R.string.native_try_again, (dialog, which) -> verifyRuntimeAndContinue())
             .setCancelable(false)
             .show();
     }
 
-    void showMessage(String title, String message) {
+    void showMessage(int title, int message) {
         new AlertDialog.Builder(this)
             .setTitle(title)
             .setMessage(message)
-            .setPositiveButton("OK", null)
+            .setPositiveButton(R.string.native_ok, null)
             .show();
     }
 }

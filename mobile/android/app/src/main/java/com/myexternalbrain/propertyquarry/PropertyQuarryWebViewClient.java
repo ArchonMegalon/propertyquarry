@@ -23,8 +23,8 @@ final class PropertyQuarryWebViewClient extends BridgeWebViewClient {
                 PropertyQuarryNativePlugin.launchExternalLogin(activity);
             } catch (Exception exception) {
                 activity.showMessage(
-                    "Secure browser unavailable",
-                    "PropertyQuarry could not open the trusted browser. Check your browser settings and try again."
+                    R.string.native_secure_browser_title,
+                    R.string.native_secure_browser_message
                 );
             }
             return true;
