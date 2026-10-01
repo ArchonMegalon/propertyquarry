@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -26,7 +27,9 @@ def _inspect(service: str) -> dict[str, object]:
     ]
     config = {
         "User": (
-            "10001:10001"
+            f"{os.geteuid()}:{os.getegid()}"
+            if service == "propertyquarry-ooda-stage"
+            else "10001:10001"
             if service in receipt.RELEASE_BOUND_SERVICES
             else ""
         ),

@@ -1,0 +1,10 @@
+{
+  "schema": "propertyquarry.ooda_source_refresh_producer_trust.v1",
+  "status": "UNCONFIGURED",
+  "rotation_epoch": 0,
+  "producers": [],
+  "integrity": {
+    "algorithm": "sha256",
+    "canonical_payload_sha256": "22c03878647487817ebab8f7077a707b0143eb293a5dfeffbdb29f89963a8ae3"
+  }
+}

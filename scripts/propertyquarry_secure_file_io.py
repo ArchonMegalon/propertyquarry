@@ -444,3 +444,210 @@ def atomic_write_bytes(
             with suppress(OSError):
                 os.unlink(temporary_name, dir_fd=handles[-1][0])
         _close_directory_handles(handles)
+
+
+def atomic_replace_bytes_if_matches(
+    path: Path,
+    *,
+    expected: bytes,
+    replacement: bytes,
+    maximum_bytes: int,
+) -> None:
+    """Atomically replace one trusted regular file only from exact known bytes.
+
+    The source is held open and identity-checked until the same-directory
+    replacement is committed.  Its permission bits are preserved.  This is
+    intentionally stricter than a hash-only compare-and-swap so callers cannot
+    accidentally authorize a different byte sequence with the same metadata.
+    """
+
+    if not (
+        isinstance(expected, bytes)
+        and isinstance(replacement, bytes)
+        and 0 < len(expected) <= maximum_bytes
+        and 0 < len(replacement) <= maximum_bytes
+        and expected != replacement
+    ):
+        raise SecureFileIOError("replacement byte contract is invalid")
+    destination = _canonical_path(path)
+    if destination == Path("/") or destination.name in {"", ".", ".."}:
+        raise SecureFileIOError("replacement path is invalid")
+
+    handles: list[_DirectoryHandle] = []
+    source_descriptor = -1
+    replacement_descriptor = -1
+    temporary_name: str | None = None
+    try:
+        handles = _open_directory_chain(destination.parent, create=False)
+        parent_descriptor = handles[-1][0]
+        read_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        source_descriptor = os.open(
+            destination.name,
+            read_flags,
+            dir_fd=parent_descriptor,
+        )
+        source_opened = os.fstat(source_descriptor)
+        _validate_regular_file(
+            source_opened,
+            maximum_bytes=maximum_bytes,
+            require_nonempty=True,
+        )
+        source_identity = _file_identity(source_opened)
+        source_named = os.stat(
+            destination.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if _file_identity(source_named) != source_identity:
+            raise SecureFileIOError("source changed while it was opened")
+
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                source_descriptor,
+                min(64 * 1024, maximum_bytes + 1 - total),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > maximum_bytes:
+                raise SecureFileIOError("source exceeds its bounded size")
+            chunks.append(chunk)
+        observed = b"".join(chunks)
+        source_after_read = os.fstat(source_descriptor)
+        named_after_read = os.stat(
+            destination.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if not (
+            observed == expected
+            and len(observed) == source_opened.st_size
+            and _file_identity(source_after_read) == source_identity
+            and _file_identity(named_after_read) == source_identity
+        ):
+            raise SecureFileIOError("source bytes do not match the expected snapshot")
+
+        write_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        for _ in range(64):
+            candidate_name = (
+                f".{destination.name}.{secrets.token_hex(16)}.replace"
+            )
+            try:
+                replacement_descriptor = os.open(
+                    candidate_name,
+                    write_flags,
+                    0o600,
+                    dir_fd=parent_descriptor,
+                )
+            except FileExistsError:
+                continue
+            temporary_name = candidate_name
+            break
+        if replacement_descriptor < 0 or temporary_name is None:
+            raise SecureFileIOError(
+                "a unique replacement file could not be allocated"
+            )
+
+        source_mode = stat.S_IMODE(source_opened.st_mode)
+        os.fchmod(replacement_descriptor, source_mode)
+        _write_all(replacement_descriptor, replacement)
+        os.fsync(replacement_descriptor)
+        staged = os.fstat(replacement_descriptor)
+        _validate_regular_file(
+            staged,
+            maximum_bytes=maximum_bytes,
+            require_nonempty=True,
+        )
+        staged_identity = _file_identity(staged)
+        staged_named = os.stat(
+            temporary_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        source_before_replace = os.fstat(source_descriptor)
+        named_before_replace = os.stat(
+            destination.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if not (
+            _file_identity(staged_named) == staged_identity
+            and staged.st_size == len(replacement)
+            and stat.S_IMODE(staged.st_mode) == source_mode
+            and _file_identity(source_before_replace) == source_identity
+            and _file_identity(named_before_replace) == source_identity
+        ):
+            raise SecureFileIOError("source or replacement changed before commit")
+        _revalidate_directory_chain(handles)
+
+        os.replace(
+            temporary_name,
+            destination.name,
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        temporary_name = None
+        published = os.fstat(replacement_descriptor)
+        published_named = os.stat(
+            destination.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        _validate_regular_file(
+            published,
+            maximum_bytes=maximum_bytes,
+            require_nonempty=True,
+        )
+        published_identity = _file_identity(published)
+        if not (
+            _file_identity(published_named) == published_identity
+            and published.st_dev == staged.st_dev
+            and published.st_ino == staged.st_ino
+            and published.st_size == len(replacement)
+            and stat.S_IMODE(published.st_mode) == source_mode
+        ):
+            raise SecureFileIOError("replacement identity changed during commit")
+        os.fsync(parent_descriptor)
+
+        final_opened = os.fstat(replacement_descriptor)
+        final_named = os.stat(
+            destination.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if not (
+            _file_identity(final_opened) == published_identity
+            and _file_identity(final_named) == published_identity
+            and stat.S_IMODE(final_named.st_mode) == source_mode
+        ):
+            raise SecureFileIOError("replacement changed while commit was synced")
+        _revalidate_directory_chain(handles)
+    except SecureFileIOError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise SecureFileIOError("source cannot be atomically replaced safely") from exc
+    finally:
+        if source_descriptor >= 0:
+            with suppress(OSError):
+                os.close(source_descriptor)
+        if replacement_descriptor >= 0:
+            with suppress(OSError):
+                os.close(replacement_descriptor)
+        if temporary_name is not None and handles:
+            with suppress(OSError):
+                os.unlink(temporary_name, dir_fd=handles[-1][0])
+        _close_directory_handles(handles)

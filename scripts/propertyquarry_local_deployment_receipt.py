@@ -33,6 +33,9 @@ DEFAULT_RECEIPT: Final = (
 FULL_SHA: Final = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST: Final = re.compile(r"sha256:[0-9a-f]{64}\Z")
 PROJECT: Final = re.compile(r"[a-z0-9][a-z0-9_.-]{0,62}\Z")
+DEFAULT_COMPOSE_PROJECT: Final = "property"
+DEFAULT_LOCAL_ORIGIN: Final = "http://127.0.0.1:8097"
+DEFAULT_PUBLIC_HOST: Final = "propertyquarry.com"
 COMPOSE_FILES: Final = (
     Path("docker-compose.property.yml"),
     Path("docker-compose.cloudflared.yml"),
@@ -41,6 +44,7 @@ SERVICE_CONTRACT: Final = {
     "propertyquarry-api": "healthy",
     "propertyquarry-migrate": "completed",
     "propertyquarry-worker": "healthy",
+    "propertyquarry-ooda-stage": "healthy",
     "propertyquarry-scheduler": "healthy",
     "propertyquarry-render-tools": "running",
     "propertyquarry-db": "healthy",
@@ -51,6 +55,7 @@ WEB_SERVICES: Final = frozenset(
         "propertyquarry-api",
         "propertyquarry-migrate",
         "propertyquarry-worker",
+        "propertyquarry-ooda-stage",
         "propertyquarry-scheduler",
     }
 )
@@ -59,6 +64,7 @@ HEALTHY_SERVICES: Final = frozenset(
     {
         "propertyquarry-api",
         "propertyquarry-worker",
+        "propertyquarry-ooda-stage",
         "propertyquarry-scheduler",
         "propertyquarry-db",
     }
@@ -203,7 +209,7 @@ def _probe(
     version_target = origin.rstrip("/") + "/version"
     request = urllib.request.Request(
         target,
-        headers={"Host": "propertyquarry.com", "User-Agent": "pq-local-release/1"},
+        headers={"Host": DEFAULT_PUBLIC_HOST, "User-Agent": "pq-local-release/1"},
         method="GET",
     )
     try:
@@ -213,7 +219,7 @@ def _probe(
         version_request = urllib.request.Request(
             version_target,
             headers={
-                "Host": "propertyquarry.com",
+                "Host": DEFAULT_PUBLIC_HOST,
                 "User-Agent": "pq-local-release/1",
             },
             method="GET",
@@ -315,8 +321,8 @@ def audit_local_deployment(
     expected_commit: str,
     expected_web_image: str,
     expected_render_image: str,
-    compose_project: str = "property",
-    local_origin: str = "http://127.0.0.1:8097",
+    compose_project: str = DEFAULT_COMPOSE_PROJECT,
+    local_origin: str = DEFAULT_LOCAL_ORIGIN,
 ) -> dict[str, object]:
     root = root.resolve(strict=True)
     failures: list[str] = []
@@ -417,7 +423,12 @@ def audit_local_deployment(
                 != expected_web_image
             ):
                 failures.append(f"{service}:release_image_binding_mismatch")
-            if str(config.get("User") or "") != "10001:10001":
+            expected_user = (
+                f"{os.geteuid()}:{os.getegid()}"
+                if service == "propertyquarry-ooda-stage"
+                else "10001:10001"
+            )
+            if str(config.get("User") or "") != expected_user:
                 failures.append(f"{service}:runtime_user_mismatch")
         if host.get("Privileged") is True:
             failures.append(f"{service}:privileged")
@@ -528,8 +539,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--expected-web-image", required=True)
     parser.add_argument("--expected-render-image", required=True)
-    parser.add_argument("--compose-project", default="property")
-    parser.add_argument("--local-origin", default="http://127.0.0.1:8097")
+    parser.add_argument("--compose-project", default=DEFAULT_COMPOSE_PROJECT)
+    parser.add_argument("--local-origin", default=DEFAULT_LOCAL_ORIGIN)
     parser.add_argument("--write", type=Path, default=DEFAULT_RECEIPT)
     args = parser.parse_args(argv)
     try:

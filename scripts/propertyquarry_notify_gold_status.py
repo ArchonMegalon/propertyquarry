@@ -5,8 +5,10 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,17 @@ from app.services.telegram_delivery import (
     send_telegram_message_for_principal,
 )
 from app.services.tool_runtime import build_tool_runtime
+
+if __package__:
+    from scripts.propertyquarry_operator_action import (
+        GOVERNED_NOTIFICATION_MAX_SOURCE_AGE_SECONDS,
+        propertyquarry_operator_action_summary,
+    )
+else:
+    from propertyquarry_operator_action import (
+        GOVERNED_NOTIFICATION_MAX_SOURCE_AGE_SECONDS,
+        propertyquarry_operator_action_summary,
+    )
 
 _FALLBACK_ENV_PATHS = (
     ROOT / ".env",
@@ -48,6 +61,7 @@ _RUNTIME_CONTAINER_ENV_KEYS = (
     "PROPERTYQUARRY_API_CONTAINER_NAME",
     "PROPERTYQUARRY_GOLD_NOTIFICATION_RUNTIME_CONTAINER",
 )
+_MAX_NOTIFICATION_STATE_BYTES = 64 * 1024
 
 
 def _utc_now_iso() -> str:
@@ -59,6 +73,55 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("json_root_not_object")
     return payload
+
+
+def _load_notification_state(path: Path) -> dict[str, Any]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return {}
+    try:
+        metadata = os.fstat(fd)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid not in {0, os.geteuid()}
+            or stat.S_IMODE(metadata.st_mode) & 0o077
+            or metadata.st_size > _MAX_NOTIFICATION_STATE_BYTES
+        ):
+            return {}
+        with os.fdopen(fd, encoding="utf-8") as stream:
+            fd = -1
+            payload = json.load(stream)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_notification_state(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            fd = -1
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        path.chmod(0o600)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _payload_digest(payload: dict[str, Any]) -> str:
@@ -225,22 +288,44 @@ def _send_container_runtime_telegram_message(
     }
 
 
-def _build_message(*, payload: dict[str, Any], receipt_path: Path, base_url: str) -> str:
-    generated_at = str(payload.get("generated_at") or "").strip() or _utc_now_iso()
-    pass_areas = list(payload.get("pass_areas") or [])
-    pass_area_count = len(pass_areas)
+def _build_message(*, action: dict[str, Any], receipt_path: Path, base_url: str) -> str:
+    consent_gate = dict(action.get("consent_gate") or {})
+    protected_operations = ", ".join(
+        str(value).strip()
+        for value in list(consent_gate.get("protected_operations") or [])
+        if str(value).strip()
+    )
     lines = [
-        "PropertyQuarry gold receipt is green.",
+        "PropertyQuarry operator action required.",
         f"Site: {base_url}",
-        f"Generated: {generated_at}",
-        f"Pass areas: {pass_area_count}",
+        f"Reason: {str(action.get('reason') or '').strip()}",
+        f"Source generated: {str(action.get('source_generated_at') or '').strip()}",
+        f"Safe next action: {str(action.get('reversible_next_action') or '').strip()}",
+        (
+            "Consent gate: required; automatic execution disabled; "
+            f"protected={protected_operations}"
+        ),
+        "Provider quota: disabled",
         f"Receipt: {receipt_path}",
     ]
     return "\n".join(lines)
 
 
-def _receipt_ready_for_notification(payload: dict[str, Any]) -> bool:
-    return payload.get("ready_for_notification") is True
+def _receipt_ready_for_notification(
+    payload: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    action = propertyquarry_operator_action_summary(
+        payload,
+        now=now,
+        max_source_age_seconds=GOVERNED_NOTIFICATION_MAX_SOURCE_AGE_SECONDS,
+    )
+    return (
+        action.get("action_required") is True
+        and action.get("interrupt_operator") is True
+        and action.get("notification_policy") == "action_required_only"
+    )
 
 
 def deliver_notification_for_principal(
@@ -354,12 +439,26 @@ def build_notification_report(
     principal_id: str,
     base_url: str,
     force: bool,
+    now: datetime | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     status = str(payload.get("status") or "").strip().lower()
     generated_at = str(payload.get("generated_at") or "").strip()
-    ready_for_notification = _receipt_ready_for_notification(payload)
-    digest = _payload_digest(payload)
+    action = propertyquarry_operator_action_summary(
+        payload,
+        now=now,
+        max_source_age_seconds=GOVERNED_NOTIFICATION_MAX_SOURCE_AGE_SECONDS,
+    )
+    ready_for_notification = (
+        action.get("action_required") is True
+        and action.get("interrupt_operator") is True
+        and action.get("notification_policy") == "action_required_only"
+    )
+    receipt_digest = _payload_digest(payload)
+    action_digest = _payload_digest(action)
+    consent_gate = dict(action.get("consent_gate") or {})
     report: dict[str, Any] = {
+        "notification_kind": "operator_action_required",
         "receipt_path": str(receipt_path),
         "state_path": str(state_path),
         "principal_id": principal_id,
@@ -367,30 +466,40 @@ def build_notification_report(
         "status": status,
         "generated_at": generated_at,
         "ready_for_notification": ready_for_notification,
-        "receipt_digest": digest,
+        "receipt_digest": receipt_digest,
+        "action_digest": action_digest,
+        "action_status": str(action.get("status") or "").strip(),
+        "action_required": action.get("action_required") is True,
+        "interrupt_operator": action.get("interrupt_operator") is True,
+        "action_reason": str(action.get("reason") or "").strip(),
+        "action_source_generated_at": str(action.get("source_generated_at") or "").strip(),
+        "consent_required": consent_gate.get("required") is True,
+        "automatic_execution_allowed": consent_gate.get("automatic_execution_allowed") is True,
+        "provider_quota_consumption_allowed": action.get("provider_quota_consumption_allowed") is True,
         "sent": False,
+        "would_send": False,
         "skipped_reason": "",
         "message_ids": [],
         "checked_at": _utc_now_iso(),
         "delivery_mode": "",
     }
-    if status != "pass":
-        report["skipped_reason"] = f"receipt_status_{status or 'missing'}"
-        return report
     if not ready_for_notification:
-        report["skipped_reason"] = "receipt_not_ready_for_notification"
+        report["skipped_reason"] = "no_fresh_operator_action"
         return report
 
     if not force and state_path.is_file():
-        try:
-            prior = _load_json(state_path)
-        except Exception:
-            prior = {}
-        if str(prior.get("last_notified_digest") or "").strip() == digest:
+        prior = _load_notification_state(state_path)
+        if str(prior.get("last_notified_digest") or "").strip() == action_digest:
             report["skipped_reason"] = "already_notified_same_digest"
             return report
 
-    message = _build_message(payload=payload, receipt_path=receipt_path, base_url=base_url)
+    message = _build_message(action=action, receipt_path=receipt_path, base_url=base_url)
+    report["would_send"] = True
+    if dry_run:
+        report["skipped_reason"] = "dry_run"
+        report["message_preview"] = message
+        return report
+
     url_buttons = [[("Open PropertyQuarry", base_url)]]
     delivery = deliver_notification_for_principal(
         principal_id=principal_id,
@@ -403,25 +512,23 @@ def build_notification_report(
         report["runtime_error"] = str(delivery.get("runtime_error") or "").strip()
     if delivery.get("container_runtime_error"):
         report["container_runtime_error"] = str(delivery.get("container_runtime_error") or "").strip()
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps(
-            {
-                "last_notified_at": _utc_now_iso(),
-                "last_notified_digest": digest,
-                "last_notified_status": status,
-                "last_receipt_path": str(receipt_path),
-                "last_generated_at": generated_at,
-                "principal_id": principal_id,
-                "base_url": base_url,
-                "message_ids": list(report["message_ids"]),
-                "delivery_mode": report["delivery_mode"],
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+    _write_notification_state(
+        state_path,
+        {
+            "last_notified_at": _utc_now_iso(),
+            "last_notified_digest": action_digest,
+            "last_notified_status": "action_required",
+            "last_receipt_status": status,
+            "notification_kind": "operator_action_required",
+            "last_action_reason": str(action.get("reason") or "").strip(),
+            "last_action_source_generated_at": str(action.get("source_generated_at") or "").strip(),
+            "last_receipt_path": str(receipt_path),
+            "last_generated_at": generated_at,
+            "principal_id": principal_id,
+            "base_url": base_url,
+            "message_ids": list(report["message_ids"]),
+            "delivery_mode": report["delivery_mode"],
+        },
     )
     report["sent"] = True
     return report
@@ -430,7 +537,7 @@ def build_notification_report(
 def main(argv: list[str] | None = None) -> int:
     _load_local_env_defaults()
     parser = argparse.ArgumentParser(
-        description="Send a Telegram message when the PropertyQuarry gold receipt is green."
+        description="Send a Telegram message only for a fresh PropertyQuarry operator action."
     )
     parser.add_argument(
         "--receipt",
@@ -455,7 +562,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Send even if the same receipt digest was already notified.",
+        help="Send even if the same action digest was already notified.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Evaluate and print the sanitized notification without sending or writing state.",
     )
     parser.add_argument(
         "--write",
@@ -481,6 +593,7 @@ def main(argv: list[str] | None = None) -> int:
         principal_id=str(args.principal_id or "").strip() or "cf-email:tibor.girschele@gmail.com",
         base_url=str(args.base_url or "").strip() or "https://propertyquarry.com",
         force=bool(args.force),
+        dry_run=bool(args.dry_run),
     )
     output = json.dumps(report, indent=2, sort_keys=True)
     if args.write:

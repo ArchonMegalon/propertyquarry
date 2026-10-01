@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import stat
 import sys
 import uuid
 from pathlib import Path
@@ -22,7 +24,53 @@ def _configure_runtime() -> None:
     os.environ.setdefault("EA_PROPERTY_PROVIDER_REPAIR_RETRY_BUDGET_SECONDS", "60")
 
 
+def _write_receipt(path: Path, body: str) -> None:
+    target = path.expanduser()
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent_metadata = os.stat(target.parent, follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid not in {0, os.geteuid()}
+        or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+    ):
+        raise ValueError(
+            f"repair canary receipt parent must be trusted and non-peer-writable: {target.parent}"
+        )
+
+    temporary = target.parent / f".{target.name}.{uuid.uuid4().hex}.tmp"
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        payload = (body + "\n").encode("utf-8")
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("short write while materializing repair canary receipt")
+            view = view[written:]
+        os.fsync(descriptor)
+        os.fchmod(descriptor, 0o600)
+    finally:
+        os.close(descriptor)
+    try:
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Exercise the provider-repair canary without calling live providers."
+    )
+    parser.add_argument("--write", default="", help="Optional JSON receipt output path.")
+    args = parser.parse_args()
     _configure_runtime()
 
     from fastapi.testclient import TestClient
@@ -129,7 +177,13 @@ def main() -> int:
         "source_repair_status": str(source.get("repair_status") or ""),
         "source_status": str(source.get("status") or ""),
     }
-    print(json.dumps(output, indent=2, sort_keys=True))
+    body = json.dumps(output, indent=2, sort_keys=True)
+    if str(args.write or "").strip():
+        try:
+            _write_receipt(Path(str(args.write)), body)
+        except (OSError, ValueError) as exc:
+            parser.error(str(exc))
+    print(body)
     return 0 if ok else 1
 
 

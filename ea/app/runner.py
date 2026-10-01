@@ -46,6 +46,7 @@ _SCHEDULER_POCKET_SIGNAL_SYNC_INTERVAL_SECONDS = 900.0
 _SCHEDULER_MORNING_MEMO_INTERVAL_SECONDS = 300.0
 _SCHEDULER_TELEGRAM_ASYNC_RECOVERY_INTERVAL_SECONDS = 5.0
 _SCHEDULER_TELEGRAM_ASYNC_RECOVERY_MIN_AGE_SECONDS = 0.0
+_SCHEDULER_PROPERTYQUARRY_OODA_INTERVAL_SECONDS = 900.0
 _SCHEDULER_MORNING_MEMO_DELIVERY_WINDOW_MINUTES = 120
 _SCHEDULER_MORNING_MEMO_RETRY_AFTER_MINUTES = 60
 _SCHEDULER_MORNING_MEMO_LEASE_SECONDS = 900
@@ -566,6 +567,2283 @@ def _scheduler_google_signal_sync_forbidden_cooldown_seconds() -> float:
         "EA_SCHEDULER_GOOGLE_SIGNAL_SYNC_FORBIDDEN_COOLDOWN_SECONDS",
         21600.0,
     )
+
+
+def _scheduler_propertyquarry_ooda_enabled() -> bool:
+    return _env_bool("PROPERTYQUARRY_OODA_NOTIFICATION_ENABLED", True)
+
+
+def _scheduler_propertyquarry_ooda_send_enabled() -> bool:
+    return _env_bool("PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED", False)
+
+
+def _scheduler_propertyquarry_ooda_interval_seconds() -> float:
+    return max(
+        60.0,
+        _env_float(
+            "EA_SCHEDULER_PROPERTYQUARRY_OODA_INTERVAL_SECONDS",
+            _SCHEDULER_PROPERTYQUARRY_OODA_INTERVAL_SECONDS,
+        ),
+    )
+
+
+def _scheduler_propertyquarry_ooda_timeout_seconds() -> float:
+    return max(
+        15.0,
+        _env_float("EA_SCHEDULER_PROPERTYQUARRY_OODA_TIMEOUT_SECONDS", 60.0),
+    )
+
+
+def _scheduler_propertyquarry_ooda_approval_max_age_seconds() -> float:
+    return max(
+        60.0,
+        min(
+            _env_float(
+                "EA_SCHEDULER_PROPERTYQUARRY_OODA_APPROVAL_MAX_AGE_SECONDS",
+                1800.0,
+            ),
+            86400.0,
+        ),
+    )
+
+
+def _scheduler_propertyquarry_ooda_path(name: str, default: str) -> str:
+    return str(os.environ.get(name) or "").strip() or default
+
+
+def _project_scheduler_propertyquarry_candidate_import_presentation(
+    report: dict[str, object],
+    *,
+    state_path: Path,
+) -> dict[str, object]:
+    """Apply the operator presentation ledger without recording a presentation."""
+
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_import as candidate_import
+
+    return candidate_import.apply_candidate_import_presentation_state(
+        report,
+        state_path=Path(state_path),
+    )
+
+
+def _record_scheduler_propertyquarry_ooda_iteration(
+    summary: dict[str, object],
+    *,
+    log: logging.Logger,
+    error_type: str = "",
+) -> dict[str, object]:
+    from scripts import propertyquarry_ooda_scheduler_witness as scheduler_witness
+
+    try:
+        receipt = scheduler_witness.persist_scheduler_iteration_receipt(
+            summary,
+            receipt_path=Path(
+                _scheduler_propertyquarry_ooda_path(
+                    "PROPERTYQUARRY_OODA_SCHEDULER_ITERATION_RECEIPT_PATH",
+                    "/data/artifacts/propertyquarry-ooda-notification/scheduler-iteration.json",
+                )
+            ),
+            cycle_receipt_path=Path(
+                _scheduler_propertyquarry_ooda_path(
+                    "PROPERTYQUARRY_OODA_NOTIFICATION_RECEIPT_PATH",
+                    "/data/artifacts/propertyquarry-ooda-notification/latest.json",
+                )
+            ),
+            error_type=error_type,
+            max_age_seconds=scheduler_witness.configured_max_age_seconds(),
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda iteration witness persistence failed"
+        )
+        return {
+            "status": "unavailable",
+            "receipt_persisted": False,
+            "persistent_reevaluation_verified": False,
+        }
+    return {
+        "status": str(receipt.get("status") or "unknown"),
+        "receipt_persisted": receipt.get("receipt_persisted") is True,
+        "persistent_reevaluation_verified": False,
+    }
+
+
+def _run_scheduler_propertyquarry_ooda_notification_cycle(log: logging.Logger) -> dict[str, object]:
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_runtime_control as runtime_control
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+    from scripts import propertyquarry_ooda_source_refresh_settlement as source_settlement
+    from scripts import propertyquarry_ooda_source_refresh_trust_decision as source_trust_decision
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_artifact_request as source_trust_candidate_artifact_request
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_artifact_notification as source_trust_candidate_artifact_notification
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_import as source_trust_candidate_import
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_manual_action as source_trust_candidate_manual_action
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_authorization as source_trust_enrollment_authorization
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_execution as source_trust_enrollment_execution
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_execution_readiness as source_trust_enrollment_execution_readiness
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_preview as source_trust_enrollment_preview
+    from scripts import propertyquarry_ooda_source_refresh_trust_intake as source_trust_intake
+    from scripts import propertyquarry_ooda_source_refresh_trust_notification as source_trust_notification
+
+    send_enabled = _scheduler_propertyquarry_ooda_send_enabled()
+    principal_id = str(os.environ.get("PROPERTYQUARRY_OODA_NOTIFICATION_PRINCIPAL_ID") or "").strip()
+    if send_enabled and not principal_id:
+        return {
+            "ran": False,
+            "status": "delivery_authority_incomplete",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+            "errors": 1,
+        }
+
+    approval_manifest_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_APPROVAL_MANIFEST_PATH",
+        "/run/propertyquarry/ooda-signals/manifest.json",
+    )
+    cycle_receipt_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_RECEIPT_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/latest.json",
+    )
+    notification_lock_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_LOCK_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/send.lock",
+    )
+    source_refresh_request_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_REQUEST_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-request.json",
+    )
+    source_refresh_verification_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_VERIFICATION_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-request-verification.json",
+    )
+    source_refresh_handoff_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_HANDOFF_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-handoff.json",
+    )
+    source_refresh_handoff_verification_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_HANDOFF_VERIFICATION_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-handoff-verification.json",
+    )
+    source_refresh_claim_trust_registry_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_CLAIM_TRUST_REGISTRY_PATH",
+        "/config/propertyquarry_ooda_source_refresh_producer_trust.v1.json",
+    )
+    source_refresh_claim_dir = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_CLAIM_DIR",
+        "/run/propertyquarry/ooda-producer-claims",
+    )
+    source_refresh_claim_receipt_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_CLAIMS_RECEIPT_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-claims.json",
+    )
+    source_refresh_claim_verification_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_CLAIMS_VERIFICATION_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-claims-verification.json",
+    )
+    source_refresh_completion_dir = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_COMPLETION_DIR",
+        "/run/propertyquarry/ooda-producer-completions",
+    )
+    source_refresh_settlement_receipt_path = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_SETTLEMENT_RECEIPT_PATH",
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-settlement.json",
+    )
+    source_refresh_settlement_verification_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_SETTLEMENT_VERIFICATION_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-settlement-verification.json",
+        )
+    )
+    source_refresh_trust_candidate_dir = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_INTAKE_CANDIDATE_DIR",
+        "/run/propertyquarry/ooda-producer-trust-candidates",
+    )
+    source_refresh_trust_intake_receipt_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_INTAKE_RECEIPT_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-intake.json",
+        )
+    )
+    source_refresh_trust_intake_verification_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_INTAKE_VERIFICATION_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-intake-verification.json",
+        )
+    )
+    source_refresh_trust_candidate_import_dir = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_IMPORT_DIR",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-candidate-imports",
+        )
+    )
+    source_refresh_trust_candidate_source_dir = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_SOURCE_DIR",
+            "/run/propertyquarry/ooda-producer-trust-source",
+        )
+    )
+    source_refresh_trust_candidate_import_presentation_state_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_IMPORT_PRESENTATION_STATE_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-candidate-import-presentation.json",
+        )
+    )
+    source_refresh_trust_candidate_artifact_request_receipt_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_ARTIFACT_REQUEST_RECEIPT_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-candidate-artifact-request.json",
+        )
+    )
+    source_refresh_trust_candidate_manual_action_receipt_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_MANUAL_ACTION_RECEIPT_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-candidate-manual-action.json",
+        )
+    )
+    source_refresh_trust_candidate_artifact_notification_receipt_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_ARTIFACT_NOTIFICATION_RECEIPT_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-candidate-artifact-notification.json",
+        )
+    )
+    source_refresh_trust_decision_dir = _scheduler_propertyquarry_ooda_path(
+        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_DECISION_DIR",
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-candidate-decisions",
+    )
+    source_refresh_trust_presentation_state_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_PRESENTATION_STATE_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-candidate-presentation.json",
+        )
+    )
+    source_refresh_trust_notification_receipt_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_NOTIFICATION_RECEIPT_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-candidate-notification.json",
+        )
+    )
+    source_refresh_trust_enrollment_preview_receipt_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_PREVIEW_RECEIPT_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-enrollment-preview.json",
+        )
+    )
+    source_refresh_trust_enrollment_preview_verification_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_PREVIEW_VERIFICATION_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-enrollment-preview-verification.json",
+        )
+    )
+    source_refresh_trust_enrollment_authorization_dir = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_AUTHORIZATION_DIR",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-enrollment-authorizations",
+        )
+    )
+    source_refresh_trust_enrollment_execution_readiness_receipt_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_EXECUTION_READINESS_RECEIPT_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-enrollment-execution-readiness.json",
+        )
+    )
+    source_refresh_trust_enrollment_execution_readiness_verification_path = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_EXECUTION_READINESS_VERIFICATION_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-enrollment-execution-readiness-verification.json",
+        )
+    )
+    source_refresh_trust_enrollment_execution_dir = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_EXECUTION_DIR",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-enrollment-executions",
+        )
+    )
+    source_refresh_trust_enrollment_backup_dir = (
+        _scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_BACKUP_DIR",
+            "/data/artifacts/propertyquarry-ooda-notification/"
+            "source-refresh-trust-enrollment-backups",
+        )
+    )
+    report = notification_cycle.run_cycle_once(
+        gold_receipt=_scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_GOLD_RECEIPT_PATH",
+            "/run/propertyquarry/ooda-signals/property-gold-status.json",
+        ),
+        public_origin_observation=_scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_OBSERVATION_PATH",
+            "/run/propertyquarry/ooda-signals/public-origin-observation.json",
+        ),
+        scene_packet=_scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SCENE_PACKET_PATH",
+            "/run/propertyquarry/ooda-signals/scene-video-provider-refresh-packet.json",
+        ),
+        scene_verifier=_scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SCENE_VERIFIER_PATH",
+            "/run/propertyquarry/ooda-signals/scene-video-provider-refresh-verifier.json",
+        ),
+        scene_runtime_status=_scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_SCENE_RUNTIME_STATUS_PATH",
+            "/run/propertyquarry/ooda-signals/scene-video-runtime-status.json",
+        ),
+        approval_manifest=approval_manifest_path,
+        require_approval_manifest=True,
+        approval_manifest_max_age_seconds=(
+            _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+        ),
+        state_file=_scheduler_propertyquarry_ooda_path(
+            "PROPERTYQUARRY_OODA_NOTIFICATION_STATE_PATH",
+            "/data/artifacts/propertyquarry-ooda-notification/state.json",
+        ),
+        lock_file=notification_lock_path,
+        write=cycle_receipt_path,
+        principal_id=principal_id or notification_cycle.DEFAULT_PRINCIPAL_ID,
+        base_url=str(
+            os.environ.get("PROPERTYQUARRY_OODA_NOTIFICATION_BASE_URL")
+            or notification_cycle.DEFAULT_BASE_URL
+        ).strip(),
+        send=send_enabled,
+    )
+    runtime_control_handoff_status: dict[str, object] | None = None
+    if report.get("schema") == notification_cycle.SCHEMA:
+        try:
+            runtime_control_handoff_status = (
+                runtime_control.stage_host_runtime_control_handoff(
+                    cycle_receipt_path=Path(cycle_receipt_path),
+                    signal_dir=Path(approval_manifest_path).parent,
+                    receipt_path=(
+                        Path(cycle_receipt_path).parent
+                        / "runtime-control-host-handoff.json"
+                    ),
+                    max_age_seconds=(
+                        _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                    ),
+                )
+            )
+        except Exception:
+            log.exception(
+                "scheduler propertyquarry ooda host runtime-control handoff failed"
+            )
+            runtime_control_handoff_status = {
+                "status": "blocked",
+                "blocking_reason": "host_runtime_control_handoff_failed",
+                "host_review_required": False,
+                "current_evidence_verified": False,
+                "receipt_persisted": False,
+                "execution_authorized": False,
+                "deployment_or_restart_authorized": False,
+                "protected_operation_executed": False,
+                "provider_quota_consumption_allowed": False,
+                "delivery_authorized": False,
+            }
+    try:
+        source_settlement_status = (
+            source_settlement.materialize_current_settlement_bundle(
+                cycle_receipt_path=Path(cycle_receipt_path),
+                signal_dir=Path(approval_manifest_path).parent,
+                handoff_path=Path(source_refresh_handoff_path),
+                handoff_verification_path=Path(
+                    source_refresh_handoff_verification_path
+                ),
+                claim_lifecycle_path=Path(source_refresh_claim_receipt_path),
+                claim_verification_path=Path(
+                    source_refresh_claim_verification_path
+                ),
+                trust_registry_path=Path(
+                    source_refresh_claim_trust_registry_path
+                ),
+                claim_dir=Path(source_refresh_claim_dir),
+                completion_dir=Path(source_refresh_completion_dir),
+                receipt_path=Path(source_refresh_settlement_receipt_path),
+                verification_path=Path(
+                    source_refresh_settlement_verification_path
+                ),
+                require_claim_dir=True,
+                require_completion_dir=True,
+                max_age_seconds=(
+                    _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                ),
+            )
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh settlement failed"
+        )
+        source_settlement_status = {
+            "status": "blocked",
+            "settlement_state": "blocked",
+            "producer_completion_recorded": False,
+            "settlement_attributed": False,
+            "settlement_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        }
+    source_settlement_verified = (
+        source_settlement_status.get("status") == "verified"
+    )
+    try:
+        source_refresh_status = (
+            source_refresh.materialize_current_source_refresh_request_bundle(
+                cycle_receipt_path=Path(cycle_receipt_path),
+                signal_dir=Path(approval_manifest_path).parent,
+                request_path=Path(source_refresh_request_path),
+                verification_path=Path(source_refresh_verification_path),
+                max_age_seconds=(
+                    _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                ),
+            )
+            if source_settlement_verified
+            else {
+                "status": "blocked",
+                "request_state": "settlement_blocked",
+                "request_staged": False,
+                "request_receipt_persisted": False,
+                "verification_receipt_persisted": False,
+            }
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh request failed"
+        )
+        source_refresh_status = {
+            "status": "blocked",
+            "request_state": "blocked",
+            "request_staged": False,
+            "request_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        }
+    try:
+        source_handoff_status = (
+            source_handoff.materialize_current_source_refresh_handoff_bundle(
+                cycle_receipt_path=Path(cycle_receipt_path),
+                signal_dir=Path(approval_manifest_path).parent,
+                request_path=Path(source_refresh_request_path),
+                request_verification_path=Path(
+                    source_refresh_verification_path
+                ),
+                handoff_path=Path(
+                    _scheduler_propertyquarry_ooda_path(
+                        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_HANDOFF_PATH",
+                        "/data/artifacts/propertyquarry-ooda-notification/"
+                        "source-refresh-handoff.json",
+                    )
+                ),
+                verification_path=Path(
+                    _scheduler_propertyquarry_ooda_path(
+                        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_HANDOFF_VERIFICATION_PATH",
+                        "/data/artifacts/propertyquarry-ooda-notification/"
+                        "source-refresh-handoff-verification.json",
+                    )
+                ),
+                max_age_seconds=(
+                    _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                ),
+            )
+            if source_settlement_verified
+            and source_refresh_status.get("status") == "verified"
+            else {
+                "status": "blocked",
+                "handoff_state": "settlement_or_request_blocked",
+                "handoff_available": False,
+                "handoff_receipt_persisted": False,
+                "verification_receipt_persisted": False,
+            }
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh handoff failed"
+        )
+        source_handoff_status = {
+            "status": "blocked",
+            "handoff_state": "blocked",
+            "handoff_available": False,
+            "handoff_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        }
+    try:
+        source_claims_status = (
+            source_claims.materialize_current_claim_lifecycle_bundle(
+                cycle_receipt_path=Path(cycle_receipt_path),
+                signal_dir=Path(approval_manifest_path).parent,
+                request_path=Path(source_refresh_request_path),
+                request_verification_path=Path(
+                    source_refresh_verification_path
+                ),
+                handoff_path=Path(
+                    _scheduler_propertyquarry_ooda_path(
+                        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_HANDOFF_PATH",
+                        "/data/artifacts/propertyquarry-ooda-notification/"
+                        "source-refresh-handoff.json",
+                    )
+                ),
+                handoff_verification_path=Path(
+                    _scheduler_propertyquarry_ooda_path(
+                        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_HANDOFF_VERIFICATION_PATH",
+                        "/data/artifacts/propertyquarry-ooda-notification/"
+                        "source-refresh-handoff-verification.json",
+                    )
+                ),
+                trust_registry_path=Path(
+                    _scheduler_propertyquarry_ooda_path(
+                        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_CLAIM_TRUST_REGISTRY_PATH",
+                        "/config/"
+                        "propertyquarry_ooda_source_refresh_producer_trust.v1.json",
+                    )
+                ),
+                claim_dir=Path(
+                    _scheduler_propertyquarry_ooda_path(
+                        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_CLAIM_DIR",
+                        "/run/propertyquarry/ooda-producer-claims",
+                    )
+                ),
+                receipt_path=Path(
+                    _scheduler_propertyquarry_ooda_path(
+                        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_CLAIMS_RECEIPT_PATH",
+                        "/data/artifacts/propertyquarry-ooda-notification/"
+                        "source-refresh-claims.json",
+                    )
+                ),
+                verification_path=Path(
+                    _scheduler_propertyquarry_ooda_path(
+                        "PROPERTYQUARRY_OODA_SOURCE_REFRESH_CLAIMS_VERIFICATION_PATH",
+                        "/data/artifacts/propertyquarry-ooda-notification/"
+                        "source-refresh-claims-verification.json",
+                    )
+                ),
+                require_claim_dir=True,
+                max_age_seconds=(
+                    _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                ),
+            )
+            if source_settlement_verified
+            and source_refresh_status.get("status") == "verified"
+            and source_handoff_status.get("status") == "verified"
+            else {
+                "status": "blocked",
+                "claim_state": "settlement_or_handoff_blocked",
+                "settlement_state": "unverified",
+                "producer_claim_recorded": False,
+                "lifecycle_receipt_persisted": False,
+                "verification_receipt_persisted": False,
+            }
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh claims failed"
+        )
+        source_claims_status = {
+            "status": "blocked",
+            "claim_state": "blocked",
+            "settlement_state": "unverified",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        }
+    source_claims_verified = source_claims_status.get("status") == "verified"
+    try:
+        source_trust_intake_status = (
+            source_trust_intake.materialize_trust_intake_bundle(
+                claim_verification_path=Path(
+                    source_refresh_claim_verification_path
+                ),
+                trust_registry_path=Path(
+                    source_refresh_claim_trust_registry_path
+                ),
+                candidate_dir=Path(source_refresh_trust_candidate_dir),
+                receipt_path=Path(
+                    source_refresh_trust_intake_receipt_path
+                ),
+                verification_path=Path(
+                    source_refresh_trust_intake_verification_path
+                ),
+                max_age_seconds=(
+                    _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                ),
+            )
+            if source_claims_verified
+            else {
+                "status": "blocked",
+                "intake_state": "claims_blocked",
+                "request_staged": False,
+                "candidates": [],
+                "action_required": False,
+                "interrupt_operator": False,
+                "trust_enrollment_authorized": False,
+                "trust_registry_modified": False,
+                "intake_receipt_persisted": False,
+                "verification_receipt_persisted": False,
+            }
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust intake failed"
+        )
+        source_trust_intake_status = {
+            "status": "blocked",
+            "intake_state": "blocked",
+            "request_staged": False,
+            "candidates": [],
+            "action_required": False,
+            "interrupt_operator": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "intake_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        }
+    source_trust_intake_verified = (
+        source_trust_intake_status.get("status") == "verified"
+    )
+    try:
+        source_trust_candidate_import_status = (
+            _project_scheduler_propertyquarry_candidate_import_presentation(
+                source_trust_candidate_import.inspect_candidate_import_readiness(
+                    source_trust_intake_status,
+                    candidate_dir=Path(source_refresh_trust_candidate_dir),
+                    import_dir=Path(source_refresh_trust_candidate_import_dir),
+                    source_discovery_dir=Path(
+                        source_refresh_trust_candidate_source_dir
+                    ),
+                ),
+                state_path=Path(
+                    source_refresh_trust_candidate_import_presentation_state_path
+                ),
+            )
+            if source_trust_intake_verified
+            else {
+                "status": "blocked",
+                "import_state": "trust_intake_blocked",
+                "action_required": False,
+                "interrupt_operator": False,
+                "candidate_import_authorized": False,
+                "candidate_import_attempted": False,
+                "candidate_imported": False,
+                "public_key_candidate_recorded": False,
+                "trust_enrollment_authorized": False,
+                "trust_registry_modified": False,
+                "provider_quota_consumption_allowed": False,
+                "delivery_authorized": False,
+            }
+        )
+        if not (
+            source_trust_candidate_import_status.get("status") == "verified"
+            and source_trust_candidate_import_status.get("import_state")
+            in {
+                "awaiting_external_artifact",
+                "external_artifact_not_admissible",
+                "ready_for_manual_import",
+                "not_required",
+                "succeeded",
+                "recovery_required",
+            }
+            and source_trust_candidate_import_status.get(
+                "candidate_import_authorized"
+            )
+            is False
+            and source_trust_candidate_import_status.get(
+                "trust_enrollment_authorized"
+            )
+            is False
+            and source_trust_candidate_import_status.get(
+                "trust_registry_modified"
+            )
+            is False
+            and source_trust_candidate_import_status.get(
+                "provider_quota_consumption_allowed"
+            )
+            is False
+            and source_trust_candidate_import_status.get(
+                "delivery_authorized"
+            )
+            is False
+        ):
+            log.error(
+                "scheduler propertyquarry ooda source refresh trust candidate "
+                "import receipt rejected status=%s state=%s reason=%s",
+                source_trust_candidate_import_status.get("status"),
+                source_trust_candidate_import_status.get("import_state"),
+                source_trust_candidate_import_status.get("blocking_reason"),
+            )
+            raise ValueError(
+                "source_refresh_trust_candidate_import_not_admissible"
+            )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust candidate import inspection failed"
+        )
+        source_trust_candidate_import_status = {
+            "status": "blocked",
+            "import_state": "blocked",
+            "action_required": False,
+            "interrupt_operator": False,
+            "candidate_import_authorized": False,
+            "candidate_import_attempted": False,
+            "candidate_imported": False,
+            "public_key_candidate_recorded": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "provider_quota_consumption_allowed": False,
+            "delivery_authorized": False,
+        }
+    source_trust_candidate_import_verified = (
+        source_trust_candidate_import_status.get("status") == "verified"
+    )
+    try:
+        source_trust_candidate_artifact_request_status = (
+            source_trust_candidate_artifact_request.materialize_candidate_artifact_request(
+                source_trust_candidate_import_status,
+                receipt_path=Path(
+                    source_refresh_trust_candidate_artifact_request_receipt_path
+                ),
+                max_age_seconds=(
+                    _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                ),
+            )
+            if source_trust_candidate_import_verified
+            else {
+                "status": "blocked",
+                "request_state": "candidate_import_blocked",
+                "artifact_request_staged": False,
+                "action_required": False,
+                "interrupt_operator": False,
+                "receipt_persisted": False,
+                "producer_contacted": False,
+                "transport_delivery_attempted": False,
+                "candidate_import_authorized": False,
+                "candidate_import_attempted": False,
+                "candidate_imported": False,
+                "trust_registry_modified": False,
+                "provider_quota_consumption_allowed": False,
+                "delivery_authorized": False,
+            }
+        )
+        if not (
+            source_trust_candidate_artifact_request_status.get("status")
+            == "verified"
+            and source_trust_candidate_artifact_request_status.get(
+                "request_state"
+            )
+            in (
+                source_trust_candidate_artifact_request._STAGED_STATES
+                | source_trust_candidate_artifact_request._NOT_REQUIRED_STATES
+            )
+            and source_trust_candidate_artifact_request_status.get(
+                "receipt_persisted"
+            )
+            is True
+            and source_trust_candidate_artifact_request_status.get(
+                "interrupt_operator"
+            )
+            is False
+            and source_trust_candidate_artifact_request_status.get(
+                "producer_contacted"
+            )
+            is False
+            and source_trust_candidate_artifact_request_status.get(
+                "transport_delivery_attempted"
+            )
+            is False
+            and source_trust_candidate_artifact_request_status.get(
+                "candidate_import_authorized"
+            )
+            is False
+            and source_trust_candidate_artifact_request_status.get(
+                "candidate_import_attempted"
+            )
+            is False
+            and source_trust_candidate_artifact_request_status.get(
+                "trust_registry_modified"
+            )
+            is False
+            and source_trust_candidate_artifact_request_status.get(
+                "provider_quota_consumption_allowed"
+            )
+            is False
+            and source_trust_candidate_artifact_request_status.get(
+                "delivery_authorized"
+            )
+            is False
+        ):
+            raise ValueError(
+                "source_refresh_trust_candidate_artifact_request_not_admissible"
+            )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust candidate "
+            "artifact request materialization failed"
+        )
+        source_trust_candidate_artifact_request_status = {
+            "status": "blocked",
+            "request_state": "blocked",
+            "artifact_request_staged": False,
+            "action_required": False,
+            "interrupt_operator": False,
+            "receipt_persisted": False,
+            "producer_contacted": False,
+            "transport_delivery_attempted": False,
+            "candidate_import_authorized": False,
+            "candidate_import_attempted": False,
+            "candidate_imported": False,
+            "trust_registry_modified": False,
+            "provider_quota_consumption_allowed": False,
+            "delivery_authorized": False,
+        }
+    source_trust_candidate_artifact_request_verified = (
+        source_trust_candidate_artifact_request_status.get("status")
+        == "verified"
+    )
+    try:
+        source_trust_candidate_manual_action_status = (
+            source_trust_candidate_manual_action.materialize_candidate_manual_action(
+                source_trust_candidate_import_status,
+                source_trust_candidate_artifact_request_status,
+                receipt_path=Path(
+                    source_refresh_trust_candidate_manual_action_receipt_path
+                ),
+                max_age_seconds=(
+                    _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                ),
+            )
+            if source_trust_candidate_import_verified
+            and source_trust_candidate_artifact_request_verified
+            else {
+                "status": "blocked",
+                "action_state": "candidate_artifact_request_blocked",
+                "operator_action_receipt_staged": False,
+                "action_required": False,
+                "interrupt_operator": False,
+                "receipt_persisted": False,
+                "producer_contacted": False,
+                "transport_delivery_authorized": False,
+                "transport_delivery_attempted": False,
+                "notification_sent": False,
+                "candidate_import_authorized": False,
+                "candidate_import_attempted": False,
+                "candidate_imported": False,
+                "trust_registry_modified": False,
+                "provider_quota_consumption_allowed": False,
+                "delivery_authorized": False,
+            }
+        )
+        manual_action_state = str(
+            source_trust_candidate_manual_action_status.get("action_state")
+            or ""
+        )
+        manual_action_staged = manual_action_state in (
+            source_trust_candidate_manual_action._ACTION_STATES
+        )
+        if not (
+            source_trust_candidate_manual_action_status.get("status")
+            == "verified"
+            and manual_action_state
+            == source_trust_candidate_import_status.get("import_state")
+            and source_trust_candidate_manual_action_status.get(
+                "operator_action_receipt_staged"
+            )
+            is manual_action_staged
+            and source_trust_candidate_manual_action_status.get(
+                "action_required"
+            )
+            is manual_action_staged
+            and source_trust_candidate_manual_action_status.get(
+                "interrupt_operator"
+            )
+            is (
+                source_trust_candidate_import_status.get(
+                    "interrupt_operator"
+                )
+                is True
+            )
+            and source_trust_candidate_manual_action_status.get(
+                "receipt_persisted"
+            )
+            is True
+            and source_trust_candidate_manual_action_status.get(
+                "producer_contacted"
+            )
+            is False
+            and source_trust_candidate_manual_action_status.get(
+                "transport_delivery_authorized"
+            )
+            is False
+            and source_trust_candidate_manual_action_status.get(
+                "transport_delivery_attempted"
+            )
+            is False
+            and source_trust_candidate_manual_action_status.get(
+                "notification_sent"
+            )
+            is False
+            and source_trust_candidate_manual_action_status.get(
+                "candidate_import_authorized"
+            )
+            is False
+            and source_trust_candidate_manual_action_status.get(
+                "candidate_import_attempted"
+            )
+            is False
+            and source_trust_candidate_manual_action_status.get(
+                "trust_registry_modified"
+            )
+            is False
+            and source_trust_candidate_manual_action_status.get(
+                "provider_quota_consumption_allowed"
+            )
+            is False
+            and source_trust_candidate_manual_action_status.get(
+                "delivery_authorized"
+            )
+            is False
+        ):
+            raise ValueError(
+                "source_refresh_trust_candidate_manual_action_not_admissible"
+            )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust candidate "
+            "manual action materialization failed"
+        )
+        source_trust_candidate_manual_action_status = {
+            "status": "blocked",
+            "action_state": "blocked",
+            "operator_action_receipt_staged": False,
+            "action_required": False,
+            "interrupt_operator": False,
+            "receipt_persisted": False,
+            "producer_contacted": False,
+            "transport_delivery_authorized": False,
+            "transport_delivery_attempted": False,
+            "notification_sent": False,
+            "candidate_import_authorized": False,
+            "candidate_import_attempted": False,
+            "candidate_imported": False,
+            "trust_registry_modified": False,
+            "provider_quota_consumption_allowed": False,
+            "delivery_authorized": False,
+        }
+    source_trust_candidate_manual_action_verified = (
+        source_trust_candidate_manual_action_status.get("status")
+        == "verified"
+    )
+    try:
+        source_trust_candidate_artifact_notification_status = (
+            source_trust_candidate_artifact_notification.run_candidate_artifact_notification(
+                source_trust_candidate_import_status,
+                source_trust_candidate_artifact_request_status,
+                source_trust_candidate_manual_action_status,
+                presentation_state_path=Path(
+                    source_refresh_trust_candidate_import_presentation_state_path
+                ),
+                manual_action_receipt_path=Path(
+                    source_refresh_trust_candidate_manual_action_receipt_path
+                ),
+                lock_path=Path(notification_lock_path),
+                receipt_path=Path(
+                    source_refresh_trust_candidate_artifact_notification_receipt_path
+                ),
+                principal_id=(
+                    principal_id or notification_cycle.DEFAULT_PRINCIPAL_ID
+                ),
+                base_url=str(
+                    os.environ.get(
+                        "PROPERTYQUARRY_OODA_NOTIFICATION_BASE_URL"
+                    )
+                    or notification_cycle.DEFAULT_BASE_URL
+                ).strip(),
+                send=send_enabled,
+            )
+            if source_trust_candidate_import_verified
+            and source_trust_candidate_artifact_request_verified
+            and source_trust_candidate_manual_action_verified
+            else {
+                "status": "blocked",
+                "action_state": "candidate_manual_action_blocked",
+                "action_required": False,
+                "interrupt_operator": False,
+                "delivery_authorized": False,
+                "delivery_attempted": False,
+                "sent": False,
+                "would_send": False,
+                "presentation_recorded": False,
+                "receipt_persisted": False,
+                "producer_contacted": False,
+                "artifact_transport_authorized": False,
+                "artifact_transport_attempted": False,
+                "candidate_import_authorized": False,
+                "candidate_import_attempted": False,
+                "trust_registry_modified": False,
+                "provider_quota_consumption_allowed": False,
+            }
+        )
+        artifact_notification_status = str(
+            source_trust_candidate_artifact_notification_status.get("status")
+            or ""
+        )
+        artifact_notification_completed = artifact_notification_status == "completed"
+        artifact_notification_action = artifact_notification_status == "action_required"
+        artifact_notification_failed = (
+            artifact_notification_status
+            in source_trust_candidate_artifact_notification._FAILURE_STATUSES
+        )
+        artifact_notification_staged = (
+            source_trust_candidate_manual_action_status.get(
+                "operator_action_receipt_staged"
+            )
+            is True
+        )
+        if not (
+            artifact_notification_status
+            in (
+                source_trust_candidate_artifact_notification._HEALTHY_STATUSES
+                | source_trust_candidate_artifact_notification._FAILURE_STATUSES
+            )
+            and source_trust_candidate_artifact_notification_status.get(
+                "action_required"
+            )
+            is artifact_notification_staged
+            and (
+                (
+                    not artifact_notification_failed
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "interrupt_operator"
+                    )
+                    is artifact_notification_action
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "would_send"
+                    )
+                    is artifact_notification_action
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "delivery_authorized"
+                    )
+                    is artifact_notification_completed
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "delivery_attempted"
+                    )
+                    is artifact_notification_completed
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "sent"
+                    )
+                    is artifact_notification_completed
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "presentation_recorded"
+                    )
+                    is artifact_notification_completed
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "receipt_persisted"
+                    )
+                    is True
+                )
+                or (
+                    artifact_notification_failed
+                    and bool(
+                        str(
+                            source_trust_candidate_artifact_notification_status.get(
+                                "blocking_reason"
+                            )
+                            or ""
+                        ).strip()
+                    )
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "interrupt_operator"
+                    )
+                    is False
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "would_send"
+                    )
+                    is False
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "delivery_authorized"
+                    )
+                    is (artifact_notification_status != "blocked")
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "delivery_attempted"
+                    )
+                    is (
+                        artifact_notification_status
+                        in {"delivery_failed", "delivery_unrecorded"}
+                    )
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "sent"
+                    )
+                    is (artifact_notification_status == "delivery_unrecorded")
+                    and (
+                        source_trust_candidate_artifact_notification_status.get(
+                            "presentation_recorded"
+                        )
+                        is False
+                        or artifact_notification_status == "delivery_unrecorded"
+                    )
+                    and source_trust_candidate_artifact_notification_status.get(
+                        "receipt_persisted"
+                    )
+                    in {True, False}
+                )
+            )
+            and source_trust_candidate_artifact_notification_status.get(
+                "producer_contacted"
+            )
+            is False
+            and source_trust_candidate_artifact_notification_status.get(
+                "artifact_transport_authorized"
+            )
+            is False
+            and source_trust_candidate_artifact_notification_status.get(
+                "artifact_transport_attempted"
+            )
+            is False
+            and source_trust_candidate_artifact_notification_status.get(
+                "candidate_import_authorized"
+            )
+            is False
+            and source_trust_candidate_artifact_notification_status.get(
+                "candidate_import_attempted"
+            )
+            is False
+            and source_trust_candidate_artifact_notification_status.get(
+                "trust_registry_modified"
+            )
+            is False
+            and source_trust_candidate_artifact_notification_status.get(
+                "provider_quota_consumption_allowed"
+            )
+            is False
+        ):
+            raise ValueError(
+                "source_refresh_trust_candidate_artifact_notification_not_admissible"
+            )
+        if artifact_notification_completed:
+            source_trust_candidate_import_status = (
+                _project_scheduler_propertyquarry_candidate_import_presentation(
+                    source_trust_candidate_import_status,
+                    state_path=Path(
+                        source_refresh_trust_candidate_import_presentation_state_path
+                    ),
+                )
+            )
+            source_trust_candidate_manual_action_status = (
+                source_trust_candidate_manual_action.inspect_candidate_manual_action(
+                    source_trust_candidate_import_status,
+                    source_trust_candidate_artifact_request_status,
+                    receipt_path=Path(
+                        source_refresh_trust_candidate_manual_action_receipt_path
+                    ),
+                    max_age_seconds=(
+                        _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                    ),
+                )
+            )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust candidate "
+            "artifact notification failed"
+        )
+        source_trust_candidate_artifact_notification_status = {
+            "status": "blocked",
+            "action_state": "blocked",
+            "action_required": False,
+            "interrupt_operator": False,
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "presentation_recorded": False,
+            "receipt_persisted": False,
+            "producer_contacted": False,
+            "artifact_transport_authorized": False,
+            "artifact_transport_attempted": False,
+            "candidate_import_authorized": False,
+            "candidate_import_attempted": False,
+            "trust_registry_modified": False,
+            "provider_quota_consumption_allowed": False,
+        }
+    source_trust_candidate_artifact_notification_verified = (
+        source_trust_candidate_artifact_notification_status.get("status")
+        in source_trust_candidate_artifact_notification._HEALTHY_STATUSES
+    )
+    try:
+        if source_trust_intake_verified:
+            source_trust_decision_status = (
+                source_trust_decision.verify_candidate_review_decision_for_report(
+                    source_trust_intake_status,
+                    decision_dir=Path(source_refresh_trust_decision_dir),
+                )
+            )
+            source_trust_projected_status = (
+                source_trust_decision.project_candidate_review_decision(
+                    source_trust_intake_status,
+                    source_trust_decision_status,
+                )
+            )
+            if not (
+                source_trust_decision_status.get("status")
+                in {"not_required", "pending", "verified"}
+                and source_trust_decision_status.get(
+                    "trust_enrollment_authorized"
+                )
+                is False
+                and source_trust_decision_status.get("trust_registry_modified")
+                is False
+                and source_trust_decision_status.get(
+                    "private_key_material_requested"
+                )
+                is False
+                and source_trust_decision_status.get(
+                    "private_key_material_recorded"
+                )
+                is False
+                and source_trust_decision_status.get(
+                    "provider_quota_consumption_allowed"
+                )
+                is False
+                and source_trust_decision_status.get("delivery_authorized")
+                is False
+                and source_trust_decision_status.get(
+                    "protected_operation_executed"
+                )
+                is False
+            ):
+                raise ValueError(
+                    "source_refresh_trust_decision_not_admissible"
+                )
+        else:
+            source_trust_decision_status = {
+                "status": "blocked",
+                "review_state": "trust_intake_blocked",
+                "decision": "",
+                "action_required": False,
+                "interrupt_operator": False,
+                "trust_enrollment_preview_authorized": False,
+                "trust_enrollment_authorized": False,
+                "trust_registry_modified": False,
+                "private_key_material_requested": False,
+                "private_key_material_recorded": False,
+                "provider_quota_consumption_allowed": False,
+                "delivery_authorized": False,
+                "protected_operation_executed": False,
+            }
+            source_trust_projected_status = dict(
+                source_trust_intake_status
+            )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust decision failed"
+        )
+        source_trust_decision_status = {
+            "status": "blocked",
+            "review_state": "blocked",
+            "decision": "",
+            "action_required": False,
+            "interrupt_operator": False,
+            "trust_enrollment_preview_authorized": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "private_key_material_requested": False,
+            "private_key_material_recorded": False,
+            "provider_quota_consumption_allowed": False,
+            "delivery_authorized": False,
+            "protected_operation_executed": False,
+        }
+        source_trust_projected_status = {
+            **dict(source_trust_intake_status),
+            "intake_state": "blocked",
+            "action_required": False,
+            "interrupt_operator": False,
+            "operator_review_required": False,
+            "trust_enrollment_preview_authorized": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+        }
+    source_trust_decision_verified = source_trust_decision_status.get(
+        "status"
+    ) in {"not_required", "pending", "verified"}
+    try:
+        source_trust_notification_status = (
+            source_trust_notification.run_candidate_notification(
+                source_trust_intake_status,
+                source_trust_decision_status,
+                presentation_state_path=Path(
+                    source_refresh_trust_presentation_state_path
+                ),
+                lock_path=Path(notification_lock_path),
+                receipt_path=Path(
+                    source_refresh_trust_notification_receipt_path
+                ),
+                principal_id=(
+                    principal_id or notification_cycle.DEFAULT_PRINCIPAL_ID
+                ),
+                base_url=str(
+                    os.environ.get(
+                        "PROPERTYQUARRY_OODA_NOTIFICATION_BASE_URL"
+                    )
+                    or notification_cycle.DEFAULT_BASE_URL
+                ).strip(),
+                send=send_enabled,
+            )
+            if source_trust_intake_verified
+            and source_trust_decision_verified
+            else {
+                "status": "blocked",
+                "candidate_review_id": "",
+                "action_required": False,
+                "interrupt_operator": False,
+                "delivery_authorized": False,
+                "delivery_attempted": False,
+                "sent": False,
+                "would_send": False,
+                "presentation_recorded": False,
+                "receipt_persisted": False,
+                "trust_enrollment_authorized": False,
+                "trust_registry_modified": False,
+            }
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust notification failed"
+        )
+        source_trust_notification_status = {
+            "status": "blocked",
+            "candidate_review_id": "",
+            "action_required": False,
+            "interrupt_operator": False,
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "presentation_recorded": False,
+            "receipt_persisted": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+        }
+    try:
+        source_trust_enrollment_preview_status = (
+            source_trust_enrollment_preview.materialize_enrollment_preview(
+                source_trust_intake_status,
+                source_trust_decision_status,
+                trust_registry_path=Path(
+                    source_refresh_claim_trust_registry_path
+                ),
+                receipt_path=Path(
+                    source_refresh_trust_enrollment_preview_receipt_path
+                ),
+                verification_path=Path(
+                    source_refresh_trust_enrollment_preview_verification_path
+                ),
+                max_age_seconds=(
+                    _scheduler_propertyquarry_ooda_approval_max_age_seconds()
+                ),
+            )
+            if source_trust_intake_verified
+            and source_trust_decision_verified
+            else {
+                "status": "blocked",
+                "preview_state": "blocked",
+                "preview_id": "",
+                "action_required": False,
+                "interrupt_operator": False,
+                "preview_staged": False,
+                "trust_enrollment_preview_authorized": False,
+                "trust_enrollment_authorized": False,
+                "trust_registry_modified": False,
+                "preview_receipt_persisted": False,
+                "verification_receipt_persisted": False,
+            }
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust enrollment preview failed"
+        )
+        source_trust_enrollment_preview_status = {
+            "status": "blocked",
+            "preview_state": "blocked",
+            "preview_id": "",
+            "action_required": False,
+            "interrupt_operator": False,
+            "preview_staged": False,
+            "trust_enrollment_preview_authorized": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "preview_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        }
+    source_trust_enrollment_preview_verified = bool(
+        source_trust_enrollment_preview_status.get("status") == "verified"
+        and source_trust_enrollment_preview_status.get("preview_state")
+        in {"not_required", "awaiting_decision", "preview_staged"}
+    )
+    try:
+        source_trust_enrollment_authorization_status = (
+            source_trust_enrollment_authorization.verify_authorization_for_preview(
+                source_trust_enrollment_preview_status,
+                decision_dir=Path(
+                    source_refresh_trust_enrollment_authorization_dir
+                ),
+            )
+            if source_trust_enrollment_preview_verified
+            else {
+                "status": "blocked",
+                "authorization_state": "blocked",
+                "authorization_id": "",
+                "decision": "",
+                "action_required": False,
+                "interrupt_operator": False,
+                "exact_preview_authorized": False,
+                "trust_enrollment_authorized": False,
+                "trust_registry_modified": False,
+                "protected_operation_executed": False,
+            }
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust enrollment authorization failed"
+        )
+        source_trust_enrollment_authorization_status = {
+            "status": "blocked",
+            "authorization_state": "blocked",
+            "authorization_id": "",
+            "decision": "",
+            "action_required": False,
+            "interrupt_operator": False,
+            "exact_preview_authorized": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "protected_operation_executed": False,
+        }
+    source_trust_enrollment_authorization_verified = (
+        source_trust_enrollment_authorization_status.get("status")
+        in {"not_required", "pending", "verified"}
+    )
+    try:
+        source_trust_enrollment_execution_readiness_status = (
+            source_trust_enrollment_execution_readiness.materialize_execution_readiness(
+                source_trust_enrollment_preview_status,
+                source_trust_enrollment_authorization_status,
+                receipt_path=Path(
+                    source_refresh_trust_enrollment_execution_readiness_receipt_path
+                ),
+                verification_path=Path(
+                    source_refresh_trust_enrollment_execution_readiness_verification_path
+                ),
+            )
+            if source_trust_enrollment_authorization_verified
+            else {
+                "status": "blocked",
+                "readiness_state": "blocked",
+                "readiness_id": "",
+                "execution_request_staged": False,
+                "execution_readiness_verified": False,
+                "governed_execution_available": False,
+                "trust_registry_modified": False,
+                "execution_authorized": False,
+                "protected_operation_executed": False,
+            }
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust enrollment execution readiness failed"
+        )
+        source_trust_enrollment_execution_readiness_status = {
+            "status": "blocked",
+            "readiness_state": "blocked",
+            "readiness_id": "",
+            "execution_request_staged": False,
+            "execution_readiness_verified": False,
+            "governed_execution_available": False,
+            "trust_registry_modified": False,
+            "execution_authorized": False,
+            "protected_operation_executed": False,
+        }
+    try:
+        source_trust_enrollment_execution_status = (
+            source_trust_enrollment_execution.inspect_execution_for_readiness(
+                source_trust_enrollment_execution_readiness_status,
+                execution_dir=Path(
+                    source_refresh_trust_enrollment_execution_dir
+                ),
+                backup_dir=Path(
+                    source_refresh_trust_enrollment_backup_dir
+                ),
+            )
+        )
+    except Exception:
+        log.exception(
+            "scheduler propertyquarry ooda source refresh trust enrollment execution inspection failed"
+        )
+        source_trust_enrollment_execution_status = {
+            "status": "blocked",
+            "execution_state": "blocked",
+            "readiness_id": "",
+            "action_required": False,
+            "interrupt_operator": False,
+            "authorization_consumed": False,
+            "trust_registry_write_attempted": False,
+            "trust_registry_modified": False,
+            "rollback_available": False,
+            "protected_operation_executed": False,
+        }
+    status = str(report.get("status") or "unknown").strip() or "unknown"
+    failure_statuses = {
+        "delivery_failed",
+        "delivery_unrecorded",
+        "state_update_failed",
+        "send_cycle_busy",
+        "send_lock_unavailable",
+    }
+    source_refresh_verified = source_refresh_status.get("status") == "verified"
+    source_handoff_verified = source_handoff_status.get("status") == "verified"
+    source_trust_notification_verified = source_trust_notification_status.get(
+        "status"
+    ) in {
+        "not_required",
+        "resolved",
+        "action_required",
+        "deduplicated",
+        "completed",
+    }
+    source_trust_enrollment_execution_readiness_verified = bool(
+        source_trust_enrollment_execution_readiness_status.get("status")
+        == "verified"
+        and source_trust_enrollment_execution_readiness_status.get(
+            "readiness_state"
+        )
+        in {
+            "not_required",
+            "awaiting_exact_preview_authorization",
+            "authorization_rejected",
+            "deferred",
+            "ready_for_governed_execution",
+        }
+    )
+    source_trust_enrollment_execution_verified = bool(
+        source_trust_enrollment_execution_status.get("status") == "verified"
+        and source_trust_enrollment_execution_status.get("execution_state")
+        in {
+            "not_required",
+            "awaiting_authorization",
+            "authorization_rejected",
+            "deferred",
+            "ready_for_manual_execution",
+            "succeeded",
+            "recovery_required",
+        }
+    )
+    summary = {
+        "ran": True,
+        "status": status,
+        "delivery_authorized": report.get("delivery_authorized") is True,
+        "delivery_attempted": report.get("delivery_attempted") is True,
+        "sent": report.get("sent") is True,
+        "would_send": report.get("would_send") is True,
+        "action_required_count": max(0, int(report.get("action_required_count") or 0)),
+        "novel_action_count": max(0, int(report.get("novel_action_count") or 0)),
+        "source_refresh_settlement_status": str(
+            source_settlement_status.get("settlement_state") or "blocked"
+        ),
+        "source_refresh_producer_completion_recorded": (
+            source_settlement_status.get("producer_completion_recorded") is True
+        ),
+        "source_refresh_settlement_attributed": (
+            source_settlement_status.get("settlement_attributed") is True
+        ),
+        "source_refresh_settled_count": max(
+            0,
+            int(
+                dict(source_settlement_status.get("progress") or {}).get(
+                    "settled_count"
+                )
+                or 0
+            ),
+        ),
+        "source_refresh_settlement_receipt_persisted": (
+            source_settlement_status.get("settlement_receipt_persisted") is True
+        ),
+        "source_refresh_settlement_verification_persisted": (
+            source_settlement_status.get("verification_receipt_persisted") is True
+        ),
+        "source_refresh_request_status": str(
+            source_refresh_status.get("request_state") or "blocked"
+        ),
+        "source_refresh_request_staged": (
+            source_refresh_status.get("request_staged") is True
+        ),
+        "source_refresh_request_receipt_persisted": (
+            source_refresh_status.get("request_receipt_persisted") is True
+        ),
+        "source_refresh_request_verification_persisted": (
+            source_refresh_status.get("verification_receipt_persisted") is True
+        ),
+        "source_refresh_handoff_status": str(
+            source_handoff_status.get("handoff_state") or "blocked"
+        ),
+        "source_refresh_handoff_available": (
+            source_handoff_status.get("handoff_available") is True
+        ),
+        "source_refresh_handoff_receipt_persisted": (
+            source_handoff_status.get("handoff_receipt_persisted") is True
+        ),
+        "source_refresh_handoff_verification_persisted": (
+            source_handoff_status.get("verification_receipt_persisted") is True
+        ),
+        "source_refresh_claims_status": str(
+            source_claims_status.get("claim_state") or "blocked"
+        ),
+        "source_refresh_claims_settlement_status": str(
+            source_claims_status.get("settlement_state") or "unverified"
+        ),
+        "source_refresh_producer_claim_recorded": (
+            source_claims_status.get("producer_claim_recorded") is True
+        ),
+        "source_refresh_claim_count": max(
+            0,
+            int(
+                dict(source_claims_status.get("progress") or {}).get(
+                    "claim_count"
+                )
+                or 0
+            ),
+        ),
+        "source_refresh_claims_receipt_persisted": (
+            source_claims_status.get("lifecycle_receipt_persisted") is True
+        ),
+        "source_refresh_claims_verification_persisted": (
+            source_claims_status.get("verification_receipt_persisted") is True
+        ),
+        "source_refresh_trust_intake_status": str(
+            source_trust_projected_status.get("intake_state") or "blocked"
+        ),
+        "source_refresh_trust_intake_request_staged": (
+            source_trust_projected_status.get("request_staged") is True
+        ),
+        "source_refresh_trust_candidate_count": len(
+            list(source_trust_projected_status.get("candidates") or [])
+        ),
+        "source_refresh_trust_intake_receipt_persisted": (
+            source_trust_intake_status.get("intake_receipt_persisted") is True
+        ),
+        "source_refresh_trust_intake_verification_persisted": (
+            source_trust_intake_status.get("verification_receipt_persisted")
+            is True
+        ),
+        "source_refresh_trust_decision_status": str(
+            source_trust_decision_status.get("status") or "blocked"
+        ),
+        "source_refresh_trust_review_state": str(
+            source_trust_decision_status.get("review_state") or "blocked"
+        ),
+        "source_refresh_trust_decision": str(
+            source_trust_decision_status.get("decision") or ""
+        ),
+        "source_refresh_trust_action_required": (
+            source_trust_projected_status.get("action_required") is True
+        ),
+        "source_refresh_trust_interrupt_operator": (
+            source_trust_projected_status.get("interrupt_operator") is True
+        ),
+        "source_refresh_trust_enrollment_preview_authorized": (
+            source_trust_projected_status.get(
+                "trust_enrollment_preview_authorized"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_authorized": (
+            source_trust_enrollment_authorization_status.get(
+                "trust_enrollment_authorized"
+            )
+            is True
+        ),
+        "source_refresh_trust_registry_modified": (
+            source_trust_enrollment_execution_status.get(
+                "trust_registry_modified"
+            )
+            is True
+        ),
+        "source_refresh_trust_intake_verified": (
+            source_trust_intake_verified
+        ),
+        "source_refresh_trust_candidate_import_status": str(
+            source_trust_candidate_import_status.get("status") or "blocked"
+        ),
+        "source_refresh_trust_candidate_import_state": str(
+            source_trust_candidate_import_status.get("import_state")
+            or "blocked"
+        ),
+        "source_refresh_trust_candidate_import_request_id": str(
+            source_trust_candidate_import_status.get("request_id") or ""
+        ),
+        "source_refresh_trust_candidate_import_action_required": (
+            source_trust_candidate_import_status.get("action_required") is True
+        ),
+        "source_refresh_trust_candidate_import_interrupt_operator": (
+            source_trust_candidate_import_status.get("interrupt_operator")
+            is True
+        ),
+        "source_refresh_trust_candidate_import_authorized": (
+            source_trust_candidate_import_status.get(
+                "candidate_import_authorized"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_import_attempted": (
+            source_trust_candidate_import_status.get(
+                "candidate_import_attempted"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_imported": (
+            source_trust_candidate_import_status.get("candidate_imported")
+            is True
+        ),
+        "source_refresh_trust_candidate_import_verified": (
+            source_trust_candidate_import_verified
+        ),
+        "source_refresh_trust_candidate_artifact_request_status": str(
+            source_trust_candidate_artifact_request_status.get("status")
+            or "blocked"
+        ),
+        "source_refresh_trust_candidate_artifact_request_state": str(
+            source_trust_candidate_artifact_request_status.get(
+                "request_state"
+            )
+            or "blocked"
+        ),
+        "source_refresh_trust_candidate_artifact_request_staged": (
+            source_trust_candidate_artifact_request_status.get(
+                "artifact_request_staged"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_request_receipt_sha256": str(
+            source_trust_candidate_artifact_request_status.get(
+                "artifact_request_receipt_sha256"
+            )
+            or ""
+        ),
+        "source_refresh_trust_candidate_artifact_request_receipt_persisted": (
+            source_trust_candidate_artifact_request_status.get(
+                "receipt_persisted"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_request_verified": (
+            source_trust_candidate_artifact_request_verified
+        ),
+        "source_refresh_trust_candidate_manual_action_status": str(
+            source_trust_candidate_manual_action_status.get("status")
+            or "blocked"
+        ),
+        "source_refresh_trust_candidate_manual_action_state": str(
+            source_trust_candidate_manual_action_status.get("action_state")
+            or "blocked"
+        ),
+        "source_refresh_trust_candidate_manual_action_staged": (
+            source_trust_candidate_manual_action_status.get(
+                "operator_action_receipt_staged"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_manual_action_required": (
+            source_trust_candidate_manual_action_status.get(
+                "action_required"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_manual_action_interrupt_operator": (
+            source_trust_candidate_manual_action_status.get(
+                "interrupt_operator"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_manual_action_receipt_sha256": str(
+            source_trust_candidate_manual_action_status.get(
+                "operator_action_receipt_sha256"
+            )
+            or ""
+        ),
+        "source_refresh_trust_candidate_manual_action_receipt_persisted": (
+            source_trust_candidate_manual_action_status.get(
+                "receipt_persisted"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_manual_action_verified": (
+            source_trust_candidate_manual_action_verified
+        ),
+        "source_refresh_trust_candidate_artifact_notification_status": str(
+            source_trust_candidate_artifact_notification_status.get("status")
+            or "blocked"
+        ),
+        "source_refresh_trust_candidate_artifact_notification_action_required": (
+            source_trust_candidate_artifact_notification_status.get(
+                "action_required"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_notification_interrupt_operator": (
+            source_trust_candidate_artifact_notification_status.get(
+                "interrupt_operator"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_notification_delivery_authorized": (
+            source_trust_candidate_artifact_notification_status.get(
+                "delivery_authorized"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_notification_delivery_attempted": (
+            source_trust_candidate_artifact_notification_status.get(
+                "delivery_attempted"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_notification_sent": (
+            source_trust_candidate_artifact_notification_status.get("sent")
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_notification_would_send": (
+            source_trust_candidate_artifact_notification_status.get(
+                "would_send"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_notification_presentation_recorded": (
+            source_trust_candidate_artifact_notification_status.get(
+                "presentation_recorded"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_notification_receipt_sha256": str(
+            source_trust_candidate_artifact_notification_status.get(
+                "notification_receipt_sha256"
+            )
+            or ""
+        ),
+        "source_refresh_trust_candidate_artifact_notification_receipt_persisted": (
+            source_trust_candidate_artifact_notification_status.get(
+                "receipt_persisted"
+            )
+            is True
+        ),
+        "source_refresh_trust_candidate_artifact_notification_verified": (
+            source_trust_candidate_artifact_notification_verified
+        ),
+        "source_refresh_trust_decision_verified": (
+            source_trust_decision_verified
+        ),
+        "source_refresh_trust_notification_status": str(
+            source_trust_notification_status.get("status") or "blocked"
+        ),
+        "source_refresh_trust_notification_candidate_review_id": str(
+            source_trust_notification_status.get("candidate_review_id") or ""
+        ),
+        "source_refresh_trust_notification_delivery_authorized": (
+            source_trust_notification_status.get("delivery_authorized") is True
+        ),
+        "source_refresh_trust_notification_delivery_attempted": (
+            source_trust_notification_status.get("delivery_attempted") is True
+        ),
+        "source_refresh_trust_notification_sent": (
+            source_trust_notification_status.get("sent") is True
+        ),
+        "source_refresh_trust_notification_would_send": (
+            source_trust_notification_status.get("would_send") is True
+        ),
+        "source_refresh_trust_notification_presentation_recorded": (
+            source_trust_notification_status.get("presentation_recorded")
+            is True
+        ),
+        "source_refresh_trust_notification_receipt_persisted": (
+            source_trust_notification_status.get("receipt_persisted") is True
+        ),
+        "source_refresh_trust_notification_verified": (
+            source_trust_notification_verified
+        ),
+        "source_refresh_trust_enrollment_preview_status": str(
+            source_trust_enrollment_preview_status.get("preview_state")
+            or "blocked"
+        ),
+        "source_refresh_trust_enrollment_preview_id": str(
+            source_trust_enrollment_preview_status.get("preview_id") or ""
+        ),
+        "source_refresh_trust_enrollment_preview_action_required": (
+            source_trust_enrollment_preview_status.get("action_required")
+            is True
+        ),
+        "source_refresh_trust_enrollment_preview_interrupt_operator": (
+            source_trust_enrollment_preview_status.get("interrupt_operator")
+            is True
+        ),
+        "source_refresh_trust_enrollment_preview_staged": (
+            source_trust_enrollment_preview_status.get("preview_staged")
+            is True
+        ),
+        "source_refresh_trust_enrollment_preview_current_registry_sha256": str(
+            source_trust_enrollment_preview_status.get(
+                "current_trust_registry_sha256"
+            )
+            or ""
+        ),
+        "source_refresh_trust_enrollment_preview_proposed_registry_sha256": str(
+            source_trust_enrollment_preview_status.get(
+                "proposed_trust_registry_sha256"
+            )
+            or ""
+        ),
+        "source_refresh_trust_enrollment_preview_receipt_persisted": (
+            source_trust_enrollment_preview_status.get(
+                "preview_receipt_persisted"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_preview_verification_persisted": (
+            source_trust_enrollment_preview_status.get(
+                "verification_receipt_persisted"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_preview_verified": (
+            source_trust_enrollment_preview_verified
+        ),
+        "source_refresh_trust_enrollment_authorization_status": str(
+            source_trust_enrollment_authorization_status.get("status")
+            or "blocked"
+        ),
+        "source_refresh_trust_enrollment_authorization_state": str(
+            source_trust_enrollment_authorization_status.get(
+                "authorization_state"
+            )
+            or "blocked"
+        ),
+        "source_refresh_trust_enrollment_authorization_id": str(
+            source_trust_enrollment_authorization_status.get(
+                "authorization_id"
+            )
+            or ""
+        ),
+        "source_refresh_trust_enrollment_authorization_decision": str(
+            source_trust_enrollment_authorization_status.get("decision")
+            or ""
+        ),
+        "source_refresh_trust_enrollment_authorization_action_required": (
+            source_trust_enrollment_authorization_status.get(
+                "action_required"
+            )
+            is True
+        ),
+        "source_refresh_trust_exact_preview_authorized": (
+            source_trust_enrollment_authorization_status.get(
+                "exact_preview_authorized"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_authorization_verified": (
+            source_trust_enrollment_authorization_verified
+        ),
+        "source_refresh_trust_enrollment_execution_readiness_status": str(
+            source_trust_enrollment_execution_readiness_status.get("status")
+            or "blocked"
+        ),
+        "source_refresh_trust_enrollment_execution_readiness_state": str(
+            source_trust_enrollment_execution_readiness_status.get(
+                "readiness_state"
+            )
+            or "blocked"
+        ),
+        "source_refresh_trust_enrollment_execution_readiness_id": str(
+            source_trust_enrollment_execution_readiness_status.get(
+                "readiness_id"
+            )
+            or ""
+        ),
+        "source_refresh_trust_enrollment_execution_request_staged": (
+            source_trust_enrollment_execution_readiness_status.get(
+                "execution_request_staged"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_execution_ready": (
+            source_trust_enrollment_execution_readiness_status.get(
+                "execution_readiness_verified"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_governed_execution_available": (
+            source_trust_enrollment_execution_readiness_status.get(
+                "governed_execution_available"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_execution_authorized": (
+            source_trust_enrollment_execution_readiness_status.get(
+                "execution_authorized"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_execution_readiness_verified": (
+            source_trust_enrollment_execution_readiness_verified
+        ),
+        "source_refresh_trust_enrollment_execution_status": str(
+            source_trust_enrollment_execution_status.get("status")
+            or "blocked"
+        ),
+        "source_refresh_trust_enrollment_execution_state": str(
+            source_trust_enrollment_execution_status.get("execution_state")
+            or "blocked"
+        ),
+        "source_refresh_trust_enrollment_execution_action_required": (
+            source_trust_enrollment_execution_status.get("action_required")
+            is True
+        ),
+        "source_refresh_trust_enrollment_execution_interrupt_operator": (
+            source_trust_enrollment_execution_status.get(
+                "interrupt_operator"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_authorization_consumed": (
+            source_trust_enrollment_execution_status.get(
+                "authorization_consumed"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_registry_write_attempted": (
+            source_trust_enrollment_execution_status.get(
+                "trust_registry_write_attempted"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_registry_modified": (
+            source_trust_enrollment_execution_status.get(
+                "trust_registry_modified"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_rollback_available": (
+            source_trust_enrollment_execution_status.get(
+                "rollback_available"
+            )
+            is True
+        ),
+        "source_refresh_trust_enrollment_execution_verified": (
+            source_trust_enrollment_execution_verified
+        ),
+        "errors": (
+            int(status in failure_statuses)
+            + int(not source_settlement_verified)
+            + int(source_settlement_verified and not source_refresh_verified)
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and not source_handoff_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and not source_claims_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and not source_trust_intake_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and not source_trust_candidate_import_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_import_verified
+                and not source_trust_candidate_artifact_request_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_import_verified
+                and source_trust_candidate_artifact_request_verified
+                and not source_trust_candidate_manual_action_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_import_verified
+                and source_trust_candidate_artifact_request_verified
+                and source_trust_candidate_manual_action_verified
+                and not source_trust_candidate_artifact_notification_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_import_verified
+                and source_trust_candidate_artifact_request_verified
+                and source_trust_candidate_manual_action_verified
+                and source_trust_candidate_artifact_notification_verified
+                and not source_trust_decision_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_manual_action_verified
+                and source_trust_candidate_artifact_notification_verified
+                and source_trust_decision_verified
+                and not source_trust_notification_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_manual_action_verified
+                and source_trust_candidate_artifact_notification_verified
+                and source_trust_decision_verified
+                and source_trust_notification_verified
+                and not source_trust_enrollment_preview_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_manual_action_verified
+                and source_trust_candidate_artifact_notification_verified
+                and source_trust_decision_verified
+                and source_trust_notification_verified
+                and source_trust_enrollment_preview_verified
+                and not source_trust_enrollment_authorization_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_manual_action_verified
+                and source_trust_candidate_artifact_notification_verified
+                and source_trust_decision_verified
+                and source_trust_notification_verified
+                and source_trust_enrollment_preview_verified
+                and source_trust_enrollment_authorization_verified
+                and not source_trust_enrollment_execution_readiness_verified
+            )
+            + int(
+                source_settlement_verified
+                and source_refresh_verified
+                and source_handoff_verified
+                and source_claims_verified
+                and source_trust_intake_verified
+                and source_trust_candidate_manual_action_verified
+                and source_trust_candidate_artifact_notification_verified
+                and source_trust_decision_verified
+                and source_trust_notification_verified
+                and source_trust_enrollment_preview_verified
+                and source_trust_enrollment_authorization_verified
+                and source_trust_enrollment_execution_readiness_verified
+                and not source_trust_enrollment_execution_verified
+            )
+        ),
+    }
+    if runtime_control_handoff_status is not None:
+        summary.update(
+            {
+                "runtime_control_handoff_status": str(
+                    runtime_control_handoff_status.get("status") or "blocked"
+                ),
+                "runtime_control_host_review_required": (
+                    runtime_control_handoff_status.get("host_review_required")
+                    is True
+                ),
+                "runtime_control_current_evidence_verified": (
+                    runtime_control_handoff_status.get(
+                        "current_evidence_verified"
+                    )
+                    is True
+                ),
+                "runtime_control_receipt_persisted": (
+                    runtime_control_handoff_status.get("receipt_persisted")
+                    is True
+                ),
+                "runtime_control_execution_authorized": (
+                    runtime_control_handoff_status.get("execution_authorized")
+                    is True
+                ),
+                "runtime_control_deployment_or_restart_authorized": (
+                    runtime_control_handoff_status.get(
+                        "deployment_or_restart_authorized"
+                    )
+                    is True
+                ),
+                "runtime_control_protected_operation_executed": (
+                    runtime_control_handoff_status.get(
+                        "protected_operation_executed"
+                    )
+                    is True
+                ),
+                "runtime_control_provider_quota_consumption_allowed": (
+                    runtime_control_handoff_status.get(
+                        "provider_quota_consumption_allowed"
+                    )
+                    is True
+                ),
+                "runtime_control_delivery_authorized": (
+                    runtime_control_handoff_status.get("delivery_authorized")
+                    is True
+                ),
+            }
+        )
+        if runtime_control_handoff_status.get("status") == "blocked":
+            summary["errors"] = int(summary.get("errors") or 0) + 1
+    return summary
 
 
 def _scheduler_pocket_signal_sync_interval_seconds() -> float:
@@ -2589,12 +4867,12 @@ def _property_search_work_batch_concurrency() -> int:
         os.environ.get("PROPERTYQUARRY_SEARCH_RUN_WORKER_CONCURRENCY") or ""
     ).strip()
     if not raw_value:
-        return 4
+        return 2
     try:
         parsed = int(raw_value)
     except Exception:
-        return 4
-    return max(1, min(parsed, 8))
+        return 2
+    return max(1, min(parsed, 2))
 
 
 def _run_property_search_work_slot(
@@ -2727,6 +5005,7 @@ def _run_execution_worker(role: str) -> None:
     last_pocket_signal_sync_at = 0.0
     last_morning_memo_at = 0.0
     last_telegram_async_recovery_at = 0.0
+    last_propertyquarry_ooda_at = 0.0
     property_only_scheduler = role == "scheduler" and _scheduler_property_only_profile_enabled()
     property_only_worker = role == "worker" and _worker_property_only_profile_enabled()
     log.info("role=%s started worker loop", role)
@@ -2800,6 +5079,71 @@ def _run_execution_worker(role: str) -> None:
                 except Exception:
                     log.exception("role=%s scheduler property search recovery failed", role)
                     last_property_search_recovery_at = now
+            if property_only_scheduler and _scheduler_propertyquarry_ooda_enabled() and (
+                now - last_propertyquarry_ooda_at >= _scheduler_propertyquarry_ooda_interval_seconds()
+            ):
+                try:
+                    ooda_summary = _run_scheduler_step_with_heartbeat(
+                        role=role,
+                        step_name="propertyquarry_ooda_notification_cycle",
+                        timeout_seconds=_scheduler_propertyquarry_ooda_timeout_seconds(),
+                        timeout_result={
+                            "ran": True,
+                            "status": "timeout",
+                            "delivery_authorized": False,
+                            "delivery_attempted": False,
+                            "sent": False,
+                            "would_send": False,
+                            "action_required_count": 0,
+                            "novel_action_count": 0,
+                            "errors": 1,
+                        },
+                        log=log,
+                        fn=lambda: _run_scheduler_propertyquarry_ooda_notification_cycle(log),
+                        stop_event=stop_event,
+                    )
+                    ooda_witness = _record_scheduler_propertyquarry_ooda_iteration(
+                        ooda_summary,
+                        log=log,
+                    )
+                    if stop_event.is_set():
+                        break
+                    last_propertyquarry_ooda_at = now
+                    log.info(
+                        "role=%s scheduler propertyquarry ooda status=%s action_required=%s novel=%s "
+                        "would_send=%s delivery_authorized=%s delivery_attempted=%s sent=%s errors=%s timeout=%s "
+                        "witness_status=%s witness_persisted=%s",
+                        role,
+                        ooda_summary.get("status"),
+                        ooda_summary.get("action_required_count"),
+                        ooda_summary.get("novel_action_count"),
+                        ooda_summary.get("would_send"),
+                        ooda_summary.get("delivery_authorized"),
+                        ooda_summary.get("delivery_attempted"),
+                        ooda_summary.get("sent"),
+                        ooda_summary.get("errors"),
+                        ooda_summary.get("timeout"),
+                        ooda_witness.get("status"),
+                        ooda_witness.get("receipt_persisted"),
+                    )
+                except Exception as exc:
+                    _record_scheduler_propertyquarry_ooda_iteration(
+                        {
+                            "ran": False,
+                            "status": "iteration_exception",
+                            "delivery_authorized": False,
+                            "delivery_attempted": False,
+                            "sent": False,
+                            "would_send": False,
+                            "action_required_count": 0,
+                            "novel_action_count": 0,
+                            "errors": 1,
+                        },
+                        log=log,
+                        error_type=type(exc).__name__,
+                    )
+                    log.exception("role=%s scheduler propertyquarry ooda cycle failed", role)
+                    last_propertyquarry_ooda_at = now
             if not property_only_scheduler and now - last_horizon_scan_at >= _SCHEDULER_SCAN_INTERVAL_SECONDS:
                 observed_at = datetime.now(timezone.utc)
                 try:

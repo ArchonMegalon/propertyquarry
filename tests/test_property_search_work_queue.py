@@ -5,6 +5,9 @@ from datetime import datetime, timedelta, timezone
 from app.product.property_search_work_queue import (
     PROPERTY_FACT_ENRICHMENT_WORK_KIND,
     PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND,
+    PROPERTY_SEARCH_WORK_GLOBAL_CONCURRENCY,
+    PROPERTY_SEARCH_WORK_PRIORITY_FREE,
+    PROPERTY_SEARCH_WORK_PRIORITY_PAID,
     InMemoryPropertySearchWorkQueue,
     PropertySearchWorkQueueSnapshot,
     property_fact_enrichment_work_idempotency_key,
@@ -62,6 +65,91 @@ def test_idempotent_enqueue_returns_the_original_job_without_a_duplicate() -> No
     assert duplicate.job.run_id == "run-a"
     assert duplicate.job.payload_json == {"actor": "first"}
     assert len(repository.list_jobs()) == 1
+
+
+def test_paid_work_jumps_older_free_work_without_changing_provider_access() -> None:
+    clock = _Clock()
+    repository = InMemoryPropertySearchWorkQueue(now=clock)
+    free = repository.enqueue_run(
+        run_record=_record(principal_id="free-principal", run_id="free-run"),
+        payload_json={"providers": ["provider-a", "provider-b"]},
+        idempotency_key="free-key",
+        priority_class=PROPERTY_SEARCH_WORK_PRIORITY_FREE,
+    ).job
+    clock.advance(10)
+    paid = repository.enqueue_run(
+        run_record=_record(principal_id="paid-principal", run_id="paid-run"),
+        payload_json={"providers": ["provider-a", "provider-b"]},
+        idempotency_key="paid-key",
+        priority_class=PROPERTY_SEARCH_WORK_PRIORITY_PAID,
+    ).job
+
+    claimed = repository.claim(lease_owner="worker-a", lease_seconds=30)
+
+    assert claimed is not None
+    assert claimed.job_id == paid.job_id
+    assert claimed.priority_class == PROPERTY_SEARCH_WORK_PRIORITY_PAID
+    assert free.payload_json["providers"] == paid.payload_json["providers"]
+
+
+def test_paid_priority_never_preempts_an_already_leased_free_run() -> None:
+    clock = _Clock()
+    repository = InMemoryPropertySearchWorkQueue(now=clock)
+    free = repository.enqueue_run(
+        run_record=_record(principal_id="free-principal", run_id="free-run"),
+        payload_json={},
+        idempotency_key="free-key",
+        priority_class=PROPERTY_SEARCH_WORK_PRIORITY_FREE,
+    ).job
+    leased_free = repository.claim(lease_owner="worker-free", lease_seconds=30)
+    assert leased_free is not None
+    assert leased_free.job_id == free.job_id
+
+    paid = repository.enqueue_run(
+        run_record=_record(principal_id="paid-principal", run_id="paid-run"),
+        payload_json={},
+        idempotency_key="paid-key",
+        priority_class=PROPERTY_SEARCH_WORK_PRIORITY_PAID,
+    ).job
+    leased_paid = repository.claim(lease_owner="worker-paid", lease_seconds=30)
+
+    assert leased_paid is not None
+    assert leased_paid.job_id == paid.job_id
+    assert repository.claim(lease_owner="worker-overflow", lease_seconds=30) is None
+    assert repository.complete(
+        job_id=free.job_id,
+        lease_owner="worker-free",
+    ) is not None
+
+
+def test_queue_never_leases_more_than_two_runs_globally() -> None:
+    clock = _Clock()
+    repository = InMemoryPropertySearchWorkQueue(now=clock)
+    queued = [
+        repository.enqueue_run(
+            run_record=_record(
+                principal_id=f"principal-{index}",
+                run_id=f"run-{index}",
+            ),
+            payload_json={},
+            idempotency_key=f"queue-key-{index}",
+        ).job
+        for index in range(PROPERTY_SEARCH_WORK_GLOBAL_CONCURRENCY + 1)
+    ]
+
+    active = [
+        repository.claim(lease_owner=f"worker-{index}", lease_seconds=30)
+        for index in range(PROPERTY_SEARCH_WORK_GLOBAL_CONCURRENCY)
+    ]
+    assert all(job is not None for job in active)
+    assert repository.claim(lease_owner="worker-overflow", lease_seconds=30) is None
+
+    first = active[0]
+    assert first is not None
+    assert repository.complete(job_id=first.job_id, lease_owner="worker-0") is not None
+    replacement = repository.claim(lease_owner="worker-replacement", lease_seconds=30)
+    assert replacement is not None
+    assert replacement.job_id in {job.job_id for job in queued}
 
 
 def test_expired_lease_is_reclaimed_and_stale_owner_cannot_complete() -> None:

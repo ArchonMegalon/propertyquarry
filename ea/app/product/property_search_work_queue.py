@@ -102,6 +102,23 @@ def property_search_work_idempotency_key(
 PROPERTY_SEARCH_RUN_WORK_KIND = "property_search_run"
 PROPERTY_FACT_ENRICHMENT_WORK_KIND = "property_fact_enrichment"
 PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND = "property_opportunity_ltd_image"
+PROPERTY_SEARCH_WORK_PRIORITY_FREE = 0
+PROPERTY_SEARCH_WORK_PRIORITY_PAID = 100
+PROPERTY_SEARCH_WORK_GLOBAL_CONCURRENCY = 2
+_PROPERTY_SEARCH_WORK_CLAIM_LOCK_ID = int.from_bytes(
+    hashlib.sha256(b"propertyquarry:property-search-work:global-claim:v1").digest()[:8],
+    byteorder="big",
+    signed=True,
+)
+
+
+def validated_property_search_work_priority(value: object) -> int:
+    if type(value) is not int or value not in {
+        PROPERTY_SEARCH_WORK_PRIORITY_FREE,
+        PROPERTY_SEARCH_WORK_PRIORITY_PAID,
+    }:
+        raise ValueError("property_search_work_priority_invalid")
+    return value
 
 
 def property_fact_enrichment_work_idempotency_key(
@@ -203,6 +220,7 @@ class PropertySearchWorkJob:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     completed_at: datetime | None = None
+    priority_class: int = PROPERTY_SEARCH_WORK_PRIORITY_FREE
 
     @property
     def terminal(self) -> bool:
@@ -246,12 +264,14 @@ class InMemoryPropertySearchWorkQueue:
         payload_json: dict[str, object],
         idempotency_key: str,
         max_attempts: int = 3,
+        priority_class: int = PROPERTY_SEARCH_WORK_PRIORITY_FREE,
     ) -> PropertySearchWorkEnqueueResult:
         principal_id = str(run_record.get("principal_id") or "").strip()
         run_id = str(run_record.get("run_id") or "").strip()
         if not principal_id or not run_id or not str(idempotency_key or "").strip():
             raise ValueError("property_search_work_identity_required")
         now = self._now()
+        priority = validated_property_search_work_priority(priority_class)
         with self._lock:
             existing_id = self._idempotency.get(idempotency_key) or self._runs.get((principal_id, run_id))
             if existing_id:
@@ -268,6 +288,7 @@ class InMemoryPropertySearchWorkQueue:
                 available_at=now,
                 created_at=now,
                 updated_at=now,
+                priority_class=priority,
             )
             self._jobs[job.job_id] = job
             self._idempotency[idempotency_key] = job.job_id
@@ -282,6 +303,7 @@ class InMemoryPropertySearchWorkQueue:
         payload_json: dict[str, object],
         idempotency_key: str,
         max_attempts: int = 3,
+        priority_class: int = PROPERTY_SEARCH_WORK_PRIORITY_FREE,
     ) -> PropertySearchWorkEnqueueResult:
         normalized_principal = str(principal_id or "").strip()
         normalized_run = str(run_id or "").strip()
@@ -292,6 +314,7 @@ class InMemoryPropertySearchWorkQueue:
         if str(payload.get("work_kind") or "").strip() != PROPERTY_FACT_ENRICHMENT_WORK_KIND:
             raise ValueError("property_fact_work_kind_invalid")
         now = self._now()
+        priority = validated_property_search_work_priority(priority_class)
         with self._lock:
             existing_id = self._idempotency.get(key)
             if existing_id:
@@ -311,6 +334,7 @@ class InMemoryPropertySearchWorkQueue:
                 available_at=now,
                 created_at=now,
                 updated_at=now,
+                priority_class=priority,
             )
             self._jobs[job.job_id] = job
             self._idempotency[key] = job.job_id
@@ -324,6 +348,7 @@ class InMemoryPropertySearchWorkQueue:
         payload_json: dict[str, object],
         idempotency_key: str,
         max_attempts: int = 2,
+        priority_class: int = PROPERTY_SEARCH_WORK_PRIORITY_FREE,
     ) -> PropertySearchWorkEnqueueResult:
         normalized_principal = str(principal_id or "").strip()
         normalized_run = str(run_id or "").strip()
@@ -337,6 +362,7 @@ class InMemoryPropertySearchWorkQueue:
         ):
             raise ValueError("property_opportunity_ltd_work_kind_invalid")
         now = self._now()
+        priority = validated_property_search_work_priority(priority_class)
         with self._lock:
             existing_id = self._idempotency.get(key)
             if existing_id:
@@ -356,6 +382,7 @@ class InMemoryPropertySearchWorkQueue:
                 available_at=now,
                 created_at=now,
                 updated_at=now,
+                priority_class=priority,
             )
             self._jobs[job.job_id] = job
             self._idempotency[key] = job.job_id
@@ -383,6 +410,17 @@ class InMemoryPropertySearchWorkQueue:
                         updated_at=now,
                         completed_at=now,
                     )
+            active_leases = sum(
+                1
+                for job in self._jobs.values()
+                if (
+                    job.status == "leased"
+                    and job.lease_expires_at is not None
+                    and job.lease_expires_at > now
+                )
+            )
+            if active_leases >= PROPERTY_SEARCH_WORK_GLOBAL_CONCURRENCY:
+                return None
             candidates = sorted(
                 (
                     job
@@ -397,7 +435,12 @@ class InMemoryPropertySearchWorkQueue:
                         )
                     )
                 ),
-                key=lambda item: (item.available_at, item.created_at or item.available_at, item.job_id),
+                key=lambda item: (
+                    -validated_property_search_work_priority(item.priority_class),
+                    item.available_at,
+                    item.created_at or item.available_at,
+                    item.job_id,
+                ),
             )
             if not candidates:
                 return None
@@ -561,12 +604,13 @@ class PostgresPropertySearchWorkQueue:
     _RETURNING_COLUMNS = """
         job_id, principal_id, run_id, idempotency_key, payload_json, status,
         attempt_count, max_attempts, available_at, lease_owner, lease_expires_at,
-        heartbeat_at, last_error, created_at, updated_at, completed_at
+        heartbeat_at, last_error, created_at, updated_at, completed_at, priority_class
     """
     _RETURNING_JOB_COLUMNS = """
         jobs.job_id, jobs.principal_id, jobs.run_id, jobs.idempotency_key, jobs.payload_json, jobs.status,
         jobs.attempt_count, jobs.max_attempts, jobs.available_at, jobs.lease_owner, jobs.lease_expires_at,
-        jobs.heartbeat_at, jobs.last_error, jobs.created_at, jobs.updated_at, jobs.completed_at
+        jobs.heartbeat_at, jobs.last_error, jobs.created_at, jobs.updated_at, jobs.completed_at,
+        jobs.priority_class
     """
 
     def __init__(
@@ -668,6 +712,11 @@ class PostgresPropertySearchWorkQueue:
             created_at=_aware_utc(row[13]),
             updated_at=_aware_utc(row[14]),
             completed_at=_aware_utc(row[15]),
+            priority_class=validated_property_search_work_priority(
+                int(row[16] or PROPERTY_SEARCH_WORK_PRIORITY_FREE)
+                if len(row) > 16
+                else PROPERTY_SEARCH_WORK_PRIORITY_FREE
+            ),
         )
 
     def enqueue_run(
@@ -677,6 +726,7 @@ class PostgresPropertySearchWorkQueue:
         payload_json: dict[str, object],
         idempotency_key: str,
         max_attempts: int = 3,
+        priority_class: int = PROPERTY_SEARCH_WORK_PRIORITY_FREE,
     ) -> PropertySearchWorkEnqueueResult:
         from psycopg.types.json import Json
 
@@ -704,6 +754,7 @@ class PostgresPropertySearchWorkQueue:
         compact = _compact_property_search_run_record(normalized)
         packet_links = tuple(project_property_research_packet_links(normalized))
         validated_payload = validated_property_search_work_payload(payload_json)
+        priority = validated_property_search_work_priority(priority_class)
         inserted_run = False
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -747,8 +798,8 @@ class PostgresPropertySearchWorkQueue:
                     INSERT INTO property_search_work_jobs
                         (job_id, principal_id, run_id, principal_key, idempotency_key,
                          payload_json, status, attempt_count, max_attempts, available_at,
-                         created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW())
+                         created_at, updated_at, priority_class)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW(), %s)
                     ON CONFLICT DO NOTHING
                     RETURNING {self._RETURNING_COLUMNS}
                     """,
@@ -760,6 +811,7 @@ class PostgresPropertySearchWorkQueue:
                         key,
                         Json(validated_payload),
                         max(1, int(max_attempts or 1)),
+                        priority,
                     ),
                 )
                 row = cur.fetchone()
@@ -817,6 +869,7 @@ class PostgresPropertySearchWorkQueue:
         payload_json: dict[str, object],
         idempotency_key: str,
         max_attempts: int = 2,
+        priority_class: int = PROPERTY_SEARCH_WORK_PRIORITY_FREE,
     ) -> PropertySearchWorkEnqueueResult:
         from psycopg.types.json import Json
 
@@ -831,6 +884,7 @@ class PostgresPropertySearchWorkQueue:
         if not principal_key:
             raise ValueError("property_search_principal_key_required")
         payload = validated_property_search_work_payload(payload_json)
+        priority = validated_property_search_work_priority(priority_class)
         if (
             str(payload.get("work_kind") or "").strip()
             != PROPERTY_OPPORTUNITY_LTD_IMAGE_WORK_KIND
@@ -849,8 +903,8 @@ class PostgresPropertySearchWorkQueue:
                     INSERT INTO property_search_work_jobs
                         (job_id, principal_id, run_id, principal_key, idempotency_key,
                          payload_json, status, attempt_count, max_attempts, available_at,
-                         created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW())
+                         created_at, updated_at, priority_class)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW(), %s)
                     ON CONFLICT DO NOTHING
                     RETURNING {self._RETURNING_COLUMNS}
                     """,
@@ -862,6 +916,7 @@ class PostgresPropertySearchWorkQueue:
                         key,
                         Json(payload),
                         max(1, min(int(max_attempts or 1), 3)),
+                        priority,
                     ),
                 )
                 row = cur.fetchone()
@@ -892,6 +947,7 @@ class PostgresPropertySearchWorkQueue:
         payload_json: dict[str, object],
         idempotency_key: str,
         max_attempts: int = 3,
+        priority_class: int = PROPERTY_SEARCH_WORK_PRIORITY_FREE,
     ) -> PropertySearchWorkEnqueueResult:
         from psycopg.types.json import Json
 
@@ -906,6 +962,7 @@ class PostgresPropertySearchWorkQueue:
         if not principal_key:
             raise ValueError("property_search_principal_key_required")
         payload = validated_property_search_work_payload(payload_json)
+        priority = validated_property_search_work_priority(priority_class)
         if str(payload.get("work_kind") or "").strip() != PROPERTY_FACT_ENRICHMENT_WORK_KIND:
             raise ValueError("property_fact_work_kind_invalid")
         with self._connect() as conn:
@@ -921,8 +978,8 @@ class PostgresPropertySearchWorkQueue:
                     INSERT INTO property_search_work_jobs
                         (job_id, principal_id, run_id, principal_key, idempotency_key,
                          payload_json, status, attempt_count, max_attempts, available_at,
-                         created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW())
+                         created_at, updated_at, priority_class)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'queued', 0, %s, NOW(), NOW(), NOW(), %s)
                     ON CONFLICT DO NOTHING
                     RETURNING {self._RETURNING_COLUMNS}
                     """,
@@ -934,6 +991,7 @@ class PostgresPropertySearchWorkQueue:
                         key,
                         Json(payload),
                         max(1, int(max_attempts or 1)),
+                        priority,
                     ),
                 )
                 row = cur.fetchone()
@@ -987,7 +1045,7 @@ class PostgresPropertySearchWorkQueue:
                         AND attempt_count < max_attempts
                     )
                 )
-                ORDER BY available_at ASC, created_at ASC, job_id ASC
+                ORDER BY priority_class DESC, available_at ASC, created_at ASC, job_id ASC
                 LIMIT %s
                 """,
                 (cls._CLAIM_CANDIDATE_SCAN_LIMIT,),
@@ -1071,6 +1129,10 @@ class PostgresPropertySearchWorkQueue:
                         cur.execute(
                             "SELECT set_config('lock_timeout', '100ms', TRUE)"
                         )
+                        cur.execute(
+                            "SELECT pg_advisory_xact_lock(%s)",
+                            (_PROPERTY_SEARCH_WORK_CLAIM_LOCK_ID,),
+                        )
                         self._set_writer_contract(cur)
                         identity = self._nonlocking_job_identity(
                             cur,
@@ -1103,6 +1165,12 @@ class PostgresPropertySearchWorkQueue:
                                           AND jobs.attempt_count < jobs.max_attempts
                                       )
                                   )
+                                  AND (
+                                      SELECT COUNT(*)
+                                      FROM property_search_work_jobs AS globally_active_jobs
+                                      WHERE globally_active_jobs.status = 'leased'
+                                        AND globally_active_jobs.lease_expires_at > NOW()
+                                  ) < %s
                                   AND NOT EXISTS (
                                       SELECT 1
                                       FROM property_search_work_jobs AS active_jobs
@@ -1119,6 +1187,7 @@ class PostgresPropertySearchWorkQueue:
                                     candidate_job_id,
                                     principal_id,
                                     run_id,
+                                    PROPERTY_SEARCH_WORK_GLOBAL_CONCURRENCY,
                                 ),
                             )
                             row = cur.fetchone()

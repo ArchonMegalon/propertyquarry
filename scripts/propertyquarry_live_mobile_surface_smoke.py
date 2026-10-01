@@ -114,6 +114,13 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 _HTTP_SMOKE_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirectHandler)
 
+_CLOUDFLARE_TUNNEL_FAILURE = {
+    "provider": "cloudflare",
+    "code": "1033",
+    "reason": "cloudflare_tunnel_unavailable",
+    "http_status": 530,
+}
+
 
 def _http_get_for_smoke(
     url: str,
@@ -190,6 +197,45 @@ def _header_value(headers: dict[str, Any], name: str) -> str:
         if str(key).strip().lower() == wanted:
             return str(value or "").strip()
     return ""
+
+
+def cloudflare_tunnel_failure_from_response(
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    """Return one sanitized edge failure without retaining response content."""
+
+    try:
+        status_code = int(response.get("status_code") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return {}
+    server = _header_value(dict(response.get("headers") or {}), "server").lower()
+    body = str(response.get("text") or "")
+    if not (
+        status_code == 530
+        and server == "cloudflare"
+        and re.search(
+            r"\berror\s*code\s*:\s*1033\b|\berror\s+1033\b",
+            body,
+            flags=re.IGNORECASE,
+        )
+    ):
+        return {}
+    return dict(_CLOUDFLARE_TUNNEL_FAILURE)
+
+
+def uniform_cloudflare_tunnel_failure(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Require every attempted route to carry the exact same edge blocker."""
+
+    if not rows:
+        return {}
+    expected = dict(_CLOUDFLARE_TUNNEL_FAILURE)
+    for row in rows:
+        if not isinstance(row, dict) or row.get("ok") is not False:
+            return {}
+        metrics = row.get("metrics")
+        if not isinstance(metrics, dict) or metrics.get("edge_failure") != expected:
+            return {}
+    return expected
 
 
 def _release_probe_browser_navigation_url(
@@ -2072,6 +2118,9 @@ def build_live_mobile_surface_receipt(
                     status_code=status_code,
                     viewport_width=viewport_width,
                 )
+                edge_failure = cloudflare_tunnel_failure_from_response(response)
+                if edge_failure:
+                    metrics["edge_failure"] = edge_failure
                 metrics["browser_engine"] = selected_browser_engine
                 checks = evaluate_mobile_metrics(route, metrics)
                 rows.append(
@@ -2188,8 +2237,15 @@ def build_live_mobile_surface_receipt(
         strict_required=browser_all and paid_persona,
     )
     billing_readiness["paid_persona"] = paid_persona
+    edge_failure = uniform_cloudflare_tunnel_failure(rows)
     receipt = _redact_sensitive_receipt_value({
-        "status": "pass" if not failed and not failed_coverage else "fail",
+        "status": (
+            "blocked"
+            if edge_failure
+            else "pass"
+            if not failed and not failed_coverage
+            else "fail"
+        ),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "base_url": base_url,
         "host_header": host_header,
@@ -2209,6 +2265,8 @@ def build_live_mobile_surface_receipt(
         "route_count": len(rows),
         "configured_route_count": len(routes),
         "failed_count": len(failed) + len(failed_coverage),
+        "error": "cloudflare_error_1033_tunnel_unavailable" if edge_failure else "",
+        "edge_failure": edge_failure,
         "billing_readiness": billing_readiness,
         "coverage_checks": coverage_checks,
         "routes": rows,

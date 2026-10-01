@@ -385,10 +385,62 @@ def test_prod_start_atomically_enqueues_before_return_and_never_starts_daemon(
     assert dict(dict(captured["payload_json"])[TELEMETRY_PARENT_KEY])["correlation_id"] == (
         "search-request-1"
     )
+    assert captured["priority_class"] == queue_module.PROPERTY_SEARCH_WORK_PRIORITY_FREE
     assert result["status"] == "queued"
     assert result["summary"]["durable_queue"] is True
     assert result["summary"]["worker_start_mode"] == "durable_queue"
     assert result["summary"]["worker_started"] is False
+
+
+def test_prod_start_enqueues_paid_commercial_state_with_paid_priority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _bare_service(monkeypatch)
+    monkeypatch.setenv("EA_RUNTIME_MODE", "prod")
+    captured: dict[str, object] = {}
+
+    class _Repository:
+        def enqueue_run(self, **kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            record = dict(kwargs["run_record"])
+            return PropertySearchWorkEnqueueResult(
+                job=_job(
+                    run_id=str(record["run_id"]),
+                    principal_id=str(record["principal_id"]),
+                ),
+                created=True,
+            )
+
+    monkeypatch.setattr(
+        product_service,
+        "_property_search_work_queue_repository",
+        lambda: _Repository(),
+    )
+    monkeypatch.setattr(
+        product_service.threading,
+        "Thread",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("production start must not create an execution thread")
+        ),
+    )
+
+    result = service.start_property_search_run(
+        principal_id="principal-prod-paid-priority",
+        actor="api-actor",
+        selected_platforms=("willhaben",),
+        property_search_preferences={
+            "country_code": "AT",
+            "property_commercial": {
+                "active_plan_key": "plus",
+                "status": "active",
+                "active_until": "2999-01-01T00:00:00+00:00",
+            },
+        },
+        dispatch_only=True,
+    )
+
+    assert result["status"] == "queued"
+    assert captured["priority_class"] == queue_module.PROPERTY_SEARCH_WORK_PRIORITY_PAID
 
 
 def test_prod_start_fails_closed_and_removes_undurable_registry_state(
@@ -984,7 +1036,7 @@ def test_worker_persists_verified_opportunity_cover_result(
     assert persisted == [verified_result]
 
 
-def test_worker_pool_starts_configured_persistent_search_slots(
+def test_worker_pool_hard_caps_persistent_search_slots_at_two(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app import runner
@@ -1011,7 +1063,7 @@ def test_worker_pool_starts_configured_persistent_search_slots(
             active += 1
             peak_active = max(peak_active, active)
             thread_ids.add(threading.get_ident())
-            if active == 3:
+            if active == 2:
                 all_started.set()
         assert all_started.wait(timeout=2)
         stop_event.set()
@@ -1027,8 +1079,8 @@ def test_worker_pool_starts_configured_persistent_search_slots(
         stop_event=stop_event,
     )
 
-    assert peak_active == 3
-    assert len(thread_ids) == 3
+    assert peak_active == 2
+    assert len(thread_ids) == 2
 
 
 def test_worker_slot_claims_again_immediately_after_completed_search(

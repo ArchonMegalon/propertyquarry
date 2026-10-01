@@ -305,7 +305,10 @@ class OnboardingPropertySearchPreferencesIn(BaseModel):
     location_query: str = ""
     keywords: str = ""
     selected_platforms: list[str] = Field(default_factory=list)
-    property_commercial: dict[str, object] = Field(default_factory=dict)
+    # Billing state is server-owned. Accepting the legacy field keeps older
+    # clients compatible, but excluding it prevents preference writes from
+    # granting paid queue priority or other paid entitlements.
+    property_commercial: dict[str, object] = Field(default_factory=dict, exclude=True)
     max_price_eur: int | None = None
     min_rooms: int | None = None
     min_area_m2: int | None = None

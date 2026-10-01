@@ -4,8 +4,10 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -54,6 +56,7 @@ def test_every_governed_compose_runtime_authority_is_allowlisted() -> None:
         ("docker-compose.host-tools.yml", "ea-operator-host-tools"): "operator-tools",
         ("docker-compose.property.yml", "propertyquarry-api"): "api",
         ("docker-compose.property.yml", "propertyquarry-migrate"): "property-search-migrate",
+        ("docker-compose.property.yml", "propertyquarry-ooda-stage"): "propertyquarry-ooda-stage",
         ("docker-compose.property.yml", "propertyquarry-render-tools"): "render-tools",
         ("docker-compose.property.yml", "propertyquarry-scheduler"): "scheduler",
         ("docker-compose.property.yml", "propertyquarry-worker"): "worker",
@@ -70,6 +73,7 @@ def test_every_governed_compose_runtime_authority_is_allowlisted() -> None:
         ("docker-compose.prod.yml", "ea-worker"): "prod",
         ("docker-compose.property.yml", "propertyquarry-api"): "prod",
         ("docker-compose.property.yml", "propertyquarry-migrate"): "prod",
+        ("docker-compose.property.yml", "propertyquarry-ooda-stage"): "prod",
         ("docker-compose.property.yml", "propertyquarry-render-tools"): "prod",
         ("docker-compose.property.yml", "propertyquarry-scheduler"): "prod",
         ("docker-compose.property.yml", "propertyquarry-worker"): "prod",
@@ -188,6 +192,47 @@ def test_docs_explain_pgdata_volume_usage() -> None:
     assert "not RAM" in runbook
 
 
+def test_operator_summary_deduplicates_verified_trust_candidate_review() -> None:
+    operator_summary = (ROOT / "scripts/operator_summary.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "apply_candidate_presentation_state," in operator_summary
+    assert "record_candidate_presentation," in operator_summary
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_PRESENTATION"
+        in operator_summary
+    )
+    assert "fingerprint=sha256:" in operator_summary
+    assert "novel verified public-key candidate review" in operator_summary
+    assert (
+        "candidate review unchanged; no repeated operator interrupt"
+        in operator_summary
+    )
+    assert "identity and fingerprint review only" in operator_summary
+    assert "enrollment requires a separate explicit decision" in operator_summary
+    assert (
+        "trust registry, provider access, delivery, deployment, and execution unchanged"
+        in operator_summary
+    )
+    assert "record_candidate_presentation(" in operator_summary
+    assert "project_candidate_review_decision," in operator_summary
+    assert "verify_candidate_review_decision_for_report," in operator_summary
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_DECISION_DIR"
+        in operator_summary
+    )
+    assert "trust candidate decision:" in operator_summary
+    assert "exact immutable review decision" in operator_summary
+    assert "reversible enrollment preview only=" in operator_summary
+    assert "trust enrollment and registry edits remain unauthorized" in operator_summary
+    assert "--expected-public-key-sha256" in operator_summary
+    assert "--identity-verification-method" in operator_summary
+    assert "--identity-evidence-ref" in operator_summary
+    assert "confirm_identity_verified" in operator_summary
+    assert "reject_candidate" in operator_summary
+
+
 def test_operator_summary_lists_ltd_release_gates() -> None:
     operator_summary = (ROOT / "scripts/operator_summary.sh").read_text(encoding="utf-8")
 
@@ -202,6 +247,770 @@ def test_operator_summary_lists_ltd_release_gates() -> None:
         "verify-ltd-flagship-subset-authenticated"
         in operator_summary
     )
+
+
+def test_operator_summary_exposes_verified_producer_trust_posture() -> None:
+    operator_summary = (ROOT / "scripts/operator_summary.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"producer trust:    "' in operator_summary
+    assert "producer_trust.get('status')" in operator_summary
+    assert "producer_trust.get('active_producer_count')" in operator_summary
+    assert "producer_trust.get('producer_trust_ready') is True" in operator_summary
+    assert "producer_trust.get('missing_lanes')" in operator_summary
+    assert '"trust intake:      "' in operator_summary
+    assert 'source_refresh_trust_intake.get("request_staged")' in operator_summary
+    assert "trust intake interrupt: suppressed" in operator_summary
+    assert "public-key metadata only; exact registry replacement" in operator_summary
+    assert "limited to the explicit one-shot executor" in operator_summary
+
+
+def test_operator_summary_exposes_exact_governed_trust_executor() -> None:
+    operator_summary = (ROOT / "scripts/operator_summary.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "inspect_execution_for_readiness," in operator_summary
+    assert "--execute-exact-readiness" in operator_summary
+    assert "--readiness-verification-sha256" in operator_summary
+    assert "--authorization-receipt-sha256" in operator_summary
+    assert "--current-trust-registry-sha256" in operator_summary
+    assert "--proposed-trust-registry-sha256" in operator_summary
+    assert "--executor-id" in operator_summary
+    assert "--execution-evidence-ref" in operator_summary
+    assert "trust execution template:" in operator_summary
+    assert "automatic execution is disabled" in operator_summary
+
+
+def test_operator_summary_projects_only_fresh_consent_gated_propertyquarry_action(
+    tmp_path: Path,
+) -> None:
+    from scripts import propertyquarry_ooda_approved_signals as approved
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_operator_status as ooda_status
+    from scripts import propertyquarry_stage_ooda_signals as stage
+
+    observed_at = datetime.now(timezone.utc)
+    source_generated_at = (observed_at - timedelta(minutes=5)).isoformat()
+    signal_dir = tmp_path / "approved"
+    presentation_state_path = tmp_path / "operator-presentation-state.json"
+    source_refresh_request_path = tmp_path / "source-refresh-request.json"
+    source_refresh_verification_path = (
+        tmp_path / "source-refresh-request-verification.json"
+    )
+    source_refresh_handoff_path = tmp_path / "source-refresh-handoff.json"
+    source_refresh_handoff_verification_path = (
+        tmp_path / "source-refresh-handoff-verification.json"
+    )
+    source_refresh_claim_dir = tmp_path / "producer-claims"
+    source_refresh_claims_path = tmp_path / "source-refresh-claims.json"
+    source_refresh_claims_verification_path = (
+        tmp_path / "source-refresh-claims-verification.json"
+    )
+    source_refresh_trust_candidate_dir = tmp_path / "producer-trust-candidates"
+    source_refresh_trust_intake_path = tmp_path / "source-refresh-trust-intake.json"
+    source_refresh_trust_intake_verification_path = (
+        tmp_path / "source-refresh-trust-intake-verification.json"
+    )
+    source_refresh_trust_candidate_import_dir = tmp_path / "candidate-imports"
+    source_refresh_trust_candidate_source_dir = tmp_path / "candidate-source"
+    source_refresh_trust_candidate_import_presentation_path = (
+        tmp_path / "candidate-import-presentation.json"
+    )
+    source_refresh_trust_candidate_artifact_request_path = (
+        tmp_path / "candidate-artifact-request.json"
+    )
+    source_refresh_trust_candidate_manual_action_path = (
+        tmp_path / "candidate-manual-action.json"
+    )
+    source_refresh_trust_candidate_artifact_notification_path = (
+        tmp_path / "candidate-artifact-notification.json"
+    )
+    source_refresh_trust_candidate_presentation_path = (
+        tmp_path / "candidate-review-presentation.json"
+    )
+    source_refresh_trust_decision_dir = tmp_path / "candidate-decisions"
+    source_refresh_trust_notification_path = (
+        tmp_path / "candidate-notification.json"
+    )
+    source_refresh_trust_enrollment_preview_path = (
+        tmp_path / "trust-enrollment-preview.json"
+    )
+    source_refresh_trust_enrollment_preview_verification_path = (
+        tmp_path / "trust-enrollment-preview-verification.json"
+    )
+    source_refresh_trust_enrollment_authorization_dir = (
+        tmp_path / "trust-enrollment-authorizations"
+    )
+    source_refresh_trust_enrollment_execution_readiness_path = (
+        tmp_path / "trust-enrollment-execution-readiness.json"
+    )
+    source_refresh_trust_enrollment_execution_readiness_verification_path = (
+        tmp_path / "trust-enrollment-execution-readiness-verification.json"
+    )
+    source_refresh_trust_enrollment_execution_dir = (
+        tmp_path / "trust-enrollment-executions"
+    )
+    source_refresh_trust_enrollment_backup_dir = (
+        tmp_path / "trust-enrollment-backups"
+    )
+    source_refresh_completion_dir = tmp_path / "producer-completions"
+    source_refresh_settlement_path = tmp_path / "source-refresh-settlement.json"
+    source_refresh_settlement_verification_path = (
+        tmp_path / "source-refresh-settlement-verification.json"
+    )
+    signal_dir.mkdir(mode=0o755)
+    source_ref = "approved-signal://propertyquarry/scene-video-readiness"
+    signal_payloads = {
+        "gold_receipt": {
+            "schema": approved.GOLD_STATUS_SCHEMA,
+            "status": "pass",
+            "generated_at": source_generated_at,
+        },
+        "scene_packet": {
+            "contract_name": approved.SOURCE_CONTRACTS["scene_packet"],
+            "generated_at": source_generated_at,
+            "source_receipt": source_ref,
+            "source_receipt_contract_name": "propertyquarry.scene_video_readiness.v1",
+            "source_receipt_generated_at": source_generated_at,
+            "providers": [
+                {
+                    "provider": "magicfit",
+                    "expected_account_count": 1,
+                    "runtime_account_count": 1,
+                    "visible_account_gap": 0,
+                    "tracked_account_count": 1,
+                    "unavailable_account_count": 0,
+                    "credit_state": "funded",
+                    "credit_refresh_required": False,
+                }
+            ],
+        },
+        "scene_verifier": {
+            "status": "pass",
+            "generated_at": source_generated_at,
+            "provider_count": 1,
+            "checked_providers": ["magicfit"],
+            "blockers": [],
+        },
+        "scene_runtime_status": {
+            "contract_name": approved.SOURCE_CONTRACTS[
+                "scene_runtime_status"
+            ],
+            "generated_at": source_generated_at,
+            "source_contract_name": "propertyquarry.scene_video_readiness.v1",
+            "source_kind": "receipt_file",
+            "source_ref": source_ref,
+            "summary": {
+                "action_required_count": 0,
+                "action_required_providers": [],
+            },
+            "providers": [
+                {
+                    "provider": "magicfit",
+                    "provider_key": "magicfit",
+                    "attention_required": False,
+                }
+            ],
+        },
+    }
+    signal_bytes = {
+        name: approved.canonical_json_bytes(payload)
+        for name, payload in signal_payloads.items()
+    }
+    for name, filename in approved.SIGNAL_FILENAMES.items():
+        path = signal_dir / filename
+        path.write_bytes(signal_bytes[name])
+        path.chmod(0o644)
+    manifest = approved.build_approval_manifest(
+        signal_bytes=signal_bytes,
+        source_evidence={
+            name: {"sha256": "a" * 64}
+            for name in approved.SIGNAL_FILENAMES
+        },
+        source_generated_at={
+            name: source_generated_at
+            for name in approved.SIGNAL_FILENAMES
+        },
+        source_contracts=approved.SOURCE_CONTRACTS,
+        now=observed_at,
+    )
+    manifest_path = signal_dir / "manifest.json"
+    manifest_path.write_bytes(approved.canonical_json_bytes(manifest))
+    manifest_path.chmod(0o644)
+    approval_status = stage.inspect_approved_signal_dir(
+        signal_dir,
+        now=observed_at,
+    )
+    input_evidence: dict[str, dict[str, object]] = {}
+    for name, filename in {
+        **approved.SIGNAL_FILENAMES,
+        "approval_manifest": "manifest.json",
+    }.items():
+        raw = (signal_dir / filename).read_bytes()
+        input_evidence[name] = {
+            "path": str(signal_dir / filename),
+            "status": "ready",
+            "sha256": approved.sha256_bytes(raw),
+            "bytes": len(raw),
+            "mode": 0o644,
+        }
+    receipt_path = tmp_path / "cycle.json"
+    lanes = [
+        {
+            "lane": "gold_live_runtime",
+            "source_status": "ready",
+            "action_required": True,
+            "clear_verified": False,
+            "reason": "live_runtime_host_admission_rejected",
+            "source_generated_at": source_generated_at,
+            "observed_source_generated_at": source_generated_at,
+        },
+        {
+            "lane": "scene_video_provider_refresh",
+            "source_status": "ready",
+            "action_required": False,
+            "clear_verified": True,
+            "reason": "no_actionable_provider_refresh",
+            "source_generated_at": "",
+            "observed_source_generated_at": source_generated_at,
+        },
+    ]
+    cycle_receipt = {
+        "schema": "propertyquarry.ooda_notification_cycle.v1",
+        "generated_at": observed_at.isoformat(),
+        "status": "action_required",
+        "execution_mode": "evaluate_only",
+        "notification_policy": "action_required_only",
+        "delivery_authorized": False,
+        "delivery_attempted": False,
+        "sent": False,
+        "would_send": True,
+        "notification_count": 0,
+        "message_ids": [],
+        "delivery_mode": "",
+        "state_path": str(tmp_path / "notification-state.json"),
+        "state_updated": False,
+        "notification_state_status": "missing",
+        "notification_state_sha256": "",
+        "notification_state_admissible": True,
+        "operator_action_required": True,
+        "interrupt_operator": True,
+        "action_required_count": 1,
+        "novel_action_count": 1,
+        "active_action_count_before": 0,
+        "active_action_count_projected": 1,
+        "protected_operation_executed": False,
+        "automatic_execution_allowed": False,
+        "provider_quota_consumption_allowed": False,
+        "signal_approval": approval_status,
+        "input_evidence": input_evidence,
+        "lanes": lanes,
+        "source_evidence_posture": notification_cycle._build_source_evidence_posture(
+            lanes
+        ),
+        "actions": [
+            {
+                "lane": "gold_live_runtime",
+                "reason": "live_runtime_host_admission_rejected",
+                "source_generated_at": source_generated_at,
+                "safe_next_action": ooda_status._GOLD_ACTIONS[
+                    "live_runtime_host_admission_rejected"
+                ],
+                "consent_required": True,
+                "automatic_execution_allowed": False,
+                "protected_operations": [
+                    "runtime_configuration_change",
+                    "deployment_or_restart",
+                ],
+                "provider_quota_consumption_allowed": False,
+            }
+        ],
+        "next_action": (
+            "rerun with --send only when factual operator delivery is authorized"
+        ),
+    }
+
+    def write_receipt() -> None:
+        if cycle_receipt.get("status") == "action_required":
+            cycle_receipt.pop("active_action_count_after", None)
+            cycle_receipt["message_preview"] = (
+                notification_cycle._build_consolidated_message(
+                    list(cycle_receipt["actions"]),
+                    generated_at=str(cycle_receipt["generated_at"]),
+                )
+            )
+        else:
+            cycle_receipt.pop("message_preview", None)
+        receipt_path.write_text(json.dumps(cycle_receipt), encoding="utf-8")
+        receipt_path.chmod(0o600)
+
+    def run_summary() -> subprocess.CompletedProcess[str]:
+        write_receipt()
+        return subprocess.run(
+            ["bash", "scripts/operator_summary.sh", "--propertyquarry-action-only"],
+            cwd=ROOT,
+            env={
+                **os.environ,
+                "PROPERTYQUARRY_OPERATOR_OODA_RECEIPT": str(receipt_path),
+                "PROPERTYQUARRY_OPERATOR_OODA_SIGNAL_DIR": str(signal_dir),
+                "PROPERTYQUARRY_OPERATOR_OODA_PRESENTATION_STATE": str(
+                    presentation_state_path
+                ),
+                "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_REQUEST": str(
+                    source_refresh_request_path
+                ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_VERIFICATION": str(
+                        source_refresh_verification_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_HANDOFF": str(
+                        source_refresh_handoff_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_HANDOFF_VERIFICATION": str(
+                        source_refresh_handoff_verification_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_CLAIM_DIR": str(
+                        source_refresh_claim_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_CLAIMS": str(
+                        source_refresh_claims_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_CLAIMS_VERIFICATION": str(
+                        source_refresh_claims_verification_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_DIR": str(
+                        source_refresh_trust_candidate_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_INTAKE": str(
+                        source_refresh_trust_intake_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_INTAKE_VERIFICATION": str(
+                        source_refresh_trust_intake_verification_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_IMPORT_DIR": str(
+                        source_refresh_trust_candidate_import_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_SOURCE_DIR": str(
+                        source_refresh_trust_candidate_source_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_IMPORT_PRESENTATION": str(
+                        source_refresh_trust_candidate_import_presentation_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_ARTIFACT_REQUEST": str(
+                        source_refresh_trust_candidate_artifact_request_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_MANUAL_ACTION": str(
+                        source_refresh_trust_candidate_manual_action_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_ARTIFACT_NOTIFICATION": str(
+                        source_refresh_trust_candidate_artifact_notification_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_PRESENTATION": str(
+                        source_refresh_trust_candidate_presentation_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_DECISION_DIR": str(
+                        source_refresh_trust_decision_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_NOTIFICATION": str(
+                        source_refresh_trust_notification_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_PREVIEW": str(
+                        source_refresh_trust_enrollment_preview_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_PREVIEW_VERIFICATION": str(
+                        source_refresh_trust_enrollment_preview_verification_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_AUTHORIZATION_DIR": str(
+                        source_refresh_trust_enrollment_authorization_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_EXECUTION_READINESS": str(
+                        source_refresh_trust_enrollment_execution_readiness_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_EXECUTION_READINESS_VERIFICATION": str(
+                        source_refresh_trust_enrollment_execution_readiness_verification_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_EXECUTION_DIR": str(
+                        source_refresh_trust_enrollment_execution_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_TRUST_ENROLLMENT_BACKUP_DIR": str(
+                        source_refresh_trust_enrollment_backup_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_COMPLETION_DIR": str(
+                        source_refresh_completion_dir
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_SETTLEMENT": str(
+                        source_refresh_settlement_path
+                    ),
+                    "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_SETTLEMENT_VERIFICATION": str(
+                        source_refresh_settlement_verification_path
+                    ),
+                },
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    fresh = run_summary()
+    assert "ooda source:         configured_operator_filesystem" in fresh.stdout
+    assert "ooda status:         action_required" in fresh.stdout
+    assert "propertyquarry action: REQUIRED" in fresh.stdout
+    assert "gold_live_runtime" in fresh.stdout
+    assert "live_runtime_host_admission_rejected" in fresh.stdout
+    assert "automatic execution disabled" in fresh.stdout
+    assert "provider quota:      disabled" in fresh.stdout
+    assert "source refresh request: VERIFIED NOT_REQUIRED" in fresh.stdout
+    assert "refresh request authority: staged work item only" in fresh.stdout
+    assert "review packet:       not verified" in fresh.stdout
+    assert "python3 scripts/propertyquarry_ooda_runtime_review.py" in fresh.stdout
+    assert "must-not-be-printed-secret-marker" not in fresh.stdout
+    first_presentation_state = presentation_state_path.read_bytes()
+    first_presentation_mtime_ns = presentation_state_path.stat().st_mtime_ns
+
+    cycle_receipt["generated_at"] = datetime.now(timezone.utc).isoformat()
+    repeated = run_summary()
+    assert "ooda status:         pending_action" in repeated.stdout
+    assert "propertyquarry action: PENDING (already presented)" in repeated.stdout
+    assert "unchanged; no repeated operator interrupt" in repeated.stdout
+    assert "propertyquarry action: REQUIRED" not in repeated.stdout
+    assert presentation_state_path.read_bytes() == first_presentation_state
+    assert presentation_state_path.stat().st_mtime_ns == first_presentation_mtime_ns
+
+    waiting_source_generated_at = (
+        datetime.now(timezone.utc) - timedelta(minutes=31)
+    ).isoformat()
+    cycle_receipt.update(
+        {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "status": "silent",
+            "would_send": False,
+            "operator_action_required": False,
+            "interrupt_operator": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+            "active_action_count_projected": 0,
+            "active_action_count_after": 0,
+            "actions": [],
+        }
+    )
+    lanes[0] = {
+        "lane": "gold_live_runtime",
+        "source_status": "ready",
+        "action_required": False,
+        "clear_verified": False,
+        "reason": "gold_receipt_not_fresh",
+        "source_generated_at": "",
+        "observed_source_generated_at": waiting_source_generated_at,
+    }
+    cycle_receipt["source_evidence_posture"] = (
+        notification_cycle._build_source_evidence_posture(lanes)
+    )
+    cycle_receipt["next_action"] = str(
+        cycle_receipt["source_evidence_posture"]["next_action"]
+    )
+    waiting = run_summary()
+    assert "ooda status:         waiting_for_evidence" in waiting.stdout
+    assert "source evidence:     WAITING (not verified clear)" in waiting.stdout
+    assert "gold_live_runtime STALE reason=gold_receipt_not_fresh" in waiting.stdout
+    assert "external_receipt_producer artifacts=gold_receipt" in waiting.stdout
+    assert "source auto-refresh: disabled; external producer authority retained" in waiting.stdout
+    assert "propertyquarry action: REQUIRED" in waiting.stdout
+    assert (
+        "action signal:       producer public-key candidate artifact required"
+        in waiting.stdout
+    )
+    assert "candidate artifact alert: WOULD_SEND" in waiting.stdout
+    assert "trust candidate alert: NOT_REQUIRED" in waiting.stdout
+    assert source_refresh_trust_notification_path.is_file()
+    assert "provider/delivery:   not used" in waiting.stdout
+    assert "source refresh request: STAGED" in waiting.stdout
+    assert "refresh request lanes: gold_live_runtime" in waiting.stdout
+    assert source_refresh_request_path.stat().st_mode & 0o077 == 0
+    assert source_refresh_verification_path.stat().st_mode & 0o077 == 0
+    assert "propertyquarry action: none" not in waiting.stdout
+    assert presentation_state_path.read_bytes() == first_presentation_state
+    assert presentation_state_path.stat().st_mtime_ns == first_presentation_mtime_ns
+
+    cycle_receipt["generated_at"] = "2026-01-01T00:00:00+00:00"
+    stale = run_summary()
+    assert "ooda status:         blocked" in stale.stdout
+    assert "propertyquarry action: unavailable" in stale.stdout
+    assert "cycle_or_manifest_receipt_not_fresh" in stale.stdout
+    assert "propertyquarry action: REQUIRED" not in stale.stdout
+    assert "deployment_or_restart" not in stale.stdout
+    assert "source refresh request: BLOCKED" in stale.stdout
+
+
+def test_operator_summary_runtime_presentation_is_two_phase_and_hash_bound() -> None:
+    operator_summary = (ROOT / "scripts/operator_summary.sh").read_text(
+        encoding="utf-8"
+    )
+    operator_status = (
+        ROOT / "scripts/propertyquarry_ooda_operator_status.py"
+    ).read_text(encoding="utf-8")
+    operator_consent = (
+        ROOT / "scripts/propertyquarry_ooda_operator_consent.py"
+    ).read_text(encoding="utf-8")
+    manual_action = (
+        ROOT / "scripts/propertyquarry_ooda_configuration_manual_action.py"
+    ).read_text(encoding="utf-8")
+    manual_action_status = (
+        ROOT / "scripts/propertyquarry_ooda_configuration_action_status.py"
+    ).read_text(encoding="utf-8")
+    evidence_refresh = (
+        ROOT / "scripts/propertyquarry_ooda_configuration_evidence_refresh.py"
+    ).read_text(encoding="utf-8")
+    read_call = operator_summary.index(
+        "summary = runtime_operator_projection(\n"
+        "                    container_id,\n"
+        "                    record_presentation=False,"
+    )
+    flush = operator_summary.index("sys.stdout.flush()")
+    record_call = operator_summary.index(
+        "recorded_projection = runtime_operator_projection(",
+        flush,
+    )
+    record_end = operator_summary.index(
+        "presentation_receipt = dict(",
+        record_call,
+    )
+    handoff_stage = operator_summary.index(
+        "authorization_handoff = stage_current_authorization_handoff("
+    )
+    execution_status_inspect = operator_summary.index(
+        "configuration_action_status = inspect_manual_action_status("
+    )
+    presentation_apply = operator_summary.index(
+        "summary = apply_operator_presentation_state("
+    )
+    consent_apply = operator_summary.index(
+        "summary = project_operator_consent("
+    )
+    configuration_stage = operator_summary.index(
+        "configuration_handoff = stage_current_configuration_handoff("
+    )
+    preview_stage = operator_summary.index(
+        "configuration_change_preview = stage_current_configuration_change_preview("
+    )
+    manual_action_stage = operator_summary.index(
+        "configuration_manual_action = stage_current_manual_action_handoff("
+    )
+    pending_projection = operator_summary.index(
+        'print("propertyquarry action: PENDING (already presented)")'
+    )
+    consent_record = operator_summary.index(
+        "consent_receipt = record_operator_consent(",
+        flush,
+    )
+    execution_status_print = operator_summary.index(
+        "print_configuration_action_status(configuration_action_status)"
+    )
+    execution_status_record = operator_summary.index(
+        "configuration_action_presentation_receipt = record_manual_action_presentation(",
+        flush,
+    )
+
+    assert read_call < flush < record_call
+    assert (
+        execution_status_inspect
+        < handoff_stage
+        < configuration_stage
+        < preview_stage
+        < manual_action_stage
+        < consent_apply
+        < presentation_apply
+        < pending_projection
+        < flush
+        < consent_record
+    )
+    assert execution_status_print < flush < execution_status_record
+    assert "record_presentation=True" in operator_summary[record_call:record_end]
+    assert "expected_cycle_receipt_sha256=expected_cycle_digest" in operator_summary[
+        record_call:record_end
+    ]
+    assert '"--expected-cycle-receipt-sha256"' in operator_summary
+    assert "authorization handoff: READY" in operator_summary
+    assert "unchanged; no repeated operator interrupt" in operator_summary
+    assert "retained prior verified digest while current review is unavailable" in operator_summary
+    assert "safe fallback tick ran for this read" in operator_summary
+    assert "persistent reevaluation is not running" in operator_summary
+    assert (
+        'summary.get("action_required") is not True\n'
+        '    and source_refresh_trust_candidate_import.get("status") == "verified"'
+        in operator_summary
+    )
+    assert "scheduler_condition" in operator_summary
+    assert "scheduler_container_healthy" in operator_summary
+    assert "persistent_reevaluation_verified" in operator_summary
+    assert "runtime_scheduler_witness_projection" in operator_summary
+    assert "propertyquarry_ooda_scheduler_witness.py" in operator_summary
+    assert "scheduler_container_count" in operator_summary
+    assert "running_scheduler_container_count" in operator_summary
+    assert "healthy_scheduler_container_count" in operator_summary
+    assert "scheduler_health" in operator_summary
+    assert "ooda scheduler:      VERIFIED" in operator_summary
+    assert "scheduler continuity: persistent reevaluation is running" in operator_summary
+    assert "deployment/restart remains separately consent-gated" in operator_summary
+    assert "edge incident:       " in operator_summary
+    assert "authorization request: NOT APPLICABLE" in operator_summary
+    assert "edge recovery is restart/deploy class" in operator_summary
+    assert "recovery authority:    none staged" in operator_summary
+    assert "recovery review:     VERIFIED CURRENT" in operator_summary
+    assert "authorization handoff: NOT APPLICABLE" in operator_summary
+    assert "no deployment/restart authority staged" in operator_summary
+    assert "recovery target:     " in operator_summary
+    assert "connector_service" in operator_summary
+    assert "recovery compose:    " in operator_summary
+    assert "non-executing; no command or authorization recorded" in operator_summary
+    assert "retained_context_lanes" in operator_status
+    assert "PENDING explicit decision; no authority recorded" in operator_summary
+    assert "stage_current_authorization_handoff" in operator_summary
+    assert "configuration handoff: READY" in operator_summary
+    assert "configuration applied: none; automatic apply disabled" in operator_summary
+    assert "stage_current_configuration_handoff" in operator_summary
+    assert "stage_current_configuration_change_preview" in operator_summary
+    assert "change preview:        READY" in operator_summary
+    assert "change preview:        unavailable; exact approval required" in operator_summary
+    assert "source edit performed: none; preview is non-applying" in operator_summary
+    assert "stage_current_manual_action_handoff" in operator_summary
+    assert "manual action:        READY" in operator_summary
+    assert "manual action:        unavailable; exact approval required" in operator_summary
+    assert "automatic execution: none; explicit manual invocation required" in operator_summary
+    assert "deployment/restart:  excluded" in operator_summary
+    assert "configuration follow-up: {label}" in operator_summary
+    assert "configuration follow-up: none" in operator_summary
+    assert "PENDING (already presented)" in operator_summary
+    assert "deployment/restart:    not authorized; not performed" in operator_summary
+    assert "provider/delivery:     not used" in operator_summary
+    assert "project_operator_consent" in operator_summary
+    assert "record_operator_consent" in operator_summary
+    assert "negative outcome retained" in operator_summary
+    assert "exact configuration scope approved; manual apply only" in operator_summary
+    assert '"approve_exact_scope", "reject", "defer"' in operator_consent
+    assert 'value.get("decision") in _NEGATIVE_DECISIONS' in operator_consent
+    assert 'configuration.get("automatic_apply_allowed") is False' in operator_consent
+    assert 'configuration.get("deployment_or_restart_authorized") is False' in operator_consent
+    assert 'configuration_preview.get("source_edit_performed") is False' in operator_consent
+    assert 'manual_action_handoff.get("source_edit_performed") is False' in operator_consent
+    assert "atomic_replace_bytes_if_matches" in manual_action
+    assert 'mode.add_argument("--apply", action="store_true")' in manual_action
+    assert 'mode.add_argument("--rollback", action="store_true")' in manual_action
+    assert '"deployment_or_restart_performed": False' in manual_action
+    assert '"provider_quota_consumed": False' in manual_action
+    assert '"delivery_attempted": False' in manual_action
+    assert "inspect_manual_action_status" in manual_action_status
+    assert "refresh_receipt_dir=configuration_evidence_refresh_receipt_dir" in operator_summary
+    assert "propertyquarry_ooda_configuration_evidence_refresh.py" in manual_action_status
+    assert "exact rollback command:" in operator_summary
+    assert "evidence refresh state:" in operator_summary
+    assert "apply_manual_action_presentation_state" in manual_action_status
+    assert "record_manual_action_presentation" in manual_action_status
+    assert "inspect_latest_evidence_refresh" in manual_action_status
+    assert '"manual_action_current_source_drifted"' in manual_action_status
+    assert '"apply_reconciliation_required"' in manual_action_status
+    assert '"evidence_refresh_reconciliation_required"' in manual_action_status
+    assert 'f"{action_state}_evidence_refreshed"' in manual_action_status
+    assert '"rolled_back"' in manual_action_status
+    assert '"delivery_state_updated": False' in manual_action_status
+    assert 'send=False' in evidence_refresh
+    assert 'require_approval_manifest=True' in evidence_refresh
+    assert '"deployment_or_restart_performed": False' in evidence_refresh
+    assert '"provider_quota_consumed": False' in evidence_refresh
+    assert '"delivery_attempted": False' in evidence_refresh
+    assert "materialize_current_review_packet" in evidence_refresh
+    assert "materialize_current_review_packet(" in operator_summary
+    assert "verify_current_review_packet" in evidence_refresh
+    assert "_acquire_send_lock" in evidence_refresh
+    assert '"presentation_source_binding_required"' in operator_status
+    assert '"presentation_source_binding_mismatch"' in operator_status
+
+
+def test_operator_runtime_source_refresh_reads_exact_container_receipts() -> None:
+    summary = (ROOT / "scripts/operator_summary.sh").read_text(
+        encoding="utf-8"
+    )
+    function_start = summary.index(
+        "def runtime_source_refresh_request_projection("
+    )
+    function_end = summary.index("\n\nif configured_receipt", function_start)
+    function = summary[function_start:function_end]
+    runtime_branch = summary.index(
+        'if source.get("type") == "runtime_container":\n'
+        "        source_refresh_request = dict(",
+        function_end,
+    )
+    fallback_branch = summary.index(
+        'elif source.get("type") == "operator_filesystem_no_runtime_container":',
+        runtime_branch,
+    )
+    configured_branch = summary.index(
+        'elif source.get("type") == "configured_operator_filesystem":',
+        fallback_branch,
+    )
+    selection_end = summary.index(
+        "except (OSError, TypeError, ValueError):",
+        configured_branch,
+    )
+
+    assert '"--inspect"' in function
+    assert "/app/scripts/propertyquarry_ooda_source_refresh_request.py" in function
+    assert "runtime_source_refresh_request_path" in function
+    assert "runtime_source_refresh_verification_path" in function
+    assert "materialize_source_refresh_request_bundle" not in function
+    assert "materialize_source_refresh_request_bundle" not in summary[
+        runtime_branch:fallback_branch
+    ]
+    assert "inspect_source_refresh_request_bundle" in summary[
+        fallback_branch:configured_branch
+    ]
+    assert "materialize_source_refresh_request_bundle" in summary[
+        configured_branch:selection_end
+    ]
+
+
+def test_operator_runtime_source_handoff_reads_exact_container_receipts() -> None:
+    summary = (ROOT / "scripts/operator_summary.sh").read_text(
+        encoding="utf-8"
+    )
+    function_start = summary.index(
+        "def runtime_source_refresh_handoff_projection("
+    )
+    function_end = summary.index("\n\nif configured_receipt", function_start)
+    function = summary[function_start:function_end]
+    handoff_selection = summary.index(
+        'if source.get("type") == "runtime_container":\n'
+        "        source_refresh_handoff = dict(",
+        function_end,
+    )
+    fallback_branch = summary.index(
+        'elif source.get("type") == "operator_filesystem_no_runtime_container":',
+        handoff_selection,
+    )
+    configured_branch = summary.index(
+        'elif source.get("type") == "configured_operator_filesystem":',
+        fallback_branch,
+    )
+    selection_end = summary.index(
+        "except (OSError, TypeError, ValueError):",
+        configured_branch,
+    )
+
+    assert '"--inspect"' in function
+    assert "/app/scripts/propertyquarry_ooda_source_refresh_handoff.py" in function
+    assert "runtime_source_refresh_request_path" in function
+    assert "runtime_source_refresh_verification_path" in function
+    assert "runtime_source_refresh_handoff_path" in function
+    assert "runtime_source_refresh_handoff_verification_path" in function
+    assert "materialize_source_refresh_handoff_bundle" not in function
+    assert "materialize_source_refresh_handoff_bundle" not in summary[
+        handoff_selection:fallback_branch
+    ]
+    assert "inspect_source_refresh_handoff_bundle" in summary[
+        fallback_branch:configured_branch
+    ]
+    assert "materialize_source_refresh_handoff_bundle" in summary[
+        configured_branch:selection_end
+    ]
 
 
 def test_local_env_rotation_slots_and_gitignore_cover_browseract_and_onemin_keys() -> None:
@@ -1034,13 +1843,19 @@ def test_payfunnels_bootstrap_script_help_and_wiring() -> None:
     assert "bootstrap_payfunnels_propertyquarry.py" in readme
 
 
-def test_property_repair_fleet_canary_script_emits_receipt() -> None:
+def test_property_repair_fleet_canary_script_emits_receipt(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["EA_RUNTIME_MODE"] = "prod"
     env["EA_API_TOKEN"] = "inherited-release-gate-token"
     env.pop("DATABASE_URL", None)
+    receipt_path = tmp_path / "repair" / "canary.json"
     result = subprocess.run(
-        [sys.executable, "scripts/propertyquarry_repair_fleet_canary.py"],
+        [
+            sys.executable,
+            "scripts/propertyquarry_repair_fleet_canary.py",
+            "--write",
+            str(receipt_path),
+        ],
         cwd=ROOT,
         env=env,
         capture_output=True,
@@ -1049,6 +1864,8 @@ def test_property_repair_fleet_canary_script_emits_receipt() -> None:
     )
     payload = json.loads(result.stdout)
 
+    assert json.loads(receipt_path.read_text(encoding="utf-8")) == payload
+    assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
     assert payload["status"] == "pass"
     assert str(payload.get("generated_at") or "").strip()
     assert payload["run_status"] == "completed_partial"
@@ -1056,6 +1873,22 @@ def test_property_repair_fleet_canary_script_emits_receipt() -> None:
     assert payload["source_repair_status"] == "returned"
     assert payload["repair_summary"]["resolved_total"] == 1
     assert payload["repair_summary"]["deferred_total"] == 0
+
+
+def test_property_repair_fleet_canary_refuses_peer_writable_receipt_parent(
+    tmp_path: Path,
+) -> None:
+    script_path = ROOT / "scripts/propertyquarry_repair_fleet_canary.py"
+    spec = importlib.util.spec_from_file_location("propertyquarry_repair_fleet_canary", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    unsafe_parent = tmp_path / "unsafe-receipts"
+    unsafe_parent.mkdir(mode=0o777)
+    unsafe_parent.chmod(0o777)
+
+    with pytest.raises(ValueError, match="trusted and non-peer-writable"):
+        module._write_receipt(unsafe_parent / "canary.json", "{}")
 
 
 def test_emailit_bootstrap_script_help_and_wiring() -> None:
@@ -4792,3 +5625,155 @@ def test_replay_forensics_horizon_bootstrap_is_documented_and_released() -> None
     assert capability["status"] == "released"
     assert capability.get("task_refs") == ["D-522"]
     assert "release/operator guards now pin those bootstrap artifacts" in capability["notes"]
+
+
+def test_propertyquarry_operator_summary_refreshes_receipt_backed_runtime_truth() -> None:
+    summary = (ROOT / "scripts/operator_summary.sh").read_text(encoding="utf-8")
+
+    assert "materialize_current_runtime_observation_bundle" in summary
+    assert "materialize_current_scheduler_continuity_bundle" in summary
+    assert (
+        "materialize_current_scheduler_activation_readiness_bundle" in summary
+    )
+    assert "run_safe_tick" in summary
+    assert "PROPERTYQUARRY_OPERATOR_OODA_RUNTIME_OBSERVATION" in summary
+    assert "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_CONTINUITY" in summary
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_CONTINUITY_VERIFICATION"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_READINESS"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_READINESS_VERIFICATION"
+        in summary
+    )
+    assert "runtime evidence:    VERIFIED" in summary
+    assert "ooda scheduler:      VERIFIED" in summary
+    assert "scheduler witness:" in summary
+    assert "cycle witness:" in summary
+    assert "continuity evidence: VERIFIED" in summary
+    assert "continuity receipt:" in summary
+    assert "activation readiness: VERIFIED" in summary
+    assert "activation preflight:" in summary
+    assert "activation receipt:" in summary
+    assert "stage_current_scheduler_activation_authorization_handoff" in summary
+    assert "verify_current_scheduler_activation_authorization_decision" in summary
+    assert "inspect_current_scheduler_activation_execution" in summary
+    assert "materialize_current_scheduler_activation_settlement_bundle" in summary
+    assert "project_scheduler_activation_settlement_handoff" in summary
+    assert "materialize_source_refresh_request_bundle" in summary
+    assert "inspect_source_refresh_request_bundle" in summary
+    assert "runtime_source_refresh_request_projection" in summary
+    assert "runtime_source_refresh_handoff_projection" in summary
+    assert "runtime_source_refresh_claims_projection" in summary
+    assert '"--inspect"' in summary
+    assert "/app/scripts/propertyquarry_ooda_source_refresh_request.py" in summary
+    assert "/app/scripts/propertyquarry_ooda_source_refresh_handoff.py" in summary
+    assert "/app/scripts/propertyquarry_ooda_source_refresh_claims.py" in summary
+    assert '"--require-claim-dir"' in summary
+    assert 'if source.get("type") == "runtime_container":' in summary
+    assert 'source.get("source_refresh_request")' in summary
+    assert 'source.get("source_refresh_handoff")' in summary
+    assert 'source.get("source_refresh_claims")' in summary
+    assert "source refresh request: STAGED" in summary
+    assert "source refresh request: VERIFIED NOT_REQUIRED" in summary
+    assert "source refresh request: BLOCKED" in summary
+    assert "refresh request authority: staged work item only" in summary
+    assert "producer handoff:   AVAILABLE" in summary
+    assert "producer handoff:   VERIFIED NOT_REQUIRED" in summary
+    assert "producer handoff:   BLOCKED" in summary
+    assert "handoff work item:" in summary
+    assert "handoff authority:   read-only pickup signal only" in summary
+    assert "producer claim:     " in summary
+    assert "signed claim evidence:" in summary
+    assert "claim settlement:" in summary
+    assert "claim receipt:" in summary
+    assert "claim authority:     observation only" in summary
+    assert "activation authorization: NOT STAGED" in summary
+    assert "activation authorization: {activation_label}" in summary
+    assert "activation request id:" in summary
+    assert "activation request expires:" in summary
+    assert "activation decision options: approve_exact_scope | reject | defer" in summary
+    assert "propertyquarry_ooda_scheduler_activation_decision.py" in summary
+    assert "propertyquarry_ooda_scheduler_activation_execution" in summary
+    assert "activation execution guard: one-shot claim" in summary
+    assert "activation replay: prohibited" in summary
+    assert "activation settlement: VERIFIED" in summary
+    assert "activation settlement recovery: {settlement_label}" in summary
+    assert "active runtime has no governed execution history" in summary
+    assert "activation request authority: none until an explicit decision" in summary
+    assert "activation presentation ledger: BLOCKED" in summary
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_AUTHORIZATION_REQUEST"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_DECISION_DIR"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_EXECUTION_DIR"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_SETTLEMENT"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_SETTLEMENT_VERIFICATION"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_SETTLEMENT_PRESENTATION_STATE"
+        in summary
+    )
+    assert "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_REQUEST" in summary
+    assert "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_VERIFICATION" in summary
+    assert "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_HANDOFF" in summary
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_HANDOFF_VERIFICATION"
+        in summary
+    )
+    assert "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_CLAIMS" in summary
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_CLAIMS_VERIFICATION"
+        in summary
+    )
+    assert "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_CLAIM_DIR" in summary
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SOURCE_REFRESH_CLAIM_TRUST_REGISTRY"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_DEPLOYMENT_RECEIPT"
+        in summary
+    )
+    assert (
+        "PROPERTYQUARRY_OPERATOR_OODA_SCHEDULER_ACTIVATION_PRESENTATION_STATE"
+        in summary
+    )
+    assert 'continuity_progress.get("receipt_integrity_verified") is True' in summary
+    assert (
+        'scheduler_continuity.get("verification_receipt_persisted") is True'
+        in summary
+    )
+    assert "scheduler continuity: persistent reevaluation is not running" in summary
+    assert "runtime authority:   observation only; deployment/restart not authorized" in summary
+    assert (
+        "continuity authority: observation only; "
+        "no delivery/provider/deployment/restart authority"
+        in summary
+    )
+    assert (
+        "activation authority: preflight/request only; "
+        "no build/delivery/provider/deployment/restart authority"
+        in summary
+    )
+    assert "ooda fallback tick: VERIFIED EVALUATE-ONLY" in summary
+    assert "fallback authority:  no delivery/provider/deployment/restart authority" in summary
+    assert "safe fallback tick ran for this read" in summary
+    assert "persistent reevaluation is not running" in summary
+    assert "current_runtime_observation_unavailable" in summary

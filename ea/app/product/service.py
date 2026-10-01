@@ -1046,16 +1046,45 @@ def _property_search_run_snapshot_projection(
 
 
 def _property_search_run_worker_concurrency() -> int:
-    raw_value = str(os.getenv("PROPERTYQUARRY_SEARCH_RUN_WORKER_CONCURRENCY") or "").strip()
+    raw_value = (
+        os.environ.get("PROPERTYQUARRY_SEARCH_RUN_WORKER_CONCURRENCY") or ""
+    ).strip()
     if not raw_value:
-        return 4
+        return 2
     try:
         parsed = int(raw_value)
     except Exception:
-        return 4
-    return max(1, min(parsed, 8))
+        return 2
+    return max(1, min(parsed, 2))
 
 
+
+def _property_search_work_priority_for_record(record: object) -> int:
+    try:
+        preferences = record["property_search_preferences"]  # type: ignore[index]
+    except Exception:
+        return 0
+    if not isinstance(preferences, dict):
+        return 0
+    commercial = preferences.get("property_commercial")
+    if not isinstance(commercial, dict):
+        return 0
+    if str(commercial.get("status") or "").strip().lower() != "active":
+        return 0
+    active_until = str(commercial.get("active_until") or "").strip()
+    if not active_until:
+        return 0
+    try:
+        from datetime import datetime, timezone
+
+        deadline = datetime.fromisoformat(active_until.replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) >= deadline:
+            return 0
+    except Exception:
+        return 0
+    return 100
 def _property_search_durable_work_required() -> bool:
     return str(os.environ.get("EA_RUNTIME_MODE") or "dev").strip().lower() == "prod"
 
@@ -13701,8 +13730,15 @@ def _property_search_ranked_candidates_from_sources(sources: object, *, limit: i
     for index, row in enumerate(rows, start=1):
         row["rank"] = index
     if limit is None:
-        return rows
-    return rows[: max(1, min(int(limit or 50), 200))]
+        limited = rows
+    else:
+        limited = rows[: max(1, min(int(limit or 50), 200))]
+    try:
+        from app.services.phygital.overlay import apply_phygital_floorplan_video_to_top_result
+
+        return apply_phygital_floorplan_video_to_top_result(limited)
+    except Exception:
+        return limited
 
 
 _PROPERTY_PRIVATE_SHOWCASE_CANDIDATE_REF = "karl-czerny-gasse-2-private-showcase"

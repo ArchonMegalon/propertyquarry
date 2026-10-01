@@ -1437,13 +1437,13 @@ def _poll_property_search_run_status(client, run_id: str) -> dict[str, object]:
     return latest_status
 
 
-def test_free_property_plan_keeps_visible_results_uncapped() -> None:
+def test_free_property_plan_keeps_providers_and_visible_results_uncapped() -> None:
     snapshot = property_commercial_snapshot({})
 
     assert snapshot["current_plan_key"] == "free"
     assert snapshot["research_depth"] == "standard"
     assert snapshot["investment_research_level"] == "none"
-    assert snapshot["max_platforms"] == 3
+    assert snapshot["max_platforms"] == 0
     assert snapshot["max_results_per_source"] == 0
     assert snapshot["max_match_score"] == 35
 
@@ -1876,7 +1876,7 @@ def test_property_plan_investment_research_levels_follow_tier() -> None:
 
     assert plus["investment_research_level"] == "preview"
     assert plus["research_depth"] == "deep"
-    assert plus["max_platforms"] == 8
+    assert plus["max_platforms"] == 0
     assert plus["max_match_score"] == 45
     assert plus["magic_fit_scene_period"] == "day"
     assert plus["magic_fit_video_period"] == "day"
@@ -8237,6 +8237,11 @@ def test_property_search_source_completed_progress_does_not_overwrite_listing_to
         },
     )
     monkeypatch.setattr(ProductService, "_warm_property_public_preview_cache_for_sources", lambda self, **kwargs: {})
+    monkeypatch.setattr(
+        ProductService,
+        "_send_property_scout_queued_notification",
+        lambda self, **kwargs: {"status": "suppressed"},
+    )
 
     events: list[dict[str, object]] = []
     result = service.sync_direct_property_scout(
@@ -13659,7 +13664,7 @@ def test_property_search_run_dispatch_only_returns_queued_without_snapshot(monke
     assert body["summary"]["dispatch_only"] is True
     assert body["summary"]["worker_started"] is True
     assert body["summary"]["worker_deferred"] is True
-    assert body["summary"]["worker_concurrency_limit"] == 4
+    assert body["summary"]["worker_concurrency_limit"] == 2
     for _ in range(50):
         if observed.get("selected_platforms") == ("willhaben",):
             break
@@ -13913,17 +13918,17 @@ def test_property_search_run_projection_preserves_provider_filter_audit_only() -
     }
 
 
-def test_property_search_run_worker_concurrency_defaults_to_four(monkeypatch) -> None:
+def test_property_search_run_worker_concurrency_defaults_to_two(monkeypatch) -> None:
     monkeypatch.delenv("PROPERTYQUARRY_SEARCH_RUN_WORKER_CONCURRENCY", raising=False)
 
-    assert product_service._property_search_run_worker_concurrency() == 4
+    assert product_service._property_search_run_worker_concurrency() == 2
 
 
-def test_property_search_run_worker_semaphore_allows_four_live_runs(monkeypatch) -> None:
-    principal_id = "exec-property-search-run-four-live-workers"
+def test_property_search_run_worker_semaphore_allows_two_live_runs(monkeypatch) -> None:
+    principal_id = "exec-property-search-run-two-live-workers"
     client = build_property_client(principal_id=principal_id)
-    start_workspace(client, mode="personal", workspace_name="Property Search Four Live Workers")
-    monkeypatch.setattr(product_service, "_PROPERTY_SEARCH_RUN_WORKER_SEMAPHORE", threading.BoundedSemaphore(4))
+    start_workspace(client, mode="personal", workspace_name="Property Search Two Live Workers")
+    monkeypatch.setattr(product_service, "_PROPERTY_SEARCH_RUN_WORKER_SEMAPHORE", threading.BoundedSemaphore(2))
 
     release_event = threading.Event()
     state_lock = threading.Lock()
@@ -13989,25 +13994,25 @@ def test_property_search_run_worker_semaphore_allows_four_live_runs(monkeypatch)
     deadline = time.time() + 2.0
     while time.time() < deadline:
         with state_lock:
-            if len(entered_run_ids) >= 4 and current_workers == 4:
+            if len(entered_run_ids) >= 2 and current_workers == 2:
                 break
         time.sleep(0.01)
 
     with state_lock:
-        assert len(entered_run_ids) == 4
-        assert current_workers == 4
-        assert max_workers == 4
+        assert len(entered_run_ids) == 2
+        assert current_workers == 2
+        assert max_workers == 2
 
     time.sleep(0.1)
     with state_lock:
-        assert len(entered_run_ids) == 4
-        assert current_workers == 4
+        assert len(entered_run_ids) == 2
+        assert current_workers == 2
 
     release_event.set()
     final_statuses = [_poll_property_search_run_status(client, run_id) for run_id in run_ids]
     assert all(str(row.get("status") or "").strip() == "processed" for row in final_statuses)
     with state_lock:
-        assert max_workers == 4
+        assert max_workers == 2
         assert len(entered_run_ids) == 5
 
 

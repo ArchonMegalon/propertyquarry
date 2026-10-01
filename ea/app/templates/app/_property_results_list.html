@@ -33,13 +33,16 @@
 {% endif %}
 {% set current_property = progress_current_property.card %}
 {% set current_property_diorama = current_property.get('diorama_scene') or {} %}
-{% set current_property_image = current_property.get('diorama_preview_url') or current_property_diorama.get('image_url') or current_property_diorama.get('preview_image_url') or '' %}
+{% set current_property_image = current_property.get('phygital_poster_url') or current_property.get('diorama_preview_url') or current_property_diorama.get('image_url') or current_property_diorama.get('preview_image_url') or current_property.get('phygital_video_url') or '' %}
+{% set current_property_video = current_property.get('phygital_video_url') or current_property_diorama.get('video_url') or '' %}
 {% set current_property_status_label = current_property.get('status_label') or ('Best so far' if current_property else '') %}
 {% set current_property_status_detail = current_property.get('status_detail') or current_property.get('fit_summary') or current_property.get('summary') or '' %}
 {% set current_property_detail_url = current_property.get('detail_url') or current_property.get('packet_url') or current_property.get('review_url') or '' %}
 <style>
   .pqx-opportunity-cover{display:grid;grid-template-columns:44px minmax(0,1fr);gap:7px;align-items:center;width:100%;max-width:100%;margin-top:8px;padding:7px;border:1px solid color-mix(in srgb,currentColor 14%,transparent);border-radius:11px;background:color-mix(in srgb,var(--pqx-surface,#fff) 94%,#b76545 6%)}
-  .pqx-opportunity-cover img{width:44px;height:44px;object-fit:cover;border-radius:8px}
+  .pqx-opportunity-cover img,.pqx-opportunity-cover video{width:44px;height:44px;object-fit:cover;border-radius:8px}
+  .pqx-current-property-thumb{width:100%;height:100%;object-fit:cover;display:block}
+  .pqx-thumb video,.pqx-result-diorama video{width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit}
   .pqx-opportunity-cover>span{display:block;min-width:0}
   .pqx-opportunity-cover strong{display:block;font-size:.68rem;line-height:1.18;font-weight:750}
   .pqx-opportunity-cover>span>span{display:block;margin-top:2px;font-size:.62rem;line-height:1.22;opacity:.72}
@@ -112,7 +115,11 @@
         data-pqx-scope-overlay="[]"
         aria-label="Enlarge diorama for {{ current_property.get('title') or 'property' }}"
       >
+        {% if current_property_video %}
+        <video class="pqx-current-property-thumb" src="{{ current_property_video }}" poster="{{ current_property.get('phygital_poster_url') or '' }}" muted loop playsinline autoplay preload="metadata" aria-hidden="true"></video>
+        {% else %}
         <img class="pqx-current-property-thumb" src="{{ current_property_image }}" alt="{{ current_property.get('diorama_alt') or current_property_diorama.get('alt') or current_property.get('title') or 'Illustrative property diorama' }}">
+        {% endif %}
       </button>
       {% else %}
       <div class="pqx-current-property-diorama-button pqx-current-property-diorama-placeholder" role="img" aria-label="Diorama preview in progress"></div>
@@ -172,7 +179,7 @@
 		      {% set diorama_scene = candidate.get('diorama_scene') or {} %}
 		      {% set diorama_preview_url = candidate.get('diorama_preview_url') or diorama_scene.get('image_url') or '' %}
 		      {% set primary_preview_url = candidate.get('preview_image_url') or orientation_preview.get('thumb_image_url') or orientation_preview.get('image_url') or '' %}
-		      {% set diorama_preview_url = diorama_preview_url if diorama_preview_url.startswith('/') else '' %}
+		      {% set diorama_preview_url = diorama_preview_url if (diorama_preview_url.startswith('/') or diorama_preview_url.startswith('https://')) else '' %}
 		      {% set primary_preview_url = primary_preview_url if ((primary_preview_url.startswith('/') and not primary_preview_url.startswith('//')) or primary_preview_url.startswith('https://')) else '' %}
 		      {% set shortlist_preview_url = diorama_preview_url or primary_preview_url %}
 	      {% set candidate_facts = candidate.get('property_facts') or {} %}
@@ -228,7 +235,18 @@
             aria-label="{{ 'Explore diorama and area map for' if diorama_preview_url else 'Open area map for' }} {{ candidate.get('title') or 'property' }}"
             {% if loop.index > 3 %}data-pqx-deferred-preview-host{% endif %}
           >
-            {% if shortlist_preview_url %}
+            {% if loop.first and candidate.get('phygital_video_url') %}
+            <video
+              src="{{ candidate.get('phygital_video_url') }}"
+              poster="{{ candidate.get('phygital_poster_url') or shortlist_preview_url }}"
+              muted
+              loop
+              playsinline
+              autoplay
+              preload="metadata"
+              aria-hidden="true"
+            ></video>
+            {% elif shortlist_preview_url %}
             <img
               {% if loop.index <= 3 %}
               src="{{ shortlist_preview_url }}"
@@ -280,7 +298,20 @@
                 fetchpriority="low"
                 referrerpolicy="no-referrer"
                 data-pqx-thumbnail-image
+                {% if loop.first and candidate.get('phygital_video_url') %}hidden{% endif %}
               >
+              {% if loop.first and candidate.get('phygital_video_url') %}
+              <video
+                src="{{ candidate.get('phygital_video_url') }}"
+                poster="{{ candidate.get('phygital_poster_url') or primary_preview_url }}"
+                muted
+                loop
+                playsinline
+                autoplay
+                preload="metadata"
+                aria-hidden="true"
+              ></video>
+              {% endif %}
 	            </button>
 	            <span class="pqx-thumb-placeholder" aria-hidden="true">Media preview not available.</span>
 	          </span>

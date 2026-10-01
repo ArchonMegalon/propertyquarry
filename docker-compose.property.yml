@@ -10,7 +10,7 @@ services:
       - ALL
     security_opt:
       - "no-new-privileges:true"
-    restart: "${PROPERTYQUARRY_API_RESTART_POLICY:-on-failure:3}"
+    restart: "${PROPERTYQUARRY_API_RESTART_POLICY:-unless-stopped}"
     init: true
     stop_grace_period: 20s
     environment:
@@ -95,6 +95,15 @@ services:
       THREEDVISTA_LOGIN_EMAIL: ""
       THREEDVISTA_LOGIN_PASSWORD: ""
       THREEDVISTA_LICENSE_EMAIL: ""
+      # Phygital+ credentials stay host-scoped. Ranking reuses Property MP4;
+      # GENERATE stays 0 so compose cannot spend Kling credits.
+      PHYGITAL_PLUS_EMAIL: ""
+      PHYGITAL_PLUS_PASSWORD: ""
+      PROPERTYQUARRY_PHYGITAL_ENABLED: "${PROPERTYQUARRY_PHYGITAL_ENABLED:-0}"
+      PROPERTYQUARRY_PHYGITAL_MODE: "${PROPERTYQUARRY_PHYGITAL_MODE:-dry_run}"
+      PROPERTYQUARRY_PHYGITAL_PROJECT_NAME: "${PROPERTYQUARRY_PHYGITAL_PROJECT_NAME:-Property}"
+      PROPERTYQUARRY_PHYGITAL_GENERATE: "${PROPERTYQUARRY_PHYGITAL_GENERATE:-0}"
+      PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS: "${PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS:-0}"
       PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"
       EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS: "${EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS:-2592000}"
       EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS: "${EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS:-1209600}"
@@ -300,6 +309,7 @@ services:
     init: true
     stop_grace_period: 45s
     environment:
+      PROPERTYQUARRY_SEARCH_RUN_WORKER_CONCURRENCY: "2"
       EA_ROLE: worker
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
       EA_STORAGE_BACKEND: "postgres"
@@ -322,6 +332,13 @@ services:
       THREEDVISTA_LOGIN_EMAIL: ""
       THREEDVISTA_LOGIN_PASSWORD: ""
       THREEDVISTA_LICENSE_EMAIL: ""
+      PHYGITAL_PLUS_EMAIL: ""
+      PHYGITAL_PLUS_PASSWORD: ""
+      PROPERTYQUARRY_PHYGITAL_ENABLED: "${PROPERTYQUARRY_PHYGITAL_ENABLED:-0}"
+      PROPERTYQUARRY_PHYGITAL_MODE: "${PROPERTYQUARRY_PHYGITAL_MODE:-dry_run}"
+      PROPERTYQUARRY_PHYGITAL_PROJECT_NAME: "${PROPERTYQUARRY_PHYGITAL_PROJECT_NAME:-Property}"
+      PROPERTYQUARRY_PHYGITAL_GENERATE: "${PROPERTYQUARRY_PHYGITAL_GENERATE:-0}"
+      PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS: "${PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS:-0}"
       PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"
       PROPERTYQUARRY_WORKER_PROFILE: "property_only"
       EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS: "${EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS:-2592000}"
@@ -412,6 +429,8 @@ services:
       retries: 5
 
   propertyquarry-scheduler:
+    group_add:
+      - "${PROPERTYQUARRY_OODA_TRUST_CANDIDATE_DROP_GID:-1000}"
     image: "${PROPERTYQUARRY_WEB_IMAGE:-propertyquarry-standalone-web-runtime:latest}"
     container_name: "${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
@@ -419,10 +438,16 @@ services:
       - ALL
     security_opt:
       - "no-new-privileges:true"
-    restart: "${PROPERTYQUARRY_SCHEDULER_RESTART_POLICY:-on-failure:3}"
+    restart: "${PROPERTYQUARRY_SCHEDULER_RESTART_POLICY:-unless-stopped}"
     init: true
     stop_grace_period: 20s
     environment:
+      PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_IMPORT_DIR: /data/artifacts/propertyquarry-ooda-notification/source-refresh-trust-candidate-imports
+      PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_SOURCE_DIR: /run/propertyquarry/ooda-producer-trust-source
+      PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_IMPORT_PRESENTATION_STATE_PATH: /data/artifacts/propertyquarry-ooda-notification/source-refresh-trust-candidate-presentation.json
+      PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_ARTIFACT_REQUEST_RECEIPT_PATH: /data/artifacts/propertyquarry-ooda-notification/source-refresh-trust-candidate-artifact-request.json
+      PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_MANUAL_ACTION_RECEIPT_PATH: /data/artifacts/propertyquarry-ooda-notification/source-refresh-trust-candidate-manual-action.json
+      PROPERTYQUARRY_OODA_SOURCE_REFRESH_TRUST_CANDIDATE_ARTIFACT_NOTIFICATION_RECEIPT_PATH: /data/artifacts/propertyquarry-ooda-notification/source-refresh-trust-candidate-artifact-notification.json
       EA_ROLE: scheduler
       EA_RUNTIME_MODE: "${EA_RUNTIME_MODE:-prod}"
       EA_API_TOKEN: "${EA_API_TOKEN:-}"
@@ -452,8 +477,18 @@ services:
       THREEDVISTA_LOGIN_EMAIL: ""
       THREEDVISTA_LOGIN_PASSWORD: ""
       THREEDVISTA_LICENSE_EMAIL: ""
+      PHYGITAL_PLUS_EMAIL: ""
+      PHYGITAL_PLUS_PASSWORD: ""
+      PROPERTYQUARRY_PHYGITAL_ENABLED: "${PROPERTYQUARRY_PHYGITAL_ENABLED:-0}"
+      PROPERTYQUARRY_PHYGITAL_MODE: "${PROPERTYQUARRY_PHYGITAL_MODE:-dry_run}"
+      PROPERTYQUARRY_PHYGITAL_PROJECT_NAME: "${PROPERTYQUARRY_PHYGITAL_PROJECT_NAME:-Property}"
+      PROPERTYQUARRY_PHYGITAL_GENERATE: "${PROPERTYQUARRY_PHYGITAL_GENERATE:-0}"
+      PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS: "${PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS:-0}"
       PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET: "${PROPERTYQUARRY_PROPERTY_SEARCH_ERASURE_SECRET:-}"
       PROPERTYQUARRY_SCHEDULER_PROFILE: "${PROPERTYQUARRY_SCHEDULER_PROFILE:-property_only}"
+      # Host-side OODA runtime-control is not in the web image. Default off so
+      # the property_only scheduler healthcheck does not require a witness.
+      PROPERTYQUARRY_OODA_NOTIFICATION_ENABLED: "${PROPERTYQUARRY_OODA_NOTIFICATION_ENABLED:-0}"
       EA_PROPERTY_SCOUT_EXCLUDED_PRINCIPAL_IDS: "${EA_PROPERTY_SCOUT_EXCLUDED_PRINCIPAL_IDS:-cf-email:thumbnail-audit@propertyquarry.local,pq-auth-performance-smoke,pq-live-mobile-smoke}"
       EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS: "${EA_PROPERTY_SEARCH_RUN_RETENTION_SECONDS:-2592000}"
       EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS: "${EA_PROPERTY_SEARCH_MEMBERSHIP_RETENTION_SECONDS:-1209600}"
@@ -534,6 +569,12 @@ services:
         max-size: "10m"
         max-file: "3"
     volumes:
+      - type: bind
+        source: "${PROPERTYQUARRY_OODA_TRUST_CANDIDATE_DROP_DIR:-./state/incoming_propertyquarry_trust}"
+        target: /run/propertyquarry/ooda-producer-trust-source
+        read_only: true
+        bind:
+          create_host_path: false
       - ./config:/config:ro
       - ./config:/app/config:ro
       - ./state/incoming_property_tours:/data/incoming_property_tours
@@ -562,7 +603,7 @@ services:
     image: "${PROPERTYQUARRY_RENDER_IMAGE:-propertyquarry-standalone-render-runtime:latest}"
     container_name: "${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
-    restart: "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-on-failure:3}"
+    restart: "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-unless-stopped}"
     init: true
     # The bridge reads the same numeric seconds value and reserves 30s for process close.
     stop_grace_period: "${PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS:-1860}s"
@@ -583,6 +624,13 @@ services:
       THREEDVISTA_LOGIN_EMAIL: ""
       THREEDVISTA_LOGIN_PASSWORD: ""
       THREEDVISTA_LICENSE_EMAIL: ""
+      PHYGITAL_PLUS_EMAIL: ""
+      PHYGITAL_PLUS_PASSWORD: ""
+      PROPERTYQUARRY_PHYGITAL_ENABLED: "${PROPERTYQUARRY_PHYGITAL_ENABLED:-0}"
+      PROPERTYQUARRY_PHYGITAL_MODE: "${PROPERTYQUARRY_PHYGITAL_MODE:-dry_run}"
+      PROPERTYQUARRY_PHYGITAL_PROJECT_NAME: "${PROPERTYQUARRY_PHYGITAL_PROJECT_NAME:-Property}"
+      PROPERTYQUARRY_PHYGITAL_GENERATE: "${PROPERTYQUARRY_PHYGITAL_GENERATE:-0}"
+      PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS: "${PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS:-0}"
       EA_PUBLIC_TOUR_DIR: /data/public_property_tours
       PROPERTYQUARRY_RECONSTRUCTION_RENDER_HOST: "0.0.0.0"
       PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN: "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN:?Set PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN for the render bridge}"
@@ -639,7 +687,7 @@ services:
     image: postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
     container_name: "${PROPERTYQUARRY_DB_CONTAINER_NAME:-propertyquarry-db-live}"
     cgroup_parent: "${PROPERTYQUARRY_RUNTIME_CGROUP_PARENT:-system.slice}"
-    restart: "${PROPERTYQUARRY_DB_RESTART_POLICY:-on-failure:3}"
+    restart: "${PROPERTYQUARRY_DB_RESTART_POLICY:-unless-stopped}"
     init: true
     stop_grace_period: 30s
     cpu_shares: ${PROPERTYQUARRY_DB_CPU_SHARES:-512}

@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 import json
+import stat
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts import propertyquarry_notify_scene_video_provider_refresh as notify_refresh
+
+
+NOW = datetime(2026, 8, 26, 4, 0, tzinfo=timezone.utc)
+PACKET_GENERATED_AT = "2026-08-26T03:45:00+00:00"
+SOURCE_GENERATED_AT = "2026-08-26T03:44:59+00:00"
+RUNTIME_GENERATED_AT = "2026-08-26T03:45:05+00:00"
+SOURCE_REF = "/data/artifacts/property-scene-video-readiness.json"
+RAW_BLOCKER = "secret-provider-blocker-must-not-be-notified"
+RAW_COMMAND = "merge_scene_video_provider_accounts_env.py --secret-value must-not-be-notified"
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> Path:
@@ -12,324 +23,383 @@ def _write_json(path: Path, payload: dict[str, object]) -> Path:
     return path
 
 
-def _packet(*, generated_at: str = "2026-07-07T05:01:00Z") -> dict[str, object]:
+def _packet(
+    *,
+    generated_at: str = PACKET_GENERATED_AT,
+    source_generated_at: str = SOURCE_GENERATED_AT,
+    actionable: bool = True,
+    credit_review: bool = False,
+) -> dict[str, object]:
+    gap = 1 if actionable and not credit_review else 0
     return {
         "contract_name": "propertyquarry.scene_video_provider_refresh_packet.v1",
         "generated_at": generated_at,
-        "providers": [
-            {
-                "provider": "magicfit",
-                "expected_account_count": 3,
-                "runtime_account_count": 0,
-                "visible_account_gap": 3,
-                "runtime_blockers": ["magicfit_credentials_missing"],
-                "post_refresh_checks": [
-                    "merge provider-only MagicFit account JSON with merge_scene_video_provider_accounts_env.py --magicfit-accounts-json-file <magicfit-accounts.json> --expected-magicfit-count 3 --write-file-env --write"
-                ],
-            },
-            {
-                "provider": "omagic",
-                "expected_account_count": 8,
-                "runtime_account_count": 0,
-                "visible_account_gap": 8,
-                "runtime_blockers": [
-                    "omagic_model_upload_adapter_disabled",
-                    "omagic_model_upload_endpoint_missing",
-                    "omagic_credentials_missing",
-                ],
-                "post_refresh_checks": [
-                    "merge provider-only OMagic/Magic account JSON with merge_scene_video_provider_accounts_env.py --omagic-accounts-json-file <omagic-accounts.json> --expected-omagic-count 8 --write-file-env --write"
-                ],
-            },
-        ],
-    }
-
-
-def _verifier(*, status: str = "pass", generated_at: str = "2026-07-07T05:02:00Z") -> dict[str, object]:
-    return {"status": status, "generated_at": generated_at}
-
-
-def _runtime_status(*, generated_at: str = "2026-07-07T05:03:00Z") -> dict[str, object]:
-    return {
-        "generated_at": generated_at,
-        "summary": {
-            "provider_count": 5,
-            "ready_count": 2,
-            "blocked_count": 3,
-            "action_required_count": 3,
-        },
-    }
-
-
-def test_scene_video_provider_refresh_notification_skips_when_verifier_fails(tmp_path: Path) -> None:
-    packet_path = _write_json(tmp_path / "packet.json", _packet())
-    verifier_path = _write_json(tmp_path / "verifier.json", _verifier(status="fail"))
-    runtime_status_path = _write_json(tmp_path / "runtime.json", _runtime_status())
-    state_path = tmp_path / "state.json"
-
-    report = notify_refresh.build_notification_report(
-        packet=_packet(),
-        packet_path=packet_path,
-        verifier=_verifier(status="fail"),
-        verifier_path=verifier_path,
-        runtime_status=_runtime_status(),
-        runtime_status_path=runtime_status_path,
-        state_path=state_path,
-        principal_id="cf-email:tibor.girschele@gmail.com",
-        base_url="https://propertyquarry.com",
-        force=False,
-    )
-
-    assert report["sent"] is False
-    assert report["skipped_reason"] == "packet_verifier_status_fail"
-    assert not state_path.exists()
-
-
-def test_scene_video_provider_refresh_notification_sends_actionable_packet(tmp_path: Path, monkeypatch) -> None:
-    packet = _packet()
-    verifier = _verifier()
-    runtime_status = _runtime_status()
-    packet_path = _write_json(tmp_path / "packet.json", packet)
-    verifier_path = _write_json(tmp_path / "verifier.json", verifier)
-    runtime_status_path = _write_json(tmp_path / "runtime.json", runtime_status)
-    state_path = tmp_path / "state.json"
-    sent: dict[str, object] = {}
-
-    class _Receipt:
-        message_ids = ("5091",)
-
-    monkeypatch.setattr(notify_refresh.gold_notify, "build_tool_runtime", lambda: object())
-    monkeypatch.setattr(
-        notify_refresh.gold_notify,
-        "send_telegram_message_for_principal",
-        lambda runtime, **kwargs: sent.update(kwargs) or _Receipt(),
-    )
-
-    report = notify_refresh.build_notification_report(
-        packet=packet,
-        packet_path=packet_path,
-        verifier=verifier,
-        verifier_path=verifier_path,
-        runtime_status=runtime_status,
-        runtime_status_path=runtime_status_path,
-        state_path=state_path,
-        principal_id="cf-email:tibor.girschele@gmail.com",
-        base_url="https://propertyquarry.com",
-        force=False,
-    )
-
-    assert report["sent"] is True
-    assert report["delivery_mode"] == "principal_binding"
-    assert report["message_ids"] == ["5091"]
-    assert sent["principal_id"] == "cf-email:tibor.girschele@gmail.com"
-    assert sent["url_buttons"] == [[("Open PropertyQuarry", "https://propertyquarry.com")]]
-    text = str(sent["text"])
-    assert "PropertyQuarry scene-video provider runtime is still blocked." in text
-    assert "Current runtime: ready 2/5, blocked 3, action required 3." in text
-    assert "state/incoming_property_tours/_operator-import-lane/scene_video_provider_accounts" in text
-    assert "--magicfit-accounts-json-file <magicfit-accounts.json>" in text
-    assert "--omagic-accounts-json-file <omagic-accounts.json>" in text
-    assert "PROPERTYQUARRY_OMAGIC_RENDER_ENDPOINT or PROPERTYQUARRY_OMAGIC_RENDER_COMMAND" in text
-    assert "PROPERTYQUARRY_OMAGIC_MODEL_UPLOAD_ENABLED=1 only after success" in text
-    assert "python3 scripts/property_scene_video_readiness_report.py" in text
-    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
-    assert state_payload["delivery_mode"] == "principal_binding"
-    assert state_payload["message_ids"] == ["5091"]
-
-
-def test_scene_video_provider_refresh_notification_falls_back_to_direct_chat(tmp_path: Path, monkeypatch) -> None:
-    packet = _packet()
-    verifier = _verifier()
-    runtime_status = _runtime_status()
-    packet_path = _write_json(tmp_path / "packet.json", packet)
-    verifier_path = _write_json(tmp_path / "verifier.json", verifier)
-    runtime_status_path = _write_json(tmp_path / "runtime.json", runtime_status)
-    state_path = tmp_path / "state.json"
-    sent: dict[str, object] = {}
-
-    monkeypatch.setattr(notify_refresh.gold_notify, "build_tool_runtime", lambda: object())
-    monkeypatch.setattr(
-        notify_refresh.gold_notify,
-        "send_telegram_message_for_principal",
-        lambda runtime, **kwargs: (_ for _ in ()).throw(RuntimeError("telegram_binding_not_found")),
-    )
-    monkeypatch.setattr(notify_refresh.gold_notify, "_direct_chat_id", lambda: "1354554303")
-    monkeypatch.setattr(
-        notify_refresh.gold_notify,
-        "_send_direct_telegram_message",
-        lambda **kwargs: sent.update(kwargs) or {"message_ids": ["5092"], "chat_id": kwargs["chat_id"]},
-    )
-
-    report = notify_refresh.build_notification_report(
-        packet=packet,
-        packet_path=packet_path,
-        verifier=verifier,
-        verifier_path=verifier_path,
-        runtime_status=runtime_status,
-        runtime_status_path=runtime_status_path,
-        state_path=state_path,
-        principal_id="cf-email:tibor.girschele@gmail.com",
-        base_url="https://propertyquarry.com",
-        force=False,
-    )
-
-    assert report["sent"] is True
-    assert report["delivery_mode"] == "direct_chat_fallback"
-    assert report["message_ids"] == ["5092"]
-    assert sent["chat_id"] == "1354554303"
-
-
-def test_scene_video_provider_refresh_notification_prefers_container_runtime_when_enabled(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    packet = _packet()
-    verifier = _verifier()
-    runtime_status = _runtime_status()
-    packet_path = _write_json(tmp_path / "packet.json", packet)
-    verifier_path = _write_json(tmp_path / "verifier.json", verifier)
-    runtime_status_path = _write_json(tmp_path / "runtime.json", runtime_status)
-    state_path = tmp_path / "state.json"
-    observed: dict[str, object] = {}
-
-    monkeypatch.setenv("PROPERTYQUARRY_NOTIFICATION_PREFER_CONTAINER_RUNTIME", "1")
-    monkeypatch.setattr(
-        notify_refresh.gold_notify,
-        "build_tool_runtime",
-        lambda: (_ for _ in ()).throw(AssertionError("should not build runtime")),
-    )
-    monkeypatch.setattr(
-        notify_refresh.gold_notify,
-        "_send_container_runtime_telegram_message",
-        lambda **kwargs: observed.update(kwargs) or {"message_ids": ["5093"], "container_name": "propertyquarry-api"},
-    )
-
-    report = notify_refresh.build_notification_report(
-        packet=packet,
-        packet_path=packet_path,
-        verifier=verifier,
-        verifier_path=verifier_path,
-        runtime_status=runtime_status,
-        runtime_status_path=runtime_status_path,
-        state_path=state_path,
-        principal_id="cf-email:tibor.girschele@gmail.com",
-        base_url="https://propertyquarry.com",
-        force=False,
-    )
-
-    assert report["sent"] is True
-    assert report["delivery_mode"] == "container_runtime_preferred"
-    assert report["message_ids"] == ["5093"]
-    assert observed["principal_id"] == "cf-email:tibor.girschele@gmail.com"
-    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
-    assert state_payload["delivery_mode"] == "container_runtime_preferred"
-    assert state_payload["message_ids"] == ["5093"]
-
-
-def test_scene_video_provider_refresh_notification_keeps_magicfit_credit_constraint_actionable(tmp_path: Path, monkeypatch) -> None:
-    packet = {
-        "contract_name": "propertyquarry.scene_video_provider_refresh_packet.v1",
-        "generated_at": "2026-07-07T09:30:00Z",
+        "source_receipt": SOURCE_REF,
+        "source_receipt_contract_name": "propertyquarry.scene_video_readiness.v1",
+        "source_receipt_generated_at": source_generated_at,
         "providers": [
             {
                 "provider": "magicfit",
                 "expected_account_count": 2,
                 "tracked_account_count": 3,
-                "unavailable_account_count": 1,
-                "availability_reason": "one_account_depleted",
-                "runtime_account_count": 2,
+                "unavailable_account_count": 1 if credit_review else 0,
+                "runtime_account_count": 2 - gap,
+                "visible_account_gap": gap,
+                "credit_state": "constrained" if credit_review else "funded",
+                "credit_refresh_required": credit_review,
+                "runtime_blockers": [RAW_BLOCKER],
+                "post_refresh_checks": [RAW_COMMAND],
+            },
+            {
+                "provider": "omagic",
+                "expected_account_count": 8,
+                "runtime_account_count": 8,
                 "visible_account_gap": 0,
-                "credit_state": "constrained",
-                "credit_refresh_required": True,
+                "credit_state": "funded",
+                "credit_refresh_required": False,
                 "runtime_blockers": [],
-                "post_refresh_checks": [
-                    "merge provider-only MagicFit account JSON with merge_scene_video_provider_accounts_env.py --magicfit-accounts-json-file <magicfit-accounts.json> --expected-magicfit-count 2 --write-file-env --write"
-                ],
-            }
+            },
         ],
     }
-    verifier = _verifier()
-    runtime_status = _runtime_status()
+
+
+def _verifier(
+    *,
+    status: str = "pass",
+    generated_at: str = PACKET_GENERATED_AT,
+) -> dict[str, object]:
+    return {
+        "status": status,
+        "generated_at": generated_at,
+        "provider_count": 2,
+        "checked_providers": ["magicfit", "omagic"],
+        "blockers": [],
+    }
+
+
+def _runtime_status(
+    *,
+    generated_at: str = RUNTIME_GENERATED_AT,
+    confirms_action: bool = True,
+) -> dict[str, object]:
+    return {
+        "contract_name": "propertyquarry.scene_video_runtime_status.v1",
+        "generated_at": generated_at,
+        "source_contract_name": "propertyquarry.scene_video_readiness.v1",
+        "source_kind": "receipt_file",
+        "source_ref": SOURCE_REF,
+        "summary": {
+            "provider_count": 2,
+            "ready_count": 1 if confirms_action else 2,
+            "blocked_count": 1 if confirms_action else 0,
+            "action_required_count": 1 if confirms_action else 0,
+            "action_required_providers": ["magicfit"] if confirms_action else [],
+        },
+        "providers": [
+            {
+                "provider": "magicfit",
+                "status": "blocked" if confirms_action else "ready",
+                "attention_required": confirms_action,
+            },
+            {
+                "provider": "omagic",
+                "status": "ready",
+                "attention_required": False,
+            },
+        ],
+    }
+
+
+def _build_report(
+    *,
+    tmp_path: Path,
+    packet: dict[str, object] | None = None,
+    verifier: dict[str, object] | None = None,
+    runtime_status: dict[str, object] | None = None,
+    state_path: Path | None = None,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    packet = packet or _packet()
+    verifier = verifier or _verifier()
+    runtime_status = runtime_status or _runtime_status()
     packet_path = _write_json(tmp_path / "packet.json", packet)
     verifier_path = _write_json(tmp_path / "verifier.json", verifier)
     runtime_status_path = _write_json(tmp_path / "runtime.json", runtime_status)
-    state_path = tmp_path / "state.json"
-    sent: dict[str, object] = {}
-
-    class _Receipt:
-        message_ids = ("5094",)
-
-    monkeypatch.setattr(notify_refresh.gold_notify, "build_tool_runtime", lambda: object())
-    monkeypatch.setattr(
-        notify_refresh.gold_notify,
-        "send_telegram_message_for_principal",
-        lambda runtime, **kwargs: sent.update(kwargs) or _Receipt(),
-    )
-
-    report = notify_refresh.build_notification_report(
+    return notify_refresh.build_notification_report(
         packet=packet,
         packet_path=packet_path,
         verifier=verifier,
         verifier_path=verifier_path,
         runtime_status=runtime_status,
         runtime_status_path=runtime_status_path,
-        state_path=state_path,
+        state_path=state_path or tmp_path / "state.json",
         principal_id="cf-email:tibor.girschele@gmail.com",
         base_url="https://propertyquarry.com",
         force=False,
+        now=NOW,
+        dry_run=dry_run,
     )
 
+
+def test_scene_video_notification_suppresses_failed_verifier(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        notify_refresh.gold_notify,
+        "deliver_notification_for_principal",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("failed verifier must stay silent")),
+    )
+
+    report = _build_report(tmp_path=tmp_path, verifier=_verifier(status="fail"))
+
+    assert report["sent"] is False
+    assert report["action_required"] is False
+    assert report["action_reason"] == "packet_verifier_not_pass"
+    assert report["skipped_reason"] == "no_fresh_operator_action"
+    assert not (tmp_path / "state.json").exists()
+
+
+def test_scene_video_notification_suppresses_stale_sources(tmp_path: Path, monkeypatch) -> None:
+    old_packet_time = "2026-08-26T03:29:00+00:00"
+    old_runtime_time = "2026-08-26T03:29:05+00:00"
+    monkeypatch.setattr(
+        notify_refresh.gold_notify,
+        "deliver_notification_for_principal",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("stale source must stay silent")),
+    )
+
+    report = _build_report(
+        tmp_path=tmp_path,
+        packet=_packet(generated_at=old_packet_time),
+        verifier=_verifier(generated_at=old_packet_time),
+        runtime_status=_runtime_status(generated_at=old_runtime_time),
+    )
+
+    assert report["action_reason"] == "source_receipt_not_fresh"
+    assert report["source_verified"] is False
+    assert report["sent"] is False
+
+
+def test_scene_video_notification_requires_coherent_packet_verifier_pair(tmp_path: Path) -> None:
+    report = _build_report(
+        tmp_path=tmp_path,
+        verifier=_verifier(generated_at="2026-08-26T03:45:01+00:00"),
+    )
+
+    assert report["action_reason"] == "packet_verifier_not_coherent"
+    assert report["action_required"] is False
+
+
+def test_scene_video_notification_requires_runtime_confirmation(tmp_path: Path) -> None:
+    report = _build_report(
+        tmp_path=tmp_path,
+        runtime_status=_runtime_status(confirms_action=False),
+    )
+
+    assert report["action_reason"] == "runtime_does_not_confirm_operator_action"
+    assert report["action_required"] is False
+
+
+def test_scene_video_notification_rejects_unbound_or_malformed_source_projection(tmp_path: Path) -> None:
+    unbound_runtime = _runtime_status()
+    unbound_runtime["source_ref"] = "/data/artifacts/different-readiness.json"
+    malformed_packet = _packet()
+    malformed_packet["providers"][0]["visible_account_gap"] = 2
+
+    unbound = _build_report(tmp_path=tmp_path, runtime_status=unbound_runtime)
+    malformed = _build_report(tmp_path=tmp_path, packet=malformed_packet)
+
+    assert unbound["action_reason"] == "source_receipt_provenance_not_admissible"
+    assert malformed["action_reason"] == "packet_provider_counts_not_admissible"
+    assert unbound["action_required"] is False
+    assert malformed["action_required"] is False
+
+
+def test_scene_video_notification_sends_only_sanitized_action(tmp_path: Path, monkeypatch) -> None:
+    sent: dict[str, object] = {}
+    monkeypatch.setattr(
+        notify_refresh.gold_notify,
+        "deliver_notification_for_principal",
+        lambda **kwargs: sent.update(kwargs)
+        or {"delivery_mode": "principal_binding", "message_ids": ["5091"]},
+    )
+    state_path = tmp_path / "state.json"
+
+    report = _build_report(tmp_path=tmp_path, state_path=state_path)
+
     assert report["sent"] is True
-    assert report["actionable_provider_count"] == 1
+    assert report["would_send"] is True
+    assert report["delivery_mode"] == "principal_binding"
+    assert report["action_reason"] == "provider_account_material_required"
+    assert report["consent_required"] is True
+    assert report["automatic_execution_allowed"] is False
+    assert report["provider_quota_consumption_allowed"] is False
     text = str(sent["text"])
-    assert "Tracked inventory: 3 (1 unavailable)." in text
-    assert "Credit state: constrained." in text
+    assert "PropertyQuarry scene-video operator action required." in text
+    assert "provider_account_material_required" in text
+    assert "automatic execution disabled" in text
+    assert "Provider quota: disabled" in text
+    assert RAW_BLOCKER not in text
+    assert RAW_COMMAND not in text
+    assert RAW_BLOCKER not in json.dumps(report)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_observed_status"] == "action_required"
+    assert state["active_action_digest"] == report["action_digest"]
+    assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
 
 
-def test_scene_video_provider_refresh_notification_dedupes_semantically_identical_receipts(
+def test_scene_video_notification_keeps_credit_change_consent_gated(tmp_path: Path, monkeypatch) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        notify_refresh.gold_notify,
+        "deliver_notification_for_principal",
+        lambda **kwargs: observed.update(kwargs)
+        or {"delivery_mode": "principal_binding", "message_ids": ["5092"]},
+    )
+
+    report = _build_report(tmp_path=tmp_path, packet=_packet(credit_review=True))
+
+    assert report["sent"] is True
+    assert report["action_reason"] == "provider_credit_review_required"
+    assert report["automatic_execution_allowed"] is False
+    assert report["provider_quota_consumption_allowed"] is False
+    assert "provider_credit_or_plan_change" in str(observed["text"])
+
+
+def test_scene_video_notification_dedupes_same_active_action_across_receipt_refreshes(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    prior_packet = _packet(generated_at="2026-07-07T05:01:00Z")
-    current_packet = _packet(generated_at="2026-07-07T06:01:00Z")
-    prior_verifier = _verifier(generated_at="2026-07-07T05:02:00Z")
-    current_verifier = _verifier(generated_at="2026-07-07T06:02:00Z")
-    prior_runtime = _runtime_status(generated_at="2026-07-07T05:03:00Z")
-    current_runtime = _runtime_status(generated_at="2026-07-07T06:03:00Z")
-    packet_path = _write_json(tmp_path / "packet.json", current_packet)
-    verifier_path = _write_json(tmp_path / "verifier.json", current_verifier)
-    runtime_status_path = _write_json(tmp_path / "runtime.json", current_runtime)
+    prior_packet = _packet(
+        generated_at="2026-08-26T03:05:00+00:00",
+        source_generated_at="2026-08-26T03:04:59+00:00",
+    )
+    prior_verifier = _verifier(generated_at="2026-08-26T03:05:00+00:00")
+    prior_runtime = _runtime_status(generated_at="2026-08-26T03:05:05+00:00")
+    prior_action = notify_refresh.scene_video_operator_action_summary(
+        packet=prior_packet,
+        verifier=prior_verifier,
+        runtime_status=prior_runtime,
+        now=NOW,
+    )
     state_path = tmp_path / "state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "last_notified_digest": notify_refresh._combined_digest(
-                    prior_packet,
-                    prior_verifier,
-                    prior_runtime,
-                )
-            }
-        ),
-        encoding="utf-8",
+    notify_refresh.gold_notify._write_notification_state(
+        state_path,
+        {"active_action_digest": notify_refresh._action_digest(prior_action)},
     )
     monkeypatch.setattr(
         notify_refresh.gold_notify,
-        "build_tool_runtime",
-        lambda: (_ for _ in ()).throw(AssertionError("should not send")),
+        "deliver_notification_for_principal",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("same active action must stay silent")),
     )
 
-    report = notify_refresh.build_notification_report(
-        packet=current_packet,
-        packet_path=packet_path,
-        verifier=current_verifier,
-        verifier_path=verifier_path,
-        runtime_status=current_runtime,
-        runtime_status_path=runtime_status_path,
+    report = _build_report(tmp_path=tmp_path, state_path=state_path)
+
+    assert report["sent"] is False
+    assert report["skipped_reason"] == "already_notified_same_action"
+
+
+def test_scene_video_notification_fresh_clear_allows_later_recurrence(tmp_path: Path, monkeypatch) -> None:
+    action = notify_refresh.scene_video_operator_action_summary(
+        packet=_packet(),
+        verifier=_verifier(),
+        runtime_status=_runtime_status(),
+        now=NOW,
+    )
+    state_path = tmp_path / "state.json"
+    notify_refresh.gold_notify._write_notification_state(
+        state_path,
+        {"active_action_digest": notify_refresh._action_digest(action)},
+    )
+
+    clear_report = _build_report(
+        tmp_path=tmp_path,
+        packet=_packet(actionable=False),
+        runtime_status=_runtime_status(confirms_action=False),
         state_path=state_path,
-        principal_id="cf-email:tibor.girschele@gmail.com",
-        base_url="https://propertyquarry.com",
-        force=False,
+    )
+
+    assert clear_report["sent"] is False
+    assert clear_report["action_reason"] == "no_actionable_provider_refresh"
+    assert clear_report["state_updated"] is True
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_observed_status"] == "clear"
+    assert state["active_action_digest"] == ""
+
+    monkeypatch.setattr(
+        notify_refresh.gold_notify,
+        "deliver_notification_for_principal",
+        lambda **kwargs: {"delivery_mode": "principal_binding", "message_ids": ["5093"]},
+    )
+    recurrence = _build_report(tmp_path=tmp_path, state_path=state_path)
+    assert recurrence["sent"] is True
+
+
+def test_scene_video_notification_dry_run_never_sends_or_changes_state(tmp_path: Path, monkeypatch) -> None:
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(
+        notify_refresh.gold_notify,
+        "deliver_notification_for_principal",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("dry run must not deliver")),
+    )
+
+    report = _build_report(
+        tmp_path=tmp_path,
+        state_path=state_path,
+        dry_run=True,
     )
 
     assert report["sent"] is False
-    assert report["skipped_reason"] == "already_notified_same_digest"
+    assert report["would_send"] is True
+    assert report["skipped_reason"] == "dry_run"
+    assert RAW_BLOCKER not in str(report["message_preview"])
+    assert RAW_COMMAND not in str(report["message_preview"])
+    assert not state_path.exists()
+
+
+def test_scene_video_notification_cli_dry_run_writes_private_sanitized_report(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    packet_time = datetime.now(timezone.utc).replace(microsecond=0)
+    runtime_time = packet_time + timedelta(seconds=5)
+    packet = _packet(
+        generated_at=packet_time.isoformat(),
+        source_generated_at=(packet_time - timedelta(seconds=1)).isoformat(),
+    )
+    verifier = _verifier(generated_at=packet_time.isoformat())
+    runtime_status = _runtime_status(generated_at=runtime_time.isoformat())
+    packet_path = _write_json(tmp_path / "packet.json", packet)
+    verifier_path = _write_json(tmp_path / "verifier.json", verifier)
+    runtime_path = _write_json(tmp_path / "runtime.json", runtime_status)
+    state_path = tmp_path / "state.json"
+    report_path = tmp_path / "report.json"
+    monkeypatch.setattr(
+        notify_refresh.gold_notify,
+        "deliver_notification_for_principal",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("CLI dry run must not deliver")),
+    )
+
+    exit_code = notify_refresh.main(
+        [
+            "--packet",
+            str(packet_path),
+            "--verifier",
+            str(verifier_path),
+            "--runtime-status",
+            str(runtime_path),
+            "--state-file",
+            str(state_path),
+            "--write",
+            str(report_path),
+            "--dry-run",
+        ]
+    )
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["skipped_reason"] == "dry_run"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["sent"] is False
+    assert report["would_send"] is True
+    assert RAW_BLOCKER not in json.dumps(report)
+    assert stat.S_IMODE(report_path.stat().st_mode) == 0o600
+    assert not state_path.exists()
