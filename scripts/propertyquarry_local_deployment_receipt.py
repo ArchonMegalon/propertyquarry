@@ -44,7 +44,6 @@ SERVICE_CONTRACT: Final = {
     "propertyquarry-api": "healthy",
     "propertyquarry-migrate": "completed",
     "propertyquarry-worker": "healthy",
-    "propertyquarry-ooda-stage": "healthy",
     "propertyquarry-scheduler": "healthy",
     "propertyquarry-render-tools": "running",
     "propertyquarry-db": "healthy",
@@ -55,7 +54,6 @@ WEB_SERVICES: Final = frozenset(
         "propertyquarry-api",
         "propertyquarry-migrate",
         "propertyquarry-worker",
-        "propertyquarry-ooda-stage",
         "propertyquarry-scheduler",
     }
 )
@@ -64,7 +62,6 @@ HEALTHY_SERVICES: Final = frozenset(
     {
         "propertyquarry-api",
         "propertyquarry-worker",
-        "propertyquarry-ooda-stage",
         "propertyquarry-scheduler",
         "propertyquarry-db",
     }
@@ -423,11 +420,7 @@ def audit_local_deployment(
                 != expected_web_image
             ):
                 failures.append(f"{service}:release_image_binding_mismatch")
-            expected_user = (
-                f"{os.geteuid()}:{os.getegid()}"
-                if service == "propertyquarry-ooda-stage"
-                else "10001:10001"
-            )
+            expected_user = "10001:10001"
             if str(config.get("User") or "") != expected_user:
                 failures.append(f"{service}:runtime_user_mismatch")
         if host.get("Privileged") is True:
