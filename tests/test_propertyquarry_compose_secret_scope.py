@@ -376,3 +376,28 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
             assert observed == {key: "" for key in PHYGITAL_SECRET_KEYS}, (
                 f"{service_name} must not receive phygital credentials"
             )
+
+
+def test_phygital_spend_env_scoped_to_capable_services() -> None:
+    """Spend-guard env arms only phygital-capable services; others carry none."""
+    payload = _compose_payload()
+    services = dict(payload.get("services") or {})
+    expected = {
+        "PROPERTYQUARRY_PHYGITAL_SPEND_LIMIT": (
+            "${PROPERTYQUARRY_PHYGITAL_SPEND_LIMIT:-10}"
+        ),
+        "PROPERTYQUARRY_PHYGITAL_SPEND_WINDOW_SECONDS": (
+            "${PROPERTYQUARRY_PHYGITAL_SPEND_WINDOW_SECONDS:-86400}"
+        ),
+    }
+    for service_name in sorted(services):
+        environment = dict(services[service_name].get("environment") or {})
+        observed = {key: environment.get(key) for key in expected}
+        if service_name in PHYGITAL_CAPABLE_SERVICES:
+            assert observed == expected, (
+                f"{service_name} must carry the armed spend-guard env"
+            )
+        else:
+            assert all(value in (None, "") for value in observed.values()), (
+                f"{service_name} must not carry spend-guard env"
+            )

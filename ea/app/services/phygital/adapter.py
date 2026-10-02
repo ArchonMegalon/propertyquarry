@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.phygital.spend import SpendLedger
+
 import base64
 import hashlib
 import http.cookiejar
@@ -28,6 +30,33 @@ _DEFAULT_PROJECT_NAME = "Property"
 _KLING_SCHEMA_ID = 74
 _DONE_STATUSES = {"done", "success", "ready", "finished", "complete", "completed"}
 _ERROR_STATUSES = {"error", "failed", "cancelled", "canceled", "access_denied"}
+
+
+_SPEND_LEDGER: SpendLedger | None = None
+_SPEND_LEDGER_ENV: tuple[str, ...] = ()
+
+
+def _module_ledger() -> SpendLedger:
+    """Return the module-level spend ledger, rebuilding when its env changes.
+
+    The cache is keyed on the three env vars that parameterize
+    SpendLedger.from_env(), so a changed environment (between tests, or an
+    operator rotating the cap) always yields a fresh ledger and a stale
+    singleton can never outlive the env that created it.
+    """
+    global _SPEND_LEDGER, _SPEND_LEDGER_ENV
+    signature = tuple(
+        str(os.environ.get(name) or "")
+        for name in (
+            "PROPERTYQUARRY_PHYGITAL_STATE_DIR",
+            "PROPERTYQUARRY_PHYGITAL_SPEND_LIMIT",
+            "PROPERTYQUARRY_PHYGITAL_SPEND_WINDOW_SECONDS",
+        )
+    )
+    if _SPEND_LEDGER is None or _SPEND_LEDGER_ENV != signature:
+        _SPEND_LEDGER = SpendLedger.from_env()
+        _SPEND_LEDGER_ENV = signature
+    return _SPEND_LEDGER
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -351,6 +380,15 @@ class EnvPhygitalAdapter:
         project_id = str(project.get("id") or "").strip()
         workspace = session.get_workspace(project_id)
         schema = kling_task_schema_from_workspace(workspace)
+        ledger = _module_ledger()
+        allowed, spend_reason, _record = ledger.preflight(key)
+        if not allowed:
+            return PhygitalFloorplanVideo(
+                status="error",
+                artifact_key=key,
+                project_id=project_id,
+                reason=spend_reason,
+            )
         blob, filename, content_type = session.fetch_bytes(floorplan_url)
         if not blob:
             return PhygitalFloorplanVideo(
@@ -377,9 +415,21 @@ class EnvPhygitalAdapter:
             floorplan_file_id=file_obj_id,
             workspace_id=project_id,
         )
+        allowed, spend_reason, _record = ledger.reserve(key)
+        if not allowed:
+            return PhygitalFloorplanVideo(
+                status="error",
+                artifact_key=key,
+                project_id=project_id,
+                reason=spend_reason,
+            )
         started = session.start_kling_task(payload)
         task_id = str(started.get("task_id") or started.get("id") or "").strip()
         if not task_id:
+            try:
+                ledger.set_outcome(key, "refunded")
+            except Exception:
+                pass
             return PhygitalFloorplanVideo(
                 status="error",
                 artifact_key=key,
@@ -393,6 +443,10 @@ class EnvPhygitalAdapter:
                 timeout = float(_env("PROPERTYQUARRY_PHYGITAL_GENERATE_WAIT_SECONDS", "0") or "0")
             except Exception:
                 timeout = 0.0
+        try:
+            ledger.attach_task(key, task_id)
+        except Exception:
+            pass
         if timeout and timeout > 0:
             polled = session.poll_task(task_id, timeout_seconds=timeout)
             status = str(polled.get("status") or "").strip().lower()
@@ -409,6 +463,10 @@ class EnvPhygitalAdapter:
             if file_id:
                 video_url = session.download_link(file_id)
                 if video_url:
+                    try:
+                        ledger.set_outcome(key, "completed")
+                    except Exception:
+                        pass
                     return PhygitalFloorplanVideo(
                         status="ready",
                         artifact_key=key,
