@@ -25,6 +25,15 @@ LONG_LIVED_SERVICES = (
     "propertyquarry-scheduler",
     "propertyquarry-render-tools",
 )
+# Phygital-capable services: the web-runtime lane whose images ship the
+# app.services.phygital adapter. render-tools is deliberately excluded:
+# its render runtime has no phygital module, so passing credentials there
+# would be dead weight (least-privilege scope, 2026-10-02).
+PHYGITAL_CAPABLE_SERVICES = (
+    "propertyquarry-api",
+    "propertyquarry-worker",
+    "propertyquarry-scheduler",
+)
 SERVICE_DSN_INPUTS = {
     "propertyquarry-api": "PROPERTYQUARRY_API_DATABASE_URL",
     "propertyquarry-worker": "PROPERTYQUARRY_WORKER_DATABASE_URL",
@@ -72,10 +81,21 @@ def test_long_lived_property_services_do_not_inherit_3dvista_login_secrets() -> 
             key: environment.get(key)
             for key in THREEDVISTA_SECRET_KEYS
         } == {key: "" for key in THREEDVISTA_SECRET_KEYS}
-        assert {
+        phygital_environment = {
             key: environment.get(key)
             for key in PHYGITAL_SECRET_KEYS
-        } == {key: f"${{{key}:-}}" for key in PHYGITAL_SECRET_KEYS}
+        }
+        if service_name in PHYGITAL_CAPABLE_SERVICES:
+            assert phygital_environment == {
+                key: f"${{{key}:-}}" for key in PHYGITAL_SECRET_KEYS
+            }
+        else:
+            assert all(
+                value in (None, "")
+                for value in phygital_environment.values()
+            ), (
+                f"{service_name} must not receive phygital credentials"
+            )
         assert environment.get("PROPERTYQUARRY_PHYGITAL_GENERATE") in {"0", "${PROPERTYQUARRY_PHYGITAL_GENERATE:-0}"}
 
 
@@ -83,7 +103,7 @@ def test_phygital_credential_lines_use_operator_passthrough_only() -> None:
     source = COMPOSE_PATH.read_text(encoding="utf-8")
     for key in PHYGITAL_SECRET_KEYS:
         assert source.count(f'      {key}: ""') == 0
-        assert source.count(f'{key}: "${{{key}:-}}"') == len(LONG_LIVED_SERVICES)
+        assert source.count(f'{key}: "${{{key}:-}}"') == len(PHYGITAL_CAPABLE_SERVICES)
 
 
 def test_compose_maps_each_database_secret_to_only_its_service_lane() -> None:
@@ -264,6 +284,8 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
         "DATABASE_URL": "postgresql://generic-forbidden:review-only@db/property",
         "POSTGRES_PASSWORD": "review-only-bootstrap-placeholder",
         "EA_SIGNING_SECRET": "review-only-signing-placeholder",
+        "PHYGITAL_PLUS_EMAIL": "review-only-phygital-email-must-flow",
+        "PHYGITAL_PLUS_PASSWORD": "review-only-phygital-password-must-flow",
         "PAYPAL_CLIENT_ID": "generic-ea-paypal-client-must-not-flow",
         "PAYPAL_SECRET": "generic-ea-paypal-secret-must-not-flow",
         "PAYPAL_API_BASE": "https://api-m.sandbox.paypal.com",
@@ -336,3 +358,21 @@ def test_docker_compose_config_resolves_explicit_nonsecret_placeholders(
     assert api_environment["PAYFUNNELS_PLUS_CHECKOUT_URL"] == ""
     assert api_environment["PAYFUNNELS_AGENT_CHECKOUT_URL"] == ""
     assert api_environment["PAYFUNNELS_API_BASE"] == "https://api.payfunnels.com"
+
+    phygital_dummy = {
+        key: command_env[key] for key in PHYGITAL_SECRET_KEYS
+    }
+    for service_name in services:
+        environment_values = dict(services[service_name].get("environment") or {})
+        observed = {
+            key: environment_values.get(key, "")
+            for key in PHYGITAL_SECRET_KEYS
+        }
+        if service_name in PHYGITAL_CAPABLE_SERVICES:
+            assert observed == phygital_dummy, (
+                f"{service_name} must receive the dummy phygital credentials"
+            )
+        else:
+            assert observed == {key: "" for key in PHYGITAL_SECRET_KEYS}, (
+                f"{service_name} must not receive phygital credentials"
+            )
