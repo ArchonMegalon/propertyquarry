@@ -29,7 +29,10 @@ fi
 
 OPERATOR_PYTHONPATH="${EA_ROOT}/ea:${EA_ROOT}"
 
-if ((OPERATOR_ACTION_ONLY == 1)); then
+# Raw action-only JSON passthrough is opt-in for controller/CI debugging
+# via PROPERTYQUARRY_OPERATOR_ACTION_ONLY_RAW=1. Default flag mode falls
+# through to the rendered print_propertyquarry_action_summary dispatch.
+if ((OPERATOR_ACTION_ONLY == 1)) && [[ "${PROPERTYQUARRY_OPERATOR_ACTION_ONLY_RAW:-0}" == "1" ]]; then
   ACTION_ONLY_PYTHON="${PROPERTYQUARRY_OPERATOR_PYTHON:-python3}"
   if [[ "${ACTION_ONLY_PYTHON}" == */* ]]; then
     [[ -x "${ACTION_ONLY_PYTHON}" ]] || {
@@ -202,6 +205,7 @@ from scripts.propertyquarry_ooda_runtime_review import (
     operator_presentation_context,
     verify_current_review_packet,
 )
+from scripts.propertyquarry_secure_file_io import SecureFileIOError
 from scripts.propertyquarry_ooda_safe_tick import run_safe_tick
 from scripts.propertyquarry_ooda_source_refresh_request import (
     inspect_source_refresh_request_bundle,
@@ -3466,7 +3470,7 @@ try:
         verification_path=runtime_observation_verification_path,
         project=str(os.getenv("PROPERTYQUARRY_COMPOSE_PROJECT_NAME") or "property"),
     )
-except (OSError, TypeError, ValueError, subprocess.TimeoutExpired):
+except (OSError, TypeError, ValueError, subprocess.TimeoutExpired, SecureFileIOError):
     runtime_observation = {
         "status": "blocked",
         "blocking_reason": "current_runtime_observation_unavailable",
@@ -3992,7 +3996,7 @@ if source.get("type") != "runtime_container" and summary.get("status") != "block
                     os.getenv("PROPERTYQUARRY_COMPOSE_PROJECT_NAME") or "property"
                 ),
             )
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError, SecureFileIOError):
             pass
         try:
             review = verify_current_review_packet(
@@ -4005,7 +4009,7 @@ if source.get("type") != "runtime_container" and summary.get("status") != "block
                 presentation_contexts["gold_live_runtime"] = operator_presentation_context(
                     review
                 )
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError, SecureFileIOError):
             summary = blocked(
                 "runtime_review_presentation_context_not_admissible",
                 source_type=str(source.get("type") or "operator_filesystem"),

@@ -50413,6 +50413,7 @@ class ProductService:
                     payload_json=work_payload,
                     idempotency_key=queue_key,
                     max_attempts=property_search_work_max_attempts(),
+                    priority_class=_property_search_work_priority_for_record(persisted_state),
                 )
             except Exception as exc:
                 with _PROPERTY_SEARCH_RUN_LOCK:

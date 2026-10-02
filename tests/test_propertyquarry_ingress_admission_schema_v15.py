@@ -134,7 +134,7 @@ class _ReadinessCursor:
 def test_v20_is_append_only_and_preserves_prior_migration_checksums() -> None:
     assert tuple(
         migration.version for migration in schema.PROPERTY_SEARCH_MIGRATIONS
-    ) == tuple(range(1, 21))
+    ) == tuple(range(1, 22))
     assert tuple(
         migration.checksum for migration in schema.PROPERTY_SEARCH_MIGRATIONS[:16]
     ) == _V1_TO_V16_CHECKSUMS
@@ -166,7 +166,7 @@ def test_v20_is_append_only_and_preserves_prior_migration_checksums() -> None:
         v20.checksum
         == "abbe200c888213b41c99c432e523056090b94a83bfc8c8de5eaa436f90199e42"
     )
-    assert schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION == 20
+    assert schema.LATEST_PROPERTY_SEARCH_SCHEMA_VERSION == 21
 
 
 def test_v16_and_v17_define_bounded_authoritative_capacity_contract() -> None:
@@ -204,8 +204,8 @@ def test_upgrade_from_v16_applies_v17_v18_v19_and_v20_and_commits(
     )
 
     assert result.previous_version == 16
-    assert result.current_version == 20
-    assert result.applied_versions == (17, 18, 19, 20)
+    assert result.current_version == 21
+    assert result.applied_versions == (17, 18, 19, 20, 21)
     assert connection.committed is True
     assert connection.rolled_back is False
     assert connection.closed is True
@@ -260,7 +260,7 @@ def test_readiness_accepts_exact_capacity_contract_and_counts() -> None:
 
     assert status.ready is True
     assert status.reason == "schema_ready"
-    assert status.current_version == 20
+    assert status.current_version == 21
 
 
 def test_readiness_rejects_capacity_contract_drift() -> None:

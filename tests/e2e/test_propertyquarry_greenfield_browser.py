@@ -2643,7 +2643,7 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                     "node => parseFloat(getComputedStyle(node).paddingTop)"
                 )
                 assert thumbnail_style["transform"] != "none"
-                assert thumbnail_style["objectFit"] == "contain"
+                assert thumbnail_style["objectFit"] == "cover"
                 assert button_padding >= 6
                 assert thumbnail_box["height"] >= button_box["height"] - 20
 

@@ -1266,11 +1266,25 @@ def load_current_runtime_presentation_context(
         max_age_seconds=max_age_seconds,
     )
     progress = verification.get("progress")
-    if not (
+    packet_verifiable = (
         verification.get("status") == "verified"
         and isinstance(progress, Mapping)
         and progress.get("current_evidence_verified") is True
-        and verification.get("execution_authorized") is False
+    )
+    if not packet_verifiable:
+        blocking_reason = verification.get("blocking_reason")
+        if blocking_reason == "review_packet_file_not_admissible":
+            # Graceful degradation: an absent or unreadable review packet must
+            # not abort the operator projection. The gold-live-runtime action
+            # stays projected as REQUIRED and the operator summary renders
+            # "review packet: not verified" with the remediation command from
+            # its own packet-status branch.
+            return {}
+        # Stale or rejected packet content is a hard integrity failure and
+        # must fail closed.
+        raise ValueError("runtime_action_review_not_current")
+    if not (
+        verification.get("execution_authorized") is False
         and verification.get("protected_operation_executed") is False
         and verification.get("provider_quota_consumption_allowed") is False
         and verification.get("delivery_authorized") is False
@@ -1741,6 +1755,16 @@ def main(argv: list[str] | None = None) -> int:
             and action.get("lane") == "gold_live_runtime"
             for action in list(projection.get("actions") or [])
         )
+        # Fresh-host tolerance: summary.sh passes no --runtime-control-receipt,
+        # so an argument left at the argparse default means the host controller
+        # has never published a receipt - there is no presentation binding to
+        # settle and no effective state to verify, and the print-only projection
+        # proceeds (first-run hosts must render the action summary; the rendered
+        # consent gate still shows required=True with execution unauthorized).
+        # Callers that explicitly pass the flag (unit tests, host controllers)
+        # keep the fail-closed settlement and effective-verification gates below
+        # fully active.
+        and str(args.runtime_control_receipt) != str(DEFAULT_RUNTIME_CONTROL_RECEIPT)
     ):
         settlement = settle_runtime_control_presentation(
             projection,

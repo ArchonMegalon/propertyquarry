@@ -1234,7 +1234,7 @@ def test_storage_source_check_tracks_governed_v20_order_and_checksum() -> None:
         (migration.version, migration.name)
         for migration in property_search_schema.PROPERTY_SEARCH_MIGRATIONS
     )
-    assert contracts[-1] == (20, "durable_fact_enrichment_work")
+    assert contracts[-1] == (21, "paid_first_bounded_work_queue")
     assert property_search_schema.PROPERTY_SEARCH_MIGRATIONS[9].checksum == (
         "83f07c1d91968753e454c79972110881259a01953a6755cfef020adf55e92bc4"
     )

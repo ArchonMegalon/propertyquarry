@@ -371,9 +371,24 @@ def _compose_runtime_privilege_failures(compose: str) -> list[str]:
             "scalars for fail-closed security inspection"
         )
 
+    governed_trust_drop_group_add = (
+        'group_add: ["${PROPERTYQUARRY_OODA_TRUST_CANDIDATE_DROP_GID:-1000}"]'
+    )
     for key in FORBIDDEN_COMPOSE_SERVICE_KEYS:
+        key_line_pattern = (
+            rf"^\s{{4}}[\"']?{re.escape(key)}[\"']?[ \t]*:[^\n]*"
+        )
+        if key == "group_add":
+            group_add_lines = re.findall(
+                key_line_pattern, compose, flags=re.MULTILINE
+            )
+            if group_add_lines and all(
+                line.strip() == governed_trust_drop_group_add
+                for line in group_add_lines
+            ):
+                continue
         if re.search(
-            rf"^\s{{4}}[\"']?{re.escape(key)}[\"']?\s*:",
+            rf"^\s{{4}}[\"']?{re.escape(key)}[\"']?[ \t]*:",
             compose,
             flags=re.MULTILINE,
         ):
@@ -427,13 +442,25 @@ def _resolved_compose_runtime_privilege_failures(
             f"(missing={missing}, unexpected={unexpected})"
         )
 
+    allowed_trust_drop_group_add = (
+        ["${PROPERTYQUARRY_OODA_TRUST_CANDIDATE_DROP_GID:-1000}"],
+        ["1000"],
+        [1000],
+    )
     for service_name, service in sorted(services.items()):
         for key in FORBIDDEN_COMPOSE_SERVICE_KEYS:
-            if key in service:
-                failures.append(
-                    "resolved docker-compose.property.yml service "
-                    f"{service_name} must not set runtime privilege boundary {key}"
-                )
+            if key not in service:
+                continue
+            if (
+                key == "group_add"
+                and service_name == "propertyquarry-scheduler"
+                and service["group_add"] in allowed_trust_drop_group_add
+            ):
+                continue
+            failures.append(
+                "resolved docker-compose.property.yml service "
+                f"{service_name} must not set runtime privilege boundary {key}"
+            )
         if "user" in service and service["user"] != ALLOWED_COMPOSE_USER:
             failures.append(
                 "resolved docker-compose.property.yml service "
