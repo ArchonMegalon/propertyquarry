@@ -24,13 +24,19 @@ record is open is a duplicate and is refused with `phygital_task_in_flight`.
 
 Counting is conservative: records count against the cap unless explicitly
 refunded (`set_outcome(..., "refunded")`) or older than the window.
+Locking: reserve/attach_task/set_outcome serialize through a two-level
+lock (threading.Lock in-process, O_CREAT|O_EXCL lock file across
+containers; stale locks are taken over after 30s). preflight/snapshot
+stay lock-free (os.replace atomicity).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+from contextlib import contextmanager
 from typing import Any
 
 
@@ -44,6 +50,14 @@ REASON_IN_FLIGHT = "phygital_task_in_flight"
 REASON_STATE = "phygital_state_unavailable"
 
 _OUTCOMES = {"completed", "refunded"}
+
+# Two-level mutation lock: threading.Lock (in-process) plus a lock file
+# (cross-process, O_CREAT|O_EXCL, pid-stamped). A stale lock left by a crashed
+# container is taken over after _LOCK_STALE_DEFAULT_SECONDS. preflight() and
+# snapshot() stay lock-free: reads ride os.replace atomicity.
+_LOCK_FILENAME = "ledger.lock"
+_LOCK_STALE_DEFAULT_SECONDS = 30.0
+_LOCK_TIMEOUT_SECONDS = 5.0
 
 
 def _parse_limit(name: str) -> int:
@@ -80,6 +94,108 @@ class SpendLedger:
         self._state_dir = state_dir
         self._limit = int(limit)
         self._window = max(1, int(window_seconds))
+        self._proc_lock = threading.Lock()
+        self._lock_timeout = _LOCK_TIMEOUT_SECONDS
+        self._stale_seconds = _LOCK_STALE_DEFAULT_SECONDS
+
+    def _lock_path(self) -> str:
+        return os.path.join(self._state_dir, _LOCK_FILENAME)
+
+    def _healthy(self) -> bool:
+        try:
+            self._load()
+        except FileNotFoundError:
+            return True
+        except (OSError, ValueError):
+            return False
+        return True
+
+    @contextmanager
+    def _guard(self):
+        """Serialize mutations across threads and processes."""
+        if not self._proc_lock.acquire(timeout=self._lock_timeout):
+            raise TimeoutError("phygital ledger busy (process lock)")
+        try:
+            os.makedirs(self._state_dir, exist_ok=True)
+            self._acquire_file_lock()
+            try:
+                yield
+            finally:
+                try:
+                    os.unlink(self._lock_path())
+                except OSError:
+                    pass
+        finally:
+            self._proc_lock.release()
+
+    def _acquire_file_lock(self) -> None:
+        path = self._lock_path()
+        deadline = time.monotonic() + self._lock_timeout
+        delay = 0.01
+        while True:
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                raise TimeoutError("phygital ledger lock unavailable") from exc
+            else:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"pid": os.getpid()}))
+                return
+            try:
+                age = time.time() - os.path.getmtime(path)
+            except OSError:
+                age = 0.0
+            if age >= self._stale_seconds:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError("phygital ledger busy (lock file)")
+            time.sleep(delay)
+            delay = min(delay * 2, 0.05)
+
+
+    def reserve(
+        self, artifact_key: str, *, now: float | None = None
+    ) -> tuple[bool, str, dict[str, Any]]:
+        """Thread/process-safe reserve; lock timeout fails closed."""
+        if not self.active:
+            return self._reserve_locked(artifact_key, now=now)
+        try:
+            with self._guard():
+                return self._reserve_locked(artifact_key, now=now)
+        except TimeoutError:
+            return False, REASON_STATE, {}
+
+    def attach_task(
+        self, artifact_key: str, task_id: str, *, now: float | None = None
+    ) -> None:
+        """Thread/process-safe best-effort task-id attach."""
+        if not self.active:
+            self._attach_task_locked(artifact_key, task_id, now=now)
+            return
+        try:
+            with self._guard():
+                self._attach_task_locked(artifact_key, task_id, now=now)
+        except TimeoutError:
+            return
+
+    def set_outcome(
+        self, artifact_key: str, outcome: str, *, now: float | None = None
+    ) -> None:
+        """Thread/process-safe outcome write; lock timeout is skipped."""
+        if not self.active:
+            self._set_outcome_locked(artifact_key, outcome, now=now)
+            return
+        try:
+            with self._guard():
+                self._set_outcome_locked(artifact_key, outcome, now=now)
+        except TimeoutError:
+            return
 
     @classmethod
     def from_env(cls) -> "SpendLedger":
@@ -142,6 +258,12 @@ class SpendLedger:
             try:
                 reserved_at = float(record.get("reserved_at") or 0.0)
             except (TypeError, ValueError):
+                # Malformed reserved_at: refresh instead of dropping, so a
+                # corrupt record still counts against the cap and self-heals
+                # (it expires one window after the refresh).
+                record = dict(record)
+                record["reserved_at"] = now
+                kept[key] = record
                 continue
             if now - reserved_at >= self._window:
                 continue
@@ -191,7 +313,7 @@ class SpendLedger:
         allowed, reason, record = self._blocked(tasks, artifact_key, moment)
         return allowed, reason, dict(record or {})
 
-    def reserve(
+    def _reserve_locked(
         self, artifact_key: str, *, now: float | None = None
     ) -> tuple[bool, str, dict[str, Any]]:
         """Enforcing gate immediately before start_kling_task. Persists a hold."""
@@ -207,6 +329,13 @@ class SpendLedger:
         tasks = self._pruned(raw, moment)["tasks"]
         allowed, reason, record = self._blocked(tasks, artifact_key, moment)
         if not allowed:
+            try:
+                # Persist pruning/refresh compaction even on refusal so a
+                # refreshed malformed record self-heals instead of counting
+                # forever (found by test_malformed_reserved_at_counts_then_expires).
+                self._save({"version": 1, "tasks": tasks})
+            except OSError:
+                pass
             return False, reason, dict(record or {})
         tasks[artifact_key] = {
             "artifact_key": artifact_key,
@@ -221,7 +350,7 @@ class SpendLedger:
             return False, REASON_STATE, {}
         return True, "ok", dict(tasks[artifact_key])
 
-    def attach_task(
+    def _attach_task_locked(
         self, artifact_key: str, task_id: str, *, now: float | None = None
     ) -> None:
         """Best-effort: record the Kling task id on a reserved slot."""
@@ -236,7 +365,7 @@ class SpendLedger:
             tasks[artifact_key] = record
             self._save({"version": 1, "tasks": tasks})
 
-    def set_outcome(
+    def _set_outcome_locked(
         self, artifact_key: str, outcome: str, *, now: float | None = None
     ) -> None:
         """Mark a slot completed (counts) or refunded (frees the cap)."""
@@ -263,6 +392,7 @@ class SpendLedger:
             tasks = {}
         return {
             "limit": self._limit,
+            "state_ok": self._healthy(),
             "active": self.active,
             "window_seconds": self._window,
             "count": self._window_count(tasks, moment) if self.active else 0,

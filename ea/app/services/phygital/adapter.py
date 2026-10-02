@@ -423,7 +423,14 @@ class EnvPhygitalAdapter:
                 project_id=project_id,
                 reason=spend_reason,
             )
-        started = session.start_kling_task(payload)
+        try:
+            started = session.start_kling_task(payload)
+        except Exception:
+            try:
+                ledger.set_outcome(key, "refunded")
+            except Exception:
+                pass
+            raise
         task_id = str(started.get("task_id") or started.get("id") or "").strip()
         if not task_id:
             try:

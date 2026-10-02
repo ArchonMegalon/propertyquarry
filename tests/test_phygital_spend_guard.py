@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import os
 
 import pytest
 
@@ -157,3 +158,62 @@ class TestSpendLedgerGates:
         led = _ledger(tmp_path)
         led.reserve('a1')
         assert not (tmp_path / 'state' / 'spend-ledger.json.tmp').exists()
+class TestCrossProcessLocking:
+    def test_lock_file_created_and_released(self, tmp_path):
+        led = _ledger(tmp_path, limit=2)
+        allowed, reason, _ = led.reserve('k1')
+        assert allowed is True and reason == 'ok'
+        lockfile = tmp_path / 'state' / 'ledger.lock'
+        assert not lockfile.exists()
+
+    def test_lock_timeout_fails_closed(self, tmp_path):
+        led = _ledger(tmp_path, limit=2)
+        allowed, _, _ = led.reserve('k1')
+        assert allowed is True
+        led._acquire_file_lock()
+        try:
+            allowed, reason, _ = led.reserve('k2')
+            assert allowed is False
+            assert reason == spend_module.REASON_STATE
+        finally:
+            os.unlink(led._lock_path())
+
+    def test_stale_lock_takeover(self, tmp_path):
+        led = _ledger(tmp_path, limit=2)
+        lockfile = tmp_path / 'state' / 'ledger.lock'
+        lockfile.parent.mkdir(parents=True, exist_ok=True)
+        lockfile.write_text('{"pid": 999999}')
+        old = time.time() - (led._stale_seconds + 5)
+        os.utime(lockfile, (old, old))
+        allowed, reason, _ = led.reserve('k3')
+        assert allowed is True and reason == 'ok'
+        assert not lockfile.exists()
+
+class TestSnapshotHealthAndPrune:
+    def test_state_ok_true_when_absent(self, tmp_path):
+        led = _ledger(tmp_path, limit=1)
+        assert led.snapshot()['state_ok'] is True
+
+    def test_state_ok_true_when_healthy(self, tmp_path):
+        led = _ledger(tmp_path, limit=1)
+        led.reserve('k1')
+        led.set_outcome('k1', 'refunded')
+        assert led.snapshot()['state_ok'] is True
+
+    def test_state_ok_false_when_corrupt(self, tmp_path):
+        led = _ledger(tmp_path, limit=1)
+        p = tmp_path / 'state' / 'spend-ledger.json'
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text('{not json')
+        assert led.snapshot()['state_ok'] is False
+
+    def test_malformed_reserved_at_counts_then_expires(self, tmp_path):
+        led = _ledger(tmp_path, limit=1, window=5)
+        p = tmp_path / 'state' / 'spend-ledger.json'
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text('{"version": 1, "tasks": {"bad": {"artifact_key": "bad", "task_id": "", "phase": "in_flight", "outcome": "", "reserved_at": "not-a-number"}}}')
+        allowed, reason, _ = led.reserve('new')
+        assert allowed is False
+        assert reason == spend_module.REASON_LIMIT
+        after = led.snapshot(now=time.time() + 10)
+        assert after['count'] == 0
