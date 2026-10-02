@@ -129,3 +129,26 @@ def test_start_failure_refunds_slot(monkeypatch, tmp_path):
     assert artifact.reason == 'phygital_task_start_failed'
     ledger = spend_module.SpendLedger(str(tmp_path / 'state'), limit=1, window_seconds=3600)
     assert ledger.snapshot()['count'] == 0
+def test_start_kling_exception_refunds_reservation(monkeypatch, tmp_path):
+    """F2: an exception from start_kling_task must refund the reserved slot."""
+    import pytest
+
+    _reset(monkeypatch, tmp_path, limit='2')
+    fake = _FakePhygitalSession()
+
+    def boom(payload):
+        fake.calls.append('start_kling_task')
+        raise RuntimeError('kling 5xx')
+
+    fake.start_kling_task = boom
+    adapter = _adapter_with(monkeypatch, fake)
+    with pytest.raises(RuntimeError):
+        adapter.generate_from_floorplan(
+            floorplan_url='https://cdn.example.test/plan.png'
+        )
+    adapter_module = __import__(
+        'app.services.phygital.adapter', fromlist=['_SPEND_LEDGER']
+    )
+    snap = adapter_module._SPEND_LEDGER.snapshot()
+    assert snap['count'] == 0
+    assert 'start_kling_task' in fake.calls
