@@ -27,9 +27,7 @@ def _inspect(service: str) -> dict[str, object]:
     ]
     config = {
         "User": (
-            f"{os.geteuid()}:{os.getegid()}"
-            if service == "propertyquarry-ooda-stage"
-            else "10001:10001"
+            "10001:10001"
             if service in receipt.RELEASE_BOUND_SERVICES
             else ""
         ),
