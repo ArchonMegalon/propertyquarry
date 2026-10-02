@@ -1066,13 +1066,24 @@ def test_propertyquarry_renter_value_loop_survives_logout_and_relogin(
         while "property_search_preferences" not in observed and time.time() < deadline:
             time.sleep(0.05)
         assert observed["principal_id"] == "pq-greenfield-browser"
-        assert list(observed["selected_platforms"]) == selected_before_dispatch
+        gated_distressed_sale_providers = {
+            "distressed_sales_at",
+            "justiz_edikte_at",
+            "zvginfo_at",
+        }
+        assert list(observed["selected_platforms"]) == [
+            p for p in selected_before_dispatch
+            if p not in gated_distressed_sale_providers
+        ]
         dispatched_preferences = dict(observed["property_search_preferences"])
         assert dispatched_preferences["search_goal"] == "home"
         assert dispatched_preferences["listing_mode"] == "rent"
         assert dispatched_preferences["country_code"] == country_code
         assert dispatched_preferences["region_code"] == region_code
-        assert dispatched_preferences["selected_platforms"] == selected_before_dispatch
+        assert dispatched_preferences["selected_platforms"] == [
+            p for p in selected_before_dispatch
+            if p not in gated_distressed_sale_providers
+        ]
 
         page.wait_for_function(
             """(runId) => JSON.parse(

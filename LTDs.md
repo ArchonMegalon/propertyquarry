@@ -2,7 +2,7 @@
 
 Consolidated inventory of your lifetime services/products, including product tier/plan, ownership status, redemption deadlines, and local workspace integration posture.
 
-Updated: 2026-08-14
+Updated: 2026-09-26
 
 ## Workspace Integration Tier Guide
 
@@ -72,6 +72,7 @@ Updated: 2026-08-14
 | `Rybbit` | `LTD analytics account` | `1 account` | `Owned` |  | `Tier 2` | PropertyQuarry public-safe analytics snippet, env contract, route masks, and privacy tests | Use as the first-party aggregate product analytics lane for public conversion, route health, search-start success, provider-latency buckets, and mobile UI error buckets. Rybbit must not receive emails, principal IDs, raw listing URLs, run IDs, exact addresses, notes, signed links, documents, payment data, or provider credentials. Authenticated app analytics are disabled by default and require explicit `PROPERTYQUARRY_RYBBIT_AUTHENTICATED_ENABLED=1` without user identification. Promote to Tier 1 after live site ID verification and privacy receipt proof. |
 | `ProductLift.dev` | `License Tier 5` | `1 license` | `Activated` |  | `Excluded - Chummer/Fleet only` | Local `.env` credentials plus dry-run Chummer signal-mirror adapters and receipts | Use on `chummer.run` as the public signal mirror for feedback, voting, roadmap, changelog, package follow, and Karma Forge signal projection, while Chummer remains the source of truth. |
 | `PayFunnels` | `Tier 3` | `1 account` | `Owned` |  | `Tier 3` | PropertyQuarry plan checkout, signed webhook, refund/failure, invoice/VAT receipt, and billing-surface contracts | Integrated as the preferred self-serve checkout surface for paid PropertyQuarry plans when configured. PayFunnels may create checkout links and send signed payment lifecycle callbacks; PropertyQuarry remains entitlement truth. Webhook callbacks are fail-closed, amount/order/plan checked, idempotent for completed payments, and bounded for failed, cancelled, and refunded payments. Invoice IDs, invoice URLs, net/VAT fields, and payment history are stored as billing-event records for accounting handoff. No PayFunnels secret is committed. |
+| `Phygital+` | `AppSumo Tier 5` | `1 account` | `Activated` |  | `Tier 2` | Fail-closed rank-1 overlay plus explicit `EnvPhygitalAdapter.generate_from_floorplan()`; search never posts Kling | Live login to `app.phygital.plus` works. Search ranking reuses AppSumo project `Property` (id `129912`) Kling MP4 `23594402`. Paid generate is gated by `PROPERTYQUARRY_PHYGITAL_GENERATE=0` (host). Workspace PUT/PATCH and `POST /api/v2/projects` stay 405, so the Property graph is not rewritten. Live generate proof 2026-09-26: task `10081074` -> `23803641.mp4`. Credentials stay in `/docker/EA/.env`; compose blanks email/password into long-lived services. |
 | `Prompt Architects` | `Tier 4` | `1 account` | `Activated` |  | `Tier 4` | `PROMPTING_SYSTEMS_API_KEY` in local `.env`; governed Prompt Foundry Accelerator is integrated for template seed/operator assist | AppSumo Tier 4 capture is confirmed for 20 team members, 20,000 prompts/month, unlimited prompt history/context, JSON/image/video prompt support, Chrome/sidebar/hotkeys, template tags, refine/shorten modes, and claimed MCP. Runtime GM assist remains disabled until API/MCP automation, export semantics, retention, and tenant isolation are verified. |
 | `PeekShot` | `3x code-based` | `3 codes` | `Activated` |  | `Tier 3` | None | Redeemed and activated; suitable for newsroom thumbnail, poster, and contact-sheet adapter work when wired. |
 | `Signitic` | `Tier 4` | `1 account` | `Activated` |  | `Tier 4` | Local `.env` username/password only | Tier 4 and account identity were seeded manually; local credentials now exist for later structured verification or BrowserAct capture. |
@@ -87,8 +88,8 @@ Updated: 2026-08-14
 
 ## Summary
 
-- `60` total LTD products tracked, including Heyy WhatsApp
-- `58` inventory rows are eligible for the PropertyQuarry runtime catalog; five Chummer/Fleet-only ownership rows are explicitly excluded
+- `61` total LTD products tracked, including Heyy WhatsApp
+- `59` inventory rows are eligible for the PropertyQuarry runtime catalog; five Chummer/Fleet-only ownership rows are explicitly excluded
 - Multiple-code holdings: `AvoMap`, `katteb.com`, `MarkupGo`, `MetaSurvey`, `PeekShot`, `Vizologi`
 - Multiple-account holding: `1min.AI` (`12 licenses / 12 accounts`)
 
@@ -99,6 +100,7 @@ Use this section to track missing tier/email/account facts discovered through th
 | Service | Account / Email | Discovery Status | Verification Source | Last Verified | Notes |
 |---|---|---|---|---|---|
 | `1min.AI` |  | `live_provider_call_verified` | `worker_health_probe + principal_bound_provider_receipt` | 2026-08-12T20:14:50Z | The deployed worker reported `70` configured slots, `25` successful probes, `45` depleted probes, `26` live-dispatchable slots, and `2` composite-ready slots without exposing credentials. PropertyQuarry generation `b77bb8dbc8cb4c94952fe2fdd1775fe1` remains completed after exactly one real image call, with a verified principal-bound receipt and private first-party asset. API-local zero-slot projections must not be used as worker-capacity truth. |
+| `Phygital+` | `<account-email-redacted>` | `live_login_verified` | `supertokens_altcha_login + reuse_and_generate_receipt` | 2026-09-26T00:00:00Z | AppSumo Tier 5. Search overlay reuses Property project `129912` Kling MP4; GENERATE stays 0. Live generate proof task `10081074` -> `23803641.mp4`. Credentials remain in `/docker/EA/.env`. |
 | `PayFunnels` |  | `unconfigured_external_authority` | `deployed_runtime_probe + contract_tests` | 2026-08-12T21:51:56Z | The deployed API has no PayFunnels API key, webhook secret, or Plus/Agent checkout URL and no provider binding. Generic EA values are isolated from PropertyQuarry and the official API origin is pinned. Contract tests cover fail-closed checkout/webhook/entitlement behavior only; they are not a live provider call or customer billing proof. |
 | `PayPal API` | `<account-email-redacted>` | `sandbox_identity_isolated` | `official_oauth_probe + deployed_runtime_probe` | 2026-08-12T21:35:18Z | The only discovered generic identity returned HTTP 401 at PayPal Live and HTTP 200 at Sandbox. PropertyQuarry now receives no generic PayPal credentials, its API origin is pinned to Live, and checkout plus safe handoff report false. Dedicated Live credentials and a same-principal canary remain external requirements. |
 | `Prompt Architects` |  | `manual_seeded` | `local_env + prompt_foundry_receipts` | 2026-06-01T20:54:48.618432+00:00 | Local `.env` contains the AppSumo API key slot for `PROMPTING_SYSTEMS_API_KEY`; Prompt Foundry integration receipts verify Tier 4 capability capture, template seed/operator assist, usage metering, privacy boundaries, MagicFit bridge, and runtime GM assist disabled pending API/MCP/privacy/export proof. |

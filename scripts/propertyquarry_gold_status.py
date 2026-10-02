@@ -52,6 +52,10 @@ if __package__:
     from scripts.propertyquarry_rybbit_evidence import (
         verify_receipt as verify_rybbit_delivery_receipt,
     )
+    from scripts.propertyquarry_operator_action import (
+        GOLD_STATUS_SCHEMA,
+        propertyquarry_operator_action_summary,
+    )
     from scripts.propertyquarry_strict_json import (
         StrictJsonError,
         load_strict_json_object_snapshot,
@@ -92,6 +96,10 @@ else:
     from propertyquarry_rybbit_evidence import (
         verify_receipt as verify_rybbit_delivery_receipt,
     )
+    from propertyquarry_operator_action import (  # type: ignore[no-redef]
+        GOLD_STATUS_SCHEMA,
+        propertyquarry_operator_action_summary,
+    )
     from propertyquarry_strict_json import (  # type: ignore[no-redef]
         StrictJsonError,
         load_strict_json_object_snapshot,
@@ -99,7 +107,6 @@ else:
     )
 
 
-GOLD_STATUS_SCHEMA = "propertyquarry.gold_status.v1"
 CORE_REQUIRED_TOUR_PROVIDER_MODE_GROUPS = (("matterport", "3dvista"),)
 CORE_REQUIRED_TOUR_PROVIDER_MODES = ("matterport", "3dvista")
 ADVANCED_VISUAL_REQUIRED_PROVIDER_MODES = ("magicfit", "magic", "omagic")
@@ -3461,9 +3468,128 @@ def _covered_live_mobile_routes(live_mobile: dict[str, Any]) -> set[str]:
     return covered
 
 
+def _live_mobile_route_probe_blocked(live_mobile: dict[str, Any]) -> bool:
+    if str(live_mobile.get("status") or "").strip().lower() != "blocked":
+        return False
+    try:
+        route_count = int(live_mobile.get("route_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    legacy_pre_route_blocker = bool(
+        route_count == 0
+        and not list(live_mobile.get("routes") or [])
+        and any(
+            isinstance(row, dict) and row.get("ok") is False
+            for row in list(live_mobile.get("coverage_checks") or [])
+        )
+    )
+    expected_edge_failure = {
+        "provider": "cloudflare",
+        "code": "1033",
+        "reason": "cloudflare_tunnel_unavailable",
+        "http_status": 530,
+    }
+    routes = list(live_mobile.get("routes") or [])
+    verified_edge_blocker = bool(
+        live_mobile.get("edge_failure") == expected_edge_failure
+        and route_count == len(routes) >= 1
+        and all(
+            isinstance(row, dict)
+            and row.get("ok") is False
+            and row.get("status_code") == 530
+            and isinstance(row.get("metrics"), dict)
+            and row["metrics"].get("edge_failure") == expected_edge_failure
+            for row in routes
+        )
+    )
+    return legacy_pre_route_blocker or verified_edge_blocker
+
+
+def _live_mobile_runtime_blocker(live_mobile: dict[str, Any]) -> str:
+    top_level = str(live_mobile.get("error") or "").strip()
+    if top_level:
+        return top_level
+    for row in list(live_mobile.get("coverage_checks") or []):
+        if not isinstance(row, dict) or row.get("ok") is True:
+            continue
+        error = str(row.get("error") or "").strip()
+        if error:
+            return error
+    return ""
+
+
+def _live_mobile_operator_action(
+    live_mobile: dict[str, Any],
+    *,
+    source_fresh: bool,
+) -> dict[str, Any]:
+    if not _live_mobile_route_probe_blocked(live_mobile):
+        return {}
+    if not source_fresh:
+        return {
+            "required": False,
+            "interrupt_operator": False,
+            "reason": "source_receipt_not_fresh",
+            "source_fresh": False,
+            "source_generated_at": str(live_mobile.get("generated_at") or "").strip(),
+            "notification_policy": "suppress_stale_signal",
+            "provider_quota_consumption_allowed": False,
+        }
+
+    runtime_blocker = _live_mobile_runtime_blocker(live_mobile)
+    normalized_blocker = runtime_blocker.lower()
+    tunnel_unavailable = (
+        normalized_blocker == "cloudflare_error_1033_tunnel_unavailable"
+    )
+    host_admission_rejected = any(
+        marker in normalized_blocker
+        for marker in ("http error 421", "misdirected request", "host_not_allowed")
+    )
+    reason = (
+        "live_runtime_tunnel_unavailable"
+        if tunnel_unavailable
+        else "live_runtime_host_admission_rejected"
+        if host_admission_rejected
+        else "live_runtime_prerequisite_blocked"
+    )
+    next_action = (
+        "inspect and stage the PropertyQuarry Cloudflare tunnel connector recovery for review; "
+        "start or restart the connector only after explicit deployment/restart authorization, then "
+        "rerun propertyquarry_live_mobile_surface_smoke.py"
+        if tunnel_unavailable
+        else "inspect and stage the PropertyQuarry host-admission, public-origin, and dedicated-runtime "
+        "configuration for review; after an explicitly authorized deployment or restart, rerun "
+        "propertyquarry_live_mobile_surface_smoke.py"
+        if host_admission_rejected
+        else "inspect and stage the reported live runtime or research-fixture prerequisite for review; "
+        "after any required external change is explicitly authorized, rerun "
+        "propertyquarry_live_mobile_surface_smoke.py"
+    )
+    return {
+        "required": True,
+        "interrupt_operator": True,
+        "reason": reason,
+        "source_fresh": True,
+        "source_generated_at": str(live_mobile.get("generated_at") or ""),
+        "runtime_blocker": runtime_blocker,
+        "reversible_next_action": next_action,
+        "notification_policy": "action_required_only",
+        "consent_gate": {
+            "required": True,
+            "automatic_execution_allowed": False,
+            "protected_operations": [
+                "runtime_configuration_change",
+                "deployment_or_restart",
+            ],
+        },
+        "provider_quota_consumption_allowed": False,
+    }
+
+
 def _failed_live_mobile_coverage_checks(live_mobile: dict[str, Any]) -> list[dict[str, Any]]:
     failed: list[dict[str, Any]] = []
     observed_names: set[str] = set()
+    route_probe_blocked = _live_mobile_route_probe_blocked(live_mobile)
     for row in list(live_mobile.get("coverage_checks") or []):
         if not isinstance(row, dict):
             continue
@@ -3471,13 +3597,15 @@ def _failed_live_mobile_coverage_checks(live_mobile: dict[str, Any]) -> list[dic
         observed_names.add(name)
         if row.get("ok") is True:
             continue
-        failed.append(
-            {
-                "name": name,
-                "required_route_prefix": str(row.get("required_route_prefix") or ""),
-                "reason": str(row.get("reason") or ""),
-            }
-        )
+        failure = {
+            "name": name,
+            "required_route_prefix": str(row.get("required_route_prefix") or ""),
+            "reason": str(row.get("reason") or ""),
+        }
+        error = str(row.get("error") or "").strip()
+        if error:
+            failure["error"] = error
+        failed.append(failure)
     for required_name in REQUIRED_LIVE_MOBILE_COVERAGE_CHECKS:
         if required_name not in observed_names:
             required_prefix = {
@@ -3489,7 +3617,11 @@ def _failed_live_mobile_coverage_checks(live_mobile: dict[str, Any]) -> list[dic
                 {
                     "name": required_name,
                     "required_route_prefix": required_prefix,
-                    "reason": "Live mobile receipt predates the required all-surface coverage contract.",
+                    "reason": (
+                        "Live mobile probe was blocked before required all-surface coverage could execute."
+                        if route_probe_blocked
+                        else "Live mobile receipt predates the required all-surface coverage contract."
+                    ),
                 }
             )
     return failed
@@ -6487,6 +6619,18 @@ def build_gold_status_receipt(
         if not any(_route_covers_required_detail(route, prefix) for route in live_mobile_covered_routes)
     ]
     failed_live_mobile_coverage_checks = _failed_live_mobile_coverage_checks(live_mobile)
+    live_mobile_route_probe_blocked = _live_mobile_route_probe_blocked(live_mobile)
+    live_mobile_operator_action_fresh, _live_mobile_operator_action_freshness_issues = (
+        _receipt_freshness_status(
+            {"live_mobile_surfaces": live_mobile},
+            now=now,
+            max_age_hours=24.0,
+        )
+    )
+    live_mobile_operator_action = _live_mobile_operator_action(
+        live_mobile,
+        source_fresh=live_mobile_operator_action_fresh,
+    )
     flagship_live_mobile_browser_ok, flagship_live_mobile_browser_details = _live_mobile_flagship_browser_proof(
         live_mobile,
         required_browser_engines=configured_browser_engines,
@@ -7198,12 +7342,19 @@ def build_gold_status_receipt(
             {
                 "area": "live_mobile_surfaces",
                 "status": live_mobile.get("status") or ("not_configured" if live_mobile_receipt_path is None else "missing"),
+                "generated_at": str(live_mobile.get("generated_at") or ""),
+                "runtime_blocker": _live_mobile_runtime_blocker(live_mobile),
+                "route_probe_blocked": live_mobile_route_probe_blocked,
+                "operator_action": live_mobile_operator_action,
                 "missing_routes": missing_live_mobile_routes,
                 "missing_detail_routes": missing_live_mobile_detail_routes,
                 "failed_coverage_checks": failed_live_mobile_coverage_checks,
                 "flagship_browser_proof": flagship_live_mobile_browser_details if flagship_profile else None,
                 "billing_availability": live_mobile_billing_availability,
                 "action": (
+                    "resolve the reported live runtime or research-fixture prerequisite, then rerun propertyquarry_live_mobile_surface_smoke.py; route and browser checks did not execute, so do not treat their absence as a UI regression"
+                    if live_mobile_route_probe_blocked
+                    else
                     "run propertyquarry_live_mobile_surface_smoke.py --proof-mode browser-all against the deployed stack for every configured required browser engine and require /app/billing to open a resolving no-second-login account handoff while fixing every browser-measured viewport, overflow, touch, focus, navigation, detail, or logout regression"
                     if flagship_profile
                     else "run propertyquarry_live_mobile_surface_smoke.py against the deployed stack with PROPERTYQUARRY_LIVE_RESEARCH_DETAIL_ROUTE and fix any overflow, chrome, touch-target, detail, or logout regressions"
@@ -8533,6 +8684,10 @@ def build_gold_status_receipt(
         },
         "live_mobile_surfaces": {
             "status": live_mobile.get("status") or ("not_configured" if live_mobile_receipt_path is None else "missing"),
+            "generated_at": str(live_mobile.get("generated_at") or ""),
+            "runtime_blocker": _live_mobile_runtime_blocker(live_mobile),
+            "route_probe_blocked": live_mobile_route_probe_blocked,
+            "operator_action": live_mobile_operator_action,
             "failed_count": live_mobile.get("failed_count"),
             "route_count": live_mobile.get("route_count"),
             "required_route_count": len(REQUIRED_LIVE_MOBILE_ROUTES),

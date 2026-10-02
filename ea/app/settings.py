@@ -17,6 +17,7 @@ SUPPORTED_RUNTIME_ROLES = (
     "openvoice",
     "operator-tools",
     "render-tools",
+    "propertyquarry-ooda-stage",
     "property-search-migrate",
 )
 

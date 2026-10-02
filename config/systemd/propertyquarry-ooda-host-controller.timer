@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the PropertyQuarry host-only OODA controller every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+AccuracySec=15s
+Persistent=true
+Unit=propertyquarry-ooda-host-controller.service
+
+[Install]
+WantedBy=timers.target

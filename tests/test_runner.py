@@ -5,6 +5,7 @@ import importlib
 import inspect
 import json
 import logging
+from pathlib import Path
 import sys
 import threading
 import time
@@ -82,6 +83,150 @@ def _load_runner_module(monkeypatch: pytest.MonkeyPatch):
     return importlib.import_module("app.runner")
 
 
+@pytest.fixture(autouse=True)
+def _verified_source_refresh_settlement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import propertyquarry_ooda_source_refresh_settlement as settlement
+    from scripts import propertyquarry_ooda_source_refresh_trust_decision as trust_decision
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_preview as trust_enrollment_preview
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_authorization as trust_enrollment_authorization
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_execution_readiness as trust_enrollment_execution_readiness
+    from scripts import propertyquarry_ooda_source_refresh_trust_intake as trust_intake
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_artifact_request as trust_candidate_artifact_request
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_artifact_notification as trust_candidate_artifact_notification
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_import as trust_candidate_import
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_manual_action as trust_candidate_manual_action
+    from scripts import propertyquarry_ooda_source_refresh_trust_notification as trust_notification
+
+    monkeypatch.setattr(
+        settlement,
+        "materialize_current_settlement_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "settlement_state": "no_prior_work",
+            "producer_completion_recorded": False,
+            "settlement_attributed": False,
+            "settlement_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+            "progress": {"settled_count": 0},
+        },
+    )
+    monkeypatch.setattr(
+        trust_intake,
+        "materialize_trust_intake_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "intake_state": "awaiting_producer_public_key_evidence",
+            "request_staged": True,
+            "candidates": [],
+            "action_required": False,
+            "interrupt_operator": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "intake_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        trust_candidate_import,
+        "inspect_candidate_import_readiness",
+        lambda *_args, **_kwargs: {
+            "status": "verified",
+            "import_state": "not_required",
+            "action_required": False,
+            "interrupt_operator": False,
+            "candidate_import_authorized": False,
+            "candidate_import_attempted": False,
+            "candidate_imported": False,
+            "public_key_candidate_recorded": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "provider_quota_consumption_allowed": False,
+            "delivery_authorized": False,
+        },
+    )
+    monkeypatch.setattr(
+        trust_candidate_artifact_request,
+        "materialize_candidate_artifact_request",
+        lambda report, **_kwargs: _verified_trust_candidate_artifact_request(
+            state=str(report.get("import_state") or "not_required")
+        ),
+    )
+    monkeypatch.setattr(
+        trust_candidate_manual_action,
+        "materialize_candidate_manual_action",
+        lambda report, _artifact, **_kwargs: (
+            _verified_trust_candidate_manual_action(
+                state=str(report.get("import_state") or "not_required"),
+                interrupt=report.get("interrupt_operator") is True,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        trust_candidate_artifact_notification,
+        "run_candidate_artifact_notification",
+        lambda _report, _artifact, action, **_kwargs: (
+            _verified_trust_candidate_artifact_notification(
+                staged=action.get("operator_action_receipt_staged") is True,
+                interrupt=action.get("interrupt_operator") is True,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        trust_decision,
+        "verify_candidate_review_decision_for_report",
+        lambda *_args, **_kwargs: {
+            "status": "not_required",
+            "review_state": "not_required",
+            "decision": "",
+            "action_required": False,
+            "interrupt_operator": False,
+            "trust_enrollment_preview_authorized": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "private_key_material_requested": False,
+            "private_key_material_recorded": False,
+            "provider_quota_consumption_allowed": False,
+            "delivery_authorized": False,
+            "protected_operation_executed": False,
+        },
+    )
+    monkeypatch.setattr(
+        trust_notification,
+        "run_candidate_notification",
+        lambda *_args, **_kwargs: {
+            "status": "not_required",
+            "candidate_review_id": "",
+            "action_required": False,
+            "interrupt_operator": False,
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "presentation_recorded": False,
+            "receipt_persisted": True,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+        },
+    )
+    monkeypatch.setattr(
+        trust_enrollment_preview,
+        "materialize_enrollment_preview",
+        lambda *_args, **_kwargs: _verified_trust_enrollment_preview(),
+    )
+    monkeypatch.setattr(
+        trust_enrollment_authorization,
+        "verify_authorization_for_preview",
+        lambda *_args, **_kwargs: _verified_trust_enrollment_authorization(),
+    )
+    monkeypatch.setattr(
+        trust_enrollment_execution_readiness,
+        "materialize_execution_readiness",
+        lambda *_args, **_kwargs: _verified_trust_enrollment_execution_readiness(),
+    )
+
+
 def test_scheduler_heartbeat_file_is_healthchecked(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     runner = _load_runner_module(monkeypatch)
     from app import scheduler_healthcheck
@@ -89,6 +234,7 @@ def test_scheduler_heartbeat_file_is_healthchecked(monkeypatch: pytest.MonkeyPat
     heartbeat_path = tmp_path / "scheduler-heartbeat.json"
     monkeypatch.setenv("EA_ROLE", "scheduler")
     monkeypatch.setenv("PROPERTYQUARRY_SCHEDULER_PROFILE", "property_only")
+    monkeypatch.setenv("PROPERTYQUARRY_OODA_NOTIFICATION_ENABLED", "0")
     monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_PATH", str(heartbeat_path))
     monkeypatch.setenv("EA_PROPERTY_SEARCH_WRITER_HEARTBEAT_DIR", str(tmp_path / "fleet"))
     monkeypatch.setenv("EA_SCHEDULER_HEARTBEAT_MAX_AGE_SECONDS", "60")
@@ -495,7 +641,6 @@ def test_scheduler_onemin_billing_refresh_runs_browseract_and_provider_api_sweep
             list_connector_bindings_for_connector=lambda connector_name, limit=1000: [binding]
         ),
     )
-
     monkeypatch.setattr(providers_route, "_onemin_browseract_max_accounts_per_refresh", lambda: 2)
     monkeypatch.setattr(providers_route, "_onemin_direct_api_batch_backoff_seconds", lambda: 0.0)
     monkeypatch.setattr(providers_route, "_binding_run_url", lambda *args, **kwargs: "")
@@ -1754,3 +1899,1667 @@ def test_scheduler_property_results_finalize_rotates_maintenance_first_principal
         )
 
     assert first_principals == ["principal-a", "principal-b", "principal-c", "principal-a"]
+
+
+def _verified_trust_enrollment_preview(
+    *,
+    state: str = "not_required",
+) -> dict[str, object]:
+    staged = state == "preview_staged"
+    return {
+        "status": "verified",
+        "preview_state": state,
+        "preview_id": "pqtrustpreview_" + "d" * 24 if staged else "",
+        "current_trust_registry_sha256": "e" * 64,
+        "proposed_trust_registry_sha256": "f" * 64 if staged else "",
+        "action_required": staged,
+        "interrupt_operator": staged,
+        "preview_staged": staged,
+        "trust_enrollment_preview_authorized": staged,
+        "trust_enrollment_authorized": False,
+        "trust_registry_modified": False,
+        "preview_receipt_persisted": True,
+        "verification_receipt_persisted": True,
+    }
+
+
+def _verified_trust_enrollment_authorization(
+    *,
+    state: str = "not_required",
+) -> dict[str, object]:
+    pending = state == "exact_preview_authorization_pending"
+    recorded = state in {
+        "exact_preview_authorized",
+        "exact_preview_rejected",
+        "deferred",
+    }
+    exact = state == "exact_preview_authorized"
+    return {
+        "status": "pending" if pending else "verified" if recorded else "not_required",
+        "authorization_state": state,
+        "authorization_id": "pqtrustauth_" + "a" * 24 if recorded else "",
+        "decision": "authorize_exact_preview" if exact else "",
+        "action_required": pending,
+        "interrupt_operator": False,
+        "exact_preview_authorized": exact,
+        "trust_enrollment_authorized": exact,
+        "trust_registry_modified": False,
+        "protected_operation_executed": False,
+    }
+
+
+def _verified_trust_candidate_import(
+    *,
+    state: str = "awaiting_external_artifact",
+) -> dict[str, object]:
+    presentable = state in {
+        "awaiting_external_artifact",
+        "external_artifact_not_admissible",
+        "ready_for_manual_import",
+        "recovery_required",
+    }
+    recovery = state == "recovery_required"
+    return {
+        "schema": "propertyquarry.ooda_source_refresh_trust_candidate_import_verification.v1",
+        "status": "verified",
+        "import_state": state,
+        "request_id": "pqtrustintake_" + "f" * 24 if presentable else "",
+        "action_required": presentable,
+        "interrupt_operator": presentable,
+        "operator_review_required": False,
+        "candidate_import_authorized": False,
+        "candidate_import_attempted": recovery,
+        "candidate_imported": False,
+        "public_key_candidate_recorded": False,
+        "private_key_material_requested": False,
+        "trust_enrollment_authorized": False,
+        "trust_registry_modified": False,
+        "provider_quota_consumption_allowed": False,
+        "delivery_authorized": False,
+    }
+
+
+def _verified_trust_enrollment_execution_readiness(
+    *,
+    state: str = "not_required",
+) -> dict[str, object]:
+    ready = state == "ready_for_governed_execution"
+    return {
+        "schema": "propertyquarry.ooda_source_refresh_trust_enrollment_execution_readiness_verification.v1",
+        "status": "verified",
+        "readiness_state": state,
+        "readiness_id": "pqtrustready_" + "b" * 24,
+        "verification_receipt_sha256": "1" * 64,
+        "preview_id": "pqtrustpreview_" + "d" * 24 if ready else "",
+        "authorization_id": "pqtrustauth_" + "a" * 24 if ready else "",
+        "authorization_receipt_sha256": "2" * 64 if ready else "",
+        "authorization_decision": "authorize_exact_preview" if ready else "",
+        "current_trust_registry_sha256": "e" * 64 if ready else "",
+        "proposed_trust_registry_sha256": "f" * 64 if ready else "",
+        "action_required": ready,
+        "interrupt_operator": False,
+        "operator_review_required": ready,
+        "explicit_authorization_recorded": ready,
+        "exact_preview_authorized": ready,
+        "trust_enrollment_authorized": ready,
+        "execution_request_staged": ready,
+        "execution_readiness_verified": ready,
+        "governed_execution_available": ready,
+        "trust_registry_modified": False,
+        "automatic_execution_allowed": False,
+        "execution_authorized": False,
+        "protected_operation_executed": False,
+        "provider_quota_consumption_allowed": False,
+        "delivery_authorized": False,
+        "readiness_receipt_persisted": True,
+        "verification_receipt_persisted": True,
+        "progress": {
+            "current_evidence_verified": True,
+            "authorization_binding_verified": True,
+            "registry_binding_verified": True,
+        },
+    }
+
+
+def _verified_trust_candidate_artifact_request(
+    *,
+    state: str = "not_required",
+) -> dict[str, object]:
+    staged = state in {
+        "awaiting_external_artifact",
+        "external_artifact_not_admissible",
+    }
+    return {
+        "status": "verified",
+        "request_state": state,
+        "artifact_request_staged": staged,
+        "artifact_request_receipt_sha256": "a" * 64,
+        "action_required": staged,
+        "interrupt_operator": False,
+        "receipt_persisted": True,
+        "producer_contacted": False,
+        "transport_delivery_attempted": False,
+        "candidate_import_authorized": False,
+        "candidate_import_attempted": False,
+        "candidate_imported": False,
+        "trust_registry_modified": False,
+        "provider_quota_consumption_allowed": False,
+        "delivery_authorized": False,
+    }
+
+
+def _verified_trust_candidate_manual_action(
+    *,
+    state: str = "not_required",
+    interrupt: bool = False,
+) -> dict[str, object]:
+    staged = state in {
+        "awaiting_external_artifact",
+        "external_artifact_not_admissible",
+        "ready_for_manual_import",
+        "recovery_required",
+    }
+    return {
+        "status": "verified",
+        "action_state": state,
+        "operator_action_receipt_staged": staged,
+        "action_required": staged,
+        "interrupt_operator": staged and interrupt,
+        "operator_action_receipt_sha256": "b" * 64,
+        "receipt_persisted": True,
+        "producer_contacted": False,
+        "transport_delivery_authorized": False,
+        "transport_delivery_attempted": False,
+        "notification_sent": False,
+        "candidate_import_authorized": False,
+        "candidate_import_attempted": False,
+        "candidate_imported": False,
+        "trust_registry_modified": False,
+        "provider_quota_consumption_allowed": False,
+        "delivery_authorized": False,
+    }
+
+
+def _verified_trust_candidate_artifact_notification(
+    *,
+    staged: bool = False,
+    interrupt: bool = False,
+) -> dict[str, object]:
+    status = (
+        "action_required"
+        if staged and interrupt
+        else "deduplicated"
+        if staged
+        else "not_required"
+    )
+    return {
+        "status": status,
+        "action_required": staged,
+        "interrupt_operator": status == "action_required",
+        "delivery_authorized": False,
+        "delivery_attempted": False,
+        "sent": False,
+        "would_send": status == "action_required",
+        "presentation_recorded": False,
+        "notification_receipt_sha256": "c" * 64,
+        "receipt_persisted": True,
+        "producer_contacted": False,
+        "artifact_transport_authorized": False,
+        "artifact_transport_attempted": False,
+        "candidate_import_authorized": False,
+        "candidate_import_attempted": False,
+        "trust_registry_modified": False,
+        "provider_quota_consumption_allowed": False,
+    }
+
+
+def test_scheduler_propertyquarry_ooda_cycle_defaults_to_evaluation_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_runtime_control as runtime_control
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_artifact_notification as trust_candidate_artifact_notification
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_import as trust_candidate_import
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_preview as trust_enrollment_preview
+
+    monkeypatch.delenv("PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED", raising=False)
+    monkeypatch.delenv("PROPERTYQUARRY_OODA_NOTIFICATION_PRINCIPAL_ID", raising=False)
+    observed: dict[str, object] = {}
+    runtime_control_observed: dict[str, object] = {}
+    artifact_notification_observed: dict[str, object] = {}
+
+    def _run_cycle_once(**kwargs):
+        observed.update(kwargs)
+        return {
+            "schema": notification_cycle.SCHEMA,
+            "status": "action_required",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": True,
+            "action_required_count": 1,
+            "novel_action_count": 1,
+        }
+
+    monkeypatch.setattr(notification_cycle, "run_cycle_once", _run_cycle_once)
+    monkeypatch.setattr(
+        runtime_control,
+        "stage_host_runtime_control_handoff",
+        lambda **kwargs: (
+            runtime_control_observed.update(kwargs)
+            or {
+                "status": "host_review_required",
+                "host_review_required": True,
+                "current_evidence_verified": True,
+                "receipt_persisted": True,
+                "execution_authorized": False,
+                "deployment_or_restart_authorized": False,
+                "protected_operation_executed": False,
+                "provider_quota_consumption_allowed": False,
+                "delivery_authorized": False,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "request_state": "producer_refresh_staged",
+            "request_staged": True,
+            "request_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "handoff_state": "producer_pickup_available",
+            "handoff_available": True,
+            "handoff_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        lambda **kwargs: {
+            "status": "verified",
+            "claim_state": "unclaimed",
+            "settlement_state": "awaiting_current_evidence",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+            "progress": {"claim_count": 0},
+            "observed_kwargs": kwargs,
+        },
+    )
+    monkeypatch.setattr(
+        trust_enrollment_preview,
+        "materialize_enrollment_preview",
+        lambda *_args, **_kwargs: _verified_trust_enrollment_preview(),
+    )
+    monkeypatch.setattr(
+        trust_candidate_import,
+        "inspect_candidate_import_readiness",
+        lambda *_args, **_kwargs: _verified_trust_candidate_import(),
+    )
+    monkeypatch.setattr(
+        trust_candidate_import,
+        "apply_candidate_import_presentation_state",
+        lambda report, **_kwargs: dict(report),
+    )
+    monkeypatch.setattr(
+        trust_candidate_artifact_notification,
+        "run_candidate_artifact_notification",
+        lambda _report, _artifact, action, **kwargs: (
+            artifact_notification_observed.update(kwargs)
+            or _verified_trust_candidate_artifact_notification(
+                staged=action.get("operator_action_receipt_staged") is True,
+                interrupt=action.get("interrupt_operator") is True,
+            )
+        ),
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert observed["send"] is False
+    assert observed["gold_receipt"] == (
+        "/run/propertyquarry/ooda-signals/property-gold-status.json"
+    )
+    assert observed["public_origin_observation"] == (
+        "/run/propertyquarry/ooda-signals/public-origin-observation.json"
+    )
+    assert observed["approval_manifest"] == (
+        "/run/propertyquarry/ooda-signals/manifest.json"
+    )
+    assert observed["require_approval_manifest"] is True
+    assert observed["write"] == (
+        "/data/artifacts/propertyquarry-ooda-notification/latest.json"
+    )
+    assert runtime_control_observed["cycle_receipt_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/latest.json"
+    )
+    assert runtime_control_observed["signal_dir"] == Path(
+        "/run/propertyquarry/ooda-signals"
+    )
+    assert runtime_control_observed["receipt_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "runtime-control-host-handoff.json"
+    )
+    assert artifact_notification_observed["send"] is False
+    assert artifact_notification_observed["receipt_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-candidate-artifact-notification.json"
+    )
+    assert artifact_notification_observed[
+        "manual_action_receipt_path"
+    ] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-candidate-manual-action.json"
+    )
+    assert summary == {
+        "ran": True,
+        "status": "action_required",
+        "delivery_authorized": False,
+        "delivery_attempted": False,
+        "sent": False,
+        "would_send": True,
+        "action_required_count": 1,
+        "novel_action_count": 1,
+        "source_refresh_settlement_status": "no_prior_work",
+        "source_refresh_producer_completion_recorded": False,
+        "source_refresh_settlement_attributed": False,
+        "source_refresh_settled_count": 0,
+        "source_refresh_settlement_receipt_persisted": True,
+        "source_refresh_settlement_verification_persisted": True,
+        "source_refresh_request_status": "producer_refresh_staged",
+        "source_refresh_request_staged": True,
+        "source_refresh_request_receipt_persisted": True,
+        "source_refresh_request_verification_persisted": True,
+        "source_refresh_handoff_status": "producer_pickup_available",
+        "source_refresh_handoff_available": True,
+        "source_refresh_handoff_receipt_persisted": True,
+        "source_refresh_handoff_verification_persisted": True,
+        "source_refresh_claims_status": "unclaimed",
+        "source_refresh_claims_settlement_status": "awaiting_current_evidence",
+        "source_refresh_producer_claim_recorded": False,
+        "source_refresh_claim_count": 0,
+        "source_refresh_claims_receipt_persisted": True,
+        "source_refresh_claims_verification_persisted": True,
+        "source_refresh_trust_intake_status": (
+            "awaiting_producer_public_key_evidence"
+        ),
+        "source_refresh_trust_intake_request_staged": True,
+        "source_refresh_trust_candidate_count": 0,
+        "source_refresh_trust_intake_receipt_persisted": True,
+        "source_refresh_trust_intake_verification_persisted": True,
+        "source_refresh_trust_decision_status": "not_required",
+        "source_refresh_trust_review_state": "not_required",
+        "source_refresh_trust_decision": "",
+        "source_refresh_trust_action_required": False,
+        "source_refresh_trust_interrupt_operator": False,
+        "source_refresh_trust_enrollment_preview_authorized": False,
+        "source_refresh_trust_enrollment_authorized": False,
+        "source_refresh_trust_registry_modified": False,
+        "source_refresh_trust_intake_verified": True,
+        "source_refresh_trust_candidate_import_status": "verified",
+        "source_refresh_trust_candidate_import_state": (
+            "awaiting_external_artifact"
+        ),
+        "source_refresh_trust_candidate_import_request_id": (
+            "pqtrustintake_" + "f" * 24
+        ),
+        "source_refresh_trust_candidate_import_action_required": True,
+        "source_refresh_trust_candidate_import_interrupt_operator": True,
+        "source_refresh_trust_candidate_import_authorized": False,
+        "source_refresh_trust_candidate_import_attempted": False,
+        "source_refresh_trust_candidate_imported": False,
+            "source_refresh_trust_candidate_import_verified": True,
+            "source_refresh_trust_candidate_artifact_request_status": (
+                "verified"
+            ),
+            "source_refresh_trust_candidate_artifact_request_state": (
+                "awaiting_external_artifact"
+            ),
+            "source_refresh_trust_candidate_artifact_request_staged": True,
+            "source_refresh_trust_candidate_artifact_request_receipt_sha256": (
+                "a" * 64
+            ),
+            "source_refresh_trust_candidate_artifact_request_receipt_persisted": (
+                True
+            ),
+            "source_refresh_trust_candidate_artifact_request_verified": True,
+            "source_refresh_trust_candidate_manual_action_status": "verified",
+            "source_refresh_trust_candidate_manual_action_state": (
+                "awaiting_external_artifact"
+            ),
+            "source_refresh_trust_candidate_manual_action_staged": True,
+            "source_refresh_trust_candidate_manual_action_required": True,
+            "source_refresh_trust_candidate_manual_action_interrupt_operator": (
+                True
+            ),
+            "source_refresh_trust_candidate_manual_action_receipt_sha256": (
+                "b" * 64
+            ),
+            "source_refresh_trust_candidate_manual_action_receipt_persisted": (
+                True
+            ),
+            "source_refresh_trust_candidate_manual_action_verified": True,
+            "source_refresh_trust_candidate_artifact_notification_status": (
+                "action_required"
+            ),
+            "source_refresh_trust_candidate_artifact_notification_action_required": (
+                True
+            ),
+            "source_refresh_trust_candidate_artifact_notification_interrupt_operator": (
+                True
+            ),
+            "source_refresh_trust_candidate_artifact_notification_delivery_authorized": (
+                False
+            ),
+            "source_refresh_trust_candidate_artifact_notification_delivery_attempted": (
+                False
+            ),
+            "source_refresh_trust_candidate_artifact_notification_sent": False,
+            "source_refresh_trust_candidate_artifact_notification_would_send": (
+                True
+            ),
+            "source_refresh_trust_candidate_artifact_notification_presentation_recorded": (
+                False
+            ),
+            "source_refresh_trust_candidate_artifact_notification_receipt_sha256": (
+                "c" * 64
+            ),
+            "source_refresh_trust_candidate_artifact_notification_receipt_persisted": (
+                True
+            ),
+            "source_refresh_trust_candidate_artifact_notification_verified": (
+                True
+            ),
+            "source_refresh_trust_decision_verified": True,
+        "source_refresh_trust_notification_status": "not_required",
+        "source_refresh_trust_notification_candidate_review_id": "",
+        "source_refresh_trust_notification_delivery_authorized": False,
+        "source_refresh_trust_notification_delivery_attempted": False,
+        "source_refresh_trust_notification_sent": False,
+        "source_refresh_trust_notification_would_send": False,
+        "source_refresh_trust_notification_presentation_recorded": False,
+        "source_refresh_trust_notification_receipt_persisted": True,
+        "source_refresh_trust_notification_verified": True,
+        "source_refresh_trust_enrollment_preview_status": "not_required",
+        "source_refresh_trust_enrollment_preview_id": "",
+        "source_refresh_trust_enrollment_preview_action_required": False,
+        "source_refresh_trust_enrollment_preview_interrupt_operator": False,
+        "source_refresh_trust_enrollment_preview_staged": False,
+        "source_refresh_trust_enrollment_preview_current_registry_sha256": (
+            "e" * 64
+        ),
+        "source_refresh_trust_enrollment_preview_proposed_registry_sha256": "",
+        "source_refresh_trust_enrollment_preview_receipt_persisted": True,
+        "source_refresh_trust_enrollment_preview_verification_persisted": True,
+        "source_refresh_trust_enrollment_preview_verified": True,
+        "source_refresh_trust_enrollment_authorization_status": (
+            "not_required"
+        ),
+        "source_refresh_trust_enrollment_authorization_state": (
+            "not_required"
+        ),
+        "source_refresh_trust_enrollment_authorization_id": "",
+        "source_refresh_trust_enrollment_authorization_decision": "",
+        "source_refresh_trust_enrollment_authorization_action_required": False,
+        "source_refresh_trust_exact_preview_authorized": False,
+        "source_refresh_trust_enrollment_authorization_verified": True,
+        "source_refresh_trust_enrollment_execution_readiness_status": (
+            "verified"
+        ),
+        "source_refresh_trust_enrollment_execution_readiness_state": (
+            "not_required"
+        ),
+        "source_refresh_trust_enrollment_execution_readiness_id": (
+            "pqtrustready_" + "b" * 24
+        ),
+        "source_refresh_trust_enrollment_execution_request_staged": False,
+        "source_refresh_trust_enrollment_execution_ready": False,
+        "source_refresh_trust_enrollment_governed_execution_available": False,
+        "source_refresh_trust_enrollment_execution_authorized": False,
+        "source_refresh_trust_enrollment_execution_readiness_verified": True,
+        "source_refresh_trust_enrollment_execution_status": "verified",
+        "source_refresh_trust_enrollment_execution_state": "not_required",
+        "source_refresh_trust_enrollment_execution_action_required": False,
+        "source_refresh_trust_enrollment_execution_interrupt_operator": False,
+        "source_refresh_trust_enrollment_authorization_consumed": False,
+        "source_refresh_trust_enrollment_registry_write_attempted": False,
+        "source_refresh_trust_enrollment_registry_modified": False,
+        "source_refresh_trust_enrollment_rollback_available": False,
+        "source_refresh_trust_enrollment_execution_verified": True,
+        "runtime_control_handoff_status": "host_review_required",
+        "runtime_control_host_review_required": True,
+        "runtime_control_current_evidence_verified": True,
+        "runtime_control_receipt_persisted": True,
+        "runtime_control_execution_authorized": False,
+        "runtime_control_deployment_or_restart_authorized": False,
+        "runtime_control_protected_operation_executed": False,
+        "runtime_control_provider_quota_consumption_allowed": False,
+        "runtime_control_delivery_authorized": False,
+        "errors": 0,
+    }
+
+
+def test_scheduler_propertyquarry_ooda_materializes_current_trust_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+    from scripts import propertyquarry_ooda_source_refresh_trust_decision as trust_decision
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_preview as trust_enrollment_preview
+    from scripts import propertyquarry_ooda_source_refresh_trust_enrollment_execution_readiness as trust_enrollment_execution_readiness
+    from scripts import propertyquarry_ooda_source_refresh_trust_intake as trust_intake
+    from scripts import propertyquarry_ooda_source_refresh_trust_notification as trust_notification
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: {
+            "status": "silent",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "request_state": "producer_refresh_staged",
+            "request_staged": True,
+            "request_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "handoff_state": "producer_pickup_available",
+            "handoff_available": True,
+            "handoff_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "claim_state": "producer_trust_unconfigured",
+            "settlement_state": "awaiting_producer_trust",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+            "progress": {"claim_count": 0},
+        },
+    )
+    review_id = "pqtrustreview_" + "a" * 24
+    verification_sha256 = "b" * 64
+    observed: dict[str, object] = {}
+
+    def materialize_trust(**kwargs):
+        observed["intake_kwargs"] = kwargs
+        return {
+            "status": "verified",
+            "intake_state": "candidate_ready_for_operator_review",
+            "request_staged": True,
+            "candidate_review_id": review_id,
+            "verification_receipt_sha256": verification_sha256,
+            "candidates": [{"public_key_sha256": "c" * 64}],
+            "action_required": True,
+            "interrupt_operator": True,
+            "operator_review_required": True,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "intake_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        }
+
+    monkeypatch.setattr(
+        trust_intake,
+        "materialize_trust_intake_bundle",
+        materialize_trust,
+    )
+
+    def verify_decision(report, **kwargs):
+        observed["decision_report"] = report
+        observed["decision_kwargs"] = kwargs
+        return {
+            "status": "pending",
+            "review_state": "candidate_review_pending",
+            "candidate_review_id": review_id,
+            "trust_intake_verification_sha256": verification_sha256,
+            "decision": "",
+            "action_required": True,
+            "interrupt_operator": False,
+            "operator_review_required": True,
+            "trust_enrollment_preview_authorized": False,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+            "private_key_material_requested": False,
+            "private_key_material_recorded": False,
+            "provider_quota_consumption_allowed": False,
+            "delivery_authorized": False,
+            "protected_operation_executed": False,
+        }
+
+    monkeypatch.setattr(
+        trust_decision,
+        "verify_candidate_review_decision_for_report",
+        verify_decision,
+    )
+    monkeypatch.setattr(
+        trust_notification,
+        "run_candidate_notification",
+        lambda intake_report, decision_report, **kwargs: (
+            observed.update(
+                {
+                    "notification_intake": intake_report,
+                    "notification_decision": decision_report,
+                    "notification_kwargs": kwargs,
+                }
+            )
+            or {
+                "status": "action_required",
+                "candidate_review_id": review_id,
+                "action_required": True,
+                "interrupt_operator": True,
+                "delivery_authorized": False,
+                "delivery_attempted": False,
+                "sent": False,
+                "would_send": True,
+                "presentation_recorded": False,
+                "receipt_persisted": True,
+                "trust_enrollment_authorized": False,
+                "trust_registry_modified": False,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        trust_enrollment_preview,
+        "materialize_enrollment_preview",
+        lambda intake_report, decision_report, **kwargs: (
+            observed.update(
+                {
+                    "preview_intake": intake_report,
+                    "preview_decision": decision_report,
+                    "preview_kwargs": kwargs,
+                }
+            )
+            or _verified_trust_enrollment_preview(
+                state="awaiting_decision"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        trust_enrollment_execution_readiness,
+        "materialize_execution_readiness",
+        lambda preview_report, authorization_report, **kwargs: (
+            observed.update(
+                {
+                    "readiness_preview": preview_report,
+                    "readiness_authorization": authorization_report,
+                    "readiness_kwargs": kwargs,
+                }
+            )
+            or _verified_trust_enrollment_execution_readiness()
+        ),
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    intake_kwargs = dict(observed["intake_kwargs"])
+    decision_kwargs = dict(observed["decision_kwargs"])
+    notification_kwargs = dict(observed["notification_kwargs"])
+    preview_kwargs = dict(observed["preview_kwargs"])
+    readiness_kwargs = dict(observed["readiness_kwargs"])
+    assert intake_kwargs["claim_verification_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-claims-verification.json"
+    )
+    assert intake_kwargs["candidate_dir"] == Path(
+        "/run/propertyquarry/ooda-producer-trust-candidates"
+    )
+    assert intake_kwargs["receipt_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-intake.json"
+    )
+    assert intake_kwargs["verification_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-intake-verification.json"
+    )
+    assert decision_kwargs["decision_dir"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-candidate-decisions"
+    )
+    assert notification_kwargs["presentation_state_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-candidate-presentation.json"
+    )
+    assert notification_kwargs["receipt_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-candidate-notification.json"
+    )
+    assert preview_kwargs["receipt_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-enrollment-preview.json"
+    )
+    assert preview_kwargs["verification_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-enrollment-preview-verification.json"
+    )
+    assert readiness_kwargs["receipt_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-enrollment-execution-readiness.json"
+    )
+    assert readiness_kwargs["verification_path"] == Path(
+        "/data/artifacts/propertyquarry-ooda-notification/"
+        "source-refresh-trust-enrollment-execution-readiness-verification.json"
+    )
+    assert dict(observed["readiness_preview"]).get("preview_state") == (
+        "awaiting_decision"
+    )
+    assert dict(observed["readiness_authorization"]).get("status") == (
+        "not_required"
+    )
+    assert summary["source_refresh_trust_intake_status"] == (
+        "candidate_ready_for_operator_review"
+    )
+    assert summary["source_refresh_trust_decision_status"] == "pending"
+    assert summary["source_refresh_trust_action_required"] is True
+    assert summary["source_refresh_trust_interrupt_operator"] is True
+    assert summary["source_refresh_trust_enrollment_authorized"] is False
+    assert summary["source_refresh_trust_registry_modified"] is False
+    assert summary["source_refresh_trust_notification_status"] == (
+        "action_required"
+    )
+    assert summary[
+        "source_refresh_trust_notification_candidate_review_id"
+    ] == review_id
+    assert summary["source_refresh_trust_notification_would_send"] is True
+    assert summary["source_refresh_trust_notification_sent"] is False
+    assert summary["source_refresh_trust_enrollment_preview_status"] == (
+        "awaiting_decision"
+    )
+    assert summary["source_refresh_trust_enrollment_preview_staged"] is False
+    assert summary["errors"] == 0
+
+
+def test_scheduler_propertyquarry_ooda_trust_alert_failure_blocks_iteration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+    from scripts import propertyquarry_ooda_source_refresh_trust_notification as trust_notification
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: {
+            "status": "silent",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "request_state": "producer_refresh_staged",
+            "request_staged": True,
+            "request_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "handoff_state": "producer_pickup_available",
+            "handoff_available": True,
+            "handoff_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "claim_state": "unclaimed",
+            "settlement_state": "awaiting_current_evidence",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+            "progress": {"claim_count": 0},
+        },
+    )
+    monkeypatch.setattr(
+        trust_notification,
+        "run_candidate_notification",
+        lambda *_args, **_kwargs: {
+            "status": "delivery_failed",
+            "candidate_review_id": "pqtrustreview_" + "a" * 24,
+            "action_required": True,
+            "interrupt_operator": False,
+            "delivery_authorized": True,
+            "delivery_attempted": True,
+            "sent": False,
+            "would_send": False,
+            "presentation_recorded": False,
+            "receipt_persisted": True,
+            "trust_enrollment_authorized": False,
+            "trust_registry_modified": False,
+        },
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert summary["source_refresh_trust_notification_status"] == (
+        "delivery_failed"
+    )
+    assert summary[
+        "source_refresh_trust_notification_delivery_attempted"
+    ] is True
+    assert summary["source_refresh_trust_notification_sent"] is False
+    assert summary["source_refresh_trust_notification_verified"] is False
+    assert summary["errors"] == 1
+
+
+def test_scheduler_propertyquarry_ooda_artifact_alert_failure_is_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_artifact_notification as artifact_notification
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_import as candidate_import
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: {
+            "status": "silent",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "request_state": "producer_refresh_staged",
+            "request_staged": True,
+            "request_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "handoff_state": "producer_pickup_available",
+            "handoff_available": True,
+            "handoff_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "claim_state": "unclaimed",
+            "settlement_state": "awaiting_current_evidence",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+            "progress": {"claim_count": 0},
+        },
+    )
+    monkeypatch.setattr(
+        candidate_import,
+        "inspect_candidate_import_readiness",
+        lambda *_args, **_kwargs: _verified_trust_candidate_import(),
+    )
+    monkeypatch.setattr(
+        candidate_import,
+        "apply_candidate_import_presentation_state",
+        lambda report, **_kwargs: dict(report),
+    )
+    monkeypatch.setattr(
+        artifact_notification,
+        "run_candidate_artifact_notification",
+        lambda *_args, **_kwargs: {
+            **_verified_trust_candidate_artifact_notification(
+                staged=True,
+                interrupt=False,
+            ),
+            "status": "delivery_failed",
+            "blocking_reason": "RuntimeError",
+            "delivery_authorized": True,
+            "delivery_attempted": True,
+            "receipt_persisted": True,
+        },
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert summary[
+        "source_refresh_trust_candidate_artifact_notification_status"
+    ] == "delivery_failed"
+    assert summary[
+        "source_refresh_trust_candidate_artifact_notification_delivery_attempted"
+    ] is True
+    assert summary[
+        "source_refresh_trust_candidate_artifact_notification_sent"
+    ] is False
+    assert summary[
+        "source_refresh_trust_candidate_artifact_notification_verified"
+    ] is False
+    assert summary["errors"] == 1
+
+
+def test_scheduler_propertyquarry_ooda_stages_import_recovery_alert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+    from scripts import propertyquarry_ooda_source_refresh_trust_candidate_import as candidate_import
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: {
+            "status": "silent",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "request_state": "producer_refresh_staged",
+            "request_staged": True,
+            "request_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "handoff_state": "producer_pickup_available",
+            "handoff_available": True,
+            "handoff_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "claim_state": "unclaimed",
+            "settlement_state": "awaiting_current_evidence",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+            "progress": {"claim_count": 0},
+        },
+    )
+    monkeypatch.setattr(
+        candidate_import,
+        "inspect_candidate_import_readiness",
+        lambda *_args, **_kwargs: _verified_trust_candidate_import(
+            state="recovery_required"
+        ),
+    )
+    monkeypatch.setattr(
+        candidate_import,
+        "apply_candidate_import_presentation_state",
+        lambda report, **_kwargs: dict(report),
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert summary["source_refresh_trust_candidate_import_state"] == (
+        "recovery_required"
+    )
+    assert summary[
+        "source_refresh_trust_candidate_manual_action_staged"
+    ] is True
+    assert summary[
+        "source_refresh_trust_candidate_manual_action_interrupt_operator"
+    ] is True
+    assert summary[
+        "source_refresh_trust_candidate_artifact_notification_status"
+    ] == "action_required"
+    assert summary[
+        "source_refresh_trust_candidate_artifact_notification_would_send"
+    ] is True
+    assert summary[
+        "source_refresh_trust_candidate_artifact_notification_sent"
+    ] is False
+    assert summary["errors"] == 0
+
+
+def test_scheduler_propertyquarry_ooda_send_requires_explicit_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+
+    monkeypatch.setenv("PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED", "1")
+    monkeypatch.delenv("PROPERTYQUARRY_OODA_NOTIFICATION_PRINCIPAL_ID", raising=False)
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("incomplete delivery authority must fail before cycle execution")
+        ),
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert summary == {
+        "ran": False,
+        "status": "delivery_authority_incomplete",
+        "delivery_authorized": False,
+        "delivery_attempted": False,
+        "sent": False,
+        "would_send": False,
+        "action_required_count": 0,
+        "novel_action_count": 0,
+        "errors": 1,
+    }
+
+
+def test_scheduler_source_settlement_failure_preserves_prior_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+    from scripts import propertyquarry_ooda_source_refresh_settlement as settlement
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: {
+            "status": "silent",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        settlement,
+        "materialize_current_settlement_bundle",
+        lambda **_kwargs: {
+            "status": "blocked",
+            "settlement_state": "blocked",
+            "producer_completion_recorded": False,
+            "settlement_attributed": False,
+            "settlement_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    must_not_replace = lambda **_kwargs: (_ for _ in ()).throw(
+        AssertionError("a blocked settlement must preserve the prior chain")
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        must_not_replace,
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        must_not_replace,
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        must_not_replace,
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert summary["status"] == "silent"
+    assert summary["source_refresh_settlement_status"] == "blocked"
+    assert summary["source_refresh_request_status"] == "settlement_blocked"
+    assert summary["source_refresh_handoff_status"] == (
+        "settlement_or_request_blocked"
+    )
+    assert summary["source_refresh_claims_status"] == (
+        "settlement_or_handoff_blocked"
+    )
+    assert summary["errors"] == 1
+    assert summary["delivery_attempted"] is False
+    assert summary["sent"] is False
+
+
+def test_scheduler_propertyquarry_ooda_refresh_request_failure_blocks_witness_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: {
+            "status": "silent",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "blocked",
+            "request_state": "blocked",
+            "request_staged": False,
+            "request_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "blocked",
+            "handoff_state": "blocked",
+            "handoff_available": False,
+            "handoff_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        },
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        lambda **_kwargs: {
+            "status": "blocked",
+            "claim_state": "blocked",
+            "settlement_state": "unverified",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        },
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert summary["status"] == "silent"
+    assert summary["source_refresh_request_status"] == "blocked"
+    assert summary["source_refresh_request_staged"] is False
+    assert summary["source_refresh_request_receipt_persisted"] is False
+    assert summary["source_refresh_request_verification_persisted"] is False
+    assert summary["source_refresh_handoff_status"] == (
+        "settlement_or_request_blocked"
+    )
+    assert summary["source_refresh_handoff_available"] is False
+    assert summary["errors"] == 1
+    assert summary["delivery_authorized"] is False
+    assert summary["delivery_attempted"] is False
+    assert summary["sent"] is False
+
+
+def test_scheduler_propertyquarry_ooda_handoff_failure_blocks_witness_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: {
+            "status": "silent",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "request_state": "producer_refresh_staged",
+            "request_staged": True,
+            "request_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "blocked",
+            "handoff_state": "blocked",
+            "handoff_available": False,
+            "handoff_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        },
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        lambda **_kwargs: {
+            "status": "blocked",
+            "claim_state": "blocked",
+            "settlement_state": "unverified",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": False,
+            "verification_receipt_persisted": False,
+        },
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert summary["status"] == "silent"
+    assert summary["source_refresh_request_status"] == (
+        "producer_refresh_staged"
+    )
+    assert summary["source_refresh_handoff_status"] == "blocked"
+    assert summary["source_refresh_handoff_available"] is False
+    assert summary["source_refresh_handoff_receipt_persisted"] is False
+    assert summary["source_refresh_handoff_verification_persisted"] is False
+    assert summary["errors"] == 1
+    assert summary["delivery_authorized"] is False
+    assert summary["delivery_attempted"] is False
+    assert summary["sent"] is False
+
+
+def test_scheduler_propertyquarry_ooda_claim_failure_blocks_witness_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+
+    monkeypatch.delenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        notification_cycle,
+        "run_cycle_once",
+        lambda **_kwargs: {
+            "status": "silent",
+            "delivery_authorized": False,
+            "delivery_attempted": False,
+            "sent": False,
+            "would_send": False,
+            "action_required_count": 0,
+            "novel_action_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "request_state": "producer_refresh_staged",
+            "request_staged": True,
+            "request_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "handoff_state": "producer_pickup_available",
+            "handoff_available": True,
+            "handoff_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    observed: dict[str, object] = {}
+
+    def blocked_claims(**kwargs):
+        observed.update(kwargs)
+        return {
+            "status": "blocked",
+            "claim_state": "blocked",
+            "settlement_state": "unverified",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        }
+
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        blocked_claims,
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert observed["require_claim_dir"] is True
+    assert str(observed["claim_dir"]) == (
+        "/run/propertyquarry/ooda-producer-claims"
+    )
+    assert summary["source_refresh_claims_status"] == "blocked"
+    assert summary["source_refresh_claims_settlement_status"] == "unverified"
+    assert summary["source_refresh_producer_claim_recorded"] is False
+    assert summary["source_refresh_claims_receipt_persisted"] is True
+    assert summary["errors"] == 1
+    assert summary["delivery_authorized"] is False
+    assert summary["delivery_attempted"] is False
+    assert summary["sent"] is False
+
+
+def test_scheduler_propertyquarry_ooda_send_requires_both_explicit_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_notification_cycle as notification_cycle
+    from scripts import propertyquarry_ooda_source_refresh_claims as source_claims
+    from scripts import propertyquarry_ooda_source_refresh_handoff as source_handoff
+    from scripts import propertyquarry_ooda_source_refresh_request as source_refresh
+
+    monkeypatch.setenv("PROPERTYQUARRY_OODA_NOTIFICATION_SEND_ENABLED", "1")
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_PRINCIPAL_ID",
+        "propertyquarry-operator-test",
+    )
+    observed: dict[str, object] = {}
+
+    def _run_cycle_once(**kwargs):
+        observed.update(kwargs)
+        return {
+            "status": "completed",
+            "delivery_authorized": True,
+            "delivery_attempted": True,
+            "sent": True,
+            "would_send": False,
+            "action_required_count": 1,
+            "novel_action_count": 1,
+        }
+
+    monkeypatch.setattr(notification_cycle, "run_cycle_once", _run_cycle_once)
+    monkeypatch.setattr(
+        source_refresh,
+        "materialize_current_source_refresh_request_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "request_state": "current_sources_verified",
+            "request_staged": False,
+            "request_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_handoff,
+        "materialize_current_source_refresh_handoff_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "handoff_state": "current_sources_verified",
+            "handoff_available": False,
+            "handoff_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+        },
+    )
+    monkeypatch.setattr(
+        source_claims,
+        "materialize_current_claim_lifecycle_bundle",
+        lambda **_kwargs: {
+            "status": "verified",
+            "claim_state": "not_required",
+            "settlement_state": "current_evidence_verified",
+            "producer_claim_recorded": False,
+            "lifecycle_receipt_persisted": True,
+            "verification_receipt_persisted": True,
+            "progress": {"claim_count": 0},
+        },
+    )
+
+    summary = runner._run_scheduler_propertyquarry_ooda_notification_cycle(
+        logging.getLogger("test.runner")
+    )
+
+    assert observed["send"] is True
+    assert observed["principal_id"] == "propertyquarry-operator-test"
+    assert summary["delivery_authorized"] is True
+    assert summary["delivery_attempted"] is True
+    assert summary["sent"] is True
+    assert summary["errors"] == 0
+
+
+def test_scheduler_propertyquarry_ooda_bounds_interval_and_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    monkeypatch.setenv("EA_SCHEDULER_PROPERTYQUARRY_OODA_INTERVAL_SECONDS", "1")
+    monkeypatch.setenv("EA_SCHEDULER_PROPERTYQUARRY_OODA_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("EA_SCHEDULER_PROPERTYQUARRY_OODA_APPROVAL_MAX_AGE_SECONDS", "999999")
+
+    assert runner._scheduler_propertyquarry_ooda_interval_seconds() == 60.0
+    assert runner._scheduler_propertyquarry_ooda_timeout_seconds() == 15.0
+    assert runner._scheduler_propertyquarry_ooda_approval_max_age_seconds() == 86400.0
+
+
+def test_property_only_scheduler_loop_wires_ooda_cycle_through_watchdog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    source = inspect.getsource(runner._run_execution_worker)
+
+    assert "property_only_scheduler and _scheduler_propertyquarry_ooda_enabled()" in source
+    assert 'step_name="propertyquarry_ooda_notification_cycle"' in source
+    assert "_scheduler_propertyquarry_ooda_timeout_seconds()" in source
+    assert "_record_scheduler_propertyquarry_ooda_iteration(" in source
+    assert '"status": "iteration_exception"' in source
+
+
+def test_scheduler_propertyquarry_ooda_records_cycle_bound_iteration_witness(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_scheduler_witness as scheduler_witness
+
+    cycle_path = tmp_path / "latest.json"
+    witness_path = tmp_path / "scheduler-iteration.json"
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_OODA_NOTIFICATION_RECEIPT_PATH",
+        str(cycle_path),
+    )
+    monkeypatch.setenv(
+        "PROPERTYQUARRY_OODA_SCHEDULER_ITERATION_RECEIPT_PATH",
+        str(witness_path),
+    )
+    observed: dict[str, object] = {}
+
+    def persist(summary, **kwargs):
+        observed["summary"] = dict(summary)
+        observed.update(kwargs)
+        return {
+            "status": "completed",
+            "receipt_persisted": True,
+        }
+
+    monkeypatch.setattr(
+        scheduler_witness,
+        "persist_scheduler_iteration_receipt",
+        persist,
+    )
+    summary = {
+        "ran": True,
+        "status": "silent",
+        "delivery_authorized": False,
+        "delivery_attempted": False,
+        "sent": False,
+        "would_send": False,
+        "action_required_count": 0,
+        "novel_action_count": 0,
+        "errors": 0,
+    }
+
+    result = runner._record_scheduler_propertyquarry_ooda_iteration(
+        summary,
+        log=logging.getLogger("test.runner"),
+    )
+
+    assert observed["summary"] == summary
+    assert observed["receipt_path"] == witness_path
+    assert observed["cycle_receipt_path"] == cycle_path
+    assert observed["error_type"] == ""
+    assert result == {
+        "status": "completed",
+        "receipt_persisted": True,
+        "persistent_reevaluation_verified": False,
+    }
+
+
+def test_scheduler_propertyquarry_ooda_witness_failure_does_not_grant_continuity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner_module(monkeypatch)
+    from scripts import propertyquarry_ooda_scheduler_witness as scheduler_witness
+
+    monkeypatch.setattr(
+        scheduler_witness,
+        "persist_scheduler_iteration_receipt",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("witness unavailable")
+        ),
+    )
+
+    result = runner._record_scheduler_propertyquarry_ooda_iteration(
+        {
+            "ran": False,
+            "status": "iteration_exception",
+            "errors": 1,
+        },
+        log=logging.getLogger("test.runner"),
+        error_type="RuntimeError",
+    )
+
+    assert result == {
+        "status": "unavailable",
+        "receipt_persisted": False,
+        "persistent_reevaluation_verified": False,
+    }

@@ -14,16 +14,24 @@ ADMISSION_RECEIPT="${PROPERTYQUARRY_ADMISSION_DATABASE_RECEIPT:-${APP_ROOT}/stat
 IMAGE_RETENTION_RECEIPT="${PROPERTYQUARRY_IMAGE_RETENTION_RECEIPT:-${APP_ROOT}/state/release/propertyquarry-image-retention.v1.json}"
 PREFLIGHT_ONLY=0
 SKIP_BUILD=0
+EXPECTED_RUNTIME_COMMIT=""
+EXPECTED_ENVELOPE_COMMIT=""
+EXPECTED_WEB_IMAGE=""
+EXPECTED_RENDER_IMAGE=""
 
 usage() {
   /usr/bin/printf '%s\n' \
-    "Usage: scripts/deploy_propertyquarry.sh [--preflight-only] [--no-build]" \
+    "Usage: scripts/deploy_propertyquarry.sh [--preflight-only] [--no-build] [exact-release guards]" \
     "" \
     "Authoritative local-Docker PropertyQuarry deployment." \
     "GitHub Actions and remote runners are not used." \
     "" \
     "--preflight-only  Validate repository, environment, Compose and images without mutation." \
-    "--no-build        Deploy already-built immutable local images."
+    "--no-build        Deploy already-built immutable local images." \
+    "--expected-runtime-commit SHA  Require this exact release-manifest commit." \
+    "--expected-envelope-commit SHA Require this exact repository HEAD." \
+    "--expected-web-image DIGEST     Require this exact immutable web image." \
+    "--expected-render-image DIGEST  Require this exact immutable render image."
 }
 
 while (($#)); do
@@ -33,6 +41,26 @@ while (($#)); do
       ;;
     --no-build)
       SKIP_BUILD=1
+      ;;
+    --expected-runtime-commit)
+      [[ $# -ge 2 ]] || { /usr/bin/printf '%s\n' "Missing value for $1" >&2; exit 2; }
+      EXPECTED_RUNTIME_COMMIT="$2"
+      shift
+      ;;
+    --expected-envelope-commit)
+      [[ $# -ge 2 ]] || { /usr/bin/printf '%s\n' "Missing value for $1" >&2; exit 2; }
+      EXPECTED_ENVELOPE_COMMIT="$2"
+      shift
+      ;;
+    --expected-web-image)
+      [[ $# -ge 2 ]] || { /usr/bin/printf '%s\n' "Missing value for $1" >&2; exit 2; }
+      EXPECTED_WEB_IMAGE="$2"
+      shift
+      ;;
+    --expected-render-image)
+      [[ $# -ge 2 ]] || { /usr/bin/printf '%s\n' "Missing value for $1" >&2; exit 2; }
+      EXPECTED_RENDER_IMAGE="$2"
+      shift
       ;;
     --help|-h)
       usage
@@ -46,6 +74,43 @@ while (($#)); do
   esac
   shift
 done
+
+expected_release_guard_count=0
+for expected_release_value in \
+  "${EXPECTED_RUNTIME_COMMIT}" \
+  "${EXPECTED_ENVELOPE_COMMIT}" \
+  "${EXPECTED_WEB_IMAGE}" \
+  "${EXPECTED_RENDER_IMAGE}"; do
+  [[ -z "${expected_release_value}" ]] || ((expected_release_guard_count += 1))
+done
+if ((expected_release_guard_count != 0 && expected_release_guard_count != 4)); then
+  /usr/bin/printf '%s\n' \
+    "Exact-release guards must be supplied together." >&2
+  exit 2
+fi
+if ((expected_release_guard_count == 4)) && {
+  [[ ! "${EXPECTED_RUNTIME_COMMIT}" =~ ^[0-9a-f]{40}$ ]] ||
+  [[ ! "${EXPECTED_ENVELOPE_COMMIT}" =~ ^[0-9a-f]{40}$ ]] ||
+  [[ ! "${EXPECTED_WEB_IMAGE}" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+  [[ ! "${EXPECTED_RENDER_IMAGE}" =~ ^sha256:[0-9a-f]{64}$ ]];
+}; then
+  /usr/bin/printf '%s\n' "Exact-release guard value is not admissible." >&2
+  exit 2
+fi
+if ((expected_release_guard_count == 4 && SKIP_BUILD != 1)); then
+  /usr/bin/printf '%s\n' \
+    "Exact-release guarded deployment requires --no-build." >&2
+  exit 2
+fi
+
+if [[ -n "${PROPERTYQUARRY_GOVERNED_EXPECTED_DEPLOY_SCRIPT_SHA256:-}" ]]; then
+  if [[ ! "${PROPERTYQUARRY_GOVERNED_EXPECTED_DEPLOY_SCRIPT_SHA256}" =~ ^[0-9a-f]{64}$ ]] ||
+     [[ "$(/usr/bin/sha256sum -- "${BASH_SOURCE[0]}")" != "${PROPERTYQUARRY_GOVERNED_EXPECTED_DEPLOY_SCRIPT_SHA256}  ${BASH_SOURCE[0]}" ]]; then
+    /usr/bin/printf '%s\n' \
+      "Governed deploy script digest does not match the authorized preflight." >&2
+    exit 2
+  fi
+fi
 
 load_env_file() {
   local source_path="$1"
@@ -222,7 +287,7 @@ unexpected="$(
     /usr/bin/sort -u |
     while IFS= read -r service; do
       case "${service}" in
-        ""|propertyquarry-api|propertyquarry-migrate|propertyquarry-worker|propertyquarry-scheduler|propertyquarry-render-tools|propertyquarry-db|propertyquarry-backup|propertyquarry-cloudflared)
+        ""|propertyquarry-api|propertyquarry-migrate|propertyquarry-worker|propertyquarry-ooda-public-origin-observer|propertyquarry-ooda-stage|propertyquarry-scheduler|propertyquarry-render-tools|propertyquarry-db|propertyquarry-backup|propertyquarry-cloudflared)
           ;;
         *)
           /usr/bin/printf '%s\n' "${service}"
@@ -239,9 +304,51 @@ export PROPERTYQUARRY_API_CONTAINER_NAME="${PROPERTYQUARRY_API_CONTAINER_NAME:-p
 export PROPERTYQUARRY_DB_CONTAINER_NAME="${PROPERTYQUARRY_DB_CONTAINER_NAME:-propertyquarry-db-live}"
 export PROPERTYQUARRY_MIGRATE_CONTAINER_NAME="${PROPERTYQUARRY_MIGRATE_CONTAINER_NAME:-propertyquarry-migrate-live}"
 export PROPERTYQUARRY_WORKER_CONTAINER_NAME="${PROPERTYQUARRY_WORKER_CONTAINER_NAME:-propertyquarry-worker-live}"
+export PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_OBSERVER_CONTAINER_NAME="${PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_OBSERVER_CONTAINER_NAME:-propertyquarry-ooda-public-origin-observer-live}"
+export PROPERTYQUARRY_OODA_STAGE_CONTAINER_NAME="${PROPERTYQUARRY_OODA_STAGE_CONTAINER_NAME:-propertyquarry-ooda-stage-live}"
 export PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME="${PROPERTYQUARRY_SCHEDULER_CONTAINER_NAME:-propertyquarry-scheduler-live}"
 export PROPERTYQUARRY_RENDER_CONTAINER_NAME="${PROPERTYQUARRY_RENDER_CONTAINER_NAME:-propertyquarry-render-live}"
+export PROPERTYQUARRY_OODA_STAGE_UID="$(/usr/bin/id -u)"
+export PROPERTYQUARRY_OODA_STAGE_GID="$(/usr/bin/id -g)"
+export PROPERTYQUARRY_OODA_GOLD_SOURCE_DIR="${APP_ROOT}/_completion/property_gold_status"
+export PROPERTYQUARRY_OODA_SCENE_SOURCE_DIR="${APP_ROOT}/_completion/scene_video_readiness"
+export PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_SOURCE_DIR="${APP_ROOT}/_completion/propertyquarry_ooda_public_origin_observation"
+export PROPERTYQUARRY_OODA_SIGNAL_DIR="${APP_ROOT}/_completion/propertyquarry_ooda_signal_ingress"
+export PROPERTYQUARRY_OODA_STAGE_RECEIPT_DIR="${APP_ROOT}/_completion/propertyquarry_ooda_notification_cycle"
 export EA_RUNTIME_MODE=prod
+
+for ooda_source_dir in \
+  "${PROPERTYQUARRY_OODA_GOLD_SOURCE_DIR}" \
+  "${PROPERTYQUARRY_OODA_SCENE_SOURCE_DIR}"; do
+  if [[ -L "${ooda_source_dir}" ]] ||
+     [[ ! -d "${ooda_source_dir}" ]] ||
+     [[ "$(/usr/bin/stat -c '%u' "${ooda_source_dir}")" != "${PROPERTYQUARRY_OODA_STAGE_UID}" ]]; then
+    /usr/bin/printf 'PropertyQuarry OODA source directory is not operator-owned and admissible: %s\n' \
+      "${ooda_source_dir}" >&2
+    exit 2
+  fi
+done
+
+for ooda_source_file in \
+  "${PROPERTYQUARRY_OODA_GOLD_SOURCE_DIR}/latest.json" \
+  "${PROPERTYQUARRY_OODA_SCENE_SOURCE_DIR}/provider-refresh-packet.json" \
+  "${PROPERTYQUARRY_OODA_SCENE_SOURCE_DIR}/provider-refresh-packet-verifier.json" \
+  "${PROPERTYQUARRY_OODA_SCENE_SOURCE_DIR}/runtime-status.json"; do
+  if [[ -L "${ooda_source_file}" ]] ||
+     [[ ! -f "${ooda_source_file}" ]] ||
+     [[ "$(/usr/bin/stat -c '%u' "${ooda_source_file}")" != "${PROPERTYQUARRY_OODA_STAGE_UID}" ]] ||
+     [[ "$(/usr/bin/stat -c '%h' "${ooda_source_file}")" != "1" ]]; then
+    /usr/bin/printf 'PropertyQuarry OODA source file identity is not admissible: %s\n' \
+      "${ooda_source_file}" >&2
+    exit 2
+  fi
+  ooda_source_file_mode="$((8#$(/usr/bin/stat -c '%a' "${ooda_source_file}")))"
+  if ((ooda_source_file_mode & 8#022)); then
+    /usr/bin/printf 'PropertyQuarry OODA source file must not be peer-writable: %s\n' \
+      "${ooda_source_file}" >&2
+    exit 2
+  fi
+done
 
 release_compose_files=(
   --file docker-compose.property.yml
@@ -304,6 +411,17 @@ if [[ ! "${render_image}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   exit 2
 fi
 
+if ((expected_release_guard_count == 4)) && {
+  [[ "${runtime_sha}" != "${EXPECTED_RUNTIME_COMMIT}" ]] ||
+  [[ "${head_sha}" != "${EXPECTED_ENVELOPE_COMMIT}" ]] ||
+  [[ "${web_image}" != "${EXPECTED_WEB_IMAGE}" ]] ||
+  [[ "${render_image}" != "${EXPECTED_RENDER_IMAGE}" ]];
+}; then
+  /usr/bin/printf '%s\n' \
+    "Current release evidence does not match the explicitly authorized exact scope." >&2
+  exit 2
+fi
+
 export PROPERTYQUARRY_WEB_IMAGE="${web_image}"
 export PROPERTYQUARRY_RENDER_IMAGE="${render_image}"
 export PROPERTYQUARRY_RELEASE_REPOSITORY="${release_repository}"
@@ -325,6 +443,57 @@ if ((PREFLIGHT_ONLY == 1)); then
   /usr/bin/printf 'READY local Docker deployment runtime=%s envelope=%s web=%s render=%s\n' \
     "${runtime_sha}" "${head_sha}" "${web_image}" "${render_image}"
   exit 0
+fi
+
+if [[ -L "${PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_SOURCE_DIR}" ]]; then
+  /usr/bin/printf '%s\n' "PropertyQuarry public-origin observation directory must not be a symlink." >&2
+  exit 2
+fi
+if [[ -e "${PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_SOURCE_DIR}" ]]; then
+  ooda_public_origin_dir_mode="$((8#$(/usr/bin/stat -c '%a' "${PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_SOURCE_DIR}")))"
+  if [[ ! -d "${PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_SOURCE_DIR}" ]] ||
+     [[ "$(/usr/bin/stat -c '%u' "${PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_SOURCE_DIR}")" != "${PROPERTYQUARRY_OODA_STAGE_UID}" ]] ||
+     ((ooda_public_origin_dir_mode & 8#077)); then
+    /usr/bin/printf '%s\n' \
+      "PropertyQuarry public-origin observations must use an operator-owned private directory." >&2
+    exit 2
+  fi
+else
+  /usr/bin/install -d -m 0700 -- "${PROPERTYQUARRY_OODA_PUBLIC_ORIGIN_SOURCE_DIR}"
+fi
+
+if [[ -L "${PROPERTYQUARRY_OODA_SIGNAL_DIR}" ]]; then
+  /usr/bin/printf '%s\n' "PropertyQuarry OODA signal ingress directory must not be a symlink." >&2
+  exit 2
+fi
+if [[ -e "${PROPERTYQUARRY_OODA_SIGNAL_DIR}" ]]; then
+  ooda_signal_dir_mode="$((8#$(/usr/bin/stat -c '%a' "${PROPERTYQUARRY_OODA_SIGNAL_DIR}")))"
+  if [[ ! -d "${PROPERTYQUARRY_OODA_SIGNAL_DIR}" ]] ||
+     [[ "$(/usr/bin/stat -c '%u' "${PROPERTYQUARRY_OODA_SIGNAL_DIR}")" != "$(/usr/bin/id -u)" ]] ||
+     ((ooda_signal_dir_mode & 8#022)); then
+    /usr/bin/printf '%s\n' \
+      "PropertyQuarry OODA signal ingress must be an operator-owned non-peer-writable directory." >&2
+    exit 2
+  fi
+else
+  /usr/bin/install -d -m 0755 -- "${PROPERTYQUARRY_OODA_SIGNAL_DIR}"
+fi
+
+if [[ -L "${PROPERTYQUARRY_OODA_STAGE_RECEIPT_DIR}" ]]; then
+  /usr/bin/printf '%s\n' "PropertyQuarry OODA stage receipt directory must not be a symlink." >&2
+  exit 2
+fi
+if [[ -e "${PROPERTYQUARRY_OODA_STAGE_RECEIPT_DIR}" ]]; then
+  ooda_stage_receipt_dir_mode="$((8#$(/usr/bin/stat -c '%a' "${PROPERTYQUARRY_OODA_STAGE_RECEIPT_DIR}")))"
+  if [[ ! -d "${PROPERTYQUARRY_OODA_STAGE_RECEIPT_DIR}" ]] ||
+     [[ "$(/usr/bin/stat -c '%u' "${PROPERTYQUARRY_OODA_STAGE_RECEIPT_DIR}")" != "${PROPERTYQUARRY_OODA_STAGE_UID}" ]] ||
+     ((ooda_stage_receipt_dir_mode & 8#077)); then
+    /usr/bin/printf '%s\n' \
+      "PropertyQuarry OODA stage receipts must use an operator-owned private directory." >&2
+    exit 2
+  fi
+else
+  /usr/bin/install -d -m 0700 -- "${PROPERTYQUARRY_OODA_STAGE_RECEIPT_DIR}"
 fi
 
 /usr/bin/docker compose \

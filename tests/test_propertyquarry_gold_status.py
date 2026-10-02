@@ -8255,6 +8255,226 @@ def test_gold_status_blocks_when_live_mobile_coverage_check_fails(tmp_path: Path
     ]
     blocker = next(row for row in receipt["blockers"] if row["area"] == "live_mobile_surfaces")
     assert blocker["failed_coverage_checks"] == receipt["live_mobile_surfaces"]["failed_coverage_checks"]
+    assert receipt["live_mobile_surfaces"]["operator_action"] == {}
+    assert blocker["operator_action"] == {}
+    action_summary = gold_status.propertyquarry_operator_action_summary(receipt)
+    assert action_summary["action_required"] is False
+    assert action_summary["interrupt_operator"] is False
+    assert action_summary["reason"] == "no_pre_route_runtime_blocker"
+
+
+def test_gold_status_preserves_fresh_live_mobile_pre_route_runtime_blocker(tmp_path: Path) -> None:
+    generated_at = "2026-08-26T03:15:17+00:00"
+    runtime_blocker = "seed_research_detail_fixture_failed:HTTPError: HTTP Error 421: Misdirected Request"
+    args = _minimal_gold_receipt_args(tmp_path, generated_at=generated_at)
+    live_mobile = _write_json(
+        tmp_path / "live-mobile-blocked.json",
+        {
+            "generated_at": generated_at,
+            "status": "blocked",
+            "base_url": "http://127.0.0.1:8090",
+            "host_header": "propertyquarry.com",
+            "proof_mode": "hybrid_browser_static",
+            "route_count": 0,
+            "failed_count": 1,
+            "coverage_checks": [
+                {
+                    "name": "research_detail_seed_fixture_ready",
+                    "ok": False,
+                    "reason": (
+                        "Live mobile smoke could not seed the saved research-detail fixture, "
+                        "so it cannot honestly prove the open-property surface."
+                    ),
+                    "error": runtime_blocker,
+                }
+            ],
+            "routes": [],
+            "error": runtime_blocker,
+        },
+    )
+
+    receipt = build_gold_status_receipt(
+        **args,
+        live_mobile_receipt_path=live_mobile,
+        now=datetime(2026, 8, 26, 3, 20, tzinfo=timezone.utc),
+        max_receipt_age_hours=24,
+    )
+
+    surface = receipt["live_mobile_surfaces"]
+    assert receipt["status"] == "blocked"
+    assert surface["status"] == "blocked"
+    assert surface["generated_at"] == generated_at
+    assert surface["route_probe_blocked"] is True
+    assert surface["runtime_blocker"] == runtime_blocker
+    assert surface["failed_coverage_checks"][0]["error"] == runtime_blocker
+    assert all(
+        "blocked before required all-surface coverage" in row["reason"]
+        for row in surface["failed_coverage_checks"][1:]
+    )
+    assert not any("predates" in row["reason"] for row in surface["failed_coverage_checks"])
+    blocker = next(row for row in receipt["blockers"] if row["area"] == "live_mobile_surfaces")
+    assert blocker["generated_at"] == generated_at
+    assert blocker["route_probe_blocked"] is True
+    assert blocker["runtime_blocker"] == runtime_blocker
+    assert "do not treat their absence as a UI regression" in blocker["action"]
+    operator_action = surface["operator_action"]
+    assert operator_action["required"] is True
+    assert operator_action["interrupt_operator"] is True
+    assert operator_action["reason"] == "live_runtime_host_admission_rejected"
+    assert operator_action["source_fresh"] is True
+    assert operator_action["source_generated_at"] == generated_at
+    assert operator_action["runtime_blocker"] == runtime_blocker
+    assert operator_action["notification_policy"] == "action_required_only"
+    assert operator_action["provider_quota_consumption_allowed"] is False
+    assert operator_action["consent_gate"] == {
+        "required": True,
+        "automatic_execution_allowed": False,
+        "protected_operations": [
+            "runtime_configuration_change",
+            "deployment_or_restart",
+        ],
+    }
+    assert "stage" in operator_action["reversible_next_action"]
+    assert "explicitly authorized" in operator_action["reversible_next_action"]
+    assert blocker["operator_action"] == operator_action
+    action_summary = gold_status.propertyquarry_operator_action_summary(
+        receipt,
+        now=datetime(2026, 8, 26, 3, 20, tzinfo=timezone.utc),
+    )
+    assert action_summary["status"] == "action_required"
+    assert action_summary["action_required"] is True
+    assert action_summary["interrupt_operator"] is True
+    assert action_summary["reason"] == "live_runtime_host_admission_rejected"
+    assert action_summary["source_generated_at"] == generated_at
+    assert action_summary["consent_gate"] == operator_action["consent_gate"]
+    assert action_summary["provider_quota_consumption_allowed"] is False
+
+    stale_receipt = build_gold_status_receipt(
+        **args,
+        live_mobile_receipt_path=live_mobile,
+        now=datetime(2026, 8, 28, 3, 20, tzinfo=timezone.utc),
+        max_receipt_age_hours=24,
+    )
+    stale_action = stale_receipt["live_mobile_surfaces"]["operator_action"]
+    assert stale_action == {
+        "required": False,
+        "interrupt_operator": False,
+        "reason": "source_receipt_not_fresh",
+        "source_fresh": False,
+        "source_generated_at": generated_at,
+        "notification_policy": "suppress_stale_signal",
+        "provider_quota_consumption_allowed": False,
+    }
+    stale_summary = gold_status.propertyquarry_operator_action_summary(
+        stale_receipt,
+        now=datetime(2026, 8, 28, 3, 20, tzinfo=timezone.utc),
+    )
+    assert stale_summary == {
+        "status": "none",
+        "action_required": False,
+        "interrupt_operator": False,
+        "reason": "source_receipt_not_fresh",
+        "source_generated_at": generated_at,
+    }
+
+
+def test_gold_status_preserves_fresh_cloudflare_tunnel_runtime_blocker(tmp_path: Path) -> None:
+    generated_at = "2026-08-27T06:23:07+00:00"
+    edge_failure = {
+        "provider": "cloudflare",
+        "code": "1033",
+        "reason": "cloudflare_tunnel_unavailable",
+        "http_status": 530,
+    }
+    args = _minimal_gold_receipt_args(tmp_path, generated_at=generated_at)
+    live_mobile = _write_json(
+        tmp_path / "live-mobile-cloudflare-1033.json",
+        {
+            "generated_at": generated_at,
+            "status": "blocked",
+            "base_url": "https://propertyquarry.com",
+            "host_header": "",
+            "proof_mode": "hybrid_browser_static",
+            "route_count": 1,
+            "failed_count": 2,
+            "coverage_checks": [
+                {
+                    "name": "registry_mobile_customer_surfaces_covered",
+                    "ok": False,
+                    "reason": "routes were not evaluated beyond the public edge",
+                }
+            ],
+            "routes": [
+                {
+                    "route": "/",
+                    "status_code": 530,
+                    "ok": False,
+                    "metrics": {"edge_failure": edge_failure},
+                }
+            ],
+            "error": "cloudflare_error_1033_tunnel_unavailable",
+            "edge_failure": edge_failure,
+        },
+    )
+
+    receipt = build_gold_status_receipt(
+        **args,
+        live_mobile_receipt_path=live_mobile,
+        now=datetime(2026, 8, 27, 6, 24, tzinfo=timezone.utc),
+        max_receipt_age_hours=24,
+    )
+
+    surface = receipt["live_mobile_surfaces"]
+    assert receipt["status"] == "blocked"
+    assert surface["route_probe_blocked"] is True
+    assert surface["runtime_blocker"] == "cloudflare_error_1033_tunnel_unavailable"
+    assert surface["operator_action"]["required"] is True
+    assert surface["operator_action"]["interrupt_operator"] is True
+    assert surface["operator_action"]["reason"] == "live_runtime_tunnel_unavailable"
+    assert "Cloudflare tunnel connector recovery" in surface["operator_action"][
+        "reversible_next_action"
+    ]
+    assert "explicit deployment/restart authorization" in surface[
+        "operator_action"
+    ]["reversible_next_action"]
+    assert surface["operator_action"]["provider_quota_consumption_allowed"] is False
+    assert surface["operator_action"]["consent_gate"] == {
+        "required": True,
+        "automatic_execution_allowed": False,
+        "protected_operations": [
+            "runtime_configuration_change",
+            "deployment_or_restart",
+        ],
+    }
+
+
+def test_gold_status_rejects_unstructured_or_spoofed_cloudflare_blocker() -> None:
+    exact = {
+        "provider": "cloudflare",
+        "code": "1033",
+        "reason": "cloudflare_tunnel_unavailable",
+        "http_status": 530,
+    }
+    base = {
+        "status": "blocked",
+        "route_count": 1,
+        "routes": [
+            {
+                "status_code": 530,
+                "ok": False,
+                "metrics": {"edge_failure": exact},
+            }
+        ],
+        "coverage_checks": [],
+        "edge_failure": exact,
+    }
+    assert gold_status._live_mobile_route_probe_blocked(base) is True
+    assert gold_status._live_mobile_route_probe_blocked(
+        {**base, "edge_failure": {**exact, "provider": "example"}}
+    ) is False
+    assert gold_status._live_mobile_route_probe_blocked(
+        {**base, "routes": [{**base["routes"][0], "status_code": 200}]}
+    ) is False
 
 
 def test_gold_status_surfaces_whole_project_scope_receipt(tmp_path: Path) -> None:

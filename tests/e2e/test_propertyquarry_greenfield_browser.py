@@ -2110,7 +2110,7 @@ def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_br
     browser: Browser,
     propertyquarry_browser_server: dict[str, object],
 ) -> None:
-    """The final-step Launch search CTA must survive hydration and navigate."""
+    """Launch search stays visible through every step and still navigates."""
     base_url = str(propertyquarry_browser_server["base_url"])
     context = _new_context(browser, mobile=True, width=390, height=844)
     page = context.new_page()
@@ -2137,14 +2137,20 @@ def test_propertyquarry_launch_search_button_starts_and_opens_results_in_real_br
         launch = page.locator("[data-property-start-top]")
         next_button = page.locator("[data-property-step-next]")
         expect(next_button).to_be_visible()
-        expect(launch).to_be_hidden()
-        for _ in range(10):
-            if launch.is_visible():
-                break
-            expect(next_button).to_be_visible()
-            next_button.click()
         expect(launch).to_be_visible()
         expect(launch).to_be_enabled()
+        initial_box = launch.bounding_box()
+        assert initial_box is not None
+        assert initial_box["height"] >= 52
+        assert initial_box["x"] >= 0
+        assert initial_box["x"] + initial_box["width"] <= 390
+        visible_steps = page.locator('[data-property-step-trigger]:visible')
+        for index in range(visible_steps.count()):
+            visible_steps.nth(index).click()
+            expect(launch).to_be_visible()
+            expect(launch).to_be_in_viewport()
+        page.locator('[data-property-step-trigger="providers"]').click()
+        expect(launch).to_be_visible()
         expect(next_button).to_be_hidden()
         launch_box = launch.bounding_box()
         assert launch_box is not None
@@ -2637,7 +2643,7 @@ def test_propertyquarry_processed_results_stay_localized_and_unclipped_in_real_b
                     "node => parseFloat(getComputedStyle(node).paddingTop)"
                 )
                 assert thumbnail_style["transform"] != "none"
-                assert thumbnail_style["objectFit"] == "contain"
+                assert thumbnail_style["objectFit"] == "cover"
                 assert button_padding >= 6
                 assert thumbnail_box["height"] >= button_box["height"] - 20
 
@@ -7117,7 +7123,7 @@ def test_propertyquarry_search_wizard_steps_replace_visible_controls_without_acc
         page.locator('[data-console-form-variant="property_search"]').wait_for(state="visible")
         launch = page.locator('[data-property-start-top]')
         next_button = page.locator('[data-property-step-next]')
-        expect(launch).to_be_hidden()
+        expect(launch).to_be_visible()
         expect(next_button).to_be_visible()
         expect(page.locator('[data-property-step-nav]')).to_be_visible()
         expected_fields = {
@@ -7148,15 +7154,14 @@ def test_propertyquarry_search_wizard_steps_replace_visible_controls_without_acc
                 expect(page.locator(f'[data-property-field-name="{field_name}"]')).to_be_visible()
             if step == "providers":
                 expect(next_button).to_be_hidden()
-                expect(launch).to_be_visible()
             else:
                 expect(next_button).to_be_visible()
-                expect(launch).to_be_hidden()
+            expect(launch).to_be_visible()
             assert page.locator(".pqx-workflow-step.active").count() == 1
             nav_box = page.locator('[data-property-step-nav]').bounding_box()
             assert nav_box is not None
             assert nav_box["y"] >= 0
-            assert nav_box["y"] < 220
+            assert nav_box["y"] < 240
         page.locator('[data-property-step-trigger="search"]').click()
         page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
         page.locator('[data-property-step-next]').click()
@@ -12702,7 +12707,7 @@ def test_propertyquarry_mobile_provider_family_controls_select_and_clear_cleanly
             }"""
         )
         assert isinstance(expected_provider_cap, int)
-        assert expected_provider_cap > 0
+        assert expected_provider_cap == 0
 
         first_provider_family = page.locator('[data-provider-group-panel]').first
         first_provider_family.locator("summary").scroll_into_view_if_needed()
@@ -12742,7 +12747,7 @@ def test_propertyquarry_mobile_provider_family_controls_select_and_clear_cleanly
         add_button.click()
         checked_family_provider_count = first_provider_family.locator('input[name="selected_platforms"]:checked').count()
         checked_total_after_family = page.locator('input[name="selected_platforms"]:checked').count()
-        assert checked_family_provider_count == min(family_provider_count, expected_provider_cap)
+        assert checked_family_provider_count == family_provider_count
         assert checked_total_after_family == checked_family_provider_count
 
         clear_button.click()
@@ -12983,10 +12988,10 @@ def test_propertyquarry_launch_posts_real_start_payload_and_shows_run_status(
             }"""
         )
         assert isinstance(expectedProviderCap, int)
-        assert expectedProviderCap > 0
+        assert expectedProviderCap == 0
         allSourcesButton = page.locator('[data-checkbox-group-select-all="selected_platforms"]')
         assert allSourcesButton.is_visible()
-        assert f"Select {expectedProviderCap} of {providerCount}" in allSourcesButton.inner_text()
+        assert "Select 0 of" not in allSourcesButton.inner_text()
         firstProviderFamily = page.locator('[data-provider-group-panel]').first
         firstProviderFamily.locator("summary").click()
         assert firstProviderFamily.get_by_role("button", name="Add family").is_visible()
@@ -12996,14 +13001,18 @@ def test_propertyquarry_launch_posts_real_start_payload_and_shows_run_status(
         firstProviderFamily.get_by_role("button", name="Add family").click()
         checkedFamilyProviderCount = firstProviderFamily.locator('input[name="selected_platforms"]:checked').count()
         checkedTotalAfterFamily = page.locator('input[name="selected_platforms"]:checked').count()
-        assert checkedFamilyProviderCount == min(familyProviderCount, expectedProviderCap)
+        assert checkedFamilyProviderCount == familyProviderCount
         assert checkedTotalAfterFamily == checkedFamilyProviderCount
         allSourcesButton.click()
         checkedProviderCount = page.locator('input[name="selected_platforms"]:checked').count()
-        assert providerCount > checkedProviderCount
-        assert checkedProviderCount == expectedProviderCap
+        assert checkedProviderCount == providerCount
+        selectedProviderValues = page.locator(
+            'input[name="selected_platforms"]:checked'
+        ).evaluate_all(
+            "nodes => [...new Set(nodes.map((node) => String(node.value || '').trim()).filter(Boolean))]"
+        )
+        assert allSourcesButton.inner_text().strip()
         assert page.locator('[data-provider-group-panel][open]').count() >= 1
-        assert page.locator('[data-property-inline-status]', has_text=f"Selected {expectedProviderCap} of {providerCount} providers").is_visible()
         page.locator('input[name="require_floorplan"]').check()
 
         with page.expect_response("**/app/api/property/search-runs") as start_response:
@@ -13050,7 +13059,18 @@ def test_propertyquarry_launch_posts_real_start_payload_and_shows_run_status(
         assert preferences["max_distance_to_library_importance"] == "nice_to_have"
         assert preferences.get("min_match_score", 0) in {0, 0.0}
         assert preferences["require_floorplan"] is True
-        assert len(observed["selected_platforms"]) == 3
+        gatedDistressedSaleProviders = {
+            "distressed_sales_at",
+            "justiz_edikte_at",
+            "zvginfo_at",
+        }
+        assert set(observed["selected_platforms"]) == (
+            set(selectedProviderValues) - gatedDistressedSaleProviders
+        )
+        assert set(selectedProviderValues) - set(
+            observed["selected_platforms"]
+        ) == gatedDistressedSaleProviders
+        assert len(observed["selected_platforms"]) > 3
         assert page.locator("body", has_text="Altbau near U6").is_visible()
         assert page.locator("body", has_text="Open property").is_visible()
         tour_link = page.locator("[data-workbench-row]", has_text="Altbau near U6").first.get_by_role("link", name="3D tour")

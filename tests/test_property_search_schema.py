@@ -131,6 +131,8 @@ def _relations_for(version: int) -> set[str]:
         }
     if version == 20:
         return {"idx_property_search_work_principal_run"}
+    if version == 21:
+        return {"idx_property_search_work_priority_available"}
     raise AssertionError(f"unexpected migration version: {version}")
 
 
@@ -1581,4 +1583,5 @@ def test_migration_checksums_are_stable_and_unique() -> None:
         "eae758d281c5447d984f15e7d367e3fb181d06f79b6f0b5d277d6b91a2d455e8",
         "3cee796e77912373a948ee9d9f4613ace502374cad74e753b5073f46366aa96a",
         "abbe200c888213b41c99c432e523056090b94a83bfc8c8de5eaa436f90199e42",
+        "997cb1c1f0a3532f9efa0012e33bbbac0fd8af67eec207ebbaae14a395de60a0",
     ]

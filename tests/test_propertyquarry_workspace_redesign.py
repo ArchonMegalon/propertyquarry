@@ -338,10 +338,10 @@ def test_property_mobile_search_header_and_district_picker_stay_compact() -> Non
     assert "progress.hidden = isMobileSearch;" in workbench_script
     assert "const saveHidden = isMobileSearch;" in workbench_script
     assert "next.dataset.pqxStepMode = 'advance';" in workbench_script
-    assert "const isProviderStep = stepKey === 'providers';" in workbench_script
-    assert "const launchVisible = isFinalStep || isProviderStep;" in workbench_script
-    assert "launch.hidden = !launchVisible;" in workbench_script
-    assert 'class="pqx-button primary pqx-provider-launch"' in workbench
+    assert "launch.hidden = false;" in workbench_script
+    assert "launch.setAttribute('aria-hidden', 'false');" in workbench_script
+    assert 'class="pqx-button primary pqx-persistent-launch"' in workbench
+    assert 'flex: 1 0 100% !important;' in workbench
     assert 'min-height: 52px !important;' in workbench
     assert "launch.dataset.pqxStepMode = 'launch';" in workbench_script
     assert "localizedWorkbenchCopy('step-next', 'Next')" in workbench_script
@@ -6590,10 +6590,10 @@ def test_property_results_keep_remote_thumbnails_no_referrer_with_fallbacks() ->
     workbench_template = (repo_root / "ea/app/templates/app/property_decision_workbench.html").read_text(encoding="utf-8")
     workbench_script = (repo_root / "ea/app/templates/app/_property_workbench_script.html").read_text(encoding="utf-8")
 
-    assert "diorama_preview_url if diorama_preview_url.startswith('/') else ''" in results_template
+    assert "diorama_preview_url if (diorama_preview_url.startswith('/') or diorama_preview_url.startswith('https://')) else ''" in results_template
     assert "primary_preview_url.startswith('https://')" in results_template
     assert "if not shortlist_preview_url %} is-placeholder" in results_template
-    assert "{% if shortlist_preview_url %}" in results_template
+    assert "{% elif shortlist_preview_url %}" in results_template
     assert 'src="{{ shortlist_preview_url }}"' in results_template
     assert 'data-pqx-deferred-src="{{ shortlist_preview_url }}"' in results_template
     assert "diorama_preview_url or primary_preview_url" in results_template

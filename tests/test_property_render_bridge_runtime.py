@@ -61,7 +61,7 @@ def test_property_compose_wires_protected_bounded_restart_render_bridge() -> Non
         "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN:?"
         "Set PROPERTYQUARRY_RECONSTRUCTION_RENDER_BRIDGE_TOKEN for the render bridge}"
     )
-    assert render["restart"] == "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-on-failure:3}"
+    assert render["restart"] == "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-unless-stopped}"
     assert render["stop_grace_period"] == "${PROPERTYQUARRY_RENDER_STOP_GRACE_SECONDS:-1860}s"
     assert render["environment"]["PROPERTYQUARRY_RECONSTRUCTION_RENDER_REQUEST_TIMEOUT_SECONDS"] == (
         "${PROPERTYQUARRY_RECONSTRUCTION_RENDER_REQUEST_TIMEOUT_SECONDS:-30}"

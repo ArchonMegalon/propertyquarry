@@ -2356,6 +2356,25 @@ WHERE COALESCE(
 """
 
 
+_PAID_FIRST_BOUNDED_WORK_QUEUE_SCHEMA_V21 = r"""
+ALTER TABLE property_search_work_jobs
+ADD COLUMN priority_class SMALLINT NOT NULL DEFAULT 0;
+
+ALTER TABLE property_search_work_jobs
+ADD CONSTRAINT property_search_work_priority_class_valid
+CHECK (priority_class IN (0, 100));
+
+CREATE INDEX idx_property_search_work_priority_available
+ON property_search_work_jobs(
+    priority_class DESC,
+    available_at ASC,
+    created_at ASC,
+    job_id ASC
+)
+WHERE status IN ('queued', 'leased');
+"""
+
+
 PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
     PropertySearchMigration(1, "property_search_runs_tenant_schema", _RUN_SCHEMA_V1),
     PropertySearchMigration(
@@ -2442,6 +2461,11 @@ PROPERTY_SEARCH_MIGRATIONS: tuple[PropertySearchMigration, ...] = (
         20,
         "durable_fact_enrichment_work",
         _DURABLE_FACT_ENRICHMENT_WORK_SCHEMA_V20,
+    ),
+    PropertySearchMigration(
+        21,
+        "paid_first_bounded_work_queue",
+        _PAID_FIRST_BOUNDED_WORK_QUEUE_SCHEMA_V21,
     ),
 )
 LATEST_PROPERTY_SEARCH_SCHEMA_VERSION = PROPERTY_SEARCH_MIGRATIONS[-1].version

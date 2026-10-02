@@ -195,12 +195,51 @@ def _hosted_tour_unavailable_detail() -> str:
     return "For now, no usable 3D tour is available yet."
 
 
+def _materialize_oversized_inline_preview(url: str, *, max_materialized_bytes: int = 2000000) -> str:
+    """Materialize an oversized inline data URL into the map-preview cache.
+
+    Oversized inline base64 previews must never ride along in the workspace
+    payload. The decoded image is cached content-addressed (sha1 of the base64
+    payload) under the shared map-previews artifact directory and served
+    through the /app/api/property/map-previews/ proxy instead. When the cache
+    is unwritable the proxy URL is still returned - the preview route serves a
+    graceful placeholder for cache misses - and undecodable payloads keep the
+    legacy drop behaviour.
+    """
+    try:
+        import base64
+        import hashlib
+        import os
+        from pathlib import Path
+
+        header, separator, b64_payload = url.partition(",")
+        if not separator or not b64_payload:
+            return ""
+        preview_id = hashlib.sha1(b64_payload.encode("ascii", "ignore")).hexdigest()
+        try:
+            decoded = base64.b64decode(b64_payload, validate=False)
+        except Exception:
+            return ""
+        if not decoded or len(decoded) > max_materialized_bytes:
+            return ""
+        try:
+            artifacts_root = os.environ.get("EA_ARTIFACTS_DIR") or "/data/artifacts"
+            cache_root = Path(artifacts_root) / "map_previews"
+            cache_root.mkdir(parents=True, exist_ok=True)
+            (cache_root / (preview_id + ".png")).write_bytes(decoded)
+        except OSError:
+            pass
+        return "/app/api/property/map-previews/" + preview_id + ".png"
+    except Exception:
+        return ""
+
+
 def _property_workbench_lightweight_image_url(value: object, *, max_data_url_chars: int = 4096) -> str:
     url = str(value or "").strip()
     if not url:
         return ""
     if url.lower().startswith("data:") and len(url) > max_data_url_chars:
-        return ""
+        return _materialize_oversized_inline_preview(url)
     return url
 
 

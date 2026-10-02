@@ -56,7 +56,7 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
     }
 
     expected = {
-        "propertyquarry-api": ("1536m", 128, "${PROPERTYQUARRY_API_RESTART_POLICY:-on-failure:3}"),
+        "propertyquarry-api": ("1536m", 128, "${PROPERTYQUARRY_API_RESTART_POLICY:-unless-stopped}"),
         "propertyquarry-migrate": ("768m", 64, "no"),
         "propertyquarry-worker": (
             "4g",
@@ -66,17 +66,17 @@ def test_primary_propertyquarry_compose_bounds_every_process() -> None:
         "propertyquarry-scheduler": (
             "1536m",
             128,
-            "${PROPERTYQUARRY_SCHEDULER_RESTART_POLICY:-on-failure:3}",
+            "${PROPERTYQUARRY_SCHEDULER_RESTART_POLICY:-unless-stopped}",
         ),
         "propertyquarry-render-tools": (
             "4g",
             256,
-            "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-on-failure:3}",
+            "${PROPERTYQUARRY_RENDER_RESTART_POLICY:-unless-stopped}",
         ),
         "propertyquarry-db": (
             "1536m",
             128,
-            "${PROPERTYQUARRY_DB_RESTART_POLICY:-on-failure:3}",
+            "${PROPERTYQUARRY_DB_RESTART_POLICY:-unless-stopped}",
         ),
         "propertyquarry-backup": (
             "512m",
@@ -234,7 +234,7 @@ def test_propertyquarry_tunnel_is_bounded_and_read_only() -> None:
         service,
         memory_default="128m",
         pids_default=64,
-        restart_default="${PROPERTYQUARRY_CLOUDFLARED_RESTART_POLICY:-on-failure:3}",
+        restart_default="${PROPERTYQUARRY_CLOUDFLARED_RESTART_POLICY:-unless-stopped}",
     )
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
