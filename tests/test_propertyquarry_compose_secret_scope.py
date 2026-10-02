@@ -75,8 +75,15 @@ def test_long_lived_property_services_do_not_inherit_3dvista_login_secrets() -> 
         assert {
             key: environment.get(key)
             for key in PHYGITAL_SECRET_KEYS
-        } == {key: "" for key in PHYGITAL_SECRET_KEYS}
+        } == {key: f"${{{key}:-}}" for key in PHYGITAL_SECRET_KEYS}
         assert environment.get("PROPERTYQUARRY_PHYGITAL_GENERATE") in {"0", "${PROPERTYQUARRY_PHYGITAL_GENERATE:-0}"}
+
+
+def test_phygital_credential_lines_use_operator_passthrough_only() -> None:
+    source = COMPOSE_PATH.read_text(encoding="utf-8")
+    for key in PHYGITAL_SECRET_KEYS:
+        assert source.count(f'      {key}: ""') == 0
+        assert source.count(f'{key}: "${{{key}:-}}"') == len(LONG_LIVED_SERVICES)
 
 
 def test_compose_maps_each_database_secret_to_only_its_service_lane() -> None:
