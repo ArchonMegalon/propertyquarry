@@ -8869,14 +8869,14 @@ def test_property_scout_clamps_requested_match_score_to_free_plan_cap(monkeypatc
 
     def _fake_assess_candidate(**kwargs):
         object_id = str(kwargs.get("object_id") or "")
-        score = 30.0 if object_id.endswith("below-free") else 40.0
+        score = 30.0 if object_id.endswith("below-free") else 70.0
         return {
             "fit_score": score,
             "confidence": 0.8,
             "predicted_reaction": "consider",
             "recommendation": "view_if_compelling",
-            "match_reasons_json": ["Above the free threshold."] if score > 35 else [],
-            "mismatch_reasons_json": [] if score > 35 else ["Below the free threshold."],
+            "match_reasons_json": ["Above the free threshold."] if score > 65 else [],
+            "mismatch_reasons_json": [] if score > 65 else ["Below the free threshold."],
             "unknowns_json": [],
             "blocking_constraints_json": [],
         }
@@ -8895,10 +8895,10 @@ def test_property_scout_clamps_requested_match_score_to_free_plan_cap(monkeypatc
 
     assert result["listing_total"] == 2
     assert result["high_match_min_score"] == 0.0
-    assert result["max_match_score"] == 35
+    assert result["max_match_score"] == 60
     assert result["sources"][0]["filtered_low_fit_total"] == 0
     assert result["sources"][0]["high_match_min_score"] == 0.0
-    assert result["sources"][0]["max_match_score"] == 35
+    assert result["sources"][0]["max_match_score"] == 60
     assert result["sources"][0]["top_candidates"][0]["title"] == "Apartment just above free threshold"
     assert result["sources"][0]["top_candidates"][1]["title"] == "Apartment below free threshold"
     assert result["sources"][0]["top_candidates"][1]["below_match_threshold"] is False
@@ -19325,7 +19325,7 @@ def test_property_visual_status_keeps_polling_while_rendering(monkeypatch) -> No
 
     assert response["status"] == "rendering"
     assert response["status_label"] == "3D tour rendering"
-    assert response["status_detail"] == "Rendering."
+    assert response["status_detail"] == "Priority queue active. Rendering."
     assert response["eta_label"]
     assert response["progress_pct"] >= 58
     assert response["poll_after_seconds"] == 10

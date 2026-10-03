@@ -5,7 +5,7 @@ import urllib.parse
 from datetime import datetime, timezone
 from typing import Callable
 
-from app.services.property_billing import normalize_property_plan_key, property_commercial_snapshot, property_plan_has_unlimited_provider_results
+from app.services.property_billing import normalize_property_plan_key, property_commercial_snapshot, property_plan_has_unlimited_provider_results, property_worker_cap
 from app.services.property_customer_copy import sanitize_property_marketing_copy, summarize_property_description_copy
 from app.services.property_market_catalog import supported_currency_codes
 from app.services.property_search_visibility import (
@@ -2344,7 +2344,7 @@ def build_property_run_live_board_snapshot(
         seen_groups.add(key)
         worker_queue.append(row)
     normalized_plan_key = normalize_property_plan_key(plan_key)
-    plan_cap = 4 if normalized_plan_key == "agent" else (2 if normalized_plan_key == "plus" else 1)
+    plan_cap = max(1, int(property_worker_cap(normalized_plan_key) or 1))
     provider_workers = dict(summary.get("provider_workers") or {}) if isinstance(summary.get("provider_workers"), dict) else {}
     configured_workers = _positive_int(provider_workers.get("worker_concurrency"))
     run_active = progress > 0 or status in {"queued", "in_progress", "running", "processing", "starting"}
