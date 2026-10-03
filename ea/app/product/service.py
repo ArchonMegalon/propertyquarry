@@ -48567,7 +48567,7 @@ class ProductService:
         )
         commercial_snapshot = property_commercial_snapshot(property_preferences)
         plan_key = normalize_property_plan_key(commercial_snapshot.get("current_plan_key") or "free")
-        priority_queue_active = plan_key in {"plus", "agent"}
+        priority_queue_active = plan_key in {"free", "plus", "agent"}
         visual_worker_limit = max(1, min(4, int(property_worker_cap(plan_key) or 1)))
         if not normalized_property_url:
             raise ValueError("property_tour_url_missing")
@@ -49265,7 +49265,7 @@ class ProductService:
         ) if normalized_principal else {}
         commercial_snapshot = property_commercial_snapshot(property_preferences)
         plan_key = normalize_property_plan_key(commercial_snapshot.get("current_plan_key") or "free")
-        priority_queue_active = plan_key in {"plus", "agent"}
+        priority_queue_active = plan_key in {"free", "plus", "agent"}
         if not normalized_principal:
             raise ValueError("property_visual_status_run_missing")
         snapshot: dict[str, object] = {}

@@ -83,9 +83,35 @@ def property_plan_has_unlimited_provider_results(plan_key: object, max_results_p
     return result_cap <= 0
 
 
+PROPERTY_PLAN_PARITY_FIELDS = (
+    "max_platforms",
+    "max_results_per_source",
+    "search_agent_limit",
+    "max_match_score",
+    "research_depth",
+    "investment_research_level",
+    "furniture_style_limit",
+    "magic_fit_scene_limit",
+    "magic_fit_video_limit",
+    "magic_fit_scene_period",
+    "magic_fit_video_period",
+    "auto_tour_policy",
+)
+
+
+def property_plans_equivalent(left: str, right: str) -> bool:
+    """True when two plan specs match on every parity field."""
+    left_spec = property_plan_spec(left)
+    right_spec = property_plan_spec(right)
+    for field in PROPERTY_PLAN_PARITY_FIELDS:
+        if getattr(left_spec, field) != getattr(right_spec, field):
+            return False
+    return True
+
+
 def property_worker_cap(plan_key: object) -> int:
     normalized = normalize_property_plan_key(plan_key)
-    return {"free": 1, "plus": 2, "agent": 4}.get(normalized, 1)
+    return {"free": 4, "plus": 2, "agent": 4}.get(normalized, 4)
 
 
 def property_furniture_style_cap(plan_key: object) -> int:
@@ -126,21 +152,21 @@ _FREE_PLAN = PropertyPlanSpec(
     pass_days=0,
     max_platforms=0,
     max_results_per_source=0,
-    search_agent_limit=1,
-    max_match_score=35,
-    research_depth="standard",
-    investment_research_level="none",
+    search_agent_limit=0,
+    max_match_score=60,
+    research_depth="deep",
+    investment_research_level="full",
     furniture_style_limit=property_furniture_style_cap("free"),
-    magic_fit_scene_limit=1,
-    magic_fit_video_limit=1,
-    magic_fit_scene_period="week",
-    magic_fit_video_period="day",
-    auto_tour_policy="hero_only",
+    magic_fit_scene_limit=0,
+    magic_fit_video_limit=0,
+    magic_fit_scene_period="none",
+    magic_fit_video_period="none",
+    auto_tour_policy="all_opt_in",
     features=(
-        "all supported listing providers per run",
-        "standard research on the shortlisted results",
-        "one saved search",
-        "one 3D reconstruction floor plan per week and one interior flythrough per day",
+        "all supported listing providers per run with paid queue priority",
+        "deep research and follow-up readiness",
+        "unlimited saved searches",
+        "opt-in 3D reconstruction floor plans and interior flythroughs for every found property",
     ),
 )
 

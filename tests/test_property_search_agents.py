@@ -898,7 +898,7 @@ def test_property_search_agent_update_rejects_unknown_agent() -> None:
     assert missing.json()["error"]["code"] == "property_search_agent_not_found"
 
 
-def test_property_search_agent_plan_limits_are_enforced() -> None:
+def test_property_search_agent_plan_limits_admit_free_unlimited() -> None:
     raw_agents = [
         {"agent_id": f"agent-{index}", "name": f"Search {index}", "country_code": "AT", "location_query": "Wien"}
         for index in range(30)
@@ -937,12 +937,12 @@ def test_property_search_agent_plan_limits_are_enforced() -> None:
         }
     )
 
-    assert len(free_agents) == 1
+    assert len(free_agents) == 30
     assert len(plus_agents) == 3
     assert len(agent_agents) == 30
 
 
-def test_property_search_preferences_preserve_agents_beyond_execution_plan_limit() -> None:
+def test_property_search_preferences_execute_all_free_agents_at_parity() -> None:
     raw_agents = [
         {
             "agent_id": f"agent-{index}",
@@ -968,7 +968,11 @@ def test_property_search_preferences_preserve_agents_beyond_execution_plan_limit
         "agent-1",
         "agent-2",
     ]
-    assert [agent["agent_id"] for agent in execution_agents] == ["agent-0"]
+    assert [agent["agent_id"] for agent in execution_agents] == [
+        "agent-0",
+        "agent-1",
+        "agent-2",
+    ]
 
 
 def test_preexisting_agents_survive_free_plan_save_load_and_landing() -> None:
@@ -1005,7 +1009,7 @@ def test_preexisting_agents_survive_free_plan_save_load_and_landing() -> None:
 
     assert saved.status_code == 200, saved.text
     saved_preferences = dict(saved.json()["property_search_preferences"])
-    assert OnboardingService._property_search_agent_limit(saved_preferences) == 1
+    assert OnboardingService._property_search_agent_limit(saved_preferences) == 0
     assert [row["agent_id"] for row in saved_preferences["search_agents"]] == [
         "agent-0",
         "agent-1",
@@ -1023,12 +1027,17 @@ def test_preexisting_agents_survive_free_plan_save_load_and_landing() -> None:
     assert page.status_code == 200
     assert all(agent["name"] in page.text for agent in raw_agents)
 
+    before_count = len(loaded.json()["property_search_preferences"]["search_agents"])
     duplicate = client.post(
         "/v1/onboarding/property-search/agents/agent-0",
         json={"action": "duplicate"},
     )
-    assert duplicate.status_code == 400
-    assert "property_search_agent_limit_reached:1" in duplicate.text
+    assert duplicate.status_code == 200, duplicate.text
+    reloaded = client.get(
+        "/v1/onboarding/property-search/preferences"
+    )
+    assert reloaded.status_code == 200, reloaded.text
+    assert len(reloaded.json()["property_search_preferences"]["search_agents"]) == before_count + 1
 
 
 def test_property_search_agent_payloads_do_not_embed_other_agents() -> None:

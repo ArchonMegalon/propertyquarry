@@ -1441,11 +1441,11 @@ def test_free_property_plan_keeps_providers_and_visible_results_uncapped() -> No
     snapshot = property_commercial_snapshot({})
 
     assert snapshot["current_plan_key"] == "free"
-    assert snapshot["research_depth"] == "standard"
-    assert snapshot["investment_research_level"] == "none"
+    assert snapshot["research_depth"] == "deep"
+    assert snapshot["investment_research_level"] == "full"
     assert snapshot["max_platforms"] == 0
     assert snapshot["max_results_per_source"] == 0
-    assert snapshot["max_match_score"] == 35
+    assert snapshot["max_match_score"] == 60
 
 
 def test_agent_property_plan_exposes_unlimited_results_per_provider() -> None:
@@ -2061,7 +2061,7 @@ def test_property_candidate_google_maps_url_uses_listing_text_postal_over_dirty_
 
 
 def test_property_worker_caps_follow_plan() -> None:
-    assert property_worker_cap("free") == 1
+    assert property_worker_cap("free") == 4
     assert property_worker_cap("plus") == 2
     assert property_worker_cap("agent") == 4
 
@@ -3005,12 +3005,12 @@ def test_findmyhome_result_cards_extract_short_detail_urls() -> None:
 def test_free_property_plan_uses_declared_visual_generation_caps() -> None:
     snapshot = property_commercial_snapshot({})
 
-    assert snapshot["magic_fit_scene_limit"] == 1
-    assert snapshot["magic_fit_video_limit"] == 1
-    assert snapshot["magic_fit_scene_period"] == "week"
-    assert snapshot["magic_fit_video_period"] == "day"
+    assert snapshot["magic_fit_scene_limit"] == 0
+    assert snapshot["magic_fit_video_limit"] == 0
+    assert snapshot["magic_fit_scene_period"] == "none"
+    assert snapshot["magic_fit_video_period"] == "none"
     free_plan = next(plan for plan in snapshot["plan_catalog"] if plan["plan_key"] == "free")
-    assert "one 3D reconstruction floor plan per week and one interior flythrough per day" in free_plan["features"]
+    assert "opt-in 3D reconstruction floor plans and interior flythroughs for every found property" in free_plan["features"]
 
 
 class _QuotaRow:
@@ -3084,7 +3084,7 @@ class _PreviewCacheContainer:
         self.channel_runtime = _PreviewCacheRuntime()
 
 
-def test_property_visual_quota_enforces_free_daily_magic_fit_limit() -> None:
+def test_property_visual_quota_allows_unlimited_free_daily_magic_fit() -> None:
     service = ProductService.__new__(ProductService)
     service._container = _QuotaContainer(
         {},
@@ -3096,12 +3096,17 @@ def test_property_visual_quota_enforces_free_daily_magic_fit_limit() -> None:
         ],
     )
 
-    with pytest.raises(ValueError, match="property_magic_fit_upgrade_required:plus"):
-        service._enforce_property_visual_quota(
-            principal_id="cf-email:quota-free@example.test",
-            property_preferences={},
-            quota_kind="scene",
-        )
+    # free has unlimited Magic Fit scenes at parity: enforcement must NOT raise
+    service._enforce_property_visual_quota(
+        principal_id="cf-email:quota-free@example.test",
+        property_preferences={},
+        quota_kind="scene",
+    )
+    service._enforce_property_visual_quota(
+        principal_id="cf-email:quota-free@example.test",
+        property_preferences={},
+        quota_kind="scene",
+    )
 
 
 def test_property_visual_quota_enforces_plus_daily_video_limit() -> None:
